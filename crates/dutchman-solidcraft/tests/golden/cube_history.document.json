@@ -1,4 +1,17 @@
 {
+  "appearances": {
+    "bodies": {
+      "unit cube": {
+        "color": [
+          204,
+          51,
+          26
+        ],
+        "name": "#cc331a",
+        "opacity": 1.0
+      }
+    }
+  },
   "features": [
     {
       "id": 1,

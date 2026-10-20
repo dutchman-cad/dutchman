@@ -166,7 +166,14 @@ pub(super) fn operation(op: Option<&Value>) -> Result<&'static str, String> {
 }
 
 /// The names of the bodies a new-body extrude makes, when the source names them all.
-pub(super) fn body_names(feature: &Value, ctx: &Context, operation: &str) -> Option<Vec<String>> {
+///
+/// Each named body's colour is recorded in `ctx.looks` under its name, so the replayed body
+/// keeps the colour the source gave it.
+pub(super) fn body_names(
+    feature: &Value,
+    ctx: &mut Context,
+    operation: &str,
+) -> Option<Vec<String>> {
     if operation != "new_body" {
         return None;
     }
@@ -174,16 +181,37 @@ pub(super) fn body_names(feature: &Value, ctx: &Context, operation: &str) -> Opt
     if outputs.is_empty() {
         return None;
     }
-    outputs
+    let rows: Vec<&Value> = outputs
         .iter()
-        .map(|id| {
-            let row = ctx.row("bodies", id.as_str()?)?;
+        .map(|id| ctx.row("bodies", id.as_str()?))
+        .collect::<Option<_>>()?;
+    let names: Vec<String> = rows
+        .iter()
+        .map(|row| {
             row.get("name")
                 .and_then(Value::as_str)
                 .filter(|name| !name.trim().is_empty())
                 .map(str::to_owned)
         })
-        .collect()
+        .collect::<Option<_>>()?;
+    for (row, name) in rows.iter().zip(&names) {
+        if let Some(look) = row.get("color").and_then(look) {
+            ctx.looks.insert(name.clone(), look);
+        }
+    }
+    Some(names)
+}
+
+/// A CADIR colour (`{r, g, b, a}`, 0 to 1) as a SolidCraft look.
+fn look(color: &Value) -> Option<Value> {
+    let channel = |key: &str| number(color.get(key)).filter(|c| (0.0..=1.0).contains(c));
+    let rgb = [channel("r")?, channel("g")?, channel("b")?].map(|c| (c * 255.0).round() as u8);
+    let opacity = channel("a").unwrap_or(1.0);
+    Some(json!({
+        "name": format!("#{:02x}{:02x}{:02x}", rgb[0], rgb[1], rgb[2]),
+        "color": rgb,
+        "opacity": opacity,
+    }))
 }
 
 /// A length as a SolidCraft expression.
@@ -253,6 +281,15 @@ mod tests {
         let mixed = json!({"kind": "two_sided", "first": blind(3.0),
             "second": {"termination": {"kind": "through_all"}}});
         assert!(extent(Some(&mixed), true).is_err());
+    }
+
+    #[test]
+    fn colours_become_looks() {
+        assert_eq!(
+            look(&json!({"r": 1.0, "g": 0.5, "b": 0.0, "a": 0.25})),
+            Some(json!({"name": "#ff8000", "color": [255, 128, 0], "opacity": 0.25}))
+        );
+        assert_eq!(look(&json!({"r": 2.0, "g": 0.5, "b": 0.0})), None);
     }
 
     #[test]

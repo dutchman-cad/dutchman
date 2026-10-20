@@ -104,14 +104,18 @@ pub(crate) fn history_design(
         live == Live::History,
         step_blob,
     ));
-    json!({
+    let mut doc = json!({
         "format": FORMAT,
         "name": model.name,
         "units": "mm",
         "params": history.params,
         "next_id": original.saturating_add(1),
         "features": features,
-    })
+    });
+    if let (false, Some(fields)) = (history.looks.is_empty(), doc.as_object_mut()) {
+        fields.insert("appearances".to_owned(), json!({"bodies": history.looks}));
+    }
+    doc
 }
 
 /// An Import feature holding the model's STEP restatement, in `component` (the root when
@@ -229,6 +233,7 @@ mod history_tests {
                 json!({"id": 1, "name": "Sketch1", "type": "sketch", "suppressed": false}),
                 json!({"id": 2, "name": "Extrude1", "type": "extrude", "suppressed": false}),
             ],
+            looks: Default::default(),
             next_id: 3,
             mapped: 2,
             total: 2,

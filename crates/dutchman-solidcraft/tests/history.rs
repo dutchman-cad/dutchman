@@ -40,6 +40,7 @@ fn cube_with_history(length: f64, profile: Value, extent: Option<Value>) -> Mode
     let ir = cadmpeg_ir::examples::unit_cube().unwrap();
     let mut wire = serde_json::to_value(&ir).unwrap();
     let model = &mut wire["model"];
+    model["bodies"][0]["color"] = json!({"r": 0.8, "g": 0.2, "b": 0.1, "a": 1.0});
     model["sketches"] = json!([{
         "id": SKETCH,
         "name": "Base",

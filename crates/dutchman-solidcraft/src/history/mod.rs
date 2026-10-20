@@ -29,6 +29,8 @@ const IR_VERSIONS: [&str; 2] = ["6", "7"];
 pub(crate) struct History {
     pub(crate) params: Vec<Value>,
     pub(crate) features: Vec<Value>,
+    /// The looks of the bodies the history makes, by body name.
+    pub(crate) looks: BTreeMap<String, Value>,
     /// The id the next feature after the history takes.
     pub(crate) next_id: u64,
     /// Source features that became SolidCraft features or needed none.
@@ -54,6 +56,8 @@ struct Context<'a> {
     params: BTreeMap<String, String>,
     /// Mapped sketches by CADIR sketch id.
     sketches: BTreeMap<String, sketch::Mapped>,
+    /// SolidCraft looks of the bodies the history makes, by body name.
+    looks: BTreeMap<String, Value>,
     /// Whether a feature that builds geometry has been mapped.
     builds: bool,
 }
@@ -65,6 +69,7 @@ impl<'a> Context<'a> {
             next_id: 1,
             params: BTreeMap::new(),
             sketches: BTreeMap::new(),
+            looks: BTreeMap::new(),
             builds: false,
         }
     }
@@ -174,6 +179,7 @@ fn map_into(
         return Err("no feature in the history builds geometry".to_owned());
     }
     history.params = params;
+    history.looks = std::mem::take(&mut ctx.looks);
     history.next_id = ctx.next_id;
     Ok(history)
 }
