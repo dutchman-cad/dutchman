@@ -215,17 +215,21 @@ fn file_name(stored: &str) -> &str {
     stored.rsplit(['/', '\\']).next().unwrap_or(stored)
 }
 
-/// The part file: at its stored path when that exists, else by name next to the assembly
-/// (ignoring case, as the saving system may have).
+/// The part file: at its stored path when that exists (relative to the assembly, and with
+/// either separator), else by name next to the assembly (ignoring case, as the saving system
+/// may have).
 fn locate(stored: &str, file: &str, folder: &Path) -> Option<PathBuf> {
-    let as_stored = Path::new(stored);
-    let as_stored = if as_stored.is_absolute() {
-        as_stored.to_path_buf()
-    } else {
-        folder.join(as_stored)
-    };
-    if as_stored.is_file() {
-        return Some(as_stored);
+    let candidates = [stored.to_owned(), stored.replace('\\', "/")];
+    for candidate in &candidates {
+        let path = Path::new(candidate);
+        let path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            folder.join(path)
+        };
+        if path.is_file() {
+            return Some(path);
+        }
     }
     let beside = folder.join(file);
     if beside.is_file() {
@@ -493,6 +497,33 @@ mod tests {
             err.to_string().contains("put its part files next to it"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn parts_are_found_as_stored_or_beside_the_assembly() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("Assemblies");
+        std::fs::create_dir_all(dir.path().join("Parts")).unwrap();
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("Bracket.ipt"), b"").unwrap();
+        std::fs::write(dir.path().join("Parts").join("Plate.ipt"), b"").unwrap();
+        let find = |stored: &str| locate(stored, file_name(stored), &folder);
+
+        // An absolute path from another machine: found by name beside the assembly.
+        assert_eq!(
+            find(r"C:\Users\Someone\Work\Bracket.ipt"),
+            Some(folder.join("Bracket.ipt"))
+        );
+        assert_eq!(
+            find("/home/someone/work/Bracket.ipt"),
+            Some(folder.join("Bracket.ipt"))
+        );
+        // A different case, as Windows saves it.
+        assert!(find(r"C:\Work\BRACKET.IPT").is_some());
+        // A relative path, with either separator.
+        assert!(find(r"..\Parts\Plate.ipt").is_some());
+        assert!(find("../Parts/Plate.ipt").is_some());
+        assert_eq!(find(r"C:\Work\Missing.ipt"), None);
     }
 
     #[test]
