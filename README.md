@@ -7,5 +7,4 @@ Early development. This release reserves the name; the converters arrive in late
 
 ## Licence
 
-Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT licence](LICENSE-MIT)
-at your option.
+Licensed under the [Apache License, Version 2.0](LICENSE).
