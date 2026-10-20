@@ -17,7 +17,7 @@ mod sketch;
 
 use std::collections::BTreeMap;
 
-use dutchman_core::{Model, Report, Severity};
+use dutchman_core::{FeatureOutcome, FeatureStatus, Model, Report, Severity};
 use serde_json::Value;
 
 /// The CADIR wire versions the mapping reads. Version 7 adds only assembly joint kinds and a
@@ -91,9 +91,31 @@ impl<'a> Context<'a> {
     }
 }
 
+/// The history as far as it maps, and what became of each feature.
+pub(crate) struct Mapping {
+    /// The replayable history, or why there is none.
+    pub(crate) result: Result<History, String>,
+    /// Each source feature's status, in timeline order. Every feature is looked at, also after
+    /// one that does not map, so a caller can show everything that stands in the way.
+    pub(crate) features: Vec<FeatureOutcome>,
+}
+
 /// Maps the model's history, or says why it cannot be replayed. Losses of a history that is
 /// written go to `report`.
-pub(crate) fn map(model: &Model, report: &mut Report) -> Result<History, String> {
+pub(crate) fn map(model: &Model, report: &mut Report) -> Mapping {
+    let mut features_out = Vec::new();
+    let result = map_into(model, report, &mut features_out);
+    Mapping {
+        result,
+        features: features_out,
+    }
+}
+
+fn map_into(
+    model: &Model,
+    report: &mut Report,
+    out: &mut Vec<FeatureOutcome>,
+) -> Result<History, String> {
     let document =
         serde_json::to_value(&model.ir).map_err(|err| format!("cannot read the model: {err}"))?;
     check_version(&document)?;
@@ -108,24 +130,45 @@ pub(crate) fn map(model: &Model, report: &mut Report) -> Result<History, String>
     features.sort_by_key(|feature| feature.get("ordinal").and_then(Value::as_u64));
 
     let mut history = History::default();
+    let mut blocked: Option<String> = None;
     for feature in features {
+        let outcome = |status, reason: Option<String>| FeatureOutcome {
+            name: name(feature).map(str::to_owned),
+            kind: kind(feature),
+            status,
+            reason,
+        };
         if feature.get("suppressed").and_then(Value::as_bool) == Some(true) {
             report.push(
                 Severity::Info,
                 describe(feature),
                 "suppressed in the source; left out",
             );
+            out.push(outcome(
+                FeatureStatus::LeftOut,
+                Some("suppressed in the source".to_owned()),
+            ));
             continue;
         }
         history.total += 1;
         match map_feature(feature, &mut ctx, report) {
-            Ok(Mapped::Nothing) => history.mapped += 1,
+            Ok(Mapped::Nothing) => {
+                history.mapped += 1;
+                out.push(outcome(FeatureStatus::NotNeeded, None));
+            }
             Ok(Mapped::Feature(mapped)) => {
                 history.mapped += 1;
                 history.features.push(mapped);
+                out.push(outcome(FeatureStatus::Mapped, None));
             }
-            Err(reason) => return Err(format!("{}: {reason}", describe(feature))),
+            Err(reason) => {
+                blocked.get_or_insert_with(|| format!("{}: {reason}", describe(feature)));
+                out.push(outcome(FeatureStatus::Blocked, Some(reason)));
+            }
         }
+    }
+    if let Some(reason) = blocked {
+        return Err(reason);
     }
     if !ctx.builds {
         return Err("no feature in the history builds geometry".to_owned());
@@ -235,14 +278,14 @@ mod tests {
 
     #[test]
     fn a_model_without_history_is_flattened() {
-        let err = map(&cube(), &mut Report::default()).unwrap_err();
+        let err = map(&cube(), &mut Report::default()).result.unwrap_err();
         assert_eq!(err, "the design carries no feature history");
     }
 
     #[test]
     fn datum_planes_alone_build_no_geometry() {
         let model = with(cube(), json!([datum(1, 0), datum(2, 1)]), json!([]));
-        let err = map(&model, &mut Report::default()).unwrap_err();
+        let err = map(&model, &mut Report::default()).result.unwrap_err();
         assert_eq!(err, "no feature in the history builds geometry");
     }
 
@@ -253,7 +296,7 @@ mod tests {
             json!([datum(1, 0), opaque(2, 2, "Later"), opaque(3, 1, "Earlier")]),
             json!([]),
         );
-        let err = map(&model, &mut Report::default()).unwrap_err();
+        let err = map(&model, &mut Report::default()).result.unwrap_err();
         assert_eq!(err, "feature \"Earlier\": native is not mapped yet");
     }
 
@@ -263,7 +306,7 @@ mod tests {
         hidden["suppressed"] = json!(true);
         let model = with(cube(), json!([datum(1, 0), hidden]), json!([]));
         let mut report = Report::default();
-        let err = map(&model, &mut report).unwrap_err();
+        let err = map(&model, &mut report).result.unwrap_err();
         assert_eq!(err, "no feature in the history builds geometry");
         let loss = report.losses().first().unwrap();
         assert_eq!(loss.subject, "feature \"Hidden\"");

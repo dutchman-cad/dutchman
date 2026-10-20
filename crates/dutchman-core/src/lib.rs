@@ -29,7 +29,7 @@ pub struct Model {
     /// The input file's name (without its folder), when the model was read from a file.
     pub source_file: Option<String>,
 }
-pub use report::{Loss, Report, Severity};
+pub use report::{Check, FeatureOutcome, FeatureStatus, Loss, Mode, Outcome, Report, Severity};
 
 /// The largest input file Dutchman will open, in bytes. Native CAD files beyond this are
 /// rejected up front rather than read into memory.

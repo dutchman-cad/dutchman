@@ -1,0 +1,158 @@
+//! The machine-readable reports `--json` prints. Their field names are stable: fields are
+//! added, never renamed or removed. See `docs/json.md`.
+
+use std::path::Path;
+
+use dutchman_core::{Check, FeatureStatus, Format, Mode, Outcome, Report, Severity};
+use serde_json::{json, Map, Value};
+
+/// The schema of `dutchman convert --json`.
+pub const CONVERT: &str = "dutchman.convert/1";
+
+/// The schema of `dutchman inspect --json`.
+pub const INSPECT: &str = "dutchman.inspect/1";
+
+/// The input file as the reports describe it.
+pub fn input(path: &Path) -> Value {
+    let format = Format::from_path(path);
+    json!({
+        "path": path.display().to_string(),
+        "format": format.map(Format::id),
+        "format_name": format.map(Format::name),
+    })
+}
+
+/// A report of a run that stopped with `message`.
+pub fn failure(schema: &str, input: Value, message: &str) -> Value {
+    json!({
+        "schema": schema,
+        "ok": false,
+        "input": input,
+        "error": {"message": message},
+    })
+}
+
+/// The fields every successful report shares: what was (or would be) written, and the losses.
+pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value> {
+    let mut out = Map::new();
+    out.insert("schema".to_owned(), json!(schema));
+    out.insert("ok".to_owned(), json!(true));
+    out.insert("input".to_owned(), input);
+    if let Some(outcome) = report.outcome() {
+        out.extend(outcome_fields(outcome));
+    }
+    out.insert("losses".to_owned(), losses(report));
+    out
+}
+
+fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
+    let (status, reason) = match &outcome.check {
+        Check::Verified => ("verified", None),
+        Check::Unverified(reason) => ("unverified", Some(reason)),
+        Check::Flattened(reason) => ("flattened", Some(reason)),
+        Check::NotApplicable(reason) => ("not_applicable", Some(reason)),
+    };
+    let features: Vec<Value> = outcome
+        .features
+        .iter()
+        .map(|feature| {
+            json!({
+                "name": feature.name,
+                "kind": feature.kind,
+                "status": match feature.status {
+                    FeatureStatus::Mapped => "mapped",
+                    FeatureStatus::NotNeeded => "not_needed",
+                    FeatureStatus::LeftOut => "left_out",
+                    FeatureStatus::Blocked => "blocked",
+                },
+                "reason": feature.reason,
+            })
+        })
+        .collect();
+    let counted = |f: &&dutchman_core::FeatureOutcome| f.status != FeatureStatus::LeftOut;
+    let mapped = outcome
+        .features
+        .iter()
+        .filter(|f| matches!(f.status, FeatureStatus::Mapped | FeatureStatus::NotNeeded))
+        .count();
+    let total = outcome.features.iter().filter(counted).count();
+    let mut out = Map::new();
+    out.insert(
+        "mode".to_owned(),
+        json!(match outcome.mode {
+            Mode::History => "history",
+            Mode::Import => "import",
+        }),
+    );
+    out.insert(
+        "verification".to_owned(),
+        json!({"status": status, "reason": reason}),
+    );
+    out.insert(
+        "history".to_owned(),
+        json!({"mapped": mapped, "total": total, "features": features}),
+    );
+    out
+}
+
+fn losses(report: &Report) -> Value {
+    report
+        .losses()
+        .iter()
+        .map(|loss| {
+            json!({
+                "level": match loss.severity {
+                    Severity::Info => "Info",
+                    Severity::Degraded => "Degraded",
+                    Severity::Dropped => "Dropped",
+                },
+                "code": loss.code,
+                "subject": loss.subject,
+                "message": loss.detail,
+            })
+        })
+        .collect()
+}
+
+// Test helpers outside `#[test]` functions are not covered by clippy.toml's test allowances.
+#[cfg(test)]
+#[allow(clippy::indexing_slicing)]
+mod tests {
+    use dutchman_core::FeatureOutcome;
+
+    use super::*;
+
+    fn feature(kind: &str, status: FeatureStatus) -> FeatureOutcome {
+        FeatureOutcome {
+            name: Some(format!("{kind}1")),
+            kind: kind.to_owned(),
+            status,
+            reason: None,
+        }
+    }
+
+    #[test]
+    fn a_written_history_reports_its_features_and_check() {
+        let mut report = Report::default();
+        report.set_outcome(Outcome {
+            mode: Mode::History,
+            check: Check::Verified,
+            features: vec![
+                feature("datum_principal_plane", FeatureStatus::NotNeeded),
+                feature("sketch", FeatureStatus::Mapped),
+                feature("extrude", FeatureStatus::Mapped),
+                feature("fillet", FeatureStatus::LeftOut),
+            ],
+        });
+        let out = Value::Object(success(CONVERT, json!({}), &report));
+        assert_eq!(out["mode"], "history");
+        assert_eq!(
+            out["verification"],
+            json!({"status": "verified", "reason": null})
+        );
+        assert_eq!(out["history"]["mapped"], 3);
+        assert_eq!(out["history"]["total"], 3);
+        assert_eq!(out["history"]["features"][3]["status"], "left_out");
+        assert_eq!(out["losses"], json!([]));
+    }
+}

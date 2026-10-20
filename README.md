@@ -24,6 +24,31 @@ Early development. Fusion (`.f3d`) designs and Inventor parts (`.ipt`) convert t
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it fits together.
 
+## Use from scripts and AI agents
+
+Install from source (Rust 1.88 or newer):
+
+```sh
+cargo install --git https://github.com/dutchman-cad/dutchman dutchman
+```
+
+See what would carry across, without writing anything:
+
+```sh
+dutchman inspect --json part.ipt
+```
+
+Convert, with one JSON report on stdout:
+
+```sh
+dutchman convert --json part.f3d part.solidcraft
+```
+
+Exit codes: `0` converted, `1` could not convert (the JSON report has `"ok": false` and
+`error.message`), `2` usage error. A written history is checked in SolidCraft when
+`solidcraft-cli` is found: set `SOLIDCRAFT_CLI` to its path, or pass `--solidcraft PATH`.
+[docs/json.md](docs/json.md) describes every field; field names are stable.
+
 ## Building
 
 ```sh

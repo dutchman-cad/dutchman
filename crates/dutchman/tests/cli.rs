@@ -1,7 +1,7 @@
 //! End-to-end checks of the `dutchman` binary.
 
 // Test helpers outside `#[test]` functions are not covered by clippy.toml's test allowances.
-#![allow(clippy::unwrap_used)]
+#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
 use std::path::PathBuf;
 use std::process::{Command, Output};
@@ -144,4 +144,94 @@ fn solidcraft_and_no_verify_conflict() {
         "b.solidcraft",
     ]);
     assert_eq!(out.status.code(), Some(2));
+}
+
+fn fixture(name: &str) -> String {
+    format!(
+        "{}/../dutchman-core/tests/fixtures/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    )
+}
+
+fn json_of(out: &Output) -> serde_json::Value {
+    serde_json::from_slice(&out.stdout).unwrap()
+}
+
+#[test]
+fn convert_json_reports_what_was_written() {
+    let output = scratch("json.solidcraft");
+    let out = dutchman(&[
+        "convert",
+        "--json",
+        "--no-verify",
+        &fixture("synthetic_cube.ipt"),
+        output.to_str().unwrap(),
+    ]);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(out.stderr.is_empty(), "nothing but JSON is printed");
+    let report = json_of(&out);
+    assert_eq!(report["schema"], "dutchman.convert/1");
+    assert_eq!(report["ok"], true);
+    assert_eq!(report["input"]["format"], "inventor_part");
+    assert_eq!(report["output"]["path"], output.to_str().unwrap());
+    assert_eq!(report["output"]["format"], "solidcraft/23");
+    assert_eq!(report["mode"], "import");
+    assert_eq!(report["verification"]["status"], "not_applicable");
+    assert_eq!(report["history"]["total"], 0);
+    let loss = &report["losses"][0];
+    for key in ["level", "code", "subject", "message"] {
+        assert!(loss.get(key).is_some(), "{key}: {loss}");
+    }
+}
+
+#[test]
+fn convert_json_reports_a_failure() {
+    let out = dutchman(&[
+        "convert",
+        "--json",
+        &fixture("container_metadata_only.f3d"),
+        scratch("never.solidcraft").to_str().unwrap(),
+    ]);
+    assert_eq!(out.status.code(), Some(1));
+    let report = json_of(&out);
+    assert_eq!(report["ok"], false);
+    assert!(report["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("no geometry could be read"));
+}
+
+#[test]
+fn inspect_json_shows_what_would_map_without_writing() {
+    let out = dutchman(&[
+        "inspect",
+        "--json",
+        &fixture("design_sketch_constraints.f3d"),
+    ]);
+    assert_eq!(out.status.code(), Some(0));
+    let report = json_of(&out);
+    assert_eq!(report["schema"], "dutchman.inspect/1");
+    assert_eq!(report["geometry"]["bodies"], 1);
+    assert_eq!(report["mode"], "import");
+    assert_eq!(report["verification"]["status"], "flattened");
+    assert_eq!(report["history"]["mapped"], 1);
+    assert_eq!(report["history"]["total"], 1);
+    let feature = &report["history"]["features"][0];
+    assert_eq!(feature["kind"], "sketch");
+    assert_eq!(feature["status"], "mapped");
+}
+
+#[test]
+fn inspect_prints_a_text_summary() {
+    let out = dutchman(&["inspect", &fixture("generated_unit_cube.f3d")]);
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.starts_with("Fusion archive (.f3d): 1 body, 6 faces\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("would write: geometry without history"),
+        "{stdout}"
+    );
 }

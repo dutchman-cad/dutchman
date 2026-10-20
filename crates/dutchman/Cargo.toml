@@ -14,6 +14,10 @@ categories = ["command-line-utilities", "parser-implementations"]
 clap.workspace = true
 dutchman-core.workspace = true
 dutchman-solidcraft.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
 
 [lints]
 workspace = true
