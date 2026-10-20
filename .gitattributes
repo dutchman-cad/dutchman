@@ -4,4 +4,5 @@
 *.f3d binary
 *.ipt binary
 *.iam binary
+*.sldprt binary
 *.png binary
