@@ -540,3 +540,41 @@ fn a_converted_angle_drives_the_geometry_in_solidcraft() {
         8000.0,
     );
 }
+
+/// The shape cadmpeg 0.6's Inventor decoder gives an extrude: its profile as native profile
+/// selections of the sketch, an explicit direction, a symmetric or through-next extent. Until
+/// cadmpeg resolves those selections into sketch profiles the history cannot be replayed, and
+/// the design is written as geometry with the reason reported.
+#[test]
+fn an_inventor_shaped_extrude_flattens_with_its_reason() {
+    let inventor_profile = json!({"kind": "sketch_selection",
+        "value": {"sketch": SKETCH, "selections": ["inventor:native:profile-selection#1"]}});
+    let model = cube_with_history(
+        10.0,
+        inventor_profile,
+        Some(json!({"kind": "symmetric",
+            "side": {"termination": {"kind": "blind", "length": 10.0}}})),
+    );
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_eq!(types(&document), [("import".to_owned(), false)]);
+    assert_eq!(
+        history_line(&report),
+        "flattened: feature \"Block\": sketch_selection profiles are not mapped yet"
+    );
+    let outcome = report.outcome().unwrap();
+    let statuses: Vec<_> = outcome
+        .features
+        .iter()
+        .map(|f| (f.kind.as_str(), f.status))
+        .collect();
+    assert_eq!(
+        statuses,
+        [
+            ("sketch", dutchman_core::FeatureStatus::Mapped),
+            ("extrude", dutchman_core::FeatureStatus::Blocked)
+        ]
+    );
+}

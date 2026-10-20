@@ -266,6 +266,7 @@ impl Builder {
                     Some("line") => "line",
                     Some("circle") => "circle",
                     Some("arc") => "arc",
+                    Some("ellipse") => "ellipse",
                     _ => "",
                 },
                 start: point("a"),
@@ -378,6 +379,28 @@ impl Builder {
                     "a",
                     construction,
                     json!({"type": "arc", "c": c, "a": a, "b": b}),
+                    &[],
+                );
+            }
+            "ellipse" if geometry.get("bounds").is_none_or(Value::is_null) => {
+                let center = p2(geometry.get("center")).ok_or_else(bad)?;
+                let angle = number(geometry.get("major_angle")).ok_or_else(bad)?;
+                let major = number(geometry.get("major_radius")).ok_or_else(bad)?;
+                let minor = number(geometry.get("minor_radius")).ok_or_else(bad)?;
+                if !(major > 0.0 && minor > 0.0) {
+                    return Err(bad());
+                }
+                let end = [
+                    center[0] + major * angle.cos(),
+                    center[1] + major * angle.sin(),
+                ];
+                let c = self.point(center, None);
+                let m = self.point(end, None);
+                self.curve(
+                    source,
+                    "e",
+                    construction,
+                    json!({"type": "ellipse", "c": c, "m": m, "r": minor}),
                     &[],
                 );
             }
@@ -556,9 +579,23 @@ mod tests {
     }
 
     #[test]
+    fn whole_ellipses_map_by_their_major_axis_end() {
+        let mut builder = Builder::default();
+        let ellipse = entity(json!({"kind": "ellipse", "center": {"u": 5.0, "v": 5.0},
+            "major_angle": std::f64::consts::FRAC_PI_2, "major_radius": 4.0, "minor_radius": 2.0}));
+        builder.entity(&ellipse, &mut Report::default()).unwrap();
+        let curve = builder.curves.first().unwrap();
+        assert_eq!(curve["type"], "ellipse");
+        assert_eq!(curve["r"], 2.0);
+        let m = builder.positions[usize::try_from(curve["m"].as_u64().unwrap()).unwrap()];
+        assert!(distance(m, [5.0, 9.0]) < 1e-9, "{m:?}");
+    }
+
+    #[test]
     fn unsupported_curves_drop_only_as_construction() {
         let ellipse = json!({"kind": "ellipse", "center": {"u": 0.0, "v": 0.0},
-            "major_angle": 0.0, "major_radius": 2.0, "minor_radius": 1.0});
+            "major_angle": 0.0, "major_radius": 2.0, "minor_radius": 1.0,
+            "bounds": [0.0, 1.0]});
         let mut report = Report::default();
         let mut builder = Builder::default();
         let mut construction = entity(ellipse.clone());
