@@ -327,6 +327,7 @@ dependencies = [
  "dutchman-core",
  "serde_json",
  "sha2",
+ "tempfile",
  "zip",
 ]
 

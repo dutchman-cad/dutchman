@@ -100,6 +100,29 @@ Checks: an end-to-end test converts a synthetic `.f3d` and compares the containe
 `document.json` with a golden file; a non-blocking CI job opens the result in a released
 SolidCraft CLI (`scripts/solidcraft-roundtrip.sh`).
 
+## Feature history
+
+When every active feature of the model maps onto SolidCraft features, the design is that
+history: SolidCraft parameters (`params`) and features at the root, then the original
+geometry as an Import named "Original geometry (imported)", **suppressed**, at the end of the
+timeline. The replayed history is the live result; the original is there to compare with and
+to fall back on, so a history design is never worse than an import design.
+
+History is all or nothing. CADIR keeps only the final B-rep, so a history that stops part way
+cannot be finished with an imported body: the first feature that does not map (or a history
+with no feature that builds geometry) flattens the design to the import design, and the
+report says why (`history: flattened: …`). Suppressed source features are left out and
+reported. Parameters keep their expressions where SolidCraft reads them the same way, else
+their evaluated values.
+
+A written history is checked in SolidCraft itself, since Dutchman has no kernel. The writer
+runs `solidcraft-cli eval` on the design as written and on a copy with the history suppressed
+and the original live, and compares body count and volumes (relative tolerance 1e-4). A
+mismatch or a feature SolidCraft cannot replay flattens the design (`flattened: replay
+differs`). When no CLI is found (`--solidcraft PATH`, else `$SOLIDCRAFT_CLI`, else `PATH`),
+when it times out (`--verify-timeout`, default 120 s), or with `--no-verify`, the history is
+written and reported unverified. `--import-only` always writes the import design.
+
 ## Errors and losses
 
 - **`Error`** stops a conversion: I/O, input over the size cap, unknown or not-yet-supported
@@ -131,9 +154,9 @@ and synthetic files from cadmpeg's public test suite (provenance in
 
 ## After v0.1
 
-- **History**: map CADIR features (sketch, extrude, revolve, fillet, chamfer, hole) and
-  parameters to SolidCraft's parametric features, falling back to an `import` body per
-  feature that cannot be mapped. This is the reason Dutchman exists beyond STEP export.
+- **History** (v0.2, in progress): sketches, then sketch constraints and dimensions, then
+  extrude, then revolve map onto SolidCraft features under the rules above; fillet, chamfer
+  and hole follow once cadmpeg gives typed references to the edges they act on.
 - **Assemblies**: CADIR occurrences → SolidCraft components and occurrences.
 - **Appearances and names**.
 - More formats as cadmpeg's codecs mature.

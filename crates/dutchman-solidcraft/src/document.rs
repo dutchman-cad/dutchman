@@ -1,12 +1,20 @@
-//! The design document: the shape SolidCraft gives a file it imports as STEP.
+//! The design document, in one of two shapes:
 //!
-//! The import's body names and assembly tree are left for SolidCraft to read from the STEP
+//! - an **import design**: what SolidCraft makes of a file it imports as STEP;
+//! - a **history design**: the replayed history, then the original geometry as an import,
+//!   suppressed, at the end of the timeline.
+//!
+//! An import's body names and assembly tree are left for SolidCraft to read from the STEP
 //! itself, so SolidCraft's STEP reader stays the only interpreter of that text.
 
 use dutchman_core::{Model, Report, Severity};
 use serde_json::{json, Value};
 
+use crate::history::History;
 use crate::FORMAT;
+
+/// The timeline name of the original geometry in a history design.
+pub(crate) const ORIGINAL: &str = "Original geometry (imported)";
 
 /// SolidCraft's longest component name.
 const MAX_COMPONENT_NAME: usize = 128;
@@ -44,20 +52,81 @@ pub(crate) fn import_design(model: &Model, step_blob: &str) -> Value {
             "grounded": false,
             "transform": IDENTITY,
         }],
-        "features": [{
-            "id": FEATURE,
-            "name": feature_name(model),
-            "type": "import",
-            "component": COMPONENT,
-            "suppressed": false,
-            "file": source_file(model),
-            "step": "",
-            "step_blob": step_blob,
-        }],
+        "features": [import_feature(model, FEATURE, &feature_name(model), Some(COMPONENT), false, step_blob)],
     })
 }
 
-/// Records what the design does not carry over from the model.
+/// Which side of a history design is live.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Live {
+    /// The replayed history, as the design is written.
+    History,
+    /// The original geometry, with the history suppressed: what the replay is checked against.
+    Original,
+}
+
+/// A design holding the replayed `history`, then the original geometry (STEP at
+/// `step_blob`) as an Import at the end of the timeline, with only the `live` side
+/// unsuppressed.
+pub(crate) fn history_design(
+    model: &Model,
+    history: &History,
+    step_blob: &str,
+    live: Live,
+) -> Value {
+    let mut features = history.features.clone();
+    if live == Live::Original {
+        for feature in &mut features {
+            if let Some(fields) = feature.as_object_mut() {
+                fields.insert("suppressed".to_owned(), Value::Bool(true));
+            }
+        }
+    }
+    let original = history.next_id;
+    features.push(import_feature(
+        model,
+        original,
+        ORIGINAL,
+        None,
+        live == Live::History,
+        step_blob,
+    ));
+    json!({
+        "format": FORMAT,
+        "name": model.name,
+        "units": "mm",
+        "params": history.params,
+        "next_id": original.saturating_add(1),
+        "features": features,
+    })
+}
+
+/// An Import feature holding the model's STEP restatement, in `component` (the root when
+/// `None`).
+fn import_feature(
+    model: &Model,
+    id: u64,
+    name: &str,
+    component: Option<u64>,
+    suppressed: bool,
+    step_blob: &str,
+) -> Value {
+    let mut feature = json!({
+        "id": id,
+        "name": name,
+        "type": "import",
+        "suppressed": suppressed,
+        "file": source_file(model),
+        "step": "",
+        "step_blob": step_blob,
+    });
+    if let (Some(component), Some(fields)) = (component, feature.as_object_mut()) {
+        fields.insert("component".to_owned(), json!(component));
+    }
+    feature
+}
+
+/// Records what an import design does not carry over from the model.
 pub(crate) fn report_unmapped(model: &Model, report: &mut Report) {
     let m = &model.ir.model;
     let flattened = [
@@ -133,5 +202,51 @@ mod tests {
             assert!(generic_name(name), "{name:?}");
         }
         assert!(!generic_name("Bracket"));
+    }
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::*;
+
+    fn history() -> History {
+        History {
+            params: vec![json!({"name": "d1", "expr": "10 mm", "unit": "mm", "model": true})],
+            features: vec![
+                json!({"id": 1, "name": "Sketch1", "type": "sketch", "suppressed": false}),
+                json!({"id": 2, "name": "Extrude1", "type": "extrude", "suppressed": false}),
+            ],
+            next_id: 3,
+            mapped: 2,
+            total: 2,
+        }
+    }
+
+    #[test]
+    fn the_original_follows_the_history_suppressed() {
+        let model = crate::testing::cube();
+        let doc = history_design(&model, &history(), "blobs/x.step", Live::History);
+        let features = doc["features"].as_array().unwrap();
+        assert_eq!(features.len(), 3);
+        let original = features.last().unwrap();
+        assert_eq!(original["id"], 3);
+        assert_eq!(original["name"], ORIGINAL);
+        assert_eq!(original["type"], "import");
+        assert_eq!(original["suppressed"], true);
+        assert_eq!(original["step_blob"], "blobs/x.step");
+        assert!(original.get("component").is_none(), "at the root");
+        assert!(features.iter().take(2).all(|f| f["suppressed"] == false));
+        assert_eq!(doc["next_id"], 4);
+        assert_eq!(doc["params"], json!(history().params));
+        assert!(doc.get("components").is_none());
+    }
+
+    #[test]
+    fn the_check_design_has_only_the_original_live() {
+        let model = crate::testing::cube();
+        let doc = history_design(&model, &history(), "blobs/x.step", Live::Original);
+        let features = doc["features"].as_array().unwrap();
+        assert!(features.iter().take(2).all(|f| f["suppressed"] == true));
+        assert_eq!(features.last().unwrap()["suppressed"], false);
     }
 }

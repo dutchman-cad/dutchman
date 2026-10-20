@@ -80,6 +80,11 @@ impl Report {
         }
     }
 
+    /// Records every loss of `other`, after this report's own.
+    pub fn append(&mut self, other: Report) {
+        self.losses.extend(other.losses);
+    }
+
     /// The recorded losses, in the order they occurred.
     pub fn losses(&self) -> &[Loss] {
         &self.losses

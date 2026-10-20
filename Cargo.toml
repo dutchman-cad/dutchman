@@ -19,6 +19,7 @@ cadmpeg-registry = { version = "0.6", default-features = false, features = ["f3d
 serde_json = "1"
 sha2 = "0.11"
 thiserror = "2"
+tempfile = "3"
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 # Never crash: hostile input must come back as an error, never as a panic.
