@@ -113,7 +113,7 @@ cannot be finished with an imported body: the first feature that does not map (o
 with no feature that builds geometry) flattens the design to the import design, and the
 report says why (`history: flattened: …`). Suppressed source features are left out and
 reported. Mapped today: principal datum planes; planar sketches (points, lines, circles, arcs,
-reference lines, at their solved positions) with their constraints and dimensions, each
+whole ellipses, reference lines, at their solved positions) with their constraints and dimensions, each
 dimension linked to its parameter (a constraint that does not map is dropped and reported,
 since the geometry is already exact); extrudes of a whole sketch, of selected sketch
 profiles, of profile regions (whole loops with their holes, or regions bounded by pieces of
@@ -169,7 +169,8 @@ and synthetic files from cadmpeg's public test suite (provenance in
   they act on.
 - **Assemblies**: CADIR occurrences → SolidCraft components and occurrences.
 - **Appearances and names**.
-- More formats as cadmpeg's codecs mature.
+- More formats as cadmpeg's codecs mature. Inventor's state and the upstream gaps that keep its
+  history from replaying are tracked in [inventor.md](inventor.md).
 - The SolidCraft plugin shim.
 
 ## Decisions
