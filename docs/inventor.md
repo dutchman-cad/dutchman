@@ -42,9 +42,19 @@ State as of cadmpeg 0.6.2 (docs/format-support.md upstream rates Inventor L1 wit
 
 ## Assemblies (`.iam`)
 
-Not converted yet. The codec transfers an occurrence when its external file reference, its
-identity and its placement form one exact join; external prototypes stay unresolved and no
-referenced file is opened. Assembly joints arrive with CADIR version 7 (cadmpeg PR #254).
+Assemblies convert as placed geometry, without history:
+
+- cadmpeg gives each occurrence its stored part path (often absolute on the machine that
+  saved it), its rigid placement in millimetres, and its name. Dutchman looks for the part at
+  the stored path, then by file name next to the assembly (ignoring case), reads each part
+  file once, and writes one SolidCraft component per part, holding the part's geometry as an
+  import, with one occurrence per placement.
+- Left out and reported as Dropped: parts that cannot be found or read, sub-assemblies
+  (`.iam` inside `.iam`) and the occurrences inside them, scaled placements, and occurrences
+  whose part is not a separate file.
+- Upstream: cadmpeg leaves local prototypes and nested parent links untransferred, and joints
+  arrive with CADIR version 7 (cadmpeg PR #254). Sub-assemblies will follow by reading each
+  `.iam` the same way, recursively.
 
 ## Testing without real Inventor files
 

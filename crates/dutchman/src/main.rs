@@ -124,16 +124,29 @@ fn inspect(input: &Path, json: bool) -> ExitCode {
             "geometry".to_owned(),
             json!({"bodies": bodies, "faces": faces}),
         );
+        if let Some(assembly) = &model.assembly {
+            out.insert(
+                "assembly".to_owned(),
+                json!({"parts": assembly.parts.len(), "placements": assembly.placements.len()}),
+            );
+        }
         print_json(&Value::Object(out));
     } else {
         let format = Format::from_path(input).map_or("design", Format::name);
         let count =
             |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
-        println!(
-            "{format}: {}, {}",
-            count(bodies, "body", "bodies"),
-            count(faces, "face", "faces")
-        );
+        match &model.assembly {
+            Some(assembly) => println!(
+                "{format}: {} placed, from {}",
+                count(assembly.placements.len(), "part", "parts"),
+                count(assembly.parts.len(), "part file", "part files")
+            ),
+            None => println!(
+                "{format}: {}, {}",
+                count(bodies, "body", "bodies"),
+                count(faces, "face", "faces")
+            ),
+        }
         match (&outcome.mode, &outcome.check) {
             (Mode::History, _) => println!("would write: editable history"),
             (Mode::Import, Check::Flattened(reason) | Check::NotApplicable(reason)) => {

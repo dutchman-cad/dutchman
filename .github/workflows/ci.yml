@@ -71,4 +71,4 @@ jobs:
       - name: Replay histories in SolidCraft
         run: |
           export SOLIDCRAFT_CLI="$PWD/solidcraft-${SOLIDCRAFT_VERSION}-linux-x86_64/bin/solidcraft-cli"
-          cargo test --locked -p dutchman-solidcraft --test history
+          cargo test --locked -p dutchman-solidcraft --test history --test assembly

@@ -152,6 +152,15 @@ impl Report {
         self.losses.extend(other.losses);
     }
 
+    /// Records every loss of `other` under `prefix` (`part.ipt: …`), after this report's own.
+    pub fn append_prefixed(&mut self, other: Report, prefix: &str) {
+        self.losses
+            .extend(other.losses.into_iter().map(|loss| Loss {
+                subject: format!("{prefix}: {}", loss.subject),
+                ..loss
+            }));
+    }
+
     /// Records what the writer made of the design.
     pub fn set_outcome(&mut self, outcome: Outcome) {
         self.outcome = Some(outcome);

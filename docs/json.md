@@ -59,7 +59,8 @@ A failure carries `"ok": false`, `input` and `error.message`, and exits 1:
 
 ## `dutchman.inspect/1`
 
-The same fields as `convert` except `output`, plus `geometry`:
+The same fields as `convert` except `output`, plus `geometry`, and for an assembly
+`assembly: {"parts": <part files read>, "placements": <parts placed>}`:
 
 ```json
 {

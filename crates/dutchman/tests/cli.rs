@@ -51,7 +51,7 @@ fn convert_rejects_unknown_input() {
     let out = dutchman(&["convert", input.to_str().unwrap(), "x.solidcraft"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains(
-        "Dutchman does not convert this kind of file. It converts Inventor part (.ipt) and Fusion archive (.f3d) files."
+        "Dutchman does not convert this kind of file. It converts Inventor part (.ipt), Inventor assembly (.iam) and Fusion archive (.f3d) files."
     ));
 }
 

@@ -72,7 +72,8 @@ fn decode_unguarded(
             other => Error::Decode(other.to_string()),
         })?;
     let (ir, decode_report, fidelity) = decoded.into_parts();
-    if !decode_report.geometry_transferred() {
+    // An assembly's geometry is in its parts' files, read afterwards.
+    if !decode_report.geometry_transferred() && !format.is_assembly() {
         return Err(Error::Decode(format!(
             "no geometry could be read from this {} file",
             format.name()
@@ -115,6 +116,7 @@ fn decode_unguarded(
         source_file: path
             .file_name()
             .map(|name| name.to_string_lossy().into_owned()),
+        assembly: None,
     })
 }
 
