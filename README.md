@@ -1,9 +1,24 @@
 # Dutchman
 
 Dutchman carries CAD designs between formats: it decodes native design files into open,
-editable models.
+editable models. Decoding is done by [cadmpeg](https://github.com/cadmpeg/cadmpeg); Dutchman
+maps the result onto a target format, starting with [SolidCraft](https://github.com/tangency-labs/solidcraft)
+designs.
 
-Early development. This release reserves the name; the converters arrive in later versions.
+Early development: the command line exists, but no format converts yet.
+
+```sh
+dutchman convert part.f3d part.solidcraft
+```
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it fits together.
+
+## Building
+
+```sh
+cargo build --release
+cargo test --workspace
+```
 
 ## Licence
 

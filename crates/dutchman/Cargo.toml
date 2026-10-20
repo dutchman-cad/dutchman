@@ -1,0 +1,19 @@
+[package]
+name = "dutchman"
+description = "Carries CAD designs between formats: decodes native design files into open, editable models (early development)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+readme = "../../README.md"
+keywords = ["cad", "converter", "step", "3d"]
+categories = ["command-line-utilities", "parser-implementations"]
+
+[dependencies]
+clap.workspace = true
+dutchman-core.workspace = true
+dutchman-solidcraft.workspace = true
+
+[lints]
+workspace = true
