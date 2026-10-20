@@ -4,7 +4,7 @@
 //! Set `UPDATE_GOLDEN=1` to rewrite the golden file after an intended change.
 
 // Test helpers outside `#[test]` functions are not covered by clippy.toml's test allowances.
-#![allow(clippy::unwrap_used)]
+#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
