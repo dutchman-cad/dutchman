@@ -1,0 +1,61 @@
+{
+  "components": [
+    {
+      "id": 1,
+      "name": "solidworks_cube",
+      "parent": 0
+    }
+  ],
+  "features": [
+    {
+      "component": 1,
+      "file": "solidworks_cube.sldprt",
+      "id": 3,
+      "name": "solidworks_cube",
+      "step": "",
+      "step_blob": "blobs/880fea02c9af7fef56cf1c70631639dcba70955e75350c3961b928cea532df02.step",
+      "suppressed": false,
+      "type": "import"
+    }
+  ],
+  "format": "solidcraft/23",
+  "name": "solidworks_cube",
+  "next_id": 4,
+  "occurrences": [
+    {
+      "component": 1,
+      "grounded": false,
+      "id": 2,
+      "name": "solidworks_cube:1",
+      "parent": 0,
+      "transform": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    }
+  ],
+  "params": [],
+  "units": "mm"
+}

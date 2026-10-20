@@ -45,6 +45,11 @@ fn inventor_unit_cube_becomes_a_solidcraft_import() {
     converts_to_an_import("synthetic_cube.ipt");
 }
 
+#[test]
+fn solidworks_unit_cube_becomes_a_solidcraft_import() {
+    converts_to_an_import("solidworks_cube.sldprt");
+}
+
 /// Converts fixture `file`, which has no history, and checks the result is SolidCraft's
 /// import container with a document matching `tests/golden/<stem>.document.json`.
 fn converts_to_an_import(file: &str) {
