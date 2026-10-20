@@ -1,6 +1,6 @@
 //! Design parameters, as SolidCraft parameters.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use cadmpeg_ir::features::{DesignParameter, ParameterValue};
 use dutchman_core::{Report, Severity};
@@ -20,9 +20,13 @@ const FUNCTIONS: [&str; 23] = [
 /// Constants SolidCraft's expressions accept.
 const CONSTANTS: [&str; 2] = ["pi", "PI"];
 
-/// The model's parameters as SolidCraft `params`, in source order. An expression SolidCraft
-/// could not read the same way is replaced by the parameter's evaluated value.
-pub(crate) fn map(parameters: &[DesignParameter], report: &mut Report) -> Vec<Value> {
+/// The model's parameters as SolidCraft `params`, in source order, and the SolidCraft name of
+/// each one written, by CADIR parameter id. An expression SolidCraft could not read the same way
+/// is replaced by the parameter's evaluated value.
+pub(crate) fn map(
+    parameters: &[DesignParameter],
+    report: &mut Report,
+) -> (Vec<Value>, BTreeMap<String, String>) {
     let mut ordered: Vec<&DesignParameter> = parameters.iter().collect();
     ordered.sort_by_key(|p| (p.owner.is_some(), p.ordinal));
 
@@ -42,6 +46,7 @@ pub(crate) fn map(parameters: &[DesignParameter], report: &mut Report) -> Vec<Va
     }
 
     let mut out = Vec::with_capacity(ordered.len());
+    let mut written = BTreeMap::new();
     for (parameter, name) in ordered.into_iter().zip(renamed) {
         let unit = unit(parameter.value.as_ref());
         let expr = if readable(&parameter.expression, &names) {
@@ -67,6 +72,7 @@ pub(crate) fn map(parameters: &[DesignParameter], report: &mut Report) -> Vec<Va
             );
             continue;
         };
+        written.insert(parameter.id.as_str().to_owned(), name.clone());
         out.push(json!({
             "name": name,
             "expr": expr,
@@ -74,7 +80,7 @@ pub(crate) fn map(parameters: &[DesignParameter], report: &mut Report) -> Vec<Va
             "model": parameter.owner.is_some(),
         }));
     }
-    out
+    (out, written)
 }
 
 /// SolidCraft's unit for a parameter holding `value`.
@@ -309,7 +315,11 @@ mod map_tests {
         ]);
         let model = with(cube(), features, parameters);
         let mut report = Report::default();
-        let params = map(&model.ir.model.parameters, &mut report);
+        let (params, names) = map(&model.ir.model.parameters, &mut report);
+        assert_eq!(
+            names.get("f3d:model:parameter#2").map(String::as_str),
+            Some("d1")
+        );
         assert_eq!(
             params,
             [

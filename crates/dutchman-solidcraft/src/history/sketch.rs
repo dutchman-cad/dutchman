@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use dutchman_core::{Report, Severity};
 use serde_json::{json, Value};
 
-use super::{name, Context};
+use super::{constraints, name, Context};
 
 /// Positions closer than this (mm) are one point.
 const COINCIDENT: f64 = 1e-6;
@@ -18,7 +18,7 @@ const COINCIDENT: f64 = 1e-6;
 const PARALLEL: f64 = 1e-9;
 
 /// A 2D point in sketch coordinates.
-type P2 = [f64; 2];
+pub(crate) type P2 = [f64; 2];
 
 /// A 3D vector.
 pub(crate) type V3 = [f64; 3];
@@ -63,17 +63,32 @@ pub(crate) fn map(
     {
         builder.entity(entity, report)?;
     }
-
     let id = ctx.id();
     let name = name(feature)
         .map(str::to_owned)
         .unwrap_or_else(|| format!("Sketch{id}"));
+    let constraints = constraints::map(
+        sketch_id,
+        &format!("sketch \"{name}\""),
+        ctx,
+        &builder,
+        report,
+    );
+
+    let curves = builder
+        .shapes
+        .iter()
+        .filter_map(|(entity, shape)| match shape {
+            Shape::Curve(curve) => Some((entity.clone(), curve.id.clone())),
+            Shape::Point(_) => None,
+        })
+        .collect();
     ctx.sketches.insert(
         sketch_id.to_owned(),
         Mapped {
             feature: id,
             normal,
-            curves: std::mem::take(&mut builder.by_entity),
+            curves,
         },
     );
     Ok(json!({
@@ -85,7 +100,7 @@ pub(crate) fn map(
         "sketch": {
             "points": builder.points,
             "curves": builder.curves,
-            "constraints": [],
+            "constraints": constraints,
         },
     }))
 }
@@ -127,18 +142,42 @@ fn plane(sketch: &Value) -> Result<(Value, V3), String> {
     Ok((plane, normal))
 }
 
+/// What a source sketch entity became.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Shape {
+    /// A point, by index.
+    Point(usize),
+    /// A curve.
+    Curve(Curve),
+}
+
+/// A SolidCraft curve a source entity became.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Curve {
+    /// Its index among the sketch's curves.
+    pub(crate) index: usize,
+    /// Its id.
+    pub(crate) id: String,
+    /// `line`, `circle` or `arc`.
+    pub(crate) kind: &'static str,
+    /// The point indices of its stored start, end and centre, where it has them.
+    pub(crate) start: Option<usize>,
+    pub(crate) end: Option<usize>,
+    pub(crate) center: Option<usize>,
+}
+
 /// SolidCraft sketch points and curves as they are built.
-struct Builder {
+pub(crate) struct Builder {
     points: Vec<Value>,
     /// Positions of `points`, for sharing coincident ends.
-    positions: Vec<P2>,
+    pub(crate) positions: Vec<P2>,
     /// Source endpoint records already placed, with their point index.
     endpoint_refs: Vec<(String, usize)>,
     curves: Vec<Value>,
     /// The last number used per id prefix (`p`, `l`, `c`, `a`).
     counters: BTreeMap<&'static str, u64>,
-    /// The SolidCraft curve id of each source entity that became a curve.
-    by_entity: BTreeMap<String, String>,
+    /// What each source entity became, by its id.
+    pub(crate) shapes: BTreeMap<String, Shape>,
 }
 
 impl Default for Builder {
@@ -149,12 +188,17 @@ impl Default for Builder {
             endpoint_refs: Vec::new(),
             curves: Vec::new(),
             counters: BTreeMap::new(),
-            by_entity: BTreeMap::new(),
+            shapes: BTreeMap::new(),
         }
     }
 }
 
 impl Builder {
+    /// The curve at `index`, as written.
+    pub(crate) fn curve_json(&self, index: usize) -> Option<&Value> {
+        self.curves.get(index)
+    }
+
     fn fresh(&mut self, prefix: &'static str) -> String {
         let n = self.counters.entry(prefix).or_insert(0);
         *n = n.saturating_add(1);
@@ -193,7 +237,8 @@ impl Builder {
         index
     }
 
-    /// Adds a curve, recording it as the one the source `entity` became.
+    /// Adds a curve, recording it as the one the source `entity` became. Its start, end and
+    /// centre are the `a`, `b` and `c` points of `kind`.
     fn curve(
         &mut self,
         entity: Option<&str>,
@@ -204,7 +249,25 @@ impl Builder {
     ) {
         let id = self.fresh(prefix);
         if let Some(entity) = entity {
-            self.by_entity.insert(entity.to_owned(), id.clone());
+            let point = |key: &str| {
+                kind.get(key)
+                    .and_then(Value::as_u64)
+                    .and_then(|i| usize::try_from(i).ok())
+            };
+            let curve = Curve {
+                index: self.curves.len(),
+                id: id.clone(),
+                kind: match kind.get("type").and_then(Value::as_str) {
+                    Some("line") => "line",
+                    Some("circle") => "circle",
+                    Some("arc") => "arc",
+                    _ => "",
+                },
+                start: point("a"),
+                end: point("b"),
+                center: point("c"),
+            };
+            self.shapes.insert(entity.to_owned(), Shape::Curve(curve));
         }
         let mut curve = json!({"id": id, "construction": construction});
         if let (Some(fields), Some(kind)) = (curve.as_object_mut(), kind.as_object()) {
@@ -217,7 +280,7 @@ impl Builder {
     }
 
     /// Adds one CADIR sketch entity.
-    fn entity(&mut self, entity: &Value, report: &mut Report) -> Result<(), String> {
+    pub(crate) fn entity(&mut self, entity: &Value, report: &mut Report) -> Result<(), String> {
         let construction = entity
             .get("construction")
             .and_then(Value::as_bool)
@@ -237,7 +300,10 @@ impl Builder {
         match kind {
             "point" => {
                 let at = p2(geometry.get("position")).ok_or_else(bad)?;
-                self.point(at, refs.first().copied());
+                let index = self.point(at, refs.first().copied());
+                if let Some(source) = source {
+                    self.shapes.insert(source.to_owned(), Shape::Point(index));
+                }
             }
             "line" => {
                 let start = p2(geometry.get("start")).ok_or_else(bad)?;
@@ -343,7 +409,7 @@ pub(crate) fn v3(value: Option<&Value>) -> Option<V3> {
     ])
 }
 
-fn distance(a: P2, b: P2) -> f64 {
+pub(crate) fn distance(a: P2, b: P2) -> f64 {
     (a[0] - b[0]).hypot(a[1] - b[1])
 }
 
@@ -512,6 +578,8 @@ mod tests {
         .unwrap();
         let wire = serde_json::to_value(&model.ir.model).unwrap();
         let mut ctx = Context::new(&wire);
+        ctx.params =
+            super::super::params::map(&model.ir.model.parameters, &mut Report::default()).1;
         let feature = ctx.arena("features").first().unwrap();
         let sketch = map(
             feature,

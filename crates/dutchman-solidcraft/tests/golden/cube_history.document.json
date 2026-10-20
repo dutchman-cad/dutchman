@@ -8,7 +8,47 @@
         "type": "origin"
       },
       "sketch": {
-        "constraints": [],
+        "constraints": [
+          {
+            "id": "k1",
+            "l": 0,
+            "type": "horizontal"
+          },
+          {
+            "id": "k2",
+            "l": 1,
+            "type": "vertical"
+          },
+          {
+            "a": 0,
+            "b": 3,
+            "id": "k3",
+            "type": "perpendicular"
+          },
+          {
+            "a": 0,
+            "b": 1,
+            "id": "k4",
+            "type": "equal"
+          },
+          {
+            "id": "k5",
+            "l": 0,
+            "param": "side",
+            "type": "length",
+            "value": 10.0
+          },
+          {
+            "id": "k6",
+            "l": 2,
+            "type": "horizontal"
+          },
+          {
+            "id": "k7",
+            "l": 3,
+            "type": "vertical"
+          }
+        ],
         "curves": [
           {
             "a": 1,
@@ -129,6 +169,12 @@
       "expr": "10 mm",
       "model": true,
       "name": "d1",
+      "unit": "mm"
+    },
+    {
+      "expr": "10 mm",
+      "model": true,
+      "name": "side",
       "unit": "mm"
     }
   ],

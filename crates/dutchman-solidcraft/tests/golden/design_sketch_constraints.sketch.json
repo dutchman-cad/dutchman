@@ -6,7 +6,16 @@
     "type": "origin"
   },
   "sketch": {
-    "constraints": [],
+    "constraints": [
+      {
+        "id": "k1",
+        "p": 9,
+        "param": "d2",
+        "q": 10,
+        "type": "distance_x",
+        "value": 10.0
+      }
+    ],
     "curves": [
       {
         "a": 2,
