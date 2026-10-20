@@ -8,6 +8,7 @@ Apache-2.0). None is a real design.
 | `generated_unit_cube.f3d` | A generated Fusion archive holding one solid unit cube (one body, six faces). | Copied unchanged from cadmpeg `main` at `5f01055eb1fd`, `crates/cadmpeg-codec-f3d/tests/golden/fixtures/`. |
 | `container_metadata_only.f3d` | A Fusion archive with container metadata and no geometry. | As above. |
 | `design_sketch_constraints.f3d` | A Fusion design whose history is one sketch on XY: an arc, points, dimensions and two parameters. | Copied unchanged from cadmpeg `main` at `5d345a29ccd6`, same folder. |
+| `design_copy_paste.f3d` | A Fusion design placing one component twice (a copy and paste), whose component does not list its bodies. | Copied unchanged from cadmpeg `main` at `5d345a29ccd6`, same folder as the other Fusion files. |
 | `synthetic_cube.ipt` | An Inventor part envelope holding one solid 10 mm cube (one body, six faces) as its ASM kernel stream. | Generated (see below). |
 | `solidworks_cube.sldprt` | A SolidWorks part holding one solid 10 mm cube (one body, six faces) as a Parasolid partition, with no feature history. | Generated (see below). |
 | `body_history.sldprt` | A SolidWorks part with a one-triangle body and a Keywords history: a 12.5 mm `Boss` extrusion and its `EquationDrivenCurve` profile. | Copied unchanged from cadmpeg `main` at `7bcc95276548` (the crates.io 0.6.2 release), `crates/cadmpeg-codec-sldprt/tests/golden/fixtures/`. |

@@ -3,7 +3,8 @@
   <img alt="Dutchman" src="assets/logo/dutchman-lockup-night.png#gh-dark-mode-only" width="252">
 </h1>
 
-Dutchman converts native CAD designs into open, editable models. Reading the native file is
+Dutchman ferries CAD designs between formats: it converts native CAD designs into open,
+editable models. Reading the native file is
 done by [cadmpeg](https://github.com/cadmpeg/cadmpeg); Dutchman maps cadmpeg's model onto a
 target format, starting with [SolidCraft](https://github.com/tangency-labs/solidcraft) designs.
 
@@ -22,7 +23,8 @@ Early development. Fusion (`.f3d`) designs, Inventor parts (`.ipt`), Inventor as
 - Otherwise the design converts as solid geometry without history.
 - Every conversion lists what it could not carry across, as Info, Degraded or Dropped.
 
-`dutchman convert --help` lists the options.
+`dutchman formats` lists what converts from each format; `dutchman convert --help` lists the
+options.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it fits together.
 

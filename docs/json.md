@@ -57,6 +57,20 @@ A failure carries `"ok": false`, `input` and `error.message`, and exits 1:
  "error": {"message": "SolidWorks assembly (.sldasm) files are not supported yet. …"}}
 ```
 
+## `dutchman.formats/1`
+
+`dutchman formats --json` lists the native formats Dutchman knows:
+
+```json
+{"schema": "dutchman.formats/1", "ok": true, "formats": [
+  {"id": "fusion_archive", "name": "Fusion archive (.f3d)", "extension": "f3d",
+   "status": "converts", "converts": "geometry; feature history (…) when every feature maps; …"}
+]}
+```
+
+`status` is `converts`, `coming` (in progress) or `not_supported`; `converts` says, for people,
+what carries across.
+
 ## `dutchman.inspect/1`
 
 The same fields as `convert` except `output`, plus `geometry`, and for an assembly

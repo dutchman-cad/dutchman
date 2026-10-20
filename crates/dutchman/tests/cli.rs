@@ -257,3 +257,23 @@ fn inspect_prints_a_text_summary() {
         "{stdout}"
     );
 }
+
+#[test]
+fn formats_lists_what_converts() {
+    let out = dutchman(&["formats", "--json"]);
+    assert_eq!(out.status.code(), Some(0));
+    let report = json_of(&out);
+    assert_eq!(report["schema"], "dutchman.formats/1");
+    let fusion = report["formats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["id"] == "fusion_archive")
+        .unwrap();
+    assert_eq!(fusion["status"], "converts");
+    assert_eq!(fusion["extension"], "f3d");
+
+    let text = dutchman(&["formats"]);
+    let stdout = String::from_utf8_lossy(&text.stdout);
+    assert!(stdout.contains("Inventor assembly (.iam)"), "{stdout}");
+}

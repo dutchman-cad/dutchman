@@ -3,6 +3,7 @@
 //! Exit codes: 0 when the design was converted (or inspected), 1 when it could not be, 2 for a
 //! usage error. See `docs/json.md` for the `--json` reports.
 
+mod formats;
 mod json;
 
 use std::path::{Path, PathBuf};
@@ -47,6 +48,12 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// List the native formats Dutchman knows and what converts from each.
+    Formats {
+        /// Print one machine-readable report on stdout instead of the text listing.
+        #[arg(long)]
+        json: bool,
+    },
     /// Show what converting a native CAD file would carry across, without writing anything.
     Inspect {
         /// The native design file to read.
@@ -81,6 +88,14 @@ fn main() -> ExitCode {
             convert(&input, &output, &writer, json)
         }
         Command::Inspect { input, json } => inspect(&input, json),
+        Command::Formats { json } => {
+            if json {
+                print_json(&formats::json());
+            } else {
+                print!("{}", formats::text());
+            }
+            ExitCode::SUCCESS
+        }
     }
 }
 

@@ -13,7 +13,7 @@ mod report;
 
 use std::path::Path;
 
-pub use assembly::{Assembly, Placement, MAX_DEPTH, MAX_PARTS, MAX_PLACEMENTS};
+pub use assembly::{local_assembly, Assembly, Placement, MAX_DEPTH, MAX_PARTS, MAX_PLACEMENTS};
 pub use error::Error;
 pub use format::Format;
 
@@ -57,7 +57,22 @@ pub trait Writer {
 /// Decodes the file at `input` (already identified as `format`) into the neutral model,
 /// recording anything dropped in `report`.
 pub fn read(format: Format, input: &Path, report: &mut Report) -> Result<Model, Error> {
-    assembly::read(format, input, report, &decode_file, &mut Vec::new())
+    let mut model = assembly::read(format, input, report, &decode_file, &mut Vec::new())?;
+    if model.assembly.is_none() {
+        match assembly::local(&model) {
+            assembly::Components::None => {}
+            assembly::Components::Assembly(components) => model.assembly = Some(components),
+            assembly::Components::Unplaceable(reason) => report.push(
+                Severity::Degraded,
+                "components",
+                format!(
+                    "the design places components, but {reason}; it converts as stored, so \
+                     placements beyond the stored geometry are not shown"
+                ),
+            ),
+        }
+    }
+    Ok(model)
 }
 
 /// Decodes one file, without reading the parts an assembly places.

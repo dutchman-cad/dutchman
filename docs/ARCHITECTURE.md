@@ -167,13 +167,15 @@ and synthetic files from cadmpeg's public test suite (provenance in
 - **History** (v0.2, in progress): partial revolves once CADIR states the
   turning direction; fillet, chamfer and hole once cadmpeg gives typed references to the edges
   they act on.
+- **Components**: designs that define and place their own components (Fusion) convert as
+  SolidCraft components when cadmpeg says which bodies each owns; see fusion.md.
 - **Assemblies**: Inventor assemblies, with their sub-assemblies, convert as placed geometry
   (each file read once per assembly, one SolidCraft component per part or sub-assembly, one
   occurrence per placement; see inventor.md). Joints and the parts' histories inside an
   assembly come next.
 - **Appearances and names**.
-- More formats as cadmpeg's codecs mature. The state of Inventor and SolidWorks parts, and the
-  upstream gaps that keep their histories from replaying, are tracked in
+- More formats as cadmpeg's codecs mature. The state of each format and the upstream gaps that
+  keep its history from replaying are tracked in [fusion.md](fusion.md),
   [inventor.md](inventor.md) and [sldprt.md](sldprt.md).
 - The SolidCraft plugin shim.
 
