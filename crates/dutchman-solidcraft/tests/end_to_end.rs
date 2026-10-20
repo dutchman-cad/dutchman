@@ -4,13 +4,13 @@
 //! Set `UPDATE_GOLDEN=1` to rewrite the golden file after an intended change.
 
 // Test helpers outside `#[test]` functions are not covered by clippy.toml's test allowances.
-#![allow(clippy::unwrap_used)]
+#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 
 use dutchman_core::convert;
-use dutchman_solidcraft::SolidCraftWriter;
+use dutchman_solidcraft::{SolidCraftWriter, Verification};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use zip::{CompressionMethod, ZipArchive};
@@ -37,14 +37,26 @@ fn entry(archive: &mut ZipArchive<Cursor<Vec<u8>>>, name: &str) -> (Vec<u8>, Com
 
 #[test]
 fn fusion_unit_cube_becomes_a_solidcraft_import() {
+    converts_to_an_import("generated_unit_cube.f3d");
+}
+
+#[test]
+fn inventor_unit_cube_becomes_a_solidcraft_import() {
+    converts_to_an_import("synthetic_cube.ipt");
+}
+
+/// Converts fixture `file`, which has no history, and checks the result is SolidCraft's
+/// import container with a document matching `tests/golden/<stem>.document.json`.
+fn converts_to_an_import(file: &str) {
+    let stem = file.rsplit_once('.').map_or(file, |(stem, _)| stem);
     let dir = std::env::temp_dir().join(format!("dutchman-e2e-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let output = dir.join("generated_unit_cube.solidcraft");
+    let output = dir.join(format!("{stem}.solidcraft"));
 
     let report = convert(
-        &fixture("generated_unit_cube.f3d"),
+        &fixture(file),
         &output,
-        &SolidCraftWriter::new(),
+        &SolidCraftWriter::new().verification(Verification::Off),
     )
     .unwrap();
     for loss in report.losses() {
@@ -93,10 +105,10 @@ fn fusion_unit_cube_becomes_a_solidcraft_import() {
     assert_eq!(import["type"], "import");
     assert_eq!(import["step"], "");
     assert_eq!(import["step_blob"], blob.as_str());
-    assert_eq!(import["file"], "generated_unit_cube.f3d");
+    assert_eq!(import["file"], file);
 
     let pretty = serde_json::to_string_pretty(&document).unwrap() + "\n";
-    let golden = golden("generated_unit_cube.document.json");
+    let golden = golden(&format!("{stem}.document.json"));
     if std::env::var_os("UPDATE_GOLDEN").is_some() {
         std::fs::write(&golden, &pretty).unwrap();
     }

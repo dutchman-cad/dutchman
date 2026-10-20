@@ -1,0 +1,61 @@
+{
+  "components": [
+    {
+      "id": 1,
+      "name": "synthetic_cube",
+      "parent": 0
+    }
+  ],
+  "features": [
+    {
+      "component": 1,
+      "file": "synthetic_cube.ipt",
+      "id": 3,
+      "name": "unit cube",
+      "step": "",
+      "step_blob": "blobs/a0fa990f8522d21f0dc9586c37404defacba8966629f69da6c4d3674178d2af4.step",
+      "suppressed": false,
+      "type": "import"
+    }
+  ],
+  "format": "solidcraft/23",
+  "name": "synthetic_cube",
+  "next_id": 4,
+  "occurrences": [
+    {
+      "component": 1,
+      "grounded": false,
+      "id": 2,
+      "name": "synthetic_cube:1",
+      "parent": 0,
+      "transform": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    }
+  ],
+  "params": [],
+  "units": "mm"
+}

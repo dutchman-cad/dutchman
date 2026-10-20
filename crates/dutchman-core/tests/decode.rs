@@ -38,6 +38,34 @@ fn decodes_a_fusion_unit_cube() {
 }
 
 #[test]
+fn decodes_an_inventor_unit_cube() {
+    let mut report = Report::default();
+    let model = read(
+        Format::InventorPart,
+        &fixture("synthetic_cube.ipt"),
+        &mut report,
+    )
+    .unwrap();
+
+    assert_eq!(model.name, "synthetic_cube");
+    assert_eq!(model.source_file.as_deref(), Some("synthetic_cube.ipt"));
+    assert_eq!(model.ir.model.bodies.len(), 1);
+    assert_eq!(model.ir.model.faces.len(), 6);
+}
+
+#[test]
+fn a_fusion_file_named_ipt_is_refused() {
+    let bytes = std::fs::read(fixture("generated_unit_cube.f3d")).unwrap();
+    let path = scratch("renamed.ipt", &bytes);
+    let err = read(Format::InventorPart, &path, &mut Report::default()).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "cannot read this design: its contents are Fusion archive (.f3d), not Inventor part \
+         (.ipt); rename it to match"
+    );
+}
+
+#[test]
 fn a_file_without_geometry_is_an_error() {
     let mut report = Report::default();
     let err = read(
@@ -79,13 +107,13 @@ fn hostile_inputs_are_errors_not_panics() {
 
 #[test]
 fn formats_without_a_decoder_are_not_supported_yet() {
-    let path = scratch("part.ipt", b"anything");
+    let path = scratch("part.sldprt", b"anything");
     let mut report = Report::default();
-    let err = read(Format::InventorPart, &path, &mut report).unwrap_err();
+    let err = read(Format::SolidWorksPart, &path, &mut report).unwrap_err();
     assert!(matches!(
         err,
         Error::NotSupportedYet {
-            format: Format::InventorPart
+            format: Format::SolidWorksPart
         }
     ));
 }
