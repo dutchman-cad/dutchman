@@ -96,7 +96,7 @@ fn decode_unguarded(
             .map(|finding| format!(": {}", finding.message))
             .unwrap_or_default();
         return Err(Error::Decode(format!(
-            "the decoded model is invalid ({} errors){first}",
+            "cadmpeg's model of it fails its checks ({} errors){first}",
             validation.error_count()
         )));
     }
@@ -152,12 +152,12 @@ fn select_codec<'a>(
     match resolved.map_err(|err| Error::Decode(err.to_string()))? {
         ResolvedSource::Native { codec, .. } if codec.id().as_str() == codec_id => Ok(codec),
         ResolvedSource::Native { codec, .. } => Err(Error::Decode(format!(
-            "the contents are a {} file, not a {}",
+            "its contents are a {} file, not a {}",
             codec.id().as_str(),
             format.name()
         ))),
         ResolvedSource::Cadir | ResolvedSource::Unrecognized => Err(Error::Decode(format!(
-            "the contents are not a {} file",
+            "its contents are not a {} file",
             format.name()
         ))),
     }

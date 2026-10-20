@@ -95,7 +95,7 @@ pub(crate) fn map(model: &Model, report: &mut Report) -> Result<History, String>
     let mut ctx = Context::new(&wire);
     let mut features: Vec<&Value> = ctx.arena("features").iter().collect();
     if features.is_empty() {
-        return Err("the file carries no feature history".to_owned());
+        return Err("the design carries no feature history".to_owned());
     }
     features.sort_by_key(|feature| feature.get("ordinal").and_then(Value::as_u64));
 
@@ -227,7 +227,7 @@ mod tests {
     #[test]
     fn a_model_without_history_is_flattened() {
         let err = map(&cube(), &mut Report::default()).unwrap_err();
-        assert_eq!(err, "the file carries no feature history");
+        assert_eq!(err, "the design carries no feature history");
     }
 
     #[test]

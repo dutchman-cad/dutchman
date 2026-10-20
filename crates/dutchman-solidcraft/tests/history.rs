@@ -158,7 +158,7 @@ fn a_sketch_and_extrude_history_is_written() {
 
     assert_eq!(
         history_line(&report),
-        "2 of 2 features replayed; unverified: verification turned off"
+        "2 of 2 features mapped; unverified: verification turned off"
     );
     assert_eq!(
         types(&document),
@@ -200,7 +200,7 @@ fn a_symmetric_through_all_extent_is_mapped() {
 fn import_only_never_writes_history() {
     let model = cube_with_history(10.0, first_profile(), None);
     let (document, report) = convert(&model, &SolidCraftWriter::new().import_only(true));
-    assert_eq!(history_line(&report), "not written: import only");
+    assert_eq!(history_line(&report), "not written (--import-only)");
     assert_eq!(types(&document), [("import".to_owned(), false)]);
 }
 
@@ -214,8 +214,8 @@ fn solidcraft() -> Option<PathBuf> {
 }
 
 #[test]
-#[ignore = "cadmpeg-codec-step 0.6.2 writes face loops reversed, so SolidCraft reads the \
-            original cube as 3.33 mm³; enable once a fixed cadmpeg is released"]
+#[ignore = "cadmpeg/cadmpeg#255: cadmpeg-codec-step 0.6.2 writes face loops reversed, so \
+            SolidCraft reads the original cube as 3.33 mm³; enable once a fixed release is pinned"]
 fn a_faithful_history_is_verified_in_solidcraft() {
     let Some(cli) = solidcraft() else { return };
     let model = cube_with_history(10.0, first_profile(), None);
@@ -225,7 +225,7 @@ fn a_faithful_history_is_verified_in_solidcraft() {
     );
     assert_eq!(
         history_line(&report),
-        "2 of 2 features replayed; verified against the original in SolidCraft"
+        "2 of 2 features mapped; verified against the original in SolidCraft"
     );
     assert_eq!(types(&document).len(), 3);
 }
