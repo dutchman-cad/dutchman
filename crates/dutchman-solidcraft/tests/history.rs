@@ -295,25 +295,25 @@ fn a_history_that_replays_differently_is_flattened() {
     assert_eq!(types(&document), [("import".to_owned(), false)]);
 }
 
-/// The design's container with `side`'s expression changed, every other entry kept.
-fn with_side(bytes: &[u8], side: &str) -> Vec<u8> {
+/// The design's container with parameter `name`'s expression changed, every other entry kept.
+fn with_param(bytes: &[u8], name: &str, expr: &str) -> Vec<u8> {
     let mut archive = ZipArchive::new(Cursor::new(bytes.to_vec())).unwrap();
     let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for index in 0..archive.len() {
         let mut entry = archive.by_index(index).unwrap();
-        let name = entry.name().unwrap().into_owned();
+        let path = entry.name().unwrap().into_owned();
         let mut data = Vec::new();
         entry.read_to_end(&mut data).unwrap();
-        if name == "document.json" {
+        if path == "document.json" {
             let mut document: Value = serde_json::from_slice(&data).unwrap();
             for param in document["params"].as_array_mut().unwrap() {
-                if param["name"] == "side" {
-                    param["expr"] = json!(side);
+                if param["name"] == name {
+                    param["expr"] = json!(expr);
                 }
             }
             data = serde_json::to_vec(&document).unwrap();
         }
-        out.start_file(name, zip::write::SimpleFileOptions::default())
+        out.start_file(path, zip::write::SimpleFileOptions::default())
             .unwrap();
         std::io::Write::write_all(&mut out, &data).unwrap();
     }
@@ -358,7 +358,10 @@ fn a_converted_dimension_drives_the_geometry_in_solidcraft() {
         .unwrap();
 
     assert_eq!(volumes(&cli, &bytes), [1000.0]);
-    assert_eq!(volumes(&cli, &with_side(&bytes, "20 mm")), [4000.0]);
+    assert_eq!(
+        volumes(&cli, &with_param(&bytes, "side", "20 mm")),
+        [4000.0]
+    );
 }
 
 /// The example cube's geometry with a revolve history: a 5 mm × 10 mm rectangle on XZ, 5 mm
@@ -454,4 +457,86 @@ fn revolves_rebuild_their_volume_in_solidcraft() {
     let quarter = ring_history(json!({"kind": "symmetric",
         "termination": {"kind": "angle", "angle": std::f64::consts::FRAC_PI_2}}));
     close(&volumes(&cli, &written(&quarter).0), ring / 4.0);
+}
+
+/// The example cube's geometry with a right-triangle history: a fixed 40 mm horizontal base,
+/// a vertical side, and the hypotenuse at `theta` from the base (shown as 36.87°), extruded by
+/// 10 mm.
+fn triangle_history() -> Model {
+    let mut model = cube_with_history(10.0, whole_sketch(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    m["sketches"][0]["profiles"] = json!([]);
+    m["sketch_entities"] = json!([
+        line(1, [0.0, 0.0], [40.0, 0.0]),
+        line(2, [0.0, 0.0], [40.0, 30.0]),
+        line(3, [40.0, 0.0], [40.0, 30.0]),
+    ]);
+    let constraint = |key: u32, definition: Value| {
+        json!({"id": format!("f3d:model:sketch-constraint#{key}"), "sketch": SKETCH,
+               "definition": definition})
+    };
+    let start = json!({"kind": "start", "entity": "f3d:model:sketch-entity#1"});
+    m["sketch_constraints"] = json!([
+        constraint(
+            1,
+            json!({"kind": "coincident_loci",
+            "loci": [start, {"kind": "start", "entity": "f3d:model:sketch-entity#2"}]})
+        ),
+        constraint(
+            2,
+            json!({"kind": "horizontal", "entity": "f3d:model:sketch-entity#1"})
+        ),
+        constraint(
+            3,
+            json!({"kind": "vertical", "entity": "f3d:model:sketch-entity#3"})
+        ),
+        constraint(
+            4,
+            json!({"kind": "distance", "entities": ["f3d:model:sketch-entity#1"],
+                              "parameter": "f3d:model:parameter#2"})
+        ),
+        constraint(
+            5,
+            json!({"kind": "angle", "first": "f3d:model:sketch-entity#1",
+                              "second": "f3d:model:sketch-entity#2",
+                              "parameter": "f3d:model:parameter#3"})
+        ),
+    ]);
+    m["parameters"][1]["expression"] = json!("40 mm");
+    m["parameters"][1]["value"] = json!({"kind": "length", "value": 40.0});
+    let theta = 30.0_f64.atan2(40.0);
+    m["parameters"].as_array_mut().unwrap().push(json!({
+        "id": "f3d:model:parameter#3",
+        "owner": "f3d:model:feature#1",
+        "ordinal": 2,
+        "name": "theta",
+        "expression": format!("{} deg", theta.to_degrees()),
+        "value": {"kind": "angle", "value": theta},
+    }));
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn a_converted_angle_drives_the_geometry_in_solidcraft() {
+    let Some(cli) = solidcraft() else { return };
+    let (bytes, report) = written(&triangle_history());
+    assert!(
+        !report
+            .losses()
+            .iter()
+            .any(|loss| loss.detail.contains("constraints not carried")),
+        "{:?}",
+        report.losses()
+    );
+    let close = |got: Vec<f64>, want: f64| {
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!((got[0] - want).abs() < 1e-6, "{got:?} vs {want}");
+    };
+    close(volumes(&cli, &bytes), 6000.0);
+    close(
+        volumes(&cli, &with_param(&bytes, "theta", "45 deg")),
+        8000.0,
+    );
 }

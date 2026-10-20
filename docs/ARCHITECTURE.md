@@ -161,7 +161,7 @@ and synthetic files from cadmpeg's public test suite (provenance in
 
 ## After v0.1
 
-- **History** (v0.2, in progress): angle dimensions; partial revolves once CADIR states the
+- **History** (v0.2, in progress): partial revolves once CADIR states the
   turning direction; fillet, chamfer and hole once cadmpeg gives typed references to the edges
   they act on.
 - **Assemblies**: CADIR occurrences → SolidCraft components and occurrences.

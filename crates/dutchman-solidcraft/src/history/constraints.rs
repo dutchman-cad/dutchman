@@ -6,6 +6,7 @@
 //! starts satisfied, and it is linked to its SolidCraft parameter where the source names one.
 
 use std::collections::BTreeMap;
+use std::f64::consts::{PI, TAU};
 
 use dutchman_core::{Report, Severity};
 use serde_json::{json, Value};
@@ -170,6 +171,8 @@ impl Mapper<'_> {
             }
             "distance" => self.entity_distance(definition),
             "radius" | "diameter" => self.radius(kind, definition),
+            "angle" => self.angle(definition),
+            "angle_to_axis" => self.angle_to_axis(definition),
             _ => None,
         };
         mapped.ok_or_else(unmapped)
@@ -302,8 +305,98 @@ impl Mapper<'_> {
         ))
     }
 
+    /// An angle between two lines. SolidCraft holds the signed counter-clockwise angle from
+    /// `a` to `b` (plus a half turn with `flip`); the source's parameter holds the angle as
+    /// shown. Of the four ways to state it, the one the solved geometry satisfies with the
+    /// parameter's value is written, so the parameter keeps driving the same angle.
+    fn angle(&self, definition: &Value) -> Option<Vec<Value>> {
+        let a = self.curve(definition.get("first")?, &["line"])?;
+        let b = self.curve(definition.get("second")?, &["line"])?;
+        let measured = signed_angle(self.direction(a)?, self.direction(b)?)?;
+        let constraint = match self.angle_value(definition) {
+            Some(value) => {
+                let (x, y, flip) = [(a, b, false), (a, b, true), (b, a, false), (b, a, true)]
+                    .into_iter()
+                    .find(|(x, _, flip)| {
+                        let turn = if x.index == a.index {
+                            measured
+                        } else {
+                            -measured
+                        };
+                        let target = value + if *flip { PI } else { 0.0 };
+                        wrap(turn - target).abs() <= ANGLE_TOLERANCE
+                    })?;
+                let mut constraint =
+                    json!({"type": "angle", "a": x.index, "b": y.index, "value": value});
+                if let (true, Some(fields)) = (flip, constraint.as_object_mut()) {
+                    fields.insert("flip".to_owned(), json!(true));
+                }
+                constraint
+            }
+            None => json!({"type": "angle", "a": a.index, "b": b.index,
+                           "value": measured.rem_euclid(TAU)}),
+        };
+        Some(self.dimension(constraint, definition))
+    }
+
+    /// A line's angle from the sketch's horizontal axis, as SolidCraft's signed line angle.
+    /// Only written when the geometry and the parameter agree on the sign, so the parameter
+    /// drives it the same way.
+    fn angle_to_axis(&self, definition: &Value) -> Option<Vec<Value>> {
+        if definition.get("axis")?.as_str()? != "horizontal" {
+            return None;
+        }
+        let l = self.curve(definition.get("entity")?, &["line"])?;
+        let d = self.direction(l)?;
+        let measured = d[1].atan2(d[0]);
+        let value = match self.angle_value(definition) {
+            Some(value) if wrap(measured - value).abs() <= ANGLE_TOLERANCE => value,
+            Some(_) => return None,
+            None => measured,
+        };
+        Some(self.dimension(
+            json!({"type": "line_angle", "l": l.index, "value": value}),
+            definition,
+        ))
+    }
+
+    /// A line's stored start-to-end direction.
+    fn direction(&self, line: &Curve) -> Option<P2> {
+        let (a, b) = (self.position(line.start?)?, self.position(line.end?)?);
+        Some([b[0] - a[0], b[1] - a[1]])
+    }
+
+    /// The evaluated angle (radians) of a dimension's parameter.
+    fn angle_value(&self, definition: &Value) -> Option<f64> {
+        let id = definition.get("parameter")?.as_str()?;
+        let value = self.ctx.row("parameters", id)?.get("value")?;
+        (value.get("kind")?.as_str()? == "angle")
+            .then(|| number(value.get("value")))
+            .flatten()
+    }
+
     fn builder_curve(&self, index: usize) -> Option<&Value> {
         self.builder.curve_json(index)
+    }
+}
+
+/// How far apart (radians) two angles may be and still be the same.
+const ANGLE_TOLERANCE: f64 = 1e-6;
+
+/// The signed angle from `a` to `b`, counter-clockwise.
+fn signed_angle(a: P2, b: P2) -> Option<f64> {
+    let cross = a[0] * b[1] - a[1] * b[0];
+    let dot = a[0] * b[0] + a[1] * b[1];
+    (cross != 0.0 || dot != 0.0).then(|| cross.atan2(dot))
+}
+
+/// An angle wrapped into (-π, π].
+fn wrap(angle: f64) -> f64 {
+    let wrapped = angle.rem_euclid(TAU);
+    if wrapped > PI {
+        wrapped - TAU
+    } else {
+        wrapped
     }
 }
 
@@ -450,12 +543,79 @@ mod tests {
         );
     }
 
+    fn run_with_params(constraints: Vec<Value>, parameters: Value) -> Vec<Value> {
+        let rows: Vec<Value> = constraints
+            .into_iter()
+            .enumerate()
+            .map(|(i, definition)| {
+                json!({"id": format!("f3d:model:sketch-constraint#{i}"), "sketch": SKETCH,
+                       "definition": definition})
+            })
+            .collect();
+        let model = json!({"sketch_constraints": rows, "parameters": parameters});
+        let mut ctx = Context::new(&model);
+        ctx.params.insert("a".to_owned(), "theta".to_owned());
+        let mut builder = Builder::default();
+        let mut report = Report::default();
+        for e in entities() {
+            builder.entity(&e, &mut report).unwrap();
+        }
+        map(SKETCH, "sketch", &ctx, &builder, &mut report)
+    }
+
+    fn angle_param(degrees: f64) -> Value {
+        json!([{"id": "a", "name": "theta", "expression": format!("{degrees} deg"),
+                "value": {"kind": "angle", "value": degrees.to_radians()}}])
+    }
+
+    #[test]
+    fn angles_keep_the_parameter_driving_the_same_angle() {
+        // The diagonal `d` runs at atan2(30, 40) ≈ 36.87° from the bottom edge `b`.
+        let theta = 30.0_f64.atan2(40.0).to_degrees();
+        let shown = |degrees: f64| {
+            run_with_params(
+                vec![json!({"kind": "angle", "first": "b", "second": "d", "parameter": "a"})],
+                angle_param(degrees),
+            )
+        };
+        let acute = shown(theta);
+        assert_eq!(acute[0]["a"], 0);
+        assert_eq!(acute[0]["b"], 5);
+        assert!(acute[0].get("flip").is_none());
+        assert_eq!(acute[0]["param"], "theta");
+        // The obtuse angle between the same lines is the reversed direction of one of them.
+        let obtuse = shown(180.0 - theta);
+        assert_eq!(
+            (obtuse[0]["a"].clone(), obtuse[0]["flip"].clone()),
+            (json!(5), json!(true))
+        );
+        // An angle the geometry does not have is not written.
+        assert!(shown(50.0).is_empty());
+    }
+
+    #[test]
+    fn angles_to_the_horizontal_axis_are_line_angles() {
+        let to_axis = |degrees: f64, axis: &str| {
+            run_with_params(
+                vec![json!({"kind": "angle_to_axis", "entity": "d", "axis": axis,
+                            "parameter": "a"})],
+                angle_param(degrees),
+            )
+        };
+        let theta = 30.0_f64.atan2(40.0).to_degrees();
+        let out = to_axis(theta, "horizontal");
+        assert_eq!(out[0]["type"], "line_angle");
+        assert_eq!(out[0]["l"], 5);
+        assert!(to_axis(-theta, "horizontal").is_empty());
+        assert!(to_axis(90.0 - theta, "vertical").is_empty());
+    }
+
     #[test]
     fn unmapped_constraints_are_dropped_and_counted() {
         let (out, report) = run(vec![
             json!({"kind": "native", "native_kind": "Linear Dimension-1", "entities": []}),
             json!({"kind": "native", "native_kind": "Linear Dimension-1", "entities": []}),
-            json!({"kind": "angle", "first": "b", "second": "d", "parameter": "x"}),
+            json!({"kind": "angle", "first": "b", "second": "c", "parameter": "x"}),
             json!({"kind": "horizontal", "entity": "c"}),
             json!({"kind": "vertical", "entity": "l"}),
         ]);
