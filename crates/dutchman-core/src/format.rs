@@ -57,24 +57,35 @@ impl Format {
         }
     }
 
-    /// The names of the formats Dutchman converts, for messages: `Fusion archive (.f3d) files`.
+    /// The names of the formats Dutchman converts, for messages:
+    /// `Inventor part (.ipt) and Fusion archive (.f3d) files`.
     pub fn supported_names() -> String {
         let names: Vec<&str> = Format::ALL
             .into_iter()
             .filter(|format| format.codec_id().is_some())
             .map(Format::name)
             .collect();
-        format!("{} files", names.join(", "))
+        let list = match names.split_last() {
+            Some((last, rest)) if !rest.is_empty() => format!("{} and {last}", rest.join(", ")),
+            _ => names.concat(),
+        };
+        format!("{list} files")
     }
 
     /// The cadmpeg codec that decodes this format, when Dutchman is built with it.
     pub fn codec_id(self) -> Option<&'static str> {
         match self {
             Format::FusionArchive => Some("f3d"),
-            Format::InventorPart
-            | Format::InventorAssembly
-            | Format::SolidWorksPart
-            | Format::SolidWorksAssembly => None,
+            Format::InventorPart => Some("inventor"),
+            Format::InventorAssembly | Format::SolidWorksPart | Format::SolidWorksAssembly => None,
+        }
+    }
+
+    /// The format a cadmpeg codec decodes, when it decodes exactly one Dutchman names.
+    pub fn from_codec_id(id: &str) -> Option<Format> {
+        match id {
+            "f3d" => Some(Format::FusionArchive),
+            _ => None,
         }
     }
 

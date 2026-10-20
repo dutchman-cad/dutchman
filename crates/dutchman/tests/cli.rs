@@ -21,7 +21,7 @@ fn scratch(name: &str) -> PathBuf {
 
 #[test]
 fn convert_reports_unsupported_format_cleanly() {
-    let input = scratch("part.ipt");
+    let input = scratch("part.sldprt");
     std::fs::write(&input, b"not really a part").unwrap();
     let output = scratch("part.solidcraft");
 
@@ -30,7 +30,8 @@ fn convert_reports_unsupported_format_cleanly() {
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("Inventor part (.ipt) files are not supported yet. Export a STEP file"),
+        stderr
+            .contains("SolidWorks part (.sldprt) files are not supported yet. Export a STEP file"),
         "{stderr}"
     );
     assert!(!output.exists(), "no output file is created on failure");
@@ -38,7 +39,7 @@ fn convert_reports_unsupported_format_cleanly() {
 
 #[test]
 fn convert_rejects_wrong_output_extension() {
-    let out = dutchman(&["convert", "part.ipt", "part.step"]);
+    let out = dutchman(&["convert", "part.f3d", "part.step"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("output must be a .solidcraft file"));
 }
@@ -50,13 +51,13 @@ fn convert_rejects_unknown_input() {
     let out = dutchman(&["convert", input.to_str().unwrap(), "x.solidcraft"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains(
-        "Dutchman does not convert this kind of file. It converts Fusion archive (.f3d) files."
+        "Dutchman does not convert this kind of file. It converts Inventor part (.ipt) and Fusion archive (.f3d) files."
     ));
 }
 
 #[test]
 fn convert_reports_missing_input() {
-    let out = dutchman(&["convert", "/nonexistent/part.ipt", "x.solidcraft"]);
+    let out = dutchman(&["convert", "/nonexistent/part.f3d", "x.solidcraft"]);
     assert_eq!(out.status.code(), Some(1));
 }
 

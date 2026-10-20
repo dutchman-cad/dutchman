@@ -151,13 +151,18 @@ fn select_codec<'a>(
         .map_err(|err| Error::Decode(err.to_string()))?;
     match resolved.map_err(|err| Error::Decode(err.to_string()))? {
         ResolvedSource::Native { codec, .. } if codec.id().as_str() == codec_id => Ok(codec),
-        ResolvedSource::Native { codec, .. } => Err(Error::Decode(format!(
-            "its contents are a {} file, not a {}",
-            codec.id().as_str(),
-            format.name()
-        ))),
+        ResolvedSource::Native { codec, .. } => {
+            let found = Format::from_codec_id(codec.id().as_str()).map_or_else(
+                || format!("{} data", codec.id().as_str()),
+                |found| found.name().to_owned(),
+            );
+            Err(Error::Decode(format!(
+                "its contents are {found}, not {}; rename it to match",
+                format.name()
+            )))
+        }
         ResolvedSource::Cadir | ResolvedSource::Unrecognized => Err(Error::Decode(format!(
-            "its contents are not a {} file",
+            "its contents are not {}",
             format.name()
         ))),
     }

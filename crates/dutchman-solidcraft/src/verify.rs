@@ -282,7 +282,15 @@ mod cli_tests {
         format!("case \"$design\" in *original*) {original};; *) {history};; esac")
     }
 
+    /// Held while a stand-in CLI is written and run. A script still open for writing when
+    /// another test forks is inherited by that child, and running it then fails with "text file
+    /// busy"; one at a time avoids that.
+    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn run(script: &str, timeout: Duration) -> Outcome {
+        let _turn = ONE_AT_A_TIME
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = tempfile::tempdir().unwrap();
         let cli = fake_cli(dir.path(), script);
         compare(&cli, timeout, b"history", b"original")
