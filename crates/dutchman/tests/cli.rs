@@ -51,7 +51,7 @@ fn convert_rejects_unknown_input() {
     let out = dutchman(&["convert", input.to_str().unwrap(), "x.solidcraft"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains(
-        "Dutchman does not convert this kind of file. It converts Inventor part (.ipt), Inventor assembly (.iam) and Fusion archive (.f3d) files."
+        "Dutchman does not convert this kind of file. It converts Inventor part (.ipt), Inventor assembly (.iam), Fusion archive (.f3d) and Fusion multi-document archive (.f3z) files."
     ));
 }
 
@@ -254,4 +254,31 @@ fn formats_lists_what_converts() {
     let text = dutchman(&["formats"]);
     let stdout = String::from_utf8_lossy(&text.stdout);
     assert!(stdout.contains("Inventor assembly (.iam)"), "{stdout}");
+}
+
+#[test]
+fn a_multi_document_archive_converts_like_a_fusion_archive() {
+    let input = scratch("design.f3z");
+    std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
+    let output = scratch("from_f3z.solidcraft");
+    let out = dutchman(&[
+        "convert",
+        "--json",
+        "--no-verify",
+        input.to_str().unwrap(),
+        output.to_str().unwrap(),
+    ]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert_eq!(json_of(&out)["input"]["format"], "fusion_multi_document");
+
+    let noise = scratch("noise.f3z");
+    std::fs::write(&noise, [0xffu8; 512]).unwrap();
+    let out = dutchman(&["convert", noise.to_str().unwrap(), output.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("cannot read this design"));
 }

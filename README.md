@@ -12,7 +12,7 @@ target format, starting with [SolidCraft](https://github.com/tangency-labs/solid
 dutchman convert part.f3d part.solidcraft
 ```
 
-Early development. Fusion (`.f3d`) designs, Inventor parts (`.ipt`) and Inventor assemblies
+Early development. Fusion (`.f3d`, `.f3z`) designs, Inventor parts (`.ipt`) and Inventor assemblies
 (`.iam`, as placed geometry; keep the part files next to the assembly) convert today:
 
 - When every feature in a design's history maps onto SolidCraft (sketches and extrudes so
