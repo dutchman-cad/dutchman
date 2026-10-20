@@ -112,7 +112,10 @@ History is all or nothing. CADIR keeps only the final B-rep, so a history that s
 cannot be finished with an imported body: the first feature that does not map (or a history
 with no feature that builds geometry) flattens the design to the import design, and the
 report says why (`history: flattened: …`). Suppressed source features are left out and
-reported. Parameters keep their expressions where SolidCraft reads them the same way, else
+reported. Mapped today: principal datum planes; planar sketches (points, lines, circles, arcs,
+reference lines, at their solved positions); extrudes of a whole sketch or of selected sketch
+profiles, one-sided, symmetric or two-sided, blind or through all, from the sketch plane or an
+offset, as new body, join, cut or intersect. Parameters keep their expressions where SolidCraft reads them the same way, else
 their evaluated values.
 
 A written history is checked in SolidCraft itself, since Dutchman has no kernel. The writer
@@ -154,9 +157,8 @@ and synthetic files from cadmpeg's public test suite (provenance in
 
 ## After v0.1
 
-- **History** (v0.2, in progress): sketches, then sketch constraints and dimensions, then
-  extrude, then revolve map onto SolidCraft features under the rules above; fillet, chamfer
-  and hole follow once cadmpeg gives typed references to the edges they act on.
+- **History** (v0.2, in progress): sketch constraints and dimensions, then revolve; fillet,
+  chamfer and hole follow once cadmpeg gives typed references to the edges they act on.
 - **Assemblies**: CADIR occurrences → SolidCraft components and occurrences.
 - **Appearances and names**.
 - More formats as cadmpeg's codecs mature.
