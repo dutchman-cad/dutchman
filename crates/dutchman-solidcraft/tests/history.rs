@@ -61,6 +61,47 @@ fn cube_with_history(length: f64, profile: Value, extent: Option<Value>) -> Mode
         line(3, [10.0, 10.0], [0.0, 10.0]),
         line(4, [0.0, 10.0], [0.0, 0.0]),
     ]);
+    let constraint = |key: u32, definition: Value| {
+        json!({"id": format!("f3d:model:sketch-constraint#{key}"), "sketch": SKETCH,
+               "definition": definition})
+    };
+    model["sketch_constraints"] = json!([
+        constraint(
+            1,
+            json!({"kind": "horizontal", "entity": "f3d:model:sketch-entity#1"})
+        ),
+        constraint(
+            2,
+            json!({"kind": "vertical", "entity": "f3d:model:sketch-entity#2"})
+        ),
+        constraint(
+            3,
+            json!({"kind": "perpendicular", "first": "f3d:model:sketch-entity#1",
+                              "second": "f3d:model:sketch-entity#4"})
+        ),
+        constraint(
+            4,
+            json!({"kind": "equal", "first": "f3d:model:sketch-entity#1",
+                              "second": "f3d:model:sketch-entity#2"})
+        ),
+        constraint(
+            5,
+            json!({"kind": "distance", "entities": ["f3d:model:sketch-entity#1"],
+                              "parameter": "f3d:model:parameter#2"})
+        ),
+        constraint(
+            7,
+            json!({"kind": "horizontal", "entity": "f3d:model:sketch-entity#3"})
+        ),
+        constraint(
+            8,
+            json!({"kind": "vertical", "entity": "f3d:model:sketch-entity#4"})
+        ),
+        constraint(
+            6,
+            json!({"kind": "native", "native_kind": "Fusion only", "entities": ["f3d:model:sketch-entity#3"]})
+        ),
+    ]);
     let extent = extent.unwrap_or_else(|| {
         json!({"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": length}}})
     });
@@ -89,13 +130,23 @@ fn cube_with_history(length: f64, profile: Value, extent: Option<Value>) -> Mode
             },
         },
     ]);
-    model["parameters"] = json!([{
-        "id": "f3d:model:parameter#1",
-        "owner": "f3d:model:feature#2",
-        "name": "d1",
-        "expression": format!("{length} mm"),
-        "value": {"kind": "length", "value": length},
-    }]);
+    model["parameters"] = json!([
+        {
+            "id": "f3d:model:parameter#1",
+            "owner": "f3d:model:feature#2",
+            "name": "d1",
+            "expression": format!("{length} mm"),
+            "value": {"kind": "length", "value": length},
+        },
+        {
+            "id": "f3d:model:parameter#2",
+            "owner": "f3d:model:feature#1",
+            "ordinal": 1,
+            "name": "side",
+            "expression": "10 mm",
+            "value": {"kind": "length", "value": 10.0},
+        },
+    ]);
     Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         fidelity: None,
@@ -242,4 +293,70 @@ fn a_history_that_replays_differently_is_flattened() {
     let line = history_line(&report);
     assert!(line.starts_with("flattened: replay differs"), "{line}");
     assert_eq!(types(&document), [("import".to_owned(), false)]);
+}
+
+/// The design's container with `side`'s expression changed, every other entry kept.
+fn with_side(bytes: &[u8], side: &str) -> Vec<u8> {
+    let mut archive = ZipArchive::new(Cursor::new(bytes.to_vec())).unwrap();
+    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for index in 0..archive.len() {
+        let mut entry = archive.by_index(index).unwrap();
+        let name = entry.name().unwrap().into_owned();
+        let mut data = Vec::new();
+        entry.read_to_end(&mut data).unwrap();
+        if name == "document.json" {
+            let mut document: Value = serde_json::from_slice(&data).unwrap();
+            for param in document["params"].as_array_mut().unwrap() {
+                if param["name"] == "side" {
+                    param["expr"] = json!(side);
+                }
+            }
+            data = serde_json::to_vec(&document).unwrap();
+        }
+        out.start_file(name, zip::write::SimpleFileOptions::default())
+            .unwrap();
+        std::io::Write::write_all(&mut out, &data).unwrap();
+    }
+    out.finish().unwrap().into_inner()
+}
+
+/// SolidCraft's body volumes for a design.
+fn volumes(cli: &Path, design: &[u8]) -> Vec<f64> {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("design.solidcraft");
+    let output = dir.path().join("eval.json");
+    std::fs::write(&input, design).unwrap();
+    let status = std::process::Command::new(cli)
+        .arg("eval")
+        .arg(&input)
+        .arg("--json-out")
+        .arg(&output)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let result: Value = serde_json::from_str(&std::fs::read_to_string(output).unwrap()).unwrap();
+    for entry in result["timeline"].as_array().unwrap() {
+        assert!(entry["error"].is_null(), "{entry}");
+    }
+    result["bodies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|body| body["volume_mm3"].as_f64().unwrap())
+        .collect()
+}
+
+#[test]
+fn a_converted_dimension_drives_the_geometry_in_solidcraft() {
+    let Some(cli) = solidcraft() else { return };
+    let model = cube_with_history(10.0, first_profile(), None);
+    let mut report = Report::default();
+    let mut bytes = Vec::new();
+    SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .write(&model, &mut bytes, &mut report)
+        .unwrap();
+
+    assert_eq!(volumes(&cli, &bytes), [1000.0]);
+    assert_eq!(volumes(&cli, &with_side(&bytes, "20 mm")), [4000.0]);
 }

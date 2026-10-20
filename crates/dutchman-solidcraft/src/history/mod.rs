@@ -8,6 +8,7 @@
 //! the stable contract cadmpeg publishes, rather than its Rust accessors. It knows the wire
 //! versions in [`IR_VERSIONS`] and refuses others rather than misread them.
 
+mod constraints;
 mod extrude;
 mod params;
 mod sketch;
@@ -47,6 +48,8 @@ struct Context<'a> {
     /// The CADIR `model` object.
     model: &'a Value,
     next_id: u64,
+    /// SolidCraft parameter names by CADIR parameter id.
+    params: BTreeMap<String, String>,
     /// Mapped sketches by CADIR sketch id.
     sketches: BTreeMap<String, sketch::Mapped>,
     /// Whether a feature that builds geometry has been mapped.
@@ -58,6 +61,7 @@ impl<'a> Context<'a> {
         Context {
             model,
             next_id: 1,
+            params: BTreeMap::new(),
             sketches: BTreeMap::new(),
             builds: false,
         }
@@ -92,7 +96,9 @@ pub(crate) fn map(model: &Model, report: &mut Report) -> Result<History, String>
         serde_json::to_value(&model.ir).map_err(|err| format!("cannot read the model: {err}"))?;
     check_version(&document)?;
     let wire = document.get("model").cloned().unwrap_or(Value::Null);
+    let (params, param_names) = params::map(&model.ir.model.parameters, report);
     let mut ctx = Context::new(&wire);
+    ctx.params = param_names;
     let mut features: Vec<&Value> = ctx.arena("features").iter().collect();
     if features.is_empty() {
         return Err("the design carries no feature history".to_owned());
@@ -122,7 +128,7 @@ pub(crate) fn map(model: &Model, report: &mut Report) -> Result<History, String>
     if !ctx.builds {
         return Err("no feature in the history builds geometry".to_owned());
     }
-    history.params = params::map(&model.ir.model.parameters, report);
+    history.params = params;
     history.next_id = ctx.next_id;
     Ok(history)
 }
