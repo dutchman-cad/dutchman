@@ -85,7 +85,8 @@ impl SolidCraftWriter {
             return Outcome {
                 mode: Mode::Import,
                 check: Check::NotApplicable(
-                    "assemblies convert as placed geometry, without their parts' histories"
+                    "assemblies and designs with components convert as placed geometry, without \
+                     their parts' histories"
                         .to_owned(),
                 ),
                 features: Vec::new(),
@@ -178,12 +179,13 @@ impl Writer for SolidCraftWriter {
             report.push(
                 Severity::Info,
                 HISTORY,
-                "not written: assemblies convert as placed geometry",
+                "not written: assemblies and designs with components convert as placed geometry",
             );
             report.set_outcome(Outcome {
                 mode: Mode::Import,
                 check: Check::NotApplicable(
-                    "assemblies convert as placed geometry, without their parts' histories"
+                    "assemblies and designs with components convert as placed geometry, without \
+                     their parts' histories"
                         .to_owned(),
                 ),
                 features: Vec::new(),
