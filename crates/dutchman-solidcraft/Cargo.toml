@@ -1,0 +1,15 @@
+[package]
+name = "dutchman-solidcraft"
+description = "SolidCraft adapter for Dutchman: writes the neutral model as a .solidcraft design"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+dutchman-core.workspace = true
+
+[lints]
+workspace = true

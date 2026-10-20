@@ -1,0 +1,77 @@
+use std::path::Path;
+
+/// A native design format Dutchman recognises, whether or not it can read it yet.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Format {
+    /// Autodesk Inventor part (`.ipt`).
+    InventorPart,
+    /// Autodesk Inventor assembly (`.iam`).
+    InventorAssembly,
+    /// Autodesk Fusion archive (`.f3d`).
+    FusionArchive,
+    /// SolidWorks part (`.sldprt`).
+    SolidWorksPart,
+    /// SolidWorks assembly (`.sldasm`).
+    SolidWorksAssembly,
+}
+
+impl Format {
+    /// Every recognised format.
+    pub const ALL: [Format; 5] = [
+        Format::InventorPart,
+        Format::InventorAssembly,
+        Format::FusionArchive,
+        Format::SolidWorksPart,
+        Format::SolidWorksAssembly,
+    ];
+
+    /// The format's file extension, without the dot.
+    pub fn extension(self) -> &'static str {
+        match self {
+            Format::InventorPart => "ipt",
+            Format::InventorAssembly => "iam",
+            Format::FusionArchive => "f3d",
+            Format::SolidWorksPart => "sldprt",
+            Format::SolidWorksAssembly => "sldasm",
+        }
+    }
+
+    /// A human-readable name, for messages.
+    pub fn name(self) -> &'static str {
+        match self {
+            Format::InventorPart => "Inventor part (.ipt)",
+            Format::InventorAssembly => "Inventor assembly (.iam)",
+            Format::FusionArchive => "Fusion archive (.f3d)",
+            Format::SolidWorksPart => "SolidWorks part (.sldprt)",
+            Format::SolidWorksAssembly => "SolidWorks assembly (.sldasm)",
+        }
+    }
+
+    /// Identifies a format from a path's extension, ignoring case.
+    pub fn from_path(path: &Path) -> Option<Format> {
+        let ext = path.extension()?.to_str()?;
+        Format::ALL
+            .into_iter()
+            .find(|format| ext.eq_ignore_ascii_case(format.extension()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_by_extension_ignoring_case() {
+        assert_eq!(
+            Format::from_path(Path::new("a/b.IPT")),
+            Some(Format::InventorPart)
+        );
+        assert_eq!(
+            Format::from_path(Path::new("x.sldasm")),
+            Some(Format::SolidWorksAssembly)
+        );
+        assert_eq!(Format::from_path(Path::new("x.step")), None);
+        assert_eq!(Format::from_path(Path::new("noext")), None);
+    }
+}

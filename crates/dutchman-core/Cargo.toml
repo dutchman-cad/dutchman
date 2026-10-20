@@ -1,0 +1,16 @@
+[package]
+name = "dutchman-core"
+description = "Format-neutral conversion core for Dutchman: the model, the reader/writer seams and loss reporting"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+cadmpeg-ir.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
