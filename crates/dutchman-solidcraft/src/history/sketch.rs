@@ -29,6 +29,8 @@ pub(crate) struct Mapped {
     pub(crate) feature: u64,
     /// The sketch plane's unit normal, in model space.
     pub(crate) normal: V3,
+    /// The sketch plane's origin, in model space.
+    pub(crate) origin: V3,
     /// The SolidCraft curve id of each source entity that became a curve.
     pub(crate) curves: BTreeMap<String, String>,
 }
@@ -53,7 +55,7 @@ pub(crate) fn map(
         .iter()
         .find(|row| row.get("id").and_then(Value::as_str) == Some(sketch_id))
         .ok_or("the sketch it binds is missing")?;
-    let (plane, normal) = plane(sketch)?;
+    let (plane, normal, origin) = plane(sketch)?;
 
     let mut builder = Builder::default();
     for entity in ctx
@@ -88,6 +90,7 @@ pub(crate) fn map(
         Mapped {
             feature: id,
             normal,
+            origin,
             curves,
         },
     );
@@ -107,7 +110,7 @@ pub(crate) fn map(
 
 /// The SolidCraft plane of a sketch, and its unit normal: an origin plane when the frame is
 /// one exactly, else an explicit plane with the frame's axes.
-fn plane(sketch: &Value) -> Result<(Value, V3), String> {
+fn plane(sketch: &Value) -> Result<(Value, V3, V3), String> {
     let placement = sketch.get("placement").unwrap_or(&Value::Null);
     if placement.get("kind").and_then(Value::as_str) != Some("resolved") {
         return Err("its plane is not resolved".to_owned());
@@ -139,7 +142,7 @@ fn plane(sketch: &Value) -> Result<(Value, V3), String> {
             "plane": {"origin": origin, "x_dir": x, "y_dir": y},
         }),
     };
-    Ok((plane, normal))
+    Ok((plane, normal, origin))
 }
 
 /// What a source sketch entity became.
@@ -460,7 +463,7 @@ mod tests {
             ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0], "YZ"),
         ];
         for (normal, u, name) in cases {
-            let (plane, n) = plane(&frame(o, normal, u)).unwrap();
+            let (plane, n, _) = plane(&frame(o, normal, u)).unwrap();
             assert_eq!(plane, json!({"type": "origin", "name": name}));
             assert_eq!(n, normal);
         }
@@ -468,7 +471,8 @@ mod tests {
 
     #[test]
     fn other_frames_become_explicit_planes() {
-        let (offset, _) = plane(&frame([0.0, 0.0, 5.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0])).unwrap();
+        let (offset, _, _) =
+            plane(&frame([0.0, 0.0, 5.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0])).unwrap();
         assert_eq!(
             offset,
             json!({"type": "custom", "plane": {
@@ -476,7 +480,7 @@ mod tests {
             }})
         );
         // XY seen from below: the normal is reversed, so it is not the XY origin plane.
-        let (below, _) = plane(&frame([0.0; 3], [0.0, 0.0, -1.0], [1.0, 0.0, 0.0])).unwrap();
+        let (below, _, _) = plane(&frame([0.0; 3], [0.0, 0.0, -1.0], [1.0, 0.0, 0.0])).unwrap();
         assert_eq!(below["type"], "custom");
         assert_eq!(below["plane"]["y_dir"], json!([0.0, -1.0, 0.0]));
     }

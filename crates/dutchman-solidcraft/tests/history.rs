@@ -360,3 +360,98 @@ fn a_converted_dimension_drives_the_geometry_in_solidcraft() {
     assert_eq!(volumes(&cli, &bytes), [1000.0]);
     assert_eq!(volumes(&cli, &with_side(&bytes, "20 mm")), [4000.0]);
 }
+
+/// The example cube's geometry with a revolve history: a 5 mm × 10 mm rectangle on XZ, 5 mm
+/// to 10 mm out from Z, turned about the Z axis by `extent`.
+fn ring_history(extent: Value) -> Model {
+    let mut model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    m["sketches"][0]["placement"]["frame"]["normal"] = json!({"x": 0.0, "y": 1.0, "z": 0.0});
+    // On XZ, sketch v runs along -Z.
+    m["sketch_entities"] = json!([
+        line(1, [5.0, 0.0], [10.0, 0.0]),
+        line(2, [10.0, 0.0], [10.0, -10.0]),
+        line(3, [10.0, -10.0], [5.0, -10.0]),
+        line(4, [5.0, -10.0], [5.0, 0.0]),
+    ]);
+    m["sketch_constraints"] = json!([]);
+    m["features"][1] = json!({
+        "id": "f3d:model:feature#2",
+        "ordinal": 1,
+        "name": "Ring",
+        "suppressed": false,
+        "definition": {
+            "definition": "revolve",
+            "construction": {
+                "state": "resolved",
+                "profile": whole_sketch(),
+                "axis": {
+                    "origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+                    "direction": {"x": 0.0, "y": 0.0, "z": 1.0},
+                },
+                "extent": extent,
+            },
+            "op": "new_body",
+        },
+    });
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+fn written(model: &Model) -> (Vec<u8>, Report) {
+    let mut report = Report::default();
+    let mut bytes = Vec::new();
+    SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .write(model, &mut bytes, &mut report)
+        .unwrap();
+    (bytes, report)
+}
+
+#[test]
+fn full_and_symmetric_revolves_are_written() {
+    let full = ring_history(json!({"kind": "one_sided",
+        "termination": {"kind": "angle", "angle": std::f64::consts::TAU}}));
+    let (document, report) = convert(
+        &full,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+    let revolve = &document["features"][1];
+    assert_eq!(revolve["type"], "revolve");
+    assert_eq!(revolve["angle"], "360 deg");
+    assert_eq!(
+        revolve["axis"],
+        json!({"type": "line", "origin": [0.0, 0.0, 0.0], "dir": [0.0, 0.0, 1.0]})
+    );
+    assert_eq!(revolve["convention"], "sketch_normal");
+
+    let half = ring_history(json!({"kind": "one_sided",
+        "termination": {"kind": "angle", "angle": std::f64::consts::PI}}));
+    let (_, report) = convert(
+        &half,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("which way it turns"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn revolves_rebuild_their_volume_in_solidcraft() {
+    let Some(cli) = solidcraft() else { return };
+    let ring = std::f64::consts::PI * (10.0_f64.powi(2) - 5.0_f64.powi(2)) * 10.0;
+    let close = |got: &[f64], want: f64| {
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!((got[0] - want).abs() / want < 1e-3, "{got:?} vs {want}");
+    };
+    let full = ring_history(json!({"kind": "one_sided",
+        "termination": {"kind": "angle", "angle": std::f64::consts::TAU}}));
+    close(&volumes(&cli, &written(&full).0), ring);
+    let quarter = ring_history(json!({"kind": "symmetric",
+        "termination": {"kind": "angle", "angle": std::f64::consts::FRAC_PI_2}}));
+    close(&volumes(&cli, &written(&quarter).0), ring / 4.0);
+}
