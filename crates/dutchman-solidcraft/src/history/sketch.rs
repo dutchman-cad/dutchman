@@ -31,8 +31,18 @@ pub(crate) struct Mapped {
     pub(crate) normal: V3,
     /// The sketch plane's origin, in model space.
     pub(crate) origin: V3,
-    /// The SolidCraft curve id of each source entity that became a curve.
-    pub(crate) curves: BTreeMap<String, String>,
+    /// What each source entity became, by its id.
+    pub(crate) shapes: BTreeMap<String, Shape>,
+}
+
+impl Mapped {
+    /// The SolidCraft curve the source entity `entity` became.
+    pub(crate) fn curve(&self, entity: &str) -> Option<&Curve> {
+        match self.shapes.get(entity)? {
+            Shape::Curve(curve) => Some(curve),
+            Shape::Point(_) => None,
+        }
+    }
 }
 
 /// Maps a sketch feature whose operation is `definition`.
@@ -77,21 +87,13 @@ pub(crate) fn map(
         report,
     );
 
-    let curves = builder
-        .shapes
-        .iter()
-        .filter_map(|(entity, shape)| match shape {
-            Shape::Curve(curve) => Some((entity.clone(), curve.id.clone())),
-            Shape::Point(_) => None,
-        })
-        .collect();
     ctx.sketches.insert(
         sketch_id.to_owned(),
         Mapped {
             feature: id,
             normal,
             origin,
-            curves,
+            shapes: builder.shapes.clone(),
         },
     );
     Ok(json!({

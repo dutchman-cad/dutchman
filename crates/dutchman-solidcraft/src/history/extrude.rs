@@ -2,6 +2,7 @@
 
 use serde_json::{json, Map, Value};
 
+use super::profile::profile;
 use super::sketch::{dot, number, unit, v3};
 use super::{name, Context};
 
@@ -43,69 +44,6 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         fields.insert("body_names".to_owned(), json!(names));
     }
     Ok(out)
-}
-
-/// The sketch a profile reference uses, and the SolidCraft profile selection for it.
-pub(super) fn profile(profile: Option<&Value>, ctx: &Context) -> Result<(String, Value), String> {
-    let profile = profile.ok_or("it has no profile")?;
-    let kind = profile
-        .get("kind")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
-    let value = profile.get("value").unwrap_or(&Value::Null);
-    match kind {
-        "sketch" => {
-            let sketch = value.as_str().ok_or("its profile sketch is malformed")?;
-            Ok((sketch.to_owned(), json!({"type": "all"})))
-        }
-        "sketch_profiles" => {
-            let sketch = value
-                .get("sketch")
-                .and_then(Value::as_str)
-                .ok_or("its profile sketch is malformed")?;
-            let mapped = ctx
-                .sketches
-                .get(sketch)
-                .ok_or("its sketch is not an earlier mapped sketch")?;
-            let loops = ctx
-                .row("sketches", sketch)
-                .and_then(|row| row.get("profiles"))
-                .and_then(Value::as_array)
-                .ok_or("its sketch has no profiles")?;
-            let indices = value
-                .get("profiles")
-                .and_then(Value::as_array)
-                .ok_or("its profile selection is malformed")?;
-            let mut selected = Vec::with_capacity(indices.len());
-            for index in indices {
-                let lp = index
-                    .as_u64()
-                    .and_then(|i| usize::try_from(i).ok())
-                    .and_then(|i| loops.get(i))
-                    .and_then(Value::as_array)
-                    .ok_or("it selects a sketch profile that does not exist")?;
-                let curves = lp
-                    .iter()
-                    .map(|uses| {
-                        uses.get("entity")
-                            .and_then(Value::as_str)
-                            .and_then(|entity| mapped.curves.get(entity))
-                            .cloned()
-                            .ok_or("its profile uses a curve the sketch does not carry")
-                    })
-                    .collect::<Result<Vec<_>, _>>()?;
-                selected.push(curves);
-            }
-            if selected.is_empty() {
-                return Err("it selects no profile".to_owned());
-            }
-            Ok((
-                sketch.to_owned(),
-                json!({"type": "curves", "loops": selected}),
-            ))
-        }
-        other => Err(format!("{other} profiles are not mapped yet")),
-    }
 }
 
 /// Whether the extrude runs along the sketch normal (`false`: against it).

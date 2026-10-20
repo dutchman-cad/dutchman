@@ -7,7 +7,8 @@ use std::f64::consts::TAU;
 
 use serde_json::{json, Value};
 
-use super::extrude::{body_names, operation, profile};
+use super::extrude::{body_names, operation};
+use super::profile::profile;
 use super::sketch::{dot, number, unit, v3};
 use super::{name, Context};
 
