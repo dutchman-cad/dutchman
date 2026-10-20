@@ -49,12 +49,15 @@ Assemblies convert as placed geometry, without history:
   the stored path, then by file name next to the assembly (ignoring case), reads each part
   file once, and writes one SolidCraft component per part, holding the part's geometry as an
   import, with one occurrence per placement.
-- Left out and reported as Dropped: parts that cannot be found or read, sub-assemblies
-  (`.iam` inside `.iam`) and the occurrences inside them, scaled placements, and occurrences
-  whose part is not a separate file.
-- Upstream: cadmpeg leaves local prototypes and nested parent links untransferred, and joints
-  arrive with CADIR version 7 (cadmpeg PR #254). Sub-assemblies will follow by reading each
-  `.iam` the same way, recursively.
+- Sub-assemblies are read from their own `.iam` files the same way, recursively (up to 32
+  deep; an assembly that places itself, directly or not, is refused). Each becomes a component
+  whose parts are components beneath it, placed by occurrences inside it, so SolidCraft keeps
+  the assembly's structure. The occurrences a parent file records inside its sub-assemblies
+  are taken from the sub-assembly files instead.
+- Left out and reported as Dropped: parts or sub-assemblies that cannot be found or read,
+  scaled placements, and occurrences whose part is not a separate file.
+- Upstream: cadmpeg leaves local prototypes untransferred, and joints arrive with CADIR
+  version 7 (cadmpeg PR #254).
 
 ## Testing without real Inventor files
 

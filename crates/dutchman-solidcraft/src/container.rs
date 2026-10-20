@@ -23,13 +23,18 @@ pub(crate) struct Container {
 impl Container {
     /// Starts a container holding `step` as its one STEP payload.
     pub(crate) fn new(step: &[u8]) -> Result<Self, Error> {
-        let mut container = Container {
+        let mut container = Container::empty();
+        container.step_blob = container.add_step(step)?;
+        Ok(container)
+    }
+
+    /// Starts a container with no payloads yet.
+    pub(crate) fn empty() -> Self {
+        Container {
             zip: ZipWriter::new(Cursor::new(Vec::new())),
             step_blob: String::new(),
             blobs: Vec::new(),
-        };
-        container.step_blob = container.add_step(step)?;
-        Ok(container)
+        }
     }
 
     /// Adds another STEP payload, stored once by its content, and returns its blob path.

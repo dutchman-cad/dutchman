@@ -10,8 +10,6 @@
 use dutchman_core::{Model, Report, Severity};
 use serde_json::{json, Value};
 
-use dutchman_core::Assembly;
-
 use crate::history::History;
 use crate::FORMAT;
 
@@ -58,75 +56,8 @@ pub(crate) fn import_design(model: &Model, step_blob: &str) -> Value {
     })
 }
 
-/// An assembly design: one component per part, holding the part's geometry as an Import
-/// (STEP at `step_blobs[part]`), and one occurrence of it per placement.
-pub(crate) fn assembly_design(model: &Model, assembly: &Assembly, step_blobs: &[String]) -> Value {
-    let parts = assembly.parts.len() as u64;
-    let mut names: Vec<String> = Vec::with_capacity(assembly.parts.len());
-    let mut components = Vec::with_capacity(assembly.parts.len());
-    for (index, part) in assembly.parts.iter().enumerate() {
-        let base = component_name(&part.name);
-        let mut name = base.clone();
-        let mut n = 2;
-        while names.contains(&name) {
-            name = format!("{base} ({n})");
-            n += 1;
-        }
-        components.push(json!({"id": index as u64 + 1, "name": name, "parent": 0}));
-        names.push(name);
-    }
-    let mut placed = vec![0usize; assembly.parts.len()];
-    let occurrences: Vec<Value> = assembly
-        .placements
-        .iter()
-        .enumerate()
-        .map(|(index, placement)| {
-            let count = placed.get_mut(placement.part).map_or(1, |count| {
-                *count += 1;
-                *count
-            });
-            let component = names.get(placement.part).map_or("Part", String::as_str);
-            json!({
-                "id": parts + index as u64 + 1,
-                "name": placement.name.clone().unwrap_or_else(|| format!("{component}:{count}")),
-                "component": placement.part as u64 + 1,
-                "parent": 0,
-                "grounded": false,
-                "transform": column_major(&placement.transform),
-            })
-        })
-        .collect();
-    let first_feature = parts + assembly.placements.len() as u64 + 1;
-    let features: Vec<Value> = assembly
-        .parts
-        .iter()
-        .zip(step_blobs)
-        .enumerate()
-        .map(|(index, (part, blob))| {
-            import_feature(
-                part,
-                first_feature + index as u64,
-                &feature_name(part),
-                Some(index as u64 + 1),
-                false,
-                blob,
-            )
-        })
-        .collect();
-    json!({
-        "format": FORMAT,
-        "name": model.name,
-        "units": "mm",
-        "params": [],
-        "next_id": first_feature + parts,
-        "components": components,
-        "occurrences": occurrences,
-        "features": features,
-    })
-}
-
 /// A row-major 3 × 4 rigid transform as SolidCraft's column-major 4 × 4.
-fn column_major(rows: &[[f64; 4]; 3]) -> [[f64; 4]; 4] {
+pub(crate) fn column_major(rows: &[[f64; 4]; 3]) -> [[f64; 4]; 4] {
     let mut out = IDENTITY;
     for (column, out_column) in out.iter_mut().enumerate() {
         for (row, values) in rows.iter().enumerate() {
@@ -185,7 +116,7 @@ pub(crate) fn history_design(
 
 /// An Import feature holding the model's STEP restatement, in `component` (the root when
 /// `None`).
-fn import_feature(
+pub(crate) fn import_feature(
     model: &Model,
     id: u64,
     name: &str,
@@ -229,7 +160,7 @@ pub(crate) fn report_unmapped(model: &Model, report: &mut Report) {
 
 /// The component's name: the design's, as SolidCraft names a component after the file it
 /// imports.
-fn component_name(design: &str) -> String {
+pub(crate) fn component_name(design: &str) -> String {
     let name: String = design.trim().chars().take(MAX_COMPONENT_NAME).collect();
     if name.is_empty() {
         "Import".to_owned()
@@ -240,7 +171,7 @@ fn component_name(design: &str) -> String {
 
 /// The timeline name SolidCraft gives the import: the STEP product's name, which cadmpeg takes
 /// from the first body, unless that is generic; else the design's name.
-fn feature_name(model: &Model) -> String {
+pub(crate) fn feature_name(model: &Model) -> String {
     model
         .ir
         .model

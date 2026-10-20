@@ -9,6 +9,7 @@
 //! model). The adapter writes the container itself rather than linking SolidCraft's crates,
 //! so it carries none of SolidCraft's kernel or renderer.
 
+mod assembly;
 mod container;
 mod document;
 mod history;
@@ -121,55 +122,6 @@ impl SolidCraftWriter {
         }
     }
 
-    fn assembly_design(
-        &self,
-        model: &Model,
-        assembly: &dutchman_core::Assembly,
-        report: &mut Report,
-    ) -> Result<Vec<u8>, Error> {
-        // A part whose geometry cannot be restated is left out with its placements; the
-        // rest of the assembly is still written.
-        let mut kept = dutchman_core::Assembly {
-            parts: Vec::new(),
-            placements: Vec::new(),
-        };
-        let mut steps = Vec::new();
-        let mut renumber = vec![None; assembly.parts.len()];
-        for (index, part) in assembly.parts.iter().enumerate() {
-            let file = part.source_file.as_deref().unwrap_or(&part.name);
-            match step::restate(part, report) {
-                Ok(step) => {
-                    if let Some(slot) = renumber.get_mut(index) {
-                        *slot = Some(kept.parts.len());
-                    }
-                    kept.parts.push(part.clone());
-                    steps.push(step);
-                }
-                Err(err) => report.push(Severity::Dropped, file, format!("left out: {err}")),
-            }
-        }
-        for placement in &assembly.placements {
-            if let Some(Some(part)) = renumber.get(placement.part) {
-                kept.placements.push(dutchman_core::Placement {
-                    part: *part,
-                    ..placement.clone()
-                });
-            }
-        }
-        let (first, rest) = steps.split_first().ok_or_else(|| {
-            Error::Encode(
-                "none of the assembly's parts has geometry SolidCraft can import".to_owned(),
-            )
-        })?;
-        let mut design = container::Container::new(first.as_bytes())?;
-        let mut blobs = vec![design.step_blob().to_owned()];
-        for step in rest {
-            blobs.push(design.add_step(step.as_bytes())?);
-        }
-        let doc = document::assembly_design(model, &kept, &blobs);
-        design.finish(&doc)
-    }
-
     fn import_design(
         &self,
         model: &Model,
@@ -222,7 +174,7 @@ impl Writer for SolidCraftWriter {
         report: &mut Report,
     ) -> Result<(), Error> {
         if let Some(assembly) = &model.assembly {
-            let bytes = self.assembly_design(model, assembly, report)?;
+            let bytes = assembly::write(model, assembly, report)?;
             report.push(
                 Severity::Info,
                 HISTORY,

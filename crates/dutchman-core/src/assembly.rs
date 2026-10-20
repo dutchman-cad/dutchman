@@ -1,4 +1,5 @@
-//! Assemblies: the parts an assembly places, read from their own files, and their placements.
+//! Assemblies: the parts and sub-assemblies an assembly places, read from their own files, and
+//! their placements.
 //!
 //! cadmpeg reads an assembly's occurrences and leaves each external part unresolved, with the
 //! path the assembly stored for it. That path is usually absolute on the machine that saved
@@ -10,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::{read, Error, Format, Model, Report, Severity};
+use crate::{Error, Format, Model, Report, Severity};
 
 /// The most part files one assembly may bring in.
 pub const MAX_PARTS: usize = 1_000;
@@ -18,13 +19,17 @@ pub const MAX_PARTS: usize = 1_000;
 /// The most placements one assembly may hold.
 pub const MAX_PLACEMENTS: usize = 100_000;
 
+/// How deep sub-assemblies may nest.
+pub const MAX_DEPTH: usize = 32;
+
 /// How far from 1 an occurrence's scale may be and still be rigid.
 const RIGID: f64 = 1e-9;
 
 /// An assembly's parts and where they are placed.
 #[derive(Clone, Debug)]
 pub struct Assembly {
-    /// Each part, read from its own file, in the order first placed.
+    /// Each part, read from its own file, in the order first placed. A sub-assembly is a part
+    /// whose model has an assembly of its own.
     pub parts: Vec<Model>,
     /// Each placed part, in the assembly's order.
     pub placements: Vec<Placement>,
@@ -41,9 +46,49 @@ pub struct Placement {
     pub transform: [[f64; 4]; 3],
 }
 
+/// Decodes one file, without reading the parts an assembly places.
+pub(crate) type Decode<'a> = dyn Fn(Format, &Path, &mut Report) -> Result<Model, Error> + 'a;
+
+/// Reads `input` with `decode` and, for an assembly, the parts and sub-assemblies it places,
+/// inside the assemblies whose files are in `open` (outermost first), so an assembly that
+/// places itself, directly or not, is refused instead of read forever.
+pub(crate) fn read(
+    format: Format,
+    input: &Path,
+    report: &mut Report,
+    decode: &Decode,
+    open: &mut Vec<PathBuf>,
+) -> Result<Model, Error> {
+    let mut model = decode(format, input, report)?;
+    if format.is_assembly() {
+        let key = input.canonicalize().unwrap_or_else(|_| input.to_path_buf());
+        if open.contains(&key) {
+            return Err(Error::Decode(
+                "the assembly places itself through its sub-assemblies".to_owned(),
+            ));
+        }
+        if open.len() >= MAX_DEPTH {
+            return Err(Error::Decode(format!(
+                "sub-assemblies nest deeper than Dutchman's limit of {MAX_DEPTH}"
+            )));
+        }
+        open.push(key);
+        let resolved = resolve(&model, input, report, decode, open);
+        open.pop();
+        model.assembly = Some(resolved?);
+    }
+    Ok(model)
+}
+
 /// Reads the parts the assembly `model`, read from `input`, places. A placement whose part
 /// cannot be found or read is left out and reported; an assembly with none left is an error.
-pub(crate) fn resolve(model: &Model, input: &Path, report: &mut Report) -> Result<Assembly, Error> {
+pub(crate) fn resolve(
+    model: &Model,
+    input: &Path,
+    report: &mut Report,
+    decode: &Decode,
+    open: &mut Vec<PathBuf>,
+) -> Result<Assembly, Error> {
     let wire = serde_json::to_value(&model.ir.model)
         .map_err(|err| Error::Decode(format!("cannot read the assembly: {err}")))?;
     let mut occurrences: Vec<&Value> = wire
@@ -86,25 +131,17 @@ pub(crate) fn resolve(model: &Model, input: &Path, report: &mut Report) -> Resul
             continue;
         };
         let file = file_name(stored);
-        match Format::from_path(Path::new(file)) {
-            Some(Format::InventorPart) => {}
-            Some(format) if format.is_assembly() => {
-                report.push(
-                    Severity::Dropped,
-                    subject,
-                    format!("{file}: sub-assemblies are not converted yet"),
-                );
-                continue;
-            }
+        let format = match Format::from_path(Path::new(file)) {
+            Some(format @ (Format::InventorPart | Format::InventorAssembly)) => format,
             _ => {
                 report.push(
                     Severity::Dropped,
                     subject,
-                    format!("{file}: not an Inventor part"),
+                    format!("{file}: not an Inventor part or assembly"),
                 );
                 continue;
             }
-        }
+        };
         let Some(path) = locate(stored, file, folder) else {
             report.push(
                 Severity::Dropped,
@@ -120,7 +157,7 @@ pub(crate) fn resolve(model: &Model, input: &Path, report: &mut Report) -> Resul
                     Err(format!("over Dutchman's limit of {MAX_PARTS} part files"))
                 } else {
                     let mut part_report = Report::default();
-                    let result = read(Format::InventorPart, &path, &mut part_report)
+                    let result = read(format, &path, &mut part_report, decode, open)
                         .map_err(|err| err.to_string());
                     report.append_prefixed(part_report, file);
                     result.map(|part| {
@@ -158,9 +195,11 @@ pub(crate) fn resolve(model: &Model, input: &Path, report: &mut Report) -> Resul
     }
     if nested > 0 {
         report.push(
-            Severity::Dropped,
+            Severity::Info,
             "assembly",
-            format!("{nested} occurrences inside sub-assemblies are not converted yet"),
+            format!(
+                "{nested} occurrences inside sub-assemblies are read from the sub-assembly files"
+            ),
         );
     }
     if placements.is_empty() {
@@ -257,7 +296,7 @@ mod tests {
             .join(name)
     }
 
-    fn occurrence(key: u32, path: &str, parent: Value, x: f64) -> Value {
+    fn occurrence(key: usize, path: &str, parent: Value, x: f64) -> Value {
         json!({
             "id": format!("inventor:assembly:occurrence#{key}"),
             "prototype": {"scope": "external", "document": {"resolution": "path", "path": path}},
@@ -265,85 +304,191 @@ mod tests {
             "ordinal": key,
             "transform": [[1.0, 0.0, 0.0, x], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
             "scale": [1.0, 1.0, 1.0],
-            "name": format!("Part:{key}"),
+            "name": format!("Occurrence:{key}"),
         })
     }
 
-    /// An assembly (CADIR built here) in a fresh folder holding a copy of the synthetic
-    /// Inventor cube, placing it twice by a path from another machine, plus a part that is
-    /// missing, a sub-assembly and an occurrence inside a sub-assembly.
-    fn assembly() -> (tempfile::TempDir, Model) {
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::copy(
-            fixture("synthetic_cube.ipt"),
-            dir.path().join("Synthetic_Cube.ipt"),
-        )
-        .unwrap();
-        let part = read(
-            Format::InventorPart,
-            &fixture("synthetic_cube.ipt"),
-            &mut Report::default(),
-        )
-        .unwrap();
-        let mut wire = serde_json::to_value(&part.ir).unwrap();
-        let root = json!({"kind": "root"});
-        wire["model"]["occurrences"] = json!([
-            occurrence(1, r"C:\Work\Parts\synthetic_cube.ipt", root.clone(), 0.0),
-            occurrence(2, r"C:\Work\Parts\synthetic_cube.ipt", root.clone(), 30.0),
-            occurrence(3, r"C:\Work\Parts\gone.ipt", root.clone(), 0.0),
-            occurrence(4, r"C:\Work\Sub.iam", root, 0.0),
-            occurrence(
-                5,
-                r"C:\Work\Parts\synthetic_cube.ipt",
-                json!({"kind": "occurrence", "occurrence": "inventor:assembly:occurrence#4"}),
-                0.0
-            ),
-        ]);
-        let model = Model {
-            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
-            fidelity: None,
-            name: "asm".to_owned(),
-            source_file: Some("asm.iam".to_owned()),
-            assembly: None,
-        };
-        (dir, model)
+    fn root() -> Value {
+        json!({"kind": "root"})
     }
 
-    #[test]
-    fn parts_are_found_beside_the_assembly_and_read_once() {
-        let (dir, model) = assembly();
-        let mut report = Report::default();
-        let assembly = resolve(&model, &dir.path().join("asm.iam"), &mut report).unwrap();
-        assert_eq!(assembly.parts.len(), 1);
-        assert_eq!(assembly.placements.len(), 2);
-        assert_eq!(assembly.placements[1].transform[0][3], 30.0);
-        assert_eq!(assembly.placements[1].name.as_deref(), Some("Part:2"));
-        let dropped: Vec<String> = report
+    /// A folder of placeholder files and a decoder that gives each its model: the synthetic
+    /// Inventor cube for `cube.ipt`, and for an assembly the occurrences `assemblies` lists
+    /// for its file name (as `(stored path, x)`).
+    struct Project {
+        dir: tempfile::TempDir,
+        cube: Model,
+        assemblies: BTreeMap<String, Vec<Value>>,
+    }
+
+    impl Project {
+        fn new(assemblies: &[(&str, Vec<Value>)]) -> Project {
+            let dir = tempfile::tempdir().unwrap();
+            let cube = crate::read(
+                Format::InventorPart,
+                &fixture("synthetic_cube.ipt"),
+                &mut Report::default(),
+            )
+            .unwrap();
+            std::fs::write(dir.path().join("Cube.IPT"), b"").unwrap();
+            for (name, _) in assemblies {
+                std::fs::write(dir.path().join(name), b"").unwrap();
+            }
+            let assemblies = assemblies
+                .iter()
+                .map(|(name, rows)| ((*name).to_owned(), rows.clone()))
+                .collect();
+            Project {
+                dir,
+                cube,
+                assemblies,
+            }
+        }
+
+        fn decode(&self, _format: Format, path: &Path, _: &mut Report) -> Result<Model, Error> {
+            let name = path.file_name().unwrap().to_string_lossy().to_lowercase();
+            if name == "cube.ipt" {
+                return Ok(self.cube.clone());
+            }
+            let rows = self.assemblies.get(&name).cloned().unwrap_or_default();
+            let mut wire = serde_json::to_value(&self.cube.ir).unwrap();
+            wire["model"]["occurrences"] = Value::Array(rows);
+            Ok(Model {
+                ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+                fidelity: None,
+                name: name.trim_end_matches(".iam").to_owned(),
+                source_file: Some(name),
+                assembly: None,
+            })
+        }
+
+        fn read(&self, name: &str, report: &mut Report) -> Result<Model, Error> {
+            let decode = |format: Format, path: &Path, report: &mut Report| {
+                self.decode(format, path, report)
+            };
+            read(
+                Format::InventorAssembly,
+                &self.dir.path().join(name),
+                report,
+                &decode,
+                &mut Vec::new(),
+            )
+        }
+    }
+
+    fn dropped(report: &Report) -> Vec<String> {
+        report
             .losses()
             .iter()
             .filter(|loss| loss.severity == Severity::Dropped)
             .map(|loss| format!("{}: {}", loss.subject, loss.detail))
-            .collect();
+            .collect()
+    }
+
+    #[test]
+    fn parts_and_sub_assemblies_are_read_from_their_files() {
+        let nested = json!({"kind": "occurrence", "occurrence": "inventor:assembly:occurrence#2"});
+        let project = Project::new(&[
+            (
+                "top.iam",
+                vec![
+                    occurrence(0, r"C:\Work\Parts\cube.ipt", root(), 0.0),
+                    occurrence(1, r"C:\Work\Parts\cube.ipt", root(), 30.0),
+                    occurrence(2, r"C:\Work\sub.iam", root(), 100.0),
+                    occurrence(3, r"C:\Work\Parts\gone.ipt", root(), 0.0),
+                    occurrence(4, r"C:\Work\Parts\cube.ipt", nested, 0.0),
+                ],
+            ),
+            (
+                "sub.iam",
+                vec![
+                    occurrence(0, "cube.ipt", root(), 0.0),
+                    occurrence(1, "cube.ipt", root(), 15.0),
+                ],
+            ),
+        ]);
+        let mut report = Report::default();
+        let top = project.read("top.iam", &mut report).unwrap();
+        let assembly = top.assembly.unwrap();
         assert_eq!(
-            dropped,
-            [
-                "occurrence \"Part:3\": gone.ipt: not found next to the assembly",
-                "occurrence \"Part:4\": Sub.iam: sub-assemblies are not converted yet",
-                "assembly: 1 occurrences inside sub-assemblies are not converted yet",
-            ]
+            assembly.parts.len(),
+            2,
+            "the cube once, and the sub-assembly"
+        );
+        assert_eq!(assembly.placements.len(), 3);
+        assert_eq!(assembly.placements[2].transform[0][3], 100.0);
+        let sub = assembly.parts[1].assembly.as_ref().unwrap();
+        assert_eq!(sub.parts.len(), 1);
+        assert_eq!(sub.placements.len(), 2);
+        assert_eq!(
+            dropped(&report),
+            ["occurrence \"Occurrence:3\": gone.ipt: not found next to the assembly"]
+        );
+    }
+
+    #[test]
+    fn an_assembly_that_places_itself_is_refused() {
+        let project = Project::new(&[
+            (
+                "a.iam",
+                vec![
+                    occurrence(0, "b.iam", root(), 0.0),
+                    occurrence(1, "cube.ipt", root(), 0.0),
+                ],
+            ),
+            ("b.iam", vec![occurrence(0, "a.iam", root(), 0.0)]),
+        ]);
+        let mut report = Report::default();
+        let a = project.read("a.iam", &mut report).unwrap();
+        assert_eq!(
+            a.assembly.unwrap().placements.len(),
+            1,
+            "the cube is still placed"
+        );
+        assert!(
+            dropped(&report)
+                .iter()
+                .any(|loss| loss.contains("places itself through its sub-assemblies")),
+            "{:?}",
+            dropped(&report)
+        );
+    }
+
+    #[test]
+    fn sub_assemblies_nest_only_so_deep() {
+        let chain: Vec<(String, Vec<Value>)> = (0..=MAX_DEPTH + 2)
+            .map(|n| {
+                (
+                    format!("d{n}.iam"),
+                    vec![
+                        occurrence(0, &format!("d{}.iam", n + 1), root(), 0.0),
+                        occurrence(1, "cube.ipt", root(), 0.0),
+                    ],
+                )
+            })
+            .collect();
+        let named: Vec<(&str, Vec<Value>)> = chain
+            .iter()
+            .map(|(name, rows)| (name.as_str(), rows.clone()))
+            .collect();
+        let project = Project::new(&named);
+        let mut report = Report::default();
+        project.read("d0.iam", &mut report).unwrap();
+        assert!(
+            dropped(&report)
+                .iter()
+                .any(|loss| loss.contains("nest deeper")),
+            "{:?}",
+            dropped(&report)
         );
     }
 
     #[test]
     fn an_assembly_with_no_readable_part_is_an_error() {
-        let (_dir, model) = assembly();
-        let elsewhere = tempfile::tempdir().unwrap();
-        let err = resolve(
-            &model,
-            &elsewhere.path().join("asm.iam"),
-            &mut Report::default(),
-        )
-        .unwrap_err();
+        let project = Project::new(&[("lonely.iam", vec![occurrence(0, "gone.ipt", root(), 0.0)])]);
+        let err = project
+            .read("lonely.iam", &mut Report::default())
+            .unwrap_err();
         assert!(
             err.to_string().contains("put its part files next to it"),
             "{err}"

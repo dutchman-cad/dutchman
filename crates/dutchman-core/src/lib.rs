@@ -13,7 +13,7 @@ mod report;
 
 use std::path::Path;
 
-pub use assembly::{Assembly, Placement, MAX_PARTS, MAX_PLACEMENTS};
+pub use assembly::{Assembly, Placement, MAX_DEPTH, MAX_PARTS, MAX_PLACEMENTS};
 pub use error::Error;
 pub use format::Format;
 
@@ -57,6 +57,11 @@ pub trait Writer {
 /// Decodes the file at `input` (already identified as `format`) into the neutral model,
 /// recording anything dropped in `report`.
 pub fn read(format: Format, input: &Path, report: &mut Report) -> Result<Model, Error> {
+    assembly::read(format, input, report, &decode_file, &mut Vec::new())
+}
+
+/// Decodes one file, without reading the parts an assembly places.
+fn decode_file(format: Format, input: &Path, report: &mut Report) -> Result<Model, Error> {
     if format.codec_id().is_none() {
         return Err(Error::NotSupportedYet { format });
     }
@@ -65,11 +70,7 @@ pub fn read(format: Format, input: &Path, report: &mut Report) -> Result<Model, 
         path: input.to_path_buf(),
         source,
     })?;
-    let mut model = decode::decode(format, input, &bytes, report)?;
-    if format.is_assembly() {
-        model.assembly = Some(assembly::resolve(&model, input, report)?);
-    }
-    Ok(model)
+    decode::decode(format, input, &bytes, report)
 }
 
 /// Converts the file at `input` into `output` through `writer`.

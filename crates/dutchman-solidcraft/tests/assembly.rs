@@ -137,3 +137,123 @@ fn solidcraft_places_each_occurrence() {
         "{bodies:?}"
     );
 }
+
+/// The pair as a sub-assembly, placed twice in a top assembly beside one loose cube.
+fn nested() -> Model {
+    let pair = placed_twice();
+    let cube = pair.assembly.as_ref().unwrap().parts[0].clone();
+    let at = |x: f64, y: f64| [[1.0, 0.0, 0.0, x], [0.0, 1.0, 0.0, y], [0.0, 0.0, 1.0, 0.0]];
+    Model {
+        name: "top".to_owned(),
+        source_file: Some("top.iam".to_owned()),
+        assembly: Some(Assembly {
+            parts: vec![pair, cube.clone()],
+            placements: vec![
+                Placement {
+                    name: None,
+                    part: 0,
+                    transform: at(0.0, 0.0),
+                },
+                Placement {
+                    name: None,
+                    part: 0,
+                    transform: at(0.0, 50.0),
+                },
+                Placement {
+                    name: None,
+                    part: 1,
+                    transform: at(100.0, 0.0),
+                },
+            ],
+        }),
+        ..cube
+    }
+}
+
+#[test]
+fn a_sub_assembly_becomes_a_component_with_its_parts_beneath_it() {
+    let (bytes, _) = written(&nested());
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut text = String::new();
+    archive
+        .by_name("document.json")
+        .unwrap()
+        .read_to_string(&mut text)
+        .unwrap();
+    let document: Value = serde_json::from_str(&text).unwrap();
+    let components: Vec<(String, u64)> = document["components"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| {
+            (
+                c["name"].as_str().unwrap().to_owned(),
+                c["parent"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    let pair = document["components"][0]["id"].as_u64().unwrap();
+    assert_eq!(
+        components,
+        [
+            ("pair".to_owned(), 0),
+            ("synthetic_cube".to_owned(), pair),
+            ("synthetic_cube (2)".to_owned(), 0)
+        ]
+    );
+    let occurrences = document["occurrences"].as_array().unwrap();
+    assert_eq!(occurrences.len(), 5);
+    let inside_pair = occurrences.iter().filter(|o| o["parent"] == pair).count();
+    assert_eq!(inside_pair, 2);
+    assert_eq!(document["features"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn solidcraft_composes_nested_placements() {
+    let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) else {
+        eprintln!("skipped: set {CLI_ENV} to open the assembly in SolidCraft");
+        return;
+    };
+    let (bytes, _) = written(&nested());
+    let bodies = evaluate(&cli, &bytes);
+    let mut corners: Vec<(i64, i64)> = bodies
+        .iter()
+        .map(|b| {
+            let min = &b["bbox"]["min"];
+            let max = &b["bbox"]["max"];
+            // Corner-independent: the box's centre, rounded to whole millimetres.
+            let centre = |axis: usize| {
+                ((min[axis].as_f64().unwrap() + max[axis].as_f64().unwrap()) / 2.0).round() as i64
+            };
+            (centre(0), centre(1))
+        })
+        .collect();
+    corners.sort_unstable();
+    let base = corners[0];
+    let offsets: Vec<(i64, i64)> = corners
+        .iter()
+        .map(|(x, y)| (x - base.0, y - base.1))
+        .collect();
+    assert_eq!(
+        offsets,
+        [(0, 0), (0, 50), (30, 0), (30, 50), (100, 0)],
+        "{bodies:?}"
+    );
+}
+
+fn evaluate(cli: &Path, design: &[u8]) -> Vec<Value> {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("design.solidcraft");
+    let output = dir.path().join("eval.json");
+    std::fs::write(&input, design).unwrap();
+    let status = std::process::Command::new(cli)
+        .arg("eval")
+        .arg(&input)
+        .arg("--json-out")
+        .arg(&output)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let result: Value = serde_json::from_str(&std::fs::read_to_string(output).unwrap()).unwrap();
+    result["bodies"].as_array().unwrap().clone()
+}

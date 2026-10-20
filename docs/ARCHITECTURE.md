@@ -167,9 +167,10 @@ and synthetic files from cadmpeg's public test suite (provenance in
 - **History** (v0.2, in progress): partial revolves once CADIR states the
   turning direction; fillet, chamfer and hole once cadmpeg gives typed references to the edges
   they act on.
-- **Assemblies**: Inventor assemblies convert as placed geometry (each part file read once,
-  one SolidCraft component per part, one occurrence per placement; see inventor.md).
-  Sub-assemblies, joints, and the parts' histories inside an assembly come next.
+- **Assemblies**: Inventor assemblies, with their sub-assemblies, convert as placed geometry
+  (each file read once per assembly, one SolidCraft component per part or sub-assembly, one
+  occurrence per placement; see inventor.md). Joints and the parts' histories inside an
+  assembly come next.
 - **Appearances and names**.
 - More formats as cadmpeg's codecs mature. Inventor's state and the upstream gaps that keep its
   history from replaying are tracked in [inventor.md](inventor.md).
