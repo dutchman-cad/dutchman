@@ -48,6 +48,25 @@ impl Format {
         }
     }
 
+    /// The product family, as cadmpeg's work on it is named.
+    pub fn family(self) -> &'static str {
+        match self {
+            Format::InventorPart | Format::InventorAssembly => "Inventor",
+            Format::FusionArchive => "Fusion",
+            Format::SolidWorksPart | Format::SolidWorksAssembly => "SolidWorks",
+        }
+    }
+
+    /// The names of the formats Dutchman converts, for messages: `Fusion archive (.f3d) files`.
+    pub fn supported_names() -> String {
+        let names: Vec<&str> = Format::ALL
+            .into_iter()
+            .filter(|format| format.codec_id().is_some())
+            .map(Format::name)
+            .collect();
+        format!("{} files", names.join(", "))
+    }
+
     /// The cadmpeg codec that decodes this format, when Dutchman is built with it.
     pub fn codec_id(self) -> Option<&'static str> {
         match self {

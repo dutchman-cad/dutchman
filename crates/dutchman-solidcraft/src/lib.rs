@@ -131,7 +131,7 @@ impl Writer for SolidCraftWriter {
     ) -> Result<(), Error> {
         let step = step::restate(model, report)?;
         let bytes = if self.import_only {
-            report.push(Severity::Info, HISTORY, "not written: import only");
+            report.push(Severity::Info, HISTORY, "not written (--import-only)");
             self.import_design(model, &step, report)?
         } else {
             let mut history_report = Report::default();
@@ -143,7 +143,7 @@ impl Writer for SolidCraftWriter {
                 Ok(history) => {
                     let written = self.history_design(model, &history, &step, Live::History)?;
                     let summary =
-                        format!("{} of {} features replayed", history.mapped, history.total);
+                        format!("{} of {} features mapped", history.mapped, history.total);
                     match self.check(model, &history, &step, &written)? {
                         Outcome::Matches => {
                             report.append(history_report);

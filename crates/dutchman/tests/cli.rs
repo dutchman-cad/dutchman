@@ -30,7 +30,7 @@ fn convert_reports_unsupported_format_cleanly() {
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("Inventor part (.ipt) files are not supported yet"),
+        stderr.contains("Inventor part (.ipt) files are not supported yet. Export a STEP file"),
         "{stderr}"
     );
     assert!(!output.exists(), "no output file is created on failure");
@@ -49,7 +49,9 @@ fn convert_rejects_unknown_input() {
     std::fs::write(&input, b"hello").unwrap();
     let out = dutchman(&["convert", input.to_str().unwrap(), "x.solidcraft"]);
     assert_eq!(out.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("unrecognised input format"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains(
+        "Dutchman does not convert this kind of file. It converts Fusion archive (.f3d) files."
+    ));
 }
 
 #[test]
@@ -113,7 +115,7 @@ fn convert_reports_what_became_of_the_history() {
     ]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("history: flattened: the file carries no feature history"),
+        stderr.contains("history: flattened: the design carries no feature history"),
         "{stderr}"
     );
 
@@ -125,7 +127,7 @@ fn convert_reports_what_became_of_the_history() {
     ]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("history: not written: import only"),
+        stderr.contains("Info: history: not written (--import-only)"),
         "{stderr}"
     );
 }

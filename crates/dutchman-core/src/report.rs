@@ -39,9 +39,9 @@ pub struct Loss {
 impl fmt::Display for Loss {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let label = match self.severity {
-            Severity::Info => "note",
-            Severity::Degraded => "degraded",
-            Severity::Dropped => "dropped",
+            Severity::Info => "Info",
+            Severity::Degraded => "Degraded",
+            Severity::Dropped => "Dropped",
         };
         write!(f, "{label}: {}: {}", self.subject, self.detail)
     }
