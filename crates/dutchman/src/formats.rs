@@ -10,6 +10,8 @@ pub const SCHEMA: &str = "dutchman.formats/1";
 #[derive(Clone, Copy)]
 enum Status {
     Converts,
+    /// In progress; no format is at this stage right now.
+    #[allow(dead_code)]
     Coming,
     NotSupported,
 }
@@ -33,7 +35,11 @@ fn rows() -> [(Format, Status, &'static str); 5] {
             Status::Converts,
             "placed parts and sub-assemblies, read from the part files next to it",
         ),
-        (Format::SolidWorksPart, Status::Coming, "geometry"),
+        (
+            Format::SolidWorksPart,
+            Status::Converts,
+            "geometry; feature history waits on cadmpeg binding sketches and extrude profiles",
+        ),
         (
             Format::SolidWorksAssembly,
             Status::NotSupported,

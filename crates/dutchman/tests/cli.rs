@@ -272,6 +272,13 @@ fn formats_lists_what_converts() {
         .unwrap();
     assert_eq!(fusion["status"], "converts");
     assert_eq!(fusion["extension"], "f3d");
+    let solidworks = report["formats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["id"] == "solidworks_part")
+        .unwrap();
+    assert_eq!(solidworks["status"], "converts");
 
     let text = dutchman(&["formats"]);
     let stdout = String::from_utf8_lossy(&text.stdout);
