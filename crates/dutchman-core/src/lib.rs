@@ -5,20 +5,28 @@
 //! file and the decoder never sees the target; the [`Report`] carries everything that could
 //! not be carried across. See `docs/ARCHITECTURE.md`.
 
+mod decode;
 mod error;
 mod format;
 mod report;
 
-use std::fs::File;
-use std::io::BufWriter;
 use std::path::Path;
 
 pub use error::Error;
 pub use format::Format;
 
-/// The neutral model every conversion passes through: cadmpeg's CADIR (exact B-rep, feature
-/// history, product structure; millimetres and radians).
-pub type Model = cadmpeg_ir::CadIr;
+/// The neutral model every conversion passes through.
+#[derive(Clone, Debug)]
+pub struct Model {
+    /// The design as cadmpeg's CADIR: exact B-rep, feature history and product structure, in
+    /// millimetres and radians.
+    pub ir: cadmpeg_ir::CadIr,
+    /// Where each entity came from in the source file, when the decoder recorded it. Writers
+    /// that restate geometry through cadmpeg's encoders pass it on.
+    pub fidelity: Option<cadmpeg_ir::SourceFidelity>,
+    /// The design's name, taken from the input file's name.
+    pub name: String,
+}
 pub use report::{Loss, Report, Severity};
 
 /// The largest input file Dutchman will open, in bytes. Native CAD files beyond this are
@@ -40,33 +48,36 @@ pub trait Writer {
     ) -> Result<(), Error>;
 }
 
-/// Decodes the file at `input` (already checked to be `format`) into the neutral model,
+/// Decodes the file at `input` (already identified as `format`) into the neutral model,
 /// recording anything dropped in `report`.
-fn read(format: Format, _input: &Path, _report: &mut Report) -> Result<Model, Error> {
-    // No decoder is wired yet; v0.1 connects cadmpeg's codec for the first format here.
-    Err(Error::NotSupportedYet { format })
+pub fn read(format: Format, input: &Path, report: &mut Report) -> Result<Model, Error> {
+    if format.codec_id().is_none() {
+        return Err(Error::NotSupportedYet { format });
+    }
+    check_input(input)?;
+    let bytes = std::fs::read(input).map_err(|source| Error::Io {
+        path: input.to_path_buf(),
+        source,
+    })?;
+    decode::decode(format, input, &bytes, report)
 }
 
 /// Converts the file at `input` into `output` through `writer`.
 ///
-/// The output file is only created once the input has been read successfully.
+/// The output file is only written once the whole conversion has succeeded.
 pub fn convert(input: &Path, output: &Path, writer: &dyn Writer) -> Result<Report, Error> {
     check_output(output, writer)?;
     let format = Format::from_path(input).ok_or_else(|| Error::UnknownFormat {
         path: input.to_path_buf(),
     })?;
-    check_input(input)?;
 
     let mut report = Report::default();
     let model = read(format, input, &mut report)?;
 
-    let file = File::create(output).map_err(|source| Error::Io {
-        path: output.to_path_buf(),
-        source,
-    })?;
-    let mut out = BufWriter::new(file);
-    writer.write(&model, &mut out, &mut report)?;
-    std::io::Write::flush(&mut out).map_err(|source| Error::Io {
+    // Encode in memory so a failed conversion never leaves a partial file behind.
+    let mut bytes = Vec::new();
+    writer.write(&model, &mut bytes, &mut report)?;
+    std::fs::write(output, bytes).map_err(|source| Error::Io {
         path: output.to_path_buf(),
         source,
     })?;

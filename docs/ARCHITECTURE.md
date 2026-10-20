@@ -23,7 +23,7 @@ consumer benefits and Dutchman stays small.
 
 | Crate | Role | Depends on |
 |---|---|---|
-| `dutchman-core` | Format gate, input caps, the `Writer` seam, the `Report`, the `convert` pipeline. Owns the cadmpeg decode call. | `cadmpeg-ir` (later `cadmpeg-registry`) |
+| `dutchman-core` | Format gate, input caps, the `Writer` seam, the `Report`, the `convert` pipeline. Owns the cadmpeg decode call. | `cadmpeg-ir`, `cadmpeg-core`, `cadmpeg-registry` |
 | `dutchman-solidcraft` | Implements `Writer` for `.solidcraft`. Knows the SolidCraft design format and nothing about native formats. | `dutchman-core` |
 | `dutchman` | The CLI: `dutchman convert <in> <out.solidcraft>`. Argument parsing and printing only. | both of the above, `clap` |
 
@@ -35,8 +35,21 @@ reserved placeholder for a future library facade.
 
 CADIR is already a format-neutral, exact B-rep model with feature history, sketches,
 parameters, appearances and assemblies, in millimetres and radians. A second Dutchman-owned
-model would duplicate it and double the mapping work. `dutchman_core::Model` is an alias for
-`cadmpeg_ir::CadIr`; if a target ever needs a different shape, the adapter derives it.
+model would duplicate it and double the mapping work. `dutchman_core::Model` carries the
+`CadIr` itself, cadmpeg's source-fidelity record (which its encoders take alongside the
+model) and the design's name; if a target ever needs a different shape, the adapter
+derives it.
+
+### Decoding
+
+`dutchman-core`'s `decode` module is the one place cadmpeg is called. It reads the input
+(after the size cap) into memory, lets cadmpeg's catalog identify the codec from the
+contents, falls back to the codec the extension names when the contents are not
+conclusive, and refuses contents that clearly belong to another format. It decodes in
+salvage mode under cadmpeg's desktop ceilings, folds cadmpeg's loss notes into the
+`Report`, then validates the model as cadmpeg's own conversion does: a model with no
+geometry or with validation errors is refused. A panic inside cadmpeg is caught and
+returned as a decode error.
 
 ## The plugin seam
 
@@ -54,7 +67,7 @@ design to SolidCraft in memory instead of as bytes). Neither crate changes.
 
 ## Depending on cadmpeg
 
-- From crates.io, semver-pinned (`cadmpeg-ir = "0.6"`). cadmpeg publishes `cadmpeg-ir`,
+- From crates.io, semver-pinned (`cadmpeg-ir`, `cadmpeg-core`, `cadmpeg-registry` at `0.6`). cadmpeg publishes `cadmpeg-ir`,
   `cadmpeg-core`, `cadmpeg-registry` and the codec crates; no git or path dependency is
   needed, so CI and `cargo install` work without a cadmpeg checkout.
 - `cadmpeg-registry` with `default-features = false` and only the codec features Dutchman
@@ -92,8 +105,10 @@ building SolidCraft in Dutchman's CI (open question 4).
 
 Hostile input comes back as an error, never a panic: workspace lints deny `unwrap`,
 `expect`, `panic!`, `todo!`, `unreachable!` and slice indexing outside tests; `unsafe` is
-forbidden. Inputs are size-checked before opening (`MAX_INPUT_BYTES`), and cadmpeg decodes
-run under its `DecodePolicy` resource limits (salvage mode, service-profile caps).
+forbidden. Inputs are size-checked before opening (`MAX_INPUT_BYTES`), cadmpeg decodes
+run under its `DecodePolicy` resource limits (salvage mode, desktop ceilings), and a panic
+inside cadmpeg is caught at the decode seam. Release builds therefore keep `panic = "unwind"`.
+Output is encoded in memory and written only when the whole conversion succeeds.
 
 ## v0.1: one format, end to end
 
@@ -105,8 +120,9 @@ run under its `DecodePolicy` resource limits (salvage mode, service-profile caps
    what SolidCraft builds when it opens a STEP, IGES or FreeCAD file, so the result behaves
    like any import.
 3. Report everything not carried (history, sketches, parameters, appearances) as losses.
-4. Tests on synthetic fixtures only: CADIR built in code, and files cadmpeg itself
-   publishes as test fixtures. No customer or downloaded models.
+4. Tests on synthetic fixtures only: CADIR built in code, and synthetic files from
+   cadmpeg's public test suite (`crates/dutchman-core/tests/fixtures/README.md` records
+   where each came from). No customer or downloaded models.
 
 ## After v0.1
 
