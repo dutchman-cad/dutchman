@@ -39,5 +39,7 @@ transform, and each component as a product definition.
    multi-component structure and constraints as open).
 4. **Shared:** cadmpeg/cadmpeg#255 (STEP face loops written reversed).
 
-`.f3z` archives (a design with its referenced designs) are merged by cadmpeg with
-occurrence-local placements; Dutchman does not yet accept the `.f3z` extension.
+`.f3z` multi-document archives (a design with the designs it references) convert like `.f3d`:
+cadmpeg merges the referenced designs into the root design with their placements, as
+components. No public `.f3z` with references exists to test against yet; a single design
+saved as `.f3z` is tested.
