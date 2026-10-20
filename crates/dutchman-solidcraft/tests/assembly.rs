@@ -257,3 +257,63 @@ fn evaluate(cli: &Path, design: &[u8]) -> Vec<Value> {
     let result: Value = serde_json::from_str(&std::fs::read_to_string(output).unwrap()).unwrap();
     result["bodies"].as_array().unwrap().clone()
 }
+
+/// A design (CADIR built here from the synthetic cube) whose component owns the cube and is
+/// placed at the origin and 30 mm along X, as a Fusion design with components would be.
+fn with_components() -> Model {
+    let part = placed_twice().assembly.unwrap().parts[0].clone();
+    let mut wire = serde_json::to_value(&part.ir).unwrap();
+    let body = wire["model"]["bodies"][0]["id"].clone();
+    wire["model"]["product_definitions"] = serde_json::json!([{
+        "id": "f3d:model:component#block", "kind": "part", "label": "Block", "bodies": [body],
+    }]);
+    let placed = |key: u32, x: f64| {
+        serde_json::json!({
+            "id": format!("f3d:model:occurrence#{key}"),
+            "prototype": {"scope": "local", "definition": "f3d:model:component#block"},
+            "parent": {"kind": "root"},
+            "ordinal": key,
+            "transform": [[1.0, 0.0, 0.0, x], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
+            "scale": [1.0, 1.0, 1.0],
+        })
+    };
+    wire["model"]["occurrences"] = serde_json::json!([placed(0, 0.0), placed(1, 30.0)]);
+    let mut model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        name: "blocks".to_owned(),
+        ..part
+    };
+    model.assembly = dutchman_core::local_assembly(&model).unwrap();
+    model
+}
+
+#[test]
+fn a_design_with_components_becomes_components_and_occurrences() {
+    let (bytes, _) = written(&with_components());
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut text = String::new();
+    archive
+        .by_name("document.json")
+        .unwrap()
+        .read_to_string(&mut text)
+        .unwrap();
+    let document: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(document["components"][0]["name"], "Block");
+    assert_eq!(document["occurrences"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn solidcraft_places_each_component_occurrence() {
+    let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) else {
+        eprintln!("skipped: set {CLI_ENV} to open the design in SolidCraft");
+        return;
+    };
+    let (bytes, _) = written(&with_components());
+    let bodies = evaluate(&cli, &bytes);
+    assert_eq!(bodies.len(), 2, "{bodies:?}");
+    let min_x = |body: &Value| body["bbox"]["min"][0].as_f64().unwrap();
+    assert!(
+        (min_x(&bodies[1]) - min_x(&bodies[0]) - 30.0).abs() < 1e-6,
+        "{bodies:?}"
+    );
+}

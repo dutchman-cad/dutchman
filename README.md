@@ -22,7 +22,8 @@ Early development. Fusion (`.f3d`) designs, Inventor parts (`.ipt`) and Inventor
 - Otherwise the design converts as solid geometry without history.
 - Every conversion lists what it could not carry across, as Info, Degraded or Dropped.
 
-`dutchman convert --help` lists the options.
+`dutchman formats` lists what converts from each format; `dutchman convert --help` lists the
+options.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it fits together.
 
