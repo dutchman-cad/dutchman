@@ -14,7 +14,7 @@ use dutchman_core::{Check, Error, FeatureStatus, Format, Mode, Report};
 use dutchman_solidcraft::{SolidCraftWriter, Verification, DEFAULT_TIMEOUT};
 use serde_json::{json, Value};
 
-/// Carries CAD designs between formats.
+/// Ferries CAD designs between formats.
 #[derive(Parser)]
 #[command(name = "dutchman", version, about)]
 struct Cli {

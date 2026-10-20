@@ -1,6 +1,6 @@
 [package]
 name = "dutchman"
-description = "Carries CAD designs between formats: decodes native design files into open, editable models (early development)"
+description = "Ferries CAD designs between formats: decodes native design files into open, editable models (early development)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
