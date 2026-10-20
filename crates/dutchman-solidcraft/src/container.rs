@@ -16,6 +16,8 @@ const VERSION: &str = "solidcraft-container/1";
 pub(crate) struct Container {
     zip: ZipWriter<Cursor<Vec<u8>>>,
     step_blob: String,
+    /// Blob paths already written, so an identical payload is stored once.
+    blobs: Vec<String>,
 }
 
 impl Container {
@@ -23,11 +25,21 @@ impl Container {
     pub(crate) fn new(step: &[u8]) -> Result<Self, Error> {
         let mut container = Container {
             zip: ZipWriter::new(Cursor::new(Vec::new())),
-            step_blob: format!("blobs/{}.step", hex(&Sha256::digest(step))),
+            step_blob: String::new(),
+            blobs: Vec::new(),
         };
-        let name = container.step_blob.clone();
-        container.part(&name, step, CompressionMethod::Stored)?;
+        container.step_blob = container.add_step(step)?;
         Ok(container)
+    }
+
+    /// Adds another STEP payload, stored once by its content, and returns its blob path.
+    pub(crate) fn add_step(&mut self, step: &[u8]) -> Result<String, Error> {
+        let name = format!("blobs/{}.step", hex(&Sha256::digest(step)));
+        if !self.blobs.contains(&name) {
+            self.part(&name, step, CompressionMethod::Stored)?;
+            self.blobs.push(name.clone());
+        }
+        Ok(name)
     }
 
     /// The container path of the STEP payload, as the document refers to it.

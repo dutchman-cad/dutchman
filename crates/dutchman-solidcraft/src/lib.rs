@@ -80,6 +80,16 @@ impl SolidCraftWriter {
     /// What writing `model` would do, without restating its geometry, writing anything or
     /// running SolidCraft: the history's mapping, as `dutchman inspect` shows it.
     pub fn plan(&self, model: &Model, report: &mut Report) -> Outcome {
+        if model.assembly.is_some() {
+            return Outcome {
+                mode: Mode::Import,
+                check: Check::NotApplicable(
+                    "assemblies convert as placed geometry, without their parts' histories"
+                        .to_owned(),
+                ),
+                features: Vec::new(),
+            };
+        }
         if self.import_only {
             return Outcome {
                 mode: Mode::Import,
@@ -109,6 +119,55 @@ impl SolidCraftWriter {
                 features: mapping.features,
             },
         }
+    }
+
+    fn assembly_design(
+        &self,
+        model: &Model,
+        assembly: &dutchman_core::Assembly,
+        report: &mut Report,
+    ) -> Result<Vec<u8>, Error> {
+        // A part whose geometry cannot be restated is left out with its placements; the
+        // rest of the assembly is still written.
+        let mut kept = dutchman_core::Assembly {
+            parts: Vec::new(),
+            placements: Vec::new(),
+        };
+        let mut steps = Vec::new();
+        let mut renumber = vec![None; assembly.parts.len()];
+        for (index, part) in assembly.parts.iter().enumerate() {
+            let file = part.source_file.as_deref().unwrap_or(&part.name);
+            match step::restate(part, report) {
+                Ok(step) => {
+                    if let Some(slot) = renumber.get_mut(index) {
+                        *slot = Some(kept.parts.len());
+                    }
+                    kept.parts.push(part.clone());
+                    steps.push(step);
+                }
+                Err(err) => report.push(Severity::Dropped, file, format!("left out: {err}")),
+            }
+        }
+        for placement in &assembly.placements {
+            if let Some(Some(part)) = renumber.get(placement.part) {
+                kept.placements.push(dutchman_core::Placement {
+                    part: *part,
+                    ..placement.clone()
+                });
+            }
+        }
+        let (first, rest) = steps.split_first().ok_or_else(|| {
+            Error::Encode(
+                "none of the assembly's parts has geometry SolidCraft can import".to_owned(),
+            )
+        })?;
+        let mut design = container::Container::new(first.as_bytes())?;
+        let mut blobs = vec![design.step_blob().to_owned()];
+        for step in rest {
+            blobs.push(design.add_step(step.as_bytes())?);
+        }
+        let doc = document::assembly_design(model, &kept, &blobs);
+        design.finish(&doc)
     }
 
     fn import_design(
@@ -162,6 +221,25 @@ impl Writer for SolidCraftWriter {
         out: &mut dyn std::io::Write,
         report: &mut Report,
     ) -> Result<(), Error> {
+        if let Some(assembly) = &model.assembly {
+            let bytes = self.assembly_design(model, assembly, report)?;
+            report.push(
+                Severity::Info,
+                HISTORY,
+                "not written: assemblies convert as placed geometry",
+            );
+            report.set_outcome(Outcome {
+                mode: Mode::Import,
+                check: Check::NotApplicable(
+                    "assemblies convert as placed geometry, without their parts' histories"
+                        .to_owned(),
+                ),
+                features: Vec::new(),
+            });
+            return out
+                .write_all(&bytes)
+                .map_err(|err| Error::Encode(format!("cannot write the design: {err}")));
+        }
         let step = step::restate(model, report)?;
         let (bytes, outcome) = if self.import_only {
             report.push(Severity::Info, HISTORY, "not written (--import-only)");

@@ -87,9 +87,14 @@ impl Format {
     pub fn codec_id(self) -> Option<&'static str> {
         match self {
             Format::FusionArchive => Some("f3d"),
-            Format::InventorPart => Some("inventor"),
-            Format::InventorAssembly | Format::SolidWorksPart | Format::SolidWorksAssembly => None,
+            Format::InventorPart | Format::InventorAssembly => Some("inventor"),
+            Format::SolidWorksPart | Format::SolidWorksAssembly => None,
         }
+    }
+
+    /// Whether the format is an assembly, whose geometry lives in the part files it places.
+    pub fn is_assembly(self) -> bool {
+        matches!(self, Format::InventorAssembly | Format::SolidWorksAssembly)
     }
 
     /// The format a cadmpeg codec decodes, when it decodes exactly one Dutchman names.

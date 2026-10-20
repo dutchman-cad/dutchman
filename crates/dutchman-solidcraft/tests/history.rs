@@ -152,6 +152,7 @@ fn cube_with_history(length: f64, profile: Value, extent: Option<Value>) -> Mode
         fidelity: None,
         name: "cube".to_owned(),
         source_file: Some("cube.f3d".to_owned()),
+        assembly: None,
     }
 }
 

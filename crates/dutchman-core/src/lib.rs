@@ -5,6 +5,7 @@
 //! file and the decoder never sees the target; the [`Report`] carries everything that could
 //! not be carried across. See `docs/ARCHITECTURE.md`.
 
+mod assembly;
 mod decode;
 mod error;
 mod format;
@@ -12,6 +13,7 @@ mod report;
 
 use std::path::Path;
 
+pub use assembly::{Assembly, Placement, MAX_PARTS, MAX_PLACEMENTS};
 pub use error::Error;
 pub use format::Format;
 
@@ -28,6 +30,8 @@ pub struct Model {
     pub name: String,
     /// The input file's name (without its folder), when the model was read from a file.
     pub source_file: Option<String>,
+    /// For an assembly: its parts, read from their own files, and where each is placed.
+    pub assembly: Option<Assembly>,
 }
 pub use report::{Check, FeatureOutcome, FeatureStatus, Loss, Mode, Outcome, Report, Severity};
 
@@ -61,7 +65,11 @@ pub fn read(format: Format, input: &Path, report: &mut Report) -> Result<Model, 
         path: input.to_path_buf(),
         source,
     })?;
-    decode::decode(format, input, &bytes, report)
+    let mut model = decode::decode(format, input, &bytes, report)?;
+    if format.is_assembly() {
+        model.assembly = Some(assembly::resolve(&model, input, report)?);
+    }
+    Ok(model)
 }
 
 /// Converts the file at `input` into `output` through `writer`.
