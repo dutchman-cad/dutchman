@@ -24,7 +24,7 @@ consumer benefits and Dutchman stays small.
 | Crate | Role | Depends on |
 |---|---|---|
 | `dutchman-core` | Format gate, input caps, the `Writer` seam, the `Report`, the `convert` pipeline. Owns the cadmpeg decode call. | `cadmpeg-ir`, `cadmpeg-core`, `cadmpeg-registry` |
-| `dutchman-solidcraft` | Implements `Writer` for `.solidcraft`. Knows the SolidCraft design format and nothing about native formats. | `dutchman-core` |
+| `dutchman-solidcraft` | Implements `Writer` for `.solidcraft`. Knows the SolidCraft design format and nothing about native formats. | `dutchman-core`, cadmpeg's STEP encoder, `zip`, `sha2`, `serde_json` |
 | `dutchman` | The CLI: `dutchman convert <in> <out.solidcraft>`. Argument parsing and printing only. | both of the above, `clap` |
 
 `dutchman-core` and `dutchman-solidcraft` are `publish = false` until their APIs settle. The
@@ -78,16 +78,27 @@ design to SolidCraft in memory instead of as bytes). Neither crate changes.
 
 ## Writing SolidCraft designs
 
-A `.solidcraft` file is JSON (`{"format":"solidcraft/N", "name", "units", "features", …}`);
-SolidCraft also reads a zip container of the same document. The adapter writes the JSON
-itself with `serde_json` rather than linking `solidcraft-doc`: that crate pulls in
-SolidCraft's kernel and renderer, needs edition 2024, and would build against unpatched
-dependencies outside SolidCraft's workspace.
+The adapter writes exactly what SolidCraft saves when it imports a STEP file: a design
+container (a zip of `blobs/<sha256>.step`, `document.json` and `container.json`) whose
+document holds one component named after the file, one occurrence of it, and a
+non-parametric `import` feature. The feature's geometry is cadmpeg's AP214 restatement of
+the model, kept in the blob; its `file` names the native source, as SolidCraft's own
+FreeCAD and Rhino imports do. The adapter builds the container itself with `zip`, `sha2`
+and `serde_json` rather than linking `solidcraft-doc`: that crate pulls in SolidCraft's
+kernel and renderer, needs edition 2024, and would build against unpatched dependencies
+outside SolidCraft's workspace.
 
-The adapter pins one format version (`solidcraft/26`). SolidCraft upgrades older formats on
-open and refuses newer ones, so writing a slightly old format is always safe. A test in CI
-round-trips a written design through SolidCraft's reader once that can be done without
-building SolidCraft in Dutchman's CI (open question 4).
+The import's body names and assembly tree are left out: SolidCraft reads them from the STEP
+when it evaluates the design, so its STEP reader stays the only interpreter of that text and
+Dutchman does not duplicate its rules.
+
+The adapter pins format `solidcraft/23`, the first in which an Import may name a non-STEP
+source. SolidCraft upgrades older formats on open and refuses newer ones, so a pinned older
+format opens in every current release.
+
+Checks: an end-to-end test converts a synthetic `.f3d` and compares the container layout and
+`document.json` with a golden file; a non-blocking CI job opens the result in a released
+SolidCraft CLI (`scripts/solidcraft-roundtrip.sh`).
 
 ## Errors and losses
 
@@ -112,17 +123,11 @@ Output is encoded in memory and written only when the whole conversion succeeds.
 
 ## v0.1: one format, end to end
 
-1. Decode **Fusion `.f3d`** through `cadmpeg-codec-f3d`, cadmpeg's most complete native
-   codec (connected B-rep and extrude/fillet/chamfer history). Inventor `.ipt` follows as
-   soon as its cadmpeg support is level with it (open question 1).
-2. Write each solid body as SolidCraft's non-parametric **`import` feature**: CADIR B-rep →
-   STEP text through cadmpeg's STEP encoder → `{"type":"import","step":…}`. This is exactly
-   what SolidCraft builds when it opens a STEP, IGES or FreeCAD file, so the result behaves
-   like any import.
-3. Report everything not carried (history, sketches, parameters, appearances) as losses.
-4. Tests on synthetic fixtures only: CADIR built in code, and synthetic files from
-   cadmpeg's public test suite (`crates/dutchman-core/tests/fixtures/README.md` records
-   where each came from). No customer or downloaded models.
+Fusion `.f3d` parts convert to a SolidCraft design holding the model as one non-parametric
+import, which behaves like any STEP import in SolidCraft. History, sketches, parameters and
+appearances are reported as losses. Tests use synthetic fixtures only: CADIR built in code
+and synthetic files from cadmpeg's public test suite (provenance in
+`crates/dutchman-core/tests/fixtures/README.md`). No customer or downloaded models.
 
 ## After v0.1
 
@@ -134,15 +139,14 @@ Output is encoded in memory and written only when the whole conversion succeeds.
 - More formats as cadmpeg's codecs mature.
 - The SolidCraft plugin shim.
 
-## Open questions
+## Decisions
 
-1. **First format.** cadmpeg rates Fusion `.f3d` at L4 and Inventor at L1 (B-rep transfers,
-   suppression and dependency state not resolved). Start with `.f3d`, or Inventor first?
-2. **Licensing of commercial-format codecs.** SolidCraft deliberately builds only cadmpeg's
-   open-format codecs; Dutchman exists partly to host the commercial ones (f3d, ipt,
-   sldprt) outside SolidCraft. Is shipping those in a public Apache-2.0 binary acceptable?
-3. **Crate names.** CLI as `dutchman`, library facade later as `dutchman-cad`: right split?
-4. **Output check.** Should CI validate output against SolidCraft's own reader (heavy build),
-   or is a schema/golden-file check enough until the plugin exists?
-5. **Container or JSON.** Write plain JSON (simplest), or SolidCraft's zip container (STEP in
-   blobs, smaller files)?
+Settled 2026-10-20:
+
+1. First format: Fusion `.f3d`, cadmpeg's most complete native codec. Inventor follows once
+   cadmpeg's Inventor support is released.
+2. Dutchman ships cadmpeg's commercial-format codecs (f3d, ipt, sldprt) in its Apache-2.0
+   binary; hosting them outside SolidCraft is its purpose.
+3. Crates: the CLI is `dutchman`; `dutchman-cad` is reserved for a library facade.
+4. Output checks: golden files block CI; the SolidCraft round-trip job does not.
+5. Output form: the design container, as SolidCraft writes an import.

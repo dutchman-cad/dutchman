@@ -14,7 +14,7 @@ use cadmpeg_registry::{
     forced_input, InputCatalog, ResolveSourceError, ResolvedSource, DETECTION_PREFIX_LEN,
 };
 
-use crate::{Error, Format, Model, Report, Severity, MAX_INPUT_BYTES};
+use crate::{Error, Format, Model, Report, MAX_INPUT_BYTES};
 
 /// cadmpeg's desktop ceilings in salvage mode: a successful decode keeps going past a loss
 /// and reports it, rather than refusing the whole file. The input cap is Dutchman's own.
@@ -78,13 +78,7 @@ fn decode_unguarded(
             format.name()
         )));
     }
-    for loss in &decode_report.losses {
-        report.push(
-            severity(loss.severity),
-            loss.code.to_string(),
-            loss.message.clone(),
-        );
-    }
+    report.extend_from_cadmpeg(&decode_report.losses);
 
     // Check the model the way cadmpeg's own conversion does before anything is built on it.
     let arena = DecodeArena::new();
@@ -108,7 +102,7 @@ fn decode_unguarded(
     }
     for finding in &validation.findings {
         report.push(
-            severity(finding.severity),
+            finding.severity.into(),
             "validation",
             finding.message.clone(),
         );
@@ -118,6 +112,9 @@ fn decode_unguarded(
         ir,
         fidelity: Some(fidelity),
         name: design_name(path),
+        source_file: path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned()),
     })
 }
 
@@ -163,15 +160,6 @@ fn select_codec<'a>(
             "the contents are not a {} file",
             format.name()
         ))),
-    }
-}
-
-/// How a cadmpeg finding reads to someone looking at the converted design.
-fn severity(severity: CadmpegSeverity) -> Severity {
-    match severity {
-        CadmpegSeverity::Info => Severity::Info,
-        CadmpegSeverity::Warning => Severity::Degraded,
-        CadmpegSeverity::Error | CadmpegSeverity::Blocking => Severity::Dropped,
     }
 }
 

@@ -5,7 +5,8 @@ editable models. Decoding is done by [cadmpeg](https://github.com/cadmpeg/cadmpe
 maps the result onto a target format, starting with [SolidCraft](https://github.com/tangency-labs/solidcraft)
 designs.
 
-Early development: Fusion `.f3d` files decode; writing `.solidcraft` designs comes next.
+Early development: Fusion `.f3d` parts convert to `.solidcraft` designs as a non-parametric
+imported body. Feature history comes next.
 
 ```sh
 dutchman convert part.f3d part.solidcraft

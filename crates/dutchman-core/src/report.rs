@@ -1,5 +1,8 @@
 use std::fmt;
 
+use cadmpeg_ir::report::loss::LossNote;
+use cadmpeg_ir::report::Severity as CadmpegSeverity;
+
 /// How much a [`Loss`] matters to the person reading the converted design.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Severity {
@@ -9,6 +12,17 @@ pub enum Severity {
     Degraded,
     /// Something dropped entirely (a body or feature that is missing from the output).
     Dropped,
+}
+
+impl From<CadmpegSeverity> for Severity {
+    /// How a cadmpeg finding reads to someone looking at the converted design.
+    fn from(severity: CadmpegSeverity) -> Self {
+        match severity {
+            CadmpegSeverity::Info => Severity::Info,
+            CadmpegSeverity::Warning => Severity::Degraded,
+            CadmpegSeverity::Error | CadmpegSeverity::Blocking => Severity::Dropped,
+        }
+    }
 }
 
 /// One thing that did not survive the conversion intact.
@@ -53,6 +67,17 @@ impl Report {
             subject: subject.into(),
             detail: detail.into(),
         });
+    }
+
+    /// Records cadmpeg's loss notes (from a decode or an export), each under its loss code.
+    pub fn extend_from_cadmpeg<'a>(&mut self, notes: impl IntoIterator<Item = &'a LossNote>) {
+        for note in notes {
+            self.push(
+                note.severity.into(),
+                note.code.to_string(),
+                note.message.clone(),
+            );
+        }
     }
 
     /// The recorded losses, in the order they occurred.

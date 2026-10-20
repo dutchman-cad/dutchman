@@ -65,7 +65,7 @@ fn missing_arguments_is_a_usage_error() {
 }
 
 #[test]
-fn convert_decodes_f3d_and_leaves_no_file_when_writing_fails() {
+fn convert_writes_a_solidcraft_design_from_f3d() {
     let input = concat!(
         env!("CARGO_MANIFEST_DIR"),
         "/../dutchman-core/tests/fixtures/generated_unit_cube.f3d"
@@ -74,8 +74,27 @@ fn convert_decodes_f3d_and_leaves_no_file_when_writing_fails() {
 
     let out = dutchman(&["convert", input, output.to_str().unwrap()]);
 
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(std::fs::read(&output).unwrap().starts_with(b"PK\x03\x04"));
+}
+
+#[test]
+fn convert_leaves_no_file_when_the_input_has_no_geometry() {
+    let input = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../dutchman-core/tests/fixtures/container_metadata_only.f3d"
+    );
+    let output = scratch("empty.solidcraft");
+
+    let out = dutchman(&["convert", input, output.to_str().unwrap()]);
+
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("cannot encode output"), "{stderr}");
+    assert!(stderr.contains("no geometry could be read"), "{stderr}");
     assert!(!output.exists(), "no output file is created on failure");
 }
