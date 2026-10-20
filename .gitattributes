@@ -1,0 +1,7 @@
+# Golden files and fixtures are compared byte for byte, so a Windows checkout must not
+# rewrite their line endings.
+* text=auto eol=lf
+*.f3d binary
+*.ipt binary
+*.iam binary
+*.png binary
