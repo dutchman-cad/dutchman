@@ -1,0 +1,79 @@
+# Machine-readable reports
+
+`dutchman convert --json` and `dutchman inspect --json` print one JSON object on stdout and
+nothing on stderr. The schema is named in `schema`. Within a schema version, fields are only
+added: none is renamed, retyped or removed. A change that would break a reader gets a new
+version (`dutchman.convert/2`).
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | The design was converted (`convert`) or read (`inspect`). Losses do not change this. |
+| 1 | It could not be: unsupported or unreadable input, no geometry, an output that could not be written. With `--json`, the report has `"ok": false`. |
+| 2 | A usage error (unknown option, missing argument). clap's usage text is printed on stderr; there is no JSON. |
+
+## `dutchman.convert/1`
+
+```json
+{
+  "schema": "dutchman.convert/1",
+  "ok": true,
+  "input": {"path": "part.f3d", "format": "fusion_archive", "format_name": "Fusion archive (.f3d)"},
+  "output": {"path": "part.solidcraft", "format": "solidcraft/23"},
+  "mode": "history",
+  "verification": {"status": "verified", "reason": null},
+  "history": {
+    "mapped": 2,
+    "total": 2,
+    "features": [
+      {"name": "Base sketch", "kind": "sketch", "status": "mapped", "reason": null},
+      {"name": "Block", "kind": "extrude", "status": "mapped", "reason": null}
+    ]
+  },
+  "losses": [
+    {"level": "Info", "code": "step/native.source-record-omitted", "subject": "step/native.source-record-omitted",
+     "message": "45 source-native record(s) were not represented in STEP"}
+  ]
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `ok` | `true` when the design was written. |
+| `input.format` | `fusion_archive`, `inventor_part`, `inventor_assembly`, `solidworks_part`, `solidworks_assembly`, or `null` for an unknown extension. `format_name` is the same for people. |
+| `output.format` | The SolidCraft design format written. |
+| `mode` | `history`: editable feature history, with the original geometry kept beside it, suppressed. `import`: the geometry alone. |
+| `verification.status` | `verified`: the history was replayed in SolidCraft and matches the original. `unverified`: the history was written without that check (`reason` says why: no `solidcraft-cli`, a timeout, `--no-verify`). `flattened`: the design has a history but it was not written (`reason`: the first feature that does not map, or `replay differs (…)`). `not_applicable`: there was no history to write, or `--import-only`. |
+| `history.features` | Every source feature in timeline order. `status`: `mapped`, `not_needed` (the target needs no feature, e.g. a principal datum plane), `left_out` (suppressed in the source), `blocked` (does not map; `reason` says why). |
+| `history.mapped`, `history.total` | Mapped or not-needed features, out of all but left-out ones. |
+| `losses` | What did not survive intact. `level` is `Info` (no effect on geometry), `Degraded` (carried in a weaker form) or `Dropped` (left out). `code` is cadmpeg's stable loss code when cadmpeg reported it, else `null`; `subject` says what was affected; `message` is for people. |
+
+A failure carries `"ok": false`, `input` and `error.message`, and exits 1:
+
+```json
+{"schema": "dutchman.convert/1", "ok": false,
+ "input": {"path": "part.sldprt", "format": "solidworks_part", "format_name": "SolidWorks part (.sldprt)"},
+ "error": {"message": "SolidWorks part (.sldprt) files are not supported yet. …"}}
+```
+
+## `dutchman.inspect/1`
+
+The same fields as `convert` except `output`, plus `geometry`:
+
+```json
+{
+  "schema": "dutchman.inspect/1",
+  "ok": true,
+  "input": {"path": "part.f3d", "format": "fusion_archive", "format_name": "Fusion archive (.f3d)"},
+  "geometry": {"bodies": 1, "faces": 6},
+  "mode": "import",
+  "verification": {"status": "flattened", "reason": "feature \"Fillet1\": fillet is not mapped yet"},
+  "history": {"mapped": 2, "total": 3, "features": [ … ]},
+  "losses": [ … ]
+}
+```
+
+`inspect` writes nothing and runs no SolidCraft, so a history that would be written reports
+`verification.status` `unverified`. Both reports look at every feature, so every `blocked` one
+is listed; `verification.reason` names the first.

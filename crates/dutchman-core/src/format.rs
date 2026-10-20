@@ -26,6 +26,17 @@ impl Format {
         Format::SolidWorksAssembly,
     ];
 
+    /// A stable identifier for scripts (`fusion_archive`, `inventor_part`, …).
+    pub fn id(self) -> &'static str {
+        match self {
+            Format::InventorPart => "inventor_part",
+            Format::InventorAssembly => "inventor_assembly",
+            Format::FusionArchive => "fusion_archive",
+            Format::SolidWorksPart => "solidworks_part",
+            Format::SolidWorksAssembly => "solidworks_assembly",
+        }
+    }
+
     /// The format's file extension, without the dot.
     pub fn extension(self) -> &'static str {
         match self {

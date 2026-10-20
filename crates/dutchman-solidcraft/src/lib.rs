@@ -20,13 +20,12 @@ mod verify;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use dutchman_core::{Error, Model, Report, Severity, Writer};
+use dutchman_core::{Check, Error, Mode, Model, Outcome, Report, Severity, Writer};
 use serde_json::Value;
 
 pub use verify::{Verification, CLI_ENV, DEFAULT_TIMEOUT, VOLUME_TOLERANCE};
 
 use document::Live;
-use verify::Outcome;
 
 /// The SolidCraft design format this adapter writes: the first in which an Import may name a
 /// non-STEP source file whose geometry it keeps as restated STEP text. Every newer
@@ -78,6 +77,40 @@ impl SolidCraftWriter {
         self
     }
 
+    /// What writing `model` would do, without restating its geometry, writing anything or
+    /// running SolidCraft: the history's mapping, as `dutchman inspect` shows it.
+    pub fn plan(&self, model: &Model, report: &mut Report) -> Outcome {
+        if self.import_only {
+            return Outcome {
+                mode: Mode::Import,
+                check: Check::NotApplicable("--import-only".to_owned()),
+                features: Vec::new(),
+            };
+        }
+        let mut history_report = Report::default();
+        let mapping = history::map(model, &mut history_report);
+        match mapping.result {
+            Ok(_) => {
+                report.append(history_report);
+                Outcome {
+                    mode: Mode::History,
+                    check: Check::Unverified("not checked: inspect writes nothing".to_owned()),
+                    features: mapping.features,
+                }
+            }
+            Err(reason) if mapping.features.is_empty() => Outcome {
+                mode: Mode::Import,
+                check: Check::NotApplicable(reason),
+                features: Vec::new(),
+            },
+            Err(reason) => Outcome {
+                mode: Mode::Import,
+                check: Check::Flattened(reason),
+                features: mapping.features,
+            },
+        }
+    }
+
     fn import_design(
         &self,
         model: &Model,
@@ -108,10 +141,10 @@ impl SolidCraftWriter {
         history: &history::History,
         step: &str,
         written: &[u8],
-    ) -> Result<Outcome, Error> {
+    ) -> Result<verify::Outcome, Error> {
         let cli: PathBuf = match verify::find_cli(&self.verification) {
             Ok(cli) => cli,
-            Err(why) => return Ok(Outcome::Unverified(why)),
+            Err(why) => return Ok(verify::Outcome::Unverified(why)),
         };
         let original = self.history_design(model, history, step, Live::Original)?;
         Ok(verify::compare(&cli, self.timeout, written, &original))
@@ -130,51 +163,74 @@ impl Writer for SolidCraftWriter {
         report: &mut Report,
     ) -> Result<(), Error> {
         let step = step::restate(model, report)?;
-        let bytes = if self.import_only {
+        let (bytes, outcome) = if self.import_only {
             report.push(Severity::Info, HISTORY, "not written (--import-only)");
-            self.import_design(model, &step, report)?
+            let outcome = Outcome {
+                mode: Mode::Import,
+                check: Check::NotApplicable("--import-only".to_owned()),
+                features: Vec::new(),
+            };
+            (self.import_design(model, &step, report)?, outcome)
         } else {
             let mut history_report = Report::default();
-            match history::map(model, &mut history_report) {
+            let mapping = history::map(model, &mut history_report);
+            let flat = |reason: String| Outcome {
+                mode: Mode::Import,
+                check: Check::Flattened(reason),
+                features: mapping.features.clone(),
+            };
+            match &mapping.result {
                 Err(reason) => {
                     report.push(Severity::Info, HISTORY, format!("flattened: {reason}"));
-                    self.import_design(model, &step, report)?
+                    let outcome = if mapping.features.is_empty() {
+                        Outcome {
+                            mode: Mode::Import,
+                            check: Check::NotApplicable(reason.clone()),
+                            features: Vec::new(),
+                        }
+                    } else {
+                        flat(reason.clone())
+                    };
+                    (self.import_design(model, &step, report)?, outcome)
                 }
                 Ok(history) => {
-                    let written = self.history_design(model, &history, &step, Live::History)?;
+                    let written = self.history_design(model, history, &step, Live::History)?;
                     let summary =
                         format!("{} of {} features mapped", history.mapped, history.total);
-                    match self.check(model, &history, &step, &written)? {
-                        Outcome::Matches => {
+                    let written_as = |check| Outcome {
+                        mode: Mode::History,
+                        check,
+                        features: mapping.features.clone(),
+                    };
+                    match self.check(model, history, &step, &written)? {
+                        verify::Outcome::Matches => {
                             report.append(history_report);
                             report.push(
                                 Severity::Info,
                                 HISTORY,
                                 format!("{summary}; verified against the original in SolidCraft"),
                             );
-                            written
+                            (written, written_as(Check::Verified))
                         }
-                        Outcome::Unverified(why) => {
+                        verify::Outcome::Unverified(why) => {
                             report.append(history_report);
                             report.push(
                                 Severity::Info,
                                 HISTORY,
                                 format!("{summary}; unverified: {why}"),
                             );
-                            written
+                            (written, written_as(Check::Unverified(why)))
                         }
-                        Outcome::Differs(why) => {
-                            report.push(
-                                Severity::Info,
-                                HISTORY,
-                                format!("flattened: replay differs ({why})"),
-                            );
-                            self.import_design(model, &step, report)?
+                        verify::Outcome::Differs(why) => {
+                            let reason = format!("replay differs ({why})");
+                            report.push(Severity::Info, HISTORY, format!("flattened: {reason}"));
+                            (self.import_design(model, &step, report)?, flat(reason))
                         }
                     }
                 }
             }
         };
+        report.set_outcome(outcome);
         out.write_all(&bytes)
             .map_err(|err| Error::Encode(format!("cannot write the design: {err}")))
     }

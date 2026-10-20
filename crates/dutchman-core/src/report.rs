@@ -30,8 +30,12 @@ impl From<CadmpegSeverity> for Severity {
 pub struct Loss {
     /// How much it matters.
     pub severity: Severity,
-    /// What was affected, in the source's terms (for example `feature "Extrusion3"`).
+    /// What was affected, in the source's terms (for example `feature "Extrusion3"`), or the
+    /// loss code when cadmpeg reported it.
     pub subject: String,
+    /// cadmpeg's stable loss code (`step/attribute.source-record-not-written`), when cadmpeg
+    /// reported the loss.
+    pub code: Option<String>,
     /// What happened to it.
     pub detail: String,
 }
@@ -52,6 +56,66 @@ impl fmt::Display for Loss {
 #[derive(Clone, Debug, Default)]
 pub struct Report {
     losses: Vec<Loss>,
+    outcome: Option<Outcome>,
+}
+
+/// What a writer made of the design: which form it wrote and what became of the history.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Outcome {
+    /// The form written.
+    pub mode: Mode,
+    /// Whether a written history was checked against the original geometry.
+    pub check: Check,
+    /// What became of each source feature, in timeline order.
+    pub features: Vec<FeatureOutcome>,
+}
+
+/// The form a design was written in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    /// Editable feature history, with the original geometry kept beside it.
+    History,
+    /// The geometry alone, without history.
+    Import,
+}
+
+/// What became of the history's check, with the reason where there is one.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Check {
+    /// The replayed history matched the original geometry.
+    Verified,
+    /// The history was written without being checked.
+    Unverified(String),
+    /// No history was written: it did not map, or its replay did not match.
+    Flattened(String),
+    /// There was no history to write, or it was not asked for.
+    NotApplicable(String),
+}
+
+/// What became of one source feature.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FeatureOutcome {
+    /// Its name in the source, when it has one.
+    pub name: Option<String>,
+    /// Its kind in cadmpeg's model (`extrude`, `sketch`, …).
+    pub kind: String,
+    /// Whether it mapped.
+    pub status: FeatureStatus,
+    /// Why it did not map, or was left out.
+    pub reason: Option<String>,
+}
+
+/// Whether a source feature mapped.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FeatureStatus {
+    /// It became a feature of the target.
+    Mapped,
+    /// The target needs no feature for it (a principal datum plane).
+    NotNeeded,
+    /// It was suppressed in the source and left out.
+    LeftOut,
+    /// It does not map, so the history cannot be written.
+    Blocked,
 }
 
 impl Report {
@@ -65,6 +129,7 @@ impl Report {
         self.losses.push(Loss {
             severity,
             subject: subject.into(),
+            code: None,
             detail: detail.into(),
         });
     }
@@ -72,17 +137,29 @@ impl Report {
     /// Records cadmpeg's loss notes (from a decode or an export), each under its loss code.
     pub fn extend_from_cadmpeg<'a>(&mut self, notes: impl IntoIterator<Item = &'a LossNote>) {
         for note in notes {
-            self.push(
-                note.severity.into(),
-                note.code.to_string(),
-                note.message.clone(),
-            );
+            let code = note.code.to_string();
+            self.losses.push(Loss {
+                severity: note.severity.into(),
+                subject: code.clone(),
+                code: Some(code),
+                detail: note.message.clone(),
+            });
         }
     }
 
     /// Records every loss of `other`, after this report's own.
     pub fn append(&mut self, other: Report) {
         self.losses.extend(other.losses);
+    }
+
+    /// Records what the writer made of the design.
+    pub fn set_outcome(&mut self, outcome: Outcome) {
+        self.outcome = Some(outcome);
+    }
+
+    /// What the writer made of the design, when it said.
+    pub fn outcome(&self) -> Option<&Outcome> {
+        self.outcome.as_ref()
     }
 
     /// The recorded losses, in the order they occurred.

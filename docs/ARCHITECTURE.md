@@ -141,7 +141,9 @@ written and reported unverified. `--import-only` always writes the import design
   flattened to a body) or `Dropped`. cadmpeg's own `DecodeReport` / `LossNote`s are folded
   into the same report, so the user sees one list.
 - The CLI prints losses to stderr and exits 0 on success, 1 on a conversion error, 2 on a
-  usage error.
+  usage error. With `--json`, `convert` and `inspect` print one report on stdout instead, with
+  stable field names (`docs/json.md`). The writer records a structured outcome in the `Report`
+  (mode written, the history's check, each feature's status) that the JSON is built from.
 
 ## Never crash
 
