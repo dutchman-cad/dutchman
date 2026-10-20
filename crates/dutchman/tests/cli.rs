@@ -98,3 +98,47 @@ fn convert_leaves_no_file_when_the_input_has_no_geometry() {
     assert!(stderr.contains("no geometry could be read"), "{stderr}");
     assert!(!output.exists(), "no output file is created on failure");
 }
+
+#[test]
+fn convert_reports_what_became_of_the_history() {
+    let input = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../dutchman-core/tests/fixtures/generated_unit_cube.f3d"
+    );
+
+    let out = dutchman(&[
+        "convert",
+        input,
+        scratch("flat.solidcraft").to_str().unwrap(),
+    ]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("history: flattened: the file carries no feature history"),
+        "{stderr}"
+    );
+
+    let out = dutchman(&[
+        "convert",
+        "--import-only",
+        input,
+        scratch("import.solidcraft").to_str().unwrap(),
+    ]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("history: not written: import only"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn solidcraft_and_no_verify_conflict() {
+    let out = dutchman(&[
+        "convert",
+        "--no-verify",
+        "--solidcraft",
+        "/x",
+        "a.f3d",
+        "b.solidcraft",
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+}
