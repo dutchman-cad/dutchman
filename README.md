@@ -3,7 +3,8 @@
   <img alt="Dutchman" src="assets/logo/dutchman-lockup-night.png#gh-dark-mode-only" width="252">
 </h1>
 
-Dutchman converts native CAD designs into open, editable models. Reading the native file is
+Dutchman ferries CAD designs between formats: it converts native CAD designs into open,
+editable models. Reading the native file is
 done by [cadmpeg](https://github.com/cadmpeg/cadmpeg); Dutchman maps cadmpeg's model onto a
 target format, starting with [SolidCraft](https://github.com/tangency-labs/solidcraft) designs.
 
