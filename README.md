@@ -1,9 +1,6 @@
 <h1>
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/logo/dutchman-lockup-night.png">
-    <source media="(prefers-color-scheme: light)" srcset="assets/logo/dutchman-lockup.png">
-    <img alt="Dutchman" src="assets/logo/dutchman-lockup.png" width="252">
-  </picture>
+  <img alt="Dutchman" src="assets/logo/dutchman-lockup.png#gh-light-mode-only" width="252">
+  <img alt="Dutchman" src="assets/logo/dutchman-lockup-night.png#gh-dark-mode-only" width="252">
 </h1>
 
 Dutchman converts native CAD designs into open, editable models. Reading the native file is
