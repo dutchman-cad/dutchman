@@ -48,6 +48,17 @@ impl Format {
         }
     }
 
+    /// The cadmpeg codec that decodes this format, when Dutchman is built with it.
+    pub fn codec_id(self) -> Option<&'static str> {
+        match self {
+            Format::FusionArchive => Some("f3d"),
+            Format::InventorPart
+            | Format::InventorAssembly
+            | Format::SolidWorksPart
+            | Format::SolidWorksAssembly => None,
+        }
+    }
+
     /// Identifies a format from a path's extension, ignoring case.
     pub fn from_path(path: &Path) -> Option<Format> {
         let ext = path.extension()?.to_str()?;

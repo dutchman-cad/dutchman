@@ -63,3 +63,19 @@ fn missing_arguments_is_a_usage_error() {
     let out = dutchman(&["convert"]);
     assert_eq!(out.status.code(), Some(2));
 }
+
+#[test]
+fn convert_decodes_f3d_and_leaves_no_file_when_writing_fails() {
+    let input = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../dutchman-core/tests/fixtures/generated_unit_cube.f3d"
+    );
+    let output = scratch("cube.solidcraft");
+
+    let out = dutchman(&["convert", input, output.to_str().unwrap()]);
+
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("cannot encode output"), "{stderr}");
+    assert!(!output.exists(), "no output file is created on failure");
+}

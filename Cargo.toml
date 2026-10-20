@@ -13,7 +13,9 @@ repository = "https://github.com/dutchman-cad/dutchman"
 dutchman-core = { path = "crates/dutchman-core" }
 dutchman-solidcraft = { path = "crates/dutchman-solidcraft" }
 clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
+cadmpeg-core = "0.6"
 cadmpeg-ir = "0.6"
+cadmpeg-registry = { version = "0.6", default-features = false, features = ["f3d"] }
 thiserror = "2"
 
 # Never crash: hostile input must come back as an error, never as a panic.
