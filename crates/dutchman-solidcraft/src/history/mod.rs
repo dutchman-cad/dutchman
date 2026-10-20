@@ -11,6 +11,7 @@
 mod constraints;
 mod extrude;
 mod params;
+mod profile;
 mod revolve;
 mod sketch;
 

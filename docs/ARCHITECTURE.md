@@ -115,8 +115,9 @@ report says why (`history: flattened: …`). Suppressed source features are left
 reported. Mapped today: principal datum planes; planar sketches (points, lines, circles, arcs,
 reference lines, at their solved positions) with their constraints and dimensions, each
 dimension linked to its parameter (a constraint that does not map is dropped and reported,
-since the geometry is already exact); extrudes of a whole sketch or of selected sketch
-profiles, one-sided, symmetric or two-sided, blind or through all, from the sketch plane or an
+since the geometry is already exact); extrudes of a whole sketch, of selected sketch
+profiles, of profile regions (whole loops with their holes, or regions bounded by pieces of
+curves) or of selected curves, one-sided, symmetric or two-sided, blind or through all, from the sketch plane or an
 offset, as new body, join, cut or intersect; revolves about a line in the sketch plane that
 are symmetric or a full turn (CADIR does not state which way a revolve turns, so a partial
 one-sided or two-sided revolve is not mapped). Parameters keep their expressions where SolidCraft reads them the same way, else
