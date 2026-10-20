@@ -1,0 +1,13 @@
+[package]
+name = "dutchman"
+version = "0.0.1"
+edition = "2021"
+rust-version = "1.85"
+description = "Carries CAD designs between formats: decodes native design files into open, editable models (early development)"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/dutchman-cad/dutchman"
+readme = "README.md"
+keywords = ["cad", "converter", "step", "3d"]
+categories = ["command-line-utilities", "parser-implementations"]
+
+[dependencies]
