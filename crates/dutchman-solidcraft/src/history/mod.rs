@@ -11,6 +11,7 @@
 mod constraints;
 mod extrude;
 mod params;
+mod revolve;
 mod sketch;
 
 use std::collections::BTreeMap;
@@ -156,6 +157,7 @@ fn map_feature(feature: &Value, ctx: &mut Context, report: &mut Report) -> Resul
         Some("datum_principal_plane") => Ok(Mapped::Nothing),
         Some("sketch") => sketch::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some("extrude") => extrude::map(feature, definition, ctx).map(Mapped::Feature),
+        Some("revolve") => revolve::map(feature, definition, ctx).map(Mapped::Feature),
         _ => Err(format!("{} is not mapped yet", kind(feature))),
     }
 }

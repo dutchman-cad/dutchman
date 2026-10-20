@@ -46,7 +46,7 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
 }
 
 /// The sketch a profile reference uses, and the SolidCraft profile selection for it.
-fn profile(profile: Option<&Value>, ctx: &Context) -> Result<(String, Value), String> {
+pub(super) fn profile(profile: Option<&Value>, ctx: &Context) -> Result<(String, Value), String> {
     let profile = profile.ok_or("it has no profile")?;
     let kind = profile
         .get("kind")
@@ -216,7 +216,7 @@ fn start_offset(start: Option<&Value>) -> Result<Option<f64>, String> {
 }
 
 /// SolidCraft's operation for a CADIR boolean.
-fn operation(op: Option<&Value>) -> Result<&'static str, String> {
+pub(super) fn operation(op: Option<&Value>) -> Result<&'static str, String> {
     match op.and_then(Value::as_str) {
         Some("new_body") => Ok("new_body"),
         Some("join") => Ok("join"),
@@ -228,7 +228,7 @@ fn operation(op: Option<&Value>) -> Result<&'static str, String> {
 }
 
 /// The names of the bodies a new-body extrude makes, when the source names them all.
-fn body_names(feature: &Value, ctx: &Context, operation: &str) -> Option<Vec<String>> {
+pub(super) fn body_names(feature: &Value, ctx: &Context, operation: &str) -> Option<Vec<String>> {
     if operation != "new_body" {
         return None;
     }

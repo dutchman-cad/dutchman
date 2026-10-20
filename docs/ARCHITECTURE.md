@@ -117,7 +117,9 @@ reference lines, at their solved positions) with their constraints and dimension
 dimension linked to its parameter (a constraint that does not map is dropped and reported,
 since the geometry is already exact); extrudes of a whole sketch or of selected sketch
 profiles, one-sided, symmetric or two-sided, blind or through all, from the sketch plane or an
-offset, as new body, join, cut or intersect. Parameters keep their expressions where SolidCraft reads them the same way, else
+offset, as new body, join, cut or intersect; revolves about a line in the sketch plane that
+are symmetric or a full turn (CADIR does not state which way a revolve turns, so a partial
+one-sided or two-sided revolve is not mapped). Parameters keep their expressions where SolidCraft reads them the same way, else
 their evaluated values.
 
 A written history is checked in SolidCraft itself, since Dutchman has no kernel. The writer
@@ -159,8 +161,9 @@ and synthetic files from cadmpeg's public test suite (provenance in
 
 ## After v0.1
 
-- **History** (v0.2, in progress): revolve next; angle dimensions; fillet, chamfer and hole
-  follow once cadmpeg gives typed references to the edges they act on.
+- **History** (v0.2, in progress): angle dimensions; partial revolves once CADIR states the
+  turning direction; fillet, chamfer and hole once cadmpeg gives typed references to the edges
+  they act on.
 - **Assemblies**: CADIR occurrences → SolidCraft components and occurrences.
 - **Appearances and names**.
 - More formats as cadmpeg's codecs mature.
