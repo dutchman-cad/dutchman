@@ -21,7 +21,17 @@ const PARALLEL: f64 = 1e-9;
 type P2 = [f64; 2];
 
 /// A 3D vector.
-type V3 = [f64; 3];
+pub(crate) type V3 = [f64; 3];
+
+/// A mapped sketch, as later features refer to it.
+pub(crate) struct Mapped {
+    /// The SolidCraft sketch feature's id.
+    pub(crate) feature: u64,
+    /// The sketch plane's unit normal, in model space.
+    pub(crate) normal: V3,
+    /// The SolidCraft curve id of each source entity that became a curve.
+    pub(crate) curves: BTreeMap<String, String>,
+}
 
 /// Maps a sketch feature whose operation is `definition`.
 pub(crate) fn map(
@@ -43,7 +53,7 @@ pub(crate) fn map(
         .iter()
         .find(|row| row.get("id").and_then(Value::as_str) == Some(sketch_id))
         .ok_or("the sketch it binds is missing")?;
-    let plane = plane(sketch)?;
+    let (plane, normal) = plane(sketch)?;
 
     let mut builder = Builder::default();
     for entity in ctx
@@ -58,6 +68,14 @@ pub(crate) fn map(
     let name = name(feature)
         .map(str::to_owned)
         .unwrap_or_else(|| format!("Sketch{id}"));
+    ctx.sketches.insert(
+        sketch_id.to_owned(),
+        Mapped {
+            feature: id,
+            normal,
+            curves: std::mem::take(&mut builder.by_entity),
+        },
+    );
     Ok(json!({
         "id": id,
         "name": name,
@@ -72,9 +90,9 @@ pub(crate) fn map(
     }))
 }
 
-/// The SolidCraft plane of a sketch: an origin plane when the frame is one exactly, else an
-/// explicit plane with the frame's axes.
-fn plane(sketch: &Value) -> Result<Value, String> {
+/// The SolidCraft plane of a sketch, and its unit normal: an origin plane when the frame is
+/// one exactly, else an explicit plane with the frame's axes.
+fn plane(sketch: &Value) -> Result<(Value, V3), String> {
     let placement = sketch.get("placement").unwrap_or(&Value::Null);
     if placement.get("kind").and_then(Value::as_str) != Some("resolved") {
         return Err("its plane is not resolved".to_owned());
@@ -99,13 +117,14 @@ fn plane(sketch: &Value) -> Result<Value, String> {
     .into_iter()
     .find(|(_, px, py)| same(x, *px) && same(y, *py))
     .map(|(name, _, _)| name);
-    Ok(match named {
+    let plane = match named {
         Some(name) if at_origin => json!({"type": "origin", "name": name}),
         _ => json!({
             "type": "custom",
             "plane": {"origin": origin, "x_dir": x, "y_dir": y},
         }),
-    })
+    };
+    Ok((plane, normal))
 }
 
 /// SolidCraft sketch points and curves as they are built.
@@ -118,6 +137,8 @@ struct Builder {
     curves: Vec<Value>,
     /// The last number used per id prefix (`p`, `l`, `c`, `a`).
     counters: BTreeMap<&'static str, u64>,
+    /// The SolidCraft curve id of each source entity that became a curve.
+    by_entity: BTreeMap<String, String>,
 }
 
 impl Default for Builder {
@@ -128,6 +149,7 @@ impl Default for Builder {
             endpoint_refs: Vec::new(),
             curves: Vec::new(),
             counters: BTreeMap::new(),
+            by_entity: BTreeMap::new(),
         }
     }
 }
@@ -171,14 +193,19 @@ impl Builder {
         index
     }
 
+    /// Adds a curve, recording it as the one the source `entity` became.
     fn curve(
         &mut self,
+        entity: Option<&str>,
         prefix: &'static str,
         construction: bool,
         kind: Value,
         extra: &[(&str, Value)],
     ) {
         let id = self.fresh(prefix);
+        if let Some(entity) = entity {
+            self.by_entity.insert(entity.to_owned(), id.clone());
+        }
         let mut curve = json!({"id": id, "construction": construction});
         if let (Some(fields), Some(kind)) = (curve.as_object_mut(), kind.as_object()) {
             fields.extend(kind.clone());
@@ -200,6 +227,7 @@ impl Builder {
             .and_then(Value::as_array)
             .map(|refs| refs.iter().filter_map(Value::as_str).collect())
             .unwrap_or_default();
+        let source = entity.get("id").and_then(Value::as_str);
         let geometry = entity.get("geometry").unwrap_or(&Value::Null);
         let kind = geometry
             .get("kind")
@@ -220,6 +248,7 @@ impl Builder {
                     return Err(bad());
                 }
                 self.curve(
+                    source,
                     "l",
                     construction,
                     json!({"type": "line", "a": a, "b": b}),
@@ -240,6 +269,7 @@ impl Builder {
                 let a = self.point(origin, None);
                 let b = self.point(along, None);
                 self.curve(
+                    source,
                     "l",
                     true,
                     json!({"type": "line", "a": a, "b": b}),
@@ -251,6 +281,7 @@ impl Builder {
                 let radius = number(geometry.get("radius")).ok_or_else(bad)?;
                 let c = self.point(center, None);
                 self.curve(
+                    source,
                     "c",
                     construction,
                     json!({"type": "circle", "c": c, "r": radius}),
@@ -272,6 +303,7 @@ impl Builder {
                 let a = self.point(at(start), refs.first().copied());
                 let b = self.point(at(end), refs.get(1).copied());
                 self.curve(
+                    source,
                     "a",
                     construction,
                     json!({"type": "arc", "c": c, "a": a, "b": b}),
@@ -289,7 +321,7 @@ impl Builder {
     }
 }
 
-fn number(value: Option<&Value>) -> Option<f64> {
+pub(crate) fn number(value: Option<&Value>) -> Option<f64> {
     let value = value?;
     value
         .as_f64()
@@ -302,7 +334,7 @@ fn p2(value: Option<&Value>) -> Option<P2> {
     Some([number(value.get("u"))?, number(value.get("v"))?])
 }
 
-fn v3(value: Option<&Value>) -> Option<V3> {
+pub(crate) fn v3(value: Option<&Value>) -> Option<V3> {
     let value = value?;
     Some([
         number(value.get("x"))?,
@@ -315,7 +347,7 @@ fn distance(a: P2, b: P2) -> f64 {
     (a[0] - b[0]).hypot(a[1] - b[1])
 }
 
-fn dot(a: V3, b: V3) -> f64 {
+pub(crate) fn dot(a: V3, b: V3) -> f64 {
     a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
 }
 
@@ -327,7 +359,7 @@ fn cross(a: V3, b: V3) -> V3 {
     ]
 }
 
-fn unit(v: V3) -> Option<V3> {
+pub(crate) fn unit(v: V3) -> Option<V3> {
     let length = dot(v, v).sqrt();
     (length > PARALLEL && length.is_finite()).then(|| [v[0] / length, v[1] / length, v[2] / length])
 }
@@ -362,16 +394,15 @@ mod tests {
             ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0], "YZ"),
         ];
         for (normal, u, name) in cases {
-            assert_eq!(
-                plane(&frame(o, normal, u)).unwrap(),
-                json!({"type": "origin", "name": name})
-            );
+            let (plane, n) = plane(&frame(o, normal, u)).unwrap();
+            assert_eq!(plane, json!({"type": "origin", "name": name}));
+            assert_eq!(n, normal);
         }
     }
 
     #[test]
     fn other_frames_become_explicit_planes() {
-        let offset = plane(&frame([0.0, 0.0, 5.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0])).unwrap();
+        let (offset, _) = plane(&frame([0.0, 0.0, 5.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0])).unwrap();
         assert_eq!(
             offset,
             json!({"type": "custom", "plane": {
@@ -379,7 +410,7 @@ mod tests {
             }})
         );
         // XY seen from below: the normal is reversed, so it is not the XY origin plane.
-        let below = plane(&frame([0.0; 3], [0.0, 0.0, -1.0], [1.0, 0.0, 0.0])).unwrap();
+        let (below, _) = plane(&frame([0.0; 3], [0.0, 0.0, -1.0], [1.0, 0.0, 0.0])).unwrap();
         assert_eq!(below["type"], "custom");
         assert_eq!(below["plane"]["y_dir"], json!([0.0, -1.0, 0.0]));
     }
@@ -480,11 +511,7 @@ mod tests {
         )
         .unwrap();
         let wire = serde_json::to_value(&model.ir.model).unwrap();
-        let mut ctx = Context {
-            model: &wire,
-            next_id: 1,
-            builds: false,
-        };
+        let mut ctx = Context::new(&wire);
         let feature = ctx.arena("features").first().unwrap();
         let sketch = map(
             feature,

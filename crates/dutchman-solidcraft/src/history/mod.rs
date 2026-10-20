@@ -8,8 +8,11 @@
 //! the stable contract cadmpeg publishes, rather than its Rust accessors. It knows the wire
 //! versions in [`IR_VERSIONS`] and refuses others rather than misread them.
 
+mod extrude;
 mod params;
 mod sketch;
+
+use std::collections::BTreeMap;
 
 use dutchman_core::{Model, Report, Severity};
 use serde_json::Value;
@@ -44,11 +47,29 @@ struct Context<'a> {
     /// The CADIR `model` object.
     model: &'a Value,
     next_id: u64,
+    /// Mapped sketches by CADIR sketch id.
+    sketches: BTreeMap<String, sketch::Mapped>,
     /// Whether a feature that builds geometry has been mapped.
     builds: bool,
 }
 
 impl<'a> Context<'a> {
+    fn new(model: &'a Value) -> Self {
+        Context {
+            model,
+            next_id: 1,
+            sketches: BTreeMap::new(),
+            builds: false,
+        }
+    }
+
+    /// A row of a CADIR arena by id.
+    fn row(&self, arena: &str, id: &str) -> Option<&'a Value> {
+        self.arena(arena)
+            .iter()
+            .find(|row| row.get("id").and_then(Value::as_str) == Some(id))
+    }
+
     fn id(&mut self) -> u64 {
         let id = self.next_id;
         self.next_id = self.next_id.saturating_add(1);
@@ -71,11 +92,7 @@ pub(crate) fn map(model: &Model, report: &mut Report) -> Result<History, String>
         serde_json::to_value(&model.ir).map_err(|err| format!("cannot read the model: {err}"))?;
     check_version(&document)?;
     let wire = document.get("model").cloned().unwrap_or(Value::Null);
-    let mut ctx = Context {
-        model: &wire,
-        next_id: 1,
-        builds: false,
-    };
+    let mut ctx = Context::new(&wire);
     let mut features: Vec<&Value> = ctx.arena("features").iter().collect();
     if features.is_empty() {
         return Err("the file carries no feature history".to_owned());
@@ -132,6 +149,7 @@ fn map_feature(feature: &Value, ctx: &mut Context, report: &mut Report) -> Resul
     match definition.get("definition").and_then(Value::as_str) {
         Some("datum_principal_plane") => Ok(Mapped::Nothing),
         Some("sketch") => sketch::map(feature, definition, ctx, report).map(Mapped::Feature),
+        Some("extrude") => extrude::map(feature, definition, ctx).map(Mapped::Feature),
         _ => Err(format!("{} is not mapped yet", kind(feature))),
     }
 }
