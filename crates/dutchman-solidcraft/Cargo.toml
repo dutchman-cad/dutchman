@@ -9,7 +9,17 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+cadmpeg-ir.workspace = true
+cadmpeg-registry.workspace = true
 dutchman-core.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+zip.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+sha2.workspace = true
+zip.workspace = true
 
 [lints]
 workspace = true

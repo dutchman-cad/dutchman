@@ -26,6 +26,8 @@ pub struct Model {
     pub fidelity: Option<cadmpeg_ir::SourceFidelity>,
     /// The design's name, taken from the input file's name.
     pub name: String,
+    /// The input file's name (without its folder), when the model was read from a file.
+    pub source_file: Option<String>,
 }
 pub use report::{Loss, Report, Severity};
 

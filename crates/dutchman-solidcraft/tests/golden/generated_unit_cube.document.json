@@ -1,0 +1,61 @@
+{
+  "components": [
+    {
+      "id": 1,
+      "name": "generated_unit_cube",
+      "parent": 0
+    }
+  ],
+  "features": [
+    {
+      "component": 1,
+      "file": "generated_unit_cube.f3d",
+      "id": 3,
+      "name": "unit cube",
+      "step": "",
+      "step_blob": "blobs/d5fdeb9787da4dff72af65655b8bd36e33e6880de703b10a6bab04592124ad24.step",
+      "suppressed": false,
+      "type": "import"
+    }
+  ],
+  "format": "solidcraft/23",
+  "name": "generated_unit_cube",
+  "next_id": 4,
+  "occurrences": [
+    {
+      "component": 1,
+      "grounded": false,
+      "id": 2,
+      "name": "generated_unit_cube:1",
+      "parent": 0,
+      "transform": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    }
+  ],
+  "params": [],
+  "units": "mm"
+}
