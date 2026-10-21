@@ -6,37 +6,7 @@ report's schema name changes when a field does).
 
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
-## Unreleased
-
-### Command line
-
-- `convert` first prints what it wrote where, `converted  IN -> OUT (geometry without
-  history)`, as `convert-all` does for each file, now in plain words for both.
-- Long loss notes are cut to their first sentence in the text reports, marked `…`; `--verbose`
-  prints them whole. `--json` is unchanged.
-
-### Command line
-
-- `convert-all` lists each converted file's losses beneath it, as `convert` does, and counts the
-  files it skipped as not in a format it knows (`skipped` in `--json`).
-
-- `inspect` says when converting a file would fail and why (`would write: nothing; …`, and
-  `conversion` in `--json`), instead of predicting geometry it cannot write.
-
-### MCP server
-
-- A tool call with arguments the tool cannot take returns a failure report as structured
-  content too, the same shape as a failed conversion, not only text.
-
-- `--no-clobber` (`overwrite: false` in the MCP tools, and a checkbox in the desktop app) keeps an
-  existing `.solidcraft` file; that file's conversion fails instead. `--help` and the MCP tool
-  descriptions now say that an existing file is otherwise replaced.
-
-### Checks
-
-- When `solidcraft-cli` is found, geometry written without history is opened in SolidCraft too,
-  and the report says `Degraded: geometry: …` when SolidCraft shows fewer faces than the source
-  model has or warns about it.
+## 0.1.1 (2026-10-21)
 
 ### Desktop app
 
@@ -44,9 +14,12 @@ report's schema name changes when a field does).
   shows what was written and its losses, and opens in SolidCraft or in its folder. Day and Night
   themes, following the system's setting. It ships in the release archives.
 
-### Reading
+### Feature history
 
-- Reads native files with cadmpeg 0.6.3.
+- Lofts through profiles of two or more sketches map onto SolidCraft lofts, when they have no
+  guide rails or centreline and are open, smooth and solid.
+- Sweeps of a sketch profile along sketch curves map onto SolidCraft sweeps: along the whole
+  path, square to it or held as drawn, optionally twisted or guided by one rail.
 
 ### Assemblies and components
 
@@ -55,12 +28,36 @@ report's schema name changes when a field does).
 - A component holding other components converts when it is placed more than once at one level;
   such designs were wrongly refused before.
 
-### Feature history
+### Checks
 
-- Lofts through profiles of two or more sketches map onto SolidCraft lofts, when they have no
-  guide rails or centreline and are open, smooth and solid.
-- Sweeps of a sketch profile along sketch curves map onto SolidCraft sweeps: along the whole
-  path, square to it or held as drawn, optionally twisted or guided by one rail.
+- When `solidcraft-cli` is found, geometry written without history is opened in SolidCraft too,
+  and the report says `Degraded: geometry: …` when SolidCraft shows fewer faces than the source
+  model has or warns about it.
+
+### Command line
+
+- `convert` first prints what it wrote where, `converted  IN -> OUT (geometry without
+  history)`, as `convert-all` does for each file, now in plain words for both.
+- Long loss notes are cut to their first sentence in the text reports, marked `…`; `--verbose`
+  prints them whole. `--json` is unchanged.
+- `convert-all` lists each converted file's losses beneath it, as `convert` does, and counts the
+  files it skipped as not in a format it knows (`skipped` in `--json`).
+- `inspect` says when converting a file would fail and why (`would write: nothing; …`, and
+  `conversion` in `--json`), instead of predicting geometry it cannot write.
+- `--no-clobber` (`overwrite: false` in the MCP tools, and a checkbox in the desktop app) keeps an
+  existing `.solidcraft` file; that file's conversion fails instead. `--help` and the MCP tool
+  descriptions now say that an existing file is otherwise replaced.
+
+### MCP server
+
+- A tool call with arguments the tool cannot take returns a failure report as structured
+  content too, the same shape as a failed conversion, not only text.
+
+### Reading and documentation
+
+- Reads native files with cadmpeg 0.6.3.
+- The release archive's README links to the docs of its own release; the getting-started guide
+  has a complete install and sample download.
 
 ## 0.1.0 (2026-10-21)
 
