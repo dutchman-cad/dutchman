@@ -1,0 +1,450 @@
+//! A Model Context Protocol server: Dutchman's commands as tools an AI agent can call.
+//!
+//! It speaks JSON-RPC 2.0 over stdio, one message per line, as the MCP stdio transport
+//! defines. The tools are `convert`, `inspect`, `formats` and `convert_all`; each returns the
+//! JSON report the command's `--json` prints (`docs/json.md`), so an agent and a script see
+//! the same documents. A conversion that fails is a tool error carrying its failure report.
+
+use std::io::{self, BufRead, Write};
+use std::num::NonZeroUsize;
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::path::PathBuf;
+
+use serde_json::{json, Map, Value};
+
+use crate::ConvertOptions;
+
+/// The protocol versions this server speaks, newest first.
+pub const PROTOCOL_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
+
+/// The longest message read, in bytes; a longer line is answered with an error and skipped.
+pub const MAX_MESSAGE: usize = 1 << 20;
+
+// JSON-RPC error codes.
+const PARSE_ERROR: i64 = -32700;
+const INVALID_REQUEST: i64 = -32600;
+const METHOD_NOT_FOUND: i64 = -32601;
+const INVALID_PARAMS: i64 = -32602;
+const INTERNAL_ERROR: i64 = -32603;
+
+/// Answers every message on `input` on `output` until `input` ends.
+pub fn serve(mut input: impl BufRead, mut output: impl Write) -> io::Result<()> {
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        let read =
+            io::Read::take(&mut input, MAX_MESSAGE as u64 + 1).read_until(b'\n', &mut line)?;
+        if read == 0 {
+            return Ok(());
+        }
+        let reply = if line.len() > MAX_MESSAGE && line.last() != Some(&b'\n') {
+            skip_line(&mut input)?;
+            Some(error(
+                Value::Null,
+                INVALID_REQUEST,
+                &format!("message over {MAX_MESSAGE} bytes"),
+            ))
+        } else {
+            let text = String::from_utf8_lossy(&line);
+            if text.trim().is_empty() {
+                continue;
+            }
+            handle(&text)
+        };
+        if let Some(reply) = reply {
+            writeln!(output, "{reply}")?;
+            output.flush()?;
+        }
+    }
+}
+
+/// Reads and drops the rest of an over-long line.
+fn skip_line(input: &mut impl BufRead) -> io::Result<()> {
+    loop {
+        let buffer = input.fill_buf()?;
+        if buffer.is_empty() {
+            return Ok(());
+        }
+        match buffer.iter().position(|b| *b == b'\n') {
+            Some(end) => {
+                input.consume(end + 1);
+                return Ok(());
+            }
+            None => {
+                let len = buffer.len();
+                input.consume(len);
+            }
+        }
+    }
+}
+
+/// The reply to one message, or `None` for a notification.
+pub fn handle(message: &str) -> Option<Value> {
+    let request: Value = match serde_json::from_str(message) {
+        Ok(request) => request,
+        Err(err) => return Some(error(Value::Null, PARSE_ERROR, &err.to_string())),
+    };
+    let Some(fields) = request.as_object() else {
+        return Some(error(
+            Value::Null,
+            INVALID_REQUEST,
+            "a message must be one JSON object",
+        ));
+    };
+    let Some(method) = fields.get("method").and_then(Value::as_str) else {
+        // A response from the client: this server sends no requests, so there is nothing to
+        // match it with.
+        return None;
+    };
+    let id = fields.get("id").cloned()?;
+    let params = fields.get("params").cloned().unwrap_or(Value::Null);
+    // Dutchman guards every call into cadmpeg; this guards the server's own code as well.
+    let outcome = catch_unwind(AssertUnwindSafe(|| answer(method, &params)))
+        .unwrap_or_else(|_| Err((INTERNAL_ERROR, "the server failed unexpectedly".to_owned())));
+    Some(match outcome {
+        Ok(result) => json!({"jsonrpc": "2.0", "id": id, "result": result}),
+        Err((code, message)) => error(id, code, &message),
+    })
+}
+
+fn error(id: Value, code: i64, message: &str) -> Value {
+    json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
+}
+
+fn answer(method: &str, params: &Value) -> Result<Value, (i64, String)> {
+    match method {
+        "initialize" => {
+            let asked = params.get("protocolVersion").and_then(Value::as_str);
+            let version = PROTOCOL_VERSIONS
+                .iter()
+                .find(|v| Some(**v) == asked)
+                .unwrap_or(&PROTOCOL_VERSIONS[0]);
+            Ok(json!({
+                "protocolVersion": version,
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "dutchman", "version": env!("CARGO_PKG_VERSION")},
+                "instructions": "Converts native CAD files (Fusion .f3d/.f3z, Inventor .ipt/.iam, \
+                    SolidWorks .sldprt) into SolidCraft designs (.solidcraft). Use inspect to see \
+                    what a file would carry across, convert for one file, convert_all for many. \
+                    Paths are on the machine running this server; give absolute paths.",
+            }))
+        }
+        "ping" => Ok(json!({})),
+        "tools/list" => Ok(json!({"tools": tools()})),
+        "tools/call" => {
+            let name = params
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or((INVALID_PARAMS, "tools/call needs a tool name".to_owned()))?;
+            let empty = Map::new();
+            let arguments = match params.get("arguments") {
+                None | Some(Value::Null) => &empty,
+                Some(Value::Object(arguments)) => arguments,
+                Some(_) => return Err((INVALID_PARAMS, "arguments must be an object".to_owned())),
+            };
+            let report = match name {
+                "convert" => convert(arguments),
+                "inspect" => inspect(arguments),
+                "formats" => only(arguments, &[]).map(|()| crate::formats::json()),
+                "convert_all" => convert_all(arguments),
+                _ => return Err((INVALID_PARAMS, format!("no tool named {name}"))),
+            };
+            Ok(match report {
+                Ok(report) => result(&report),
+                Err(message) => {
+                    json!({"content": [{"type": "text", "text": message}], "isError": true})
+                }
+            })
+        }
+        _ => Err((METHOD_NOT_FOUND, format!("no method {method}"))),
+    }
+}
+
+/// A tool result carrying `report`: as text for every client, and as structured content;
+/// an error when the report says the run failed.
+fn result(report: &Value) -> Value {
+    json!({
+        "content": [{"type": "text", "text": report.to_string()}],
+        "structuredContent": report,
+        "isError": report.get("ok") != Some(&Value::Bool(true)),
+    })
+}
+
+/// The options every converting tool takes, as JSON Schema properties.
+fn option_properties() -> Map<String, Value> {
+    let properties = json!({
+        "import_only": {
+            "type": "boolean",
+            "description": "Write the geometry as one non-parametric import, never the feature history.",
+        },
+        "verify": {
+            "type": "boolean",
+            "description": "Check a written history against the original geometry in SolidCraft (default true; skipped, and the history marked unverified, when no SolidCraft CLI is found).",
+        },
+        "solidcraft": {
+            "type": "string",
+            "description": "Path of the SolidCraft CLI for the check (default: $SOLIDCRAFT_CLI, else solidcraft-cli on PATH).",
+        },
+        "verify_timeout": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Seconds each SolidCraft check may run before the history is written unverified (default 120).",
+        },
+    });
+    match properties {
+        Value::Object(map) => map,
+        _ => Map::new(),
+    }
+}
+
+fn tools() -> Value {
+    let input = json!({
+        "type": "string",
+        "description": "Absolute path of a native CAD file: .f3d, .f3z, .ipt, .iam or .sldprt.",
+    });
+    let mut convert = option_properties();
+    convert.insert("input".to_owned(), input.clone());
+    convert.insert(
+        "output".to_owned(),
+        json!({"type": "string", "description": "Absolute path of the .solidcraft file to write. Nothing else is written."}),
+    );
+    let mut all = option_properties();
+    all.insert(
+        "inputs".to_owned(),
+        json!({
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 1,
+            "description": "Absolute paths of files, and of folders to search (with their subfolders) for files Dutchman knows.",
+        }),
+    );
+    all.insert(
+        "out_dir".to_owned(),
+        json!({"type": "string", "description": "Absolute path of the folder to write the designs to, keeping each input folder's layout. Nothing is written outside it."}),
+    );
+    all.insert(
+        "jobs".to_owned(),
+        json!({"type": "integer", "minimum": 1, "description": "How many files to convert at once (default: the machine's cores, at most 8)."}),
+    );
+    json!([
+        {
+            "name": "convert",
+            "title": "Convert a CAD file",
+            "description": "Convert one native CAD file into a SolidCraft design, with its feature history when every feature maps, else its geometry. Returns the dutchman.convert/1 report: the mode written, the history check, each feature's status and every loss.",
+            "inputSchema": {"type": "object", "properties": convert, "required": ["input", "output"], "additionalProperties": false},
+        },
+        {
+            "name": "inspect",
+            "title": "Inspect a CAD file",
+            "description": "Read one native CAD file and report what converting it would carry across, without writing anything. Returns the dutchman.inspect/1 report.",
+            "inputSchema": {"type": "object", "properties": {"input": input}, "required": ["input"], "additionalProperties": false},
+            "annotations": {"readOnlyHint": true},
+        },
+        {
+            "name": "formats",
+            "title": "List formats",
+            "description": "List the native formats Dutchman knows and what converts from each. Returns the dutchman.formats/1 report.",
+            "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false},
+            "annotations": {"readOnlyHint": true},
+        },
+        {
+            "name": "convert_all",
+            "title": "Convert many CAD files",
+            "description": "Convert every native CAD file given, and those in the folders given, into SolidCraft designs under one folder. Returns the dutchman.convert-all/1 report, with one convert report per file.",
+            "inputSchema": {"type": "object", "properties": all, "required": ["inputs", "out_dir"], "additionalProperties": false},
+        },
+    ])
+}
+
+type Arguments = Map<String, Value>;
+
+/// Refuses arguments outside `known`, so a misspelt option is not silently ignored.
+fn only(arguments: &Arguments, known: &[&str]) -> Result<(), String> {
+    match arguments.keys().find(|key| !known.contains(&key.as_str())) {
+        Some(key) => Err(format!("unknown argument {key}")),
+        None => Ok(()),
+    }
+}
+
+fn path(arguments: &Arguments, key: &str) -> Result<PathBuf, String> {
+    match arguments.get(key) {
+        Some(Value::String(path)) if !path.is_empty() => Ok(PathBuf::from(path)),
+        Some(_) => Err(format!("{key} must be a path")),
+        None => Err(format!("{key} is required")),
+    }
+}
+
+fn flag(arguments: &Arguments, key: &str, default: bool) -> Result<bool, String> {
+    match arguments.get(key) {
+        None | Some(Value::Null) => Ok(default),
+        Some(Value::Bool(value)) => Ok(*value),
+        Some(_) => Err(format!("{key} must be true or false")),
+    }
+}
+
+fn count(arguments: &Arguments, key: &str) -> Result<Option<NonZeroUsize>, String> {
+    match arguments.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .and_then(|n| usize::try_from(n).ok())
+            .and_then(NonZeroUsize::new)
+            .map(Some)
+            .ok_or_else(|| format!("{key} must be a whole number of at least 1")),
+    }
+}
+
+const OPTIONS: [&str; 4] = ["import_only", "verify", "solidcraft", "verify_timeout"];
+
+fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
+    let defaults = ConvertOptions::default();
+    let solidcraft = match arguments.get("solidcraft") {
+        None | Some(Value::Null) => None,
+        Some(_) => Some(path(arguments, "solidcraft")?),
+    };
+    Ok(ConvertOptions {
+        import_only: flag(arguments, "import_only", false)?,
+        no_verify: !flag(arguments, "verify", true)?,
+        solidcraft,
+        verify_timeout: count(arguments, "verify_timeout")?
+            .map_or(defaults.verify_timeout, |n| n.get() as u64),
+    })
+}
+
+fn convert(arguments: &Arguments) -> Result<Value, String> {
+    only(arguments, &[&["input", "output"][..], &OPTIONS].concat())?;
+    let (input, output) = (path(arguments, "input")?, path(arguments, "output")?);
+    Ok(crate::convert(
+        &input,
+        &output,
+        &options(arguments)?.writer(),
+    ))
+}
+
+fn inspect(arguments: &Arguments) -> Result<Value, String> {
+    only(arguments, &["input"])?;
+    Ok(crate::inspect_report(&path(arguments, "input")?))
+}
+
+fn convert_all(arguments: &Arguments) -> Result<Value, String> {
+    only(
+        arguments,
+        &[&["inputs", "out_dir", "jobs"][..], &OPTIONS].concat(),
+    )?;
+    let inputs = match arguments.get("inputs") {
+        Some(Value::Array(items)) if !items.is_empty() => items
+            .iter()
+            .map(|item| match item {
+                Value::String(path) if !path.is_empty() => Ok(PathBuf::from(path)),
+                _ => Err("inputs must be paths".to_owned()),
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        Some(_) => return Err("inputs must be a list of one or more paths".to_owned()),
+        None => return Err("inputs is required".to_owned()),
+    };
+    let out_dir = path(arguments, "out_dir")?;
+    let jobs = count(arguments, "jobs")?;
+    Ok(crate::batch::convert_all(
+        &inputs,
+        &out_dir,
+        &options(arguments)?.writer(),
+        jobs,
+    ))
+}
+
+// Test helpers outside `#[test]` functions are not covered by clippy.toml's test allowances.
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
+mod tests {
+    use super::*;
+
+    fn call(name: &str, arguments: Value) -> Value {
+        let message = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": name, "arguments": arguments}});
+        handle(&message.to_string()).unwrap()
+    }
+
+    #[test]
+    fn notifications_and_responses_get_no_reply() {
+        assert!(handle(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#).is_none());
+        assert!(handle(r#"{"jsonrpc":"2.0","id":3,"result":{}}"#).is_none());
+    }
+
+    #[test]
+    fn malformed_messages_are_protocol_errors() {
+        assert_eq!(handle("{").unwrap()["error"]["code"], PARSE_ERROR);
+        assert_eq!(handle("[]").unwrap()["error"]["code"], INVALID_REQUEST);
+        let unknown = handle(r#"{"jsonrpc":"2.0","id":"a","method":"nope"}"#).unwrap();
+        assert_eq!(unknown["id"], "a");
+        assert_eq!(unknown["error"]["code"], METHOD_NOT_FOUND);
+        assert_eq!(
+            call("no_such_tool", json!({}))["error"]["code"],
+            INVALID_PARAMS
+        );
+    }
+
+    #[test]
+    fn bad_arguments_are_tool_errors() {
+        for (name, arguments, says) in [
+            ("convert", json!({"input": "a.f3d"}), "output is required"),
+            (
+                "convert",
+                json!({"input": "a.f3d", "output": 3}),
+                "output must be a path",
+            ),
+            (
+                "convert",
+                json!({"input": "a.f3d", "output": "b.solidcraft", "verfy": false}),
+                "unknown argument verfy",
+            ),
+            (
+                "convert_all",
+                json!({"inputs": [], "out_dir": "x"}),
+                "one or more paths",
+            ),
+            (
+                "convert_all",
+                json!({"inputs": ["a"], "out_dir": "x", "jobs": 0}),
+                "jobs must be",
+            ),
+            ("formats", json!({"x": 1}), "unknown argument x"),
+        ] {
+            let result = &call(name, arguments)["result"];
+            assert_eq!(result["isError"], true, "{name}");
+            let text = result["content"][0]["text"].as_str().unwrap();
+            assert!(text.contains(says), "{name}: {text}");
+        }
+    }
+
+    #[test]
+    fn a_failed_conversion_is_a_tool_error_with_its_report() {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dir.path().join("out.solidcraft");
+        let result = &call(
+            "convert",
+            json!({"input": dir.path().join("missing.f3d"), "output": output}),
+        )["result"];
+        assert_eq!(result["isError"], true);
+        assert_eq!(result["structuredContent"]["schema"], "dutchman.convert/1");
+        assert_eq!(result["structuredContent"]["ok"], false);
+        assert!(!output.exists());
+    }
+
+    #[test]
+    fn an_over_long_message_is_refused_and_the_next_one_answered() {
+        let mut input = vec![b' '; MAX_MESSAGE + 10];
+        input.push(b'\n');
+        input.extend_from_slice(b"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}\n");
+        let mut output = Vec::new();
+        serve(&input[..], &mut output).unwrap();
+        let replies: Vec<Value> = String::from_utf8(output)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(replies.len(), 2);
+        assert_eq!(replies[0]["error"]["code"], INVALID_REQUEST);
+        assert_eq!(replies[1]["id"], 2);
+        assert_eq!(replies[1]["result"], json!({}));
+    }
+}

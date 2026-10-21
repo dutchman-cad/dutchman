@@ -1,7 +1,8 @@
 # Machine-readable reports
 
 `dutchman convert --json` and `dutchman inspect --json` print one JSON object on stdout and
-nothing on stderr. The schema is named in `schema`. Within a schema version, fields are only
+nothing on stderr. The `dutchman-mcp` server's tools return the same objects, as structured
+content and as text, with `isError` set when `ok` is false. The schema is named in `schema`. Within a schema version, fields are only
 added: none is renamed, retyped or removed. A change that would break a reader gets a new
 version (`dutchman.convert/2`).
 

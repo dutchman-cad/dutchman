@@ -25,7 +25,7 @@ consumer benefits and Dutchman stays small.
 |---|---|---|
 | `dutchman-core` | Format gate, input caps, the `Writer` seam, the `Report`, the `convert` pipeline. Owns the cadmpeg decode call. | `cadmpeg-ir`, `cadmpeg-core`, `cadmpeg-registry` |
 | `dutchman-solidcraft` | Implements `Writer` for `.solidcraft`. Knows the SolidCraft design format and nothing about native formats. | `dutchman-core`, cadmpeg's STEP encoder, `zip`, `sha2`, `serde_json` |
-| `dutchman` | The CLI: `dutchman convert <in> <out.solidcraft>`. Argument parsing and printing only. | both of the above, `clap` |
+| `dutchman` | The CLI (`dutchman convert <in> <out.solidcraft>`) and the MCP server (`dutchman-mcp`), sharing one small library that sets up a conversion and builds the JSON reports both return. Argument parsing, printing and the MCP protocol only. | both of the above, `clap` |
 
 `dutchman-core` and `dutchman-solidcraft` are `publish = false` until their APIs settle. The
 `dutchman` crate is the published CLI (`cargo install dutchman`); `dutchman-cad` stays a
