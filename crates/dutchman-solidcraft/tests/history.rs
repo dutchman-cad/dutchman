@@ -809,3 +809,38 @@ fn bounds(cli: &Path, design: &[u8]) -> Vec<([f64; 3], [f64; 3])> {
         .map(|b| (corner(&b["bbox"]["min"]), corner(&b["bbox"]["max"])))
         .collect()
 }
+
+#[test]
+fn a_face_colour_becomes_a_face_look_on_that_face() {
+    let mut model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    for face in wire["model"]["faces"].as_array_mut().unwrap() {
+        if face["id"] == "synthetic:cube:face#top" {
+            face["color"] = json!({"r": 0.0, "g": 0.0, "b": 1.0, "a": 1.0});
+        }
+    }
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, _) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let faces = document["appearances"]["faces"].as_array().unwrap();
+    assert_eq!(faces.len(), 1, "only the face that differs from its body");
+    let look = &faces[0];
+    assert_eq!(look["body"], "unit cube");
+    assert_eq!(look["look"]["color"], json!([0, 0, 255]));
+    let p: Vec<f64> = look["point"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_f64().unwrap())
+        .collect();
+    assert!(
+        (p[2] - 10.0).abs() < 1e-9 && (0.0..10.0).contains(&p[0]) && (0.0..10.0).contains(&p[1]),
+        "{p:?}"
+    );
+
+    if let Some(cli) = solidcraft() {
+        assert_eq!(volumes(&cli, &written(&model).0), [1000.0]);
+    }
+}

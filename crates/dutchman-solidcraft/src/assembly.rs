@@ -321,6 +321,18 @@ impl Builder<'_> {
         self.features.append(&mut history.features);
         self.params.append(&mut history.params);
         self.looks.append(&mut history.looks);
+        if !history.face_looks.is_empty() {
+            // A face look's point is in the design's frame, which a part placed by occurrences
+            // does not have one of.
+            self.report.push(
+                Severity::Info,
+                "appearance",
+                format!(
+                    "{file}: {} face colours keep their body's colour inside an assembly",
+                    history.face_looks.len()
+                ),
+            );
+        }
         self.histories.push(check);
         Ok(true)
     }
