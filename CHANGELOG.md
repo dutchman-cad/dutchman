@@ -6,6 +6,13 @@ report's schema name changes when a field does).
 
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
+## Unreleased
+
+### Feature history
+
+- Lofts guided by one or two rails of sketch curves keep their rails. A loft along a centreline
+  still flattens, with the reason.
+
 ## 0.1.1 (2026-10-21)
 
 ### Desktop app

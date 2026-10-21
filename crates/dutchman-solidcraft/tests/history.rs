@@ -465,7 +465,7 @@ fn lofts_solidcraft_would_build_differently_flatten_the_history() {
         ),
         (
             json!({"guidance": {"kind": "centerline", "path": {"kind": "native", "value": "n"}}}),
-            "lofts along guide rails or a centreline are not mapped yet",
+            "lofts along a centreline are not mapped yet",
         ),
         (
             json!({"sections": [first_profile(), {"kind": "point", "value": {"x": 5.0, "y": 5.0, "z": 10.0}}]}),
@@ -525,6 +525,110 @@ fn a_loft_inside_an_assembly_keeps_its_own_sketches() {
             assert_eq!(sketch["component"], loft["component"]);
         }
     }
+}
+
+const RAIL: &str = "f3d:model:sketch#4";
+
+/// [`loft_history`] guided by a rail: a line up Z along the cube's edge at the origin, drawn in
+/// its own sketch on XZ before the loft.
+fn railed_loft(top: f64) -> Model {
+    let model = loft_history(top, |definition| {
+        definition["guidance"] = json!({"kind": "guides", "path": [
+            {"kind": "sketch_curves", "value": {"sketch": RAIL, "curves": ["f3d:model:sketch-entity#31"]}}
+        ]});
+    });
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    m["sketches"].as_array_mut().unwrap().push(json!({
+        "id": RAIL,
+        "name": "Rail",
+        "placement": {"kind": "resolved", "frame": {
+            "origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "normal": {"x": 0.0, "y": -1.0, "z": 0.0},
+            "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0},
+        }},
+        "profiles": [],
+    }));
+    let mut rail = line(31, [0.0, 0.0], [0.0, 10.0]);
+    rail["sketch"] = json!(RAIL);
+    m["sketch_entities"].as_array_mut().unwrap().push(rail);
+    let features = m["features"].as_array_mut().unwrap();
+    features.insert(
+        2,
+        json!({
+            "id": "f3d:model:feature#4",
+            "ordinal": 2,
+            "name": "Rail sketch",
+            "suppressed": false,
+            "definition": {"definition": "sketch", "sketch": {"space": "planar", "sketch": RAIL}},
+        }),
+    );
+    features[3]["ordinal"] = json!(3);
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    }
+}
+
+#[test]
+fn a_loft_along_a_guide_rail_keeps_its_rail() {
+    let (document, report) = convert(
+        &railed_loft(10.0),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let features = document["features"].as_array().unwrap();
+    let rail_sketch = features
+        .iter()
+        .find(|f| f["name"] == "Rail sketch")
+        .unwrap()["id"]
+        .clone();
+    let loft = features.iter().find(|f| f["type"] == "loft").unwrap();
+    let rails = loft["rails"].as_array().unwrap();
+    assert_eq!(rails.len(), 1);
+    assert_eq!(rails[0]["sketch"], rail_sketch);
+    assert_eq!(rails[0]["curves"].as_array().unwrap().len(), 1);
+    assert!(
+        history_line(&report).contains("4 of 4 features mapped"),
+        "{}",
+        history_line(&report)
+    );
+
+    // Three rails are more than SolidCraft takes.
+    let three = loft_history(10.0, |definition| {
+        let rail = json!({"kind": "sketch_curves", "value": {"sketch": TOP, "curves": ["f3d:model:sketch-entity#11"]}});
+        definition["guidance"] =
+            json!({"kind": "guides", "path": [rail.clone(), rail.clone(), rail]});
+    });
+    let (_, report) = convert(
+        &three,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("lofts along more than two guide rails are not mapped yet"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn solidcraft_lofts_along_the_rail() {
+    let Some(cli) = solidcraft() else { return };
+    let volume = volumes(&cli, &written(&railed_loft(10.0)).0);
+    assert_eq!(volume.len(), 1);
+    assert!(
+        (volume[0] - 1000.0).abs() / 1000.0 < dutchman_solidcraft::VOLUME_TOLERANCE,
+        "{volume:?}"
+    );
+    // Checked against the original cube by the writer itself.
+    let (_, report) = convert(
+        &railed_loft(10.0),
+        &SolidCraftWriter::new().verification(Verification::With(cli)),
+    );
+    assert!(
+        history_line(&report).contains("verified against the original in SolidCraft"),
+        "{}",
+        history_line(&report)
+    );
 }
 
 #[test]

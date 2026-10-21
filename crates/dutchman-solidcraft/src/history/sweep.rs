@@ -120,7 +120,11 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
 
 /// The SolidCraft sketch feature and curve ids a path of sketch curves uses; `what` names it
 /// in the reason when it cannot be mapped.
-fn curves(path: Option<&Value>, ctx: &Context, what: &str) -> Result<(u64, Vec<String>), String> {
+pub(super) fn curves(
+    path: Option<&Value>,
+    ctx: &Context,
+    what: &str,
+) -> Result<(u64, Vec<String>), String> {
     let path = path.ok_or_else(|| format!("it has no {what}"))?;
     match path.get("kind").and_then(Value::as_str) {
         Some("sketch_curves") => {}

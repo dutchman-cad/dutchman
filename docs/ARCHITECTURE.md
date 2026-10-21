@@ -122,7 +122,7 @@ curves) or of selected curves, one-sided, symmetric or two-sided, blind or throu
 offset, as new body, join, cut or intersect (a new body keeps its source name and colour); revolves about a line in the sketch plane that
 are symmetric or a full turn (CADIR does not state which way a revolve turns, so a partial
 one-sided or two-sided revolve is not mapped); lofts through profiles of two or more
-sketches, without guide rails, open, smooth and solid; sweeps of one sketch profile along
+sketches, open, smooth and solid, guided by up to two rails of sketch curves; sweeps of one sketch profile along
 sketch curves (whole path, square to it or held as drawn, optionally twisted or guided by one
 rail); patterns of earlier features, linear in one or
 two directions, or circular all the way round (features are named uniquely on the timeline,
