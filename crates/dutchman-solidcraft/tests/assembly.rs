@@ -259,25 +259,42 @@ fn evaluate(cli: &Path, design: &[u8]) -> Vec<Value> {
 }
 
 /// A design (CADIR built here from the synthetic cube) whose component owns the cube and is
-/// placed at the origin and 30 mm along X, as a Fusion design with components would be.
-fn with_components() -> Model {
+/// placed at the origin and 30 mm along X, as a Fusion design with components would be. With
+/// `nested`, both placements are inside an occurrence of the design's root component placed
+/// 100 mm along X, as cadmpeg places the components a Fusion root component contains.
+fn with_components(nested: bool) -> Model {
     let part = placed_twice().assembly.unwrap().parts[0].clone();
     let mut wire = serde_json::to_value(&part.ir).unwrap();
     let body = wire["model"]["bodies"][0]["id"].clone();
-    wire["model"]["product_definitions"] = serde_json::json!([{
-        "id": "f3d:model:component#block", "kind": "part", "label": "Block", "bodies": [body],
-    }]);
-    let placed = |key: u32, x: f64| {
+    wire["model"]["product_definitions"] = serde_json::json!([
+        {"id": "f3d:model:component#block", "kind": "part", "label": "Block", "bodies": [body]},
+        {"id": "f3d:model:component#root", "kind": "part", "label": "Top", "bodies": []},
+    ]);
+    let placed = |key: u32, definition: &str, x: f64, parent: Value| {
         serde_json::json!({
             "id": format!("f3d:model:occurrence#{key}"),
-            "prototype": {"scope": "local", "definition": "f3d:model:component#block"},
-            "parent": {"kind": "root"},
+            "prototype": {"scope": "local", "definition": format!("f3d:model:component#{definition}")},
+            "parent": parent,
             "ordinal": key,
             "transform": [[1.0, 0.0, 0.0, x], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
             "scale": [1.0, 1.0, 1.0],
         })
     };
-    wire["model"]["occurrences"] = serde_json::json!([placed(0, 0.0), placed(1, 30.0)]);
+    let root = serde_json::json!({"kind": "root"});
+    wire["model"]["occurrences"] = if nested {
+        let inside =
+            serde_json::json!({"kind": "occurrence", "occurrence": "f3d:model:occurrence#9"});
+        serde_json::json!([
+            placed(9, "root", 100.0, root),
+            placed(0, "block", 0.0, inside.clone()),
+            placed(1, "block", 30.0, inside),
+        ])
+    } else {
+        serde_json::json!([
+            placed(0, "block", 0.0, root.clone()),
+            placed(1, "block", 30.0, root)
+        ])
+    };
     let mut model = Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         name: "blocks".to_owned(),
@@ -289,7 +306,7 @@ fn with_components() -> Model {
 
 #[test]
 fn a_design_with_components_becomes_components_and_occurrences() {
-    let (bytes, _) = written(&with_components());
+    let (bytes, _) = written(&with_components(false));
     let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
     let mut text = String::new();
     archive
@@ -308,12 +325,55 @@ fn solidcraft_places_each_component_occurrence() {
         eprintln!("skipped: set {CLI_ENV} to open the design in SolidCraft");
         return;
     };
-    let (bytes, _) = written(&with_components());
-    let bodies = evaluate(&cli, &bytes);
-    assert_eq!(bodies.len(), 2, "{bodies:?}");
-    let min_x = |body: &Value| body["bbox"]["min"][0].as_f64().unwrap();
-    assert!(
-        (min_x(&bodies[1]) - min_x(&bodies[0]) - 30.0).abs() < 1e-6,
-        "{bodies:?}"
+    for nested in [false, true] {
+        let (bytes, _) = written(&with_components(nested));
+        let bodies = evaluate(&cli, &bytes);
+        assert_eq!(bodies.len(), 2, "{bodies:?}");
+        let mut min_x: Vec<f64> = bodies
+            .iter()
+            .map(|body| body["bbox"]["min"][0].as_f64().unwrap())
+            .collect();
+        min_x.sort_by(f64::total_cmp);
+        assert!((min_x[1] - min_x[0] - 30.0).abs() < 1e-6, "{bodies:?}");
+        if nested {
+            // The cube's own minimum, moved by the outer occurrence.
+            let (flat, _) = written(&with_components(false));
+            let flat_min = evaluate(&cli, &flat)
+                .iter()
+                .map(|body| body["bbox"]["min"][0].as_f64().unwrap())
+                .fold(f64::INFINITY, f64::min);
+            assert!((min_x[0] - flat_min - 100.0).abs() < 1e-6, "{bodies:?}");
+        }
+    }
+}
+
+#[test]
+fn components_inside_a_component_stay_beneath_it() {
+    let (bytes, _) = written(&with_components(true));
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut text = String::new();
+    archive
+        .by_name("document.json")
+        .unwrap()
+        .read_to_string(&mut text)
+        .unwrap();
+    let document: Value = serde_json::from_str(&text).unwrap();
+    let components = document["components"].as_array().unwrap();
+    let id_of = |name: &str| {
+        components
+            .iter()
+            .find(|c| c["name"] == name)
+            .unwrap_or_else(|| panic!("{name} in {components:?}"))["id"]
+            .clone()
+    };
+    let (top, block) = (id_of("Top"), id_of("Block"));
+    assert_eq!(
+        components.iter().find(|c| c["id"] == block).unwrap()["parent"],
+        top
     );
+    let occurrences = document["occurrences"].as_array().unwrap();
+    assert_eq!(occurrences.len(), 3);
+    let inside: Vec<&Value> = occurrences.iter().filter(|o| o["parent"] == top).collect();
+    assert_eq!(inside.len(), 2);
+    assert!(inside.iter().all(|o| o["component"] == block));
 }
