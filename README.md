@@ -66,6 +66,8 @@ desktop portal, and dropping files works without it.
   explain the results.
 - [JSON reports](docs/json.md): every field of the `--json` reports, and
   [the anonymous batch report](docs/report-anon.md) that is safe to share.
+- [Testing Dutchman on your library](docs/testing-your-library.md): convert your own files
+  and report what broke, without sharing a file.
 - Formats: [Fusion](docs/fusion.md), [Inventor](docs/inventor.md),
   [SolidWorks](docs/sldprt.md).
 - Contributing: [CONTRIBUTING.md](CONTRIBUTING.md), and [AGENTS.md](AGENTS.md) for AI

@@ -25,6 +25,9 @@ report's schema name changes when a field does).
   Each `convert-all` result gives its `elapsed_ms`, and the report counts skipped files by
   extension.
 - Formats Dutchman does not convert yet point to Dutchman's issues rather than cadmpeg's.
+- New guide, [Testing Dutchman on your library](docs/testing-your-library.md), with a
+  library test report issue form; [docs/triage.md](docs/triage.md) says how reports are sorted
+  and taken upstream.
 
 ### Feature history
 

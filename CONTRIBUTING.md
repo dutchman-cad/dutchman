@@ -16,9 +16,13 @@ Only share files you made yourself and are free to share. Please don't attach de
 your employer or customers, or models downloaded from model libraries. A small part made for
 the report, with the one feature that goes wrong, is the most useful.
 
-Many problems in reading a native file belong to cadmpeg. If the loss report or the error
-names something cadmpeg reads (a `f3d/…`, `inventor/…` or `sldprt/…` code), it may be
-reported there as well.
+Always report it here, on Dutchman, even when the report names cadmpeg or SolidCraft (an
+`upstream` field, or a `f3d/…`, `inventor/…` or `sldprt/…` loss code). Don't file it on cadmpeg
+or SolidCraft yourself: we work out where the fix belongs, take it upstream, and tell you here
+when a Dutchman release has it. [docs/triage.md](docs/triage.md) says how.
+
+To test Dutchman on a whole library of your own without sharing a file, see
+[Testing Dutchman on your library](docs/testing-your-library.md) and its issue form.
 
 ## Building and checking
 
