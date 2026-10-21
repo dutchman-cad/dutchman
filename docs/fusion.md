@@ -26,18 +26,26 @@ transform, and each component as a product definition.
 - **When it does not,** the design converts as stored and the report says so (Degraded,
   `components`): the geometry is written once, so a placement whose geometry the file does
   not store separately is not shown.
-- **Components inside components** are not converted yet; the design converts as stored and
-  the report says so.
+- **Components inside components** become sub-assemblies: a component that holds others
+  becomes a SolidCraft component with them beneath it, placed by occurrences inside it, and its
+  own bodies as one more component at its origin. cadmpeg places the components a design's root
+  component contains inside one occurrence of that root component, so such a design converts
+  as the root component with its components beneath it. A component placed several times must
+  hold the same components in the same places each time; when it does not, or when a placement
+  is inside an occurrence the design does not place, the design converts as stored and the
+  report says why.
 
 ### Upstream gaps
 
-1. **Component bodies.** cadmpeg 0.6 leaves `product_definitions[].bodies` empty for Fusion
-   components, so nothing says which bodies a component owns. This is the blocker for Fusion
-   components: once cadmpeg fills it, Dutchman writes components with no change of its own.
-2. **Nested components.** Occurrences placed inside other occurrences.
+1. **Component bodies.** cadmpeg says which bodies a component owns when the file binds the
+   component to its entities (its naming space): the bodies whose body-map entries lie in the
+   component's entity range. A component placed by an operation the file does not bind (as in
+   some copy-and-paste designs) has no bodies, so that design converts as stored.
+2. **Joints and constraints between components** (cadmpeg lists intra-document
+   multi-component structure and constraints as open).
 3. **Joints and constraints between components** (cadmpeg lists intra-document
    multi-component structure and constraints as open).
-4. **Shared:** cadmpeg/cadmpeg#255 (STEP face loops written reversed).
+3. **Shared:** cadmpeg/cadmpeg#255 (STEP face loops written reversed).
 
 `.f3z` multi-document archives (a design with the designs it references) convert like `.f3d`:
 cadmpeg merges the referenced designs into the root design with their placements, as

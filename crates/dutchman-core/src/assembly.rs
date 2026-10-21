@@ -263,12 +263,6 @@ pub fn local_assembly(model: &Model) -> Result<Option<Assembly>, String> {
         return Err(format!("it places over {MAX_PLACEMENTS} components"));
     }
     occurrences.sort_by_key(|row| row.get("ordinal").and_then(Value::as_u64));
-    if occurrences
-        .iter()
-        .any(|row| row.pointer("/parent/kind").and_then(Value::as_str) != Some("root"))
-    {
-        return Err("components inside components are not converted yet".to_owned());
-    }
 
     let definitions: BTreeMap<&str, &Value> = arena("product_definitions")
         .iter()
@@ -280,49 +274,39 @@ pub fn local_assembly(model: &Model) -> Result<Option<Assembly>, String> {
         .flatten()
         .filter_map(Value::as_str)
         .collect();
-
-    let mut parts = Vec::new();
-    let mut part_of: BTreeMap<&str, usize> = BTreeMap::new();
-    let mut placements = Vec::new();
+    // Each occurrence's children, by the id of the occurrence they are placed in.
+    let mut children: BTreeMap<&str, Vec<&Value>> = BTreeMap::new();
+    let mut roots = Vec::new();
     for occurrence in &occurrences {
-        let definition = occurrence
-            .pointer("/prototype/definition")
-            .and_then(Value::as_str)
-            .ok_or("a component placement names no component")?;
-        let part = match part_of.get(definition) {
-            Some(part) => *part,
-            None => {
-                let row = definitions
-                    .get(definition)
-                    .ok_or("a component placement names a component the design lacks")?;
-                let bodies: Vec<&str> = row
-                    .get("bodies")
-                    .and_then(Value::as_array)
-                    .map(|bodies| bodies.iter().filter_map(Value::as_str).collect())
-                    .unwrap_or_default();
-                if bodies.is_empty() {
-                    return Err(format!(
-                        "cadmpeg does not say which bodies belong to component {}",
-                        name_of(row).unwrap_or(definition)
-                    ));
-                }
-                let name = name_of(row)
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| format!("{} component {}", model.name, parts.len() + 1));
-                parts.push(only(model, &document, &bodies, name)?);
-                part_of.insert(definition, parts.len() - 1);
-                parts.len() - 1
+        match occurrence.pointer("/parent/kind").and_then(Value::as_str) {
+            Some("root") => roots.push(*occurrence),
+            _ => {
+                let parent = occurrence
+                    .pointer("/parent/occurrence")
+                    .and_then(Value::as_str)
+                    .ok_or("a component placement names no parent")?;
+                children.entry(parent).or_default().push(*occurrence);
             }
-        };
-        placements.push(Placement {
-            name: occurrence
-                .get("name")
-                .and_then(Value::as_str)
-                .map(str::to_owned),
-            part,
-            transform: transform(occurrence)?,
-        });
+        }
     }
+
+    let mut tree = Tree {
+        model,
+        document: &document,
+        definitions,
+        children,
+        built: BTreeMap::new(),
+        parts: Vec::new(),
+        placed: 0,
+        open: Vec::new(),
+    };
+    let mut placements = tree.placements(&roots)?;
+    if tree.placed != occurrences.len() {
+        return Err(
+            "some components are placed inside components the design does not place".to_owned(),
+        );
+    }
+    let mut parts = std::mem::take(&mut tree.parts);
 
     // Bodies no component owns are the design's own, placed where they are.
     let loose: Vec<&str> = arena("bodies")
@@ -335,14 +319,136 @@ pub fn local_assembly(model: &Model) -> Result<Option<Assembly>, String> {
         placements.push(Placement {
             name: None,
             part: parts.len() - 1,
-            transform: [
-                [1.0, 0.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0],
-            ],
+            transform: IDENTITY,
         });
     }
     Ok(Some(Assembly { parts, placements }))
+}
+
+/// The identity placement, row-major 3 × 4.
+const IDENTITY: [[f64; 4]; 3] = [
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+];
+
+/// A definition built into a part: the part, and the components it holds (each one's
+/// definition and placement), which every other occurrence of it at that level must match.
+type Built = (usize, Vec<(String, [[f64; 4]; 3])>);
+
+/// A design's occurrence tree, turned into parts and sub-assemblies one definition at a time.
+struct Tree<'a> {
+    model: &'a Model,
+    document: &'a Value,
+    definitions: BTreeMap<&'a str, &'a Value>,
+    /// Occurrences placed inside each occurrence, by its id.
+    children: BTreeMap<&'a str, Vec<&'a Value>>,
+    /// The definitions built so far at the level being built.
+    built: BTreeMap<&'a str, Built>,
+    /// The parts of the level being built.
+    parts: Vec<Model>,
+    /// How many occurrences have been placed, to find those placed in nothing the design places.
+    placed: usize,
+    /// The occurrences being built, outermost first, to refuse a placement inside itself.
+    open: Vec<&'a str>,
+}
+
+impl<'a> Tree<'a> {
+    /// The placements of `occurrences` among `self.parts`.
+    fn placements(&mut self, occurrences: &[&'a Value]) -> Result<Vec<Placement>, String> {
+        let mut placements = Vec::with_capacity(occurrences.len());
+        for occurrence in occurrences {
+            self.placed += 1;
+            placements.push(Placement {
+                name: occurrence
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                part: self.part(occurrence)?,
+                transform: transform(occurrence)?,
+            });
+        }
+        Ok(placements)
+    }
+
+    /// The part an occurrence places: its definition's bodies, and, when components are
+    /// placed inside it, those as a sub-assembly beside them.
+    fn part(&mut self, occurrence: &'a Value) -> Result<usize, String> {
+        let definition = occurrence
+            .pointer("/prototype/definition")
+            .and_then(Value::as_str)
+            .ok_or("a component placement names no component")?;
+        let id = occurrence.get("id").and_then(Value::as_str).unwrap_or("");
+        let inner: Vec<&'a Value> = self.children.get(id).cloned().unwrap_or_default();
+        let signature = inner
+            .iter()
+            .map(|child| {
+                let definition = child
+                    .pointer("/prototype/definition")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_owned();
+                transform(child).map(|t| (definition, t))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if let Some((part, built_with)) = self.built.get(definition) {
+            return if *built_with == signature {
+                Ok(*part)
+            } else {
+                Err("one component holds different components where it is placed".to_owned())
+            };
+        }
+        if self.open.contains(&id) || self.open.len() >= MAX_DEPTH {
+            return Err("its components nest too deep or inside themselves".to_owned());
+        }
+        let row = self
+            .definitions
+            .get(definition)
+            .ok_or("a component placement names a component the design lacks")?;
+        let bodies: Vec<&str> = row
+            .get("bodies")
+            .and_then(Value::as_array)
+            .map(|bodies| bodies.iter().filter_map(Value::as_str).collect())
+            .unwrap_or_default();
+        let name = name_of(row)
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("{} component {}", self.model.name, self.parts.len() + 1));
+        let model = if inner.is_empty() {
+            if bodies.is_empty() {
+                return Err(format!(
+                    "cadmpeg does not say which bodies belong to component {}",
+                    name_of(row).unwrap_or(definition)
+                ));
+            }
+            only(self.model, self.document, &bodies, name)?
+        } else {
+            // A sub-assembly: the components inside it, and its own bodies at its origin.
+            let outer = std::mem::take(&mut self.parts);
+            let outer_built = std::mem::take(&mut self.built);
+            self.open.push(id);
+            let placed = self.placements(&inner);
+            self.open.pop();
+            let mut placements = placed?;
+            if !bodies.is_empty() {
+                let own = only(self.model, self.document, &bodies, format!("{name} bodies"))?;
+                self.parts.push(own);
+                placements.push(Placement {
+                    name: None,
+                    part: self.parts.len() - 1,
+                    transform: IDENTITY,
+                });
+            }
+            let parts = std::mem::replace(&mut self.parts, outer);
+            self.built = outer_built;
+            let mut holder = only(self.model, self.document, &[], name)?;
+            holder.assembly = Some(Assembly { parts, placements });
+            holder
+        };
+        self.parts.push(model);
+        let index = self.parts.len() - 1;
+        self.built.insert(definition, (index, signature));
+        Ok(index)
+    }
 }
 
 fn name_of(definition: &Value) -> Option<&str> {
@@ -749,9 +855,8 @@ mod tests {
     }
 
     /// cadmpeg's example 10 mm cube in a design whose component `Block` owns it, placed at
-    /// the origin and 30 mm along X, plus `loose` (a copy of the cube no component owns) when
-    /// asked.
-    fn with_components(owned: bool, nested: bool) -> Model {
+    /// the origin and 30 mm along X; with `owned` false the component does not say what it owns.
+    fn with_components(owned: bool) -> Model {
         let part = crate::read(
             Format::InventorPart,
             &fixture("synthetic_cube.ipt"),
@@ -777,13 +882,7 @@ mod tests {
                 "scale": [1.0, 1.0, 1.0],
             })
         };
-        let second_parent = if nested {
-            json!({"kind": "occurrence", "occurrence": "f3d:model:occurrence#0"})
-        } else {
-            root()
-        };
-        wire["model"]["occurrences"] =
-            json!([placed(0, 0.0, root()), placed(1, 30.0, second_parent)]);
+        wire["model"]["occurrences"] = json!([placed(0, 0.0, root()), placed(1, 30.0, root())]);
         Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
             ..part
@@ -792,9 +891,7 @@ mod tests {
 
     #[test]
     fn components_that_own_their_bodies_become_an_assembly() {
-        let assembly = local_assembly(&with_components(true, false))
-            .unwrap()
-            .unwrap();
+        let assembly = local_assembly(&with_components(true)).unwrap().unwrap();
         assert_eq!(assembly.parts.len(), 1);
         let part = &assembly.parts[0];
         assert_eq!(part.name, "Block");
@@ -807,13 +904,116 @@ mod tests {
 
     #[test]
     fn components_that_do_not_say_what_they_own_convert_as_stored() {
-        let err = local_assembly(&with_components(false, false)).unwrap_err();
+        let err = local_assembly(&with_components(false)).unwrap_err();
         assert_eq!(
             err,
             "cadmpeg does not say which bodies belong to component Block"
         );
-        let err = local_assembly(&with_components(true, true)).unwrap_err();
-        assert_eq!(err, "components inside components are not converted yet");
+    }
+
+    /// cadmpeg's example cube, owned by component `Block`, placed twice inside a `Frame`
+    /// placed 100 mm along X. `frame_owns` gives the frame the cube too; `rows` replaces the
+    /// occurrences.
+    fn nested(frame_owns: bool, rows: Option<Value>) -> Model {
+        let part = crate::read(
+            Format::InventorPart,
+            &fixture("synthetic_cube.ipt"),
+            &mut Report::default(),
+        )
+        .unwrap();
+        let mut wire = serde_json::to_value(&part.ir).unwrap();
+        let body = wire["model"]["bodies"][0]["id"].clone();
+        let frame_bodies = if frame_owns { json!([body]) } else { json!([]) };
+        wire["model"]["product_definitions"] = json!([
+            {"id": "f3d:model:component#frame", "kind": "part", "label": "Frame", "bodies": frame_bodies},
+            {"id": "f3d:model:component#block", "kind": "part", "label": "Block", "bodies": [body]},
+        ]);
+        wire["model"]["occurrences"] = rows.unwrap_or_else(|| {
+            json!([
+                placed(0, "frame", root(), 100.0),
+                placed(1, "block", inside(0), 0.0),
+                placed(2, "block", inside(0), 30.0),
+            ])
+        });
+        Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..part
+        }
+    }
+
+    fn placed(key: u32, definition: &str, parent: Value, x: f64) -> Value {
+        json!({
+            "id": format!("f3d:model:occurrence#{key}"),
+            "prototype": {"scope": "local", "definition": format!("f3d:model:component#{definition}")},
+            "parent": parent,
+            "ordinal": key,
+            "transform": [[1.0, 0.0, 0.0, x], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
+            "scale": [1.0, 1.0, 1.0],
+        })
+    }
+
+    fn inside(key: u32) -> Value {
+        json!({"kind": "occurrence", "occurrence": format!("f3d:model:occurrence#{key}")})
+    }
+
+    #[test]
+    fn components_inside_components_become_sub_assemblies() {
+        let assembly = local_assembly(&nested(false, None)).unwrap().unwrap();
+        assert_eq!(assembly.parts.len(), 1);
+        assert_eq!(assembly.placements.len(), 1);
+        assert_eq!(assembly.placements[0].transform[0][3], 100.0);
+        let frame = &assembly.parts[0];
+        assert_eq!(frame.name, "Frame");
+        assert!(frame.ir.model.bodies.is_empty());
+        let inner = frame.assembly.as_ref().unwrap();
+        assert_eq!(inner.parts.len(), 1, "Block is read once");
+        assert_eq!(inner.parts[0].name, "Block");
+        assert_eq!(inner.parts[0].ir.model.bodies.len(), 1);
+        let xs: Vec<f64> = inner.placements.iter().map(|p| p.transform[0][3]).collect();
+        assert_eq!(xs, [0.0, 30.0]);
+    }
+
+    #[test]
+    fn a_component_holding_others_keeps_its_own_bodies_beside_them() {
+        let assembly = local_assembly(&nested(true, None)).unwrap().unwrap();
+        let inner = assembly.parts[0].assembly.as_ref().unwrap();
+        assert_eq!(inner.parts.len(), 2);
+        assert_eq!(inner.parts[1].name, "Frame bodies");
+        assert_eq!(inner.placements.len(), 3);
+        assert_eq!(inner.placements[2].part, 1);
+        assert_eq!(inner.placements[2].transform, IDENTITY);
+    }
+
+    #[test]
+    fn nested_components_that_do_not_hold_together_convert_as_stored() {
+        // Two frames, holding blocks in different places.
+        let err = local_assembly(&nested(
+            false,
+            Some(json!([
+                placed(0, "frame", root(), 0.0),
+                placed(1, "frame", root(), 100.0),
+                placed(2, "block", inside(0), 0.0),
+                placed(3, "block", inside(1), 30.0),
+            ])),
+        ))
+        .unwrap_err();
+        assert_eq!(
+            err,
+            "one component holds different components where it is placed"
+        );
+        // A block placed inside an occurrence the design does not have.
+        let err = local_assembly(&nested(
+            false,
+            Some(json!([
+                placed(0, "block", root(), 0.0),
+                placed(1, "block", inside(7), 0.0),
+            ])),
+        ))
+        .unwrap_err();
+        assert_eq!(
+            err,
+            "some components are placed inside components the design does not place"
+        );
     }
 
     #[test]
