@@ -11,7 +11,7 @@ pin is bumped.
 |---|---|
 | The design's B-rep, with body transforms applied. | Converts it: restated as STEP, written as SolidCraft's import. |
 | Parameters, planar sketches with typed and native constraints. | Mapped; native constraints are reported as not carried. |
-| Typed extrudes, revolves, fillets, chamfers and more, with selections often native. | Extrudes and revolves map (see ARCHITECTURE.md for the cases); fillet, chamfer and hole wait on typed edge and face references. |
+| Typed extrudes, revolves, fillets, chamfers and more, with selections often native. | Extrudes, revolves and lofts map (see ARCHITECTURE.md for the cases); fillet, chamfer and hole wait on typed edge and face references. |
 
 ## Components
 

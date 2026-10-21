@@ -11,6 +11,7 @@
 mod constraints;
 mod extrude;
 mod faces;
+mod loft;
 mod params;
 mod pattern;
 mod profile;
@@ -107,6 +108,22 @@ impl History {
             for key in ["id", "sketch"] {
                 if let Some(id) = fields.get(key).and_then(Value::as_u64) {
                     fields.insert(key.to_owned(), Value::from(id.saturating_add(offset)));
+                }
+            }
+            // A loft names the sketch of each section.
+            for section in fields
+                .get_mut("sections")
+                .and_then(Value::as_array_mut)
+                .into_iter()
+                .flatten()
+            {
+                if let Some(sketch) = section.get("sketch").and_then(Value::as_u64) {
+                    if let Some(section) = section.as_object_mut() {
+                        section.insert(
+                            "sketch".to_owned(),
+                            Value::from(sketch.saturating_add(offset)),
+                        );
+                    }
                 }
             }
             fields.insert("component".to_owned(), Value::from(component));
@@ -395,6 +412,7 @@ fn map_feature(feature: &Value, ctx: &mut Context, report: &mut Report) -> Resul
         Some("sketch") => sketch::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some("extrude") => extrude::map(feature, definition, ctx).map(Mapped::Feature),
         Some("revolve") => revolve::map(feature, definition, ctx).map(Mapped::Feature),
+        Some("loft") => loft::map(feature, definition, ctx).map(Mapped::Feature),
         Some("pattern") => pattern::map(feature, definition, ctx).map(Mapped::Feature),
         _ => Err(format!("{} is not mapped yet", kind(feature))),
     }

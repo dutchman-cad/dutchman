@@ -157,6 +157,187 @@ fn cube_with_history(length: f64, profile: Value, extent: Option<Value>) -> Mode
     }
 }
 
+const TOP: &str = "f3d:model:sketch#2";
+
+/// The example cube built instead by a loft from its 10 mm base square to a square of side
+/// `top` centred above it, 10 mm up; `change` edits the loft's definition.
+fn loft_history(top: f64, change: impl FnOnce(&mut Value)) -> Model {
+    let base = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let model = &mut wire["model"];
+    let mut sketches = model["sketches"].as_array().unwrap().clone();
+    let (a, b) = (5.0 - top / 2.0, 5.0 + top / 2.0);
+    let top_loop: Vec<Value> = [11, 12, 13, 14]
+        .map(|k| json!({"entity": format!("f3d:model:sketch-entity#{k}")}))
+        .to_vec();
+    sketches.push(json!({
+        "id": TOP,
+        "name": "Top",
+        "placement": {"kind": "resolved", "frame": {
+            "origin": {"x": 0.0, "y": 0.0, "z": 10.0},
+            "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
+            "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0},
+        }},
+        "profiles": [top_loop],
+    }));
+    model["sketches"] = Value::Array(sketches);
+    let top_line = |key: u32, from: [f64; 2], to: [f64; 2]| {
+        let mut row = line(key, from, to);
+        row["sketch"] = json!(TOP);
+        row
+    };
+    let entities = model["sketch_entities"].as_array_mut().unwrap();
+    entities.extend([
+        top_line(11, [a, a], [b, a]),
+        top_line(12, [b, a], [b, b]),
+        top_line(13, [b, b], [a, b]),
+        top_line(14, [a, b], [a, a]),
+    ]);
+    let mut definition = json!({
+        "definition": "loft",
+        "sections": [
+            first_profile(),
+            {"kind": "sketch_profiles", "value": {"sketch": TOP, "profiles": [0]}},
+        ],
+        "guidance": {"kind": "guides", "path": []},
+        "op": "new_body",
+    });
+    change(&mut definition);
+    model["features"] = json!([
+        model["features"][0].clone(),
+        {
+            "id": "f3d:model:feature#3",
+            "ordinal": 1,
+            "name": "Top sketch",
+            "suppressed": false,
+            "definition": {"definition": "sketch", "sketch": {"space": "planar", "sketch": TOP}},
+        },
+        {
+            "id": "f3d:model:feature#2",
+            "ordinal": 2,
+            "name": "Block",
+            "suppressed": false,
+            "dependencies": ["f3d:model:feature#1", "f3d:model:feature#3"],
+            "outputs": ["synthetic:cube:body#0"],
+            "definition": definition,
+        },
+    ]);
+    // The extrude's length parameter has no feature to own it now.
+    model["parameters"] = json!([model["parameters"][1].clone()]);
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    }
+}
+
+#[test]
+fn a_loft_between_sketch_profiles_becomes_a_solidcraft_loft() {
+    let (document, report) = convert(
+        &loft_history(10.0, |_| {}),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let features = document["features"].as_array().unwrap();
+    let id_of = |name: &str| features.iter().find(|f| f["name"] == name).unwrap()["id"].clone();
+    let loft = features.iter().find(|f| f["type"] == "loft").unwrap();
+    assert_eq!(loft["name"], "Block");
+    assert_eq!(loft["operation"], "new_body");
+    assert_eq!(loft["body_names"], json!(["unit cube"]));
+    let sections = loft["sections"].as_array().unwrap();
+    assert_eq!(sections.len(), 2);
+    assert_eq!(sections[0]["sketch"], id_of("Base sketch"));
+    assert_eq!(sections[1]["sketch"], id_of("Top sketch"));
+    assert_eq!(sections[1]["profiles"]["type"], "curves");
+    assert!(
+        history_line(&report).contains("3 of 3 features mapped"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn lofts_solidcraft_would_build_differently_flatten_the_history() {
+    for (change, reason) in [
+        (json!({"ruled": true}), "ruled lofts are not mapped yet"),
+        (json!({"closed": true}), "closed lofts are not mapped yet"),
+        (
+            json!({"max_degree": 3}),
+            "lofts with a degree limit are not mapped yet",
+        ),
+        (
+            json!({"guidance": {"kind": "centerline", "path": {"kind": "native", "value": "n"}}}),
+            "lofts along guide rails or a centreline are not mapped yet",
+        ),
+        (
+            json!({"sections": [first_profile(), {"kind": "point", "value": {"x": 5.0, "y": 5.0, "z": 10.0}}]}),
+            "lofts that close to a point are not mapped yet",
+        ),
+        (
+            json!({"sections": [first_profile(), first_profile()]}),
+            "loft sections that share a sketch are not mapped yet",
+        ),
+    ] {
+        let model = loft_history(10.0, |definition| {
+            for (key, value) in change.as_object().unwrap() {
+                definition[key] = value.clone();
+            }
+        });
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            document["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|f| f["type"] != "loft"),
+            "{reason}"
+        );
+        assert!(
+            history_line(&report).contains(reason),
+            "{}",
+            history_line(&report)
+        );
+    }
+}
+
+#[test]
+fn a_loft_inside_an_assembly_keeps_its_own_sketches() {
+    let mut model = assembly_of_histories();
+    let assembly = model.assembly.as_mut().unwrap();
+    for part in &mut assembly.parts {
+        part.ir = loft_history(10.0, |_| {}).ir;
+    }
+    let (document, _) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let features = document["features"].as_array().unwrap();
+    let lofts: Vec<&Value> = features.iter().filter(|f| f["type"] == "loft").collect();
+    assert_eq!(lofts.len(), 2);
+    for loft in lofts {
+        for section in loft["sections"].as_array().unwrap() {
+            let sketch = features
+                .iter()
+                .find(|f| f["id"] == section["sketch"])
+                .unwrap();
+            assert_eq!(sketch["type"], "sketch");
+            assert_eq!(sketch["component"], loft["component"]);
+        }
+    }
+}
+
+#[test]
+fn solidcraft_lofts_between_the_sections() {
+    let Some(cli) = solidcraft() else { return };
+    // The cube again, then a frustum: 10/3 × (100 + 16 + 40) mm³.
+    for (top, expected) in [(10.0, 1000.0), (4.0, 520.0)] {
+        let volume = volumes(&cli, &written(&loft_history(top, |_| {})).0);
+        assert_eq!(volume.len(), 1);
+        assert!((volume[0] - expected).abs() < 1e-6, "{volume:?}");
+    }
+}
+
 fn whole_sketch() -> Value {
     json!({"kind": "sketch", "value": SKETCH})
 }

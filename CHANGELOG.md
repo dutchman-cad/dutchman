@@ -6,6 +6,13 @@ report's schema name changes when a field does).
 
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
+## Unreleased
+
+### Feature history
+
+- Lofts through profiles of two or more sketches map onto SolidCraft lofts, when they have no
+  guide rails or centreline and are open, smooth and solid.
+
 ## 0.1.0 (2026-10-21)
 
 The first release that converts designs. Native CAD files are read by

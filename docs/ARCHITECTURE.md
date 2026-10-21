@@ -120,7 +120,8 @@ profiles, of profile regions (whole loops with their holes, or regions bounded b
 curves) or of selected curves, one-sided, symmetric or two-sided, blind or through all, from the sketch plane or an
 offset, as new body, join, cut or intersect (a new body keeps its source name and colour); revolves about a line in the sketch plane that
 are symmetric or a full turn (CADIR does not state which way a revolve turns, so a partial
-one-sided or two-sided revolve is not mapped); patterns of earlier features, linear in one or
+one-sided or two-sided revolve is not mapped); lofts through profiles of two or more
+sketches, without guide rails, open, smooth and solid; patterns of earlier features, linear in one or
 two directions, or circular all the way round (features are named uniquely on the timeline,
 since SolidCraft patterns refer to them by name). Parameters keep their expressions where SolidCraft reads them the same way, else
 their evaluated values.
