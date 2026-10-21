@@ -183,6 +183,14 @@ impl App {
                     self.search_for_row(row, folder.to_path_buf(), ctx);
                 }
             }
+            Pick::SaveLog(row) => {
+                if let Some(report) = self.rows.get(row).and_then(|row| row.report.as_ref()) {
+                    let text = dutchman::json::full_log(report, &dutchman::batch::line(report));
+                    if let Err(err) = std::fs::write(&first, text) {
+                        self.notice = Some(format!("Cannot save {}: {err}", display(&first)));
+                    }
+                }
+            }
         }
     }
 
@@ -699,13 +707,41 @@ fn row_ui(
             .map(|l| l.iter().collect())
             .unwrap_or_default();
         if !losses.is_empty() {
+            let components = dutchman::json::components(report);
             egui::CollapsingHeader::new(RichText::new(loss_counts(&losses)).color(p.tide))
                 .id_salt(("losses", index))
                 .show(ui, |ui| {
-                    for loss in losses {
-                        loss_line(ui, p, loss);
+                    // One component: its losses. Several: each in its own section, most that
+                    // matters first.
+                    if let [only] = components.as_slice() {
+                        for loss in &only.losses {
+                            loss_line(ui, p, loss);
+                        }
+                        return;
+                    }
+                    for (n, component) in components.iter().enumerate() {
+                        let name = component.file.as_deref().unwrap_or("The design");
+                        let colour = if component.dropped > 0 {
+                            p.danger
+                        } else if component.degraded > 0 || component.flattened.is_some() {
+                            p.lantern_text
+                        } else {
+                            p.tide
+                        };
+                        egui::CollapsingHeader::new(
+                            RichText::new(format!("{name}: {}", component.summary())).color(colour),
+                        )
+                        .id_salt(("component", index, n))
+                        .show(ui, |ui| {
+                            for loss in &component.losses {
+                                loss_line(ui, p, loss);
+                            }
+                        });
                     }
                 });
+            if ui.button("Save the full log…").clicked() {
+                action = Some(Action::Pick(Pick::SaveLog(index)));
+            }
         }
     }
     action
