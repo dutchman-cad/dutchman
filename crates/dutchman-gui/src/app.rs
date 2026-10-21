@@ -53,6 +53,18 @@ pub struct App {
     has_app: bool,
     /// The SolidCraft CLI that checks histories when nothing else is chosen, if one is found.
     checker: Option<PathBuf>,
+    /// What to scroll into view on the next frame, so the results are seen without looking
+    /// for them.
+    reveal: Option<Reveal>,
+}
+
+/// What to scroll into view.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Reveal {
+    /// The results' heading, as a run starts.
+    Results,
+    /// The first file that needs attention, as a run ends.
+    FirstIssue,
 }
 
 impl App {
@@ -72,6 +84,7 @@ impl App {
             notice: None,
             has_app: platform::has_solidcraft_app(),
             checker: dutchman_solidcraft::find_cli(&dutchman_solidcraft::Verification::Auto).ok(),
+            reveal: None,
         }
     }
 
@@ -178,6 +191,7 @@ impl App {
             match message {
                 Message::Picked { pick, paths } => self.picked(pick, paths, ctx),
                 Message::Planned { problems, jobs } => {
+                    self.reveal = Some(Reveal::Results);
                     self.offset = problems.len();
                     self.rows = problems
                         .into_iter()
@@ -218,6 +232,7 @@ impl App {
                 }
                 Message::Done => {
                     self.run = None;
+                    self.reveal = Some(Reveal::FirstIssue);
                     for row in &mut self.rows {
                         if matches!(row.status, Status::Waiting | Status::Converting) {
                             row.status = Status::NotStarted;
@@ -540,15 +555,23 @@ impl App {
 
     fn results(&mut self, ui: &mut egui::Ui) {
         let p = *theme::palette(ui);
-        section_label(ui, &p, "Results");
+        let heading = section_label(ui, &p, "Results");
+        let reveal = self.reveal.take();
+        if reveal == Some(Reveal::Results) {
+            heading.scroll_to_me(Some(Align::Min));
+        }
+        let first = (reveal == Some(Reveal::FirstIssue)).then(|| first_to_show(&self.rows));
         let mut action = None;
         let running = self.running();
         for (index, row) in self.rows.iter().enumerate() {
-            card(ui, &p, |ui| {
+            let shown = card(ui, &p, |ui| {
                 if let Some(chosen) = row_ui(ui, &p, index, row, self.has_app, running) {
                     action = Some(chosen);
                 }
             });
+            if first == Some(index) {
+                shown.scroll_to_me(Some(Align::Min));
+            }
             ui.add_space(theme::SPACE_2);
         }
         let result = match action {
@@ -819,12 +842,23 @@ fn loss_line(ui: &mut egui::Ui, p: &Palette, loss: &Value) {
     });
 }
 
-fn section_label(ui: &mut egui::Ui, p: &Palette, text: &str) {
+fn section_label(ui: &mut egui::Ui, p: &Palette, text: &str) -> egui::Response {
     ui.label(
         RichText::new(text.to_uppercase())
             .text_style(theme::label())
             .color(p.tide),
-    );
+    )
+}
+
+/// The row to show first when a run ends: the first that failed or converted incomplete,
+/// else the first.
+fn first_to_show(rows: &[Row]) -> usize {
+    rows.iter()
+        .position(|row| {
+            row.status == Status::Failed
+                || (row.status == Status::Converted && row.report.as_ref().is_some_and(incomplete))
+        })
+        .unwrap_or(0)
 }
 
 /// A raised panel on `surface-2` with a hairline border (spectre while files hover over it).
@@ -834,8 +868,8 @@ fn panel(ui: &mut egui::Ui, p: &Palette, highlight: bool, body: impl FnOnce(&mut
 }
 
 /// A result card: `surface` with a hairline border, so status and loss colours read on it.
-fn card(ui: &mut egui::Ui, p: &Palette, body: impl FnOnce(&mut egui::Ui)) {
-    framed(ui, p, p.surface, false, body);
+fn card(ui: &mut egui::Ui, p: &Palette, body: impl FnOnce(&mut egui::Ui)) -> egui::Response {
+    framed(ui, p, p.surface, false, body)
 }
 
 fn framed(
@@ -844,7 +878,7 @@ fn framed(
     fill: egui::Color32,
     highlight: bool,
     body: impl FnOnce(&mut egui::Ui),
-) {
+) -> egui::Response {
     let stroke = if highlight {
         Stroke::new(1.5_f32, p.spectre)
     } else {
@@ -858,7 +892,8 @@ fn framed(
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             body(ui);
-        });
+        })
+        .response
 }
 
 /// A file's name, then its folder in `tide`, cut short to fit; the whole path on hover.
@@ -900,6 +935,35 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    fn row(status: Status) -> Row {
+        Row {
+            input: PathBuf::from("a.f3d"),
+            output: None,
+            status,
+            report: None,
+            job: None,
+        }
+    }
+
+    #[test]
+    fn a_finished_run_shows_its_first_failure_first() {
+        let rows = [
+            row(Status::Converted),
+            row(Status::Failed),
+            row(Status::Failed),
+        ];
+        assert_eq!(first_to_show(&rows), 1);
+        assert_eq!(first_to_show(&[row(Status::Converted)]), 0);
+        let mut incomplete = row(Status::Converted);
+        incomplete.report = Some(json!({"completeness": {"placed": 1, "placements": 2,
+            "left_out": [{"file": "pin.ipt", "reason": "gone", "stage": "input", "count": 1}]}}));
+        assert_eq!(
+            first_to_show(&[row(Status::Converted), incomplete, row(Status::Failed)]),
+            1
+        );
+        assert_eq!(first_to_show(&[]), 0);
+    }
 
     #[test]
     fn the_parts_an_assembly_could_not_find_are_named() {
