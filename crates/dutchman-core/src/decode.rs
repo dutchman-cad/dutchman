@@ -93,9 +93,20 @@ fn with_fallback(
             );
             Ok(model)
         }
-        Err(_) => Err(Error::Decode(why)),
+        // Say what each attempt found: the checks may fail the same way twice.
+        Err(Failed::Checks(again)) => Err(Error::Decode(format!(
+            "{why}; read again as geometry alone, without its history, sketches and parameters, \
+             it still fails them {}",
+            again.strip_prefix(CHECKS).unwrap_or(&again)
+        ))),
+        Err(Failed::Other(err)) => Err(Error::Decode(format!(
+            "{why}; reading it again as geometry alone failed too: {err}"
+        ))),
     }
 }
+
+/// How a failure of cadmpeg's checks begins.
+const CHECKS: &str = "cadmpeg's model of it fails its checks ";
 
 fn decode_unguarded(
     format: Format,
@@ -144,7 +155,7 @@ fn decode_unguarded(
             .map(|finding| format!(": {}", finding.message))
             .unwrap_or_default();
         return Err(Failed::Checks(format!(
-            "cadmpeg's model of it fails its checks ({} errors){first}",
+            "{CHECKS}({} errors){first}",
             validation.error_count()
         )));
     }
@@ -268,14 +279,22 @@ mod tests {
     }
 
     #[test]
-    fn when_the_geometry_fails_too_the_first_failure_is_the_error() {
-        let err = with_fallback(&mut Report::default(), |_, _| {
-            Err(Failed::Checks("the checks".to_owned()))
+    fn when_the_geometry_fails_too_both_failures_are_said() {
+        let err = with_fallback(&mut Report::default(), |depth, _| {
+            Err(Failed::Checks(match depth {
+                DecodeDepth::Full => format!("{CHECKS}(10 errors): scope repeats `x`"),
+                _ => format!("{CHECKS}(3 errors): scope repeats `y`"),
+            }))
         })
         .unwrap_err();
         assert_eq!(
             err.to_string(),
-            Error::Decode("the checks".to_owned()).to_string()
+            Error::Decode(format!(
+                "{CHECKS}(10 errors): scope repeats `x`; read again as geometry alone, without \
+                 its history, sketches and parameters, it still fails them (3 errors): scope \
+                 repeats `y`"
+            ))
+            .to_string()
         );
         let other = with_fallback(&mut Report::default(), |_, _| {
             Err(Failed::Other(Error::Decode("unreadable".to_owned())))

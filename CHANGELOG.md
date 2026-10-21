@@ -20,7 +20,8 @@ report's schema name changes when a field does).
   a parameter used before it is defined) is no longer refused. Its geometry is read again
   without the design's history, sketches and parameters, where such failures lie, and written
   as geometry, with a `Degraded` loss saying why. In an assembly, the part is placed instead of
-  left out.
+  left out. When the geometry fails cadmpeg's checks too, the error says what each
+  attempt found.
 
 ### Checks
 
