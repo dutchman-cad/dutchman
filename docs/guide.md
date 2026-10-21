@@ -20,7 +20,8 @@ reading what the conversion reports, and opening the result in SolidCraft.
 
 Each [release](https://github.com/dutchman-cad/dutchman/releases) has one archive per
 platform. Each archive holds `dutchman` (the command), `dutchman-mcp` (the
-[MCP server](mcp.md)), `LICENSE`, `NOTICE` and `README.md`, with a `.sha256` file beside it.
+[MCP server](mcp.md)), `dutchman-gui` (the desktop app, from 0.1.1 on), `LICENSE`, `NOTICE`,
+`README.md` and the font licences, with a `.sha256` file beside it.
 
 | Platform | Archive |
 |---|---|
@@ -31,11 +32,11 @@ platform. Each archive holds `dutchman` (the command), `dutchman-mcp` (the
 | Windows, x86_64 | `dutchman-VERSION-x86_64-pc-windows-msvc.zip` |
 
 Download the archive and its `.sha256` file, check one against the other, then unpack it and
-put the programs on your `PATH`. On Linux x86_64, for release 0.1.0 (set `VERSION` and the
+put the programs on your `PATH`. On Linux x86_64, for release 0.1.1 (set `VERSION` and the
 target for another release or machine):
 
 ```sh
-VERSION=0.1.0 TARGET=x86_64-unknown-linux-gnu
+VERSION=0.1.1 TARGET=x86_64-unknown-linux-gnu
 base=https://github.com/dutchman-cad/dutchman/releases/download/v$VERSION
 curl -fLO "$base/dutchman-$VERSION-$TARGET.tar.gz"
 curl -fLO "$base/dutchman-$VERSION-$TARGET.tar.gz.sha256"
@@ -48,8 +49,7 @@ dutchman --version
 ```
 
 The `export` lasts for this shell; add the same line to your shell's profile (`~/.bashrc`,
-`~/.zshrc`) to keep it. From 0.1.1 on, the archive also holds the desktop app,
-`dutchman-gui`, which the `dutchman*` pattern installs too.
+`~/.zshrc`) to keep it. The `dutchman*` pattern installs the desktop app, `dutchman-gui`, too.
 
 On macOS, `shasum -a 256 -c` takes the place of `sha256sum -c`. The programs are not signed
 yet, so the first run may be blocked; allow it in System Settings, Privacy & Security, or

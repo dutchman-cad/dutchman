@@ -46,8 +46,8 @@ files. The app follows the system's light or dark setting, or can be set to Day 
   <img alt="The Dutchman app after converting three files: two converted, one failed with its reason" src="docs/images/dutchman-gui-day.png" width="480">
 </picture>
 
-The desktop app ships in the release archives from 0.1.1 on; the 0.1.0 archives hold only
-`dutchman` and `dutchman-mcp`. Until then, build it from source with Rust 1.88 or newer:
+It ships in the release archives beside `dutchman` (from 0.1.1 on), or build it from source
+with Rust 1.88 or newer:
 
 ```sh
 cargo install --git https://github.com/dutchman-cad/dutchman dutchman-gui
