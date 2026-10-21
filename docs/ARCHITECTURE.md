@@ -124,7 +124,8 @@ are symmetric or a full turn (CADIR does not state which way a revolve turns, so
 one-sided or two-sided revolve is not mapped); lofts through profiles of two or more
 sketches, open, smooth and solid, guided by up to two rails of sketch curves; sweeps of one sketch profile along
 sketch curves (whole path, square to it or held as drawn, optionally twisted or guided by one
-rail); patterns of earlier features, linear in one or
+rail); spheres, and tori about the Z axis (boxes and cylinder primitives wait on cadmpeg
+placing them); patterns of earlier features, linear in one or
 two directions, or circular all the way round, and mirrors of earlier features across a
 plane (features are named uniquely on the timeline,
 since SolidCraft patterns refer to them by name). Parameters keep their expressions where SolidCraft reads them the same way, else

@@ -14,6 +14,7 @@ mod faces;
 mod loft;
 mod params;
 mod pattern;
+mod primitive;
 mod profile;
 mod revolve;
 mod sketch;
@@ -415,6 +416,9 @@ fn map_feature(feature: &Value, ctx: &mut Context, report: &mut Report) -> Resul
         Some("revolve") => revolve::map(feature, definition, ctx).map(Mapped::Feature),
         Some("loft") => loft::map(feature, definition, ctx).map(Mapped::Feature),
         Some("sweep") => sweep::map(feature, definition, ctx).map(Mapped::Feature),
+        Some("sphere") => primitive::sphere(feature, definition, ctx).map(Mapped::Feature),
+        Some("torus") => primitive::torus(feature, definition, ctx).map(Mapped::Feature),
+        Some(kind @ ("block" | "primitive")) => Err(primitive::unplaced(kind)),
         Some("pattern") => pattern::map(feature, definition, ctx).map(Mapped::Feature),
         _ => Err(format!("{} is not mapped yet", kind(feature))),
     }
