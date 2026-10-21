@@ -35,6 +35,8 @@ report's schema name changes when a field does).
 
 - Lofts through profiles of two or more sketches map onto SolidCraft lofts, when they have no
   guide rails or centreline and are open, smooth and solid.
+- Sweeps of a sketch profile along sketch curves map onto SolidCraft sweeps: along the whole
+  path, square to it or held as drawn, optionally twisted or guided by one rail.
 
 ## 0.1.0 (2026-10-21)
 

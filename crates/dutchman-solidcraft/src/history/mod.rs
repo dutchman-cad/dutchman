@@ -17,6 +17,7 @@ mod pattern;
 mod profile;
 mod revolve;
 mod sketch;
+mod sweep;
 
 use std::collections::BTreeMap;
 
@@ -105,24 +106,24 @@ impl History {
             let Some(fields) = feature.as_object_mut() else {
                 continue;
             };
-            for key in ["id", "sketch"] {
+            for key in ["id", "sketch", "path_sketch"] {
                 if let Some(id) = fields.get(key).and_then(Value::as_u64) {
                     fields.insert(key.to_owned(), Value::from(id.saturating_add(offset)));
                 }
             }
-            // A loft names the sketch of each section.
-            for section in fields
-                .get_mut("sections")
-                .and_then(Value::as_array_mut)
-                .into_iter()
-                .flatten()
-            {
-                if let Some(sketch) = section.get("sketch").and_then(Value::as_u64) {
-                    if let Some(section) = section.as_object_mut() {
-                        section.insert(
-                            "sketch".to_owned(),
-                            Value::from(sketch.saturating_add(offset)),
-                        );
+            // A loft names the sketch of each section, and a sweep that of each rail.
+            for key in ["sections", "rails"] {
+                let Some(Value::Array(rows)) = fields.get_mut(key) else {
+                    continue;
+                };
+                for row in rows {
+                    if let Some(sketch) = row.get("sketch").and_then(Value::as_u64) {
+                        if let Some(row) = row.as_object_mut() {
+                            row.insert(
+                                "sketch".to_owned(),
+                                Value::from(sketch.saturating_add(offset)),
+                            );
+                        }
                     }
                 }
             }
@@ -413,6 +414,7 @@ fn map_feature(feature: &Value, ctx: &mut Context, report: &mut Report) -> Resul
         Some("extrude") => extrude::map(feature, definition, ctx).map(Mapped::Feature),
         Some("revolve") => revolve::map(feature, definition, ctx).map(Mapped::Feature),
         Some("loft") => loft::map(feature, definition, ctx).map(Mapped::Feature),
+        Some("sweep") => sweep::map(feature, definition, ctx).map(Mapped::Feature),
         Some("pattern") => pattern::map(feature, definition, ctx).map(Mapped::Feature),
         _ => Err(format!("{} is not mapped yet", kind(feature))),
     }

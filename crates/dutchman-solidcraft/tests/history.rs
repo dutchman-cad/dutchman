@@ -230,6 +230,206 @@ fn loft_history(top: f64, change: impl FnOnce(&mut Value)) -> Model {
     }
 }
 
+const PATH: &str = "f3d:model:sketch#3";
+
+/// The example cube built instead by sweeping its 10 mm base square along a 10 mm line up Z,
+/// drawn in a sketch on XZ; `change` edits the sweep's definition.
+fn sweep_history(change: impl FnOnce(&mut Value)) -> Model {
+    let base = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let model = &mut wire["model"];
+    let mut sketches = model["sketches"].as_array().unwrap().clone();
+    sketches.push(json!({
+        "id": PATH,
+        "name": "Path",
+        "placement": {"kind": "resolved", "frame": {
+            "origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "normal": {"x": 0.0, "y": -1.0, "z": 0.0},
+            "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0},
+        }},
+        "profiles": [],
+    }));
+    model["sketches"] = Value::Array(sketches);
+    let mut path = line(21, [0.0, 0.0], [0.0, 10.0]);
+    path["sketch"] = json!(PATH);
+    model["sketch_entities"].as_array_mut().unwrap().push(path);
+    let mut definition = json!({
+        "definition": "sweep",
+        "shape": {"mode": "solid", "op": "new_body",
+                  "section": {"kind": "profile", "value": first_profile()}},
+        "path": {"kind": "sketch_curves",
+                 "value": {"sketch": PATH, "curves": ["f3d:model:sketch-entity#21"]}},
+        "path_tangent": false,
+        "linearize": false,
+        "path_extent": {"along_fraction": 1.0, "against_fraction": 0.0},
+    });
+    change(&mut definition);
+    model["features"] = json!([
+        model["features"][0].clone(),
+        {
+            "id": "f3d:model:feature#3",
+            "ordinal": 1,
+            "name": "Path sketch",
+            "suppressed": false,
+            "definition": {"definition": "sketch", "sketch": {"space": "planar", "sketch": PATH}},
+        },
+        {
+            "id": "f3d:model:feature#2",
+            "ordinal": 2,
+            "name": "Block",
+            "suppressed": false,
+            "dependencies": ["f3d:model:feature#1", "f3d:model:feature#3"],
+            "outputs": ["synthetic:cube:body#0"],
+            "definition": definition,
+        },
+    ]);
+    model["parameters"] = json!([model["parameters"][1].clone()]);
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    }
+}
+
+#[test]
+fn a_sweep_along_sketch_curves_becomes_a_solidcraft_sweep() {
+    let (document, report) = convert(
+        &sweep_history(|_| {}),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let features = document["features"].as_array().unwrap();
+    let id_of = |name: &str| features.iter().find(|f| f["name"] == name).unwrap()["id"].clone();
+    let sweep = features.iter().find(|f| f["type"] == "sweep").unwrap();
+    assert_eq!(sweep["name"], "Block");
+    assert_eq!(sweep["sketch"], id_of("Base sketch"));
+    assert_eq!(sweep["path_sketch"], id_of("Path sketch"));
+    assert_eq!(sweep["path"].as_array().unwrap().len(), 1);
+    assert_eq!(sweep["operation"], "new_body");
+    assert_eq!(sweep["body_names"], json!(["unit cube"]));
+    assert!(sweep.get("twist").is_none());
+    assert!(
+        history_line(&report).contains("3 of 3 features mapped"),
+        "{}",
+        history_line(&report)
+    );
+
+    let (document, _) = convert(
+        &sweep_history(|d| d["twist"] = json!(std::f64::consts::FRAC_PI_2)),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let sweep = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["type"] == "sweep")
+        .unwrap()
+        .clone();
+    assert_eq!(sweep["twist"], "90 deg");
+}
+
+#[test]
+fn sweeps_solidcraft_would_build_differently_flatten_the_history() {
+    for (change, reason) in [
+        (
+            json!({"shape": {"mode": "surface", "section": {"kind": "unresolved", "value": null}}}),
+            "surface sweeps are not mapped yet",
+        ),
+        (
+            json!({"path_extent": {"along_fraction": 0.5, "against_fraction": 0.0}}),
+            "sweeps along part of their path are not mapped yet",
+        ),
+        (json!({"taper": 0.1}), "tapered sweeps are not mapped yet"),
+        (json!({"scale": 2.0}), "scaled sweeps are not mapped yet"),
+        (
+            json!({"orientation": {"kind": "binormal", "direction": {"x": 0.0, "y": 0.0, "z": 1.0}}}),
+            "sweeps oriented by binormal are not mapped yet",
+        ),
+        (
+            json!({"transition": "round_corner"}),
+            "sweeps with corner transitions are not mapped yet",
+        ),
+        (
+            json!({"path": {"kind": "native", "value": "n"}}),
+            "its path is not a set of sketch curves",
+        ),
+    ] {
+        let model = sweep_history(|definition| {
+            for (key, value) in change.as_object().unwrap() {
+                definition[key] = value.clone();
+            }
+        });
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            document["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|f| f["type"] != "sweep"),
+            "{reason}"
+        );
+        assert!(
+            history_line(&report).contains(reason),
+            "{}",
+            history_line(&report)
+        );
+    }
+}
+
+#[test]
+fn a_sweep_inside_an_assembly_keeps_its_own_sketches() {
+    let mut model = assembly_of_histories();
+    for part in &mut model.assembly.as_mut().unwrap().parts {
+        part.ir = sweep_history(|_| {}).ir;
+    }
+    let (document, _) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let features = document["features"].as_array().unwrap();
+    let sweeps: Vec<&Value> = features.iter().filter(|f| f["type"] == "sweep").collect();
+    assert_eq!(sweeps.len(), 2);
+    for sweep in sweeps {
+        for key in ["sketch", "path_sketch"] {
+            let sketch = features.iter().find(|f| f["id"] == sweep[key]).unwrap();
+            assert_eq!(sketch["type"], "sketch", "{key}");
+            assert_eq!(sketch["component"], sweep["component"], "{key}");
+        }
+    }
+}
+
+#[test]
+fn solidcraft_sweeps_the_profile_along_the_path() {
+    let Some(cli) = solidcraft() else { return };
+    // The cube, and twisted a quarter turn about the path through the square's corner: the
+    // same square at every height, so the same volume.
+    for twist in [None, Some(std::f64::consts::FRAC_PI_2)] {
+        let model = sweep_history(|d| {
+            if let Some(twist) = twist {
+                d["twist"] = json!(twist);
+            }
+        });
+        let volume = volumes(&cli, &written(&model).0);
+        assert_eq!(volume.len(), 1, "{twist:?}");
+        // A twisted sweep's faces are fitted splines: within the history check's tolerance.
+        assert!(
+            (volume[0] - 1000.0).abs() / 1000.0 < dutchman_solidcraft::VOLUME_TOLERANCE,
+            "{twist:?}: {volume:?}"
+        );
+    }
+    // Checked against the original cube by the writer itself.
+    let (_, report) = convert(
+        &sweep_history(|_| {}),
+        &SolidCraftWriter::new().verification(Verification::With(cli)),
+    );
+    assert!(
+        history_line(&report).contains("verified against the original in SolidCraft"),
+        "{}",
+        history_line(&report)
+    );
+}
+
 #[test]
 fn a_loft_between_sketch_profiles_becomes_a_solidcraft_loft() {
     let (document, report) = convert(
