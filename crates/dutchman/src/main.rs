@@ -87,6 +87,15 @@ enum Command {
     Inspect {
         /// The native design file to read.
         input: PathBuf,
+        /// The project folder an assembly's part files are searched in when they are not at
+        /// their stored paths (default: the nearest folder above the assembly holding an
+        /// Inventor .ipj, else two folders up).
+        #[arg(long, value_name = "DIR")]
+        project: Option<PathBuf>,
+        /// Another folder to search, with its subfolders, for part files the project folder
+        /// does not hold; may be given more than once.
+        #[arg(long = "search", value_name = "DIR")]
+        search: Vec<PathBuf>,
         /// Print one machine-readable report on stdout instead of the text report.
         #[arg(long)]
         json: bool,
@@ -175,7 +184,20 @@ fn main() -> ExitCode {
             }
             exit(&report)
         }
-        Command::Inspect { input, json } => inspect(&input, json, verbose),
+        Command::Inspect {
+            input,
+            project,
+            search,
+            json,
+        } => inspect(
+            &input,
+            &dutchman::PartSearch {
+                project,
+                also: search,
+            },
+            json,
+            verbose,
+        ),
         Command::Formats { json } => {
             if json {
                 print_json(&formats::json());
@@ -194,7 +216,13 @@ fn convert(
     as_json: bool,
     verbose: bool,
 ) -> ExitCode {
-    let report = dutchman::convert(input, output, &options.writer(), !options.no_clobber);
+    let report = dutchman::convert(
+        input,
+        output,
+        &options.writer(),
+        !options.no_clobber,
+        &options.part_search(),
+    );
     if as_json {
         print_json(&report);
     } else if let Some(message) = report.pointer("/error/message").and_then(Value::as_str) {
@@ -213,8 +241,8 @@ fn convert(
     exit(&report)
 }
 
-fn inspect(input: &Path, as_json: bool, verbose: bool) -> ExitCode {
-    let inspection = match dutchman::inspect(input) {
+fn inspect(input: &Path, search: &dutchman::PartSearch, as_json: bool, verbose: bool) -> ExitCode {
+    let inspection = match dutchman::inspect(input, search) {
         Ok(inspection) => inspection,
         Err(err) => {
             if as_json {

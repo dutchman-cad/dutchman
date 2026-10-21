@@ -15,8 +15,8 @@ use serde_json::Value;
 /// What the background work tells the window.
 #[derive(Debug)]
 pub enum Message {
-    /// Files and folders chosen in a dialog: inputs, or (`output`) the output folder.
-    Picked { output: bool, paths: Vec<PathBuf> },
+    /// Files and folders chosen in a dialog, for what it was opened for.
+    Picked { pick: Pick, paths: Vec<PathBuf> },
     /// A run's plan: inputs that could not be planned (as failed reports), then its jobs.
     Planned {
         problems: Vec<Value>,
@@ -44,7 +44,7 @@ impl Run {
     ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let writer = options.writer();
-        let replace = !options.no_clobber;
+        let options = options.clone();
         let flag = Arc::clone(&stop);
         std::thread::spawn(move || {
             let send = |message: Message| {
@@ -56,15 +56,42 @@ impl Run {
                 let batch::Plan {
                     mut jobs, problems, ..
                 } = batch::plan(&inputs, &out_dir);
-                for job in &mut jobs {
-                    job.replace = replace;
-                }
+                batch::prepare(&mut jobs, &options);
                 send(Message::Planned {
                     problems,
                     jobs: jobs.clone(),
                 });
                 batch::run_each(&jobs, &writer, batch::workers(None), &flag, |event| {
                     send(Message::Progress(event));
+                });
+            }));
+            send(Message::Done);
+        });
+        Run { stop }
+    }
+
+    /// Converts `job`, the run's job at `index`, again in the background, as it now says.
+    pub fn retry(
+        job: Job,
+        index: usize,
+        options: &ConvertOptions,
+        messages: Sender<Message>,
+        ctx: egui::Context,
+    ) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let writer = options.writer();
+        let flag = Arc::clone(&stop);
+        std::thread::spawn(move || {
+            let send = |message: Message| {
+                let _ = messages.send(message);
+                ctx.request_repaint();
+            };
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                batch::run_each(&[job], &writer, 1, &flag, |event| {
+                    send(Message::Progress(match event {
+                        Event::Started(_) => Event::Started(index),
+                        Event::Finished(_, report) => Event::Finished(index, report),
+                    }));
                 });
             }));
             send(Message::Done);
@@ -104,25 +131,49 @@ pub fn pick(kind: Pick, messages: Sender<Message>, ctx: egui::Context) {
                     .await
                     .into_iter()
                     .collect(),
+                Pick::Project => dialog
+                    .set_title("Choose the project folder for assemblies' part files")
+                    .pick_folder()
+                    .await
+                    .into_iter()
+                    .collect(),
+                Pick::SearchFolder(_) => dialog
+                    .set_title("Choose a folder holding the missing part files")
+                    .pick_folder()
+                    .await
+                    .into_iter()
+                    .collect(),
+                Pick::SearchFile(_) => dialog
+                    .set_title("Find a missing part file")
+                    .add_filter("Inventor parts and assemblies", &["ipt", "iam"])
+                    .pick_file()
+                    .await
+                    .into_iter()
+                    .collect(),
             }
             .into_iter()
             .map(|handle| handle.path().to_path_buf())
             .collect()
         });
         if !paths.is_empty() {
-            let _ = messages.send(Message::Picked {
-                output: matches!(kind, Pick::Output),
-                paths,
-            });
+            let _ = messages.send(Message::Picked { pick: kind, paths });
             ctx.request_repaint();
         }
     });
 }
 
 /// What a file dialog picks.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Pick {
+    /// Designs to convert.
     Files,
     Folder,
+    /// The folder designs are written to.
     Output,
+    /// The project folder an assembly's part files are searched in.
+    Project,
+    /// A folder to search for the part files the result row at this index is missing.
+    SearchFolder(usize),
+    /// One of those files, whose folder is then searched.
+    SearchFile(usize),
 }

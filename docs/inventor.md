@@ -45,10 +45,10 @@ Assemblies convert as placed parts, each with its own feature history when that 
 maps (see the parts table above for what blocks Inventor history today):
 
 - cadmpeg gives each occurrence its stored part path (often absolute on the machine that
-  saved it), its rigid placement in millimetres, and its name. Dutchman looks for the part at
-  the stored path, then by file name next to the assembly (ignoring case), reads each part
-  file once, and writes one SolidCraft component per part, holding the part's geometry as an
-  import, with one occurrence per placement.
+  saved it), its rigid placement in millimetres, and its name. Dutchman finds each part as
+  [below](#finding-the-part-files), reads each part file once, and writes one SolidCraft
+  component per part, holding the part's geometry as an import, with one occurrence per
+  placement.
 - Sub-assemblies are read from their own `.iam` files the same way, recursively (up to 32
   deep; an assembly that places itself, directly or not, is refused). Each becomes a component
   whose parts are components beneath it, placed by occurrences inside it, so SolidCraft keeps
@@ -58,6 +58,39 @@ maps (see the parts table above for what blocks Inventor history today):
   scaled placements, and occurrences whose part is not a separate file.
 - Upstream: cadmpeg leaves local prototypes untransferred. CADIR version 7 (cadmpeg 0.6.3) can
   carry assembly joints, but the Inventor codec does not read them yet.
+
+### Finding the part files
+
+An assembly stores where its parts were on the machine that saved it. Dutchman finds each one
+as Inventor does, so a project can be converted where it lies:
+
+1. **The stored path.** A relative path is taken from the assembly's folder. An absolute one
+   is tried as it is, then with its drive or root (`C:\`, `\\server\share\`, `/Users/…/`)
+   moved onto this machine: the longest end of the path found under a folder above the
+   assembly, nearest first. Folder and file names may differ in case.
+2. **The project folder.** Otherwise the file is searched for by name under the project
+   folder, with all its subfolders. Of several files with that name, Dutchman takes the one in
+   the most of the stored path's folders (`Parts\Brackets\pin.ipt` matches
+   `…/Parts/Brackets/pin.ipt` before `…/Assemblies/pin.ipt`), then the one nearest the
+   assembly; the report says which it used. Inventor's `OldVersions` backups, hidden folders
+   and symbolic links are not searched, and the search stops after 200,000 files and folders.
+
+If the file is not under the project folder, the folders given with `--search DIR` (the MCP
+tools' `search`) are searched the same way, in order: a shared library of standard parts, say.
+
+The project folder is, first found:
+
+- the folder given: `--project DIR` (the MCP tools' `project`); `convert-all` uses each folder
+  it is given;
+- the nearest folder above the assembly holding an Inventor project file (`.ipj`);
+- two folders above the assembly's, but never your home folder or a whole drive.
+
+A part found nowhere is left out and reported, `Dropped`, naming the project folder searched.
+In the desktop app, the file's card names the parts not found: **Search a folder…** or **Find a
+file…** (whose folder is then searched) converts it again with that folder searched too. The
+app's **Inventor project folder** setting sets `--project` for a whole run.
+
+Every file found is named as its folder lists it, whatever case the assembly stored it in.
 
 ## Testing without real Inventor files
 

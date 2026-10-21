@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
-use dutchman::batch::Event;
+use dutchman::batch::{Event, Job};
 use dutchman::ConvertOptions;
 use eframe::egui::{
     self, Align, CornerRadius, Frame, Layout, Margin, RichText, ScrollArea, Stroke, TextStyle,
@@ -33,6 +33,8 @@ pub struct Row {
     pub status: Status,
     /// Its `dutchman.convert/1` report, once it has one.
     pub report: Option<Value>,
+    /// The job that converts it; none for an input that could not be planned.
+    pub job: Option<Job>,
 }
 
 /// Dutchman's window.
@@ -94,6 +96,42 @@ impl App {
         &self.rows
     }
 
+    /// Sets the project folder assemblies' part files are searched in; `None` finds it.
+    pub fn set_project(&mut self, project: Option<PathBuf>) {
+        self.options.project = project;
+    }
+
+    /// Converts the row at `index` again, searching `folder` too for its assemblies' part
+    /// files.
+    pub fn search_for_row(&mut self, index: usize, folder: PathBuf, ctx: &egui::Context) {
+        if self.running() {
+            return;
+        }
+        let Some(job_index) = index.checked_sub(self.offset) else {
+            return;
+        };
+        let Some(row) = self.rows.get_mut(index) else {
+            return;
+        };
+        let Some(job) = row.job.as_mut() else {
+            return;
+        };
+        if !job.search.also.contains(&folder) {
+            job.search.also.push(folder);
+        }
+        let job = job.clone();
+        row.status = Status::Waiting;
+        row.report = None;
+        self.notice = None;
+        self.run = Some(Run::retry(
+            job,
+            job_index,
+            &self.options,
+            self.sender.clone(),
+            ctx.clone(),
+        ));
+    }
+
     /// Whether a run is in progress.
     pub fn running(&self) -> bool {
         self.run.is_some()
@@ -115,21 +153,27 @@ impl App {
         ));
     }
 
-    fn receive(&mut self) {
+    fn picked(&mut self, pick: Pick, paths: Vec<PathBuf>, ctx: &egui::Context) {
+        let Some(first) = paths.first().cloned() else {
+            return;
+        };
+        match pick {
+            Pick::Files | Pick::Folder => self.add_inputs(paths),
+            Pick::Output => self.out_dir = Some(first),
+            Pick::Project => self.options.project = Some(first),
+            Pick::SearchFolder(row) => self.search_for_row(row, first, ctx),
+            Pick::SearchFile(row) => {
+                if let Some(folder) = first.parent() {
+                    self.search_for_row(row, folder.to_path_buf(), ctx);
+                }
+            }
+        }
+    }
+
+    fn receive(&mut self, ctx: &egui::Context) {
         while let Ok(message) = self.messages.try_recv() {
             match message {
-                Message::Picked {
-                    output: true,
-                    paths,
-                } => {
-                    if let Some(dir) = paths.into_iter().next() {
-                        self.out_dir = Some(dir);
-                    }
-                }
-                Message::Picked {
-                    output: false,
-                    paths,
-                } => self.add_inputs(paths),
+                Message::Picked { pick, paths } => self.picked(pick, paths, ctx),
                 Message::Planned { problems, jobs } => {
                     self.offset = problems.len();
                     self.rows = problems
@@ -143,12 +187,14 @@ impl App {
                             output: None,
                             status: Status::Failed,
                             report: Some(report),
+                            job: None,
                         })
                         .chain(jobs.into_iter().map(|job| Row {
-                            input: job.input,
-                            output: Some(job.output),
+                            input: job.input.clone(),
+                            output: Some(job.output.clone()),
                             status: Status::Waiting,
                             report: None,
+                            job: Some(job),
                         }))
                         .collect();
                 }
@@ -194,7 +240,7 @@ impl App {
 
     /// Draws the window, for eframe and for tests.
     pub fn ui(&mut self, ctx: &egui::Context) {
-        self.receive();
+        self.receive(ctx);
         self.take_dropped_files(ctx);
 
         egui::TopBottomPanel::top("title")
@@ -378,6 +424,44 @@ impl App {
                     .small()
                     .color(p.tide),
                 );
+                ui.add_space(theme::SPACE_2);
+                let chosen = self.options.project.clone();
+                let mut find = false;
+                egui::Sides::new().shrink_left().truncate().show(
+                    ui,
+                    |ui| {
+                        let project = match &chosen {
+                            Some(dir) => display(dir),
+                            None => "found from each assembly".to_owned(),
+                        };
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(format!("Inventor project folder: {project}"))
+                                    .small()
+                                    .color(p.tide),
+                            )
+                            .truncate(),
+                        )
+                        .on_hover_text(
+                            "Where an assembly's part files are searched for when they are not \
+                             at the paths it stores. Found from each assembly: the nearest folder \
+                             above it holding an .ipj, else two folders up; a folder you add is \
+                             its files' project.",
+                        );
+                    },
+                    |ui| {
+                        if chosen.is_some() && ui.button(RichText::new("Automatic").small()).clicked()
+                        {
+                            find = true;
+                        }
+                        if ui.button(RichText::new("Choose…").small()).clicked() {
+                            worker::pick(Pick::Project, self.sender.clone(), ctx.clone());
+                        }
+                    },
+                );
+                if find {
+                    self.options.project = None;
+                }
             });
         });
         ui.add_space(theme::SPACE_4);
@@ -441,9 +525,10 @@ impl App {
         let p = *theme::palette(ui);
         section_label(ui, &p, "Results");
         let mut action = None;
+        let running = self.running();
         for (index, row) in self.rows.iter().enumerate() {
             card(ui, &p, |ui| {
-                if let Some(chosen) = row_ui(ui, &p, index, row, self.has_app) {
+                if let Some(chosen) = row_ui(ui, &p, index, row, self.has_app, running) {
                     action = Some(chosen);
                 }
             });
@@ -452,6 +537,10 @@ impl App {
         let result = match action {
             Some(Action::Open(path)) => platform::open_in_solidcraft(&path),
             Some(Action::Reveal(path)) => platform::reveal(&path),
+            Some(Action::Pick(pick)) => {
+                worker::pick(pick, self.sender.clone(), ui.ctx().clone());
+                Ok(())
+            }
             None => Ok(()),
         };
         if let Err(err) = result {
@@ -469,6 +558,7 @@ impl eframe::App for App {
 enum Action {
     Open(PathBuf),
     Reveal(PathBuf),
+    Pick(Pick),
 }
 
 /// One file's result: its status, what was written, and its losses.
@@ -478,6 +568,7 @@ fn row_ui(
     index: usize,
     row: &Row,
     has_app: bool,
+    running: bool,
 ) -> Option<Action> {
     let mut action = None;
     let report = row.report.as_ref();
@@ -521,6 +612,19 @@ fn row_ui(
             }
         },
     );
+    if let Some(missing) = report.and_then(missing_parts) {
+        missing_ui(ui, p, &missing);
+        ui.horizontal(|ui| {
+            ui.add_enabled_ui(!running && row.job.is_some(), |ui| {
+                if ui.button("Search a folder…").clicked() {
+                    action = Some(Action::Pick(Pick::SearchFolder(index)));
+                }
+                if ui.button("Find a file…").clicked() {
+                    action = Some(Action::Pick(Pick::SearchFile(index)));
+                }
+            });
+        });
+    }
     if let Some(message) = report
         .and_then(|r| r.pointer("/error/message"))
         .and_then(Value::as_str)
@@ -556,6 +660,64 @@ fn row_ui(
         }
     }
     action
+}
+
+/// What marks a part file an assembly places as not found, in its loss.
+const NOT_FOUND: &str = ": not found at its stored path";
+
+/// The part files an assembly's conversion could not find, by name, when it missed any; an
+/// empty list when it failed for want of all of them, without naming them.
+fn missing_parts(report: &Value) -> Option<Vec<String>> {
+    let mut names: Vec<String> = report
+        .get("losses")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|loss| loss.get("message").and_then(Value::as_str))
+        .filter_map(|message| message.find(NOT_FOUND).map(|at| message.get(..at)))
+        .flatten()
+        .map(str::to_owned)
+        .collect();
+    names.sort();
+    names.dedup();
+    let none_found = report
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .is_some_and(|message| message.contains("parts could be found or read"));
+    (!names.is_empty() || none_found).then_some(names)
+}
+
+/// The part files not found, the first few by name.
+fn missing_ui(ui: &mut egui::Ui, p: &Palette, missing: &[String]) {
+    const SHOWN: usize = 5;
+    let text = match missing.len() {
+        0 => "Its part files were not found.".to_owned(),
+        n => {
+            let mut text = format!(
+                "{n} part file{} not found: {}",
+                if n == 1 { " was" } else { "s were" },
+                missing
+                    .iter()
+                    .take(SHOWN)
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            if n > SHOWN {
+                text.push_str(&format!(" and {} more", n - SHOWN));
+            }
+            text
+        }
+    };
+    ui.label(RichText::new(text).color(p.danger));
+    ui.label(
+        RichText::new(
+            "Choose the folder that holds them, or one of them, to convert this file again \
+             searching there too.",
+        )
+        .small()
+        .color(p.tide),
+    );
 }
 
 /// What was written, in a sentence.
@@ -696,4 +858,31 @@ fn file_name(path: &Path) -> String {
 
 fn display(path: &Path) -> String {
     path.display().to_string()
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn the_parts_an_assembly_could_not_find_are_named() {
+        let report = json!({"ok": true, "losses": [
+            {"level": "Dropped", "subject": "occurrence \"Pin:1\"",
+             "message": "pin.ipt: not found at its stored path or in the project folder /p"},
+            {"level": "Dropped", "subject": "sub.iam: occurrence \"Pin:2\"",
+             "message": "pin.ipt: not found at its stored path or in the project folder /p"},
+            {"level": "Dropped", "subject": "occurrence \"Base:1\"",
+             "message": "base.ipt: not found at its stored path or in the project folder /p"},
+            {"level": "Info", "subject": "history", "message": "flattened"},
+        ]});
+        assert_eq!(missing_parts(&report).unwrap(), ["base.ipt", "pin.ipt"]);
+        let failed = json!({"ok": false, "error": {"message": "cannot read this design: none of \
+            the assembly's parts could be found or read; if they are elsewhere, give the project \
+            folder that holds them"}});
+        assert_eq!(missing_parts(&failed).unwrap(), Vec::<String>::new());
+        assert_eq!(missing_parts(&json!({"ok": true, "losses": []})), None);
+    }
 }

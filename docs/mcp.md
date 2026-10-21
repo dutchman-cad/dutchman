@@ -61,9 +61,9 @@ only when `solidcraft-cli` is on the server's `PATH`, and is reported unverified
 
 | Tool | Arguments | Returns | Writes |
 |---|---|---|---|
-| `inspect` | `input` | `dutchman.inspect/1` | nothing |
-| `convert` | `input`, `output`, and optionally `import_only`, `verify`, `solidcraft`, `verify_timeout`, `overwrite` | `dutchman.convert/1` | the `output` file |
-| `convert_all` | `inputs`, `out_dir`, and optionally `jobs`, `timeout`, `max_memory_mb`, `journal`, `report_anon`, `report_salt`, `report_key`, `import_only`, `verify`, `solidcraft`, `verify_timeout`, `overwrite` | `dutchman.convert-all/1` | inside `out_dir`, and the `journal`, `report_anon` and `report_key` files |
+| `inspect` | `input`, and optionally `project`, `search` | `dutchman.inspect/1` | nothing |
+| `convert` | `input`, `output`, and optionally `import_only`, `verify`, `solidcraft`, `verify_timeout`, `overwrite`, `project`, `search` | `dutchman.convert/1` | the `output` file |
+| `convert_all` | `inputs`, `out_dir`, and optionally `jobs`, `timeout`, `max_memory_mb`, `journal`, `report_anon`, `report_salt`, `report_key`, `import_only`, `verify`, `solidcraft`, `verify_timeout`, `overwrite`, `project`, `search` | `dutchman.convert-all/1` | inside `out_dir`, and the `journal`, `report_anon` and `report_key` files |
 | `formats` | none | `dutchman.formats/1` | nothing |
 
 | Argument | Type | Meaning |
@@ -84,6 +84,8 @@ only when `solidcraft-cli` is on the server's `PATH`, and is reported unverified
 | `solidcraft` | string | Path of `solidcraft-cli` for the check. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`. |
 | `verify_timeout` | integer, at least 1 | Seconds each SolidCraft check may run before the history is written unverified. Default 120. |
 | `overwrite` | boolean | Replace an existing `.solidcraft` file (default true). When false, an existing file is left alone and that file's conversion fails with "already exists". |
+| `project` | string | Absolute path of the project folder an assembly's part files are searched in when they are not at their stored paths. Default: the nearest folder above the assembly holding an Inventor `.ipj`, else two folders up; for `convert_all`, each folder given. See [Finding the part files](inventor.md#finding-the-part-files). |
+| `search` | array of strings | Absolute paths of more folders to search, with their subfolders, for part files the project folder does not hold. |
 
 An unknown argument is refused (`unknown argument bogus`), as is a missing required one
 (`output is required`).

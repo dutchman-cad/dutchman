@@ -33,7 +33,7 @@ minute. Every release is on the [releases page](https://github.com/dutchman-cad/
 ## What converts
 
 Early development. Fusion (`.f3d`, `.f3z`) designs, Inventor parts (`.ipt`), Inventor
-assemblies (`.iam`, keep the part files next to the assembly) and SolidWorks parts (`.sldprt`)
+assemblies (`.iam`, with their parts found anywhere in the project) and SolidWorks parts (`.sldprt`)
 convert today:
 
 - When every feature in a design's history maps onto SolidCraft (sketches and extrudes so
@@ -55,7 +55,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it fits together.
 shows whether it converted, what was written (editable history or geometry), and its losses as
 Info, Degraded or Dropped. A converted design opens in SolidCraft from its card: the app that
 `SOLIDCRAFT_APP` names, else `solidcraft` on `PATH`, else the system's app for `.solidcraft`
-files. The app follows the system's light or dark setting, or can be set to Day or Night.
+files. When an Inventor assembly's part files are not found, its card names them: **Search a
+folder…** or **Find a file…** converts it again, searching there too. The app follows the
+system's light or dark setting, or can be set to Day or Night.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/dutchman-gui-night.png">

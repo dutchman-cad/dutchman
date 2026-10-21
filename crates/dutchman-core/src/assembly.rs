@@ -11,6 +11,9 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use crate::locate::Finder;
+#[cfg(test)]
+use crate::locate::PartSearch;
 use crate::placement::{compose, inverse, Placement3x4, IDENTITY};
 use crate::{Error, Format, Model, Report, Severity, Stage};
 
@@ -126,13 +129,14 @@ pub struct Placement {
 pub(crate) type Decode<'a> = dyn Fn(Format, &Path, &mut Report) -> Result<Model, Error> + 'a;
 
 /// Reads `input` with `decode` and, for an assembly, the parts and sub-assemblies it places,
-/// inside the assemblies whose files are in `open` (outermost first), so an assembly that
-/// places itself, directly or not, is refused instead of read forever.
+/// found by `finder`, inside the assemblies whose files are in `open` (outermost first), so
+/// an assembly that places itself, directly or not, is refused instead of read forever.
 pub(crate) fn read(
     format: Format,
     input: &Path,
     report: &mut Report,
     decode: &Decode,
+    finder: &Finder,
     open: &mut Vec<PathBuf>,
 ) -> Result<Model, Error> {
     let mut model = decode(format, input, report)?;
@@ -149,20 +153,22 @@ pub(crate) fn read(
             )));
         }
         open.push(key);
-        let resolved = resolve(&model, input, report, decode, open);
+        let resolved = resolve(&model, input, report, decode, finder, open);
         open.pop();
         model.assembly = Some(resolved?);
     }
     Ok(model)
 }
 
-/// Reads the parts the assembly `model`, read from `input`, places. A placement whose part
-/// cannot be found or read is left out and reported; an assembly with none left is an error.
+/// Reads the parts the assembly `model`, read from `input`, places, found by `finder`. A
+/// placement whose part cannot be found or read is left out and reported; an assembly with
+/// none left is an error.
 pub(crate) fn resolve(
     model: &Model,
     input: &Path,
     report: &mut Report,
     decode: &Decode,
+    finder: &Finder,
     open: &mut Vec<PathBuf>,
 ) -> Result<Assembly, Error> {
     let wire = serde_json::to_value(&model.ir.model)
@@ -180,7 +186,10 @@ pub(crate) fn resolve(
     }
     occurrences.sort_by_key(|row| row.get("ordinal").and_then(Value::as_u64));
 
-    let folder = input.parent().unwrap_or(Path::new("."));
+    let folder = input
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
     let mut parts: Vec<Model> = Vec::new();
     let mut by_file: BTreeMap<PathBuf, Option<usize>> = BTreeMap::new();
     let mut placements = Vec::new();
@@ -220,14 +229,27 @@ pub(crate) fn resolve(
                 continue;
             }
         };
-        let Some(path) = locate(stored, file, folder) else {
-            report.push_at(
-                Stage::Input,
-                Severity::Dropped,
-                subject,
-                format!("{file}: not found next to the assembly"),
-            );
-            continue;
+        let path = match finder.locate(stored, folder) {
+            Ok(found) => {
+                if let Some((count, used)) = found.ambiguous {
+                    report.push_at(
+                        Stage::Input,
+                        Severity::Info,
+                        file,
+                        format!("{count} files in the project have this name; used {used}"),
+                    );
+                }
+                found.path
+            }
+            Err(missing) => {
+                report.push_at(
+                    Stage::Input,
+                    Severity::Dropped,
+                    subject,
+                    format!("{file}: {missing}"),
+                );
+                continue;
+            }
         };
         let part = match by_file.get(&path) {
             Some(known) => *known,
@@ -239,7 +261,7 @@ pub(crate) fn resolve(
                     ))
                 } else {
                     let mut part_report = Report::default();
-                    let result = read(format, &path, &mut part_report, decode, open)
+                    let result = read(format, &path, &mut part_report, decode, finder, open)
                         .map_err(|err| (err.stage(), err.to_string()));
                     report.append_prefixed(part_report, file);
                     result.map(|part| {
@@ -287,7 +309,9 @@ pub(crate) fn resolve(
     }
     if placements.is_empty() {
         return Err(Error::Assembly(
-            "none of the assembly's parts could be read; put its part files next to it".to_owned(),
+            "none of the assembly's parts could be found or read; if they are elsewhere, give \
+             the project folder that holds them"
+                .to_owned(),
         ));
     }
     Ok(Assembly {
@@ -1022,39 +1046,6 @@ fn file_name(stored: &str) -> &str {
     stored.rsplit(['/', '\\']).next().unwrap_or(stored)
 }
 
-/// The part file: at its stored path when that exists (relative to the assembly, and with
-/// either separator), else by name next to the assembly (ignoring case, as the saving system
-/// may have).
-fn locate(stored: &str, file: &str, folder: &Path) -> Option<PathBuf> {
-    let candidates = [stored.to_owned(), stored.replace('\\', "/")];
-    for candidate in &candidates {
-        let path = Path::new(candidate);
-        let path = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            folder.join(path)
-        };
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-    let beside = folder.join(file);
-    if beside.is_file() {
-        return Some(beside);
-    }
-    std::fs::read_dir(folder)
-        .ok()?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .find(|path| {
-            path.is_file()
-                && path
-                    .file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| name.eq_ignore_ascii_case(file))
-        })
-}
-
 /// An occurrence's rigid placement, or why it is not one.
 fn transform(occurrence: &Value) -> Result<[[f64; 4]; 3], String> {
     let malformed = || "its placement is malformed".to_owned();
@@ -1182,6 +1173,7 @@ mod tests {
                 &self.dir.path().join(name),
                 report,
                 &decode,
+                &Finder::new(&PartSearch::project(self.dir.path())),
                 &mut Vec::new(),
             )
         }
@@ -1233,7 +1225,11 @@ mod tests {
         assert_eq!(sub.placements.len(), 2);
         assert_eq!(
             dropped(&report),
-            ["occurrence \"Occurrence:3\": gone.ipt: not found next to the assembly"]
+            [format!(
+                "occurrence \"Occurrence:3\": gone.ipt: not found at its stored path or in the \
+                 project folder {}",
+                crate::locate::tests::absolute_for_tests(project.dir.path()).display()
+            )]
         );
     }
 
@@ -1301,36 +1297,67 @@ mod tests {
             .read("lonely.iam", &mut Report::default())
             .unwrap_err();
         assert!(
-            err.to_string().contains("put its part files next to it"),
+            err.to_string()
+                .contains("give the project folder that holds them"),
             "{err}"
         );
     }
 
     #[test]
-    fn parts_are_found_as_stored_or_beside_the_assembly() {
-        let dir = tempfile::tempdir().unwrap();
-        let folder = dir.path().join("Assemblies");
-        std::fs::create_dir_all(dir.path().join("Parts")).unwrap();
-        std::fs::create_dir_all(&folder).unwrap();
-        std::fs::write(folder.join("Bracket.ipt"), b"").unwrap();
-        std::fs::write(dir.path().join("Parts").join("Plate.ipt"), b"").unwrap();
-        let find = |stored: &str| locate(stored, file_name(stored), &folder);
-
-        // An absolute path from another machine: found by name beside the assembly.
+    fn parts_in_the_folders_of_an_inventor_project_are_found() {
+        // Robot/Robot.ipj, Robot/Assemblies/top.iam, Robot/Parts/cube.ipt and
+        // Robot/SubAssembly/sub.iam, stored with the paths of the machine that saved them.
+        let project = Project::new(&[
+            (
+                "top.iam",
+                vec![
+                    occurrence(0, r"C:\Users\someone\Robot\Parts\cube.ipt", root(), 0.0),
+                    occurrence(
+                        1,
+                        r"C:\Users\someone\Robot\SubAssembly\sub.iam",
+                        root(),
+                        50.0,
+                    ),
+                ],
+            ),
+            (
+                "sub.iam",
+                vec![occurrence(0, r"\\server\old\cube.ipt", root(), 0.0)],
+            ),
+        ]);
+        let top = project.dir.path().join("Robot");
+        for folder in ["Assemblies", "Parts", "SubAssembly"] {
+            std::fs::create_dir_all(top.join(folder)).unwrap();
+        }
+        std::fs::write(top.join("Robot.ipj"), b"").unwrap();
+        for (from, to) in [
+            ("top.iam", "Assemblies/top.iam"),
+            ("Cube.IPT", "Parts/cube.ipt"),
+            ("sub.iam", "SubAssembly/sub.iam"),
+        ] {
+            std::fs::rename(project.dir.path().join(from), top.join(to)).unwrap();
+        }
+        let decode =
+            |format: Format, path: &Path, report: &mut Report| project.decode(format, path, report);
+        let mut report = Report::default();
+        let model = read(
+            Format::InventorAssembly,
+            &top.join("Assemblies/top.iam"),
+            &mut report,
+            &decode,
+            &Finder::new(&PartSearch::default()),
+            &mut Vec::new(),
+        )
+        .unwrap();
+        assert_eq!(dropped(&report), Vec::<String>::new());
+        let assembly = model.assembly.unwrap();
+        assert_eq!(assembly.placements.len(), 2);
+        let sub = assembly.parts[1].assembly.as_ref().unwrap();
         assert_eq!(
-            find(r"C:\Users\Someone\Work\Bracket.ipt"),
-            Some(folder.join("Bracket.ipt"))
+            sub.placements.len(),
+            1,
+            "the sub-assembly's cube, found by searching"
         );
-        assert_eq!(
-            find("/home/someone/work/Bracket.ipt"),
-            Some(folder.join("Bracket.ipt"))
-        );
-        // A different case, as Windows saves it.
-        assert!(find(r"C:\Work\BRACKET.IPT").is_some());
-        // A relative path, with either separator.
-        assert!(find(r"..\Parts\Plate.ipt").is_some());
-        assert!(find("../Parts/Plate.ipt").is_some());
-        assert_eq!(find(r"C:\Work\Missing.ipt"), None);
     }
 
     /// cadmpeg's example 10 mm cube in a design whose component `Block` owns it, placed at

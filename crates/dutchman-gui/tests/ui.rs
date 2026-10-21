@@ -84,6 +84,34 @@ fn a_file_that_cannot_convert_says_why() {
 }
 
 #[test]
+fn a_file_converts_again_searching_a_folder_chosen_for_it() {
+    let out = tempfile::tempdir().unwrap();
+    let mut harness = harness();
+    harness
+        .state_mut()
+        .add_inputs([fixture("synthetic_cube.ipt")]);
+    harness.state_mut().set_out_dir(out.path().to_path_buf());
+    harness.state_mut().set_verify(false);
+    convert(&mut harness);
+
+    let parts = out.path().join("Parts");
+    let ctx = harness.ctx.clone();
+    harness.state_mut().search_for_row(0, parts.clone(), &ctx);
+    assert!(harness.state().running());
+    let started = Instant::now();
+    while harness.state().running() {
+        assert!(started.elapsed() < Duration::from_secs(120));
+        std::thread::sleep(Duration::from_millis(20));
+        harness.step();
+    }
+    harness.run();
+    let row = &harness.state().rows()[0];
+    assert_eq!(row.status, Status::Converted);
+    assert_eq!(row.job.as_ref().unwrap().search.also, [parts]);
+    assert!(harness.query_by_label("1 converted, 0 failed").is_some());
+}
+
+#[test]
 fn convert_waits_for_designs_and_a_folder() {
     let mut harness = harness();
     harness.run();

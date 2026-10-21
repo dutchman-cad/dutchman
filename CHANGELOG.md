@@ -19,6 +19,16 @@ report's schema name changes when a field does).
 
 ### Assemblies and components
 
+- Inventor assemblies find their parts as Inventor does: at the stored path, relative or with
+  the saving machine's drive or root moved onto this one, else by name anywhere under the
+  project folder (the nearest above holding an `.ipj`, the folder given to `convert-all`, or
+  `--project DIR`), preferring the file in the stored path's folders. A project whose parts
+  are in sibling folders (`../Parts`, `../SubAssembly`) converts where it lies. `--search DIR`
+  adds folders searched after the project's, and files found are named as their folders list
+  them. `dutchman_core::read_in` and `convert_traced` take a `PartSearch`.
+- The desktop app names the part files an assembly could not find, and converts it again
+  searching a folder, or a found file's folder, chosen there. Its **Inventor project folder**
+  setting gives the project folder for a run.
 - Revolute and slider joints become SolidCraft revolute and slider joints, revolutes with their
   limits, so the parts move as in the source; fixed joints keep their offset. Joint frames meet
   face to face, as in Fusion.
