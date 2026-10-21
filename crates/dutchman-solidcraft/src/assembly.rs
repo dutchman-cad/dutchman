@@ -36,6 +36,8 @@ pub(crate) fn write(
         params: Vec::new(),
         taken: BTreeSet::new(),
         looks: BTreeMap::new(),
+        face_looks: Vec::new(),
+        bodies: BTreeSet::new(),
         names: Vec::new(),
         placed: BTreeMap::new(),
         histories: Vec::new(),
@@ -57,8 +59,15 @@ pub(crate) fn write(
         "occurrences": builder.occurrences,
         "features": builder.features,
     });
-    if let (false, Some(fields)) = (builder.looks.is_empty(), doc.as_object_mut()) {
-        fields.insert("appearances".to_owned(), json!({"bodies": builder.looks}));
+    let mut appearances = serde_json::Map::new();
+    if !builder.looks.is_empty() {
+        appearances.insert("bodies".to_owned(), json!(builder.looks));
+    }
+    if !builder.face_looks.is_empty() {
+        appearances.insert("faces".to_owned(), json!(builder.face_looks));
+    }
+    if let (false, Some(fields)) = (appearances.is_empty(), doc.as_object_mut()) {
+        fields.insert("appearances".to_owned(), Value::Object(appearances));
     }
     builder
         .report
@@ -158,6 +167,11 @@ struct Builder<'r> {
     taken: BTreeSet<String>,
     /// Looks of the bodies the parts' histories make, by body name.
     looks: BTreeMap<String, Value>,
+    /// Looks of those bodies' faces, each by a point in its part's own frame, which SolidCraft
+    /// applies to every occurrence of the part.
+    face_looks: Vec<Value>,
+    /// Body names the parts' histories use so far, kept unique across parts.
+    bodies: BTreeSet<String>,
     /// What became of each part's history.
     histories: Vec<Check>,
     /// Every part's features, for the outcome.
@@ -317,22 +331,12 @@ impl Builder<'_> {
         };
         self.report.append_prefixed(part_report, &file);
         history.relocate(self.next_id - 1, component, &prefix(name), &mut self.taken);
+        history.rename_bodies(name, &mut self.bodies);
         self.next_id = history.next_id;
         self.features.append(&mut history.features);
         self.params.append(&mut history.params);
         self.looks.append(&mut history.looks);
-        if !history.face_looks.is_empty() {
-            // A face look's point is in the design's frame, which a part placed by occurrences
-            // does not have one of.
-            self.report.push(
-                Severity::Info,
-                "appearance",
-                format!(
-                    "{file}: {} face colours keep their body's colour inside an assembly",
-                    history.face_looks.len()
-                ),
-            );
-        }
+        self.face_looks.append(&mut history.face_looks);
         self.histories.push(check);
         Ok(true)
     }

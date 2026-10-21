@@ -688,6 +688,76 @@ fn parts_keep_their_histories_inside_an_assembly() {
     assert_eq!(report.outcome().unwrap().mode, dutchman_core::Mode::History);
 }
 
+/// [`assembly_of_histories`] with `First`'s cube green and `Second`'s top face blue.
+fn assembly_with_face_colours() -> Model {
+    let mut model = assembly_of_histories();
+    let assembly = model.assembly.as_mut().unwrap();
+    for (part, recolour) in assembly.parts.iter_mut().zip([true, false]) {
+        let mut wire = serde_json::to_value(&part.ir).unwrap();
+        if recolour {
+            wire["model"]["bodies"][0]["color"] = json!({"r": 0.0, "g": 1.0, "b": 0.0, "a": 1.0});
+        } else {
+            for face in wire["model"]["faces"].as_array_mut().unwrap() {
+                if face["id"] == "synthetic:cube:face#top" {
+                    face["color"] = json!({"r": 0.0, "g": 0.0, "b": 1.0, "a": 1.0});
+                }
+            }
+        }
+        part.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    }
+    model
+}
+
+#[test]
+fn parts_inside_an_assembly_keep_their_own_body_and_face_colours() {
+    let (document, report) = convert(
+        &assembly_with_face_colours(),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    // Both parts name their body "unit cube"; the second's is renamed so each keeps its look.
+    let bodies = &document["appearances"]["bodies"];
+    assert_eq!(bodies["unit cube"]["color"], json!([0, 255, 0]));
+    assert_eq!(bodies["unit cube (Second)"]["color"], json!([204, 51, 26]));
+    let second = document["components"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "Second")
+        .unwrap()["id"]
+        .clone();
+    let extrude = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["type"] == "extrude" && f["component"] == second)
+        .unwrap();
+    assert_eq!(extrude["body_names"], json!(["unit cube (Second)"]));
+    // The face look is on the second part's body, at a point in that part's own frame: on its
+    // top face, not moved to where it is placed.
+    let faces = document["appearances"]["faces"].as_array().unwrap();
+    assert_eq!(faces.len(), 1);
+    assert_eq!(faces[0]["body"], "unit cube (Second)");
+    assert_eq!(faces[0]["look"]["color"], json!([0, 0, 255]));
+    let p: Vec<f64> = faces[0]["point"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c.as_f64().unwrap())
+        .collect();
+    assert!(
+        (p[2] - 10.0).abs() < 1e-9 && (0.0..10.0).contains(&p[0]) && (0.0..10.0).contains(&p[1]),
+        "{p:?}"
+    );
+    assert!(
+        !report
+            .losses()
+            .iter()
+            .any(|loss| loss.subject == "appearance"),
+        "{:?}",
+        report.losses()
+    );
+}
+
 #[test]
 fn solidcraft_rebuilds_each_parts_history_in_the_assembly() {
     let Some(cli) = solidcraft() else { return };
@@ -867,4 +937,42 @@ fn solidcraft_extrudes_a_spline_profile() {
     let got = volumes(&cli, &written(&model).0);
     assert_eq!(got.len(), 1, "{got:?}");
     assert!((got[0] - 3000.0).abs() / 3000.0 < 1e-3, "{got:?}");
+}
+
+#[test]
+fn solidcraft_colours_the_face_of_each_parts_own_body() {
+    let Some(cli) = solidcraft() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let design = dir.path().join("pair.solidcraft");
+    std::fs::write(&design, written(&assembly_with_face_colours()).0).unwrap();
+    let script = dir.path().join("looks.json");
+    let list = |body: &str| json!({"command": "appearance.list", "params": {"body": body}});
+    std::fs::write(
+        &script,
+        json!([list("unit cube (Second)"), list("unit cube")]).to_string(),
+    )
+    .unwrap();
+    let output = dir.path().join("looks.out.json");
+    let status = std::process::Command::new(cli)
+        .arg("run")
+        .arg(&script)
+        .arg("--in")
+        .arg(&design)
+        .arg("--results")
+        .arg("--json-out")
+        .arg(&output)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let results: Value = serde_json::from_str(&std::fs::read_to_string(output).unwrap()).unwrap();
+    let face_colours = |result: &Value| -> Vec<String> {
+        result["body"]["faces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|face| face["appearance"]["color"].as_str().unwrap().to_owned())
+            .collect()
+    };
+    assert_eq!(face_colours(&results[0]), ["#0000ff"], "{results}");
+    assert!(face_colours(&results[1]).is_empty(), "{results}");
 }
