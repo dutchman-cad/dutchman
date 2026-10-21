@@ -34,3 +34,10 @@ todo = "deny"
 unimplemented = "deny"
 unreachable = "deny"
 indexing_slicing = "deny"
+
+# Release builds keep panic = "unwind" (the default): a panic inside cadmpeg is caught and
+# reported as an error, which aborting would turn into a crash.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
