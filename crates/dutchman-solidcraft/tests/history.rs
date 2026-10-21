@@ -580,3 +580,121 @@ fn an_inventor_shaped_extrude_flattens_with_its_reason() {
         ]
     );
 }
+
+/// Two parts with the cube history (and so the same parameter names), `First` placed at the
+/// origin and `Second` twice, 30 mm and 60 mm along X.
+fn assembly_of_histories() -> Model {
+    let part = |name: &str| Model {
+        name: name.to_owned(),
+        source_file: Some(format!("{name}.ipt")),
+        ..cube_with_history(10.0, first_profile(), None)
+    };
+    let at = |x: f64| {
+        [
+            [1.0, 0.0, 0.0, x],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+        ]
+    };
+    let placed = |part: usize, x: f64| dutchman_core::Placement {
+        name: None,
+        part,
+        transform: at(x),
+    };
+    Model {
+        name: "pair".to_owned(),
+        source_file: Some("pair.iam".to_owned()),
+        assembly: Some(dutchman_core::Assembly {
+            parts: vec![part("First"), part("Second")],
+            placements: vec![placed(0, 0.0), placed(1, 30.0), placed(1, 60.0)],
+        }),
+        ..part("pair")
+    }
+}
+
+#[test]
+fn parts_keep_their_histories_inside_an_assembly() {
+    let (document, report) = convert(
+        &assembly_of_histories(),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let components = document["components"].as_array().unwrap();
+    let second = components.iter().find(|c| c["name"] == "Second").unwrap()["id"].clone();
+    let in_second: Vec<_> = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["component"] == second)
+        .map(|f| {
+            (
+                f["type"].as_str().unwrap().to_owned(),
+                f["suppressed"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        in_second,
+        [
+            ("sketch".to_owned(), false),
+            ("extrude".to_owned(), false),
+            ("import".to_owned(), true)
+        ]
+    );
+    // Feature ids are unique, and each extrude still points at its own sketch.
+    let features = document["features"].as_array().unwrap();
+    let mut ids: Vec<u64> = features.iter().map(|f| f["id"].as_u64().unwrap()).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), features.len());
+    for extrude in features.iter().filter(|f| f["type"] == "extrude") {
+        let sketch = features
+            .iter()
+            .find(|f| f["id"] == extrude["sketch"])
+            .unwrap();
+        assert_eq!(sketch["component"], extrude["component"]);
+    }
+    // The second part's parameters are renamed, and its dimension follows.
+    let names: Vec<&str> = document["params"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["d1", "side", "Second_d1", "Second_side"]);
+    let second_sketch = features
+        .iter()
+        .find(|f| f["type"] == "sketch" && f["component"] == second)
+        .unwrap();
+    let linked: Vec<&str> = second_sketch["sketch"]["constraints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c["param"].as_str())
+        .collect();
+    assert_eq!(linked, ["Second_side"]);
+    let lines: Vec<String> = report
+        .losses()
+        .iter()
+        .filter(|loss| loss.subject == "history")
+        .map(|loss| loss.detail.clone())
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            "First.ipt: 2 of 2 features mapped; unverified: verification turned off",
+            "Second.ipt: 2 of 2 features mapped; unverified: verification turned off"
+        ]
+    );
+    assert_eq!(report.outcome().unwrap().mode, dutchman_core::Mode::History);
+}
+
+#[test]
+fn solidcraft_rebuilds_each_parts_history_in_the_assembly() {
+    let Some(cli) = solidcraft() else { return };
+    let (bytes, _) = written(&assembly_of_histories());
+    assert_eq!(volumes(&cli, &bytes), [1000.0, 1000.0, 1000.0]);
+    // The second part's own `side` drives only its placements.
+    let mut grown = volumes(&cli, &with_param(&bytes, "Second_side", "20 mm"));
+    grown.sort_by(f64::total_cmp);
+    assert_eq!(grown, [1000.0, 4000.0, 4000.0]);
+}

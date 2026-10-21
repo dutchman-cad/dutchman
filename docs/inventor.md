@@ -42,7 +42,8 @@ State as of cadmpeg 0.6.2 (docs/format-support.md upstream rates Inventor L1 wit
 
 ## Assemblies (`.iam`)
 
-Assemblies convert as placed geometry, without history:
+Assemblies convert as placed parts, each with its own feature history when that history
+maps (see the parts table above for what blocks Inventor history today):
 
 - cadmpeg gives each occurrence its stored part path (often absolute on the machine that
   saved it), its rigid placement in millimetres, and its name. Dutchman looks for the part at

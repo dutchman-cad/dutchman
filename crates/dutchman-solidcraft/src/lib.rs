@@ -175,21 +175,7 @@ impl Writer for SolidCraftWriter {
         report: &mut Report,
     ) -> Result<(), Error> {
         if let Some(assembly) = &model.assembly {
-            let bytes = assembly::write(model, assembly, report)?;
-            report.push(
-                Severity::Info,
-                HISTORY,
-                "not written: assemblies and designs with components convert as placed geometry",
-            );
-            report.set_outcome(Outcome {
-                mode: Mode::Import,
-                check: Check::NotApplicable(
-                    "assemblies and designs with components convert as placed geometry, without \
-                     their parts' histories"
-                        .to_owned(),
-                ),
-                features: Vec::new(),
-            });
+            let bytes = assembly::write(self, model, assembly, report)?;
             return out
                 .write_all(&bytes)
                 .map_err(|err| Error::Encode(format!("cannot write the design: {err}")));
