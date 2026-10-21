@@ -60,8 +60,8 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     env:
-      SOLIDCRAFT_VERSION: 0.17.0
-      SOLIDCRAFT_SHA256: 4032f1e7da8519982580dbcb2cd87d0906d49781293f466e78751f891e0ea614
+      SOLIDCRAFT_VERSION: 0.18.2
+      SOLIDCRAFT_SHA256: 9d0c922ac72204f34ad22ca7a171be78016ab002e304ace3c07d34d187d830ff
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -73,7 +73,15 @@ jobs:
           curl -fsSL -o "$archive" "https://github.com/tangency-labs/solidcraft/releases/download/v${SOLIDCRAFT_VERSION}/$archive"
           echo "${SOLIDCRAFT_SHA256}  $archive" | sha256sum -c -
           tar xzf "$archive"
-      - run: scripts/solidcraft-roundtrip.sh "solidcraft-${SOLIDCRAFT_VERSION}-linux-x86_64/bin/solidcraft-cli" target/debug/dutchman crates/dutchman-core/tests/fixtures/generated_unit_cube.f3d crates/dutchman-core/tests/fixtures/synthetic_cube.ipt crates/dutchman-core/tests/fixtures/solidworks_cube.sldprt
+      # Each fixture holds cadmpeg's example 10 mm cube, which must read back as one.
+      - name: Check converted geometry in SolidCraft
+        run: |
+          cube=1000:6:0,0,0:10,10,10
+          fixtures=crates/dutchman-core/tests/fixtures
+          scripts/solidcraft-roundtrip.sh "solidcraft-${SOLIDCRAFT_VERSION}-linux-x86_64/bin/solidcraft-cli" target/debug/dutchman \
+            "$fixtures/generated_unit_cube.f3d=$cube" \
+            "$fixtures/synthetic_cube.ipt=$cube" \
+            "$fixtures/solidworks_cube.sldprt=$cube"
       - name: Replay histories in SolidCraft
         run: |
           export SOLIDCRAFT_CLI="$PWD/solidcraft-${SOLIDCRAFT_VERSION}-linux-x86_64/bin/solidcraft-cli"
