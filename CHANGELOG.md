@@ -6,6 +6,15 @@ report's schema name changes when a field does).
 
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
+## Unreleased
+
+### Releases
+
+- A nightly build: Dutchman's main built against cadmpeg's main every day, when either has
+  changed, and published as the `nightly` pre-release once every test and the SolidCraft round
+  trip pass. It brings cadmpeg fixes that are merged but not yet released; stable releases keep
+  using released cadmpeg only. See [Channels](docs/guide.md#channels-stable-and-nightly).
+
 ## 0.1.2 (2026-10-21)
 
 ### Testing on your own library
