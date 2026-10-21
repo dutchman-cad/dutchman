@@ -33,6 +33,7 @@ fn placed_twice() -> Model {
         name: "pair".to_owned(),
         source_file: Some("pair.iam".to_owned()),
         assembly: Some(Assembly {
+            joints: Vec::new(),
             parts: vec![part.clone()],
             placements: vec![
                 Placement {
@@ -147,6 +148,7 @@ fn nested() -> Model {
         name: "top".to_owned(),
         source_file: Some("top.iam".to_owned()),
         assembly: Some(Assembly {
+            joints: Vec::new(),
             parts: vec![pair, cube.clone()],
             placements: vec![
                 Placement {
@@ -376,4 +378,154 @@ fn components_inside_a_component_stay_beneath_it() {
     let inside: Vec<&Value> = occurrences.iter().filter(|o| o["parent"] == top).collect();
     assert_eq!(inside.len(), 2);
     assert!(inside.iter().all(|o| o["component"] == block));
+}
+
+/// Two blocks inside the root component's occurrence (placed 100 mm along X), the second 30 mm
+/// further and turned a quarter turn about Z, held by a fixed joint, and the root occurrence
+/// fixed to the design itself.
+fn jointed() -> Model {
+    let mut model = with_components(true);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["occurrences"][2]["transform"] = serde_json::json!([
+        [0.0, -1.0, 0.0, 30.0],
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0]
+    ]);
+    let identity = serde_json::json!([
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0]
+    ]);
+    let side = |key: Option<u32>| {
+        let operand = match key {
+            None => {
+                serde_json::json!({"container": {"container": "root"}, "object": "root:origin"})
+            }
+            Some(key) => serde_json::json!({
+                "container": {"container": "occurrence", "occurrence": format!("f3d:model:occurrence#{key}")},
+                "object": key.to_string(),
+            }),
+        };
+        serde_json::json!({"operand": operand, "frame": identity, "detached": false})
+    };
+    let joint = |key: u32, a: Value, b: Value| {
+        serde_json::json!({
+            "id": format!("f3d:model:joint#{key}"),
+            "operands": {"arity": "pair", "kind": {"kind": "fixed"}, "connectors": [a, b]},
+            "suppressed": false,
+        })
+    };
+    wire["model"]["assembly_joints"] = serde_json::json!([
+        joint(1, side(Some(0)), side(Some(1))),
+        joint(2, side(None), side(Some(9))),
+    ]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.assembly = dutchman_core::local_assembly(&model).unwrap();
+    model
+}
+
+#[test]
+fn fixed_joints_become_rigid_joints_that_hold_the_parts_as_placed() {
+    let (bytes, report) = written(&jointed());
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut text = String::new();
+    archive
+        .by_name("document.json")
+        .unwrap()
+        .read_to_string(&mut text)
+        .unwrap();
+    let document: Value = serde_json::from_str(&text).unwrap();
+    let joints = document["assembly"]["joints"].as_array().unwrap();
+    assert_eq!(joints.len(), 2);
+    assert!(joints
+        .iter()
+        .all(|j| j["kind"] == "rigid" && j["flip"] == true));
+    // The blocks: A's frame is its own origin; B's is the same place seen from B, which sits
+    // 30 mm further along X, turned a quarter turn: A's origin is 30 mm along B's +Y.
+    let blocks = &joints[0];
+    assert_eq!(
+        blocks["a"]["snap"]["origin"],
+        serde_json::json!([0.0, 0.0, 0.0])
+    );
+    let origin: Vec<f64> = blocks["b"]["snap"]["origin"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_f64().unwrap())
+        .collect();
+    assert!(
+        (origin[0]).abs() < 1e-9 && (origin[1] - 30.0).abs() < 1e-9 && origin[2].abs() < 1e-9,
+        "{origin:?}"
+    );
+    // The root occurrence, fixed to the design itself (occurrence 0).
+    assert_eq!(joints[1]["a"]["occurrence"], 0);
+    assert!(report
+        .losses()
+        .iter()
+        .any(|loss| loss.subject == "joints" && loss.detail.starts_with("2 joint(s)")));
+}
+
+#[test]
+fn solidcraft_reads_each_joint_as_built_and_solves_without_moving_anything() {
+    let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) else {
+        eprintln!("skipped: set {CLI_ENV} to open the design in SolidCraft");
+        return;
+    };
+    let (bytes, _) = written(&jointed());
+    let before = evaluate(&cli, &bytes);
+
+    let dir = tempfile::tempdir().unwrap();
+    let design = dir.path().join("design.solidcraft");
+    let solved = dir.path().join("solved.solidcraft");
+    let script = dir.path().join("solve.json");
+    let results = dir.path().join("results.json");
+    std::fs::write(&design, &bytes).unwrap();
+    std::fs::write(
+        &script,
+        r#"[{"command":"joint.list","params":{}},{"command":"joint.solve","params":{}}]"#,
+    )
+    .unwrap();
+    let status = std::process::Command::new(&cli)
+        .arg("run")
+        .arg(&script)
+        .arg("--in")
+        .arg(&design)
+        .arg("--save")
+        .arg(&solved)
+        .arg("--results")
+        .arg("--json-out")
+        .arg(&results)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let results: Value = serde_json::from_str(&std::fs::read_to_string(results).unwrap()).unwrap();
+    // As built: each joint's two frames, as SolidCraft places them in the world, coincide.
+    let joints = results[0]["joints"].as_array().unwrap();
+    assert_eq!(joints.len(), 2, "{results}");
+    for joint in joints {
+        assert_eq!(joint["type"], "rigid");
+        for key in ["origin", "z"] {
+            let a = joint["frame_a"][key].as_array().unwrap();
+            let b = joint["frame_b"][key].as_array().unwrap();
+            for (a, b) in a.iter().zip(b) {
+                assert!(
+                    (a.as_f64().unwrap() - b.as_f64().unwrap()).abs() < 1e-9,
+                    "{}: {key} {a} vs {b}",
+                    joint["name"]
+                );
+            }
+        }
+    }
+    let solve = &results[1];
+    assert_eq!(solve["conflicts"], serde_json::json!([]), "{solve}");
+    assert_eq!(solve["errors"], serde_json::json!([]), "{solve}");
+
+    let after = evaluate(&cli, &std::fs::read(&solved).unwrap());
+    let boxes = |bodies: &[Value]| {
+        let mut boxes: Vec<String> = bodies.iter().map(|b| b["bbox"].to_string()).collect();
+        boxes.sort();
+        boxes
+    };
+    assert_eq!(boxes(&before), boxes(&after));
+    assert_eq!(before.len(), 2);
 }

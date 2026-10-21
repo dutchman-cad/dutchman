@@ -33,6 +33,22 @@ pub struct Assembly {
     pub parts: Vec<Model>,
     /// Each placed part, in the assembly's order.
     pub placements: Vec<Placement>,
+    /// Joints between its placements.
+    pub joints: Vec<Joint>,
+}
+
+/// A joint that holds two placed parts where they are, relative to each other: rigid, as
+/// built.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Joint {
+    /// The first side: the indices of the placements leading to it, from the top assembly's
+    /// [`Assembly::placements`] down through each sub-assembly's; empty for the top assembly
+    /// itself, which stays fixed.
+    pub a: Vec<usize>,
+    /// The second side, the same way.
+    pub b: Vec<usize>,
+    /// Whether the source suppresses it.
+    pub suppressed: bool,
 }
 
 /// One part placed in an assembly.
@@ -207,7 +223,11 @@ pub(crate) fn resolve(
             "none of the assembly's parts could be read; put its part files next to it".to_owned(),
         ));
     }
-    Ok(Assembly { parts, placements })
+    Ok(Assembly {
+        parts,
+        placements,
+        joints: Vec::new(),
+    })
 }
 
 /// Arenas a component's own geometry never reaches into: other components' bodies are kept
@@ -225,8 +245,8 @@ const NOT_GEOMETRY: [&str; 6] = [
 pub(crate) enum Components {
     /// The design places no components of its own.
     None,
-    /// They can be written as an assembly.
-    Assembly(Assembly),
+    /// They can be written as an assembly; with why each joint left out was.
+    Assembly(Assembly, Vec<String>),
     /// They cannot, for this reason; the design converts as stored.
     Unplaceable(String),
 }
@@ -234,8 +254,8 @@ pub(crate) enum Components {
 /// The components a design defines and places itself (as Fusion designs do), as an assembly
 /// of part models each holding only its component's bodies, plus the design's loose bodies.
 pub(crate) fn local(model: &Model) -> Components {
-    match local_assembly(model) {
-        Ok(Some(assembly)) => Components::Assembly(assembly),
+    match local_components(model) {
+        Ok(Some((assembly, left_out))) => Components::Assembly(assembly, left_out),
         Ok(None) => Components::None,
         Err(reason) => Components::Unplaceable(reason),
     }
@@ -245,6 +265,11 @@ pub(crate) fn local(model: &Model) -> Components {
 /// holding only its component's bodies, plus the design's loose bodies; `None` when it places
 /// no components of its own, `Err` with the reason when they cannot be placed.
 pub fn local_assembly(model: &Model) -> Result<Option<Assembly>, String> {
+    Ok(local_components(model)?.map(|(assembly, _)| assembly))
+}
+
+/// [`local_assembly`], with why each joint left out was.
+fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, String> {
     let document = serde_json::to_value(&model.ir).map_err(|err| err.to_string())?;
     let wire = document.get("model").unwrap_or(&Value::Null);
     let arena = |name: &str| {
@@ -299,14 +324,17 @@ pub fn local_assembly(model: &Model) -> Result<Option<Assembly>, String> {
         parts: Vec::new(),
         placed: 0,
         open: Vec::new(),
+        path: Vec::new(),
+        paths: BTreeMap::new(),
     };
-    let mut placements = tree.placements(&roots)?;
+    let mut placements = tree.placements(&roots, false)?;
     if tree.placed != occurrences.len() {
         return Err(
             "some components are placed inside components the design does not place".to_owned(),
         );
     }
     let mut parts = std::mem::take(&mut tree.parts);
+    let (joints, left_out) = joints(arena("assembly_joints"), &tree.paths);
 
     // Bodies no component owns are the design's own, placed where they are.
     let loose: Vec<&str> = arena("bodies")
@@ -322,7 +350,105 @@ pub fn local_assembly(model: &Model) -> Result<Option<Assembly>, String> {
             transform: IDENTITY,
         });
     }
-    Ok(Some(Assembly { parts, placements }))
+    Ok(Some((
+        Assembly {
+            parts,
+            placements,
+            joints,
+        },
+        left_out,
+    )))
+}
+
+/// The joints that can be written as rigid joints between placed parts, and why each other
+/// one cannot. `paths` gives each occurrence's placement path and whether it is inside a
+/// component placed more than once.
+fn joints(rows: &[Value], paths: &BTreeMap<&str, (Vec<usize>, bool)>) -> (Vec<Joint>, Vec<String>) {
+    let mut joints = Vec::new();
+    let mut left_out = Vec::new();
+    for (index, row) in rows.iter().enumerate() {
+        let name = format!("joint {}", index + 1);
+        match joint(row, paths) {
+            Ok(joint) => joints.push(joint),
+            Err(reason) => left_out.push(format!("{name}: {reason}")),
+        }
+    }
+    (joints, left_out)
+}
+
+fn joint(row: &Value, paths: &BTreeMap<&str, (Vec<usize>, bool)>) -> Result<Joint, String> {
+    let operands = row.get("operands").unwrap_or(&Value::Null);
+    if operands.get("arity").and_then(Value::as_str) != Some("pair") {
+        return Err("a joint to the ground alone is not converted yet".to_owned());
+    }
+    let kind = operands
+        .pointer("/kind/kind")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    if kind != "fixed" {
+        return Err(format!("{kind} joints are not converted yet"));
+    }
+    let side = |index: usize| -> Result<Vec<usize>, String> {
+        let operand = operands
+            .pointer(&format!("/connectors/{index}/operand"))
+            .ok_or("it is malformed")?;
+        side_path(operand, paths)
+    };
+    let (a, b) = (side(0)?, side(1)?);
+    if a == b {
+        return Err("it joins a component to itself".to_owned());
+    }
+    Ok(Joint {
+        a,
+        b,
+        suppressed: row
+            .get("suppressed")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    })
+}
+
+/// The placement path of one side of a joint: the design itself for its root, else the
+/// deepest occurrence the operand names.
+fn side_path(
+    operand: &Value,
+    paths: &BTreeMap<&str, (Vec<usize>, bool)>,
+) -> Result<Vec<usize>, String> {
+    let container = operand.get("container").unwrap_or(&Value::Null);
+    match container.get("container").and_then(Value::as_str) {
+        Some("root") => Ok(Vec::new()),
+        Some("occurrence") => {
+            let id = container
+                .get("occurrence")
+                .and_then(Value::as_str)
+                .ok_or("it is malformed")?;
+            // Occurrences nested inside the named one are listed by their keys, outermost
+            // first, and their ids are built the same way as its: the deepest one placed wins.
+            let object = operand.get("object").and_then(Value::as_str).unwrap_or("");
+            let prefix = id.strip_suffix(object).filter(|_| !object.is_empty());
+            let nested = operand
+                .get("subelements")
+                .and_then(Value::as_array)
+                .map_or(&[][..], Vec::as_slice)
+                .iter()
+                .rev()
+                .filter_map(Value::as_str)
+                .filter_map(|key| {
+                    let nested = format!("{}{key}", prefix?);
+                    paths.get_key_value(nested.as_str()).map(|(id, _)| *id)
+                })
+                .next();
+            let (path, shared) = paths
+                .get(nested.unwrap_or(id))
+                .ok_or("it joins a component the design does not place")?;
+            if *shared {
+                return Err("it joins a component inside one placed more than once".to_owned());
+            }
+            Ok(path.clone())
+        }
+        Some("external") => Err("it joins a component of another design".to_owned()),
+        _ => Err("it is malformed".to_owned()),
+    }
 }
 
 /// The identity placement, row-major 3 × 4.
@@ -351,29 +477,73 @@ struct Tree<'a> {
     placed: usize,
     /// The occurrences being built, outermost first, to refuse a placement inside itself.
     open: Vec<&'a str>,
+    /// The placement indices leading to the occurrence being built.
+    path: Vec<usize>,
+    /// Each occurrence's placement path, and whether it is inside a component placed more
+    /// than once at its level, so that a joint to it would not say which copy.
+    paths: BTreeMap<&'a str, (Vec<usize>, bool)>,
 }
 
 impl<'a> Tree<'a> {
-    /// The placements of `occurrences` among `self.parts`.
-    fn placements(&mut self, occurrences: &[&'a Value]) -> Result<Vec<Placement>, String> {
+    /// The placements of `occurrences` among `self.parts`; `shared` when they are inside a
+    /// component placed more than once.
+    fn placements(
+        &mut self,
+        occurrences: &[&'a Value],
+        shared: bool,
+    ) -> Result<Vec<Placement>, String> {
+        let definition = |row: &Value| {
+            row.pointer("/prototype/definition")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        };
         let mut placements = Vec::with_capacity(occurrences.len());
-        for occurrence in occurrences {
+        for (index, occurrence) in occurrences.iter().enumerate() {
+            let copies = occurrences
+                .iter()
+                .filter(|other| definition(other) == definition(occurrence))
+                .count();
+            self.path.push(index);
+            if let Some(id) = occurrence.get("id").and_then(Value::as_str) {
+                self.paths.insert(id, (self.path.clone(), shared));
+            }
+            // A placement is its own occurrence however many copies sit beside it; what it
+            // holds is shared between those copies.
+            let part = self.part(occurrence, shared || copies > 1);
+            self.path.pop();
             self.placed += 1;
             placements.push(Placement {
                 name: occurrence
                     .get("name")
                     .and_then(Value::as_str)
                     .map(str::to_owned),
-                part: self.part(occurrence)?,
+                part: part?,
                 transform: transform(occurrence)?,
             });
         }
         Ok(placements)
     }
 
+    /// Counts and records the occurrences inside `id`, an occurrence of a definition already
+    /// built at this level, whose own placements are that definition's.
+    fn reuse_inside(&mut self, id: &str) {
+        let inner: Vec<&'a Value> = self.children.get(id).cloned().unwrap_or_default();
+        for (index, occurrence) in inner.iter().enumerate() {
+            self.placed += 1;
+            self.path.push(index);
+            if let Some(id) = occurrence.get("id").and_then(Value::as_str) {
+                self.paths.insert(id, (self.path.clone(), true));
+                if self.path.len() <= MAX_DEPTH {
+                    self.reuse_inside(id);
+                }
+            }
+            self.path.pop();
+        }
+    }
+
     /// The part an occurrence places: its definition's bodies, and, when components are
     /// placed inside it, those as a sub-assembly beside them.
-    fn part(&mut self, occurrence: &'a Value) -> Result<usize, String> {
+    fn part(&mut self, occurrence: &'a Value, shared: bool) -> Result<usize, String> {
         let definition = occurrence
             .pointer("/prototype/definition")
             .and_then(Value::as_str)
@@ -393,7 +563,9 @@ impl<'a> Tree<'a> {
             .collect::<Result<Vec<_>, _>>()?;
         if let Some((part, built_with)) = self.built.get(definition) {
             return if *built_with == signature {
-                Ok(*part)
+                let part = *part;
+                self.reuse_inside(id);
+                Ok(part)
             } else {
                 Err("one component holds different components where it is placed".to_owned())
             };
@@ -426,7 +598,7 @@ impl<'a> Tree<'a> {
             let outer = std::mem::take(&mut self.parts);
             let outer_built = std::mem::take(&mut self.built);
             self.open.push(id);
-            let placed = self.placements(&inner);
+            let placed = self.placements(&inner, shared);
             self.open.pop();
             let mut placements = placed?;
             if !bodies.is_empty() {
@@ -441,7 +613,11 @@ impl<'a> Tree<'a> {
             let parts = std::mem::replace(&mut self.parts, outer);
             self.built = outer_built;
             let mut holder = only(self.model, self.document, &[], name)?;
-            holder.assembly = Some(Assembly { parts, placements });
+            holder.assembly = Some(Assembly {
+                parts,
+                placements,
+                joints: Vec::new(),
+            });
             holder
         };
         self.parts.push(model);
@@ -939,6 +1115,159 @@ mod tests {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
             ..part
         }
+    }
+
+    /// `model` with these assembly joints.
+    fn with_joints(model: Model, joints: Value) -> Model {
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["assembly_joints"] = joints;
+        Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        }
+    }
+
+    /// One side of a joint: the design's root, or an occurrence (with nested occurrence keys).
+    fn connector(occurrence: Option<(u32, &[&str])>) -> Value {
+        let operand = match occurrence {
+            None => json!({"container": {"container": "root"}, "object": "root:origin"}),
+            Some((key, nested)) => json!({
+                "container": {"container": "occurrence", "occurrence": format!("f3d:model:occurrence#{key}")},
+                "object": key.to_string(),
+                "subelements": nested,
+            }),
+        };
+        json!({"operand": operand, "frame": IDENTITY, "detached": false})
+    }
+
+    fn joint(key: u32, kind: Value, a: Value, b: Value) -> Value {
+        json!({
+            "id": format!("f3d:model:joint#{key}"),
+            "operands": {"arity": "pair", "kind": kind, "connectors": [a, b]},
+            "suppressed": false,
+        })
+    }
+
+    #[test]
+    fn fixed_joints_join_the_placements_they_name() {
+        let fixed = json!({"kind": "fixed", "angle": 0.0, "translation_offset": [0.0, 0.0, 0.0]});
+        let model = with_joints(
+            nested(false, None),
+            json!([
+                // Between the two blocks inside the frame.
+                joint(
+                    1,
+                    fixed.clone(),
+                    connector(Some((1, &[]))),
+                    connector(Some((2, &[])))
+                ),
+                // The frame to the design itself.
+                joint(2, fixed.clone(), connector(None), connector(Some((0, &[])))),
+                // The second block, named through the frame it sits in.
+                joint(
+                    3,
+                    fixed.clone(),
+                    connector(Some((1, &[]))),
+                    connector(Some((0, &["2"])))
+                ),
+            ]),
+        );
+        let (assembly, left_out) = local_components(&model).unwrap().unwrap();
+        assert!(left_out.is_empty(), "{left_out:?}");
+        let sides: Vec<(Vec<usize>, Vec<usize>)> = assembly
+            .joints
+            .iter()
+            .map(|j| (j.a.clone(), j.b.clone()))
+            .collect();
+        assert_eq!(
+            sides,
+            [
+                (vec![0, 0], vec![0, 1]),
+                (vec![], vec![0]),
+                (vec![0, 0], vec![0, 1])
+            ]
+        );
+    }
+
+    #[test]
+    fn joints_that_cannot_be_written_are_left_out_with_the_reason() {
+        let fixed = json!({"kind": "fixed"});
+        let model = with_joints(
+            nested(false, None),
+            json!([
+                joint(
+                    1,
+                    json!({"kind": "revolute"}),
+                    connector(Some((1, &[]))),
+                    connector(Some((2, &[])))
+                ),
+                joint(
+                    2,
+                    fixed.clone(),
+                    connector(Some((1, &[]))),
+                    connector(Some((1, &[])))
+                ),
+                joint(
+                    3,
+                    fixed.clone(),
+                    connector(Some((1, &[]))),
+                    connector(Some((9, &[])))
+                ),
+                joint(
+                    4,
+                    fixed.clone(),
+                    connector(Some((1, &[]))),
+                    json!({"operand": {"container": {"container": "external",
+                        "external_document": {"resolution": "missing"}}, "object": "x"},
+                        "frame": IDENTITY, "detached": false})
+                ),
+            ]),
+        );
+        let (assembly, left_out) = local_components(&model).unwrap().unwrap();
+        assert!(assembly.joints.is_empty());
+        assert_eq!(
+            left_out,
+            [
+                "joint 1: revolute joints are not converted yet",
+                "joint 2: it joins a component to itself",
+                "joint 3: it joins a component the design does not place",
+                "joint 4: it joins a component of another design",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_component_holding_others_converts_wherever_it_is_placed() {
+        // Two frames, each holding the two blocks in the same places.
+        let model = nested(
+            false,
+            Some(json!([
+                placed(0, "frame", root(), 0.0),
+                placed(1, "frame", root(), 100.0),
+                placed(2, "block", inside(0), 0.0),
+                placed(3, "block", inside(0), 30.0),
+                placed(4, "block", inside(1), 0.0),
+                placed(5, "block", inside(1), 30.0),
+            ])),
+        );
+        let fixed = json!({"kind": "fixed"});
+        let model = with_joints(
+            model,
+            json!([joint(
+                1,
+                fixed,
+                connector(Some((2, &[]))),
+                connector(Some((3, &[])))
+            )]),
+        );
+        let (assembly, left_out) = local_components(&model).unwrap().unwrap();
+        assert_eq!(assembly.parts.len(), 1, "one frame, placed twice");
+        assert_eq!(assembly.placements.len(), 2);
+        // Which frame's blocks the joint means cannot be said in a design that holds the frame once.
+        assert_eq!(
+            left_out,
+            ["joint 1: it joins a component inside one placed more than once"]
+        );
     }
 
     fn placed(key: u32, definition: &str, parent: Value, x: f64) -> Value {

@@ -784,6 +784,7 @@ fn assembly_of_histories() -> Model {
         name: "pair".to_owned(),
         source_file: Some("pair.iam".to_owned()),
         assembly: Some(dutchman_core::Assembly {
+            joints: Vec::new(),
             parts: vec![part("First"), part("Second")],
             placements: vec![placed(0, 0.0), placed(1, 30.0), placed(1, 60.0)],
         }),
