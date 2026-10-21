@@ -181,7 +181,17 @@ fn on_path() -> Option<PathBuf> {
 
 /// Compares `history` (the design as written) with `original` (the same design with the
 /// history suppressed and the original geometry live).
-pub(crate) fn compare(cli: &Path, timeout: Duration, history: &[u8], original: &[u8]) -> Outcome {
+/// Replays `history` and compares it with `original` (the same design with its original
+/// geometry live), whose model has `solids` solid bodies. When SolidCraft opens the original
+/// unsoundly (solids without a volume, bodies inside out), there is nothing sound to compare
+/// with, and a replay that runs is kept unverified, saying why.
+pub(crate) fn compare(
+    cli: &Path,
+    timeout: Duration,
+    history: &[u8],
+    original: &[u8],
+    solids: usize,
+) -> Outcome {
     let dir = match tempfile::tempdir() {
         Ok(dir) => dir,
         Err(err) => return Outcome::Unverified(format!("no scratch folder: {err}")),
@@ -202,7 +212,35 @@ pub(crate) fn compare(cli: &Path, timeout: Duration, history: &[u8], original: &
     if let Some(error) = replayed.errors.first() {
         return Outcome::Differs(error.clone());
     }
+    let unsound = volume_problems(&expected.volumes, solids);
+    if !unsound.is_empty() {
+        return Outcome::Unverified(format!(
+            "the original geometry cannot be compared with: {}",
+            unsound.join("; ")
+        ));
+    }
     match_volumes(&replayed.volumes, &expected.volumes)
+}
+
+/// What is wrong with a design's body `volumes` in SolidCraft, for a design with `solids`
+/// solid bodies (0: not counted): bodies inside out, and solids without a volume.
+fn volume_problems(volumes: &[f64], solids: usize) -> Vec<String> {
+    let mut problems = Vec::new();
+    let inside_out = volumes.iter().filter(|v| **v < -NO_VOLUME).count();
+    if inside_out > 0 {
+        problems.push(format!(
+            "SolidCraft reads {inside_out} bod{} inside out, with a negative volume",
+            if inside_out == 1 { "y" } else { "ies" }
+        ));
+    }
+    let with_volume = volumes.iter().filter(|v| **v > NO_VOLUME).count();
+    if with_volume < solids {
+        problems.push(format!(
+            "SolidCraft gives {with_volume} of its {solids} solids a volume; the others open as \
+             empty shells"
+        ));
+    }
+    problems
 }
 
 /// What SolidCraft shows of geometry written as an import.
@@ -259,21 +297,7 @@ fn shown(eval: &Eval, expected: Expected) -> Shown {
         }
         _ => {}
     }
-    let inside_out = eval.volumes.iter().filter(|v| **v < -NO_VOLUME).count();
-    if inside_out > 0 {
-        problems.push(format!(
-            "SolidCraft reads {inside_out} bod{} inside out, with a negative volume",
-            if inside_out == 1 { "y" } else { "ies" }
-        ));
-    }
-    let with_volume = eval.volumes.iter().filter(|v| **v > NO_VOLUME).count();
-    if with_volume < expected.solids {
-        problems.push(format!(
-            "SolidCraft gives {with_volume} of its {} solids a volume; the others open as \
-             empty shells",
-            expected.solids
-        ));
-    }
+    problems.extend(volume_problems(&eval.volumes, expected.solids));
     problems.extend(eval.warnings.iter().cloned());
     if problems.is_empty() {
         Shown::Whole
@@ -581,7 +605,32 @@ mod cli_tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = tempfile::tempdir().unwrap();
         let cli = fake_cli(dir.path(), script);
-        compare(&cli, timeout, b"history", b"original")
+        compare(&cli, timeout, b"history", b"original", 1)
+    }
+
+    #[test]
+    fn an_original_that_opens_unsoundly_leaves_a_replayed_history_unverified() {
+        // The original opens as an empty shell; the history replays to a solid.
+        let shell = by_design(&eval(0.0, "null"), &eval(1000.0, "null"));
+        assert_eq!(
+            run(&shell, DEFAULT_TIMEOUT),
+            Outcome::Unverified(
+                "the original geometry cannot be compared with: SolidCraft gives 0 of its 1 \
+                 solids a volume; the others open as empty shells"
+                    .to_owned()
+            )
+        );
+        let inside_out = by_design(&eval(-65.4, "null"), &eval(1000.0, "null"));
+        assert!(matches!(
+            run(&inside_out, DEFAULT_TIMEOUT),
+            Outcome::Unverified(_)
+        ));
+        // A history that does not replay still differs.
+        let failing = by_design(&eval(0.0, "null"), &eval(0.0, "\"profile not closed\""));
+        assert!(matches!(
+            run(&failing, DEFAULT_TIMEOUT),
+            Outcome::Differs(_)
+        ));
     }
 
     #[test]
@@ -669,6 +718,7 @@ mod cli_tests {
             DEFAULT_TIMEOUT,
             b"h",
             b"o",
+            1,
         );
         assert!(matches!(outcome, Outcome::Unverified(_)));
     }
