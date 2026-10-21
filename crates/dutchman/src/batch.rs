@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 
 use crate::json as report;
 use crate::worker::{self, Limits};
-use crate::ConvertOptions;
+use crate::{ConvertOptions, PartSearch};
 
 /// The schema of `dutchman convert-all --json`.
 pub const SCHEMA: &str = "dutchman.convert-all/1";
@@ -38,6 +38,9 @@ pub struct Job {
     pub output: PathBuf,
     /// Whether an existing design at `output` is replaced.
     pub replace: bool,
+    /// Where an assembly's part files are looked for: in the folder given that holds the
+    /// file as its project, unless the options name one.
+    pub search: PartSearch,
 }
 
 /// What happens to a job while a batch runs.
@@ -76,6 +79,19 @@ impl Settings {
     }
 }
 
+/// Sets planned `jobs` to replace designs and look for part files as `options` say: in the
+/// options' project folder when they name one, else in the folder given that holds each file,
+/// then in the options' other folders.
+pub fn prepare(jobs: &mut [Job], options: &ConvertOptions) {
+    for job in jobs {
+        job.replace = !options.no_clobber;
+        if options.project.is_some() {
+            job.search.project.clone_from(&options.project);
+        }
+        job.search.also.clone_from(&options.search);
+    }
+}
+
 /// Converts every file `inputs` names or holds into `out_dir` as `settings` say, writing
 /// nothing outside `out_dir` (and the journal) and replacing designs already there unless
 /// `options` turn that off, and returns the `dutchman.convert-all/1` report. `Err` when the
@@ -92,9 +108,7 @@ pub fn convert_all(
         skipped,
         skipped_by_extension,
     } = plan(inputs, out_dir);
-    for job in &mut work {
-        job.replace = !options.no_clobber;
-    }
+    prepare(&mut work, options);
     let mut journal = match &settings.journal {
         Some(path) => Some(Journal::open(path)?),
         None => None,
@@ -313,6 +327,10 @@ pub fn plan(inputs: &[PathBuf], out_dir: &Path) -> Plan {
                 input: path,
                 output,
                 replace: true,
+                search: PartSearch {
+                    project: input.is_dir().then(|| input.clone()),
+                    also: Vec::new(),
+                },
             });
         }
     }
@@ -525,7 +543,7 @@ fn identity(job: &Job) -> Option<String> {
 pub fn convert_job(job: &Job, writer: &SolidCraftWriter) -> Value {
     match make_folder(job) {
         Some(failure) => failure,
-        None => crate::convert(&job.input, &job.output, writer, job.replace),
+        None => crate::convert(&job.input, &job.output, writer, job.replace, &job.search),
     }
 }
 
@@ -539,4 +557,27 @@ fn make_folder(job: &Job) -> Option<Value> {
             &format!("{}: {err}", parent.display()),
         )
     })
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn files_in_a_folder_given_are_found_in_that_folder_as_a_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("Robot");
+        std::fs::create_dir_all(project.join("Assemblies")).unwrap();
+        std::fs::write(project.join("Assemblies/top.iam"), b"").unwrap();
+        let single = dir.path().join("cube.ipt");
+        std::fs::write(&single, b"").unwrap();
+        let plan = plan(&[project.clone(), single], &dir.path().join("out"));
+        let projects: Vec<Option<PathBuf>> = plan
+            .jobs
+            .into_iter()
+            .map(|job| job.search.project)
+            .collect();
+        assert_eq!(projects, [Some(project), None]);
+    }
 }

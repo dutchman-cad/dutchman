@@ -9,6 +9,7 @@ mod assembly;
 mod decode;
 mod error;
 mod format;
+mod locate;
 pub mod placement;
 mod report;
 
@@ -19,6 +20,7 @@ pub use assembly::{
 };
 pub use error::Error;
 pub use format::Format;
+pub use locate::{PartSearch, MAX_SEARCHED};
 
 /// The neutral model every conversion passes through.
 #[derive(Clone, Debug)]
@@ -62,7 +64,26 @@ pub trait Writer {
 /// Decodes the file at `input` (already identified as `format`) into the neutral model,
 /// recording anything dropped in `report`.
 pub fn read(format: Format, input: &Path, report: &mut Report) -> Result<Model, Error> {
-    let mut model = assembly::read(format, input, report, &decode_file, &mut Vec::new())?;
+    read_in(format, input, &PartSearch::default(), report)
+}
+
+/// [`read`], finding the files an assembly places as `search` says, when they are not at
+/// their stored paths.
+pub fn read_in(
+    format: Format,
+    input: &Path,
+    search: &PartSearch,
+    report: &mut Report,
+) -> Result<Model, Error> {
+    let finder = locate::Finder::new(search);
+    let mut model = assembly::read(
+        format,
+        input,
+        report,
+        &decode_file,
+        &finder,
+        &mut Vec::new(),
+    )?;
     if model.assembly.is_none() {
         match assembly::local(&model) {
             assembly::Components::None => {}
@@ -114,16 +135,25 @@ pub fn convert_to(
     writer: &dyn Writer,
     replace: bool,
 ) -> Result<Report, Error> {
-    convert_traced(input, output, writer, replace, &mut |_| {})
+    convert_traced(
+        input,
+        output,
+        writer,
+        replace,
+        &PartSearch::default(),
+        &mut |_| {},
+    )
 }
 
-/// [`convert_to`], telling `on_stage` as each stage begins: decoding (with projection, which
-/// cadmpeg does as it reads), then mapping and writing, then writing the file.
+/// [`convert_to`], finding an assembly's files as `search` says (see [`read_in`]), and telling
+/// `on_stage` as each stage begins: decoding (with projection, which cadmpeg does as it
+/// reads), then mapping and writing, then writing the file.
 pub fn convert_traced(
     input: &Path,
     output: &Path,
     writer: &dyn Writer,
     replace: bool,
+    search: &PartSearch,
     on_stage: &mut dyn FnMut(Stage),
 ) -> Result<Report, Error> {
     on_stage(Stage::Input);
@@ -139,7 +169,7 @@ pub fn convert_traced(
 
     let mut report = Report::default();
     on_stage(Stage::Decode);
-    let model = read(format, input, &mut report)?;
+    let model = read_in(format, input, search, &mut report)?;
 
     // Encode in memory so a failed conversion never leaves a partial file behind.
     let mut bytes = Vec::new();

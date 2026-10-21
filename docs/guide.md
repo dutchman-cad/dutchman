@@ -170,6 +170,8 @@ dutchman convert --json generated_unit_cube.f3d cube.solidcraft
 | `--no-verify` | Write the history without checking it in SolidCraft. Cannot be combined with `--solidcraft`. |
 | `--verify-timeout SECONDS` | How long each SolidCraft check may run before the history is written unverified. Default 120. |
 | `--no-clobber` | Do not replace an existing `.solidcraft` file: that file's conversion fails instead. By default it is replaced. |
+| `--project DIR` | The project folder an Inventor assembly's part files are searched in when they are not at their stored paths. Default: the nearest folder above the assembly holding an `.ipj`, else two folders up. See [Finding the part files](inventor.md#finding-the-part-files). |
+| `--search DIR` | Another folder to search for part files the project folder does not hold, such as a shared library. May be given more than once. |
 | `--json` | One JSON report on stdout instead of the text report. |
 | `--verbose` | Print each loss note in full; the text report cuts long ones to their first sentence. The JSON report always has them in full. |
 
@@ -249,8 +251,10 @@ Large batches:
 
 Everything runs on your machine: Dutchman makes no network connections.
 
-For an Inventor assembly (`.iam`), keep its part files next to it or at the paths it stores.
-Dutchman reads them from there.
+For an Inventor assembly (`.iam`), Dutchman finds its part files as Inventor does: at the
+paths it stores, else anywhere under the project folder, the nearest folder above it holding a
+`.ipj`. Give another with `--project DIR`; `convert-all` searches each folder it is given. See
+[Finding the part files](inventor.md#finding-the-part-files).
 
 ## Formats
 

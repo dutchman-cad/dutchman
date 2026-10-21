@@ -38,7 +38,7 @@ fn rows() -> [(Format, Status, &'static str); 6] {
         (
             Format::InventorAssembly,
             Status::Converts,
-            "placed parts and sub-assemblies, read from the part files next to it",
+            "placed parts and sub-assemblies, read from their files in the project",
         ),
         (
             Format::SolidWorksPart,

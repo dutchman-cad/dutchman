@@ -17,7 +17,7 @@ use serde_json::Value;
 
 use crate::batch::Job;
 use crate::json::{self, CONVERT};
-use crate::ConvertOptions;
+use crate::{ConvertOptions, PartSearch};
 
 /// The first argument that makes a Dutchman program convert one file as a batch's child.
 pub const WORKER_ARG: &str = "--dutchman-convert-worker";
@@ -92,6 +92,7 @@ pub fn run_if_worker() -> Option<ExitCode> {
         &parsed.output,
         &writer,
         !parsed.options.no_clobber,
+        &parsed.options.part_search(),
         &mut |stage| eprintln!("{STAGE_MARK}{}", stage.id()),
     ) {
         Ok(report) => crate::convert_success(&parsed.input, &parsed.output, &report),
@@ -102,7 +103,8 @@ pub fn run_if_worker() -> Option<ExitCode> {
 }
 
 impl ConvertOptions {
-    /// These options as the command-line flags that give them, for a child process.
+    /// These options as the command-line flags that give them, for a child process; where
+    /// part files are looked for is the job's (see [`search_args`]).
     pub fn to_args(&self) -> Vec<OsString> {
         let mut args: Vec<OsString> = Vec::new();
         if self.import_only {
@@ -124,6 +126,20 @@ impl ConvertOptions {
     }
 }
 
+/// The flags that look for a job's part files as `search` says.
+fn search_args(search: &PartSearch) -> Vec<OsString> {
+    let mut args = Vec::new();
+    if let Some(project) = &search.project {
+        args.push("--project".into());
+        args.push(project.clone().into_os_string());
+    }
+    for folder in &search.also {
+        args.push("--search".into());
+        args.push(folder.clone().into_os_string());
+    }
+    args
+}
+
 /// Converts `job` in a child process started from `program`, within `limits`, and returns
 /// its convert report, or a failure report saying why the child stopped.
 pub fn convert_isolated(
@@ -139,6 +155,7 @@ pub fn convert_isolated(
         .arg(&job.input)
         .arg(&job.output)
         .args(options.to_args())
+        .args(search_args(&job.search))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

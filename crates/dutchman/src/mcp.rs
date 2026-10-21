@@ -12,7 +12,7 @@ use std::path::PathBuf;
 
 use serde_json::{json, Map, Value};
 
-use crate::ConvertOptions;
+use crate::{ConvertOptions, PartSearch};
 
 /// The protocol versions this server speaks, newest first.
 pub const PROTOCOL_VERSIONS: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
@@ -202,11 +202,30 @@ fn option_properties() -> Map<String, Value> {
             "minimum": 1,
             "description": "Seconds each SolidCraft check may run before the history is written unverified (default 120).",
         },
+        "project": project_property(),
+        "search": search_property(),
     });
     match properties {
         Value::Object(map) => map,
         _ => Map::new(),
     }
+}
+
+/// The project folder an Inventor assembly's part files are searched in.
+fn project_property() -> Value {
+    json!({
+        "type": "string",
+        "description": "Absolute path of the project folder an assembly's part files are searched in, when they are not at the paths the assembly stores (default: the nearest folder above the assembly holding an Inventor .ipj, else two folders up; for convert_all, each folder given).",
+    })
+}
+
+/// More folders an Inventor assembly's part files are searched in.
+fn search_property() -> Value {
+    json!({
+        "type": "array",
+        "items": {"type": "string"},
+        "description": "Absolute paths of more folders to search, with their subfolders, for part files the project folder does not hold.",
+    })
 }
 
 fn tools() -> Value {
@@ -273,7 +292,7 @@ fn tools() -> Value {
             "name": "inspect",
             "title": "Inspect a CAD file",
             "description": "Read one native CAD file and report what converting it would carry across, without writing anything. Returns the dutchman.inspect/1 report.",
-            "inputSchema": {"type": "object", "properties": {"input": input}, "required": ["input"], "additionalProperties": false},
+            "inputSchema": {"type": "object", "properties": {"input": input, "project": project_property(), "search": search_property()}, "required": ["input"], "additionalProperties": false},
             "annotations": {"readOnlyHint": true},
         },
         {
@@ -330,13 +349,35 @@ fn count(arguments: &Arguments, key: &str) -> Result<Option<NonZeroUsize>, Strin
     }
 }
 
-const OPTIONS: [&str; 5] = [
+const OPTIONS: [&str; 7] = [
     "import_only",
     "verify",
     "solidcraft",
     "verify_timeout",
     "overwrite",
+    "project",
+    "search",
 ];
+
+/// The `project` and `search` arguments.
+fn part_search(arguments: &Arguments) -> Result<PartSearch, String> {
+    let project = match arguments.get("project") {
+        None | Some(Value::Null) => None,
+        Some(_) => Some(path(arguments, "project")?),
+    };
+    let also = match arguments.get("search") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(folders)) => folders
+            .iter()
+            .map(|folder| match folder {
+                Value::String(folder) => Ok(PathBuf::from(folder)),
+                _ => Err("search must be a list of paths".to_owned()),
+            })
+            .collect::<Result<_, _>>()?,
+        Some(_) => return Err("search must be a list of paths".to_owned()),
+    };
+    Ok(PartSearch { project, also })
+}
 
 fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
     let defaults = ConvertOptions::default();
@@ -344,6 +385,7 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
         None | Some(Value::Null) => None,
         Some(_) => Some(path(arguments, "solidcraft")?),
     };
+    let search = part_search(arguments)?;
     Ok(ConvertOptions {
         import_only: flag(arguments, "import_only", false)?,
         no_verify: !flag(arguments, "verify", true)?,
@@ -351,6 +393,8 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
         solidcraft,
         verify_timeout: count(arguments, "verify_timeout")?
             .map_or(defaults.verify_timeout, |n| n.get() as u64),
+        project: search.project,
+        search: search.also,
     })
 }
 
@@ -363,12 +407,16 @@ fn convert(arguments: &Arguments) -> Result<Value, String> {
         &output,
         &options.writer(),
         !options.no_clobber,
+        &options.part_search(),
     ))
 }
 
 fn inspect(arguments: &Arguments) -> Result<Value, String> {
-    only(arguments, &["input"])?;
-    Ok(crate::inspect_report(&path(arguments, "input")?))
+    only(arguments, &["input", "project", "search"])?;
+    Ok(crate::inspect_report(
+        &path(arguments, "input")?,
+        &part_search(arguments)?,
+    ))
 }
 
 fn convert_all(arguments: &Arguments) -> Result<Value, String> {
@@ -513,6 +561,11 @@ mod tests {
                 "jobs must be",
             ),
             ("formats", json!({"x": 1}), "unknown argument x"),
+            (
+                "inspect",
+                json!({"input": "a.iam", "project": 3}),
+                "project must be a path",
+            ),
         ] {
             let result = &call(name, arguments)["result"];
             assert_eq!(result["isError"], true, "{name}");
@@ -528,6 +581,11 @@ mod tests {
         let report = &call("convert", json!({"input": "/x/a.f3d"}))["result"]["structuredContent"];
         assert_eq!(report["schema"], "dutchman.convert/1");
         assert_eq!(report["input"]["path"], "/x/a.f3d");
+        // A project folder is taken; the file is what fails.
+        let report = &call("inspect", json!({"input": "/x/a.iam", "project": "/x"}))["result"]
+            ["structuredContent"];
+        assert_eq!(report["schema"], "dutchman.inspect/1");
+        assert_eq!(report["input"]["path"], "/x/a.iam");
         let report = &call("formats", json!({"x": 1}))["result"]["structuredContent"];
         assert_eq!(report["schema"], "dutchman.formats/1");
     }
