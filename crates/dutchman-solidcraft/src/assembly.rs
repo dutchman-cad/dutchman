@@ -9,7 +9,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use dutchman_core::Assembly;
+use dutchman_core::{Assembly, Joint};
 use dutchman_core::{Check, Error, FeatureOutcome, Mode, Model, Outcome, Report, Severity};
 use serde_json::{json, Value};
 
@@ -42,8 +42,11 @@ pub(crate) fn write(
         placed: BTreeMap::new(),
         histories: Vec::new(),
         outcomes: Vec::new(),
+        inner: BTreeMap::new(),
+        placements: BTreeMap::new(),
     };
-    builder.assembly(assembly, 0)?;
+    let top = builder.assembly(assembly, 0)?;
+    let joints = builder.joints(&assembly.joints, &top);
     if builder.features.is_empty() {
         return Err(Error::Encode(
             "none of the assembly's parts has geometry SolidCraft can import".to_owned(),
@@ -68,6 +71,9 @@ pub(crate) fn write(
     }
     if let (false, Some(fields)) = (appearances.is_empty(), doc.as_object_mut()) {
         fields.insert("appearances".to_owned(), Value::Object(appearances));
+    }
+    if let (false, Some(fields)) = (joints.is_empty(), doc.as_object_mut()) {
+        fields.insert("assembly".to_owned(), json!({"joints": joints}));
     }
     builder
         .report
@@ -180,6 +186,11 @@ struct Builder<'r> {
     names: Vec<String>,
     /// Occurrences made so far of each component, for naming the next.
     placed: BTreeMap<u64, usize>,
+    /// The occurrence each placement of a sub-assembly's became, by the sub-assembly's
+    /// component (`None` for a part left out).
+    inner: BTreeMap<u64, Vec<Option<u64>>>,
+    /// Each occurrence's component and placement in its parent.
+    placements: BTreeMap<u64, (u64, [[f64; 4]; 3])>,
 }
 
 impl Builder<'_> {
@@ -190,14 +201,16 @@ impl Builder<'_> {
     }
 
     /// Adds `assembly`'s parts as components beneath component `parent` (0: the root), and its
-    /// placements as occurrences inside it.
-    fn assembly(&mut self, assembly: &Assembly, parent: u64) -> Result<(), Error> {
+    /// placements as occurrences inside it; returns the occurrence each placement became.
+    fn assembly(&mut self, assembly: &Assembly, parent: u64) -> Result<Vec<Option<u64>>, Error> {
         let mut components = Vec::with_capacity(assembly.parts.len());
         for part in &assembly.parts {
             components.push(self.part(part, parent)?);
         }
+        let mut occurrences = Vec::with_capacity(assembly.placements.len());
         for placement in &assembly.placements {
             let Some(Some((component, name))) = components.get(placement.part).cloned() else {
+                occurrences.push(None);
                 continue;
             };
             let count = self.placed.entry(component).or_insert(0);
@@ -215,8 +228,75 @@ impl Builder<'_> {
                 "grounded": false,
                 "transform": column_major(&placement.transform),
             }));
+            self.placements.insert(id, (component, placement.transform));
+            occurrences.push(Some(id));
         }
-        Ok(())
+        Ok(occurrences)
+    }
+
+    /// The joints, as SolidCraft rigid joints written as built: each holds its two
+    /// occurrences where they are placed now. Side A's joint frame is A's own origin; side B's
+    /// is the same place in the world, given in B's component.
+    fn joints(&mut self, joints: &[Joint], top: &[Option<u64>]) -> Vec<Value> {
+        let mut out = Vec::new();
+        for joint in joints {
+            let (Some((a, world_a)), Some((b, world_b))) =
+                (self.resolve(&joint.a, top), self.resolve(&joint.b, top))
+            else {
+                self.report.push(
+                    Severity::Dropped,
+                    "joints",
+                    "a joint is left out: a part it joins was left out".to_owned(),
+                );
+                continue;
+            };
+            let b_frame = compose(&inverse(&world_b), &world_a);
+            let id = self.id();
+            let mut row = json!({
+                "id": id,
+                "name": format!("Rigid {}", out.len() + 1),
+                "kind": "rigid",
+                "a": {"occurrence": a, "snap": snap(&IDENTITY)},
+                "b": {"occurrence": b, "snap": snap(&b_frame)},
+                "values": [],
+                "limits": [],
+                "flip": true,
+                "offset": 0.0,
+                "angle": 0.0,
+            });
+            if let (true, Some(fields)) = (joint.suppressed, row.as_object_mut()) {
+                fields.insert("suppressed".to_owned(), json!(true));
+            }
+            out.push(row);
+        }
+        if !out.is_empty() {
+            self.report.push(
+                Severity::Info,
+                "joints",
+                format!(
+                    "{} joint(s) written as rigid joints holding their parts as placed",
+                    out.len()
+                ),
+            );
+        }
+        out
+    }
+
+    /// The occurrence a placement path leads to (0, the design itself, for an empty path) and
+    /// its placement in the world.
+    fn resolve(&self, path: &[usize], top: &[Option<u64>]) -> Option<(u64, [[f64; 4]; 3])> {
+        let mut occurrence = 0;
+        let mut world = IDENTITY;
+        let mut level = top;
+        for (depth, index) in path.iter().enumerate() {
+            occurrence = (*level.get(*index)?)?;
+            let (component, placement) = self.placements.get(&occurrence)?;
+            world = compose(&world, placement);
+            if depth + 1 < path.len() {
+                level = self.inner.get(component)?;
+            }
+        }
+        Some((occurrence, world))
     }
 
     /// The component a part or sub-assembly becomes, with its name; `None` when it has nothing
@@ -239,7 +319,10 @@ impl Builder<'_> {
         self.components
             .push(json!({"id": component, "name": name, "parent": parent}));
         match (&part.assembly, step) {
-            (Some(sub), _) => self.assembly(sub, component)?,
+            (Some(sub), _) => {
+                let occurrences = self.assembly(sub, component)?;
+                self.inner.insert(component, occurrences);
+            }
             (None, Some(step)) => {
                 let blob = self.container.add_step(step.as_bytes())?;
                 let replayed = self.history(part, &step, component, &name)?;
@@ -351,6 +434,65 @@ impl Builder<'_> {
         self.names.push(name.clone());
         name
     }
+}
+
+/// The identity placement, row-major 3 × 4.
+const IDENTITY: [[f64; 4]; 3] = [
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+];
+
+/// `outer` after `inner`: a point placed by `inner`, then by `outer`.
+fn compose(outer: &[[f64; 4]; 3], inner: &[[f64; 4]; 3]) -> [[f64; 4]; 3] {
+    let mut out = [[0.0; 4]; 3];
+    for (row, out_row) in outer.iter().zip(out.iter_mut()) {
+        for (col, value) in out_row.iter_mut().enumerate() {
+            let mut sum: f64 = row
+                .iter()
+                .take(3)
+                .zip(inner.iter())
+                .map(|(r, inner_row)| r * inner_row.get(col).copied().unwrap_or(0.0))
+                .sum();
+            if col == 3 {
+                sum += row.get(3).copied().unwrap_or(0.0);
+            }
+            *value = sum;
+        }
+    }
+    out
+}
+
+/// The inverse of a rigid placement.
+fn inverse(placement: &[[f64; 4]; 3]) -> [[f64; 4]; 3] {
+    let mut out = [[0.0; 4]; 3];
+    for (i, out_row) in out.iter_mut().enumerate() {
+        // The rotation transposed, and the translation taken back through it.
+        let mut moved = 0.0;
+        for (j, row) in placement.iter().enumerate() {
+            let r = row.get(i).copied().unwrap_or(0.0);
+            if let Some(cell) = out_row.get_mut(j) {
+                *cell = r;
+            }
+            moved -= r * row.get(3).copied().unwrap_or(0.0);
+        }
+        out_row[3] = moved;
+    }
+    out
+}
+
+/// A SolidCraft joint origin at a placement: its origin, and its z and x axes.
+fn snap(frame: &[[f64; 4]; 3]) -> Value {
+    let column = |c: usize| -> [f64; 3] {
+        [0, 1, 2].map(|r| {
+            frame
+                .get(r)
+                .and_then(|row| row.get(c))
+                .copied()
+                .unwrap_or(0.0)
+        })
+    };
+    json!({"type": "frame", "origin": column(3), "z": column(2), "x": column(0)})
 }
 
 /// A component name as a parameter-name prefix: letters, digits and underscores.

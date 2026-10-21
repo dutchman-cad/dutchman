@@ -24,6 +24,13 @@ report's schema name changes when a field does).
 
 - Reads native files with cadmpeg 0.6.3.
 
+### Assemblies and components
+
+- Fusion joints between components become SolidCraft rigid joints, written as built, so the
+  parts they join stay together. Joints of other kinds are reported as Dropped.
+- A component holding other components converts when it is placed more than once at one level;
+  such designs were wrongly refused before.
+
 ### Feature history
 
 - Lofts through profiles of two or more sketches map onto SolidCraft lofts, when they have no

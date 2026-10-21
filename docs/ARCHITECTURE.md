@@ -189,8 +189,9 @@ and synthetic files from cadmpeg's public test suite (provenance in
   maps and checks out as a single part's would: its features are authored in its component,
   their ids moved into the design's, and parameters whose names another part already uses are
   renamed with the component's name (`Second_d1`) wherever they are used; so are bodies whose
-  names another part already uses (`Body (Second)`), so each keeps its own colours. Joints
-  come next.
+  names another part already uses (`Body (Second)`), so each keeps its own colours. Fusion
+  joints become SolidCraft rigid joints written as built (see fusion.md); Inventor joints wait on
+  cadmpeg reading them.
 - **Appearances**: body and face colours carry across: through STEP for imports; as looks for
   replayed bodies, with a planar face's own colour placed by a point inside the face (curved
   faces keep their body's colour). Inside an assembly the point is in the part's own frame,

@@ -13,7 +13,9 @@ mod report;
 
 use std::path::Path;
 
-pub use assembly::{local_assembly, Assembly, Placement, MAX_DEPTH, MAX_PARTS, MAX_PLACEMENTS};
+pub use assembly::{
+    local_assembly, Assembly, Joint, Placement, MAX_DEPTH, MAX_PARTS, MAX_PLACEMENTS,
+};
 pub use error::Error;
 pub use format::Format;
 
@@ -61,7 +63,12 @@ pub fn read(format: Format, input: &Path, report: &mut Report) -> Result<Model, 
     if model.assembly.is_none() {
         match assembly::local(&model) {
             assembly::Components::None => {}
-            assembly::Components::Assembly(components) => model.assembly = Some(components),
+            assembly::Components::Assembly(components, left_out) => {
+                for reason in left_out {
+                    report.push(Severity::Dropped, "joints", reason);
+                }
+                model.assembly = Some(components);
+            }
             assembly::Components::Unplaceable(reason) => report.push(
                 Severity::Degraded,
                 "components",

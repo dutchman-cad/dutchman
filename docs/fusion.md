@@ -34,6 +34,14 @@ transform, and each component as a product definition.
   hold the same components in the same places each time; when it does not, or when a placement
   is inside an occurrence the design does not place, the design converts as stored and the
   report says why.
+- **Joints** between components become SolidCraft rigid joints written as built: each holds its
+  two occurrences where they are placed, so moving one in SolidCraft moves the other. A joint to
+  the design's root component holds its occurrence fixed. cadmpeg 0.6.3 reads Fusion joints as
+  fixed joints only (motion types such as revolute or slider are not decoded yet), so every
+  converted joint is rigid. A joint is left out, and reported as Dropped (`joints`), when it is
+  of another kind, joins a component to itself or to one in another design, or joins a component
+  inside one placed more than once (the SolidCraft design holds that component once, so it would
+  not say which copy).
 
 ### Upstream gaps
 
@@ -41,8 +49,8 @@ transform, and each component as a product definition.
    component to its entities (its naming space): the bodies whose body-map entries lie in the
    component's entity range. A component placed by an operation the file does not bind (as in
    some copy-and-paste designs) has no bodies, so that design converts as stored.
-2. **Joints and constraints between components** (cadmpeg lists intra-document
-   multi-component structure and constraints as open).
+2. **Joint motion.** cadmpeg reads Fusion joints as fixed only; revolute, slider and the other
+   motion types, and joint limits, wait on it decoding them.
 
 `.f3z` multi-document archives (a design with the designs it references) convert like `.f3d`:
 cadmpeg merges the referenced designs into the root design with their placements, as
