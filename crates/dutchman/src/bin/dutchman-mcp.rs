@@ -7,6 +7,9 @@
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    if let Some(code) = dutchman::worker::run_if_worker() {
+        return code;
+    }
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
     match dutchman::mcp::serve(stdin.lock(), stdout.lock()) {

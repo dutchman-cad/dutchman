@@ -64,7 +64,8 @@ desktop portal, and dropping files works without it.
   example calls, safety.
 - [Agent skill](skills/README.md): teaches an AI assistant to convert files with Dutchman and
   explain the results.
-- [JSON reports](docs/json.md): every field of the `--json` reports.
+- [JSON reports](docs/json.md): every field of the `--json` reports, and
+  [the anonymous batch report](docs/report-anon.md) that is safe to share.
 - Formats: [Fusion](docs/fusion.md), [Inventor](docs/inventor.md),
   [SolidWorks](docs/sldprt.md).
 - Contributing: [CONTRIBUTING.md](CONTRIBUTING.md), and [AGENTS.md](AGENTS.md) for AI

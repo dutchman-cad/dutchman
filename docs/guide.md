@@ -224,6 +224,20 @@ convert at once (default: the machine's cores, at most 8). It takes the same opt
 `dutchman.convert/1` report per file. One run converts at most 10,000 files and searches
 folders at most 32 levels deep.
 
+Large batches:
+
+- **Each file in its own process.** A file that takes longer than `--timeout SECONDS` (default
+  900) or holds more than `--max-memory MB` (default 8192; `0` for no limit) is stopped and
+  reported as failed, and the rest carry on. A file that crashes the converter fails alone.
+- **Carry on where you stopped.** `--journal FILE` records each file's result as it finishes.
+  Run the same command again and the files already recorded, unchanged since, are not
+  converted again; their results come from the journal.
+- **A report you can share.** `--report-anon FILE` also writes an anonymous report: counts by
+  format, every loss and failure by cause and stage, and timings, with no file names, paths or
+  geometry. See [the report's fields](report-anon.md).
+
+Everything runs on your machine: Dutchman makes no network connections.
+
 For an Inventor assembly (`.iam`), keep its part files next to it or at the paths it stores.
 Dutchman reads them from there.
 
@@ -332,7 +346,7 @@ line). Nothing is written when a conversion fails.
 |---|---|
 | `x.step: output must be a .solidcraft file` | Name the output `something.solidcraft`. |
 | `a.step: Dutchman does not convert this kind of file. It converts …` | Dutchman converts the native formats listed; it does not read STEP or other exchange formats. Open STEP files in SolidCraft directly. |
-| `SolidWorks assembly (.sldasm) files are not supported yet. Export a STEP file for SolidCraft to open, or follow the SolidWorks work in cadmpeg …` | Export the assembly as STEP from the program that made it and open that in SolidCraft. |
+| `SolidWorks assembly (.sldasm) files are not supported yet. Export a STEP file for SolidCraft to open; Dutchman's issues (…) say when …` | Export the assembly as STEP from the program that made it and open that in SolidCraft. |
 | `cannot read this design: its contents are inventor data, not Fusion archive (.f3d); rename it to match` | The file's extension does not match its contents. Rename it with the right extension. |
 | `cannot read this design: no geometry could be read from this Fusion archive (.f3d) file` | The file holds no geometry Dutchman can read yet, for example a design saved without bodies, or one whose geometry is stored in a form cadmpeg does not read yet. |
 | `cannot read this design: malformed container: …` | The file is cut short or damaged, for example by an unfinished download or copy. Get a fresh copy. If the original opens in the program that made it, please report it. |

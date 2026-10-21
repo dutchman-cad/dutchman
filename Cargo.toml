@@ -17,6 +17,7 @@ clap = { version = "4.5", default-features = false, features = ["std", "derive",
 cadmpeg-core = "0.6"
 cadmpeg-ir = "0.6"
 cadmpeg-registry = { version = "0.6", default-features = false, features = ["f3d", "inventor", "sldprt", "step"] }
+getrandom = "0.3"
 serde_json = "1"
 sha2 = "0.11"
 thiserror = "2"

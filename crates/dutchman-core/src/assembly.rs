@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::{Error, Format, Model, Report, Severity};
+use crate::{Error, Format, Model, Report, Severity, Stage};
 
 /// The most part files one assembly may bring in.
 pub const MAX_PARTS: usize = 1_000;
@@ -79,12 +79,12 @@ pub(crate) fn read(
     if format.is_assembly() {
         let key = input.canonicalize().unwrap_or_else(|_| input.to_path_buf());
         if open.contains(&key) {
-            return Err(Error::Decode(
+            return Err(Error::Assembly(
                 "the assembly places itself through its sub-assemblies".to_owned(),
             ));
         }
         if open.len() >= MAX_DEPTH {
-            return Err(Error::Decode(format!(
+            return Err(Error::Assembly(format!(
                 "sub-assemblies nest deeper than Dutchman's limit of {MAX_DEPTH}"
             )));
         }
@@ -139,7 +139,8 @@ pub(crate) fn resolve(
             .pointer("/prototype/document/path")
             .and_then(Value::as_str)
         else {
-            report.push(
+            report.push_at(
+                Stage::Input,
                 Severity::Dropped,
                 subject,
                 "its part is not in a separate file Dutchman can find",
@@ -150,7 +151,8 @@ pub(crate) fn resolve(
         let format = match Format::from_path(Path::new(file)) {
             Some(format @ (Format::InventorPart | Format::InventorAssembly)) => format,
             _ => {
-                report.push(
+                report.push_at(
+                    Stage::Input,
                     Severity::Dropped,
                     subject,
                     format!("{file}: not an Inventor part or assembly"),
@@ -159,7 +161,8 @@ pub(crate) fn resolve(
             }
         };
         let Some(path) = locate(stored, file, folder) else {
-            report.push(
+            report.push_at(
+                Stage::Input,
                 Severity::Dropped,
                 subject,
                 format!("{file}: not found next to the assembly"),
@@ -170,11 +173,14 @@ pub(crate) fn resolve(
             Some(known) => *known,
             None => {
                 let read = if parts.len() >= MAX_PARTS {
-                    Err(format!("over Dutchman's limit of {MAX_PARTS} part files"))
+                    Err((
+                        Stage::Input,
+                        format!("over Dutchman's limit of {MAX_PARTS} part files"),
+                    ))
                 } else {
                     let mut part_report = Report::default();
                     let result = read(format, &path, &mut part_report, decode, open)
-                        .map_err(|err| err.to_string());
+                        .map_err(|err| (err.stage(), err.to_string()));
                     report.append_prefixed(part_report, file);
                     result.map(|part| {
                         parts.push(part);
@@ -183,8 +189,8 @@ pub(crate) fn resolve(
                 };
                 let index = match read {
                     Ok(index) => Some(index),
-                    Err(why) => {
-                        report.push(Severity::Dropped, file, why);
+                    Err((stage, why)) => {
+                        report.push_at(stage, Severity::Dropped, file, why);
                         None
                     }
                 };
@@ -193,7 +199,8 @@ pub(crate) fn resolve(
             }
         };
         let Some(part) = part else {
-            report.push(
+            report.push_at(
+                Stage::Decode,
                 Severity::Dropped,
                 subject,
                 format!("{file} could not be read"),
@@ -219,7 +226,7 @@ pub(crate) fn resolve(
         );
     }
     if placements.is_empty() {
-        return Err(Error::Decode(
+        return Err(Error::Assembly(
             "none of the assembly's parts could be read; put its part files next to it".to_owned(),
         ));
     }

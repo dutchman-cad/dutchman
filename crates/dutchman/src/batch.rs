@@ -1,19 +1,26 @@
 //! `dutchman convert-all`: many native files converted in one run, several at a time.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::Write as _;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::time::Instant;
 
 use dutchman_core::Format;
 use dutchman_solidcraft::SolidCraftWriter;
 use serde_json::{json, Value};
 
 use crate::json as report;
+use crate::worker::{self, Limits};
+use crate::ConvertOptions;
 
 /// The schema of `dutchman convert-all --json`.
 pub const SCHEMA: &str = "dutchman.convert-all/1";
+
+/// This Dutchman's version, which a journal's records must match.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// The most files one run converts.
 const MAX_FILES: usize = 10_000;
@@ -42,25 +49,108 @@ pub enum Event {
     Finished(usize, Value),
 }
 
-/// Converts every file `inputs` names or holds into `out_dir`, `jobs` at a time, writing
-/// nothing outside `out_dir` and replacing designs already there only when `replace` is set,
-/// and returns the `dutchman.convert-all/1` report.
+/// How a batch runs.
+#[derive(Clone, Debug, Default)]
+pub struct Settings {
+    /// How many files to convert at once (default: [`workers`]).
+    pub jobs: Option<NonZeroUsize>,
+    /// The program each file is converted in, as a child process of its own within
+    /// `limits`; `None` converts in this process, without limits.
+    pub worker: Option<PathBuf>,
+    /// What one file's conversion may use, when converted in a child.
+    pub limits: Limits,
+    /// A file that records each file's report as it finishes; files it already records, and
+    /// that have not changed since, are not converted again.
+    pub journal: Option<PathBuf>,
+}
+
+impl Settings {
+    /// Settings that convert each file in a child process of the running program.
+    pub fn isolated() -> Result<Self, String> {
+        let program = std::env::current_exe()
+            .map_err(|err| format!("cannot find the running program: {err}"))?;
+        Ok(Settings {
+            worker: Some(program),
+            ..Settings::default()
+        })
+    }
+}
+
+/// Converts every file `inputs` names or holds into `out_dir` as `settings` say, writing
+/// nothing outside `out_dir` (and the journal) and replacing designs already there unless
+/// `options` turn that off, and returns the `dutchman.convert-all/1` report. `Err` when the
+/// journal cannot be read or written.
 pub fn convert_all(
     inputs: &[PathBuf],
     out_dir: &Path,
-    writer: &SolidCraftWriter,
-    jobs: Option<NonZeroUsize>,
-    replace: bool,
-) -> Value {
+    options: &ConvertOptions,
+    settings: &Settings,
+) -> Result<Value, String> {
     let Plan {
         jobs: mut work,
         problems,
         skipped,
+        skipped_by_extension,
     } = plan(inputs, out_dir);
     for job in &mut work {
-        job.replace = replace;
+        job.replace = !options.no_clobber;
     }
-    let results = run(&work, writer, workers(jobs));
+    let mut journal = match &settings.journal {
+        Some(path) => Some(Journal::open(path)?),
+        None => None,
+    };
+    // Files the journal already records are not converted again.
+    let mut results: Vec<Option<Value>> = work
+        .iter()
+        .map(|job| journal.as_ref().and_then(|j| j.recorded(job)))
+        .collect();
+    let resumed = results.iter().flatten().count();
+    let todo: Vec<usize> = (0..work.len())
+        .filter(|&i| results.get(i).is_some_and(Option::is_none))
+        .collect();
+    let pending: Vec<Job> = todo.iter().filter_map(|&i| work.get(i).cloned()).collect();
+    let fresh: Mutex<Vec<Option<Value>>> = Mutex::new(vec![None; pending.len()]);
+    let journal_error: Mutex<Option<String>> = Mutex::new(None);
+    let writer = options.writer();
+    let journal_lock = Mutex::new(journal.take());
+    let convert = |job: &Job| match &settings.worker {
+        Some(program) => make_folder(job)
+            .unwrap_or_else(|| worker::convert_isolated(program, job, options, &settings.limits)),
+        None => convert_job(job, &writer),
+    };
+    run_with(
+        &pending,
+        workers(settings.jobs),
+        &AtomicBool::new(false),
+        convert,
+        |event| {
+            if let Event::Finished(index, report) = event {
+                if let (Ok(mut journal), Some(job)) = (journal_lock.lock(), pending.get(index)) {
+                    if let Some(journal) = journal.as_mut() {
+                        if let Err(err) = journal.record(job, &report) {
+                            if let Ok(mut slot) = journal_error.lock() {
+                                slot.get_or_insert(err);
+                            }
+                        }
+                    }
+                }
+                if let Ok(mut fresh) = fresh.lock() {
+                    if let Some(slot) = fresh.get_mut(index) {
+                        *slot = Some(report);
+                    }
+                }
+            }
+        },
+    );
+    if let Some(err) = journal_error.into_inner().unwrap_or_default() {
+        return Err(err);
+    }
+    for (index, report) in todo.into_iter().zip(fresh.into_inner().unwrap_or_default()) {
+        if let Some(slot) = results.get_mut(index) {
+            *slot = report;
+        }
+    }
+    let results: Vec<Value> = results.into_iter().flatten().collect();
 
     let failed = results
         .iter()
@@ -70,14 +160,16 @@ pub fn convert_all(
     let converted = results.len() + problems.len() - failed;
     let mut all: Vec<Value> = problems;
     all.extend(results);
-    json!({
+    Ok(json!({
         "schema": SCHEMA,
         "ok": failed == 0,
         "converted": converted,
         "failed": failed,
         "skipped": skipped,
+        "skipped_by_extension": skipped_by_extension,
+        "resumed": resumed,
         "results": all,
-    })
+    }))
 }
 
 /// How many files to convert at once: `jobs`, else the machine's cores, at most 8.
@@ -177,6 +269,8 @@ pub struct Plan {
     pub problems: Vec<Value>,
     /// Files in the folders searched that are not in a format Dutchman knows.
     pub skipped: usize,
+    /// Those files, counted by their extension (see [`extension_of`]).
+    pub skipped_by_extension: BTreeMap<String, usize>,
 }
 
 /// The files to convert, with their output paths; failure reports for inputs that are
@@ -185,7 +279,7 @@ pub struct Plan {
 pub fn plan(inputs: &[PathBuf], out_dir: &Path) -> Plan {
     let mut jobs = Vec::new();
     let mut problems = Vec::new();
-    let mut skipped = 0;
+    let mut skipped = BTreeMap::new();
     let mut outputs = BTreeSet::new();
     for input in inputs {
         let mut found = Vec::new();
@@ -225,7 +319,25 @@ pub fn plan(inputs: &[PathBuf], out_dir: &Path) -> Plan {
     Plan {
         jobs,
         problems,
-        skipped,
+        skipped: skipped.values().sum(),
+        skipped_by_extension: skipped,
+    }
+}
+
+/// A file's extension as the reports count it: lower case, letters and digits only, at most
+/// eight of them; `other` for anything else and `none` for no extension, so no part of a
+/// file's name can show through.
+pub fn extension_of(path: &Path) -> String {
+    match path.extension().and_then(|e| e.to_str()) {
+        None => "none".to_owned(),
+        Some(ext)
+            if !ext.is_empty()
+                && ext.len() <= 8
+                && ext.chars().all(|c| c.is_ascii_alphanumeric()) =>
+        {
+            ext.to_ascii_lowercase()
+        }
+        Some(_) => "other".to_owned(),
     }
 }
 
@@ -236,7 +348,7 @@ fn search(
     folder: &Path,
     depth: usize,
     out: &mut Vec<(PathBuf, PathBuf)>,
-    skipped: &mut usize,
+    skipped: &mut BTreeMap<String, usize>,
 ) {
     if depth > MAX_DEPTH {
         return;
@@ -253,7 +365,7 @@ fn search(
         if meta.is_dir() {
             search(root, &path, depth + 1, out, skipped);
         } else if meta.is_file() && Format::from_path(&path).is_none() {
-            *skipped += 1;
+            *skipped.entry(extension_of(&path)).or_insert(0) += 1;
         } else if meta.is_file() {
             let relative = path
                 .strip_prefix(root)
@@ -280,26 +392,6 @@ fn unique(path: PathBuf, taken: &mut BTreeSet<PathBuf>) -> PathBuf {
     candidate
 }
 
-/// Converts every job with `workers` threads, and returns each file's report in input order.
-fn run(work: &[Job], writer: &SolidCraftWriter, workers: usize) -> Vec<Value> {
-    let results: Mutex<Vec<Option<Value>>> = Mutex::new(vec![None; work.len()]);
-    run_each(work, writer, workers, &AtomicBool::new(false), |event| {
-        if let Event::Finished(index, report) = event {
-            if let Ok(mut results) = results.lock() {
-                if let Some(slot) = results.get_mut(index) {
-                    *slot = Some(report);
-                }
-            }
-        }
-    });
-    results
-        .into_inner()
-        .unwrap_or_default()
-        .into_iter()
-        .flatten()
-        .collect()
-}
-
 /// Converts every job with `workers` threads, telling `on_event` as each starts and finishes.
 /// Once `stop` is set, no further job starts; those already converting finish.
 pub fn run_each(
@@ -307,6 +399,24 @@ pub fn run_each(
     writer: &SolidCraftWriter,
     workers: usize,
     stop: &AtomicBool,
+    on_event: impl Fn(Event) + Sync,
+) {
+    run_with(
+        work,
+        workers,
+        stop,
+        |job| convert_job(job, writer),
+        on_event,
+    );
+}
+
+/// Runs `convert` on every job with `workers` threads, as [`run_each`] does, adding each
+/// file's time to its report as `elapsed_ms`.
+fn run_with(
+    work: &[Job],
+    workers: usize,
+    stop: &AtomicBool,
+    convert: impl Fn(&Job) -> Value + Sync,
     on_event: impl Fn(Event) + Sync,
 ) {
     let next = AtomicUsize::new(0);
@@ -319,22 +429,114 @@ pub fn run_each(
                 let index = next.fetch_add(1, Ordering::Relaxed);
                 let Some(job) = work.get(index) else { break };
                 on_event(Event::Started(index));
-                on_event(Event::Finished(index, convert_job(job, writer)));
+                let started = Instant::now();
+                let mut report = convert(job);
+                if let Some(fields) = report.as_object_mut() {
+                    let elapsed = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+                    fields.insert("elapsed_ms".to_owned(), json!(elapsed));
+                }
+                on_event(Event::Finished(index, report));
             });
         }
     });
 }
 
+/// The record of a batch's finished files, one JSON line each, kept as they finish so a run
+/// stopped part way can carry on where it stopped.
+struct Journal {
+    file: std::fs::File,
+    /// What it already records: each file's report, by the file's identity.
+    known: BTreeMap<String, Value>,
+}
+
+impl Journal {
+    /// Opens the journal at `path`, reading what it records; makes it when it is not there.
+    fn open(path: &Path) -> Result<Journal, String> {
+        let io = |err: std::io::Error| format!("journal {}: {err}", path.display());
+        let mut known = BTreeMap::new();
+        match std::fs::read_to_string(path) {
+            Ok(text) => {
+                for line in text.lines() {
+                    // A line cut short by a stopped run is simply not recorded.
+                    let Ok(entry) = serde_json::from_str::<Value>(line) else {
+                        continue;
+                    };
+                    // A file another version of Dutchman converted is converted again.
+                    if entry.get("dutchman").and_then(Value::as_str) != Some(VERSION) {
+                        continue;
+                    }
+                    if let (Some(key), Some(report)) = (
+                        entry.get("file").and_then(Value::as_str),
+                        entry.get("report"),
+                    ) {
+                        known.insert(key.to_owned(), report.clone());
+                    }
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(io(err)),
+        }
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(io)?;
+        Ok(Journal { file, known })
+    }
+
+    /// The report the journal holds for `job`, when the file has not changed since and its
+    /// design, if it converted, is still where the journal says.
+    fn recorded(&self, job: &Job) -> Option<Value> {
+        let report = self.known.get(&identity(job)?)?;
+        let output = job.output.display().to_string();
+        let converted = report.get("ok") == Some(&json!(true));
+        let still_there = report.pointer("/output/path").and_then(Value::as_str)
+            == Some(output.as_str())
+            && job.output.is_file();
+        (!converted || still_there).then(|| report.clone())
+    }
+
+    /// Records `report` as `job`'s.
+    fn record(&mut self, job: &Job, report: &Value) -> Result<(), String> {
+        let Some(file) = identity(job) else {
+            return Ok(());
+        };
+        let line = json!({"dutchman": VERSION, "file": file, "report": report});
+        writeln!(self.file, "{line}")
+            .and_then(|()| self.file.flush())
+            .map_err(|err| format!("cannot record a file in the journal: {err}"))
+    }
+}
+
+/// What tells one input file from another, and from itself once changed: its full path, its
+/// size and when it was last changed.
+fn identity(job: &Job) -> Option<String> {
+    let path = std::fs::canonicalize(&job.input).ok()?;
+    let meta = std::fs::metadata(&path).ok()?;
+    let changed = meta
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |since| since.as_nanos());
+    Some(format!("{}|{}|{changed}", path.display(), meta.len()))
+}
+
 /// One file converted, its output folder made first, as its convert report.
 pub fn convert_job(job: &Job, writer: &SolidCraftWriter) -> Value {
-    if let Some(parent) = job.output.parent() {
-        if let Err(err) = std::fs::create_dir_all(parent) {
-            return report::failure(
-                report::CONVERT,
-                report::input(&job.input),
-                &format!("{}: {err}", parent.display()),
-            );
-        }
+    match make_folder(job) {
+        Some(failure) => failure,
+        None => crate::convert(&job.input, &job.output, writer, job.replace),
     }
-    crate::convert(&job.input, &job.output, writer, job.replace)
+}
+
+/// Makes the folder `job`'s design goes in; a failure report when it cannot be made.
+fn make_folder(job: &Job) -> Option<Value> {
+    let parent = job.output.parent()?;
+    std::fs::create_dir_all(parent).err().map(|err| {
+        report::failure(
+            report::CONVERT,
+            report::input(&job.input),
+            &format!("{}: {err}", parent.display()),
+        )
+    })
 }

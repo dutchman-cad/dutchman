@@ -21,10 +21,10 @@ mod verify;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use dutchman_core::{Check, Error, Mode, Model, Outcome, Report, Severity, Writer};
+use dutchman_core::{Check, Error, Mode, Model, Outcome, Report, Severity, Stage, Writer};
 use serde_json::Value;
 
-pub use verify::{Verification, CLI_ENV, DEFAULT_TIMEOUT, VOLUME_TOLERANCE};
+pub use verify::{solidcraft_version, Verification, CLI_ENV, DEFAULT_TIMEOUT, VOLUME_TOLERANCE};
 
 use document::Live;
 
@@ -97,7 +97,9 @@ impl SolidCraftWriter {
                 Err("none of the assembly's parts has geometry SolidCraft can import".to_owned())
             }
             None => step::restatable(model).map_err(|err| match err {
-                Error::Encode(reason) => reason,
+                Error::Encode(reason) | Error::NoGeometry(reason) | Error::Restate(reason) => {
+                    reason
+                }
                 other => other.to_string(),
             }),
         }
@@ -194,9 +196,16 @@ impl SolidCraftWriter {
         };
         match verify::check_import(&cli, self.timeout, design, faces) {
             verify::Shown::Whole => {}
-            verify::Shown::Short(what) => report.push(Severity::Degraded, GEOMETRY, what),
+            verify::Shown::Short(what) => {
+                report.push_at(Stage::SolidCraft, Severity::Degraded, GEOMETRY, what);
+            }
             verify::Shown::Unchecked(why) => {
-                report.push(Severity::Info, GEOMETRY, format!("not checked: {why}"));
+                report.push_at(
+                    Stage::SolidCraft,
+                    Severity::Info,
+                    GEOMETRY,
+                    format!("not checked: {why}"),
+                );
             }
         }
     }
@@ -273,7 +282,8 @@ impl Writer for SolidCraftWriter {
                         }
                         verify::Outcome::Unverified(why) => {
                             report.append(history_report);
-                            report.push(
+                            report.push_at(
+                                Stage::SolidCraft,
                                 Severity::Info,
                                 HISTORY,
                                 format!("{summary}; unverified: {why}"),

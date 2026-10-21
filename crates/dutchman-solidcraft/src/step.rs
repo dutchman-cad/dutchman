@@ -23,7 +23,7 @@ pub(crate) fn restate(model: &Model, report: &mut Report) -> Result<String, Erro
         restate_unguarded(model, report)
     }))
     .unwrap_or_else(|_| {
-        Err(Error::Encode(
+        Err(Error::Restate(
             "cadmpeg's STEP writer failed unexpectedly on this model".to_owned(),
         ))
     })
@@ -34,7 +34,7 @@ pub(crate) fn restate(model: &Model, report: &mut Report) -> Result<String, Erro
 pub(crate) fn restatable(model: &Model) -> Result<(), Error> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| plan(model).map(|_| ())))
         .unwrap_or_else(|_| {
-            Err(Error::Encode(
+            Err(Error::Restate(
                 "cadmpeg's STEP writer failed unexpectedly on this model".to_owned(),
             ))
         })
@@ -45,14 +45,14 @@ fn plan(model: &Model) -> Result<cadmpeg_ir::codec::write::ExportPlan, Error> {
     let input = EncodeInput::new(&model.ir, model.fidelity.as_ref());
     let plan = build_encoder(Format::Step)
         .plan(input, TargetRequest::Explicit(SCHEMA))
-        .map_err(|err| Error::Encode(format!("cannot restate the model as STEP: {err}")))?;
+        .map_err(|err| Error::Restate(format!("cannot restate the model as STEP: {err}")))?;
     if plan
         .report()
         .losses
         .iter()
         .any(|loss| loss.code.to_string() == "step/export.no-exportable-solids")
     {
-        return Err(Error::Encode(
+        return Err(Error::NoGeometry(
             "the model has no solids or surfaces SolidCraft can import".to_owned(),
         ));
     }
@@ -61,11 +61,11 @@ fn plan(model: &Model) -> Result<cadmpeg_ir::codec::write::ExportPlan, Error> {
 
 fn restate_unguarded(model: &Model, report: &mut Report) -> Result<String, Error> {
     let plan = plan(model)?;
-    report.extend_from_cadmpeg(&plan.report().losses);
+    report.extend_from_cadmpeg_export(&plan.report().losses);
 
     let mut bytes = Vec::new();
     plan.write_to(&mut bytes)
-        .map_err(|err| Error::Encode(format!("cannot write STEP: {err}")))?;
+        .map_err(|err| Error::Restate(format!("cannot write STEP: {err}")))?;
     if bytes.len() > MAX_STEP_BYTES {
         return Err(Error::Encode(format!(
             "the STEP restatement is {} MB, over SolidCraft's {} MB import limit",
@@ -74,7 +74,7 @@ fn restate_unguarded(model: &Model, report: &mut Report) -> Result<String, Error
         )));
     }
     let text = String::from_utf8(bytes)
-        .map_err(|_| Error::Encode("cadmpeg wrote STEP that is not UTF-8".to_owned()))?;
+        .map_err(|_| Error::Restate("cadmpeg wrote STEP that is not UTF-8".to_owned()))?;
     Ok(name_unnamed_product(text, &model.name))
 }
 

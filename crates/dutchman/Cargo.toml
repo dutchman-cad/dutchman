@@ -7,6 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 readme = "../../README.md"
+build = "build.rs"
 keywords = ["cad", "converter", "step", "3d"]
 categories = ["command-line-utilities", "parser-implementations"]
 
@@ -22,7 +23,9 @@ path = "src/bin/dutchman-mcp.rs"
 clap.workspace = true
 dutchman-core.workspace = true
 dutchman-solidcraft.workspace = true
+getrandom.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

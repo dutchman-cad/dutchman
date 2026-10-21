@@ -8,6 +8,24 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Testing on your own library
+
+- `convert-all` converts each file in a process of its own: a file that runs past `--timeout`
+  (default 900 s) or holds more than `--max-memory` (default 8192 MB) is stopped and fails
+  alone, and one that crashes the converter no longer takes the batch down.
+- `convert-all --journal FILE` records each file's result as it finishes, so a stopped run
+  carries on where it stopped without converting files again.
+- `convert-all --report-anon FILE` writes an anonymous report, safe to share: counts by format,
+  every failure and loss by cause and stage, blocked features, timings and versions, with each
+  file named only by a salted hash of its path. `--report-salt` keeps the ids from one run to
+  the next and `--report-key` writes the private key from ids to paths. The MCP `convert_all`
+  tool takes the same options.
+- Every loss and failure in the JSON reports says its `stage` (`input`, `decode`, `project`,
+  `map`, `write`, `solidcraft`) and, when it arose in cadmpeg or SolidCraft, its `upstream`.
+  Each `convert-all` result gives its `elapsed_ms`, and the report counts skipped files by
+  extension.
+- Formats Dutchman does not convert yet point to Dutchman's issues rather than cadmpeg's.
+
 ### Feature history
 
 - Lofts guided by one or two rails of sketch curves keep their rails. A loft along a centreline

@@ -35,7 +35,9 @@ pub struct Model {
     /// For an assembly: its parts, read from their own files, and where each is placed.
     pub assembly: Option<Assembly>,
 }
-pub use report::{Check, FeatureOutcome, FeatureStatus, Loss, Mode, Outcome, Report, Severity};
+pub use report::{
+    Check, FeatureOutcome, FeatureStatus, Loss, Mode, Outcome, Report, Severity, Stage,
+};
 
 /// The largest input file Dutchman will open, in bytes. Native CAD files beyond this are
 /// rejected up front rather than read into memory.
@@ -111,6 +113,19 @@ pub fn convert_to(
     writer: &dyn Writer,
     replace: bool,
 ) -> Result<Report, Error> {
+    convert_traced(input, output, writer, replace, &mut |_| {})
+}
+
+/// [`convert_to`], telling `on_stage` as each stage begins: decoding (with projection, which
+/// cadmpeg does as it reads), then mapping and writing, then writing the file.
+pub fn convert_traced(
+    input: &Path,
+    output: &Path,
+    writer: &dyn Writer,
+    replace: bool,
+    on_stage: &mut dyn FnMut(Stage),
+) -> Result<Report, Error> {
+    on_stage(Stage::Input);
     check_output(output, writer)?;
     if !replace && output.exists() {
         return Err(Error::OutputExists {
@@ -122,11 +137,14 @@ pub fn convert_to(
     })?;
 
     let mut report = Report::default();
+    on_stage(Stage::Decode);
     let model = read(format, input, &mut report)?;
 
     // Encode in memory so a failed conversion never leaves a partial file behind.
     let mut bytes = Vec::new();
+    on_stage(Stage::Map);
     writer.write(&model, &mut bytes, &mut report)?;
+    on_stage(Stage::Write);
     write_output(output, &bytes, replace)?;
     Ok(report)
 }
