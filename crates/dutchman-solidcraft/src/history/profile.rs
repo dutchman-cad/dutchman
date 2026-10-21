@@ -236,6 +236,9 @@ mod tests {
             feature: 1,
             normal: [0.0, 0.0, 1.0],
             origin: [0.0; 3],
+            x_dir: [1.0, 0.0, 0.0],
+            y_dir: [0.0, 1.0, 0.0],
+            points: Vec::new(),
             shapes,
         }
     }

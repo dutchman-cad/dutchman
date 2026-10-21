@@ -8,6 +8,12 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Feature history
+
+- Simple holes drilled at a sketch's circle centres, arc centres or points map onto
+  SolidCraft holes: through all, or to a depth with a flat end or a drill point. FreeCAD's
+  Hole is one; counterbores, countersinks and holes placed on faces are not mapped yet.
+
 ### Desktop app
 
 - After **Convert**, the window scrolls to the results as the run starts, and to the first

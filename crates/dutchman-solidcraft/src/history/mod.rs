@@ -11,6 +11,7 @@
 mod constraints;
 mod extrude;
 mod faces;
+mod hole;
 mod loft;
 mod params;
 mod pattern;
@@ -420,6 +421,7 @@ fn map_feature(feature: &Value, ctx: &mut Context, report: &mut Report) -> Resul
         Some("torus") => primitive::torus(feature, definition, ctx).map(Mapped::Feature),
         Some(kind @ ("block" | "primitive")) => Err(primitive::unplaced(kind)),
         Some("pattern") => pattern::map(feature, definition, ctx).map(Mapped::Feature),
+        Some("hole") => hole::map(feature, definition, ctx).map(Mapped::Feature),
         _ => Err(format!("{} is not mapped yet", kind(feature))),
     }
 }
