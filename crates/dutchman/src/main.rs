@@ -152,12 +152,13 @@ fn inspect(input: &Path, as_json: bool) -> ExitCode {
         ),
     }
     if let Some(outcome) = inspection.report.outcome() {
-        match (&outcome.mode, &outcome.check) {
-            (Mode::History, _) => println!("would write: editable history"),
-            (Mode::Import, Check::Flattened(reason) | Check::NotApplicable(reason)) => {
+        match (&inspection.conversion, &outcome.mode, &outcome.check) {
+            (Err(reason), _, _) => println!("would write: nothing; converting it fails: {reason}"),
+            (Ok(()), Mode::History, _) => println!("would write: editable history"),
+            (Ok(()), Mode::Import, Check::Flattened(reason) | Check::NotApplicable(reason)) => {
                 println!("would write: geometry without history ({reason})");
             }
-            (Mode::Import, _) => println!("would write: geometry without history"),
+            (Ok(()), Mode::Import, _) => println!("would write: geometry without history"),
         }
         for feature in &outcome.features {
             let status = match feature.status {

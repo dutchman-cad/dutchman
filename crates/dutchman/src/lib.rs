@@ -88,6 +88,8 @@ pub struct Inspection {
     pub faces: usize,
     /// For an assembly: how many part files it reads, and how many placements it makes.
     pub assembly: Option<(usize, usize)>,
+    /// Whether converting it would succeed: `Err` with why it would fail.
+    pub conversion: Result<(), String>,
 }
 
 /// Reads `input` and works out what converting it would do, without writing anything.
@@ -97,9 +99,12 @@ pub fn inspect(input: &Path) -> Result<Inspection, Error> {
         path: input.to_path_buf(),
     })?;
     let model = dutchman_core::read(format, input, &mut report)?;
-    let outcome = SolidCraftWriter::new().plan(&model, &mut report);
+    let writer = SolidCraftWriter::new();
+    let conversion = writer.convertible(&model);
+    let outcome = writer.plan(&model, &mut report);
     report.set_outcome(outcome);
     Ok(Inspection {
+        conversion,
         report,
         bodies: model.ir.model.bodies.len(),
         faces: model.ir.model.faces.len(),
@@ -125,6 +130,13 @@ impl Inspection {
         out.insert(
             "geometry".to_owned(),
             json!({"bodies": self.bodies, "faces": self.faces}),
+        );
+        out.insert(
+            "conversion".to_owned(),
+            match &self.conversion {
+                Ok(()) => json!({"possible": true, "reason": null}),
+                Err(reason) => json!({"possible": false, "reason": reason}),
+            },
         );
         if let Some((parts, placements)) = self.assembly {
             out.insert(

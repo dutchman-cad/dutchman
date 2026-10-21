@@ -29,13 +29,26 @@ pub(crate) fn restate(model: &Model, report: &mut Report) -> Result<String, Erro
     })
 }
 
-fn restate_unguarded(model: &Model, report: &mut Report) -> Result<String, Error> {
+/// Whether the model has geometry a STEP restatement can carry, found by planning the
+/// restatement without writing it; `Err` with what conversion would say otherwise.
+pub(crate) fn restatable(model: &Model) -> Result<(), Error> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| plan(model).map(|_| ())))
+        .unwrap_or_else(|_| {
+            Err(Error::Encode(
+                "cadmpeg's STEP writer failed unexpectedly on this model".to_owned(),
+            ))
+        })
+}
+
+/// cadmpeg's plan for restating the model as STEP, refused when it carries no geometry.
+fn plan(model: &Model) -> Result<cadmpeg_ir::codec::write::ExportPlan, Error> {
     let input = EncodeInput::new(&model.ir, model.fidelity.as_ref());
     let plan = build_encoder(Format::Step)
         .plan(input, TargetRequest::Explicit(SCHEMA))
         .map_err(|err| Error::Encode(format!("cannot restate the model as STEP: {err}")))?;
-    let losses = &plan.report().losses;
-    if losses
+    if plan
+        .report()
+        .losses
         .iter()
         .any(|loss| loss.code.to_string() == "step/export.no-exportable-solids")
     {
@@ -43,7 +56,12 @@ fn restate_unguarded(model: &Model, report: &mut Report) -> Result<String, Error
             "the model has no solids or surfaces SolidCraft can import".to_owned(),
         ));
     }
-    report.extend_from_cadmpeg(losses);
+    Ok(plan)
+}
+
+fn restate_unguarded(model: &Model, report: &mut Report) -> Result<String, Error> {
+    let plan = plan(model)?;
+    report.extend_from_cadmpeg(&plan.report().losses);
 
     let mut bytes = Vec::new();
     plan.write_to(&mut bytes)

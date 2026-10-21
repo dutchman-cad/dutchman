@@ -105,6 +105,7 @@ fn an_mcp_client_converts_through_dutchman() {
     let report = &inspected["structuredContent"];
     assert_eq!(report["schema"], "dutchman.inspect/1");
     assert_eq!(report["geometry"]["bodies"], 1);
+    assert_eq!(report["conversion"]["possible"], true);
     // The text content is the same report, for clients that read only text.
     let text: Value =
         serde_json::from_str(inspected["content"][0]["text"].as_str().unwrap()).unwrap();
