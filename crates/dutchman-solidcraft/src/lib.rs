@@ -180,8 +180,25 @@ impl SolidCraftWriter {
             Err(why) => return Ok(verify::Outcome::Unverified(why)),
         };
         let original = self.history_design(model, history, step, Live::Original)?;
-        Ok(verify::compare(&cli, self.timeout, written, &original))
+        Ok(verify::compare(
+            &cli,
+            self.timeout,
+            written,
+            &original,
+            solid_bodies(model),
+        ))
     }
+}
+
+/// How many of the model's bodies are solids, each of which should have a volume.
+fn solid_bodies(model: &Model) -> usize {
+    model
+        .ir
+        .model
+        .bodies
+        .iter()
+        .filter(|body| body.kind == cadmpeg_ir::topology::BodyKind::Solid)
+        .count()
 }
 
 impl SolidCraftWriter {
@@ -189,16 +206,9 @@ impl SolidCraftWriter {
     /// reports it as Degraded when SolidCraft shows less of it than the model holds: geometry
     /// that is wrong but opens would otherwise go unnoticed.
     fn check_import(&self, model: &Model, design: &[u8], report: &mut Report) {
-        let solids = model
-            .ir
-            .model
-            .bodies
-            .iter()
-            .filter(|body| body.kind == cadmpeg_ir::topology::BodyKind::Solid)
-            .count();
         let expected = verify::Expected {
             faces: model.ir.model.faces.len(),
-            solids,
+            solids: solid_bodies(model),
         };
         self.check_geometry(design, expected, report);
     }

@@ -31,6 +31,10 @@ report's schema name changes when a field does).
 
 ### Checks
 
+- A history whose original geometry SolidCraft opens unsoundly (solids as empty shells,
+  bodies inside out) is kept, unverified, saying so, rather than flattened onto that geometry:
+  there is nothing sound to compare its replay with. A history that does not replay is still
+  flattened.
 - The check of geometry written without history also reads each body's volume in SolidCraft:
   a solid it gives no volume (an empty shell) or a body it reads inside out is reported as
   `Degraded: geometry`, as missing faces already were.
