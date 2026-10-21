@@ -93,8 +93,8 @@ what carries across.
 
 ## `dutchman.inspect/1`
 
-The same fields as `convert` except `output`, plus `geometry`, and for an assembly
-`assembly: {"parts": <part files read>, "placements": <parts placed>}`:
+The same fields as `convert` except `output`, plus `geometry`, `conversion`, and for an
+assembly `assembly: {"parts": <part files read>, "placements": <parts placed>}`:
 
 ```json
 {
@@ -102,12 +102,17 @@ The same fields as `convert` except `output`, plus `geometry`, and for an assemb
   "ok": true,
   "input": {"path": "part.f3d", "format": "fusion_archive", "format_name": "Fusion archive (.f3d)"},
   "geometry": {"bodies": 1, "faces": 6},
+  "conversion": {"possible": true, "reason": null},
   "mode": "import",
   "verification": {"status": "flattened", "reason": "feature \"Fillet1\": fillet is not mapped yet"},
   "history": {"mapped": 2, "total": 3, "features": [ … ]},
   "losses": [ … ]
 }
 ```
+
+`conversion.possible` is `false` when converting the file would fail, with `reason` saying
+why, for example a design whose only geometry is a sketch: "the model has no solids or surfaces
+SolidCraft can import". `geometry` counts what was read, whether or not it can be written.
 
 `inspect` writes nothing and runs no SolidCraft, so a history that would be written reports
 `verification.status` `unverified`. Both reports look at every feature, so every `blocked` one

@@ -81,6 +81,28 @@ impl SolidCraftWriter {
         self
     }
 
+    /// Whether `model` can be written at all: `Err` with the reason a conversion would fail
+    /// with, when it has no geometry SolidCraft can import (for an assembly, when none of its
+    /// parts has). Plans the STEP restatement without writing anything.
+    pub fn convertible(&self, model: &Model) -> Result<(), String> {
+        fn any_part(assembly: &dutchman_core::Assembly) -> bool {
+            assembly.parts.iter().any(|part| match &part.assembly {
+                Some(sub) => any_part(sub),
+                None => step::restatable(part).is_ok(),
+            })
+        }
+        match &model.assembly {
+            Some(assembly) if any_part(assembly) => Ok(()),
+            Some(_) => {
+                Err("none of the assembly's parts has geometry SolidCraft can import".to_owned())
+            }
+            None => step::restatable(model).map_err(|err| match err {
+                Error::Encode(reason) => reason,
+                other => other.to_string(),
+            }),
+        }
+    }
+
     /// What writing `model` would do, without restating its geometry, writing anything or
     /// running SolidCraft: the history's mapping, as `dutchman inspect` shows it.
     pub fn plan(&self, model: &Model, report: &mut Report) -> Outcome {

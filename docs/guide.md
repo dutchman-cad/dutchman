@@ -148,15 +148,16 @@ dutchman inspect design_sketch_constraints.f3d
 
 ```text
 Fusion archive (.f3d): 1 body, 1 face
-would write: geometry without history (no feature in the history builds geometry)
+would write: nothing; converting it fails: the model has no solids or surfaces SolidCraft can import
   mapped     sketch "Sketch 1"
 dutchman: Degraded: f3d/feature.edge-reference-lost: 1 source parametric edge reference(s) were marked EDGE_REFERENCE_LOST and have no independent complete selection proof.
 dutchman: Degraded: f3d/sketch.relation-native: 2 sketch relation(s) retain native operands because no unique neutral relation was resolved.
 dutchman: Degraded: f3d/sketch.dimension-native: 1 sketch dimension(s) retain native operands because no unique neutral dimension was resolved.
 ```
 
-The first line counts bodies and faces. The second says whether the design would keep its
-feature history or be written as geometry, and why. Then comes each feature of the history
+The first line counts the bodies and faces read. The second says whether the design would keep
+its feature history or be written as geometry, and why, or, as here, that converting it would
+fail and why. Then comes each feature of the history
 with its status (`mapped`, `not_needed`, `left_out` or `blocked`, with the reason for a
 blocked one), and the loss report. `inspect --json` prints the same as a
 `dutchman.inspect/1` report.

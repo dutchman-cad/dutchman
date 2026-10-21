@@ -13,6 +13,9 @@ report's schema name changes when a field does).
 - `convert-all` lists each converted file's losses beneath it, as `convert` does, and counts the
   files it skipped as not in a format it knows (`skipped` in `--json`).
 
+- `inspect` says when converting a file would fail and why (`would write: nothing; …`, and
+  `conversion` in `--json`), instead of predicting geometry it cannot write.
+
 ### Checks
 
 - When `solidcraft-cli` is found, geometry written without history is opened in SolidCraft too,

@@ -220,6 +220,25 @@ fn inspect_json_shows_what_would_map_without_writing() {
     let feature = &report["history"]["features"][0];
     assert_eq!(feature["kind"], "sketch");
     assert_eq!(feature["status"], "mapped");
+    // Its one body is a sketch's, which no conversion can write; inspect says so.
+    assert_eq!(
+        report["conversion"],
+        serde_json::json!({"possible": false,
+            "reason": "the model has no solids or surfaces SolidCraft can import"})
+    );
+    let text = dutchman(&["inspect", &fixture("design_sketch_constraints.f3d")]);
+    assert!(String::from_utf8_lossy(&text.stdout).contains(
+        "would write: nothing; converting it fails: the model has no solids or surfaces"
+    ));
+    let cube = json_of(&dutchman(&[
+        "inspect",
+        "--json",
+        &fixture("generated_unit_cube.f3d"),
+    ]));
+    assert_eq!(
+        cube["conversion"],
+        serde_json::json!({"possible": true, "reason": null})
+    );
 }
 
 #[test]
