@@ -183,6 +183,10 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.changes.outputs.dutchman }}
+          path: source
       - name: Replace the nightly pre-release
         run: |
           date=$(date -u +%Y-%m-%d)
@@ -196,7 +200,9 @@ jobs:
           Dutchman's main built against cadmpeg's main, with every test and the SolidCraft round
           trip passing. Use it when an issue says a fix is merged but not yet released; otherwise
           use the latest stable release.
+
           EOF
+          python3 -I source/scripts/downloads.py nightly >> notes.md
           # Move the tag; stable tags are never touched.
           gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/nightly" -f sha="$DUTCHMAN_SHA" -F force=true \
             || gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" -f ref=refs/tags/nightly -f sha="$DUTCHMAN_SHA"

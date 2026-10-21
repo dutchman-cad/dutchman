@@ -12,9 +12,25 @@ target format, starting with [SolidCraft](https://github.com/tangency-labs/solid
 dutchman convert part.f3d part.solidcraft
 ```
 
-Download it for Linux, macOS or Windows from the
-[latest release](https://github.com/dutchman-cad/dutchman/releases/latest), or see
-[Getting started](docs/guide.md) to install it and convert a sample in a minute.
+## Download
+
+<!-- downloads -->
+| Your computer | Download | Checksum |
+|---|---|---|
+| Mac with Apple silicon (M1 or later) | [dutchman-0.1.2-aarch64-apple-darwin.tar.gz](https://github.com/dutchman-cad/dutchman/releases/download/v0.1.2/dutchman-0.1.2-aarch64-apple-darwin.tar.gz) | [SHA-256](https://github.com/dutchman-cad/dutchman/releases/download/v0.1.2/dutchman-0.1.2-aarch64-apple-darwin.tar.gz.sha256) |
+| Mac with an Intel processor | [dutchman-0.1.2-x86_64-apple-darwin.tar.gz](https://github.com/dutchman-cad/dutchman/releases/download/v0.1.2/dutchman-0.1.2-x86_64-apple-darwin.tar.gz) | [SHA-256](https://github.com/dutchman-cad/dutchman/releases/download/v0.1.2/dutchman-0.1.2-x86_64-apple-darwin.tar.gz.sha256) |
+| Windows, 64-bit | [dutchman-0.1.2-x86_64-pc-windows-msvc.zip](https://github.com/dutchman-cad/dutchman/releases/download/v0.1.2/dutchman-0.1.2-x86_64-pc-windows-msvc.zip) | [SHA-256](https://github.com/dutchman-cad/dutchman/releases/download/v0.1.2/dutchman-0.1.2-x86_64-pc-windows-msvc.zip.sha256) |
+| Linux, x86_64 | [dutchman-0.1.2-x86_64-unknown-linux-gnu.tar.gz](https://github.com/dutchman-cad/dutchman/releases/download/v0.1.2/dutchman-0.1.2-x86_64-unknown-linux-gnu.tar.gz) | [SHA-256](https://github.com/dutchman-cad/dutchman/releases/download/v0.1.2/dutchman-0.1.2-x86_64-unknown-linux-gnu.tar.gz.sha256) |
+| Linux, ARM 64-bit (aarch64) | [dutchman-0.1.2-aarch64-unknown-linux-gnu.tar.gz](https://github.com/dutchman-cad/dutchman/releases/download/v0.1.2/dutchman-0.1.2-aarch64-unknown-linux-gnu.tar.gz) | [SHA-256](https://github.com/dutchman-cad/dutchman/releases/download/v0.1.2/dutchman-0.1.2-aarch64-unknown-linux-gnu.tar.gz.sha256) |
+
+Not sure which Mac you have? Apple menu › **About This Mac**: a chip named Apple M… is Apple silicon; a processor named Intel… is Intel.
+<!-- /downloads -->
+
+Each archive holds `dutchman`, `dutchman-mcp` and the desktop app, `dutchman-gui`.
+[Getting started](docs/guide.md) shows how to check it, install it and convert a sample in a
+minute. Every release is on the [releases page](https://github.com/dutchman-cad/dutchman/releases).
+
+## What converts
 
 Early development. Fusion (`.f3d`, `.f3z`) designs, Inventor parts (`.ipt`), Inventor
 assemblies (`.iam`, keep the part files next to the assembly) and SolidWorks parts (`.sldprt`)
