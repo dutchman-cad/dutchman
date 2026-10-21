@@ -28,6 +28,24 @@ options.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it fits together.
 
+## Desktop app
+
+`dutchman-gui` converts without a terminal. Drop design files or folders on the window (or use
+**Add files…** and **Add folder…**), choose an output folder, and press **Convert**. Each file
+shows whether it converted, what was written (editable history or geometry), and its losses as
+Info, Degraded or Dropped. A converted design opens in SolidCraft from its card: the app that
+`SOLIDCRAFT_APP` names, else `solidcraft` on `PATH`, else the system's app for `.solidcraft`
+files. The app follows the system's light or dark setting, or can be set to Day or Night.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/dutchman-gui-night.png">
+  <img alt="The Dutchman app after converting three files: two converted, one failed with its reason" src="docs/images/dutchman-gui-day.png" width="480">
+</picture>
+
+It ships in the release archives beside `dutchman`. On Linux it needs a desktop session (X11 or
+Wayland with OpenGL); the file dialogs use the desktop portal, and dropping files works without
+it.
+
 ## Docs
 
 - [Getting started](docs/guide.md): install, convert, read the loss report, open the result

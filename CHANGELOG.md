@@ -8,6 +8,12 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Desktop app
+
+- `dutchman-gui`: drop design files or folders, choose an output folder and convert. Each file
+  shows what was written and its losses, and opens in SolidCraft or in its folder. Day and Night
+  themes, following the system's setting. It ships in the release archives.
+
 ### Feature history
 
 - Lofts through profiles of two or more sketches map onto SolidCraft lofts, when they have no

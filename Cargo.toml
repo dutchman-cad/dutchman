@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/dutchman", "crates/dutchman-core", "crates/dutchman-solidcraft"]
+members = ["crates/dutchman", "crates/dutchman-core", "crates/dutchman-gui", "crates/dutchman-solidcraft"]
 
 [workspace.package]
 version = "0.1.0"
@@ -10,6 +10,7 @@ license = "Apache-2.0"
 repository = "https://github.com/dutchman-cad/dutchman"
 
 [workspace.dependencies]
+dutchman = { path = "crates/dutchman", version = "0.1.0" }
 dutchman-core = { path = "crates/dutchman-core", version = "0.1.0" }
 dutchman-solidcraft = { path = "crates/dutchman-solidcraft", version = "0.1.0" }
 clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }

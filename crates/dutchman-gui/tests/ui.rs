@@ -1,0 +1,164 @@
+//! The app driven as a person would: designs added, an output folder set, Convert pressed, and
+//! the results read back from the window.
+//!
+//! `screenshots` renders the window in both themes; it needs a GPU, so it is ignored by default:
+//! `DUTCHMAN_GUI_SCREENSHOTS=<dir> cargo test -p dutchman-gui --test ui -- --ignored`.
+
+// Test helpers outside `#[test]` functions are not covered by clippy.toml's test allowances.
+#![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
+
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use dutchman_gui::app::Status;
+use dutchman_gui::App;
+use eframe::egui::{self, ThemePreference};
+use egui_kittest::kittest::Queryable;
+use egui_kittest::Harness;
+
+fn fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../dutchman-core/tests/fixtures")
+        .join(name)
+}
+
+fn harness() -> Harness<'static, App> {
+    Harness::builder()
+        .with_size(egui::vec2(760.0, 680.0))
+        .build_eframe(|cc| App::new(cc))
+}
+
+/// Presses Convert and runs the window until the run is over.
+fn convert(harness: &mut Harness<'static, App>) {
+    harness.run();
+    harness.get_by_label("Convert").click();
+    harness.step();
+    let started = Instant::now();
+    while harness.state().running() || harness.state().rows().is_empty() {
+        assert!(
+            started.elapsed() < Duration::from_secs(120),
+            "the run did not finish"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+        harness.step();
+    }
+    harness.run();
+}
+
+#[test]
+fn designs_convert_from_the_window() {
+    let out = tempfile::tempdir().unwrap();
+    let mut harness = harness();
+    harness.state_mut().add_inputs([
+        fixture("generated_unit_cube.f3d"),
+        fixture("synthetic_cube.ipt"),
+    ]);
+    harness.state_mut().set_out_dir(out.path().to_path_buf());
+    harness.state_mut().set_verify(false);
+    convert(&mut harness);
+
+    let rows = harness.state().rows();
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|row| row.status == Status::Converted));
+    assert!(out.path().join("generated_unit_cube.solidcraft").is_file());
+    assert!(out.path().join("synthetic_cube.solidcraft").is_file());
+    assert!(harness.query_by_label("2 converted, 0 failed").is_some());
+    assert_eq!(harness.query_all_by_label("Open in SolidCraft").count(), 2);
+}
+
+#[test]
+fn a_file_that_cannot_convert_says_why() {
+    let dir = tempfile::tempdir().unwrap();
+    let broken = dir.path().join("broken.f3d");
+    std::fs::write(&broken, b"not a design").unwrap();
+    let mut harness = harness();
+    harness.state_mut().add_inputs([broken]);
+    harness.state_mut().set_out_dir(dir.path().join("out"));
+    convert(&mut harness);
+
+    let rows = harness.state().rows();
+    assert_eq!(rows[0].status, Status::Failed);
+    assert!(harness.query_by_label("Failed").is_some());
+    assert!(harness.query_by_label("0 converted, 1 failed").is_some());
+    assert!(!dir.path().join("out/broken.solidcraft").exists());
+}
+
+#[test]
+fn convert_waits_for_designs_and_a_folder() {
+    let mut harness = harness();
+    harness.run();
+    assert!(harness.query_by_label("Add designs to convert.").is_some());
+    harness
+        .state_mut()
+        .add_inputs([fixture("synthetic_cube.ipt")]);
+    harness.run();
+    assert!(harness.query_by_label("Choose an output folder.").is_some());
+}
+
+#[test]
+#[ignore = "renders with a GPU; set DUTCHMAN_GUI_SCREENSHOTS to a folder"]
+fn screenshots() {
+    let Some(dir) = std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").map(PathBuf::from) else {
+        panic!("set DUTCHMAN_GUI_SCREENSHOTS to a folder");
+    };
+    std::fs::create_dir_all(&dir).unwrap();
+    // The designs, copied where their paths say nothing about this machine.
+    let work = tempfile::tempdir().unwrap();
+    let designs = work.path().join("Designs");
+    std::fs::create_dir_all(&designs).unwrap();
+    let inputs: Vec<PathBuf> = [
+        "solidworks_cube.sldprt",
+        "synthetic_cube.ipt",
+        "container_metadata_only.f3d",
+    ]
+    .into_iter()
+    .map(|name| {
+        let copy = designs.join(name);
+        std::fs::copy(fixture(name), &copy).unwrap();
+        copy
+    })
+    .collect();
+    for (theme, name) in [
+        (ThemePreference::Light, "day"),
+        (ThemePreference::Dark, "night"),
+    ] {
+        let mut harness = harness();
+        harness.ctx.set_theme(theme);
+        harness.run();
+        harness
+            .render()
+            .unwrap()
+            .save(dir.join(format!("{name}-empty.png")))
+            .unwrap();
+
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(760.0, 1040.0))
+            .build_eframe(|cc| App::new(cc));
+        harness.ctx.set_theme(theme);
+        harness.state_mut().add_inputs(inputs.clone());
+        harness
+            .state_mut()
+            .set_out_dir(work.path().join(format!("Converted-{name}")));
+        harness.state_mut().set_verify(false);
+        convert(&mut harness);
+        // Scrolled to the results, then with the first file's losses open.
+        harness.get_by_label("RESULTS").scroll_to_me();
+        harness.run();
+        harness
+            .render()
+            .unwrap()
+            .save(dir.join(format!("{name}-results.png")))
+            .unwrap();
+        harness
+            .query_all_by_label_contains("Losses:")
+            .next()
+            .unwrap()
+            .click();
+        harness.run();
+        harness
+            .render()
+            .unwrap()
+            .save(dir.join(format!("{name}-losses.png")))
+            .unwrap();
+    }
+}
