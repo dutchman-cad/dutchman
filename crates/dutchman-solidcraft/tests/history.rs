@@ -698,3 +698,24 @@ fn solidcraft_rebuilds_each_parts_history_in_the_assembly() {
     grown.sort_by(f64::total_cmp);
     assert_eq!(grown, [1000.0, 4000.0, 4000.0]);
 }
+
+#[test]
+fn inspecting_an_assembly_maps_each_parts_history() {
+    let mut report = Report::default();
+    let outcome = SolidCraftWriter::new().plan(&assembly_of_histories(), &mut report);
+    assert_eq!(outcome.mode, dutchman_core::Mode::History);
+    let names: Vec<String> = outcome
+        .features
+        .iter()
+        .map(|f| f.name.clone().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "First.ipt: Base sketch",
+            "First.ipt: Block",
+            "Second.ipt: Base sketch",
+            "Second.ipt: Block"
+        ]
+    );
+}

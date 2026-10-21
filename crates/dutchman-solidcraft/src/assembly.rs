@@ -66,6 +66,57 @@ pub(crate) fn write(
     builder.container.finish(&doc)
 }
 
+/// What writing an assembly would do with its parts' histories, without restating geometry,
+/// writing anything or running SolidCraft.
+pub(crate) fn plan(writer: &SolidCraftWriter, assembly: &Assembly, report: &mut Report) -> Outcome {
+    let mut checks = Vec::new();
+    let mut features = Vec::new();
+    plan_parts(writer, assembly, report, &mut checks, &mut features);
+    outcome(&checks, features)
+}
+
+fn plan_parts(
+    writer: &SolidCraftWriter,
+    assembly: &Assembly,
+    report: &mut Report,
+    checks: &mut Vec<Check>,
+    features: &mut Vec<FeatureOutcome>,
+) {
+    for part in &assembly.parts {
+        if let Some(sub) = &part.assembly {
+            plan_parts(writer, sub, report, checks, features);
+            continue;
+        }
+        if writer.import_only {
+            continue;
+        }
+        let file = part.source_file.as_deref().unwrap_or(&part.name);
+        let mut part_report = Report::default();
+        let mapping = history::map(part, &mut part_report);
+        features.extend(mapping.features.iter().cloned().map(|mut feature| {
+            feature.name = Some(format!("{file}: {}", feature.name.unwrap_or_default()));
+            feature
+        }));
+        match mapping.result {
+            Ok(_) => {
+                report.append_prefixed(part_report, file);
+                checks.push(Check::Unverified(
+                    "not checked: inspect writes nothing".to_owned(),
+                ));
+            }
+            Err(reason) if !mapping.features.is_empty() => {
+                report.push(
+                    Severity::Info,
+                    HISTORY,
+                    format!("{file}: flattened: {reason}"),
+                );
+                checks.push(Check::Flattened(reason));
+            }
+            Err(_) => {}
+        }
+    }
+}
+
 /// What became of the parts' histories, as one outcome for the design.
 fn outcome(histories: &[Check], features: Vec<FeatureOutcome>) -> Outcome {
     let written: Vec<&Check> = histories

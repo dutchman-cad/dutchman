@@ -81,16 +81,8 @@ impl SolidCraftWriter {
     /// What writing `model` would do, without restating its geometry, writing anything or
     /// running SolidCraft: the history's mapping, as `dutchman inspect` shows it.
     pub fn plan(&self, model: &Model, report: &mut Report) -> Outcome {
-        if model.assembly.is_some() {
-            return Outcome {
-                mode: Mode::Import,
-                check: Check::NotApplicable(
-                    "assemblies and designs with components convert as placed geometry, without \
-                     their parts' histories"
-                        .to_owned(),
-                ),
-                features: Vec::new(),
-            };
+        if let Some(assembly) = &model.assembly {
+            return assembly::plan(self, assembly, report);
         }
         if self.import_only {
             return Outcome {
