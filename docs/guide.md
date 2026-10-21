@@ -96,9 +96,12 @@ dutchman --version
 
 When a design's feature history converts, Dutchman checks it by replaying it in SolidCraft's
 command-line tool, `solidcraft-cli`, which comes with every
-[SolidCraft release](https://github.com/tangency-labs/solidcraft/releases). Dutchman finds it
-on your `PATH`, or where `SOLIDCRAFT_CLI` points, or where `--solidcraft PATH` points. Without
-it, conversions still work; a converted history is marked unverified.
+[SolidCraft release](https://github.com/tangency-labs/solidcraft/releases). Installing the
+SolidCraft app is enough: Dutchman finds the tool inside it (on macOS, the newest
+`SolidCraft*.app` in `/Applications` or `~/Applications`; on Windows, `Program Files\SolidCraft`).
+`--solidcraft PATH`, `SOLIDCRAFT_CLI`, or `solidcraft-cli` on your `PATH` come first. The
+desktop app says which one it checks with. Without one, conversions still work; a converted
+history is marked unverified.
 
 ## Your first conversion
 
@@ -166,7 +169,7 @@ dutchman convert --json generated_unit_cube.f3d cube.solidcraft
 | Option | What it does |
 |---|---|
 | `--import-only` | Write the geometry as one non-parametric import, never the feature history. |
-| `--solidcraft PATH` | The `solidcraft-cli` that checks a converted history. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`. |
+| `--solidcraft PATH` | The `solidcraft-cli` that checks a converted history. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`). |
 | `--no-verify` | Write the history without checking it in SolidCraft. Cannot be combined with `--solidcraft`. |
 | `--verify-timeout SECONDS` | How long each SolidCraft check may run before the history is written unverified. Default 120. |
 | `--no-clobber` | Do not replace an existing `.solidcraft` file: that file's conversion fails instead. By default it is replaced. |

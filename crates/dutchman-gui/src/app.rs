@@ -51,6 +51,8 @@ pub struct App {
     /// A one-line notice, such as an app that could not be opened.
     notice: Option<String>,
     has_app: bool,
+    /// The SolidCraft CLI that checks histories when nothing else is chosen, if one is found.
+    checker: Option<PathBuf>,
 }
 
 impl App {
@@ -69,6 +71,7 @@ impl App {
             sender,
             notice: None,
             has_app: platform::has_solidcraft_app(),
+            checker: dutchman_solidcraft::find_cli(&dutchman_solidcraft::Verification::Auto).ok(),
         }
     }
 
@@ -417,13 +420,15 @@ impl App {
                 {
                     self.options.no_verify = !verify;
                 }
-                ui.label(
-                    RichText::new(
-                        "Uses solidcraft-cli when it is installed; otherwise history is written unchecked.",
-                    )
-                    .small()
-                    .color(p.tide),
-                );
+                let checker = match &self.checker {
+                    Some(cli) => format!("Checks with {}.", display(cli)),
+                    None => format!(
+                        "No SolidCraft found, so history is written unchecked: install SolidCraft, \
+                         or set {} to its solidcraft-cli.",
+                        dutchman_solidcraft::CLI_ENV
+                    ),
+                };
+                ui.add(egui::Label::new(RichText::new(checker).small().color(p.tide)).wrap());
                 ui.add_space(theme::SPACE_2);
                 let chosen = self.options.project.clone();
                 let mut find = false;
@@ -450,7 +455,8 @@ impl App {
                         );
                     },
                     |ui| {
-                        if chosen.is_some() && ui.button(RichText::new("Automatic").small()).clicked()
+                        if chosen.is_some()
+                            && ui.button(RichText::new("Automatic").small()).clicked()
                         {
                             find = true;
                         }

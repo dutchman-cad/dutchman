@@ -27,7 +27,8 @@ const POLL: Duration = Duration::from_millis(20);
 /// How a written history is checked.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Verification {
-    /// With the SolidCraft CLI named by `SOLIDCRAFT_CLI`, else the one on `PATH`.
+    /// With the SolidCraft CLI named by `SOLIDCRAFT_CLI`, else the one on `PATH`, else the
+    /// one an installed SolidCraft app carries (see [`find_cli`]).
     Auto,
     /// With this SolidCraft CLI.
     With(PathBuf),
@@ -46,8 +47,11 @@ pub(crate) enum Outcome {
     Unverified(String),
 }
 
-/// The SolidCraft CLI to check with, if any.
-pub(crate) fn find_cli(verification: &Verification) -> Result<PathBuf, String> {
+/// The SolidCraft CLI `verification` checks with: for [`Verification::Auto`], the one
+/// `SOLIDCRAFT_CLI` names, else `solidcraft-cli` on `PATH`, else the one inside an installed
+/// SolidCraft app: on macOS `SolidCraft*.app` in `/Applications` or `~/Applications`, newest
+/// version first; on Windows `SolidCraft\solidcraft-cli.exe` in Program Files.
+pub fn find_cli(verification: &Verification) -> Result<PathBuf, String> {
     match verification {
         Verification::Off => Err("verification turned off".to_owned()),
         Verification::With(path) => Ok(path.clone()),
@@ -55,8 +59,87 @@ pub(crate) fn find_cli(verification: &Verification) -> Result<PathBuf, String> {
             .map(PathBuf::from)
             .filter(|path| !path.as_os_str().is_empty())
             .or_else(on_path)
-            .ok_or_else(|| format!("no {CLI_NAME} found (set {CLI_ENV} or add it to PATH)")),
+            .or_else(installed)
+            .ok_or_else(|| {
+                format!(
+                    "no {CLI_NAME} found (install SolidCraft, set {CLI_ENV}, or add it to PATH)"
+                )
+            }),
     }
+}
+
+/// The CLI inside an installed SolidCraft app, where this system installs apps.
+fn installed() -> Option<PathBuf> {
+    if cfg!(target_os = "macos") {
+        let mut folders = vec![PathBuf::from("/Applications")];
+        if let Some(home) = std::env::var_os("HOME") {
+            folders.push(Path::new(&home).join("Applications"));
+        }
+        in_app_bundles(&folders)
+    } else if cfg!(windows) {
+        ["ProgramFiles", "ProgramW6432", "LOCALAPPDATA"]
+            .into_iter()
+            .filter_map(std::env::var_os)
+            .flat_map(|base| {
+                let base = PathBuf::from(base);
+                [
+                    base.join("SolidCraft"),
+                    base.join("Programs").join("SolidCraft"),
+                ]
+            })
+            .map(|folder| folder.join(format!("{CLI_NAME}.exe")))
+            .find(|cli| cli.is_file())
+    } else {
+        None
+    }
+}
+
+/// The CLI in the newest `SolidCraft*.app` bundle in `folders` (`Contents/MacOS/solidcraft-cli`),
+/// by the version its `Info.plist` gives, then by name.
+fn in_app_bundles(folders: &[PathBuf]) -> Option<PathBuf> {
+    let mut found: Vec<(Vec<u64>, PathBuf)> = folders
+        .iter()
+        .filter_map(|folder| std::fs::read_dir(folder).ok())
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|app| {
+            app.file_name()
+                .map(|name| name.to_string_lossy().to_lowercase())
+                .is_some_and(|name| name.starts_with("solidcraft") && name.ends_with(".app"))
+        })
+        .filter_map(|app| {
+            let cli = app.join("Contents/MacOS").join(CLI_NAME);
+            cli.is_file().then(|| (bundle_version(&app), cli))
+        })
+        .collect();
+    found.sort();
+    found.pop().map(|(_, cli)| cli)
+}
+
+/// The version an app bundle's `Info.plist` gives (`CFBundleShortVersionString`), as numbers
+/// to compare; empty when it gives none.
+fn bundle_version(app: &Path) -> Vec<u64> {
+    let Ok(plist) = std::fs::read_to_string(app.join("Contents/Info.plist")) else {
+        return Vec::new();
+    };
+    let Some(after) = plist
+        .split_once("<key>CFBundleShortVersionString</key>")
+        .map(|(_, after)| after)
+    else {
+        return Vec::new();
+    };
+    after
+        .split_once("<string>")
+        .and_then(|(_, rest)| rest.split_once("</string>"))
+        .map(|(version, _)| {
+            version
+                .trim()
+                .split(['.', '-'])
+                .map_while(|part| part.parse().ok())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The version the SolidCraft CLI `verification` finds prints (`solidcraft-cli 0.18.2`),
@@ -376,6 +459,36 @@ mod cli_tests {
 
     /// A stand-in SolidCraft CLI: `script` runs with `$design` (the design path) and must
     /// print the eval result, which is written to the `--json-out` file.
+    #[test]
+    fn the_newest_solidcraft_app_carries_the_cli() {
+        let dir = tempfile::tempdir().unwrap();
+        for (app, version) in [
+            ("SolidCraft.app", Some("0.18.2")),
+            ("SolidCraft 2.app", Some("0.18.10")),
+            ("SolidCraft old.app", None),
+            ("Other.app", Some("9.0")),
+        ] {
+            let macos = dir.path().join(app).join("Contents/MacOS");
+            std::fs::create_dir_all(&macos).unwrap();
+            std::fs::write(macos.join(CLI_NAME), b"").unwrap();
+            if let Some(version) = version {
+                std::fs::write(
+                    dir.path().join(app).join("Contents/Info.plist"),
+                    format!(
+                        "<dict><key>CFBundleShortVersionString</key>\n<string>{version}</string></dict>"
+                    ),
+                )
+                .unwrap();
+            }
+        }
+        let cli = in_app_bundles(&[dir.path().to_path_buf(), dir.path().join("missing")]).unwrap();
+        assert!(
+            cli.ends_with("SolidCraft 2.app/Contents/MacOS/solidcraft-cli"),
+            "{cli:?}"
+        );
+        assert_eq!(in_app_bundles(&[dir.path().join("missing")]), None);
+    }
+
     fn fake_cli(dir: &Path, script: &str) -> PathBuf {
         let path = dir.join("solidcraft-cli");
         let body = format!("#!/bin/sh\ndesign=\"$2\"\nout=\"$4\"\n{{\n{script}\n}} > \"$out\"\n");
