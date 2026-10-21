@@ -1,0 +1,212 @@
+name: Nightly
+
+# Builds Dutchman's main against cadmpeg's main, every day and on demand, and publishes the
+# archives as the rolling `nightly` pre-release: the way a cadmpeg fix that is merged but not
+# released reaches users before the next stable release. cadmpeg's main is taken only here, at
+# build time (scripts/use-cadmpeg-main.sh); nothing about it is committed, and stable releases
+# keep using crates.io cadmpeg. Nothing is published unless every test and the SolidCraft
+# round trip pass. A run is skipped when neither main changed since the last nightly.
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Build even when neither main changed since the last nightly
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CADMPEG_REPO: https://github.com/cadmpeg/cadmpeg
+  SOLIDCRAFT_VERSION: 0.18.2
+  SOLIDCRAFT_SHA256: 9d0c922ac72204f34ad22ca7a171be78016ab002e304ace3c07d34d187d830ff
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.compare.outputs.build }}
+      dutchman: ${{ steps.compare.outputs.dutchman }}
+      cadmpeg: ${{ steps.compare.outputs.cadmpeg }}
+    steps:
+      - id: compare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          dutchman=$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}" refs/heads/main | cut -f1)
+          cadmpeg=$(git ls-remote "$CADMPEG_REPO" refs/heads/main | cut -f1)
+          [ -n "$dutchman" ] && [ -n "$cadmpeg" ]
+          echo "dutchman=$dutchman" >> "$GITHUB_OUTPUT"
+          echo "cadmpeg=$cadmpeg" >> "$GITHUB_OUTPUT"
+          last=$(gh release view nightly --repo "$GITHUB_REPOSITORY" --json body -q .body 2>/dev/null || true)
+          if [ "$FORCE" != true ] && grep -q "$dutchman" <<<"$last" && grep -q "$cadmpeg" <<<"$last"; then
+            echo "Neither main changed since the last nightly; nothing to build."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  test:
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.changes.outputs.dutchman }}
+      - uses: dtolnay/rust-toolchain@stable
+      - shell: bash
+        run: scripts/use-cadmpeg-main.sh "${{ needs.changes.outputs.cadmpeg }}"
+      - run: cargo test --workspace
+
+  roundtrip:
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.changes.outputs.dutchman }}
+      - uses: dtolnay/rust-toolchain@stable
+      - run: scripts/use-cadmpeg-main.sh "${{ needs.changes.outputs.cadmpeg }}"
+      - run: cargo build
+      - name: Fetch SolidCraft
+        run: |
+          archive="solidcraft-${SOLIDCRAFT_VERSION}-linux-x86_64.tar.gz"
+          curl -fsSL -o "$archive" "https://github.com/tangency-labs/solidcraft/releases/download/v${SOLIDCRAFT_VERSION}/$archive"
+          echo "${SOLIDCRAFT_SHA256}  $archive" | sha256sum -c -
+          tar xzf "$archive"
+      - name: Check converted geometry in SolidCraft
+        run: |
+          cube=1000:6:0,0,0:10,10,10
+          fixtures=crates/dutchman-core/tests/fixtures
+          scripts/solidcraft-roundtrip.sh "solidcraft-${SOLIDCRAFT_VERSION}-linux-x86_64/bin/solidcraft-cli" target/debug/dutchman \
+            "$fixtures/generated_unit_cube.f3d=$cube" \
+            "$fixtures/synthetic_cube.ipt=$cube" \
+            "$fixtures/solidworks_cube.sldprt=$cube"
+      - name: Replay histories in SolidCraft
+        run: |
+          export SOLIDCRAFT_CLI="$PWD/solidcraft-${SOLIDCRAFT_VERSION}-linux-x86_64/bin/solidcraft-cli"
+          cargo test -p dutchman-solidcraft --test history --test assembly
+
+  build:
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.changes.outputs.dutchman }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - shell: bash
+        run: scripts/use-cadmpeg-main.sh "${{ needs.changes.outputs.cadmpeg }}"
+      - run: cargo build --release -p dutchman -p dutchman-gui --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: |
+          name="dutchman-nightly-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          exe=""
+          [[ "${{ matrix.target }}" == *windows* ]] && exe=".exe"
+          for program in dutchman dutchman-mcp dutchman-gui; do
+            cp "target/${{ matrix.target }}/release/$program$exe" "dist/$name/"
+          done
+          cp LICENSE NOTICE "dist/$name/"
+          python3 -I scripts/archive-readme.py "${{ needs.changes.outputs.dutchman }}" README.md "dist/$name/README.md"
+          mkdir -p "dist/$name/licences"
+          cp crates/dutchman-gui/assets/fonts/*.txt "dist/$name/licences/"
+          "dist/$name/dutchman$exe" --version
+          echo '{"jsonrpc":"2.0","id":1,"method":"ping"}' | "dist/$name/dutchman-mcp$exe" | grep -q '"result"'
+          cd dist
+          if [[ "${{ matrix.target }}" == *windows* ]]; then
+            7z a -tzip "$name.zip" "$name" > /dev/null
+            archive="$name.zip"
+          else
+            tar czf "$name.tar.gz" "$name"
+            archive="$name.tar.gz"
+          fi
+          if command -v sha256sum > /dev/null; then
+            sha256sum "$archive" > "$archive.sha256"
+          else
+            shasum -a 256 "$archive" > "$archive.sha256"
+          fi
+          echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARCHIVE }}
+          path: |
+            dist/${{ env.ARCHIVE }}
+            dist/${{ env.ARCHIVE }}.sha256
+          retention-days: 7
+
+  publish:
+    needs: [changes, test, roundtrip, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DUTCHMAN_SHA: ${{ needs.changes.outputs.dutchman }}
+      CADMPEG_SHA: ${{ needs.changes.outputs.cadmpeg }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Replace the nightly pre-release
+        run: |
+          date=$(date -u +%Y-%m-%d)
+          cat > notes.md <<EOF
+          Nightly, not a stable release.
+
+          - Dutchman main @ ${DUTCHMAN_SHA}
+          - cadmpeg main @ ${CADMPEG_SHA}
+          - Built ${date}
+
+          Dutchman's main built against cadmpeg's main, with every test and the SolidCraft round
+          trip passing. Use it when an issue says a fix is merged but not yet released; otherwise
+          use the latest stable release.
+          EOF
+          # Move the tag; stable tags are never touched.
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/nightly" -f sha="$DUTCHMAN_SHA" -F force=true \
+            || gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" -f ref=refs/tags/nightly -f sha="$DUTCHMAN_SHA"
+          if gh release view nightly --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            for asset in $(gh release view nightly --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name'); do
+              gh release delete-asset nightly "$asset" --repo "$GITHUB_REPOSITORY" --yes
+            done
+            gh release edit nightly --repo "$GITHUB_REPOSITORY" --prerelease --title "Nightly ${date}" --notes-file notes.md
+          else
+            gh release create nightly --repo "$GITHUB_REPOSITORY" --prerelease --title "Nightly ${date}" \
+              --notes-file notes.md --verify-tag
+          fi
+          gh release upload nightly artifacts/* --repo "$GITHUB_REPOSITORY" --clobber

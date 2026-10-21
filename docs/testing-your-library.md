@@ -36,6 +36,15 @@ SolidWorks (`.sldprt`) files are welcome too, including ones you cannot open any
    $env:SOLIDCRAFT_CLI = "C:\path\to\solidcraft-cli.exe"  # Windows
    ```
 
+### Stable or nightly
+
+Use the latest stable release. When an issue you filed says the fix is "merged, not released
+yet", you can try it at once with the
+[`nightly`](https://github.com/dutchman-cad/dutchman/releases/tag/nightly) pre-release:
+Dutchman's and cadmpeg's latest code, rebuilt each day once every test passes. Run the same
+batch with it (a new `--journal`, since a different version converts everything again), and
+say in the issue which you used: its notes give the commits.
+
 ## 2. Run the batch
 
 Pick a folder for the results **outside** your library, then run (one line on Windows,

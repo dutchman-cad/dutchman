@@ -68,6 +68,16 @@ Get-Content dutchman-VERSION-x86_64-pc-windows-msvc.zip.sha256
 Expand-Archive dutchman-VERSION-x86_64-pc-windows-msvc.zip -DestinationPath .
 ```
 
+### Channels: stable and nightly
+
+- **Stable** releases (`v0.1.2`, …) are the ones to use. Each is built against released
+  versions of cadmpeg, the library that reads the native files.
+- **Nightly** is one pre-release, [`nightly`](https://github.com/dutchman-cad/dutchman/releases/tag/nightly),
+  rebuilt each day from Dutchman's latest code against cadmpeg's latest code, and published
+  only when every test passes. Its notes give both commits and the date. Its archives are
+  named `dutchman-nightly-TARGET` and install the same way. Use it when an issue says a fix is
+  merged but not released yet; go back to stable once a stable release has it.
+
 ### From source
 
 With Rust 1.88 or newer:
