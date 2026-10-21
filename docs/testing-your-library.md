@@ -7,7 +7,8 @@ file names, paths, part names or geometry in it. You read it, then share it or t
 it you choose.
 
 Fusion (`.f3d`, `.f3z`) libraries are the main target. Inventor (`.ipt`, `.iam`) and
-SolidWorks (`.sldprt`) files are welcome too, including ones you cannot open any more.
+SolidWorks (`.sldprt`) and FreeCAD (`.FCStd`) files are welcome too, including ones you cannot
+open any more.
 
 ## Everything stays on your machine
 

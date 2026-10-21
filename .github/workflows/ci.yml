@@ -74,6 +74,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --locked
+      # A build without FreeCAD says where FreeCAD files convert instead.
+      - run: cargo test --locked -p dutchman --no-default-features
 
   # The same on macOS, only when Rust code changed: the account runs few macOS jobs at once.
   test-macos:

@@ -1,7 +1,7 @@
 # Test fixtures
 
 Every file here is a synthetic test input from cadmpeg (<https://github.com/cadmpeg/cadmpeg>,
-Apache-2.0). None is a real design.
+Apache-2.0; the FreeCAD documents, from its donated corpus, are CC0-1.0). None is a real design.
 
 | File | What it is | Where it came from |
 |---|---|---|
@@ -13,6 +13,9 @@ Apache-2.0). None is a real design.
 | `solidworks_cube.sldprt` | A SolidWorks part holding one solid 10 mm cube (one body, six faces) as a Parasolid partition, with no feature history. | Generated (see below). |
 | `body_history.sldprt` | A SolidWorks part with a one-triangle body and a Keywords history: a 12.5 mm `Boss` extrusion and its `EquationDrivenCurve` profile. | Copied unchanged from cadmpeg `main` at `7bcc95276548` (the crates.io 0.6.2 release), `crates/cadmpeg-codec-sldprt/tests/golden/fixtures/`. |
 | `container_metadata.sldprt` | A SolidWorks part with container metadata and no geometry. | As above. |
+| `core_design_product.FCStd` | A FreeCAD document: exact geometry (five bodies, 22 faces), persistent names, sketch constraints, design properties, a product link and a spreadsheet. | Copied unchanged from cadmpeg's corpus, `corpus/freecad_fcstd/fixtures/` at `main` `377eb82352dd`: authored in FreeCAD 1.1.1 by the cadmpeg project and dedicated CC0-1.0 (`corpus/manifest.toml`, SHA-256 `69c6aa00…989ba`). |
+| `design_history.FCStd` | A FreeCAD PartDesign Body with constrained sketches, an additive Pad, a subtractive Pocket and an edge Fillet. | As above (SHA-256 `c71da85e…ea0d7`). |
+| `product_assembly.FCStd` | A FreeCAD Assembly with groups, nested, array and external occurrences, grounding, and a limited revolute joint. | As above (SHA-256 `b8e0e92c…d8340`). |
 
 The three cubes hold `cadmpeg_ir::examples::unit_cube()`, the 10 mm example cube, as fixed in
 cadmpeg PR #257 (`main` `f816fb00fb54`): before it, the example's face loops ran clockwise

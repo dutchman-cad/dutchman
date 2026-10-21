@@ -17,7 +17,18 @@ enum Status {
 }
 
 /// What Dutchman does with each format, in the order listed.
-fn rows() -> [(Format, Status, &'static str); 6] {
+fn rows() -> [(Format, Status, String); 7] {
+    let freecad = if Format::FreeCadDocument.codec_id().is_some() {
+        (
+            Status::Converts,
+            "geometry, and components; feature history is not mapped yet".to_owned(),
+        )
+    } else {
+        (
+            Status::NotSupported,
+            format!("in nightly builds for now: {}", dutchman_core::NIGHTLY),
+        )
+    };
     [
         (
             Format::FusionArchive,
@@ -50,7 +61,9 @@ fn rows() -> [(Format, Status, &'static str); 6] {
             Status::NotSupported,
             "nothing yet",
         ),
+        (Format::FreeCadDocument, freecad.0, freecad.1.as_str()),
     ]
+    .map(|(format, status, converts)| (format, status, converts.to_owned()))
 }
 
 fn status_word(status: Status) -> &'static str {
@@ -101,11 +114,10 @@ mod tests {
         let rows = rows();
         assert_eq!(rows.len(), Format::ALL.len());
         for format in Format::ALL {
-            let (_, status, _) = rows
+            let status = rows
                 .iter()
                 .find(|(f, _, _)| *f == format)
-                .copied()
-                .unwrap_or((format, Status::NotSupported, ""));
+                .map_or(Status::NotSupported, |(_, status, _)| *status);
             assert_eq!(
                 matches!(status, Status::Converts),
                 format.codec_id().is_some(),

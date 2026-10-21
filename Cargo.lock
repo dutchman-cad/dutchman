@@ -625,6 +625,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "cadmpeg-codec-freecad"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c4a8fa61748cbb3ce80838b00a8cebfe553460583941f5aba6e2b97c16b4d37"
+dependencies = [
+ "cadmpeg-container",
+ "cadmpeg-core",
+ "cadmpeg-ir",
+ "roxmltree 0.21.1",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "zip",
+]
+
+[[package]]
 name = "cadmpeg-codec-inventor"
 version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -749,6 +765,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2be23469a9bca0b684f1811118fffb581ebd32ded08e6cc8b0716a41f8c1377"
 dependencies = [
  "cadmpeg-codec-f3d",
+ "cadmpeg-codec-freecad",
  "cadmpeg-codec-inventor",
  "cadmpeg-codec-sldprt",
  "cadmpeg-codec-step",

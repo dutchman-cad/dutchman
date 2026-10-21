@@ -115,7 +115,9 @@ pub fn pick(kind: Pick, messages: Sender<Message>, ctx: egui::Context) {
                     .set_title("Add designs")
                     .add_filter(
                         "CAD designs",
-                        &["f3d", "f3z", "ipt", "iam", "sldprt", "sldasm"],
+                        &[
+                            "f3d", "f3z", "ipt", "iam", "sldprt", "sldasm", "FCStd", "fcstd",
+                        ],
                     )
                     .pick_files()
                     .await

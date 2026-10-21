@@ -72,7 +72,8 @@ design to SolidCraft in memory instead of as bytes). Neither crate changes.
   `cadmpeg-core`, `cadmpeg-registry` and the codec crates; no git or path dependency is
   needed, so CI and `cargo install` work without a cadmpeg checkout.
 - `cadmpeg-registry` with `default-features = false` and only the codec features Dutchman
-  ships (`f3d`, `inventor`, `sldprt`, and `step` for the restatement), to keep the build small.
+  ships (`f3d`, `inventor`, `sldprt`, and `step` for the restatement), to keep the build small;
+  `fcstd` with Dutchman's `freecad` feature, on by default.
 - Unreleased cadmpeg work is tried locally with a `[patch.crates-io]` path override that is
   never committed.
 - Minimum Rust follows cadmpeg's (1.88 today).

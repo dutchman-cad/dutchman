@@ -124,7 +124,7 @@ fn answer(method: &str, params: &Value) -> Result<Value, (i64, String)> {
                 "capabilities": {"tools": {}},
                 "serverInfo": {"name": "dutchman", "version": env!("CARGO_PKG_VERSION")},
                 "instructions": "Converts native CAD files (Fusion .f3d/.f3z, Inventor .ipt/.iam, \
-                    SolidWorks .sldprt) into SolidCraft designs (.solidcraft). Use inspect to see \
+                    SolidWorks .sldprt, FreeCAD .FCStd) into SolidCraft designs (.solidcraft). Use inspect to see \
                     what a file would carry across, convert for one file, convert_all for many. \
                     Paths are on the machine running this server; give absolute paths.",
             }))
@@ -231,7 +231,7 @@ fn search_property() -> Value {
 fn tools() -> Value {
     let input = json!({
         "type": "string",
-        "description": "Absolute path of a native CAD file: .f3d, .f3z, .ipt, .iam or .sldprt.",
+        "description": "Absolute path of a native CAD file: .f3d, .f3z, .ipt, .iam, .sldprt or .FCStd.",
     });
     let mut convert = option_properties();
     convert.insert("input".to_owned(), input.clone());

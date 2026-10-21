@@ -8,6 +8,14 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Formats
+
+- **FreeCAD** documents (`.FCStd`) convert, through cadmpeg 0.6.3's FreeCAD codec: their
+  geometry, and their components when cadmpeg says which bodies each owns. Feature history is
+  not mapped yet. FreeCAD support is the `freecad` cargo feature, on by default; a build
+  without it says that FreeCAD files convert in nightly builds. See
+  [docs/freecad.md](docs/freecad.md).
+
 ### Feature history
 
 - Simple holes drilled at a sketch's circle centres, arc centres or points map onto
