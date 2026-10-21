@@ -10,6 +10,8 @@ report's schema name changes when a field does).
 
 ### Releases
 
+- The README, and each release's notes, start with a direct download for each platform, with
+  its checksum, and how to tell which Mac you have.
 - A nightly build: Dutchman's main built against cadmpeg's main every day, when either has
   changed, and published as the `nightly` pre-release once every test and the SolidCraft round
   trip pass. It brings cadmpeg fixes that are merged but not yet released; stable releases keep
