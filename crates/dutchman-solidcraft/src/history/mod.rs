@@ -11,6 +11,7 @@
 mod constraints;
 mod extrude;
 mod params;
+mod pattern;
 mod profile;
 mod revolve;
 mod sketch;
@@ -134,6 +135,8 @@ struct Context<'a> {
     sketches: BTreeMap<String, sketch::Mapped>,
     /// SolidCraft looks of the bodies the history makes, by body name.
     looks: BTreeMap<String, Value>,
+    /// The timeline name each mapped source feature took, by CADIR feature id.
+    feature_names: BTreeMap<String, String>,
     /// Whether a feature that builds geometry has been mapped.
     builds: bool,
 }
@@ -146,8 +149,27 @@ impl<'a> Context<'a> {
             params: BTreeMap::new(),
             sketches: BTreeMap::new(),
             looks: BTreeMap::new(),
+            feature_names: BTreeMap::new(),
             builds: false,
         }
+    }
+
+    /// The timeline name `feature` keeps: its own, numbered when an earlier feature has it,
+    /// since SolidCraft refers to features by name.
+    fn unique_name(&self, feature: &Value) -> String {
+        let base = feature
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("Feature")
+            .to_owned();
+        let taken = |name: &str| self.feature_names.values().any(|known| known == name);
+        let mut name = base.clone();
+        let mut n = 2;
+        while taken(&name) {
+            name = format!("{base} ({n})");
+            n += 1;
+        }
+        name
     }
 
     /// A row of a CADIR arena by id.
@@ -237,8 +259,15 @@ fn map_into(
                 history.mapped += 1;
                 out.push(outcome(FeatureStatus::NotNeeded, None));
             }
-            Ok(Mapped::Feature(mapped)) => {
+            Ok(Mapped::Feature(mut mapped)) => {
                 history.mapped += 1;
+                let name = ctx.unique_name(&mapped);
+                if let Some(fields) = mapped.as_object_mut() {
+                    fields.insert("name".to_owned(), Value::String(name.clone()));
+                }
+                if let Some(id) = feature.get("id").and_then(Value::as_str) {
+                    ctx.feature_names.insert(id.to_owned(), name);
+                }
                 history.features.push(mapped);
                 out.push(outcome(FeatureStatus::Mapped, None));
             }
@@ -284,6 +313,7 @@ fn map_feature(feature: &Value, ctx: &mut Context, report: &mut Report) -> Resul
         Some("sketch") => sketch::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some("extrude") => extrude::map(feature, definition, ctx).map(Mapped::Feature),
         Some("revolve") => revolve::map(feature, definition, ctx).map(Mapped::Feature),
+        Some("pattern") => pattern::map(feature, definition, ctx).map(Mapped::Feature),
         _ => Err(format!("{} is not mapped yet", kind(feature))),
     }
 }
