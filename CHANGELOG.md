@@ -8,6 +8,14 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Reading
+
+- A part whose cadmpeg model fails cadmpeg's checks (a parameter name repeated in one scope,
+  a parameter used before it is defined) is no longer refused. Its geometry is read again
+  without the design's history, sketches and parameters, where such failures lie, and written
+  as geometry, with a `Degraded` loss saying why. In an assembly, the part is placed instead of
+  left out.
+
 ### Checks
 
 - Installing the SolidCraft app is enough to check histories: without `SOLIDCRAFT_CLI` or
