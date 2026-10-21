@@ -18,6 +18,9 @@ use serde_json::Value;
 struct Cli {
     #[command(subcommand)]
     command: Command,
+    /// Print each loss note in full (the text reports cut them to their first sentence).
+    #[arg(long, global = true)]
+    verbose: bool,
 }
 
 #[derive(Subcommand)]
@@ -70,13 +73,14 @@ enum Command {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    let verbose = cli.verbose;
     match cli.command {
         Command::Convert {
             input,
             output,
             options,
             json,
-        } => convert(&input, &output, &options.writer(), json),
+        } => convert(&input, &output, &options.writer(), json, verbose),
         Command::ConvertAll {
             inputs,
             out_dir,
@@ -88,11 +92,11 @@ fn main() -> ExitCode {
             if json {
                 print_json(&report);
             } else {
-                print!("{}", batch::text(&report));
+                print!("{}", batch::text(&report, verbose));
             }
             exit(&report)
         }
-        Command::Inspect { input, json } => inspect(&input, json),
+        Command::Inspect { input, json } => inspect(&input, json, verbose),
         Command::Formats { json } => {
             if json {
                 print_json(&formats::json());
@@ -104,19 +108,33 @@ fn main() -> ExitCode {
     }
 }
 
-fn convert(input: &Path, output: &Path, writer: &SolidCraftWriter, as_json: bool) -> ExitCode {
+fn convert(
+    input: &Path,
+    output: &Path,
+    writer: &SolidCraftWriter,
+    as_json: bool,
+    verbose: bool,
+) -> ExitCode {
     let report = dutchman::convert(input, output, writer);
     if as_json {
         print_json(&report);
     } else if let Some(message) = report.pointer("/error/message").and_then(Value::as_str) {
         eprintln!("dutchman: {message}");
     } else {
-        print_losses(&report);
+        // What was written first, on stdout; then what it could not carry across.
+        println!("{}", batch::line(&report));
+        print_losses(
+            report
+                .get("losses")
+                .and_then(Value::as_array)
+                .map_or(&[][..], Vec::as_slice),
+            verbose,
+        );
     }
     exit(&report)
 }
 
-fn inspect(input: &Path, as_json: bool) -> ExitCode {
+fn inspect(input: &Path, as_json: bool, verbose: bool) -> ExitCode {
     let inspection = match dutchman::inspect(input) {
         Ok(inspection) => inspection,
         Err(err) => {
@@ -173,9 +191,8 @@ fn inspect(input: &Path, as_json: bool) -> ExitCode {
             }
         }
     }
-    for loss in inspection.report.losses() {
-        eprintln!("dutchman: {loss}");
-    }
+    let losses = json::losses(&inspection.report);
+    print_losses(losses.as_array().map_or(&[][..], Vec::as_slice), verbose);
     ExitCode::SUCCESS
 }
 
@@ -192,14 +209,16 @@ fn print_json(value: &Value) {
     println!("{value}");
 }
 
-/// The losses of a convert report, one line each on stderr, as the text report prints them.
-fn print_losses(report: &Value) {
-    for loss in report
-        .get("losses")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
-        eprintln!("dutchman: {}", json::loss_line(loss));
+/// Losses as the text reports print them, one line each on stderr, then once a note on how
+/// to see the ones cut short in full.
+fn print_losses(losses: &[Value], verbose: bool) {
+    let mut cut = false;
+    for loss in losses {
+        let (line, shortened) = json::loss_line(loss, verbose);
+        cut |= shortened;
+        eprintln!("dutchman: {line}");
+    }
+    if cut {
+        eprintln!("dutchman: ({})", json::CUT_NOTE);
     }
 }

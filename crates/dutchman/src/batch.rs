@@ -86,9 +86,10 @@ pub fn workers(jobs: Option<NonZeroUsize>) -> usize {
 }
 
 /// The text report of a `dutchman.convert-all/1` report: one line per file, each converted
-/// file's losses indented beneath it, then the counts.
-pub fn text(report: &Value) -> String {
+/// file's losses indented beneath it (their notes cut short unless `verbose`), then the counts.
+pub fn text(report: &Value, verbose: bool) -> String {
     let mut out = String::new();
+    let mut cut = false;
     for result in report
         .get("results")
         .and_then(Value::as_array)
@@ -103,8 +104,10 @@ pub fn text(report: &Value) -> String {
             .into_iter()
             .flatten()
         {
+            let (line, shortened) = report::loss_line(loss, verbose);
+            cut |= shortened;
             out.push_str("           ");
-            out.push_str(&report::loss_line(loss));
+            out.push_str(&line);
             out.push('\n');
         }
     }
@@ -121,11 +124,14 @@ pub fn text(report: &Value) -> String {
         ));
     }
     out.push('\n');
+    if cut {
+        out.push_str(&format!("({})\n", report::CUT_NOTE));
+    }
     out
 }
 
-/// One line of the text report.
-fn line(result: &Value) -> String {
+/// One file's line of the text reports: what it became, or why it failed.
+pub fn line(result: &Value) -> String {
     let input = result
         .pointer("/input/path")
         .and_then(Value::as_str)
@@ -135,11 +141,17 @@ fn line(result: &Value) -> String {
             .pointer("/output/path")
             .and_then(Value::as_str)
             .unwrap_or("?");
-        let mode = result
-            .get("mode")
-            .and_then(Value::as_str)
-            .unwrap_or("import");
-        format!("converted  {input} -> {output} ({mode})")
+        let written = match (
+            result.get("mode").and_then(Value::as_str),
+            result
+                .pointer("/verification/status")
+                .and_then(Value::as_str),
+        ) {
+            (Some("history"), Some("verified")) => "editable history, verified in SolidCraft",
+            (Some("history"), _) => "editable history, unverified",
+            _ => "geometry without history",
+        };
+        format!("converted  {input} -> {output} ({written})")
     } else {
         let message = result
             .pointer("/error/message")
