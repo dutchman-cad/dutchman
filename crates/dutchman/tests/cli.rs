@@ -21,17 +21,18 @@ fn scratch(name: &str) -> PathBuf {
 
 #[test]
 fn convert_reports_unsupported_format_cleanly() {
-    let input = scratch("part.sldprt");
-    std::fs::write(&input, b"not really a part").unwrap();
-    let output = scratch("part.solidcraft");
+    let input = scratch("assembly.sldasm");
+    std::fs::write(&input, b"not really an assembly").unwrap();
+    let output = scratch("assembly.solidcraft");
 
     let out = dutchman(&["convert", input.to_str().unwrap(), output.to_str().unwrap()]);
 
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr
-            .contains("SolidWorks part (.sldprt) files are not supported yet. Export a STEP file"),
+        stderr.contains(
+            "SolidWorks assembly (.sldasm) files are not supported yet. Export a STEP file"
+        ),
         "{stderr}"
     );
     assert!(!output.exists(), "no output file is created on failure");
@@ -51,7 +52,7 @@ fn convert_rejects_unknown_input() {
     let out = dutchman(&["convert", input.to_str().unwrap(), "x.solidcraft"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains(
-        "Dutchman does not convert this kind of file. It converts Inventor part (.ipt), Inventor assembly (.iam), Fusion archive (.f3d) and Fusion multi-document archive (.f3z) files."
+        "Dutchman does not convert this kind of file. It converts Inventor part (.ipt), Inventor assembly (.iam), Fusion archive (.f3d), Fusion multi-document archive (.f3z) and SolidWorks part (.sldprt) files."
     ));
 }
 
@@ -222,6 +223,27 @@ fn inspect_json_shows_what_would_map_without_writing() {
 }
 
 #[test]
+fn inspect_json_names_what_blocks_a_solidworks_history() {
+    let out = dutchman(&["inspect", "--json", &fixture("body_history.sldprt")]);
+    assert_eq!(out.status.code(), Some(0));
+    let report = json_of(&out);
+    assert_eq!(report["input"]["format"], "solidworks_part");
+    assert_eq!(report["mode"], "import");
+    assert_eq!(report["verification"]["status"], "flattened");
+    assert_eq!(
+        report["verification"]["reason"],
+        "feature \"Boss\": unresolved profiles are not mapped yet"
+    );
+    let features: Vec<_> = report["history"]["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| (f["kind"].as_str().unwrap(), f["status"].as_str().unwrap()))
+        .collect();
+    assert_eq!(features, [("extrude", "blocked"), ("native", "blocked")]);
+}
+
+#[test]
 fn inspect_prints_a_text_summary() {
     let out = dutchman(&["inspect", &fixture("generated_unit_cube.f3d")]);
     assert_eq!(out.status.code(), Some(0));
@@ -250,6 +272,13 @@ fn formats_lists_what_converts() {
         .unwrap();
     assert_eq!(fusion["status"], "converts");
     assert_eq!(fusion["extension"], "f3d");
+    let solidworks = report["formats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["id"] == "solidworks_part")
+        .unwrap();
+    assert_eq!(solidworks["status"], "converts");
 
     let text = dutchman(&["formats"]);
     let stdout = String::from_utf8_lossy(&text.stdout);

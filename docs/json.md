@@ -53,8 +53,8 @@ A failure carries `"ok": false`, `input` and `error.message`, and exits 1:
 
 ```json
 {"schema": "dutchman.convert/1", "ok": false,
- "input": {"path": "part.sldprt", "format": "solidworks_part", "format_name": "SolidWorks part (.sldprt)"},
- "error": {"message": "SolidWorks part (.sldprt) files are not supported yet. …"}}
+ "input": {"path": "assembly.sldasm", "format": "solidworks_assembly", "format_name": "SolidWorks assembly (.sldasm)"},
+ "error": {"message": "SolidWorks assembly (.sldasm) files are not supported yet. …"}}
 ```
 
 ## `dutchman.formats/1`

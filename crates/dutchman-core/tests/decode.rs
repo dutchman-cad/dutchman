@@ -54,6 +54,42 @@ fn decodes_an_inventor_unit_cube() {
 }
 
 #[test]
+fn decodes_a_solidworks_unit_cube() {
+    let mut report = Report::default();
+    let model = read(
+        Format::SolidWorksPart,
+        &fixture("solidworks_cube.sldprt"),
+        &mut report,
+    )
+    .unwrap();
+
+    assert_eq!(model.name, "solidworks_cube");
+    assert_eq!(model.source_file.as_deref(), Some("solidworks_cube.sldprt"));
+    assert_eq!(model.ir.model.bodies.len(), 1);
+    assert_eq!(model.ir.model.faces.len(), 6);
+    assert!(
+        report
+            .losses()
+            .iter()
+            .any(|loss| loss.code.as_deref() == Some("sldprt/source.dialect-unverified")),
+        "cadmpeg's losses are kept: {:?}",
+        report.losses()
+    );
+}
+
+#[test]
+fn a_solidworks_file_named_f3d_is_refused() {
+    let bytes = std::fs::read(fixture("solidworks_cube.sldprt")).unwrap();
+    let path = scratch("renamed.f3d", &bytes);
+    let err = read(Format::FusionArchive, &path, &mut Report::default()).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "cannot read this design: its contents are SolidWorks part (.sldprt), not Fusion archive \
+         (.f3d); rename it to match"
+    );
+}
+
+#[test]
 fn a_fusion_file_named_ipt_is_refused() {
     let bytes = std::fs::read(fixture("generated_unit_cube.f3d")).unwrap();
     let path = scratch("renamed.ipt", &bytes);
@@ -67,17 +103,17 @@ fn a_fusion_file_named_ipt_is_refused() {
 
 #[test]
 fn a_file_without_geometry_is_an_error() {
-    let mut report = Report::default();
-    let err = read(
-        Format::FusionArchive,
-        &fixture("container_metadata_only.f3d"),
-        &mut report,
-    )
-    .unwrap_err();
-    assert!(
-        err.to_string().contains("no geometry could be read"),
-        "{err}"
-    );
+    for (format, file) in [
+        (Format::FusionArchive, "container_metadata_only.f3d"),
+        (Format::SolidWorksPart, "container_metadata.sldprt"),
+    ] {
+        let mut report = Report::default();
+        let err = read(format, &fixture(file), &mut report).unwrap_err();
+        assert!(
+            err.to_string().contains("no geometry could be read"),
+            "{file}: {err}"
+        );
+    }
 }
 
 #[test]
@@ -107,13 +143,13 @@ fn hostile_inputs_are_errors_not_panics() {
 
 #[test]
 fn formats_without_a_decoder_are_not_supported_yet() {
-    let path = scratch("part.sldprt", b"anything");
+    let path = scratch("assembly.sldasm", b"anything");
     let mut report = Report::default();
-    let err = read(Format::SolidWorksPart, &path, &mut report).unwrap_err();
+    let err = read(Format::SolidWorksAssembly, &path, &mut report).unwrap_err();
     assert!(matches!(
         err,
         Error::NotSupportedYet {
-            format: Format::SolidWorksPart
+            format: Format::SolidWorksAssembly
         }
     ));
 }

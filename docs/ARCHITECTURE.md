@@ -71,7 +71,7 @@ design to SolidCraft in memory instead of as bytes). Neither crate changes.
   `cadmpeg-core`, `cadmpeg-registry` and the codec crates; no git or path dependency is
   needed, so CI and `cargo install` work without a cadmpeg checkout.
 - `cadmpeg-registry` with `default-features = false` and only the codec features Dutchman
-  ships (`f3d`, `inventor`, and `step` for the restatement), to keep the build small.
+  ships (`f3d`, `inventor`, `sldprt`, and `step` for the restatement), to keep the build small.
 - Unreleased cadmpeg work is tried locally with a `[patch.crates-io]` path override that is
   never committed.
 - Minimum Rust follows cadmpeg's (1.88 today).
@@ -174,9 +174,9 @@ and synthetic files from cadmpeg's public test suite (provenance in
   occurrence per placement; see inventor.md). Joints and the parts' histories inside an
   assembly come next.
 - **Appearances and names**.
-- More formats as cadmpeg's codecs mature. Inventor's state and the upstream gaps that keep its
-  history from replaying are tracked in [inventor.md](inventor.md), and Fusion's in
-  [fusion.md](fusion.md).
+- More formats as cadmpeg's codecs mature. The state of each format and the upstream gaps that
+  keep its history from replaying are tracked in [fusion.md](fusion.md),
+  [inventor.md](inventor.md) and [sldprt.md](sldprt.md).
 - The SolidCraft plugin shim.
 
 ## Decisions
@@ -185,7 +185,8 @@ Settled 2026-10-20:
 
 1. First format: Fusion `.f3d`, cadmpeg's most complete native codec. Inventor parts (`.ipt`)
    follow through cadmpeg's published Inventor codec, pinned like f3d; improvements land
-   upstream and reach Dutchman by bumping the pin. Assemblies (`.iam`) come later.
+   upstream and reach Dutchman by bumping the pin. Assemblies (`.iam`) come later. SolidWorks
+   parts (`.sldprt`) follow the same way through cadmpeg's published SolidWorks codec.
 2. Dutchman ships cadmpeg's commercial-format codecs (f3d, ipt, sldprt) in its Apache-2.0
    binary; hosting them outside SolidCraft is its purpose.
 3. Crates: the CLI is `dutchman`; `dutchman-cad` is reserved for a library facade.

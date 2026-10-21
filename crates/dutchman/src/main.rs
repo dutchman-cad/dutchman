@@ -27,7 +27,7 @@ struct Cli {
 enum Command {
     /// Convert a native CAD file into a SolidCraft design.
     Convert {
-        /// The native design file to read (for example a `.f3d` or `.ipt`).
+        /// The native design file to read (for example a `.f3d`, `.ipt` or `.sldprt`).
         input: PathBuf,
         /// The `.solidcraft` file to write.
         output: PathBuf,

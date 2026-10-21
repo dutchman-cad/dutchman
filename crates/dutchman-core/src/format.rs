@@ -94,7 +94,8 @@ impl Format {
         match self {
             Format::FusionArchive | Format::FusionMultiDocument => Some("f3d"),
             Format::InventorPart | Format::InventorAssembly => Some("inventor"),
-            Format::SolidWorksPart | Format::SolidWorksAssembly => None,
+            Format::SolidWorksPart => Some("sldprt"),
+            Format::SolidWorksAssembly => None,
         }
     }
 
@@ -107,6 +108,7 @@ impl Format {
     pub fn from_codec_id(id: &str) -> Option<Format> {
         match id {
             "f3d" => Some(Format::FusionArchive),
+            "sldprt" => Some(Format::SolidWorksPart),
             _ => None,
         }
     }
