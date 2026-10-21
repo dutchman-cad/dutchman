@@ -469,3 +469,57 @@ fn convert_says_what_it_wrote_and_cuts_long_notes_short() {
     );
     assert!(!stderr.contains("--verbose prints"), "{stderr}");
 }
+
+#[test]
+fn no_clobber_keeps_an_existing_design() {
+    let dir = std::env::temp_dir().join(format!("dutchman-noclobber-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let output = dir.join("cube.solidcraft");
+    std::fs::write(&output, b"SENTINEL").unwrap();
+    let cube = fixture("synthetic_cube.ipt");
+
+    let out = dutchman(&[
+        "convert",
+        "--no-verify",
+        "--no-clobber",
+        &cube,
+        output.to_str().unwrap(),
+    ]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("already exists"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(std::fs::read(&output).unwrap(), b"SENTINEL");
+
+    // Without it, the existing file is replaced, as `--help` says.
+    let out = dutchman(&["convert", "--no-verify", &cube, output.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(0));
+    assert_ne!(std::fs::read(&output).unwrap(), b"SENTINEL");
+    let help = dutchman(&["convert", "--help"]);
+    assert!(String::from_utf8_lossy(&help.stdout).contains("An existing file is replaced"));
+
+    // convert-all fails that one file and converts the rest.
+    let out_dir = dir.join("all");
+    std::fs::create_dir_all(&out_dir).unwrap();
+    std::fs::write(out_dir.join("synthetic_cube.solidcraft"), b"SENTINEL").unwrap();
+    let out = dutchman(&[
+        "convert-all",
+        "--json",
+        "--no-verify",
+        "--no-clobber",
+        "--out-dir",
+        out_dir.to_str().unwrap(),
+        &cube,
+        &fixture("generated_unit_cube.f3d"),
+    ]);
+    let report = json_of(&out);
+    assert_eq!(report["converted"], 1);
+    assert_eq!(report["failed"], 1);
+    assert_eq!(
+        std::fs::read(out_dir.join("synthetic_cube.solidcraft")).unwrap(),
+        b"SENTINEL"
+    );
+    assert!(out_dir.join("generated_unit_cube.solidcraft").is_file());
+}

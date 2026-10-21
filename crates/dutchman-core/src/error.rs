@@ -38,6 +38,9 @@ pub enum Error {
         format.family()
     )]
     NotSupportedYet { format: Format },
+    /// The output file exists and replacing it was not allowed.
+    #[error("{}: already exists; it is not replaced when overwriting is turned off", path.display())]
+    OutputExists { path: PathBuf },
     /// The output path does not end in the writer's extension.
     #[error("{}: output must be a .{expected} file", path.display())]
     WrongOutputExtension {

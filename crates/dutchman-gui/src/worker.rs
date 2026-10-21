@@ -44,6 +44,7 @@ impl Run {
     ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let writer = options.writer();
+        let replace = !options.no_clobber;
         let flag = Arc::clone(&stop);
         std::thread::spawn(move || {
             let send = |message: Message| {
@@ -52,7 +53,12 @@ impl Run {
             };
             // A panic here must not take the window down; it ends the run.
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let batch::Plan { jobs, problems, .. } = batch::plan(&inputs, &out_dir);
+                let batch::Plan {
+                    mut jobs, problems, ..
+                } = batch::plan(&inputs, &out_dir);
+                for job in &mut jobs {
+                    job.replace = replace;
+                }
                 send(Message::Planned {
                     problems,
                     jobs: jobs.clone(),

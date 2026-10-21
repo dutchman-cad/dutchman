@@ -132,6 +132,25 @@ fn an_mcp_client_converts_through_dutchman() {
     assert_eq!(failed["isError"], true);
     assert_eq!(failed["structuredContent"]["ok"], false);
 
+    // overwrite: false leaves an existing design alone, and says so.
+    std::fs::write(&output, b"SENTINEL").unwrap();
+    let kept = client.call(
+        "convert",
+        json!({"input": cube, "output": output, "verify": false, "overwrite": false}),
+    );
+    assert_eq!(kept["isError"], true, "{kept}");
+    assert!(kept["structuredContent"]["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("already exists"));
+    assert_eq!(std::fs::read(&output).unwrap(), b"SENTINEL");
+    let schema = tools["result"]["tools"][0]["inputSchema"]["properties"].clone();
+    assert!(schema["output"]["description"]
+        .as_str()
+        .unwrap()
+        .contains("replaced, unless overwrite is false"));
+    assert_eq!(schema["overwrite"]["type"], "boolean");
+
     let out_dir = dir.path().join("all");
     let all = client.call(
         "convert_all",

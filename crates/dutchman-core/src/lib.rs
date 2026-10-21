@@ -95,11 +95,28 @@ fn decode_file(format: Format, input: &Path, report: &mut Report) -> Result<Mode
     decode::decode(format, input, &bytes, report)
 }
 
-/// Converts the file at `input` into `output` through `writer`.
+/// Converts the file at `input` into `output` through `writer`, replacing an existing output.
 ///
 /// The output file is only written once the whole conversion has succeeded.
 pub fn convert(input: &Path, output: &Path, writer: &dyn Writer) -> Result<Report, Error> {
+    convert_to(input, output, writer, true)
+}
+
+/// [`convert`], replacing an existing `output` only when `replace` is set; otherwise an
+/// existing output is refused as [`Error::OutputExists`], before anything is read, and again
+/// when writing if one appeared meanwhile.
+pub fn convert_to(
+    input: &Path,
+    output: &Path,
+    writer: &dyn Writer,
+    replace: bool,
+) -> Result<Report, Error> {
     check_output(output, writer)?;
+    if !replace && output.exists() {
+        return Err(Error::OutputExists {
+            path: output.to_path_buf(),
+        });
+    }
     let format = Format::from_path(input).ok_or_else(|| Error::UnknownFormat {
         path: input.to_path_buf(),
     })?;
@@ -110,11 +127,31 @@ pub fn convert(input: &Path, output: &Path, writer: &dyn Writer) -> Result<Repor
     // Encode in memory so a failed conversion never leaves a partial file behind.
     let mut bytes = Vec::new();
     writer.write(&model, &mut bytes, &mut report)?;
-    std::fs::write(output, bytes).map_err(|source| Error::Io {
+    write_output(output, &bytes, replace)?;
+    Ok(report)
+}
+
+/// Writes `bytes` to `output`; when `replace` is not set, only if no file is there.
+fn write_output(output: &Path, bytes: &[u8], replace: bool) -> Result<(), Error> {
+    use std::io::Write as _;
+    let io = |source| Error::Io {
         path: output.to_path_buf(),
         source,
-    })?;
-    Ok(report)
+    };
+    if replace {
+        return std::fs::write(output, bytes).map_err(io);
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(output)
+        .map_err(|source| match source.kind() {
+            std::io::ErrorKind::AlreadyExists => Error::OutputExists {
+                path: output.to_path_buf(),
+            },
+            _ => io(source),
+        })?;
+    file.write_all(bytes).map_err(io)
 }
 
 fn check_output(output: &Path, writer: &dyn Writer) -> Result<(), Error> {

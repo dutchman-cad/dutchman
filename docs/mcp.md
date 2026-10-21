@@ -62,14 +62,14 @@ only when `solidcraft-cli` is on the server's `PATH`, and is reported unverified
 | Tool | Arguments | Returns | Writes |
 |---|---|---|---|
 | `inspect` | `input` | `dutchman.inspect/1` | nothing |
-| `convert` | `input`, `output`, and optionally `import_only`, `verify`, `solidcraft`, `verify_timeout` | `dutchman.convert/1` | the `output` file |
-| `convert_all` | `inputs`, `out_dir`, and optionally `jobs`, `import_only`, `verify`, `solidcraft`, `verify_timeout` | `dutchman.convert-all/1` | inside `out_dir` |
+| `convert` | `input`, `output`, and optionally `import_only`, `verify`, `solidcraft`, `verify_timeout`, `overwrite` | `dutchman.convert/1` | the `output` file |
+| `convert_all` | `inputs`, `out_dir`, and optionally `jobs`, `import_only`, `verify`, `solidcraft`, `verify_timeout`, `overwrite` | `dutchman.convert-all/1` | inside `out_dir` |
 | `formats` | none | `dutchman.formats/1` | nothing |
 
 | Argument | Type | Meaning |
 |---|---|---|
 | `input` | string | Absolute path of a native CAD file: `.f3d`, `.f3z`, `.ipt`, `.iam` or `.sldprt`. |
-| `output` | string | Absolute path of the `.solidcraft` file to write. An existing file is replaced. |
+| `output` | string | Absolute path of the `.solidcraft` file to write. An existing file is replaced, unless `overwrite` is false. |
 | `inputs` | array of strings, at least one | Absolute paths of files, and of folders to search (with their subfolders) for files Dutchman knows. |
 | `out_dir` | string | Absolute path of the folder for the designs, keeping each input folder's layout. Created if missing. |
 | `jobs` | integer, at least 1 | How many files to convert at once. Default: the machine's cores, at most 8. |
@@ -77,6 +77,7 @@ only when `solidcraft-cli` is on the server's `PATH`, and is reported unverified
 | `verify` | boolean | Check a converted history in SolidCraft. Default `true`; skipped, and the history marked unverified, when no `solidcraft-cli` is found. |
 | `solidcraft` | string | Path of `solidcraft-cli` for the check. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`. |
 | `verify_timeout` | integer, at least 1 | Seconds each SolidCraft check may run before the history is written unverified. Default 120. |
+| `overwrite` | boolean | Replace an existing `.solidcraft` file (default true). When false, an existing file is left alone and that file's conversion fails with "already exists". |
 
 An unknown argument is refused (`unknown argument bogus`), as is a missing required one
 (`output is required`).

@@ -357,6 +357,13 @@ impl App {
                     &mut self.options.import_only,
                     "Write geometry only, without feature history",
                 );
+                let mut replace = !self.options.no_clobber;
+                if ui
+                    .checkbox(&mut replace, "Replace designs already in the output folder")
+                    .changed()
+                {
+                    self.options.no_clobber = !replace;
+                }
                 let mut verify = !self.options.no_verify;
                 if ui
                     .checkbox(&mut verify, "Check feature history in SolidCraft")

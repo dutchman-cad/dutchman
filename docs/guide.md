@@ -125,7 +125,8 @@ geometry, as this file has no feature history (else `editable history, verified 
 or `editable history, unverified`). The lines on stderr are the loss report, explained
 [below](#reading-the-loss-report). Long notes are cut to their first sentence, marked `…`;
 `--verbose` prints them whole. An existing output file is
-replaced, and nothing is written when the conversion fails.
+replaced (`--no-clobber` keeps it, and the conversion fails instead), and nothing is written
+when the conversion fails.
 
 The output must end in `.solidcraft`. To get one machine-readable report on stdout instead
 of the text, add `--json` ([json.md](json.md) describes every field):
@@ -158,6 +159,7 @@ dutchman convert --json generated_unit_cube.f3d cube.solidcraft
 | `--solidcraft PATH` | The `solidcraft-cli` that checks a converted history. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`. |
 | `--no-verify` | Write the history without checking it in SolidCraft. Cannot be combined with `--solidcraft`. |
 | `--verify-timeout SECONDS` | How long each SolidCraft check may run before the history is written unverified. Default 120. |
+| `--no-clobber` | Do not replace an existing `.solidcraft` file: that file's conversion fails instead. By default it is replaced. |
 | `--json` | One JSON report on stdout instead of the text report. |
 | `--verbose` | Print each loss note in full; the text report cuts long ones to their first sentence. The JSON report always has them in full. |
 
