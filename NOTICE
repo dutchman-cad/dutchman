@@ -2,3 +2,8 @@ Dutchman
 Copyright 2026 Dutchman contributors
 
 Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+dutchman-gui bundles these fonts, each under the SIL Open Font License 1.1 (texts in
+crates/dutchman-gui/assets/fonts/, and in licences/ in the release archives):
+- Spectral, Copyright 2017 The Spectral Project Authors.
+- IBM Plex Sans and IBM Plex Mono, Copyright 2017 IBM Corp., with Reserved Font Name "Plex".

@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use dutchman_core::Format;
@@ -25,9 +25,19 @@ const MAX_DEPTH: usize = 32;
 const DEFAULT_JOBS: usize = 8;
 
 /// One file to convert, and where its design goes.
-struct Job {
-    input: PathBuf,
-    output: PathBuf,
+#[derive(Clone, Debug)]
+pub struct Job {
+    pub input: PathBuf,
+    pub output: PathBuf,
+}
+
+/// What happens to a job while a batch runs.
+#[derive(Debug)]
+pub enum Event {
+    /// The job at this index started converting.
+    Started(usize),
+    /// The job at this index finished, with its `dutchman.convert/1` report.
+    Finished(usize, Value),
 }
 
 /// Converts every file `inputs` names or holds into `out_dir`, `jobs` at a time, writing
@@ -39,15 +49,7 @@ pub fn convert_all(
     jobs: Option<NonZeroUsize>,
 ) -> Value {
     let (work, problems) = plan(inputs, out_dir);
-    let workers = jobs.map_or_else(
-        || {
-            std::thread::available_parallelism()
-                .map_or(1, NonZeroUsize::get)
-                .min(DEFAULT_JOBS)
-        },
-        NonZeroUsize::get,
-    );
-    let results = run(&work, writer, workers);
+    let results = run(&work, writer, workers(jobs));
 
     let failed = results
         .iter()
@@ -64,6 +66,18 @@ pub fn convert_all(
         "failed": failed,
         "results": all,
     })
+}
+
+/// How many files to convert at once: `jobs`, else the machine's cores, at most 8.
+pub fn workers(jobs: Option<NonZeroUsize>) -> usize {
+    jobs.map_or_else(
+        || {
+            std::thread::available_parallelism()
+                .map_or(1, NonZeroUsize::get)
+                .min(DEFAULT_JOBS)
+        },
+        NonZeroUsize::get,
+    )
 }
 
 /// The text report of a `dutchman.convert-all/1` report: one line per file, then the counts.
@@ -114,7 +128,7 @@ fn line(result: &Value) -> String {
 
 /// The files to convert, with their output paths; and failure reports for inputs that are
 /// neither a known file nor a readable folder.
-fn plan(inputs: &[PathBuf], out_dir: &Path) -> (Vec<Job>, Vec<Value>) {
+pub fn plan(inputs: &[PathBuf], out_dir: &Path) -> (Vec<Job>, Vec<Value>) {
     let mut jobs = Vec::new();
     let mut problems = Vec::new();
     let mut outputs = BTreeSet::new();
@@ -200,20 +214,14 @@ fn unique(path: PathBuf, taken: &mut BTreeSet<PathBuf>) -> PathBuf {
 
 /// Converts every job with `workers` threads, and returns each file's report in input order.
 fn run(work: &[Job], writer: &SolidCraftWriter, workers: usize) -> Vec<Value> {
-    let next = AtomicUsize::new(0);
     let results: Mutex<Vec<Option<Value>>> = Mutex::new(vec![None; work.len()]);
-    std::thread::scope(|scope| {
-        for _ in 0..workers.min(work.len()).max(1) {
-            scope.spawn(|| loop {
-                let index = next.fetch_add(1, Ordering::Relaxed);
-                let Some(job) = work.get(index) else { break };
-                let report = convert_one(job, writer);
-                if let Ok(mut results) = results.lock() {
-                    if let Some(slot) = results.get_mut(index) {
-                        *slot = Some(report);
-                    }
+    run_each(work, writer, workers, &AtomicBool::new(false), |event| {
+        if let Event::Finished(index, report) = event {
+            if let Ok(mut results) = results.lock() {
+                if let Some(slot) = results.get_mut(index) {
+                    *slot = Some(report);
                 }
-            });
+            }
         }
     });
     results
@@ -224,8 +232,33 @@ fn run(work: &[Job], writer: &SolidCraftWriter, workers: usize) -> Vec<Value> {
         .collect()
 }
 
-/// One file converted, as its convert report.
-fn convert_one(job: &Job, writer: &SolidCraftWriter) -> Value {
+/// Converts every job with `workers` threads, telling `on_event` as each starts and finishes.
+/// Once `stop` is set, no further job starts; those already converting finish.
+pub fn run_each(
+    work: &[Job],
+    writer: &SolidCraftWriter,
+    workers: usize,
+    stop: &AtomicBool,
+    on_event: impl Fn(Event) + Sync,
+) {
+    let next = AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        for _ in 0..workers.min(work.len()).max(1) {
+            scope.spawn(|| loop {
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                let index = next.fetch_add(1, Ordering::Relaxed);
+                let Some(job) = work.get(index) else { break };
+                on_event(Event::Started(index));
+                on_event(Event::Finished(index, convert_job(job, writer)));
+            });
+        }
+    });
+}
+
+/// One file converted, its output folder made first, as its convert report.
+pub fn convert_job(job: &Job, writer: &SolidCraftWriter) -> Value {
     if let Some(parent) = job.output.parent() {
         if let Err(err) = std::fs::create_dir_all(parent) {
             return report::failure(

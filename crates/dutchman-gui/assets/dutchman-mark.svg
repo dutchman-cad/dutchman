@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Dutchman">
+  <path d="M32 9.5V45" stroke="#0E1A24" stroke-width="2.4" stroke-linecap="round"/>
+  <path d="M30.6 14H14.5c1.4 8.2 1.4 16.2 0 24h16.1z" fill="#1F7A6A"/>
+  <g fill="none" stroke="#1F7A6A" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">
+    <path d="M33.4 14h16.1c-1.4 8.2-1.4 16.2 0 24H33.4z"/>
+    <path d="M33.4 26h15.3M33.4 14l15.3 12M33.4 26l16.1 12"/>
+  </g>
+  <path d="M7 45h50l-7.5 9.5h-35z" fill="#0E1A24"/>
+  <circle cx="32" cy="6.2" r="2.8" fill="#D98E2B"/>
+</svg>

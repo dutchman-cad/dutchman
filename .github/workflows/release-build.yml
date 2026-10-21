@@ -1,7 +1,7 @@
 name: Release builds
 
-# Builds the dutchman command and the dutchman-mcp server for each platform and keeps the
-# archives as workflow artifacts.
+# Builds the dutchman command, the dutchman-mcp server and the dutchman-gui app for each
+# platform and keeps the archives as workflow artifacts.
 # Nothing is published from here.
 
 on:
@@ -44,7 +44,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-      - run: cargo build --release --locked -p dutchman --target ${{ matrix.target }}
+      - run: cargo build --release --locked -p dutchman -p dutchman-gui --target ${{ matrix.target }}
       - name: Package
         shell: bash
         run: |
@@ -56,7 +56,10 @@ jobs:
           [[ "${{ matrix.target }}" == *windows* ]] && exe=".exe"
           cp "target/${{ matrix.target }}/release/dutchman$exe" "dist/$name/"
           cp "target/${{ matrix.target }}/release/dutchman-mcp$exe" "dist/$name/"
+          cp "target/${{ matrix.target }}/release/dutchman-gui$exe" "dist/$name/"
           cp LICENSE NOTICE README.md "dist/$name/"
+          mkdir -p "dist/$name/licences"
+          cp crates/dutchman-gui/assets/fonts/*.txt "dist/$name/licences/"
           "dist/$name/dutchman$exe" --version
           echo '{"jsonrpc":"2.0","id":1,"method":"ping"}' | "dist/$name/dutchman-mcp$exe" | grep -q '"result"'
           cd dist
