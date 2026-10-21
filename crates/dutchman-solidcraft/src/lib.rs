@@ -189,14 +189,25 @@ impl SolidCraftWriter {
     /// reports it as Degraded when SolidCraft shows less of it than the model holds: geometry
     /// that is wrong but opens would otherwise go unnoticed.
     fn check_import(&self, model: &Model, design: &[u8], report: &mut Report) {
-        self.check_geometry(design, model.ir.model.faces.len(), report);
+        let solids = model
+            .ir
+            .model
+            .bodies
+            .iter()
+            .filter(|body| body.kind == cadmpeg_ir::topology::BodyKind::Solid)
+            .count();
+        let expected = verify::Expected {
+            faces: model.ir.model.faces.len(),
+            solids,
+        };
+        self.check_geometry(design, expected, report);
     }
 
-    fn check_geometry(&self, design: &[u8], faces: usize, report: &mut Report) {
+    fn check_geometry(&self, design: &[u8], expected: verify::Expected, report: &mut Report) {
         let Ok(cli) = verify::find_cli(&self.verification) else {
             return;
         };
-        match verify::check_import(&cli, self.timeout, design, faces) {
+        match verify::check_import(&cli, self.timeout, design, expected) {
             verify::Shown::Whole => {}
             verify::Shown::Short(what) => {
                 report.push_at(Stage::SolidCraft, Severity::Degraded, GEOMETRY, what);
@@ -227,7 +238,7 @@ impl Writer for SolidCraftWriter {
         if let Some(assembly) = &model.assembly {
             let bytes = assembly::write(self, model, assembly, report)?;
             // Each part is placed any number of times, so only SolidCraft's own warnings count.
-            self.check_geometry(&bytes, 0, report);
+            self.check_geometry(&bytes, verify::Expected::default(), report);
             return out
                 .write_all(&bytes)
                 .map_err(|err| Error::Encode(format!("cannot write the design: {err}")));
