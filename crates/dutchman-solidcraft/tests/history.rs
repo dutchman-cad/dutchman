@@ -844,3 +844,27 @@ fn a_face_colour_becomes_a_face_look_on_that_face() {
         assert_eq!(volumes(&cli, &written(&model).0), [1000.0]);
     }
 }
+
+#[test]
+fn solidcraft_extrudes_a_spline_profile() {
+    let Some(cli) = solidcraft() else { return };
+    let mut model = cube_with_history(10.0, whole_sketch(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["sketches"][0]["profiles"] = json!([]);
+    wire["model"]["sketch_constraints"] = json!([]);
+    wire["model"]["sketch_entities"] = json!([
+        line(1, [0.0, 0.0], [30.0, 0.0]),
+        entity(
+            2,
+            json!({"kind": "nurbs", "curve": {"degree": 2, "periodic": false,
+            "knots": [0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+            "poles": {"form": "polynomial", "points": [
+                {"u": 0.0, "v": 0.0}, {"u": 15.0, "v": 30.0}, {"u": 30.0, "v": 0.0}]}}})
+        ),
+    ]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    // Under a quadratic arch: base × control height / 3 = 300 mm², extruded 10 mm.
+    let got = volumes(&cli, &written(&model).0);
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert!((got[0] - 3000.0).abs() / 3000.0 < 1e-3, "{got:?}");
+}
