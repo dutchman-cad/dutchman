@@ -593,7 +593,7 @@ fn timing<'a, 'b: 'a>(files: impl Iterator<Item = &'a File<'b>>) -> Value {
 /// The slowest files, slowest first.
 fn slowest(files: &[File]) -> Value {
     let mut timed: Vec<&File> = files.iter().filter(|f| f.elapsed_ms.is_some()).collect();
-    timed.sort_by(|a, b| b.elapsed_ms.cmp(&a.elapsed_ms));
+    timed.sort_by_key(|f| std::cmp::Reverse(f.elapsed_ms));
     Value::Array(
         timed
             .into_iter()
