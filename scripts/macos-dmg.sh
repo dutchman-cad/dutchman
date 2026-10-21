@@ -23,12 +23,13 @@ trap 'rm -rf "$work"' EXIT
 
 stage="$work/Dutchman"
 app="$stage/Dutchman.app"
-mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources/licences"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Helpers" "$app/Contents/Resources/licences"
 
-# One binary for both processors.
+# One binary for both processors. The app alone is in MacOS; the commands are helpers, as
+# macOS's file system ignores case and `dutchman` there would be the app's `Dutchman`.
 lipo -create -output "$app/Contents/MacOS/Dutchman" "$arm/dutchman-gui" "$intel/dutchman-gui"
 for program in dutchman dutchman-mcp; do
-  lipo -create -output "$app/Contents/MacOS/$program" "$arm/$program" "$intel/$program"
+  lipo -create -output "$app/Contents/Helpers/$program" "$arm/$program" "$intel/$program"
 done
 lipo -info "$app/Contents/MacOS/Dutchman"
 
@@ -59,13 +60,13 @@ cat > "$app/Contents/Info.plist" <<PLIST
 PLIST
 plutil -lint "$app/Contents/Info.plist"
 
-# Ad hoc: the programs inside first, then the bundle, which seals them.
-for program in dutchman dutchman-mcp Dutchman; do
-  codesign --force --sign - --timestamp=none "$app/Contents/MacOS/$program"
+# Ad hoc: the helpers first, then the bundle, which seals them with the app.
+for program in dutchman dutchman-mcp; do
+  codesign --force --sign - --timestamp=none "$app/Contents/Helpers/$program"
 done
 codesign --force --sign - --timestamp=none "$app"
 codesign --verify --strict --verbose=2 "$app"
-"$app/Contents/MacOS/dutchman" --version
+"$app/Contents/Helpers/dutchman" --version
 
 ln -s /Applications "$stage/Applications"
 cat > "$stage/Read me first.txt" <<'NOTE'
@@ -90,10 +91,11 @@ Or, in Terminal, once:
 
 Command line
 ------------
-The dutchman and dutchman-mcp commands are inside the app. To use them from Terminal:
+The dutchman and dutchman-mcp commands are inside the app, in Contents/Helpers. To use them
+from Terminal:
 
-    sudo ln -sf /Applications/Dutchman.app/Contents/MacOS/dutchman /usr/local/bin/dutchman
-    sudo ln -sf /Applications/Dutchman.app/Contents/MacOS/dutchman-mcp /usr/local/bin/dutchman-mcp
+    sudo ln -sf /Applications/Dutchman.app/Contents/Helpers/dutchman /usr/local/bin/dutchman
+    sudo ln -sf /Applications/Dutchman.app/Contents/Helpers/dutchman-mcp /usr/local/bin/dutchman-mcp
 NOTE
 ref=main
 [[ $label != nightly ]] && ref="v$label"

@@ -57,8 +57,8 @@ cut short or changed: download it again and check it against its `.sha256`
 To use the commands from Terminal, link them onto your `PATH`:
 
 ```sh
-sudo ln -sf /Applications/Dutchman.app/Contents/MacOS/dutchman /usr/local/bin/dutchman
-sudo ln -sf /Applications/Dutchman.app/Contents/MacOS/dutchman-mcp /usr/local/bin/dutchman-mcp
+sudo ln -sf /Applications/Dutchman.app/Contents/Helpers/dutchman /usr/local/bin/dutchman
+sudo ln -sf /Applications/Dutchman.app/Contents/Helpers/dutchman-mcp /usr/local/bin/dutchman-mcp
 ```
 
 ### From a release archive
