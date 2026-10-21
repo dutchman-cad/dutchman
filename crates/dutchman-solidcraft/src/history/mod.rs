@@ -47,6 +47,82 @@ enum Mapped {
     Feature(Value),
 }
 
+impl History {
+    /// Moves the history into component `component` of a design whose features so far end
+    /// before id `offset + 1`: every id and sketch reference shifts by `offset`, and each
+    /// parameter whose name is in `taken` is renamed (prefixed with `prefix`) everywhere it is
+    /// used. The names it ends up with are added to `taken`.
+    pub(crate) fn relocate(
+        &mut self,
+        offset: u64,
+        component: u64,
+        prefix: &str,
+        taken: &mut std::collections::BTreeSet<String>,
+    ) {
+        let mut renamed = BTreeMap::new();
+        for param in &self.params {
+            let Some(name) = param.get("name").and_then(Value::as_str) else {
+                continue;
+            };
+            let mut new = name.to_owned();
+            let mut n = 1;
+            while taken.contains(&new) {
+                new = if n == 1 {
+                    format!("{prefix}_{name}")
+                } else {
+                    format!("{prefix}_{name}_{n}")
+                };
+                n += 1;
+            }
+            taken.insert(new.clone());
+            if new != name {
+                renamed.insert(name.to_owned(), new);
+            }
+        }
+        for param in &mut self.params {
+            if let Some(fields) = param.as_object_mut() {
+                if let Some(name) = fields.get("name").and_then(Value::as_str) {
+                    let name = renamed
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_else(|| name.to_owned());
+                    fields.insert("name".to_owned(), Value::String(name));
+                }
+                if let Some(expr) = fields.get("expr").and_then(Value::as_str) {
+                    let expr = params::rename_in(expr, &renamed);
+                    fields.insert("expr".to_owned(), Value::String(expr));
+                }
+            }
+        }
+        for feature in &mut self.features {
+            let Some(fields) = feature.as_object_mut() else {
+                continue;
+            };
+            for key in ["id", "sketch"] {
+                if let Some(id) = fields.get(key).and_then(Value::as_u64) {
+                    fields.insert(key.to_owned(), Value::from(id.saturating_add(offset)));
+                }
+            }
+            fields.insert("component".to_owned(), Value::from(component));
+            if let Some(constraints) = fields
+                .get_mut("sketch")
+                .and_then(|sketch| sketch.get_mut("constraints"))
+                .and_then(Value::as_array_mut)
+            {
+                for constraint in constraints {
+                    let param = constraint.get("param").and_then(Value::as_str);
+                    if let Some(new) = param.and_then(|p| renamed.get(p)).cloned() {
+                        if let Some(fields) = constraint.as_object_mut() {
+                            fields.insert("param".to_owned(), Value::String(new));
+                        }
+                    }
+                }
+            }
+        }
+        self.next_id = self.next_id.saturating_add(offset);
+    }
+}
+
 /// The model and what has been mapped so far.
 struct Context<'a> {
     /// The CADIR `model` object.

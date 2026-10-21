@@ -13,8 +13,8 @@ dutchman convert part.f3d part.solidcraft
 ```
 
 Early development. Fusion (`.f3d`, `.f3z`) designs, Inventor parts (`.ipt`), Inventor
-assemblies (`.iam`, as placed geometry; keep the part files next to the assembly) and
-SolidWorks parts (`.sldprt`) convert today:
+assemblies (`.iam`, keep the part files next to the assembly) and SolidWorks parts (`.sldprt`)
+convert today:
 
 - When every feature in a design's history maps onto SolidCraft (sketches and extrudes so
   far), the SolidCraft design keeps that history, editable, with the original geometry kept

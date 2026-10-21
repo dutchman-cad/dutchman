@@ -171,9 +171,12 @@ and synthetic files from cadmpeg's public test suite (provenance in
   SolidCraft components when cadmpeg says which bodies each owns; see fusion.md.
 - **Assemblies**: Inventor assemblies, with their sub-assemblies, convert as placed geometry
   (each file read once per assembly, one SolidCraft component per part or sub-assembly, one
-  occurrence per placement; see inventor.md). Joints and the parts' histories inside an
-  assembly come next.
-- **Appearances and names**.
+  occurrence per placement; see inventor.md). Each part keeps its own feature history when it
+  maps and checks out as a single part's would: its features are authored in its component,
+  their ids moved into the design's, and parameters whose names another part already uses are
+  renamed with the component's name (`Second_d1`) wherever they are used. Joints come next.
+- **Appearances**: body colours carry across (through STEP for imports, as looks for
+  replayed bodies); face colours and materials come next.
 - More formats as cadmpeg's codecs mature. The state of each format and the upstream gaps that
   keep its history from replaying are tracked in [fusion.md](fusion.md),
   [inventor.md](inventor.md) and [sldprt.md](sldprt.md).

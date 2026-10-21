@@ -83,6 +83,41 @@ pub(crate) fn map(
     (out, written)
 }
 
+/// `expression` with each parameter name in `renamed` replaced by its new name; numbers, units,
+/// functions and everything else are kept as written.
+pub(crate) fn rename_in(expression: &str, renamed: &BTreeMap<String, String>) -> String {
+    let mut out = String::with_capacity(expression.len());
+    let mut word = String::new();
+    let mut in_number = false;
+    let flush = |word: &mut String, out: &mut String| {
+        if !word.is_empty() {
+            out.push_str(
+                renamed
+                    .get(word.as_str())
+                    .map_or(word.as_str(), String::as_str),
+            );
+            word.clear();
+        }
+    };
+    for c in expression.chars() {
+        if c.is_ascii_alphanumeric() || c == '_' {
+            if word.is_empty() && (c.is_ascii_digit() || in_number) {
+                // A number, or a unit or exponent written against it (`10mm`, `1e-3`).
+                in_number = true;
+                out.push(c);
+                continue;
+            }
+            word.push(c);
+        } else {
+            flush(&mut word, &mut out);
+            in_number = c == '.' && in_number;
+            out.push(c);
+        }
+    }
+    flush(&mut word, &mut out);
+    out
+}
+
 /// SolidCraft's unit for a parameter holding `value`.
 fn unit(value: Option<&ParameterValue>) -> &'static str {
     match value {
@@ -241,6 +276,25 @@ mod tests {
         ] {
             assert!(!readable(bad, &known), "{bad}");
         }
+    }
+
+    #[test]
+    fn renaming_touches_parameter_names_only() {
+        let renamed: BTreeMap<String, String> = [
+            ("d1".to_owned(), "Block_d1".to_owned()),
+            ("w".to_owned(), "Block_w".to_owned()),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            rename_in("2 * d1 + w / 2", &renamed),
+            "2 * Block_d1 + Block_w / 2"
+        );
+        assert_eq!(
+            rename_in("sqrt(d1^2) + 10mm + 1e-3 m", &renamed),
+            "sqrt(Block_d1^2) + 10mm + 1e-3 m"
+        );
+        assert_eq!(rename_in("d10 + xd1", &renamed), "d10 + xd1");
     }
 
     #[test]
