@@ -6,7 +6,7 @@ report's schema name changes when a field does).
 
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
-## 0.1.0 (unreleased)
+## 0.1.0 (2026-10-20)
 
 The first release that converts designs. Native CAD files are read by
 [cadmpeg](https://github.com/cadmpeg/cadmpeg) 0.6 and written as
