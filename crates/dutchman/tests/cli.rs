@@ -429,3 +429,43 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
         "{stdout}"
     );
 }
+
+#[test]
+fn convert_says_what_it_wrote_and_cuts_long_notes_short() {
+    let output = scratch("plain.solidcraft");
+    let cube = fixture("solidworks_cube.sldprt");
+    let out = dutchman(&["convert", "--no-verify", &cube, output.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        stdout.trim_end(),
+        format!(
+            "converted  {cube} -> {} (geometry without history)",
+            output.display()
+        )
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("so no declared identity was verified. …\n"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("Agreement is consistency"), "{stderr}");
+    assert!(
+        stderr.ends_with("--verbose prints them in full)\n"),
+        "{stderr}"
+    );
+
+    let out = dutchman(&[
+        "convert",
+        "--no-verify",
+        "--verbose",
+        &cube,
+        output.to_str().unwrap(),
+    ]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Agreement is consistency, not a declaration."),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("--verbose prints"), "{stderr}");
+}

@@ -22,16 +22,38 @@ pub fn input(path: &Path) -> Value {
     })
 }
 
-/// One loss of a report as the text reports print it: `LEVEL: SUBJECT: MESSAGE`.
-pub fn loss_line(loss: &Value) -> String {
+/// One loss of a report as the text reports print it, `LEVEL: SUBJECT: MESSAGE`, with the
+/// message cut to its first sentence unless `verbose`; and whether it was cut.
+pub fn loss_line(loss: &Value, verbose: bool) -> (String, bool) {
     let field = |name: &str| loss.get(name).and_then(Value::as_str).unwrap_or("");
-    format!(
-        "{}: {}: {}",
-        field("level"),
-        field("subject"),
-        field("message")
+    let (message, cut) = if verbose {
+        (field("message").to_owned(), false)
+    } else {
+        first_sentence(field("message"))
+    };
+    (
+        format!("{}: {}: {message}", field("level"), field("subject")),
+        cut,
     )
 }
+
+/// The first sentence of `text`, marked with "…" when more followed; and whether it was cut.
+/// A sentence ends at ". " before a capital letter, so "e.g. so" does not end one.
+pub fn first_sentence(text: &str) -> (String, bool) {
+    let bytes = text.as_bytes();
+    let end = text.match_indices(". ").map(|(at, _)| at).find(|at| {
+        bytes
+            .get(at + 2)
+            .is_some_and(|next| next.is_ascii_uppercase())
+    });
+    match end {
+        Some(at) => (format!("{} …", text.get(..=at).unwrap_or(text)), true),
+        None => (text.to_owned(), false),
+    }
+}
+
+/// What the text reports say once when they cut a note short.
+pub const CUT_NOTE: &str = "notes are cut to their first sentence; --verbose prints them in full";
 
 /// A report of a run that stopped with `message`.
 pub fn failure(schema: &str, input: Value, message: &str) -> Value {
@@ -106,7 +128,7 @@ fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
     out
 }
 
-fn losses(report: &Report) -> Value {
+pub fn losses(report: &Report) -> Value {
     report
         .losses()
         .iter()
@@ -140,6 +162,23 @@ mod tests {
             status,
             reason: None,
         }
+    }
+
+    #[test]
+    fn a_note_is_cut_at_its_first_sentence() {
+        let long = "the document carries no declaration, so nothing was verified. The document \
+                    is read on the residual path. Agreement is consistency.";
+        assert_eq!(
+            first_sentence(long),
+            (
+                "the document carries no declaration, so nothing was verified. …".to_owned(),
+                true
+            )
+        );
+        let short = "1 record(s) were not written to STEP: configuration=1";
+        assert_eq!(first_sentence(short), (short.to_owned(), false));
+        let abbreviated = "a frame, e.g. the origin. Then more";
+        assert_eq!(first_sentence(abbreviated).0, "a frame, e.g. the origin. …");
     }
 
     #[test]

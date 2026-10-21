@@ -10,6 +10,13 @@ report's schema name changes when a field does).
 
 ### Command line
 
+- `convert` first prints what it wrote where, `converted  IN -> OUT (geometry without
+  history)`, as `convert-all` does for each file, now in plain words for both.
+- Long loss notes are cut to their first sentence in the text reports, marked `…`; `--verbose`
+  prints them whole. `--json` is unchanged.
+
+### Command line
+
 - `convert-all` lists each converted file's losses beneath it, as `convert` does, and counts the
   files it skipped as not in a format it knows (`skipped` in `--json`).
 

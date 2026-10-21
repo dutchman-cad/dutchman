@@ -111,15 +111,20 @@ dutchman convert solidworks_cube.sldprt cube.solidcraft
 ```
 
 ```text
+converted  solidworks_cube.sldprt -> cube.solidcraft (geometry without history)
 dutchman: Degraded: sldprt/source.dialect-unverified: the document carries no swSolidWorks swVersion declaration, so no declared identity was verified. …
 dutchman: Degraded: sldprt/config.inferred-without-native: 1 configuration state(s) are inferred from geometry partitions without native configuration definitions.
 dutchman: Info: step/design.parametric-records-omitted: 1 parametric/design record(s) were not represented in STEP: configuration=1
 dutchman: Info: step/native.passthrough-record-omitted: 1 uninterpreted passthrough record(s) were not represented in STEP
 dutchman: Info: history: flattened: the design carries no feature history
+dutchman: (notes are cut to their first sentence; --verbose prints them in full)
 ```
 
-The exit code is 0: the design was written to `cube.solidcraft`. The lines on stderr are the
-loss report, explained [below](#reading-the-loss-report). An existing output file is
+The exit code is 0, and the first line, on stdout, says what was written where: here the
+geometry, as this file has no feature history (else `editable history, verified in SolidCraft`
+or `editable history, unverified`). The lines on stderr are the loss report, explained
+[below](#reading-the-loss-report). Long notes are cut to their first sentence, marked `…`;
+`--verbose` prints them whole. An existing output file is
 replaced, and nothing is written when the conversion fails.
 
 The output must end in `.solidcraft`. To get one machine-readable report on stdout instead
@@ -154,6 +159,7 @@ dutchman convert --json generated_unit_cube.f3d cube.solidcraft
 | `--no-verify` | Write the history without checking it in SolidCraft. Cannot be combined with `--solidcraft`. |
 | `--verify-timeout SECONDS` | How long each SolidCraft check may run before the history is written unverified. Default 120. |
 | `--json` | One JSON report on stdout instead of the text report. |
+| `--verbose` | Print each loss note in full; the text report cuts long ones to their first sentence. The JSON report always has them in full. |
 
 ## Look before you convert: inspect
 
@@ -194,13 +200,13 @@ dutchman convert-all --jobs 2 --out-dir converted project
 ```
 
 ```text
-converted  project/generated_unit_cube.f3d -> converted/generated_unit_cube.solidcraft (import)
+converted  project/generated_unit_cube.f3d -> converted/generated_unit_cube.solidcraft (geometry without history)
            Degraded: f3d/material.not-transferred: Materials/appearances (.protein assets, ACT/design assignments) were not transferred.
            Info: step/attribute.source-record-not-written: 7 source attribute record(s) were not written to STEP
            Info: step/native.source-record-omitted: 45 source-native record(s) were not represented in STEP
            Info: history: flattened: the design carries no feature history
 failed     project/sub/container_metadata_only.f3d: cannot read this design: no geometry could be read from this Fusion archive (.f3d) file
-converted  project/sub/synthetic_cube.ipt -> converted/sub/synthetic_cube.solidcraft (import)
+converted  project/sub/synthetic_cube.ipt -> converted/sub/synthetic_cube.solidcraft (geometry without history)
            Degraded: inventor/rse.segment-pair-untyped: Retained 1 structurally paired RSe segment(s) without record semantics.
            Info: step/attribute.source-record-not-written: 7 source attribute record(s) were not written to STEP
            Info: step/native.source-record-omitted: 67 source-native record(s) were not represented in STEP
