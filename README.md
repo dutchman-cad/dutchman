@@ -59,6 +59,45 @@ Exit codes: `0` converted, `1` could not convert (the JSON report has `"ok": fal
 `solidcraft-cli` is found: set `SOLIDCRAFT_CLI` to its path, or pass `--solidcraft PATH`.
 [docs/json.md](docs/json.md) describes every field; field names are stable.
 
+### As an MCP server
+
+`cargo install` also installs `dutchman-mcp`, a [Model Context Protocol](https://modelcontextprotocol.io)
+server on stdio. It gives an agent four tools, each returning the same report as the matching
+`--json` command:
+
+| Tool | Arguments | Returns |
+|---|---|---|
+| `inspect` | `input` | `dutchman.inspect/1` |
+| `convert` | `input`, `output`, and optionally `import_only`, `verify`, `solidcraft`, `verify_timeout` | `dutchman.convert/1` |
+| `convert_all` | `inputs` (files and folders), `out_dir`, and optionally `jobs` and the convert options | `dutchman.convert-all/1` |
+| `formats` | none | `dutchman.formats/1` |
+
+A conversion that fails comes back as a tool error carrying its failure report. Paths are on
+the machine running the server, so give absolute ones. `convert` writes only its `output`
+file, and `convert_all` writes only inside `out_dir`.
+
+For Claude Code:
+
+```sh
+claude mcp add dutchman -- dutchman-mcp
+```
+
+For other clients, the usual configuration entry is:
+
+```json
+{
+  "mcpServers": {
+    "dutchman": {
+      "command": "dutchman-mcp",
+      "env": {"SOLIDCRAFT_CLI": "/path/to/solidcraft-cli"}
+    }
+  }
+}
+```
+
+`SOLIDCRAFT_CLI` is optional: without it, a written history is checked only when
+`solidcraft-cli` is on the server's `PATH`, and is reported unverified otherwise.
+
 ## Building
 
 ```sh

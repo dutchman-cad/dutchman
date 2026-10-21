@@ -1,6 +1,7 @@
 name: Release builds
 
-# Builds the dutchman command for each platform and keeps the archives as workflow artifacts.
+# Builds the dutchman command and the dutchman-mcp server for each platform and keeps the
+# archives as workflow artifacts.
 # Nothing is published from here.
 
 on:
@@ -54,8 +55,10 @@ jobs:
           exe=""
           [[ "${{ matrix.target }}" == *windows* ]] && exe=".exe"
           cp "target/${{ matrix.target }}/release/dutchman$exe" "dist/$name/"
+          cp "target/${{ matrix.target }}/release/dutchman-mcp$exe" "dist/$name/"
           cp LICENSE NOTICE README.md "dist/$name/"
           "dist/$name/dutchman$exe" --version
+          echo '{"jsonrpc":"2.0","id":1,"method":"ping"}' | "dist/$name/dutchman-mcp$exe" | grep -q '"result"'
           cd dist
           if [[ "${{ matrix.target }}" == *windows* ]]; then
             7z a -tzip "$name.zip" "$name" > /dev/null

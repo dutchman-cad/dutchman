@@ -3,18 +3,14 @@
 //! Exit codes: 0 when the design was converted (or inspected), 1 when it could not be, 2 for a
 //! usage error. See `docs/json.md` for the `--json` reports.
 
-mod batch;
-mod formats;
-mod json;
-
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::time::Duration;
 
 use clap::{Parser, Subcommand};
-use dutchman_core::{Check, Error, FeatureStatus, Format, Mode, Report};
-use dutchman_solidcraft::{SolidCraftWriter, Verification, DEFAULT_TIMEOUT};
-use serde_json::{json, Value};
+use dutchman::{batch, formats, json, ConvertOptions};
+use dutchman_core::{Check, FeatureStatus, Format, Mode};
+use dutchman_solidcraft::SolidCraftWriter;
+use serde_json::Value;
 
 /// Ferries CAD designs between formats.
 #[derive(Parser)]
@@ -22,38 +18,6 @@ use serde_json::{json, Value};
 struct Cli {
     #[command(subcommand)]
     command: Command,
-}
-
-/// How a design is converted.
-#[derive(clap::Args)]
-struct ConvertOptions {
-    /// Write the geometry as one non-parametric import, never the feature history.
-    #[arg(long)]
-    import_only: bool,
-    /// The SolidCraft CLI that checks a written history against the original geometry
-    /// (default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`).
-    #[arg(long, value_name = "PATH", conflicts_with = "no_verify")]
-    solidcraft: Option<PathBuf>,
-    /// Write history without checking it in SolidCraft.
-    #[arg(long)]
-    no_verify: bool,
-    /// Seconds each SolidCraft check may run before the history is written unverified.
-    #[arg(long, value_name = "SECONDS", default_value_t = DEFAULT_TIMEOUT.as_secs())]
-    verify_timeout: u64,
-}
-
-impl ConvertOptions {
-    fn writer(&self) -> SolidCraftWriter {
-        let verification = match (self.no_verify, &self.solidcraft) {
-            (true, _) => Verification::Off,
-            (false, Some(path)) => Verification::With(path.clone()),
-            (false, None) => Verification::Auto,
-        };
-        SolidCraftWriter::new()
-            .import_only(self.import_only)
-            .verification(verification)
-            .timeout(Duration::from_secs(self.verify_timeout))
-    }
 }
 
 #[derive(Subcommand)]
@@ -119,7 +83,15 @@ fn main() -> ExitCode {
             jobs,
             options,
             json,
-        } => batch::convert_all(&inputs, &out_dir, &options.writer(), jobs, json),
+        } => {
+            let report = batch::convert_all(&inputs, &out_dir, &options.writer(), jobs);
+            if json {
+                print_json(&report);
+            } else {
+                print!("{}", batch::text(&report));
+            }
+            exit(&report)
+        }
         Command::Inspect { input, json } => inspect(&input, json),
         Command::Formats { json } => {
             if json {
@@ -132,69 +104,54 @@ fn main() -> ExitCode {
     }
 }
 
-fn convert(input: &Path, output: &Path, writer: &SolidCraftWriter, json: bool) -> ExitCode {
-    match dutchman_core::convert(input, output, writer) {
-        Ok(report) if json => {
-            let mut out = json::success(json::CONVERT, json::input(input), &report);
-            out.insert(
-                "output".to_owned(),
-                json!({"path": output.display().to_string(), "format": dutchman_solidcraft::FORMAT}),
-            );
-            print_json(&Value::Object(out));
-            ExitCode::SUCCESS
-        }
-        Ok(report) => {
-            print_losses(&report);
-            ExitCode::SUCCESS
-        }
-        Err(err) => fail(json::CONVERT, input, &err, json),
+fn convert(input: &Path, output: &Path, writer: &SolidCraftWriter, as_json: bool) -> ExitCode {
+    let report = dutchman::convert(input, output, writer);
+    if as_json {
+        print_json(&report);
+    } else if let Some(message) = report.pointer("/error/message").and_then(Value::as_str) {
+        eprintln!("dutchman: {message}");
+    } else {
+        print_losses(&report);
     }
+    exit(&report)
 }
 
-fn inspect(input: &Path, json: bool) -> ExitCode {
-    let mut report = Report::default();
-    let model = match Format::from_path(input)
-        .ok_or_else(|| Error::UnknownFormat {
-            path: input.to_path_buf(),
-        })
-        .and_then(|format| dutchman_core::read(format, input, &mut report))
-    {
-        Ok(model) => model,
-        Err(err) => return fail(json::INSPECT, input, &err, json),
+fn inspect(input: &Path, as_json: bool) -> ExitCode {
+    let inspection = match dutchman::inspect(input) {
+        Ok(inspection) => inspection,
+        Err(err) => {
+            if as_json {
+                print_json(&json::failure(
+                    json::INSPECT,
+                    json::input(input),
+                    &err.to_string(),
+                ));
+            } else {
+                eprintln!("dutchman: {err}");
+            }
+            return ExitCode::FAILURE;
+        }
     };
-    let outcome = SolidCraftWriter::new().plan(&model, &mut report);
-    let bodies = model.ir.model.bodies.len();
-    let faces = model.ir.model.faces.len();
-    if json {
-        report.set_outcome(outcome);
-        let mut out = json::success(json::INSPECT, json::input(input), &report);
-        out.insert(
-            "geometry".to_owned(),
-            json!({"bodies": bodies, "faces": faces}),
-        );
-        if let Some(assembly) = &model.assembly {
-            out.insert(
-                "assembly".to_owned(),
-                json!({"parts": assembly.parts.len(), "placements": assembly.placements.len()}),
-            );
-        }
-        print_json(&Value::Object(out));
-    } else {
-        let format = Format::from_path(input).map_or("design", Format::name);
-        let count =
-            |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
-        match &model.assembly {
-            Some(assembly) => println!(
-                "{format}: {} placed, from {}",
-                count(assembly.placements.len(), "part", "parts"),
-                count(assembly.parts.len(), "part file", "part files")
-            ),
-            None => println!(
-                "{format}: {}, {}",
-                count(bodies, "body", "bodies"),
-                count(faces, "face", "faces")
-            ),
-        }
+    if as_json {
+        print_json(&inspection.json(input));
+        return ExitCode::SUCCESS;
+    }
+    let format = Format::from_path(input).map_or("design", Format::name);
+    let count =
+        |n: usize, one: &str, many: &str| format!("{n} {}", if n == 1 { one } else { many });
+    match inspection.assembly {
+        Some((parts, placements)) => println!(
+            "{format}: {} placed, from {}",
+            count(placements, "part", "parts"),
+            count(parts, "part file", "part files")
+        ),
+        None => println!(
+            "{format}: {}, {}",
+            count(inspection.bodies, "body", "bodies"),
+            count(inspection.faces, "face", "faces")
+        ),
+    }
+    if let Some(outcome) = inspection.report.outcome() {
         match (&outcome.mode, &outcome.check) {
             (Mode::History, _) => println!("would write: editable history"),
             (Mode::Import, Check::Flattened(reason) | Check::NotApplicable(reason)) => {
@@ -215,26 +172,40 @@ fn inspect(input: &Path, json: bool) -> ExitCode {
                 None => println!("  {status:<10} {} \"{name}\"", feature.kind),
             }
         }
-        print_losses(&report);
+    }
+    for loss in inspection.report.losses() {
+        eprintln!("dutchman: {loss}");
     }
     ExitCode::SUCCESS
 }
 
-fn fail(schema: &str, input: &Path, err: &Error, json: bool) -> ExitCode {
-    if json {
-        print_json(&json::failure(schema, json::input(input), &err.to_string()));
+/// Success when the report says the run succeeded.
+fn exit(report: &Value) -> ExitCode {
+    if report.get("ok") == Some(&Value::Bool(true)) {
+        ExitCode::SUCCESS
     } else {
-        eprintln!("dutchman: {err}");
+        ExitCode::FAILURE
     }
-    ExitCode::FAILURE
 }
 
 fn print_json(value: &Value) {
     println!("{value}");
 }
 
-fn print_losses(report: &Report) {
-    for loss in report.losses() {
-        eprintln!("dutchman: {loss}");
+/// The losses of a convert report, one line each on stderr, as the text report prints them.
+fn print_losses(report: &Value) {
+    for loss in report
+        .get("losses")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let field = |name: &str| loss.get(name).and_then(Value::as_str).unwrap_or("");
+        eprintln!(
+            "dutchman: {}: {}: {}",
+            field("level"),
+            field("subject"),
+            field("message")
+        );
     }
 }

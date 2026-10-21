@@ -3,13 +3,12 @@
 use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
 use dutchman_core::Format;
 use dutchman_solidcraft::SolidCraftWriter;
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 
 use crate::json as report;
 
@@ -31,14 +30,14 @@ struct Job {
     output: PathBuf,
 }
 
-/// Converts every file `inputs` names or holds into `out_dir`, `jobs` at a time.
+/// Converts every file `inputs` names or holds into `out_dir`, `jobs` at a time, writing
+/// nothing outside `out_dir`, and returns the `dutchman.convert-all/1` report.
 pub fn convert_all(
     inputs: &[PathBuf],
     out_dir: &Path,
     writer: &SolidCraftWriter,
     jobs: Option<NonZeroUsize>,
-    as_json: bool,
-) -> ExitCode {
+) -> Value {
     let (work, problems) = plan(inputs, out_dir);
     let workers = jobs.map_or_else(
         || {
@@ -56,37 +55,40 @@ pub fn convert_all(
         .count()
         + problems.len();
     let converted = results.len() + problems.len() - failed;
-    if as_json {
-        let mut all: Vec<Value> = problems;
-        all.extend(results);
-        println!(
-            "{}",
-            json!({
-                "schema": SCHEMA,
-                "ok": failed == 0,
-                "converted": converted,
-                "failed": failed,
-                "results": all,
-            })
-        );
-    } else {
-        for problem in &problems {
-            print_line(problem);
-        }
-        for result in &results {
-            print_line(result);
-        }
-        println!("{converted} converted, {failed} failed");
+    let mut all: Vec<Value> = problems;
+    all.extend(results);
+    json!({
+        "schema": SCHEMA,
+        "ok": failed == 0,
+        "converted": converted,
+        "failed": failed,
+        "results": all,
+    })
+}
+
+/// The text report of a `dutchman.convert-all/1` report: one line per file, then the counts.
+pub fn text(report: &Value) -> String {
+    let mut out = String::new();
+    for result in report
+        .get("results")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        out.push_str(&line(result));
+        out.push('\n');
     }
-    if failed == 0 {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
-    }
+    let count = |key: &str| report.get(key).and_then(Value::as_u64).unwrap_or(0);
+    out.push_str(&format!(
+        "{} converted, {} failed\n",
+        count("converted"),
+        count("failed")
+    ));
+    out
 }
 
 /// One line of the text report.
-fn print_line(result: &Value) {
+fn line(result: &Value) -> String {
     let input = result
         .pointer("/input/path")
         .and_then(Value::as_str)
@@ -100,13 +102,13 @@ fn print_line(result: &Value) {
             .get("mode")
             .and_then(Value::as_str)
             .unwrap_or("import");
-        println!("converted  {input} -> {output} ({mode})");
+        format!("converted  {input} -> {output} ({mode})")
     } else {
         let message = result
             .pointer("/error/message")
             .and_then(Value::as_str)
             .unwrap_or("failed");
-        println!("failed     {input}: {message}");
+        format!("failed     {input}: {message}")
     }
 }
 
@@ -233,16 +235,5 @@ fn convert_one(job: &Job, writer: &SolidCraftWriter) -> Value {
             );
         }
     }
-    match dutchman_core::convert(&job.input, &job.output, writer) {
-        Ok(converted) => {
-            let mut out: Map<String, Value> =
-                report::success(report::CONVERT, report::input(&job.input), &converted);
-            out.insert(
-                "output".to_owned(),
-                json!({"path": job.output.display().to_string(), "format": dutchman_solidcraft::FORMAT}),
-            );
-            Value::Object(out)
-        }
-        Err(err) => report::failure(report::CONVERT, report::input(&job.input), &err.to_string()),
-    }
+    crate::convert(&job.input, &job.output, writer)
 }
