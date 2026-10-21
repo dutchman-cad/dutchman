@@ -36,8 +36,7 @@ State as of cadmpeg 0.6.2 (docs/format-support.md upstream rates Inventor L1 wit
    active.
 5. **Through-next ends.** An extrude ending at the next face is not mapped by Dutchman yet; it
    needs the face it stops at, which also depends on (2).
-6. **Shared upstream issues.** cadmpeg/cadmpeg#255 (STEP face loops written reversed, so
-   SolidCraft reads solids inside out), and the STEP product name falling back to the
+6. **STEP product name.** cadmpeg's STEP writer names a product with no name by its
    product-definition id.
 
 ## Assemblies (`.iam`)

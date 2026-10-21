@@ -267,8 +267,8 @@ fn solidcraft() -> Option<PathBuf> {
 }
 
 #[test]
-#[ignore = "cadmpeg/cadmpeg#255: cadmpeg-codec-step 0.6.2 writes face loops reversed, so \
-            SolidCraft reads the original cube as 3.33 mm³; enable once a fixed release is pinned"]
+#[ignore = "cadmpeg/cadmpeg#255: cadmpeg-ir 0.6.2's example cube has its face loops reversed, so \
+            SolidCraft reads the original as 3.33 mm³; enable once a release with the fix is pinned"]
 fn a_faithful_history_is_verified_in_solidcraft() {
     let Some(cli) = solidcraft() else { return };
     let model = cube_with_history(10.0, first_profile(), None);
