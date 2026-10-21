@@ -242,6 +242,15 @@ impl Builder {
         index
     }
 
+    /// A new point at `pos`, never shared with another curve's.
+    fn own_point(&mut self, pos: P2) -> usize {
+        let id = self.fresh("p");
+        self.points
+            .push(json!({"id": id, "pos": pos, "fixed": false}));
+        self.positions.push(pos);
+        self.positions.len() - 1
+    }
+
     /// Adds a curve, recording it as the one the source `entity` became. Its start, end and
     /// centre are the `a`, `b` and `c` points of `kind`.
     fn curve(
@@ -267,6 +276,7 @@ impl Builder {
                     Some("circle") => "circle",
                     Some("arc") => "arc",
                     Some("ellipse") => "ellipse",
+                    Some("spline") => "spline",
                     _ => "",
                 },
                 start: point("a"),
@@ -382,6 +392,47 @@ impl Builder {
                     &[],
                 );
             }
+            "nurbs" => match spline(geometry.get("curve")) {
+                Ok((degree, poles)) => {
+                    // The ends are shared with the curves that meet them; the inner control
+                    // points belong to this spline alone.
+                    let last = poles.len().saturating_sub(1);
+                    let points: Vec<usize> = poles
+                        .iter()
+                        .enumerate()
+                        .map(|(i, pole)| {
+                            if i == 0 {
+                                self.point(*pole, refs.first().copied())
+                            } else if i == last {
+                                self.point(*pole, refs.get(1).copied())
+                            } else {
+                                self.own_point(*pole)
+                            }
+                        })
+                        .collect();
+                    self.curve(
+                        source,
+                        "s",
+                        construction,
+                        json!({"type": "spline", "pts": points, "control": true, "degree": degree}),
+                        &[],
+                    );
+                    if let (Some(first), Some(end)) = (points.first(), points.last()) {
+                        if let Some(Shape::Curve(curve)) =
+                            source.and_then(|id| self.shapes.get_mut(id))
+                        {
+                            curve.start = Some(*first);
+                            curve.end = Some(*end);
+                        }
+                    }
+                }
+                Err(why) if construction => report.push(
+                    Severity::Degraded,
+                    "sketch",
+                    format!("a construction spline is not carried: {why}"),
+                ),
+                Err(why) => return Err(why),
+            },
             "ellipse" if geometry.get("bounds").is_none_or(Value::is_null) => {
                 let center = p2(geometry.get("center")).ok_or_else(bad)?;
                 let angle = number(geometry.get("major_angle")).ok_or_else(bad)?;
@@ -412,6 +463,88 @@ impl Builder {
             other => return Err(format!("{other} sketch curves are not mapped yet")),
         }
         Ok(())
+    }
+}
+
+/// SolidCraft's highest spline degree.
+const MAX_DEGREE: u64 = 9;
+
+/// SolidCraft's most spline points.
+const MAX_POLES: usize = 500;
+
+/// How far apart (relative to the knot span) knots may be and still be evenly spaced.
+const EVEN: f64 = 1e-9;
+
+/// A CADIR NURBS curve as SolidCraft's clamped uniform B-spline: its degree and control
+/// points; or why it is not one. SolidCraft's control splines have exactly this knot layout,
+/// so only curves that already have it map; any other would change shape.
+fn spline(curve: Option<&Value>) -> Result<(u64, Vec<P2>), String> {
+    let curve = curve.ok_or("its spline is malformed")?;
+    if curve.get("periodic").and_then(Value::as_bool) == Some(true) {
+        return Err("periodic splines are not mapped yet".to_owned());
+    }
+    let poles = curve.get("poles").ok_or("its spline is malformed")?;
+    if poles.get("form").and_then(Value::as_str) != Some("polynomial") {
+        return Err("rational splines are not mapped yet".to_owned());
+    }
+    let points: Vec<P2> = poles
+        .get("points")
+        .and_then(Value::as_array)
+        .ok_or("its spline is malformed")?
+        .iter()
+        .map(|p| p2(Some(p)))
+        .collect::<Option<_>>()
+        .ok_or("its spline is malformed")?;
+    let degree = curve
+        .get("degree")
+        .and_then(Value::as_u64)
+        .filter(|d| (1..=MAX_DEGREE).contains(d))
+        .ok_or("its spline degree is out of SolidCraft's range")?;
+    let order = usize::try_from(degree).map_err(|_| "its spline degree is malformed")? + 1;
+    if points.len() < order || points.len() > MAX_POLES {
+        return Err("its spline has too few or too many control points".to_owned());
+    }
+    let knots: Vec<f64> = curve
+        .get("knots")
+        .and_then(Value::as_array)
+        .ok_or("its spline is malformed")?
+        .iter()
+        .map(Value::as_f64)
+        .collect::<Option<_>>()
+        .ok_or("its spline is malformed")?;
+    if knots.len() != points.len() + order {
+        return Err("its spline's knots do not fit its control points".to_owned());
+    }
+    let (Some(&first), Some(&last)) = (knots.first(), knots.last()) else {
+        return Err("its spline is malformed".to_owned());
+    };
+    let span = last - first;
+    let clamped = span > 0.0
+        && knots
+            .iter()
+            .take(order)
+            .all(|k| (k - first).abs() <= EVEN * span)
+        && knots
+            .iter()
+            .rev()
+            .take(order)
+            .all(|k| (k - last).abs() <= EVEN * span);
+    let inner: Vec<f64> = knots
+        .get(order..knots.len() - order)
+        .unwrap_or_default()
+        .to_vec();
+    let pieces = inner.len() + 1;
+    let even = inner.iter().enumerate().all(|(i, k)| {
+        let want = first + span * (i + 1) as f64 / pieces as f64;
+        (k - want).abs() <= EVEN * span
+    });
+    if clamped && even {
+        Ok((degree, points))
+    } else {
+        Err(
+            "its spline is not a clamped uniform B-spline, which SolidCraft's splines are"
+                .to_owned(),
+        )
     }
 }
 
@@ -576,6 +709,48 @@ mod tests {
         builder.entity(&first, &mut report).unwrap();
         builder.entity(&second, &mut report).unwrap();
         assert_eq!(builder.curves[0]["b"], builder.curves[1]["a"]);
+    }
+
+    fn nurbs(degree: u64, knots: &[f64], points: &[P2]) -> Value {
+        json!({"degree": degree, "knots": knots, "periodic": false,
+               "poles": {"form": "polynomial",
+                         "points": points.iter().map(|p| json!({"u": p[0], "v": p[1]})).collect::<Vec<_>>()}})
+    }
+
+    #[test]
+    fn only_clamped_uniform_splines_map() {
+        let five = [[0.0, 0.0], [1.0, 1.0], [2.0, 0.0], [3.0, 1.0], [4.0, 0.0]];
+        let uniform = nurbs(3, &[0.0, 0.0, 0.0, 0.0, 0.5, 1.0, 1.0, 1.0, 1.0], &five);
+        assert_eq!(spline(Some(&uniform)).unwrap().0, 3);
+        let bezier = nurbs(2, &[0.0, 0.0, 0.0, 2.0, 2.0, 2.0], &five[..3]);
+        assert!(spline(Some(&bezier)).is_ok());
+        let uneven = nurbs(3, &[0.0, 0.0, 0.0, 0.0, 0.3, 1.0, 1.0, 1.0, 1.0], &five);
+        assert!(spline(Some(&uneven))
+            .unwrap_err()
+            .contains("clamped uniform"));
+        let mut rational = uniform.clone();
+        rational["poles"]["form"] = json!("rational");
+        assert!(spline(Some(&rational)).is_err());
+        let wrong_count = nurbs(3, &[0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0], &five);
+        assert!(spline(Some(&wrong_count)).is_err());
+    }
+
+    #[test]
+    fn a_spline_shares_only_its_ends() {
+        let mut builder = Builder::default();
+        let mut report = Report::default();
+        builder
+            .entity(&line([0.0, 0.0], [30.0, 0.0]), &mut report)
+            .unwrap();
+        let arch = json!({"id": "arch", "construction": false, "geometry": {"kind": "nurbs",
+            "curve": nurbs(2, &[0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+                           &[[0.0, 0.0], [15.0, 30.0], [30.0, 0.0]])}});
+        builder.entity(&arch, &mut report).unwrap();
+        let spline = builder.curves.last().unwrap();
+        assert_eq!(spline["type"], "spline");
+        assert_eq!(spline["control"], true);
+        // The arch's ends are the line's; its middle control point is its own.
+        assert_eq!(spline["pts"], json!([1, 3, 2]));
     }
 
     #[test]
