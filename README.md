@@ -28,6 +28,20 @@ options.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it fits together.
 
+## Docs
+
+- [Getting started](docs/guide.md): install, convert, read the loss report, open the result
+  in SolidCraft, troubleshooting.
+- [The MCP server](docs/mcp.md): tools, client setup for Claude Code, Codex and others,
+  example calls, safety.
+- [Agent skill](skills/README.md): teaches an AI assistant to convert files with Dutchman and
+  explain the results.
+- [JSON reports](docs/json.md): every field of the `--json` reports.
+- Formats: [Fusion](docs/fusion.md), [Inventor](docs/inventor.md),
+  [SolidWorks](docs/sldprt.md).
+- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md), and [AGENTS.md](AGENTS.md) for AI
+  contributors.
+
 ## Use from scripts and AI agents
 
 Install from source (Rust 1.88 or newer):
