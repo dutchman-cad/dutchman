@@ -31,14 +31,25 @@ platform. Each archive holds `dutchman` (the command), `dutchman-mcp` (the
 | Windows, x86_64 | `dutchman-VERSION-x86_64-pc-windows-msvc.zip` |
 
 Download the archive and its `.sha256` file, check one against the other, then unpack it and
-put the two programs on your `PATH`. On Linux (replace `VERSION` and the target with yours):
+put the programs on your `PATH`. On Linux x86_64, for release 0.1.0 (set `VERSION` and the
+target for another release or machine):
 
 ```sh
-sha256sum -c dutchman-VERSION-x86_64-unknown-linux-gnu.tar.gz.sha256
-tar xzf dutchman-VERSION-x86_64-unknown-linux-gnu.tar.gz
-install -m 755 dutchman-VERSION-x86_64-unknown-linux-gnu/dutchman \
-  dutchman-VERSION-x86_64-unknown-linux-gnu/dutchman-mcp ~/.local/bin/
+VERSION=0.1.0 TARGET=x86_64-unknown-linux-gnu
+base=https://github.com/dutchman-cad/dutchman/releases/download/v$VERSION
+curl -fLO "$base/dutchman-$VERSION-$TARGET.tar.gz"
+curl -fLO "$base/dutchman-$VERSION-$TARGET.tar.gz.sha256"
+sha256sum -c dutchman-$VERSION-$TARGET.tar.gz.sha256
+tar xzf dutchman-$VERSION-$TARGET.tar.gz
+mkdir -p "$HOME/.local/bin"
+install -m 755 dutchman-$VERSION-$TARGET/dutchman* "$HOME/.local/bin/"
+export PATH="$HOME/.local/bin:$PATH"
+dutchman --version
 ```
+
+The `export` lasts for this shell; add the same line to your shell's profile (`~/.bashrc`,
+`~/.zshrc`) to keep it. From 0.1.1 on, the archive also holds the desktop app,
+`dutchman-gui`, which the `dutchman*` pattern installs too.
 
 On macOS, `shasum -a 256 -c` takes the place of `sha256sum -c`. The programs are not signed
 yet, so the first run may be blocked; allow it in System Settings, Privacy & Security, or
@@ -86,7 +97,14 @@ small synthetic files that are fine to try: they are in
 [`crates/dutchman-core/tests/fixtures/`](../crates/dutchman-core/tests/fixtures/), with
 where each came from in that folder's README. None is a real design. `solidworks_cube.sldprt`
 is a 10 mm cube; `generated_unit_cube.f3d` and `synthetic_cube.ipt` are the same cube as
-Fusion and Inventor files.
+Fusion and Inventor files. To download them:
+
+```sh
+fixtures=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/crates/dutchman-core/tests/fixtures
+curl -fLO "$fixtures/solidworks_cube.sldprt"
+curl -fLO "$fixtures/generated_unit_cube.f3d"
+curl -fLO "$fixtures/synthetic_cube.ipt"
+```
 
 ```sh
 dutchman convert solidworks_cube.sldprt cube.solidcraft
@@ -141,6 +159,9 @@ dutchman convert --json generated_unit_cube.f3d cube.solidcraft
 
 `inspect` reads a file and says what converting it would carry across. It writes nothing and
 does not run SolidCraft.
+
+`design_sketch_constraints.f3d`, from the same folder, is for inspecting only: its history is a
+single sketch, with no solid or surface to convert.
 
 ```sh
 dutchman inspect design_sketch_constraints.f3d

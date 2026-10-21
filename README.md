@@ -12,6 +12,10 @@ target format, starting with [SolidCraft](https://github.com/tangency-labs/solid
 dutchman convert part.f3d part.solidcraft
 ```
 
+Download it for Linux, macOS or Windows from the
+[latest release](https://github.com/dutchman-cad/dutchman/releases/latest), or see
+[Getting started](docs/guide.md) to install it and convert a sample in a minute.
+
 Early development. Fusion (`.f3d`, `.f3z`) designs, Inventor parts (`.ipt`), Inventor
 assemblies (`.iam`, keep the part files next to the assembly) and SolidWorks parts (`.sldprt`)
 convert today:
@@ -42,9 +46,15 @@ files. The app follows the system's light or dark setting, or can be set to Day 
   <img alt="The Dutchman app after converting three files: two converted, one failed with its reason" src="docs/images/dutchman-gui-day.png" width="480">
 </picture>
 
-It ships in the release archives beside `dutchman`. On Linux it needs a desktop session (X11 or
-Wayland with OpenGL); the file dialogs use the desktop portal, and dropping files works without
-it.
+The desktop app ships in the release archives from 0.1.1 on; the 0.1.0 archives hold only
+`dutchman` and `dutchman-mcp`. Until then, build it from source with Rust 1.88 or newer:
+
+```sh
+cargo install --git https://github.com/dutchman-cad/dutchman dutchman-gui
+```
+
+On Linux it needs a desktop session (X11 or Wayland with OpenGL); the file dialogs use the
+desktop portal, and dropping files works without it.
 
 ## Docs
 
@@ -62,7 +72,9 @@ it.
 
 ## Use from scripts and AI agents
 
-Install from source (Rust 1.88 or newer):
+Download a prebuilt archive from the
+[latest release](https://github.com/dutchman-cad/dutchman/releases/latest) (see
+[Getting started](docs/guide.md#install)), or install from source (Rust 1.88 or newer):
 
 ```sh
 cargo install --git https://github.com/dutchman-cad/dutchman dutchman

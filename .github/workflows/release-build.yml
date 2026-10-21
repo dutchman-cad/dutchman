@@ -57,7 +57,9 @@ jobs:
           cp "target/${{ matrix.target }}/release/dutchman$exe" "dist/$name/"
           cp "target/${{ matrix.target }}/release/dutchman-mcp$exe" "dist/$name/"
           cp "target/${{ matrix.target }}/release/dutchman-gui$exe" "dist/$name/"
-          cp LICENSE NOTICE README.md "dist/$name/"
+          cp LICENSE NOTICE "dist/$name/"
+          # The archive holds none of the files the README links to: point them at the tag.
+          python3 -I scripts/archive-readme.py "v$version" README.md "dist/$name/README.md"
           mkdir -p "dist/$name/licences"
           cp crates/dutchman-gui/assets/fonts/*.txt "dist/$name/licences/"
           "dist/$name/dutchman$exe" --version
