@@ -31,8 +31,25 @@ pub(crate) struct Mapped {
     pub(crate) normal: V3,
     /// The sketch plane's origin, in model space.
     pub(crate) origin: V3,
+    /// The sketch plane's unit x and y axes, in model space.
+    pub(crate) x_dir: V3,
+    pub(crate) y_dir: V3,
+    /// The SolidCraft sketch's points, by index: their ids and positions in the sketch.
+    pub(crate) points: Vec<(String, P2)>,
     /// What each source entity became, by its id.
     pub(crate) shapes: BTreeMap<String, Shape>,
+}
+
+impl Mapped {
+    /// Where the sketch point `at` is in model space.
+    pub(crate) fn world(&self, at: P2) -> V3 {
+        let [u, v] = at;
+        [0, 1, 2].map(|i| {
+            self.origin.get(i).copied().unwrap_or(0.0)
+                + u * self.x_dir.get(i).copied().unwrap_or(0.0)
+                + v * self.y_dir.get(i).copied().unwrap_or(0.0)
+        })
+    }
 }
 
 impl Mapped {
@@ -65,7 +82,15 @@ pub(crate) fn map(
         .iter()
         .find(|row| row.get("id").and_then(Value::as_str) == Some(sketch_id))
         .ok_or("the sketch it binds is missing")?;
-    let (plane, normal, origin) = plane(sketch)?;
+    let (
+        plane,
+        Frame {
+            normal,
+            origin,
+            x,
+            y,
+        },
+    ) = plane(sketch)?;
 
     let mut builder = Builder::default();
     for entity in ctx
@@ -93,6 +118,17 @@ pub(crate) fn map(
             feature: id,
             normal,
             origin,
+            x_dir: x,
+            y_dir: y,
+            points: builder
+                .points
+                .iter()
+                .zip(&builder.positions)
+                .map(|(point, at)| {
+                    let id = point.get("id").and_then(Value::as_str).unwrap_or("");
+                    (id.to_owned(), *at)
+                })
+                .collect(),
             shapes: builder.shapes.clone(),
         },
     );
@@ -110,9 +146,17 @@ pub(crate) fn map(
     }))
 }
 
-/// The SolidCraft plane of a sketch, and its unit normal: an origin plane when the frame is
-/// one exactly, else an explicit plane with the frame's axes.
-fn plane(sketch: &Value) -> Result<(Value, V3, V3), String> {
+/// A sketch plane in model space: its origin and unit axes.
+struct Frame {
+    normal: V3,
+    origin: V3,
+    x: V3,
+    y: V3,
+}
+
+/// The SolidCraft plane of a sketch, and its frame: an origin plane when the frame is one
+/// exactly, else an explicit plane with the frame's axes.
+fn plane(sketch: &Value) -> Result<(Value, Frame), String> {
     let placement = sketch.get("placement").unwrap_or(&Value::Null);
     if placement.get("kind").and_then(Value::as_str) != Some("resolved") {
         return Err("its plane is not resolved".to_owned());
@@ -144,7 +188,15 @@ fn plane(sketch: &Value) -> Result<(Value, V3, V3), String> {
             "plane": {"origin": origin, "x_dir": x, "y_dir": y},
         }),
     };
-    Ok((plane, normal, origin))
+    Ok((
+        plane,
+        Frame {
+            normal,
+            origin,
+            x,
+            y,
+        },
+    ))
 }
 
 /// What a source sketch entity became.
@@ -621,16 +673,15 @@ mod tests {
             ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0], "YZ"),
         ];
         for (normal, u, name) in cases {
-            let (plane, n, _) = plane(&frame(o, normal, u)).unwrap();
+            let (plane, frame) = plane(&frame(o, normal, u)).unwrap();
             assert_eq!(plane, json!({"type": "origin", "name": name}));
-            assert_eq!(n, normal);
+            assert_eq!(frame.normal, normal);
         }
     }
 
     #[test]
     fn other_frames_become_explicit_planes() {
-        let (offset, _, _) =
-            plane(&frame([0.0, 0.0, 5.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0])).unwrap();
+        let (offset, _) = plane(&frame([0.0, 0.0, 5.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0])).unwrap();
         assert_eq!(
             offset,
             json!({"type": "custom", "plane": {
@@ -638,7 +689,7 @@ mod tests {
             }})
         );
         // XY seen from below: the normal is reversed, so it is not the XY origin plane.
-        let (below, _, _) = plane(&frame([0.0; 3], [0.0, 0.0, -1.0], [1.0, 0.0, 0.0])).unwrap();
+        let (below, _) = plane(&frame([0.0; 3], [0.0, 0.0, -1.0], [1.0, 0.0, 0.0])).unwrap();
         assert_eq!(below["type"], "custom");
         assert_eq!(below["plane"]["y_dir"], json!([0.0, -1.0, 0.0]));
     }

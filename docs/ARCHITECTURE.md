@@ -125,7 +125,9 @@ one-sided or two-sided revolve is not mapped); lofts through profiles of two or 
 sketches, open, smooth and solid, guided by up to two rails of sketch curves; sweeps of one sketch profile along
 sketch curves (whole path, square to it or held as drawn, optionally twisted or guided by one
 rail); spheres, and tori about the Z axis (boxes and cylinder primitives wait on cadmpeg
-placing them); patterns of earlier features, linear in one or
+placing them); simple holes drilled at the circle centres, arc centres or points of a sketch,
+through all or to a depth, flat or with a drill point (counterbores, countersinks and holes
+placed on faces are not mapped); patterns of earlier features, linear in one or
 two directions, or circular all the way round, and mirrors of earlier features across a
 plane (features are named uniquely on the timeline,
 since SolidCraft patterns refer to them by name). Parameters keep their expressions where SolidCraft reads them the same way, else

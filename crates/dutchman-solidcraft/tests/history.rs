@@ -944,6 +944,104 @@ fn revolves_rebuild_their_volume_in_solidcraft() {
     close(&volumes(&cli, &written(&quarter).0), ring / 4.0);
 }
 
+const HOLES: &str = "f3d:model:sketch#3";
+
+/// The example cube's history, with a sketch on its top face holding a circle of radius 2 about
+/// (5, 5) and a simple hole of `diameter` drilled down from it; `change` edits the hole.
+fn holed_cube(diameter: f64, change: impl FnOnce(&mut Value)) -> Model {
+    let mut model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    m["sketches"].as_array_mut().unwrap().push(json!({
+        "id": HOLES,
+        "name": "Holes",
+        "placement": {"kind": "resolved", "frame": {
+            "origin": {"x": 0.0, "y": 0.0, "z": 10.0},
+            "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
+            "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0},
+        }},
+    }));
+    m["sketch_entities"].as_array_mut().unwrap().push(json!({
+        "id": "f3d:model:sketch-entity#9",
+        "sketch": HOLES,
+        "construction": false,
+        "geometry": {"kind": "circle", "center": {"u": 5.0, "v": 5.0}, "radius": 2.0},
+    }));
+    let mut hole = json!({
+        "definition": "hole",
+        "profile": {"kind": "sketch", "value": HOLES},
+        "profile_filter": "circles",
+        "direction": {"x": 0.0, "y": 0.0, "z": -1.0},
+        "shape": {"construction": {"construction": "form", "kind": {"kind": "simple"}},
+                  "diameter": diameter},
+        "extent": {"kind": "through_all"},
+    });
+    change(&mut hole);
+    let features = m["features"].as_array_mut().unwrap();
+    features.push(json!({
+        "id": "f3d:model:feature#3",
+        "ordinal": 2,
+        "name": "Hole sketch",
+        "suppressed": false,
+        "definition": {"definition": "sketch", "sketch": {"space": "planar", "sketch": HOLES}},
+    }));
+    features.push(json!({
+        "id": "f3d:model:feature#4",
+        "ordinal": 3,
+        "name": "Hole",
+        "suppressed": false,
+        "dependencies": ["f3d:model:feature#3", "f3d:model:feature#2"],
+        "definition": hole,
+    }));
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn a_simple_hole_at_a_sketch_circle_becomes_a_solidcraft_hole() {
+    let (document, report) = convert(
+        &holed_cube(4.0, |_| {}),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("4 of 4 features mapped"),
+        "{}",
+        history_line(&report)
+    );
+    let hole = &document["features"][3];
+    assert_eq!(hole["type"], "hole");
+    assert_eq!(hole["diameter"], "4 mm");
+    assert_eq!(hole["direction"], json!([0.0, 0.0, -1.0]));
+    assert_eq!(hole["position"], json!([5.0, 5.0, 10.0]));
+    assert_eq!(hole["points"]["sketch"], document["features"][2]["id"]);
+}
+
+#[test]
+fn solidcraft_drills_the_holes() {
+    let Some(cli) = solidcraft() else { return };
+    let close = |got: &[f64], want: f64| {
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!((got[0] - want).abs() / want < 1e-3, "{got:?} vs {want}");
+    };
+    let bore = std::f64::consts::PI * 2.0_f64.powi(2);
+    // Through all.
+    close(
+        &volumes(&cli, &written(&holed_cube(4.0, |_| {})).0),
+        1000.0 - bore * 10.0,
+    );
+    // 6 mm to its shoulder, with a 118° drill point below.
+    let angle = 118_f64.to_radians();
+    let blind = holed_cube(4.0, |hole| {
+        hole["extent"] = json!({"kind": "blind", "length": 6.0});
+        hole["bottom"] = json!({"kind": "angled", "included_angle": angle, "depth_to_tip": false});
+    });
+    let point = 2.0 / (angle / 2.0).tan();
+    close(
+        &volumes(&cli, &written(&blind).0),
+        1000.0 - bore * 6.0 - bore * point / 3.0,
+    );
+}
+
 /// The example cube's geometry with a right-triangle history: a fixed 40 mm horizontal base,
 /// a vertical side, and the hypotenuse at `theta` from the base (shown as 36.87°), extruded by
 /// 10 mm.
