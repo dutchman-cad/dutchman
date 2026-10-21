@@ -643,9 +643,9 @@ fn framed(
     body: impl FnOnce(&mut egui::Ui),
 ) {
     let stroke = if highlight {
-        Stroke::new(1.5, p.spectre)
+        Stroke::new(1.5_f32, p.spectre)
     } else {
-        Stroke::new(1.0, p.hairline)
+        Stroke::new(1.0_f32, p.hairline)
     };
     Frame::new()
         .fill(fill)

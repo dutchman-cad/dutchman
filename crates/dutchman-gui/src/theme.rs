@@ -191,7 +191,7 @@ fn visuals(theme: Theme, p: &Palette) -> Visuals {
     v.override_text_color = Some(p.ink);
     v.panel_fill = p.surface;
     v.window_fill = p.surface;
-    v.window_stroke = Stroke::new(1.0, p.hairline);
+    v.window_stroke = Stroke::new(1.0_f32, p.hairline);
     v.extreme_bg_color = p.surface;
     v.faint_bg_color = p.surface_2;
     v.code_bg_color = p.surface_2;
@@ -199,7 +199,7 @@ fn visuals(theme: Theme, p: &Palette) -> Visuals {
     v.warn_fg_color = p.lantern_text;
     v.error_fg_color = p.danger;
     v.selection.bg_fill = p.spectre;
-    v.selection.stroke = Stroke::new(1.0, p.on_spectre);
+    v.selection.stroke = Stroke::new(1.0_f32, p.on_spectre);
     v.window_corner_radius = CornerRadius::same(RADIUS_LG);
     v.menu_corner_radius = CornerRadius::same(RADIUS_MD);
     v.window_shadow = egui::Shadow::NONE;
@@ -214,24 +214,24 @@ fn visuals(theme: Theme, p: &Palette) -> Visuals {
         &mut widgets.open,
     ] {
         w.corner_radius = CornerRadius::same(RADIUS_MD);
-        w.fg_stroke = Stroke::new(1.0, p.ink);
+        w.fg_stroke = Stroke::new(1.0_f32, p.ink);
         w.expansion = 0.0;
     }
     widgets.noninteractive.bg_fill = p.surface;
     widgets.noninteractive.weak_bg_fill = p.surface;
-    widgets.noninteractive.bg_stroke = Stroke::new(1.0, p.hairline);
+    widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, p.hairline);
     widgets.inactive.bg_fill = p.surface_2;
     widgets.inactive.weak_bg_fill = p.surface_2;
-    widgets.inactive.bg_stroke = Stroke::new(1.0, p.hairline);
+    widgets.inactive.bg_stroke = Stroke::new(1.0_f32, p.hairline);
     widgets.hovered.bg_fill = p.surface_2;
     widgets.hovered.weak_bg_fill = p.surface_2;
-    widgets.hovered.bg_stroke = Stroke::new(1.0, p.spectre);
+    widgets.hovered.bg_stroke = Stroke::new(1.0_f32, p.spectre);
     widgets.active.bg_fill = p.surface_2;
     widgets.active.weak_bg_fill = p.surface_2;
-    widgets.active.bg_stroke = Stroke::new(1.5, p.spectre);
+    widgets.active.bg_stroke = Stroke::new(1.5_f32, p.spectre);
     widgets.open.bg_fill = p.surface_2;
     widgets.open.weak_bg_fill = p.surface_2;
-    widgets.open.bg_stroke = Stroke::new(1.0, p.spectre);
+    widgets.open.bg_stroke = Stroke::new(1.0_f32, p.spectre);
     v
 }
 
