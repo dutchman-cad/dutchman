@@ -3,7 +3,9 @@
 
 use std::path::Path;
 
-use dutchman_core::{Check, Error, FeatureStatus, Format, Mode, Outcome, Report, Severity, Stage};
+use dutchman_core::{
+    Check, Completeness, Error, FeatureStatus, Format, Mode, Outcome, Report, Severity, Stage,
+};
 use serde_json::{json, Map, Value};
 
 /// The schema of `dutchman convert --json`.
@@ -98,8 +100,77 @@ pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value
     if let Some(outcome) = report.outcome() {
         out.extend(outcome_fields(outcome));
     }
+    if let Some(completeness) = report.completeness() {
+        out.insert("completeness".to_owned(), completeness_json(completeness));
+    }
     out.insert("losses".to_owned(), losses(report));
     out
+}
+
+/// How much of an assembly was placed, as the reports give it.
+pub fn completeness_json(completeness: &Completeness) -> Value {
+    let left_out: Vec<Value> = completeness
+        .left_out
+        .iter()
+        .map(|group| {
+            json!({
+                "file": group.file,
+                "reason": group.reason,
+                "stage": group.stage.id(),
+                "count": group.count,
+            })
+        })
+        .collect();
+    json!({
+        "placed": completeness.placed,
+        "placements": completeness.placements(),
+        "left_out": left_out,
+    })
+}
+
+/// The most causes [`completeness_lines`] lists.
+const CAUSES_SHOWN: usize = 10;
+
+/// A report's completeness in words, when it has one: `assembly: 18 of 20 placements placed;
+/// 2 left out:`, then a line per cause, `  pin.ipt ×2: not found …`.
+pub fn completeness_lines(report: &Value) -> Vec<String> {
+    let Some(completeness) = report.get("completeness") else {
+        return Vec::new();
+    };
+    let count = |key: &str| completeness.get(key).and_then(Value::as_u64).unwrap_or(0);
+    let (placed, placements) = (count("placed"), count("placements"));
+    let causes: Vec<&Value> = completeness
+        .get("left_out")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .collect();
+    if causes.is_empty() {
+        return vec![format!("assembly: all {placements} placements placed")];
+    }
+    let mut lines = vec![format!(
+        "assembly: {placed} of {placements} placements placed; {} left out:",
+        placements.saturating_sub(placed)
+    )];
+    for cause in causes.iter().take(CAUSES_SHOWN) {
+        let field = |key: &str| cause.get(key).and_then(Value::as_str);
+        let times = cause.get("count").and_then(Value::as_u64).unwrap_or(1);
+        let file = field("file").unwrap_or("(no file)");
+        let reason = field("reason").unwrap_or("");
+        // The reason usually starts with the file's name; say it once.
+        let reason = reason
+            .strip_prefix(file)
+            .and_then(|rest| rest.strip_prefix(": "))
+            .unwrap_or(reason);
+        lines.push(format!("  {file} ×{times}: {reason}"));
+    }
+    if causes.len() > CAUSES_SHOWN {
+        lines.push(format!(
+            "  and {} more causes (--json lists them all)",
+            causes.len() - CAUSES_SHOWN
+        ));
+    }
+    lines
 }
 
 fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
@@ -180,6 +251,38 @@ mod tests {
     use dutchman_core::FeatureOutcome;
 
     use super::*;
+
+    #[test]
+    fn an_assembly_says_how_much_of_it_was_placed() {
+        let completeness = Completeness {
+            placed: 18,
+            left_out: vec![dutchman_core::LeftOutGroup {
+                file: Some("pin.ipt".to_owned()),
+                reason: "pin.ipt: not found at its stored path".to_owned(),
+                stage: Stage::Input,
+                count: 2,
+            }],
+        };
+        let report = json!({"completeness": completeness_json(&completeness)});
+        assert_eq!(report["completeness"]["placements"], 20);
+        assert_eq!(report["completeness"]["left_out"][0]["stage"], "input");
+        assert_eq!(
+            completeness_lines(&report),
+            [
+                "assembly: 18 of 20 placements placed; 2 left out:",
+                "  pin.ipt ×2: not found at its stored path",
+            ]
+        );
+        let whole = Completeness {
+            placed: 3,
+            left_out: Vec::new(),
+        };
+        assert_eq!(
+            completeness_lines(&json!({"completeness": completeness_json(&whole)})),
+            ["assembly: all 3 placements placed"]
+        );
+        assert!(completeness_lines(&json!({})).is_empty());
+    }
 
     fn feature(kind: &str, status: FeatureStatus) -> FeatureOutcome {
         FeatureOutcome {

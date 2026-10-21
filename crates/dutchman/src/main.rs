@@ -230,6 +230,9 @@ fn convert(
     } else {
         // What was written first, on stdout; then what it could not carry across.
         println!("{}", batch::line(&report));
+        for line in json::completeness_lines(&report) {
+            println!("{line}");
+        }
         print_losses(
             report
                 .get("losses")
@@ -293,6 +296,14 @@ fn inspect(input: &Path, search: &dutchman::PartSearch, as_json: bool, verbose: 
                 Some(reason) => println!("  {status:<10} {} \"{name}\": {reason}", feature.kind),
                 None => println!("  {status:<10} {} \"{name}\"", feature.kind),
             }
+        }
+    }
+    if let Some(completeness) = inspection.report.completeness() {
+        let lines = json::completeness_lines(&serde_json::json!({
+            "completeness": json::completeness_json(completeness),
+        }));
+        for line in lines {
+            println!("would place: {}", line.trim_start_matches("assembly: "));
         }
     }
     let losses = json::losses(&inspection.report);

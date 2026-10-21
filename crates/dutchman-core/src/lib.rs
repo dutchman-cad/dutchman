@@ -16,7 +16,8 @@ mod report;
 use std::path::Path;
 
 pub use assembly::{
-    local_assembly, Assembly, Joint, Motion, Placement, MAX_DEPTH, MAX_PARTS, MAX_PLACEMENTS,
+    local_assembly, Assembly, Joint, LeftOut, Motion, Placement, MAX_DEPTH, MAX_PARTS,
+    MAX_PLACEMENTS,
 };
 pub use error::Error;
 pub use format::Format;
@@ -39,7 +40,8 @@ pub struct Model {
     pub assembly: Option<Assembly>,
 }
 pub use report::{
-    Check, FeatureOutcome, FeatureStatus, Loss, Mode, Outcome, Report, Severity, Stage,
+    Check, Completeness, FeatureOutcome, FeatureStatus, LeftOutGroup, Loss, Mode, Outcome, Report,
+    Severity, Stage,
 };
 
 /// The largest input file Dutchman will open, in bytes. Native CAD files beyond this are
@@ -102,6 +104,9 @@ pub fn read_in(
                 ),
             ),
         }
+    }
+    if let Some(assembly) = &model.assembly {
+        report.set_completeness(assembly.completeness());
     }
     Ok(model)
 }

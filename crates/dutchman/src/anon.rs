@@ -331,6 +331,16 @@ impl<'a> File<'a> {
         }
     }
 
+    /// Whether it is an assembly that converted with placements left out.
+    fn incomplete(&self) -> bool {
+        self.ok
+            && self
+                .report
+                .pointer("/completeness/left_out")
+                .and_then(Value::as_array)
+                .is_some_and(|causes| !causes.is_empty())
+    }
+
     /// Whether it converted but lost something that matters (a Degraded or Dropped loss).
     fn degraded(&self) -> bool {
         self.ok
@@ -351,6 +361,7 @@ fn tally<'a, 'b: 'a>(files: impl Iterator<Item = &'a File<'b>>, batch: &Value) -
         "history_unverified",
         "geometry_only",
         "degraded",
+        "incomplete",
         "failed",
     ] {
         counts.insert(key, 0);
@@ -364,6 +375,9 @@ fn tally<'a, 'b: 'a>(files: impl Iterator<Item = &'a File<'b>>, batch: &Value) -
         }
         if file.degraded() {
             *counts.entry("degraded").or_insert(0) += 1;
+        }
+        if file.incomplete() {
+            *counts.entry("incomplete").or_insert(0) += 1;
         }
     }
     let mut out = json!(counts);

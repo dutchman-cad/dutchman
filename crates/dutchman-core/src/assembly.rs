@@ -15,7 +15,7 @@ use crate::locate::Finder;
 #[cfg(test)]
 use crate::locate::PartSearch;
 use crate::placement::{compose, inverse, Placement3x4, IDENTITY};
-use crate::{Error, Format, Model, Report, Severity, Stage};
+use crate::{Completeness, Error, Format, LeftOutGroup, Model, Report, Severity, Stage};
 
 /// The most part files one assembly may bring in.
 pub const MAX_PARTS: usize = 1_000;
@@ -39,6 +39,72 @@ pub struct Assembly {
     pub placements: Vec<Placement>,
     /// Joints between its placements.
     pub joints: Vec<Joint>,
+    /// The placements its file records that are not placed, and why.
+    pub left_out: Vec<LeftOut>,
+}
+
+/// A placement an assembly's file records that is not placed.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LeftOut {
+    /// The occurrence's name, when it has one.
+    pub name: Option<String>,
+    /// The file it places, by name, when it names one.
+    pub file: Option<String>,
+    /// Why it is left out.
+    pub reason: String,
+    /// The stage it was lost at.
+    pub stage: Stage,
+}
+
+impl Assembly {
+    /// How much of the assembly is placed: its own placements and, for each placed
+    /// sub-assembly, the sub-assembly's, as often as it is placed.
+    pub fn completeness(&self) -> Completeness {
+        let mut groups: BTreeMap<(Option<String>, String, Stage), u64> = BTreeMap::new();
+        let placed = self.count(1, &mut groups, 0);
+        let mut left_out: Vec<LeftOutGroup> = groups
+            .into_iter()
+            .map(|((file, reason, stage), count)| LeftOutGroup {
+                file,
+                reason,
+                stage,
+                count,
+            })
+            .collect();
+        left_out.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.file.cmp(&b.file)));
+        Completeness { placed, left_out }
+    }
+
+    /// The placements placed in this assembly placed `times` times, adding those left out to
+    /// `groups`.
+    fn count(
+        &self,
+        times: u64,
+        groups: &mut BTreeMap<(Option<String>, String, Stage), u64>,
+        depth: usize,
+    ) -> u64 {
+        for left in &self.left_out {
+            let count = groups
+                .entry((left.file.clone(), left.reason.clone(), left.stage))
+                .or_default();
+            *count = count.saturating_add(times);
+        }
+        let mut placed = times.saturating_mul(self.placements.len() as u64);
+        if depth >= MAX_DEPTH {
+            return placed;
+        }
+        let mut uses: BTreeMap<usize, u64> = BTreeMap::new();
+        for placement in &self.placements {
+            *uses.entry(placement.part).or_default() += 1;
+        }
+        for (part, used) in uses {
+            if let Some(sub) = self.parts.get(part).and_then(|part| part.assembly.as_ref()) {
+                placed =
+                    placed.saturating_add(sub.count(times.saturating_mul(used), groups, depth + 1));
+            }
+        }
+        placed
+    }
 }
 
 /// A joint between two placed parts. Its frames meet face to face, as two mated faces do:
@@ -191,8 +257,10 @@ pub(crate) fn resolve(
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     let mut parts: Vec<Model> = Vec::new();
-    let mut by_file: BTreeMap<PathBuf, Option<usize>> = BTreeMap::new();
+    // Each file read, once: its part, or the stage and reason it could not be read.
+    let mut by_file: BTreeMap<PathBuf, Result<usize, (Stage, String)>> = BTreeMap::new();
     let mut placements = Vec::new();
+    let mut left_out: Vec<LeftOut> = Vec::new();
     let mut nested = 0usize;
     for occurrence in &occurrences {
         let name = occurrence
@@ -208,11 +276,12 @@ pub(crate) fn resolve(
             .pointer("/prototype/document/path")
             .and_then(Value::as_str)
         else {
-            report.push_at(
+            leave_out(
+                report,
+                &mut left_out,
+                (&subject, &name, None),
                 Stage::Input,
-                Severity::Dropped,
-                subject,
-                "its part is not in a separate file Dutchman can find",
+                "its part is not in a separate file Dutchman can find".to_owned(),
             );
             continue;
         };
@@ -220,10 +289,11 @@ pub(crate) fn resolve(
         let format = match Format::from_path(Path::new(file)) {
             Some(format @ (Format::InventorPart | Format::InventorAssembly)) => format,
             _ => {
-                report.push_at(
+                leave_out(
+                    report,
+                    &mut left_out,
+                    (&subject, &name, Some(file)),
                     Stage::Input,
-                    Severity::Dropped,
-                    subject,
                     format!("{file}: not an Inventor part or assembly"),
                 );
                 continue;
@@ -242,17 +312,18 @@ pub(crate) fn resolve(
                 found.path
             }
             Err(missing) => {
-                report.push_at(
+                leave_out(
+                    report,
+                    &mut left_out,
+                    (&subject, &name, Some(file)),
                     Stage::Input,
-                    Severity::Dropped,
-                    subject,
                     format!("{file}: {missing}"),
                 );
                 continue;
             }
         };
         let part = match by_file.get(&path) {
-            Some(known) => *known,
+            Some(known) => known.clone(),
             None => {
                 let read = if parts.len() >= MAX_PARTS {
                     Err((
@@ -269,25 +340,31 @@ pub(crate) fn resolve(
                         parts.len() - 1
                     })
                 };
-                let index = match read {
-                    Ok(index) => Some(index),
-                    Err((stage, why)) => {
-                        report.push_at(stage, Severity::Dropped, file, why);
-                        None
-                    }
-                };
-                by_file.insert(path, index);
-                index
+                if let Err((stage, why)) = &read {
+                    report.push_at(*stage, Severity::Dropped, file, why.clone());
+                }
+                by_file.insert(path, read.clone());
+                read
             }
         };
-        let Some(part) = part else {
-            report.push_at(
-                Stage::Decode,
-                Severity::Dropped,
-                subject,
-                format!("{file} could not be read"),
-            );
-            continue;
+        let part = match part {
+            Ok(part) => part,
+            Err((stage, why)) => {
+                // The file's own loss says why; this one which placement it costs.
+                report.push_at(
+                    stage,
+                    Severity::Dropped,
+                    subject.clone(),
+                    format!("{file} could not be read"),
+                );
+                left_out.push(LeftOut {
+                    name: name.clone(),
+                    file: Some(file.to_owned()),
+                    reason: format!("{file} could not be read: {why}"),
+                    stage,
+                });
+                continue;
+            }
         };
         match transform(occurrence) {
             Ok(transform) => placements.push(Placement {
@@ -295,7 +372,13 @@ pub(crate) fn resolve(
                 part,
                 transform,
             }),
-            Err(why) => report.push(Severity::Dropped, subject, why),
+            Err(why) => leave_out(
+                report,
+                &mut left_out,
+                (&subject, &name, Some(file)),
+                Stage::Map,
+                why,
+            ),
         }
     }
     if nested > 0 {
@@ -318,7 +401,26 @@ pub(crate) fn resolve(
         parts,
         placements,
         joints: Vec::new(),
+        left_out,
     })
+}
+
+/// Reports the placement `who` (its loss subject, its name and the file it places) left out
+/// at `stage` for `reason`, and keeps it for the completeness count.
+fn leave_out(
+    report: &mut Report,
+    left_out: &mut Vec<LeftOut>,
+    (subject, name, file): (&str, &Option<String>, Option<&str>),
+    stage: Stage,
+    reason: String,
+) {
+    report.push_at(stage, Severity::Dropped, subject, reason.clone());
+    left_out.push(LeftOut {
+        name: name.clone(),
+        file: file.map(str::to_owned),
+        reason,
+        stage,
+    });
 }
 
 /// Arenas a component's own geometry never reaches into: other components' bodies are kept
@@ -446,6 +548,7 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
         parts,
         placements,
         joints,
+        left_out: Vec::new(),
     };
     left_out.extend(place_by_joints(&mut assembly));
     Ok(Some((assembly, left_out)))
@@ -944,6 +1047,7 @@ impl<'a> Tree<'a> {
                 parts,
                 placements,
                 joints: Vec::new(),
+                left_out: Vec::new(),
             });
             holder
         };
@@ -1223,6 +1327,13 @@ mod tests {
         let sub = assembly.parts[1].assembly.as_ref().unwrap();
         assert_eq!(sub.parts.len(), 1);
         assert_eq!(sub.placements.len(), 2);
+        let completeness = Assembly::completeness(&Assembly {
+            parts: assembly.parts.clone(),
+            placements: assembly.placements.clone(),
+            joints: Vec::new(),
+            left_out: assembly.left_out.clone(),
+        });
+        assert_eq!((completeness.placed, completeness.placements()), (5, 6));
         assert_eq!(
             dropped(&report),
             [format!(
@@ -1231,6 +1342,52 @@ mod tests {
                 crate::locate::tests::absolute_for_tests(project.dir.path()).display()
             )]
         );
+    }
+
+    #[test]
+    fn completeness_counts_through_each_placed_sub_assembly() {
+        let project = Project::new(&[
+            (
+                "top.iam",
+                vec![
+                    occurrence(0, "cube.ipt", root(), 0.0),
+                    occurrence(1, "sub.iam", root(), 30.0),
+                    occurrence(2, "sub.iam", root(), 60.0),
+                    occurrence(3, "gone.ipt", root(), 0.0),
+                    occurrence(4, "notes.txt", root(), 0.0),
+                ],
+            ),
+            (
+                "sub.iam",
+                vec![
+                    occurrence(0, "cube.ipt", root(), 0.0),
+                    occurrence(1, "cube.ipt", root(), 15.0),
+                    occurrence(2, "lost.ipt", root(), 0.0),
+                ],
+            ),
+        ]);
+        let top = project.read("top.iam", &mut Report::default()).unwrap();
+        let completeness = top.assembly.unwrap().completeness();
+        // The cube and the sub-assembly twice at the top; two cubes in each sub-assembly.
+        assert_eq!(completeness.placed, 7);
+        assert_eq!(completeness.placements(), 11);
+        assert_eq!(completeness.left_out_count(), 4);
+        let groups: Vec<(Option<&str>, u64, Stage)> = completeness
+            .left_out
+            .iter()
+            .map(|g| (g.file.as_deref(), g.count, g.stage))
+            .collect();
+        assert_eq!(
+            groups,
+            [
+                (Some("lost.ipt"), 2, Stage::Input),
+                (Some("gone.ipt"), 1, Stage::Input),
+                (Some("notes.txt"), 1, Stage::Input),
+            ]
+        );
+        assert!(completeness.left_out[0]
+            .reason
+            .starts_with("lost.ipt: not found"));
     }
 
     #[test]

@@ -518,7 +518,18 @@ impl App {
         Some(if self.running() {
             format!("{} of {} done", converted + failed, self.rows.len())
         } else {
-            let mut text = format!("{converted} converted, {failed} failed");
+            let incomplete = self
+                .rows
+                .iter()
+                .filter(|row| {
+                    row.status == Status::Converted && row.report.as_ref().is_some_and(incomplete)
+                })
+                .count();
+            let mut text = if incomplete > 0 {
+                format!("{converted} converted ({incomplete} incomplete), {failed} failed")
+            } else {
+                format!("{converted} converted, {failed} failed")
+            };
             let skipped = count(Status::NotStarted);
             if skipped > 0 {
                 text.push_str(&format!(", {skipped} not started"));
@@ -581,6 +592,7 @@ fn row_ui(
     let (word, colour) = match row.status {
         Status::Waiting => ("Waiting", p.tide),
         Status::Converting => ("Converting", p.tide),
+        Status::Converted if report.is_some_and(incomplete) => ("Incomplete", p.lantern_text),
         Status::Converted => ("Converted", p.spectre),
         Status::Failed => ("Failed", p.danger),
         Status::NotStarted => ("Not started", p.tide),
@@ -650,6 +662,14 @@ fn row_ui(
         )
         .on_hover_text(output);
         ui.label(RichText::new(outcome(report)).color(p.ink));
+        let lines = dutchman::json::completeness_lines(report);
+        if let Some((first, causes)) = lines.split_first() {
+            let colour = if incomplete(report) { p.danger } else { p.tide };
+            ui.label(RichText::new(first.trim_start_matches("assembly: ")).color(colour));
+            for cause in causes {
+                ui.label(RichText::new(cause.trim()).small().color(p.ink));
+            }
+        }
         let losses: Vec<&Value> = report
             .get("losses")
             .and_then(Value::as_array)
@@ -666,6 +686,14 @@ fn row_ui(
         }
     }
     action
+}
+
+/// Whether `report` is of an assembly that converted with placements left out.
+fn incomplete(report: &Value) -> bool {
+    report
+        .pointer("/completeness/left_out")
+        .and_then(Value::as_array)
+        .is_some_and(|causes| !causes.is_empty())
 }
 
 /// What marks a part file an assembly places as not found, in its loss.
@@ -890,5 +918,18 @@ mod tests {
             folder that holds them"}});
         assert_eq!(missing_parts(&failed).unwrap(), Vec::<String>::new());
         assert_eq!(missing_parts(&json!({"ok": true, "losses": []})), None);
+    }
+
+    #[test]
+    fn an_assembly_with_placements_left_out_is_incomplete() {
+        assert!(incomplete(
+            &json!({"completeness": {"placed": 1, "placements": 2,
+            "left_out": [{"file": "pin.ipt", "reason": "gone", "stage": "input", "count": 1}]}})
+        ));
+        assert!(!incomplete(
+            &json!({"completeness": {"placed": 2, "placements": 2,
+            "left_out": []}})
+        ));
+        assert!(!incomplete(&json!({"ok": true})));
     }
 }
