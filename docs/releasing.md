@@ -15,3 +15,11 @@ A release is cut from `main` once CI is green there.
    first (`cargo publish -p dutchman-core`, then `-p dutchman-solidcraft`, then `-p dutchman`).
    Both are `publish = false` today, and publishing them makes their APIs public. Run
    `cargo publish --dry-run -p <crate>` before each.
+
+## Stable and nightly
+
+A stable release depends only on cadmpeg versions published on crates.io; it never pins a
+cadmpeg git commit. A fix that is merged on cadmpeg's `main` but not yet released reaches
+users through the nightly channel: the `nightly` pre-release, rebuilt each day from Dutchman's
+`main` against cadmpeg's `main` (see `.github/workflows/nightly.yml`). The stable release
+that follows cadmpeg's next release carries it.

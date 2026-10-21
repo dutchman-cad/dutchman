@@ -32,11 +32,11 @@ platform. Each archive holds `dutchman` (the command), `dutchman-mcp` (the
 | Windows, x86_64 | `dutchman-VERSION-x86_64-pc-windows-msvc.zip` |
 
 Download the archive and its `.sha256` file, check one against the other, then unpack it and
-put the programs on your `PATH`. On Linux x86_64, for release 0.1.1 (set `VERSION` and the
+put the programs on your `PATH`. On Linux x86_64, for release 0.1.2 (set `VERSION` and the
 target for another release or machine):
 
 ```sh
-VERSION=0.1.1 TARGET=x86_64-unknown-linux-gnu
+VERSION=0.1.2 TARGET=x86_64-unknown-linux-gnu
 base=https://github.com/dutchman-cad/dutchman/releases/download/v$VERSION
 curl -fLO "$base/dutchman-$VERSION-$TARGET.tar.gz"
 curl -fLO "$base/dutchman-$VERSION-$TARGET.tar.gz.sha256"
