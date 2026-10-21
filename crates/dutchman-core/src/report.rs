@@ -141,6 +141,49 @@ impl fmt::Display for Loss {
 pub struct Report {
     losses: Vec<Loss>,
     outcome: Option<Outcome>,
+    completeness: Option<Completeness>,
+}
+
+/// How much of an assembly was placed: every placement its file and its placed sub-assemblies'
+/// files record, each sub-assembly counted as often as it is placed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Completeness {
+    /// The placements placed.
+    pub placed: u64,
+    /// The placements left out, by the file each places and why, most first.
+    pub left_out: Vec<LeftOutGroup>,
+}
+
+/// Placements of one file left out for one reason.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LeftOutGroup {
+    /// The file they place, by name, when they name one.
+    pub file: Option<String>,
+    /// Why they are left out.
+    pub reason: String,
+    /// The stage they were lost at.
+    pub stage: Stage,
+    /// How many there are.
+    pub count: u64,
+}
+
+impl Completeness {
+    /// Every placement recorded, placed or not.
+    pub fn placements(&self) -> u64 {
+        self.left_out.iter().fold(self.placed, |total, group| {
+            total.saturating_add(group.count)
+        })
+    }
+
+    /// How many placements were left out.
+    pub fn left_out_count(&self) -> u64 {
+        self.placements().saturating_sub(self.placed)
+    }
+
+    /// Whether every placement was placed.
+    pub fn is_complete(&self) -> bool {
+        self.left_out.is_empty()
+    }
 }
 
 /// What a writer made of the design: which form it wrote and what became of the history.
@@ -281,6 +324,16 @@ impl Report {
     /// What the writer made of the design, when it said.
     pub fn outcome(&self) -> Option<&Outcome> {
         self.outcome.as_ref()
+    }
+
+    /// Records how much of the assembly was placed.
+    pub fn set_completeness(&mut self, completeness: Completeness) {
+        self.completeness = Some(completeness);
+    }
+
+    /// How much of the assembly was placed, for an assembly.
+    pub fn completeness(&self) -> Option<&Completeness> {
+        self.completeness.as_ref()
     }
 
     /// The recorded losses, in the order they occurred.

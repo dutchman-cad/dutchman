@@ -48,6 +48,7 @@ version (`dutchman.convert/2`).
 | `verification.status` | `verified`: the history was replayed in SolidCraft and matches the original. `unverified`: the history was written without that check (`reason` says why: no `solidcraft-cli`, a timeout, `--no-verify`). `flattened`: the design has a history but it was not written (`reason`: the first feature that does not map, or `replay differs (…)`). `not_applicable`: there was no history to write, or `--import-only`. |
 | `history.features` | Every source feature in timeline order. `status`: `mapped`, `not_needed` (the target needs no feature, e.g. a principal datum plane), `left_out` (suppressed in the source), `blocked` (does not map; `reason` says why). |
 | `history.mapped`, `history.total` | Mapped or not-needed features, out of all but left-out ones. |
+| `completeness` | For an assembly: how much of it was placed. `placed` and `placements` count every placement the assembly and its placed sub-assemblies record, a sub-assembly's as often as it is placed. `left_out` lists those not placed by cause, most first: `file` (the file placed, or `null`), `reason`, `stage` and `count`. Absent for a single part. |
 | `losses` | What did not survive intact. `level` is `Info` (no effect on geometry), `Degraded` (carried in a weaker form) or `Dropped` (left out). `code` is cadmpeg's stable loss code when cadmpeg reported it, else `null`; `subject` says what was affected; `message` is for people. `stage` and `upstream` say where it arose (below). |
 
 A failure carries `"ok": false`, `input` and `error`, and exits 1:
@@ -124,8 +125,9 @@ what carries across.
 
 ## `dutchman.inspect/1`
 
-The same fields as `convert` except `output`, plus `geometry`, `conversion`, and for an
-assembly `assembly: {"parts": <part files read>, "placements": <parts placed>}`:
+The same fields as `convert` except `output` (with `completeness` for an assembly), plus
+`geometry`, `conversion`, and for an assembly
+`assembly: {"parts": <part files read>, "placements": <parts placed at the top level>}`:
 
 ```json
 {

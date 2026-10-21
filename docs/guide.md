@@ -278,6 +278,22 @@ there.
 
 ## Reading the loss report
 
+An assembly's conversion first says how complete it is, under the line saying what was
+written:
+
+```text
+converted  top.iam -> out/top.solidcraft (geometry without history)
+assembly: 18 of 20 placements placed; 2 left out:
+  pin.ipt ×2: not found at its stored path or in the project folder /work/Robot
+```
+
+The count takes in every placement the assembly and its sub-assemblies record, each
+sub-assembly as often as it is placed. Each cause names the file and how many placements it
+cost. A part not found usually means its project folder is elsewhere: give it with
+`--project`, or a library with `--search` (see
+[Finding the part files](inventor.md#finding-the-part-files)). `inspect` says the same as
+`would place: …`.
+
 Every conversion lists what it could not carry across intact. Each line reads
 `LEVEL: SUBJECT: MESSAGE`:
 

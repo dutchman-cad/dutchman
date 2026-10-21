@@ -34,6 +34,7 @@ fn placed_twice() -> Model {
         source_file: Some("pair.iam".to_owned()),
         assembly: Some(Assembly {
             joints: Vec::new(),
+            left_out: Vec::new(),
             parts: vec![part.clone()],
             placements: vec![
                 Placement {
@@ -149,6 +150,7 @@ fn nested() -> Model {
         source_file: Some("top.iam".to_owned()),
         assembly: Some(Assembly {
             joints: Vec::new(),
+            left_out: Vec::new(),
             parts: vec![pair, cube.clone()],
             placements: vec![
                 Placement {

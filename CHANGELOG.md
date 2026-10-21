@@ -19,6 +19,12 @@ report's schema name changes when a field does).
 
 ### Assemblies and components
 
+- An assembly's conversion says how complete it is, before you open it: `assembly: 18 of 20
+  placements placed; 2 left out:`, then each cause with its file and count, counting through
+  sub-assemblies as often as they are placed. `convert`, `convert-all` and `inspect` print it;
+  the JSON reports carry it as `completeness`. The desktop app marks such a file
+  **Incomplete**, shows the count and the causes on its card, and counts incomplete files in
+  the run's summary. The anonymous report counts them as `incomplete`.
 - Inventor assemblies find their parts as Inventor does: at the stored path, relative or with
   the saving machine's drive or root moved onto this one, else by name anywhere under the
   project folder (the nearest above holding an `.ipj`, the folder given to `convert-all`, or

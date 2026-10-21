@@ -211,6 +211,11 @@ pub fn text(report: &Value, verbose: bool) -> String {
     {
         out.push_str(&line(result));
         out.push('\n');
+        for line in report::completeness_lines(result) {
+            out.push_str("           ");
+            out.push_str(&line);
+            out.push('\n');
+        }
         for loss in result
             .get("losses")
             .and_then(Value::as_array)
