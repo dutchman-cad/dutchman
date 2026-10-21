@@ -392,18 +392,19 @@ fn jointed() -> Model {
         [0.0, 0.0, 1.0, 0.0]
     ]);
     // Each connector frame is in its own part, placed so the joints hold the parts where they
-    // are stored: A's origin seen from B (30 mm on, a quarter turn round) is 30 mm along B's
-    // +Y, turned back; the root's origin seen from Top (at x = 100) is 100 mm back along X.
+    // are stored, the second facing the first (half a turn about x): A's origin seen from B
+    // (30 mm on, a quarter turn round) is 30 mm along B's +Y, turned back; the root's origin
+    // seen from Top (at x = 100) is 100 mm back along X.
     let frame = |key: Option<u32>| match key {
         Some(1) => serde_json::json!([
-            [0.0, 1.0, 0.0, 0.0],
+            [0.0, -1.0, 0.0, 0.0],
             [-1.0, 0.0, 0.0, 30.0],
-            [0.0, 0.0, 1.0, 0.0]
+            [0.0, 0.0, -1.0, 0.0]
         ]),
         Some(9) => serde_json::json!([
             [1.0, 0.0, 0.0, -100.0],
-            [0.0, 1.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0]
+            [0.0, -1.0, 0.0, 0.0],
+            [0.0, 0.0, -1.0, 0.0]
         ]),
         _ => serde_json::json!([
             [1.0, 0.0, 0.0, 0.0],
@@ -454,7 +455,7 @@ fn fixed_joints_become_rigid_joints_that_hold_the_parts_as_placed() {
     assert_eq!(joints.len(), 2);
     assert!(joints
         .iter()
-        .all(|j| j["kind"] == "rigid" && j["flip"] == true));
+        .all(|j| j["kind"] == "rigid" && j["flip"] == false));
     // The blocks: A's frame is its own origin; B's is the same place seen from B, which sits
     // 30 mm further along X, turned a quarter turn: A's origin is 30 mm along B's +Y.
     let blocks = &joints[0];
@@ -514,17 +515,18 @@ fn solidcraft_reads_each_joint_as_built_and_solves_without_moving_anything() {
         .unwrap();
     assert!(status.success());
     let results: Value = serde_json::from_str(&std::fs::read_to_string(results).unwrap()).unwrap();
-    // As built: each joint's two frames, as SolidCraft places them in the world, coincide.
+    // As built: each joint's two frames, as SolidCraft places them in the world, meet face to
+    // face: the same origin, opposite z axes.
     let joints = results[0]["joints"].as_array().unwrap();
     assert_eq!(joints.len(), 2, "{results}");
     for joint in joints {
         assert_eq!(joint["type"], "rigid");
-        for key in ["origin", "z"] {
+        for (key, sign) in [("origin", 1.0), ("z", -1.0)] {
             let a = joint["frame_a"][key].as_array().unwrap();
             let b = joint["frame_b"][key].as_array().unwrap();
             for (a, b) in a.iter().zip(b) {
                 assert!(
-                    (a.as_f64().unwrap() - b.as_f64().unwrap()).abs() < 1e-9,
+                    (a.as_f64().unwrap() - sign * b.as_f64().unwrap()).abs() < 1e-9,
                     "{}: {key} {a} vs {b}",
                     joint["name"]
                 );
@@ -547,7 +549,7 @@ fn solidcraft_reads_each_joint_as_built_and_solves_without_moving_anything() {
 
 /// The two blocks at the root (A at x 0–10, B at x 30–40), A fixed to the design, and B joined
 /// to A by `kind` about a vertical axis through (20, 0, 0), each connector frame given in its
-/// own part.
+/// own part, the second facing the first.
 fn hinged(kind: Value) -> Model {
     let mut model = with_components(false);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
@@ -557,6 +559,14 @@ fn hinged(kind: Value) -> Model {
             [1.0, 0.0, 0.0, x],
             [0.0, 1.0, 0.0, 0.0],
             [0.0, 0.0, 1.0, 0.0]
+        ])
+    };
+    // Half a turn about x, as the second frame faces the first.
+    let facing = |x: f64| {
+        serde_json::json!([
+            [1.0, 0.0, 0.0, x],
+            [0.0, -1.0, 0.0, 0.0],
+            [0.0, 0.0, -1.0, 0.0]
         ])
     };
     let side = |key: Option<u32>, at: Value| {
@@ -583,9 +593,14 @@ fn hinged(kind: Value) -> Model {
             1,
             serde_json::json!({"kind": "fixed"}),
             side(None, at(0.0)),
-            side(Some(0), at(0.0))
+            side(Some(0), facing(0.0))
         ),
-        joint(2, kind, side(Some(0), at(20.0)), side(Some(1), at(-10.0))),
+        joint(
+            2,
+            kind,
+            side(Some(0), at(20.0)),
+            side(Some(1), facing(-10.0))
+        ),
     ]);
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model.assembly = dutchman_core::local_assembly(&model).unwrap();

@@ -37,9 +37,12 @@ transform, and each component as a product definition.
 - **Joints** between components become SolidCraft joints: fixed ones rigid (their offset kept),
   revolute ones turning about the connector's z axis with their limits, slider ones along it.
   Each connector frame is in its own part, as cadmpeg gives it, which is how SolidCraft takes
-  it. Fusion can store a joined part where it was before its joints were solved, so Dutchman
-  places joined parts where their joints put them: from the parts no joint moves, each joint
-  places the part at its other end. A part two joints would place differently is reported,
+  it. The two frames meet face to face, as the faces they were snapped to do: same origin,
+  opposite z axes, the second half a turn about the first's x axis. Fusion can store a joined
+  part where it was before its joints were solved, so Dutchman places joined parts where their
+  joints put them: from the design's own root, each joint places the part at its other end; a
+  joint neither of whose parts is placed yet moves its first part to its second, as Fusion
+  moves the first part picked for a joint. A part two joints would place differently is reported,
   and SolidCraft reports the conflict when it solves. A joint to the design's root component
   holds its occurrence to the design. cadmpeg reads Fusion joint motion from its next release
   on (before it, every Fusion joint is fixed). A revolute limit on one side only is left out,
@@ -57,6 +60,10 @@ transform, and each component as a product definition.
 2. **Joint motion.** cadmpeg reads revolute and slider joints, and revolute limits, from its
    next release; other motion types, slider limits and one-sided limits stay fixed with its
    `assembly.joint-motion-undecoded` loss, which the report carries.
+3. **Joints between referenced designs.** In an `.f3z`, a joint names each part by its design's
+   Fusion document id and occurrence id, which cadmpeg does not yet tie to the occurrences it
+   merges, and the merged occurrences do not say which bodies they hold; such a design converts
+   as stored.
 
 `.f3z` multi-document archives (a design with the designs it references) convert like `.f3d`:
 cadmpeg merges the referenced designs into the root design with their placements, as

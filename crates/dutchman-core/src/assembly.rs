@@ -38,8 +38,11 @@ pub struct Assembly {
     pub joints: Vec<Joint>,
 }
 
-/// A joint between two placed parts. Its parts are placed where the joint puts them:
-/// `A · frame_a · motion = B · frame_b`, with A and B the sides' placements in the world.
+/// A joint between two placed parts. Its frames meet face to face, as two mated faces do:
+/// their origins coincide and their z axes oppose, the second frame half a turn about the
+/// first's x axis. Its parts are placed where the joint puts them,
+/// `A · frame_a · motion · half turn about x = B · frame_b`, with A and B the sides'
+/// placements in the world.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Joint {
     /// The first side: the indices of the placements leading to it, from the top assembly's
@@ -61,15 +64,15 @@ pub struct Joint {
 /// How a joint lets its second side move, and where it is now.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Motion {
-    /// Not at all: the frames coincide.
+    /// Not at all: the frames meet.
     Rigid,
-    /// Turning about the frames' z axis, now `angle` radians from where their x axes agree,
+    /// Turning about the first frame's z axis, now `angle` radians from where the frames meet,
     /// within `limits` (radians), when it has them.
     Revolute {
         angle: f64,
         limits: Option<(f64, f64)>,
     },
-    /// Sliding along the frames' z axis, now `distance` mm from where they coincide.
+    /// Sliding along the first frame's z axis, now `distance` mm from where the frames meet.
     Slider { distance: f64 },
 }
 
@@ -85,6 +88,20 @@ impl Motion {
                 out
             }
         }
+    }
+}
+
+/// Half a turn about x: how the second frame of a joint meets the first.
+const FACING: Placement3x4 = [
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, -1.0, 0.0, 0.0],
+    [0.0, 0.0, -1.0, 0.0],
+];
+
+impl Joint {
+    /// The placement of the second frame in the first, where the joint is now.
+    pub fn meeting(&self) -> Placement3x4 {
+        compose(&self.motion.transform(), &FACING)
     }
 }
 
@@ -411,22 +428,15 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
 }
 
 /// Places the parts the joints join where the joints put them, as cadmpeg's own placements
-/// of joined parts may be where they were before the joints were solved. Parts no joint
-/// moves keep their placements; from them, each joint places the side not yet placed. A
-/// joint whose two sides were both placed already is left for SolidCraft to check, with a
-/// note when they do not meet.
+/// of joined parts may be where they were before the joints were solved. The design itself
+/// stays put; from it, each joint places the side not yet placed. A joint neither of whose
+/// sides is placed yet keeps its second side and moves its first to it, as Fusion moves the
+/// first part picked for a joint to the second. A joint whose two sides were both placed
+/// already is left for SolidCraft to check, with a note when they do not meet.
 fn place_by_joints(assembly: &mut Assembly) -> Vec<String> {
     let joints = assembly.joints.clone();
     let mut notes = Vec::new();
     let mut fixed: BTreeSet<Vec<usize>> = BTreeSet::from([Vec::new()]);
-    let moved: BTreeSet<&Vec<usize>> = joints.iter().flat_map(|j| [&j.a, &j.b]).collect();
-    for joint in &joints {
-        for side in [&joint.a, &joint.b] {
-            if !moved.contains(side) {
-                fixed.insert(side.clone());
-            }
-        }
-    }
     let mut pending: Vec<usize> = (0..joints.len()).collect();
     while !pending.is_empty() {
         let next = pending
@@ -445,7 +455,7 @@ fn place_by_joints(assembly: &mut Assembly) -> Vec<String> {
         else {
             continue;
         };
-        let reach = compose(&compose(&a, &joint.frame_a), &joint.motion.transform());
+        let reach = compose(&compose(&a, &joint.frame_a), &joint.meeting());
         match (fixed.contains(&joint.a), fixed.contains(&joint.b)) {
             (true, true) => {
                 let b_frame = compose(&b, &joint.frame_b);
@@ -457,25 +467,22 @@ fn place_by_joints(assembly: &mut Assembly) -> Vec<String> {
                     ));
                 }
             }
-            (false, true) => {
-                // A goes where B's frame, taken back through the motion, meets A's frame.
-                let at = compose(
-                    &compose(
-                        &compose(&b, &joint.frame_b),
-                        &inverse(&joint.motion.transform()),
-                    ),
-                    &inverse(&joint.frame_a),
-                );
-                set_world_at(assembly, &joint.a, &at);
-                fixed.insert(joint.a.clone());
-            }
-            _ => {
-                fixed.insert(joint.a.clone());
+            (true, false) => {
                 set_world_at(
                     assembly,
                     &joint.b,
                     &compose(&reach, &inverse(&joint.frame_b)),
                 );
+                fixed.insert(joint.b.clone());
+            }
+            (false, _) => {
+                // A goes where B's frame, taken back through the joint, meets A's frame.
+                let at = compose(
+                    &compose(&compose(&b, &joint.frame_b), &inverse(&joint.meeting())),
+                    &inverse(&joint.frame_a),
+                );
+                set_world_at(assembly, &joint.a, &at);
+                fixed.insert(joint.a.clone());
                 fixed.insert(joint.b.clone());
             }
         }
@@ -1453,9 +1460,14 @@ mod tests {
         ]
     }
 
+    /// `frame` turned half a turn about its x axis, as a joint's frame faces the other.
+    fn facing(frame: Placement3x4) -> Placement3x4 {
+        compose(&frame, &FACING)
+    }
+
     /// Block 2's placement in the world (and the joint, and the notes) once one joint `kind`
-    /// joins block 1 (placed at x = 100 in the world) and block 2 (stored at x = 130) with
-    /// these connectors.
+    /// joins block 2 (stored at x = 130) to block 1 (placed at x = 100 in the world) with
+    /// these connectors, block 2's first.
     fn joined(kind: Value, a: Value, b: Value) -> (Placement3x4, Joint, Vec<String>) {
         let model = with_joints(nested(false, None), json!([joint(1, kind, a, b)]));
         let (assembly, notes) = local_components(&model).unwrap().unwrap();
@@ -1468,42 +1480,56 @@ mod tests {
     }
 
     #[test]
-    fn a_joint_places_its_second_part_where_its_frames_meet() {
-        // A hinge 10 mm past block 1's origin and at block 2's own origin: whatever block 2's
-        // stored placement, the joint puts it at x = 110.
-        let (world, joint, notes) = joined(
-            json!({"kind": "revolute"}),
-            connector_at(1, &[], at([10.0, 0.0, 0.0], 0.0)),
-            connector_at(2, &[], at([0.0, 0.0, 0.0], 0.0)),
-        );
+    fn a_joint_moves_its_first_part_to_where_its_frames_meet() {
+        // A hinge at block 2's own origin and 10 mm past block 1's, facing it: whatever block
+        // 2's stored placement, the joint puts it at x = 110, and block 1 stays.
+        let hinge = || {
+            (
+                connector_at(2, &[], at([0.0, 0.0, 0.0], 0.0)),
+                connector_at(1, &[], facing(at([10.0, 0.0, 0.0], 0.0))),
+            )
+        };
+        let (a, b) = hinge();
+        let (world, joint, notes) = joined(json!({"kind": "revolute"}), a, b);
         assert!(notes.is_empty(), "{notes:?}");
         assert!(near(&world, &at([110.0, 0.0, 0.0], 0.0)), "{world:?}");
-        assert_eq!(joint.frame_a, at([10.0, 0.0, 0.0], 0.0));
-        // Turned half a radian, block 2 turns with it about the hinge.
-        let (world, _, _) = joined(
-            json!({"kind": "revolute", "angle": 0.5}),
-            connector_at(1, &[], at([10.0, 0.0, 0.0], 0.0)),
-            connector_at(2, &[], at([0.0, 0.0, 0.0], 0.0)),
-        );
-        assert!(near(&world, &at([110.0, 0.0, 0.0], 0.5)), "{world:?}");
-        // A slider 7 mm out along z.
-        let (world, _, _) = joined(
-            json!({"kind": "slider", "distance": 7.0}),
-            connector_at(1, &[], at([10.0, 0.0, 0.0], 0.0)),
-            connector_at(2, &[], at([0.0, 0.0, 0.0], 0.0)),
-        );
-        assert!(near(&world, &at([110.0, 0.0, 7.0], 0.0)), "{world:?}");
-        // A fixed joint carries its offset: 5 mm along the frame, a quarter turn about it.
+        assert_eq!(joint.frame_a, at([0.0, 0.0, 0.0], 0.0));
+        // Turned half a radian, the second frame turns half a radian from the first, so block
+        // 2 turns back by as much about the hinge.
+        let (a, b) = hinge();
+        let (world, _, _) = joined(json!({"kind": "revolute", "angle": 0.5}), a, b);
+        assert!(near(&world, &at([110.0, 0.0, 0.0], -0.5)), "{world:?}");
+        // A slider 7 mm out along the first frame's z, which faces down once they meet.
+        let (a, b) = hinge();
+        let (world, _, _) = joined(json!({"kind": "slider", "distance": 7.0}), a, b);
+        assert!(near(&world, &at([110.0, 0.0, -7.0], 0.0)), "{world:?}");
+        // A fixed joint carries its offset in the first frame: 5 mm along it, then a quarter
+        // turn about it.
+        let (a, b) = hinge();
         let (world, _, _) = joined(
             json!({"kind": "fixed", "angle": std::f64::consts::FRAC_PI_2,
                    "translation_offset": [5.0, 0.0, 0.0]}),
-            connector_at(1, &[], at([10.0, 0.0, 0.0], 0.0)),
-            connector_at(2, &[], at([0.0, 0.0, 0.0], 0.0)),
+            a,
+            b,
         );
         assert!(
-            near(&world, &at([115.0, 0.0, 0.0], std::f64::consts::FRAC_PI_2)),
+            near(&world, &at([110.0, 5.0, 0.0], -std::f64::consts::FRAC_PI_2)),
             "{world:?}"
         );
+    }
+
+    #[test]
+    fn a_part_joined_by_its_face_stands_on_the_face_it_is_joined_to() {
+        // As Fusion stores a pin jointed onto a block: the pin's frame on its bottom face, z
+        // out of the face (down), and the block's on its top face 10 mm up, z up. The pin
+        // stands on the block, upright, whatever its stored placement.
+        let (world, _, notes) = joined(
+            json!({"kind": "fixed"}),
+            connector_at(2, &[], facing(IDENTITY)),
+            connector_at(1, &[], at([0.0, 0.0, 10.0], 0.0)),
+        );
+        assert!(notes.is_empty(), "{notes:?}");
+        assert!(near(&world, &at([100.0, 0.0, 10.0], 0.0)), "{world:?}");
     }
 
     #[test]
@@ -1512,10 +1538,10 @@ mod tests {
         // x = 30 in it): 30 mm in, it is block 2's own origin.
         let (world, joint, _) = joined(
             json!({"kind": "revolute"}),
-            connector_at(1, &[], at([10.0, 0.0, 0.0], 0.0)),
             connector_at(0, &["2"], at([30.0, 0.0, 0.0], 0.0)),
+            connector_at(1, &[], facing(at([10.0, 0.0, 0.0], 0.0))),
         );
-        assert!(near(&joint.frame_b, &IDENTITY), "{:?}", joint.frame_b);
+        assert!(near(&joint.frame_a, &IDENTITY), "{:?}", joint.frame_a);
         assert!(near(&world, &at([110.0, 0.0, 0.0], 0.0)), "{world:?}");
     }
 

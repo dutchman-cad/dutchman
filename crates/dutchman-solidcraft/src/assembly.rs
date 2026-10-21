@@ -253,7 +253,7 @@ impl Builder<'_> {
                 continue;
             };
             // Each frame is in its own part, and the parts are placed where the joint puts
-            // them (B's frame on A's, moved by the joint's value), so solving moves nothing.
+            // them (B's frame facing A's, moved by the joint's value), so solving moves nothing.
             let (kind, values, limits) = match &joint.motion {
                 Motion::Rigid => ("rigid", json!([]), json!([])),
                 Motion::Revolute { angle, limits } => (
@@ -274,7 +274,7 @@ impl Builder<'_> {
                 "b": {"occurrence": b, "snap": snap(&b_frame)},
                 "values": values,
                 "limits": limits,
-                "flip": true,
+                "flip": false,
                 "offset": 0.0,
                 "angle": 0.0,
             });
