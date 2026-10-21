@@ -23,6 +23,11 @@ report's schema name changes when a field does).
 - `inspect` says when converting a file would fail and why (`would write: nothing; …`, and
   `conversion` in `--json`), instead of predicting geometry it cannot write.
 
+### MCP server
+
+- A tool call with arguments the tool cannot take returns a failure report as structured
+  content too, the same shape as a failed conversion, not only text.
+
 ### Checks
 
 - When `solidcraft-cli` is found, geometry written without history is opened in SolidCraft too,

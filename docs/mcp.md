@@ -139,6 +139,20 @@ A conversion that fails is a tool error (`isError: true`) carrying its failure r
   "error":{"message":"SolidWorks assembly (.sldasm) files are not supported yet. Export a STEP file for SolidCraft to open, or follow the SolidWorks work in cadmpeg (https://github.com/cadmpeg/cadmpeg)."}}}}
 ```
 
+Arguments a tool cannot take (a missing `output`, an unknown argument, a mistyped value) fail
+the same way: a tool error carrying a failure report of the tool's schema, whose `error.message`
+says what is wrong. `input` is described when the call names one, else `null`:
+
+```json
+{"jsonrpc":"2.0","id":6,"result":{"isError":true,"content":"…","structuredContent":{
+  "schema":"dutchman.convert/1","ok":false,
+  "input":{"format":"fusion_archive","format_name":"Fusion archive (.f3d)","path":"/home/me/designs/part.f3d"},
+  "error":{"message":"output is required"}}}}
+```
+
+So a client checks `isError`, and finds the reason in `structuredContent.error.message` (or the
+same report as text in `content`) whichever way the call failed.
+
 Convert a folder. When any file fails, the whole call is a tool error, but the other files are
 still converted and each has its own report (shortened here):
 
