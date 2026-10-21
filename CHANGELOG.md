@@ -10,10 +10,10 @@ report's schema name changes when a field does).
 
 ### Formats
 
-- **FreeCAD** documents (`.FCStd`) convert, through cadmpeg 0.6.3's FreeCAD codec: their
-  geometry, and their components when cadmpeg says which bodies each owns. Feature history is
-  not mapped yet. FreeCAD support is the `freecad` cargo feature, on by default; a build
-  without it says that FreeCAD files convert in nightly builds. See
+- **FreeCAD** documents (`.FCStd`) convert in the nightly builds, through cadmpeg's FreeCAD
+  codec: their geometry, and their components when cadmpeg says which bodies each owns.
+  Stable builds say so instead, until a cadmpeg release reads FreeCAD solids right. FreeCAD
+  support is the `freecad` cargo feature, which the nightly build turns on. See
   [docs/freecad.md](docs/freecad.md).
 
 ### Feature history

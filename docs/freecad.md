@@ -1,27 +1,41 @@
 # FreeCAD documents (`.FCStd`)
 
-Dutchman reads FreeCAD documents through cadmpeg's `fcstd` codec, from cadmpeg 0.6.3 on, and
-writes them as SolidCraft designs.
+FreeCAD documents convert in the [nightly builds](https://github.com/dutchman-cad/dutchman/releases/tag/nightly)
+for now, through cadmpeg's `fcstd` codec. Stable releases list FreeCAD as not converting yet
+and answer a `.FCStd` file with "FreeCAD files convert in nightly builds for now".
+
+## Why only nightly
+
+cadmpeg 0.6.3 reads FreeCAD documents, but not yet their solids as FreeCAD shows them. Checked
+in SolidCraft, none of 18 single-part test documents (pads, pockets, revolves, holes, shells)
+came out as one solid of the right volume:
+
+- some of FreeCAD's faces are stored as replicas of curves, which SolidCraft leaves out, so
+  solids open as empty shells of zero volume;
+- the intermediate shapes FreeCAD keeps for each feature come through as bodies of their own,
+  beside the part;
+- revolved faces can face inwards, so their volume reads wrong.
+
+A cadmpeg release that takes only each Body's Tip shape, keeps those faces and sets their
+sense makes stable builds convert FreeCAD documents too; until then the nightly builds, made
+against cadmpeg's `main`, carry the fixes as they land.
 
 ## What converts
 
-- **Geometry.** Every solid and surface in the document, written as a SolidCraft import and,
-  with `solidcraft-cli`, checked in SolidCraft like any other import.
-- **Components.** A document whose cadmpeg model says which bodies each component owns
-  converts as SolidCraft components and occurrences, as a Fusion design does.
+- **Geometry**, written as a SolidCraft import and checked in SolidCraft like any other.
+- **Components**, when cadmpeg says which bodies each owns, as for a Fusion design.
 - **Feature history** is not mapped yet, so every document converts as geometry without
   history, and the report names the first feature that stopped it. FreeCAD's PartDesign
   Body, its sketches, Pads, Pockets, Revolutions, Holes and Thicknesses are the next to map.
 
-`dutchman inspect file.FCStd` shows what a document would carry across.
+## Building with FreeCAD
 
-## Builds without FreeCAD
+FreeCAD support is the `freecad` cargo feature of `dutchman` and `dutchman-gui`, off by
+default:
 
-FreeCAD support is the `freecad` cargo feature of `dutchman`, `dutchman-gui` and
-`dutchman-core`, on by default, so every release archive from 0.1.3 on, and every nightly, has it. A build made
-with `--no-default-features` leaves cadmpeg's FreeCAD codec out; it lists FreeCAD as not
-converting and answers a `.FCStd` file with "FreeCAD files convert in nightly builds for
-now", linking the [nightly builds](https://github.com/dutchman-cad/dutchman/releases/tag/nightly).
+```sh
+cargo build --release -p dutchman -p dutchman-gui --features dutchman/freecad,dutchman-gui/freecad
+```
 
 ## Testing without FreeCAD
 

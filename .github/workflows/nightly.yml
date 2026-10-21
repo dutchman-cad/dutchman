@@ -71,7 +71,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - shell: bash
         run: scripts/use-cadmpeg-main.sh "${{ needs.changes.outputs.cadmpeg }}"
-      - run: cargo test --workspace
+      - run: cargo test --workspace --features dutchman/freecad,dutchman-gui/freecad
 
   roundtrip:
     needs: changes
@@ -130,7 +130,8 @@ jobs:
           targets: ${{ matrix.target }}
       - shell: bash
         run: scripts/use-cadmpeg-main.sh "${{ needs.changes.outputs.cadmpeg }}"
-      - run: cargo build --release -p dutchman -p dutchman-gui --target ${{ matrix.target }}
+      # FreeCAD documents convert in nightly builds only, for now (docs/freecad.md).
+      - run: cargo build --release -p dutchman -p dutchman-gui --features dutchman/freecad,dutchman-gui/freecad --target ${{ matrix.target }}
       - name: Package
         shell: bash
         run: |

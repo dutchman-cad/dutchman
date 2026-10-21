@@ -13,7 +13,7 @@ name = "dutchman-gui"
 path = "src/main.rs"
 
 [features]
-default = ["freecad"]
+default = []
 # FreeCAD documents (.FCStd); see dutchman-core's feature of the same name.
 freecad = ["dutchman/freecad"]
 

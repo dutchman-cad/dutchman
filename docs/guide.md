@@ -276,7 +276,7 @@ Inventor part (.ipt)             converts  geometry; feature history waits on ca
 Inventor assembly (.iam)         converts  placed parts and sub-assemblies, read from their files in the project
 SolidWorks part (.sldprt)        converts  geometry; feature history waits on cadmpeg binding sketches and extrude profiles
 SolidWorks assembly (.sldasm)    not yet   nothing yet
-FreeCAD document (.FCStd)        converts  geometry, and components; feature history is not mapped yet
+FreeCAD document (.FCStd)        not yet   in nightly builds for now: https://github.com/dutchman-cad/dutchman/releases/tag/nightly
 ```
 
 The state of each format, and what is still missing upstream, is in [fusion.md](fusion.md),
