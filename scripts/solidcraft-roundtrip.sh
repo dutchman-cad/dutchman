@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# Converts every fixture with Dutchman and opens the result in SolidCraft's own CLI, failing
-# when SolidCraft cannot evaluate the design or a timeline feature errors.
+# Converts fixtures with Dutchman and opens each result in SolidCraft's own CLI, failing when
+# SolidCraft cannot evaluate the design, a timeline feature errors, or the geometry SolidCraft
+# reads differs from what the fixture holds: total volume, face count and bounding box.
 #
-#   scripts/solidcraft-roundtrip.sh <solidcraft-cli> <dutchman> <fixture>...
+#   scripts/solidcraft-roundtrip.sh <solidcraft-cli> <dutchman> <fixture>=<expected>...
+#
+# <expected> is <volume mm³>:<faces>:<min x,y,z>:<max x,y,z>, for example
+# 1000:6:0,0,0:10,10,10 for a 10 mm cube at the origin.
 set -euo pipefail
 
 sc=$1 dutchman=$2
@@ -11,24 +15,45 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 status=0
-for input in "$@"; do
+for case in "$@"; do
+    input=${case%%=*} expected=${case#*=}
     name=$(basename "${input%.*}")
     output="$work/$name.solidcraft"
-    "$dutchman" convert "$input" "$output"
+    "$dutchman" convert --import-only "$input" "$output"
     if ! "$sc" eval "$output" > "$work/$name.json"; then
         echo "FAIL $input: SolidCraft could not open the design" >&2
         status=1
         continue
     fi
-    if ! python3 -I - "$work/$name.json" <<'PY'
+    if ! python3 -I - "$work/$name.json" "$expected" <<'PY'
 import json, sys
+
 result = json.load(open(sys.argv[1]))
-errors = [f"{t['name']}: {t['error']}" for t in result["timeline"] if t.get("error")]
+volume, faces, low, high = sys.argv[2].split(":")
+want_low = [float(v) for v in low.split(",")]
+want_high = [float(v) for v in high.split(",")]
+
+problems = [f"{t['name']}: {t['error']}" for t in result["timeline"] if t.get("error")]
 bodies = result.get("bodies", [])
-if errors or not bodies:
-    print("\n".join(errors) or "no bodies", file=sys.stderr)
+if not bodies:
+    problems.append("no bodies")
+total = result.get("total", {})
+got_volume = total.get("volume_mm3", 0.0)
+if abs(got_volume - float(volume)) > 1e-6 * max(1.0, float(volume)):
+    problems.append(f"volume {got_volume} mm³, expected {volume}")
+if total.get("faces") != int(faces):
+    problems.append(f"{total.get('faces')} faces, expected {faces}")
+if bodies:
+    got_low = [min(b["bbox"]["min"][i] for b in bodies) for i in range(3)]
+    got_high = [max(b["bbox"]["max"][i] for b in bodies) for i in range(3)]
+    if any(abs(g - w) > 1e-6 for g, w in zip(got_low + got_high, want_low + want_high)):
+        problems.append(f"bounding box {got_low}–{got_high}, expected {want_low}–{want_high}")
+for warning in result.get("warnings") or []:
+    problems.append(f"warning: {warning}")
+if problems:
+    print("\n".join(problems), file=sys.stderr)
     sys.exit(1)
-print(", ".join(f"{b['name']} ({b['kernel']['faces']} faces)" for b in bodies))
+print(f"{got_volume:g} mm³, {total.get('faces')} faces")
 PY
     then
         echo "FAIL $input" >&2
