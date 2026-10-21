@@ -719,3 +719,93 @@ fn inspecting_an_assembly_maps_each_parts_history() {
         ]
     );
 }
+/// The cube history followed by a pattern of its extrude, laid out by `layout`.
+fn patterned(layout: Value) -> Model {
+    let mut model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "id": "f3d:model:feature#3",
+            "ordinal": 2,
+            "name": "Copies",
+            "suppressed": false,
+            "definition": {
+                "definition": "pattern",
+                "seeds": [{"kind": "feature", "value": "f3d:model:feature#2"}],
+                "pattern": layout,
+            },
+        }));
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn a_feature_pattern_names_its_seed() {
+    let model = patterned(json!({"kind": "linear",
+        "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 20.0, "count": 3}));
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("3 of 3 features mapped"),
+        "{}",
+        history_line(&report)
+    );
+    let pattern = &document["features"][2];
+    assert_eq!(pattern["type"], "pattern");
+    assert_eq!(pattern["features"], json!(["Block"]));
+}
+
+#[test]
+fn solidcraft_replays_feature_patterns() {
+    let Some(cli) = solidcraft() else { return };
+    let linear = patterned(json!({"kind": "linear",
+        "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 20.0, "count": 3}));
+    let mut copies = volumes(&cli, &written(&linear).0);
+    copies.sort_by(f64::total_cmp);
+    assert_eq!(copies.iter().sum::<f64>(), 3000.0, "{copies:?}");
+    // Spacing is between instances: the third copy spans 40 to 50 mm.
+    let mut starts: Vec<f64> = bounds(&cli, &written(&linear).0)
+        .iter()
+        .map(|(min, _)| min[0])
+        .collect();
+    starts.sort_by(f64::total_cmp);
+    assert_eq!(starts, [0.0, 20.0, 40.0]);
+
+    let around = patterned(json!({"kind": "circular",
+        "axis_origin": {"x": -20.0, "y": 0.0, "z": 0.0},
+        "axis_dir": {"x": 0.0, "y": 0.0, "z": 1.0},
+        "angle": std::f64::consts::TAU, "count": 4}));
+    let copies = volumes(&cli, &written(&around).0);
+    assert!(
+        (copies.iter().sum::<f64>() - 4000.0).abs() < 1e-6,
+        "{copies:?}"
+    );
+}
+
+/// Each body's bounding box (min, max) as SolidCraft evaluates the design.
+fn bounds(cli: &Path, design: &[u8]) -> Vec<([f64; 3], [f64; 3])> {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("design.solidcraft");
+    let output = dir.path().join("eval.json");
+    std::fs::write(&input, design).unwrap();
+    let status = std::process::Command::new(cli)
+        .arg("eval")
+        .arg(&input)
+        .arg("--json-out")
+        .arg(&output)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let result: Value = serde_json::from_str(&std::fs::read_to_string(output).unwrap()).unwrap();
+    let corner = |v: &Value| [0, 1, 2].map(|i| v[i].as_f64().unwrap());
+    result["bodies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| (corner(&b["bbox"]["min"]), corner(&b["bbox"]["max"])))
+        .collect()
+}
