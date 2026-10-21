@@ -17,13 +17,18 @@ enum Status {
 }
 
 /// What Dutchman does with each format, in the order listed.
-fn rows() -> [(Format, Status, &'static str); 5] {
+fn rows() -> [(Format, Status, &'static str); 6] {
     [
         (
             Format::FusionArchive,
             Status::Converts,
             "geometry; feature history (sketches, constraints, dimensions, extrudes, revolves) \
              when every feature maps; components when the file says which bodies they own",
+        ),
+        (
+            Format::FusionMultiDocument,
+            Status::Converts,
+            "as a Fusion archive, with the designs it references merged in by cadmpeg",
         ),
         (
             Format::InventorPart,

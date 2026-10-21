@@ -10,6 +10,8 @@ pub enum Format {
     InventorAssembly,
     /// Autodesk Fusion archive (`.f3d`).
     FusionArchive,
+    /// Autodesk Fusion multi-document archive (`.f3z`): a design with the designs it references.
+    FusionMultiDocument,
     /// SolidWorks part (`.sldprt`).
     SolidWorksPart,
     /// SolidWorks assembly (`.sldasm`).
@@ -18,10 +20,11 @@ pub enum Format {
 
 impl Format {
     /// Every recognised format.
-    pub const ALL: [Format; 5] = [
+    pub const ALL: [Format; 6] = [
         Format::InventorPart,
         Format::InventorAssembly,
         Format::FusionArchive,
+        Format::FusionMultiDocument,
         Format::SolidWorksPart,
         Format::SolidWorksAssembly,
     ];
@@ -32,6 +35,7 @@ impl Format {
             Format::InventorPart => "inventor_part",
             Format::InventorAssembly => "inventor_assembly",
             Format::FusionArchive => "fusion_archive",
+            Format::FusionMultiDocument => "fusion_multi_document",
             Format::SolidWorksPart => "solidworks_part",
             Format::SolidWorksAssembly => "solidworks_assembly",
         }
@@ -43,6 +47,7 @@ impl Format {
             Format::InventorPart => "ipt",
             Format::InventorAssembly => "iam",
             Format::FusionArchive => "f3d",
+            Format::FusionMultiDocument => "f3z",
             Format::SolidWorksPart => "sldprt",
             Format::SolidWorksAssembly => "sldasm",
         }
@@ -54,6 +59,7 @@ impl Format {
             Format::InventorPart => "Inventor part (.ipt)",
             Format::InventorAssembly => "Inventor assembly (.iam)",
             Format::FusionArchive => "Fusion archive (.f3d)",
+            Format::FusionMultiDocument => "Fusion multi-document archive (.f3z)",
             Format::SolidWorksPart => "SolidWorks part (.sldprt)",
             Format::SolidWorksAssembly => "SolidWorks assembly (.sldasm)",
         }
@@ -63,7 +69,7 @@ impl Format {
     pub fn family(self) -> &'static str {
         match self {
             Format::InventorPart | Format::InventorAssembly => "Inventor",
-            Format::FusionArchive => "Fusion",
+            Format::FusionArchive | Format::FusionMultiDocument => "Fusion",
             Format::SolidWorksPart | Format::SolidWorksAssembly => "SolidWorks",
         }
     }
@@ -86,7 +92,7 @@ impl Format {
     /// The cadmpeg codec that decodes this format, when Dutchman is built with it.
     pub fn codec_id(self) -> Option<&'static str> {
         match self {
-            Format::FusionArchive => Some("f3d"),
+            Format::FusionArchive | Format::FusionMultiDocument => Some("f3d"),
             Format::InventorPart | Format::InventorAssembly => Some("inventor"),
             Format::SolidWorksPart => Some("sldprt"),
             Format::SolidWorksAssembly => None,
