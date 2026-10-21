@@ -34,7 +34,8 @@ pub(crate) struct History {
     /// The looks of the bodies the history makes, by body name.
     pub(crate) looks: BTreeMap<String, Value>,
     /// Looks of faces of those bodies that differ from their body's, as SolidCraft face looks
-    /// (a point on the face, in the design's frame).
+    /// (a point on the face, in the frame the body is built in: the design's, or its
+    /// component's inside an assembly, which SolidCraft applies to every occurrence).
     pub(crate) face_looks: Vec<Value>,
     /// The id the next feature after the history takes.
     pub(crate) next_id: u64,
@@ -125,6 +126,71 @@ impl History {
             }
         }
         self.next_id = self.next_id.saturating_add(offset);
+    }
+
+    /// Renames each body this history names that `taken` already holds to `<name> (<label>)`,
+    /// in its features, looks and face looks, so bodies of different parts of one design
+    /// keep their own looks; then adds the names it uses to `taken`.
+    pub(crate) fn rename_bodies(
+        &mut self,
+        label: &str,
+        taken: &mut std::collections::BTreeSet<String>,
+    ) {
+        let names: std::collections::BTreeSet<String> = self
+            .features
+            .iter()
+            .filter_map(|feature| feature.get("body_names").and_then(Value::as_array))
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect();
+        let mut renamed = BTreeMap::new();
+        for name in names {
+            let mut new = name.clone();
+            let mut n = 2;
+            while taken.contains(&new) {
+                new = if n == 2 {
+                    format!("{name} ({label})")
+                } else {
+                    format!("{name} ({label} {n})")
+                };
+                n += 1;
+            }
+            taken.insert(new.clone());
+            if new != name {
+                renamed.insert(name, new);
+            }
+        }
+        if renamed.is_empty() {
+            return;
+        }
+        let rename = |name: &str| {
+            renamed
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| name.to_owned())
+        };
+        for feature in &mut self.features {
+            if let Some(names) = feature.get_mut("body_names").and_then(Value::as_array_mut) {
+                for name in names {
+                    if let Some(old) = name.as_str() {
+                        *name = Value::String(rename(old));
+                    }
+                }
+            }
+        }
+        self.looks = std::mem::take(&mut self.looks)
+            .into_iter()
+            .map(|(name, look)| (rename(&name), look))
+            .collect();
+        for face in &mut self.face_looks {
+            if let Some(fields) = face.as_object_mut() {
+                if let Some(old) = fields.get("body").and_then(Value::as_str) {
+                    let new = rename(old);
+                    fields.insert("body".to_owned(), Value::String(new));
+                }
+            }
+        }
     }
 }
 

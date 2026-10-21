@@ -180,10 +180,14 @@ and synthetic files from cadmpeg's public test suite (provenance in
   occurrence per placement; see inventor.md). Each part keeps its own feature history when it
   maps and checks out as a single part's would: its features are authored in its component,
   their ids moved into the design's, and parameters whose names another part already uses are
-  renamed with the component's name (`Second_d1`) wherever they are used. Joints come next.
+  renamed with the component's name (`Second_d1`) wherever they are used; so are bodies whose
+  names another part already uses (`Body (Second)`), so each keeps its own colours. Joints
+  come next.
 - **Appearances**: body and face colours carry across: through STEP for imports; as looks for
   replayed bodies, with a planar face's own colour placed by a point inside the face (curved
-  faces, and faces of parts inside assemblies, keep their body's colour). Materials come next.
+  faces keep their body's colour). Inside an assembly the point is in the part's own frame,
+  which SolidCraft applies to every occurrence of the part. Materials come next, once cadmpeg
+  gives physical materials (CADIR 0.6 carries appearances only).
 - More formats as cadmpeg's codecs mature. The state of each format and the upstream gaps that
   keep its history from replaying are tracked in [fusion.md](fusion.md),
   [inventor.md](inventor.md) and [sldprt.md](sldprt.md).
