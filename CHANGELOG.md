@@ -8,6 +8,12 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Desktop app
+
+- After **Convert**, the window scrolls to the results as the run starts, and to the first
+  file that failed or converted incomplete when it ends, so the first problem is on screen at
+  any window size.
+
 ### Reading
 
 - A part whose cadmpeg model fails cadmpeg's checks (a parameter name repeated in one scope,
