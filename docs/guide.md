@@ -234,7 +234,8 @@ Large batches:
   converted again; their results come from the journal.
 - **A report you can share.** `--report-anon FILE` also writes an anonymous report: counts by
   format, every loss and failure by cause and stage, and timings, with no file names, paths or
-  geometry. See [the report's fields](report-anon.md).
+  geometry. See [Testing Dutchman on your library](testing-your-library.md) and
+  [the report's fields](report-anon.md).
 
 Everything runs on your machine: Dutchman makes no network connections.
 

@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Testing Dutchman on your library
+    url: https://github.com/dutchman-cad/dutchman/blob/main/docs/testing-your-library.md
+    about: Run Dutchman over your own files and report what broke, without sharing a file.

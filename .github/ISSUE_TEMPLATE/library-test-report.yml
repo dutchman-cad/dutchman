@@ -1,0 +1,98 @@
+name: Library test report
+description: One cause from Dutchman's anonymous batch report (convert-all --report-anon). No design files.
+title: "[library] "
+labels: ["library-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for testing Dutchman on your library. One issue per distinct cause, please: one entry of `errors`, `losses` or `blocked_features` in your `report-anon.json`. See [Testing Dutchman on your library](https://github.com/dutchman-cad/dutchman/blob/main/docs/testing-your-library.md).
+
+        **Do not attach design files, the key file, the salt or the journal.** File here even when the report says `upstream: cadmpeg` or `upstream: solidcraft`; we take it upstream.
+  - type: dropdown
+    id: format
+    attributes:
+      label: Format
+      options:
+        - Fusion archive (.f3d)
+        - Fusion multi-document archive (.f3z)
+        - Inventor part (.ipt)
+        - Inventor assembly (.iam)
+        - SolidWorks part (.sldprt)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: source-version
+    attributes:
+      label: Version that made the files
+      description: The Fusion, Inventor or SolidWorks version or year, if you know it.
+      placeholder: "Fusion 2.0.20xxx, Inventor 2024, SolidWorks 2022, unknown"
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Stage
+      description: The cause's `stage` in the report.
+      options:
+        - input
+        - decode
+        - project
+        - map
+        - write
+        - solidcraft
+        - not given
+    validations:
+      required: true
+  - type: dropdown
+    id: upstream
+    attributes:
+      label: Upstream
+      description: The cause's `upstream` in the report.
+      options:
+        - none (null)
+        - cadmpeg
+        - solidcraft
+    validations:
+      required: true
+  - type: textarea
+    id: cause
+    attributes:
+      label: The cause
+      description: The entry as the report gives it (message or code, level, example, reason). Paste the JSON object if you like.
+      render: json
+    validations:
+      required: true
+  - type: input
+    id: counts
+    attributes:
+      label: Counts
+      description: "`files` and `occurrences` for this cause, and the run's total files."
+      placeholder: "12 files, 12 occurrences, of 1,034 files"
+    validations:
+      required: true
+  - type: input
+    id: ids
+    attributes:
+      label: File ids
+      description: A few of the cause's `file_ids`. They let us ask about a file later; only your key turns them back into files.
+      placeholder: "f3a9c0e1d2b4f5a6, f0b1c2d3e4f5a6b7"
+  - type: textarea
+    id: versions
+    attributes:
+      label: Versions
+      description: The report's `versions` block.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: What you expected, what the designs have in common, whether you would share one file privately with a maintainer (we will reply with a way; never attach it here).
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: I read what I am posting, and it holds no file names, paths, part or company names, and no design files.
+          required: true
