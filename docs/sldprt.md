@@ -43,8 +43,6 @@ SolidWorks fixtures (`dutchman inspect --json`).
    or face selections. SolidCraft finds edges by points on them and faces by persistent names,
    so these need typed historical or generated references first. The same gap holds for
    Fusion and Inventor.
-5. **Shared upstream issues.** cadmpeg/cadmpeg#255 (STEP face loops written reversed, so
-   SolidCraft can read solids inside out).
 
 A design whose sketches carry no sketch feature at all (only feature-input sketches) has, to
 Dutchman, no feature history: it converts as geometry, and its sketches are not carried.

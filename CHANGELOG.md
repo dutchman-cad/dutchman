@@ -6,7 +6,7 @@ report's schema name changes when a field does).
 
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
-## 0.1.0 (2026-10-20)
+## 0.1.0 (2026-10-21)
 
 The first release that converts designs. Native CAD files are read by
 [cadmpeg](https://github.com/cadmpeg/cadmpeg) 0.6 and written as
@@ -83,8 +83,6 @@ The first release that converts designs. Native CAD files are read by
   SolidWorks extrudes wait on cadmpeg resolving their profiles. See `docs/fusion.md`,
   `docs/inventor.md` and `docs/sldprt.md`.
 - Assembly joints wait on cadmpeg's next IR version.
-- Faithful histories are flattened when checked in SolidCraft until cadmpeg's STEP writer
-  orients face loops correctly (cadmpeg/cadmpeg#255). With `--no-verify` they are kept.
 
 ## 0.0.1
 

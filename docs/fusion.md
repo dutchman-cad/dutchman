@@ -43,9 +43,6 @@ transform, and each component as a product definition.
    some copy-and-paste designs) has no bodies, so that design converts as stored.
 2. **Joints and constraints between components** (cadmpeg lists intra-document
    multi-component structure and constraints as open).
-3. **Joints and constraints between components** (cadmpeg lists intra-document
-   multi-component structure and constraints as open).
-3. **Shared:** cadmpeg/cadmpeg#255 (STEP face loops written reversed).
 
 `.f3z` multi-document archives (a design with the designs it references) convert like `.f3d`:
 cadmpeg merges the referenced designs into the root design with their placements, as
