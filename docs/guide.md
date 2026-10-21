@@ -173,13 +173,22 @@ dutchman convert-all --jobs 2 --out-dir converted project
 
 ```text
 converted  project/generated_unit_cube.f3d -> converted/generated_unit_cube.solidcraft (import)
+           Degraded: f3d/material.not-transferred: Materials/appearances (.protein assets, ACT/design assignments) were not transferred.
+           Info: step/attribute.source-record-not-written: 7 source attribute record(s) were not written to STEP
+           Info: step/native.source-record-omitted: 45 source-native record(s) were not represented in STEP
+           Info: history: flattened: the design carries no feature history
 failed     project/sub/container_metadata_only.f3d: cannot read this design: no geometry could be read from this Fusion archive (.f3d) file
-converted  project/sub/solidworks_cube.sldprt -> converted/sub/solidworks_cube.solidcraft (import)
 converted  project/sub/synthetic_cube.ipt -> converted/sub/synthetic_cube.solidcraft (import)
-3 converted, 1 failed
+           Degraded: inventor/rse.segment-pair-untyped: Retained 1 structurally paired RSe segment(s) without record semantics.
+           Info: step/attribute.source-record-not-written: 7 source attribute record(s) were not written to STEP
+           Info: step/native.source-record-omitted: 67 source-native record(s) were not represented in STEP
+           Info: history: flattened: the design carries no feature history
+2 converted, 1 failed, 1 skipped (not in a format Dutchman knows)
 ```
 
-The exit code is 0 only when every file converted, else 1. `--jobs N` sets how many files
+Each converted file's loss report is listed beneath it. Files in the folders that are not in a
+format Dutchman knows (`notes.txt`, say) are skipped and counted at the end. The exit code is 0
+only when every file converted, else 1. `--jobs N` sets how many files
 convert at once (default: the machine's cores, at most 8). It takes the same options as
 `convert`, and `--json` prints one `dutchman.convert-all/1` report holding a
 `dutchman.convert/1` report per file. One run converts at most 10,000 files and searches

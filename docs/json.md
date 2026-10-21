@@ -67,13 +67,14 @@ design goes to `DIR`, keeping the folder layout below each folder named. A file 
 does not stop the others.
 
 ```json
-{"schema": "dutchman.convert-all/1", "ok": false, "converted": 2, "failed": 1,
+{"schema": "dutchman.convert-all/1", "ok": false, "converted": 2, "failed": 1, "skipped": 1,
  "results": [ {"schema": "dutchman.convert/1", "ok": true, "input": {…}, "output": {…}, …},
               {"schema": "dutchman.convert/1", "ok": false, "input": {…}, "error": {…}} ]}
 ```
 
 `results` holds one `dutchman.convert/1` report per file (inputs that are neither a file nor a
-folder come first), in the order found. `ok` is `true` only when every file converted; the
+folder come first), in the order found. `skipped` counts the files in the folders searched that
+are not in a format Dutchman knows; they are not converted and not reported one by one. `ok` is `true` only when every file converted; the
 exit code is then 0, else 1.
 
 ## `dutchman.formats/1`
