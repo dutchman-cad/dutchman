@@ -48,6 +48,12 @@ Convert, with one JSON report on stdout:
 dutchman convert --json part.f3d part.solidcraft
 ```
 
+Convert a whole project folder, four files at a time:
+
+```sh
+dutchman convert-all --json --jobs 4 --out-dir converted/ project/
+```
+
 Exit codes: `0` converted, `1` could not convert (the JSON report has `"ok": false` and
 `error.message`), `2` usage error. A written history is checked in SolidCraft when
 `solidcraft-cli` is found: set `SOLIDCRAFT_CLI` to its path, or pass `--solidcraft PATH`.

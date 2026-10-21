@@ -57,6 +57,24 @@ A failure carries `"ok": false`, `input` and `error.message`, and exits 1:
  "error": {"message": "SolidWorks assembly (.sldasm) files are not supported yet. …"}}
 ```
 
+## `dutchman.convert-all/1`
+
+`dutchman convert-all --json --out-dir DIR <files and folders>…` converts every file named, and
+every file Dutchman knows in the folders named (with their subfolders; symbolic links are not
+followed), several at a time (`--jobs N`, default: the machine's cores, at most 8). Each
+design goes to `DIR`, keeping the folder layout below each folder named. A file that fails
+does not stop the others.
+
+```json
+{"schema": "dutchman.convert-all/1", "ok": false, "converted": 2, "failed": 1,
+ "results": [ {"schema": "dutchman.convert/1", "ok": true, "input": {…}, "output": {…}, …},
+              {"schema": "dutchman.convert/1", "ok": false, "input": {…}, "error": {…}} ]}
+```
+
+`results` holds one `dutchman.convert/1` report per file (inputs that are neither a file nor a
+folder come first), in the order found. `ok` is `true` only when every file converted; the
+exit code is then 0, else 1.
+
 ## `dutchman.formats/1`
 
 `dutchman formats --json` lists the native formats Dutchman knows:
