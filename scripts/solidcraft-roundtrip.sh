@@ -48,8 +48,9 @@ if bodies:
     got_high = [max(b["bbox"]["max"][i] for b in bodies) for i in range(3)]
     if any(abs(g - w) > 1e-6 for g, w in zip(got_low + got_high, want_low + want_high)):
         problems.append(f"bounding box {got_low}–{got_high}, expected {want_low}–{want_high}")
-for warning in result.get("warnings") or []:
-    problems.append(f"warning: {warning}")
+for entry in result["timeline"]:
+    if entry.get("warning"):
+        problems.append(f"{entry['name']}: warning: {entry['warning']}")
 if problems:
     print("\n".join(problems), file=sys.stderr)
     sys.exit(1)

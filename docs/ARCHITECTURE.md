@@ -135,6 +135,12 @@ differs`). When no CLI is found (`--solidcraft PATH`, else `$SOLIDCRAFT_CLI`, el
 when it times out (`--verify-timeout`, default 120 s), or with `--no-verify`, the history is
 written and reported unverified. `--import-only` always writes the import design.
 
+Geometry written as an import is opened in the same CLI. When SolidCraft shows fewer faces
+than the model holds, refuses the design, or warns on its timeline (faces it cannot mesh), the
+report gets a `Degraded` `geometry` line saying so, since geometry that opens but is wrong would
+otherwise go unnoticed. An assembly is checked for warnings only, as its parts are placed any
+number of times.
+
 ## Errors and losses
 
 - **`Error`** stops a conversion: I/O, input over the size cap, unknown or not-yet-supported

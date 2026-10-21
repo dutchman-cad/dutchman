@@ -257,6 +257,13 @@ in `verification.status` in `--json`:
 | `flattened` | The design has a history, but it was not written: a feature does not map, or the replay differs from the original. The design is the geometry alone. |
 | `not_applicable` | There was no history to write, or `--import-only`. |
 
+When the design is written as geometry, the same `solidcraft-cli` opens it too. If SolidCraft
+shows fewer faces than the source model has, or warns about it (for example faces it cannot
+mesh), the report says so as `Degraded: geometry: …`, such as
+`Degraded: geometry: SolidCraft shows 3 of its 6 faces; solid 'unit cube': 3 face(s) could not be meshed and are not shown`.
+The geometry was written, but check it in SolidCraft before relying on it. `--no-verify`
+skips this check too.
+
 ## Open the result in SolidCraft
 
 In the SolidCraft app, use File, Open, or start it with the design:

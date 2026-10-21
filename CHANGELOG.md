@@ -8,6 +8,12 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Checks
+
+- When `solidcraft-cli` is found, geometry written without history is opened in SolidCraft too,
+  and the report says `Degraded: geometry: …` when SolidCraft shows fewer faces than the source
+  model has or warns about it.
+
 ### Desktop app
 
 - `dutchman-gui`: drop design files or folders, choose an output folder and convert. Each file

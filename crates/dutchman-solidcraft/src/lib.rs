@@ -36,6 +36,9 @@ pub const FORMAT: &str = "solidcraft/23";
 /// The report subject of the lines that say what became of the history.
 const HISTORY: &str = "history";
 
+/// The report subject of what SolidCraft shows of the written geometry.
+const GEOMETRY: &str = "geometry";
+
 /// Writes `.solidcraft` designs.
 #[derive(Clone, Debug)]
 pub struct SolidCraftWriter {
@@ -155,6 +158,28 @@ impl SolidCraftWriter {
     }
 }
 
+impl SolidCraftWriter {
+    /// Opens geometry written as an import in SolidCraft, when a SolidCraft CLI is found, and
+    /// reports it as Degraded when SolidCraft shows less of it than the model holds: geometry
+    /// that is wrong but opens would otherwise go unnoticed.
+    fn check_import(&self, model: &Model, design: &[u8], report: &mut Report) {
+        self.check_geometry(design, model.ir.model.faces.len(), report);
+    }
+
+    fn check_geometry(&self, design: &[u8], faces: usize, report: &mut Report) {
+        let Ok(cli) = verify::find_cli(&self.verification) else {
+            return;
+        };
+        match verify::check_import(&cli, self.timeout, design, faces) {
+            verify::Shown::Whole => {}
+            verify::Shown::Short(what) => report.push(Severity::Degraded, GEOMETRY, what),
+            verify::Shown::Unchecked(why) => {
+                report.push(Severity::Info, GEOMETRY, format!("not checked: {why}"));
+            }
+        }
+    }
+}
+
 impl Writer for SolidCraftWriter {
     fn extension(&self) -> &'static str {
         "solidcraft"
@@ -168,6 +193,8 @@ impl Writer for SolidCraftWriter {
     ) -> Result<(), Error> {
         if let Some(assembly) = &model.assembly {
             let bytes = assembly::write(self, model, assembly, report)?;
+            // Each part is placed any number of times, so only SolidCraft's own warnings count.
+            self.check_geometry(&bytes, 0, report);
             return out
                 .write_all(&bytes)
                 .map_err(|err| Error::Encode(format!("cannot write the design: {err}")));
@@ -240,6 +267,9 @@ impl Writer for SolidCraftWriter {
                 }
             }
         };
+        if outcome.mode == Mode::Import {
+            self.check_import(model, &bytes, report);
+        }
         report.set_outcome(outcome);
         out.write_all(&bytes)
             .map_err(|err| Error::Encode(format!("cannot write the design: {err}")))

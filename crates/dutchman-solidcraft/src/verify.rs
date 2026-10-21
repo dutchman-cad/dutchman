@@ -1,6 +1,7 @@
-//! Checks a written history against the original geometry by evaluating both in SolidCraft's
-//! own command-line tool. Dutchman has no kernel of its own, and evaluating both in the same
-//! SolidCraft makes any kernel difference cancel out.
+//! Checks written designs in SolidCraft's own command-line tool, since Dutchman has no kernel
+//! of its own: a written history against the original geometry (evaluating both in the same
+//! SolidCraft makes any kernel difference cancel out), and geometry written as an import
+//! against what the model holds.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -91,6 +92,50 @@ pub(crate) fn compare(cli: &Path, timeout: Duration, history: &[u8], original: &
     match_volumes(&replayed.volumes, &expected.volumes)
 }
 
+/// What SolidCraft shows of geometry written as an import.
+#[derive(Debug, PartialEq)]
+pub(crate) enum Shown {
+    /// Every face, with no warning.
+    Whole,
+    /// Less than the model holds, or with warnings; what.
+    Short(String),
+    /// The check could not be made; why.
+    Unchecked(String),
+}
+
+/// Evaluates `design`, written as an import of a model with `faces` faces, and says whether
+/// SolidCraft shows all of it.
+pub(crate) fn check_import(cli: &Path, timeout: Duration, design: &[u8], faces: usize) -> Shown {
+    let dir = match tempfile::tempdir() {
+        Ok(dir) => dir,
+        Err(err) => return Shown::Unchecked(format!("no scratch folder: {err}")),
+    };
+    let eval = match evaluate(cli, timeout, dir.path(), "import", design) {
+        Ok(Evaluation::Done(eval)) => eval,
+        Ok(Evaluation::Failed(why)) => {
+            return Shown::Short(format!("SolidCraft cannot open it: {why}"))
+        }
+        Err(why) => return Shown::Unchecked(why),
+    };
+    shown(&eval, faces)
+}
+
+fn shown(eval: &Eval, faces: usize) -> Shown {
+    let mut problems: Vec<String> = eval.errors.clone();
+    match eval.faces {
+        Some(shown) if shown < faces as u64 => {
+            problems.insert(0, format!("SolidCraft shows {shown} of its {faces} faces"));
+        }
+        _ => {}
+    }
+    problems.extend(eval.warnings.iter().cloned());
+    if problems.is_empty() {
+        Shown::Whole
+    } else {
+        Shown::Short(problems.join("; "))
+    }
+}
+
 /// Whether two sets of body volumes match, regardless of body order.
 fn match_volumes(replayed: &[f64], expected: &[f64]) -> Outcome {
     if replayed.len() != expected.len() {
@@ -119,6 +164,10 @@ fn match_volumes(replayed: &[f64], expected: &[f64]) -> Outcome {
 struct Eval {
     volumes: Vec<f64>,
     errors: Vec<String>,
+    /// The faces SolidCraft shows across every body, when it says.
+    faces: Option<u64>,
+    /// Warnings on timeline features, such as faces that could not be meshed.
+    warnings: Vec<String>,
 }
 
 enum Evaluation {
@@ -177,7 +226,7 @@ fn evaluate(
     parse(&value).map(Evaluation::Done)
 }
 
-/// The body volumes and timeline errors in a SolidCraft `eval` result.
+/// The body volumes, face count and timeline errors and warnings in a SolidCraft `eval` result.
 fn parse(value: &Value) -> Result<Eval, String> {
     let bodies = value
         .get("bodies")
@@ -191,21 +240,30 @@ fn parse(value: &Value) -> Result<Eval, String> {
                 .ok_or_else(|| format!("{CLI_NAME} result has a body without a volume"))
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let errors = value
+    let timeline = value
         .get("timeline")
         .and_then(Value::as_array)
-        .map(|timeline| {
-            timeline
-                .iter()
-                .filter_map(|entry| {
-                    let error = entry.get("error").and_then(Value::as_str)?;
-                    let name = entry.get("name").and_then(Value::as_str).unwrap_or("?");
-                    Some(format!("feature \"{name}\" failed: {error}"))
-                })
-                .collect()
+        .map_or(&[][..], Vec::as_slice);
+    let errors = timeline
+        .iter()
+        .filter_map(|entry| {
+            let error = entry.get("error").and_then(Value::as_str)?;
+            let name = entry.get("name").and_then(Value::as_str).unwrap_or("?");
+            Some(format!("feature \"{name}\" failed: {error}"))
         })
-        .unwrap_or_default();
-    Ok(Eval { volumes, errors })
+        .collect();
+    let warnings = timeline
+        .iter()
+        .filter_map(|entry| entry.get("warning").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect();
+    let faces = value.pointer("/total/faces").and_then(Value::as_u64);
+    Ok(Eval {
+        volumes,
+        errors,
+        faces,
+        warnings,
+    })
 }
 
 #[cfg(test)]
@@ -244,6 +302,30 @@ mod tests {
             eval.errors,
             ["feature \"Extrude1\" failed: profile not closed"]
         );
+    }
+
+    #[test]
+    fn an_import_shows_whole_unless_faces_are_missing_or_warned_about() {
+        let eval = |faces: u64, warning: Option<&str>| {
+            parse(&serde_json::json!({
+                "bodies": [{"volume_mm3": 1000.0}],
+                "timeline": [{"name": "cube", "error": null, "warning": warning}],
+                "total": {"faces": faces},
+            }))
+            .unwrap()
+        };
+        assert_eq!(shown(&eval(6, None), 6), Shown::Whole);
+        assert_eq!(
+            shown(
+                &eval(3, Some("solid 'cube': 3 face(s) could not be meshed")),
+                6
+            ),
+            Shown::Short(
+                "SolidCraft shows 3 of its 6 faces; solid 'cube': 3 face(s) could not be meshed"
+                    .to_owned()
+            )
+        );
+        assert!(matches!(shown(&eval(6, Some("odd")), 6), Shown::Short(_)));
     }
 
     #[test]
@@ -339,6 +421,31 @@ mod cli_tests {
             matches!(&outcome, Outcome::Unverified(why) if why.contains("timed out")),
             "{outcome:?}"
         );
+    }
+
+    fn import_check(script: &str) -> Shown {
+        let _turn = ONE_AT_A_TIME
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = tempfile::tempdir().unwrap();
+        let cli = fake_cli(dir.path(), script);
+        check_import(&cli, DEFAULT_TIMEOUT, b"design", 6)
+    }
+
+    #[test]
+    fn an_import_solidcraft_shows_short_is_reported() {
+        let whole =
+            "echo '{\"bodies\":[{\"volume_mm3\":1000}],\"timeline\":[],\"total\":{\"faces\":6}}'";
+        assert_eq!(import_check(whole), Shown::Whole);
+        let short = "echo '{\"bodies\":[{\"volume_mm3\":3.3}],\"timeline\":[{\"name\":\"cube\",\"error\":null,\"warning\":\"3 face(s) could not be meshed\"}],\"total\":{\"faces\":3}}'";
+        assert_eq!(
+            import_check(short),
+            Shown::Short(
+                "SolidCraft shows 3 of its 6 faces; 3 face(s) could not be meshed".to_owned()
+            )
+        );
+        assert!(matches!(import_check("exit 3"), Shown::Short(_)));
+        assert!(matches!(import_check("echo nonsense"), Shown::Unchecked(_)));
     }
 
     #[test]

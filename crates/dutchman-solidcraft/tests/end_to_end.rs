@@ -125,3 +125,31 @@ fn converts_to_an_import(file: &str) {
         golden.display()
     );
 }
+
+#[test]
+fn solidcraft_shows_every_face_of_each_cube() {
+    let Some(cli) = std::env::var_os(dutchman_solidcraft::CLI_ENV).map(PathBuf::from) else {
+        eprintln!("skipped: set SOLIDCRAFT_CLI to open the designs in SolidCraft");
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    for file in [
+        "generated_unit_cube.f3d",
+        "synthetic_cube.ipt",
+        "solidworks_cube.sldprt",
+    ] {
+        let report = convert(
+            &fixture(file),
+            &dir.path().join("cube.solidcraft"),
+            &SolidCraftWriter::new().verification(Verification::With(cli.clone())),
+        )
+        .unwrap();
+        let geometry: Vec<String> = report
+            .losses()
+            .iter()
+            .filter(|loss| loss.subject == "geometry")
+            .map(ToString::to_string)
+            .collect();
+        assert!(geometry.is_empty(), "{file}: {geometry:?}");
+    }
+}
