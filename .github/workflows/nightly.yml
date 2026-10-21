@@ -169,8 +169,41 @@ jobs:
             dist/${{ env.ARCHIVE }}.sha256
           retention-days: 7
 
+  macos-dmg:
+    needs: [changes, build]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.changes.outputs.dutchman }}
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dutchman-nightly-*-apple-darwin.tar.gz
+          path: artifacts
+          merge-multiple: true
+      - name: Package Dutchman.app
+        run: |
+          version=$(cargo metadata --format-version 1 --no-deps \
+            | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "dutchman"))')
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            tar xzf "artifacts/dutchman-nightly-${target}.tar.gz" -C artifacts
+          done
+          name="dutchman-nightly-macos-universal.dmg"
+          mkdir -p dist
+          scripts/macos-dmg.sh "$version" nightly \
+            artifacts/dutchman-nightly-aarch64-apple-darwin \
+            artifacts/dutchman-nightly-x86_64-apple-darwin "dist/$name"
+          (cd dist && shasum -a 256 "$name" > "$name.sha256")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dutchman-nightly-macos-universal.dmg
+          path: |
+            dist/dutchman-nightly-macos-universal.dmg
+            dist/dutchman-nightly-macos-universal.dmg.sha256
+          retention-days: 7
+
   publish:
-    needs: [changes, test, roundtrip, build]
+    needs: [changes, test, roundtrip, build, macos-dmg]
     runs-on: ubuntu-latest
     permissions:
       contents: write

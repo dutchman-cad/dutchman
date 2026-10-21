@@ -25,6 +25,11 @@ report's schema name changes when a field does).
 
 ### Releases
 
+- macOS: each release has a disk image, `dutchman-VERSION-macos-universal.dmg`, holding
+  **Dutchman.app** with its own icon, for Apple silicon and Intel, with the `dutchman` and
+  `dutchman-mcp` commands inside. It is signed ad hoc, not with a Developer ID; the guide shows
+  how to open it the first time. The archives stay as they were.
+
 - The README, and each release's notes, start with a direct download for each platform, with
   its checksum, and how to tell which Mac you have.
 - A nightly build: Dutchman's main built against cadmpeg's main every day, when either has

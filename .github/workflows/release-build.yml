@@ -1,7 +1,8 @@
 name: Release builds
 
 # Builds the dutchman command, the dutchman-mcp server and the dutchman-gui app for each
-# platform and keeps the archives as workflow artifacts.
+# platform and keeps the archives as workflow artifacts, with a macOS disk image holding
+# Dutchman.app for Apple silicon and Intel.
 # Nothing is published from here.
 
 on:
@@ -12,6 +13,7 @@ on:
     paths:
       - .github/workflows/release-build.yml
       - Cargo.toml
+      - scripts/macos-dmg.sh
 
 permissions:
   contents: read
@@ -84,4 +86,36 @@ jobs:
           path: |
             dist/${{ env.ARCHIVE }}
             dist/${{ env.ARCHIVE }}.sha256
+          retention-days: 30
+
+  macos-dmg:
+    needs: build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dutchman-*-apple-darwin.tar.gz
+          path: artifacts
+          merge-multiple: true
+      - name: Package Dutchman.app
+        run: |
+          version=$(cargo metadata --format-version 1 --no-deps \
+            | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "dutchman"))')
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            tar xzf "artifacts/dutchman-${version}-${target}.tar.gz" -C artifacts
+          done
+          name="dutchman-${version}-macos-universal.dmg"
+          mkdir -p dist
+          scripts/macos-dmg.sh "$version" "$version" \
+            "artifacts/dutchman-${version}-aarch64-apple-darwin" \
+            "artifacts/dutchman-${version}-x86_64-apple-darwin" "dist/$name"
+          (cd dist && shasum -a 256 "$name" > "$name.sha256")
+          echo "DMG=$name" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.DMG }}
+          path: |
+            dist/${{ env.DMG }}
+            dist/${{ env.DMG }}.sha256
           retention-days: 30
