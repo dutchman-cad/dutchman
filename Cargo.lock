@@ -193,7 +193,7 @@ dependencies = [
  "objc2-foundation 0.3.2",
  "parking_lot",
  "percent-encoding",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
  "x11rb",
 ]
 
@@ -592,9 +592,9 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "cadmpeg-asm"
-version = "0.6.2"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1e30b83e8cc4e3864f2483435e6a5791c48e70a4b6deea0fa15a663f5f8e2ab"
+checksum = "af13ecc21eec619688d015edf2187e2357d04aad5100f2a120e6f206fa4d0a75"
 dependencies = [
  "cadmpeg-core",
  "cadmpeg-ir",
@@ -604,9 +604,9 @@ dependencies = [
 
 [[package]]
 name = "cadmpeg-codec-f3d"
-version = "0.6.2"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54505b952b9cda11a1a8bd98fc4acf54a92e5b7efc83f549877b6632d9296cbd"
+checksum = "eaf41c27847e8b57185f98c26001ec304903a2cca3a0098c877c8d8eae22a423"
 dependencies = [
  "cadmpeg-asm",
  "cadmpeg-container",
@@ -626,9 +626,9 @@ dependencies = [
 
 [[package]]
 name = "cadmpeg-codec-inventor"
-version = "0.6.2"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95cc163d0779e6dc6a156c8580b06581799c2525d846bb461a7944a8e8efee15"
+checksum = "6c815fc4f6500d87648645f339554ebd76b2291fc28dba2bd37196e2b6c910b2"
 dependencies = [
  "cadmpeg-asm",
  "cadmpeg-container",
@@ -642,9 +642,9 @@ dependencies = [
 
 [[package]]
 name = "cadmpeg-codec-sldprt"
-version = "0.6.2"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af3bf53c3878a2218f077cd89cd32a9ce591a0a09cc8ed8957b9296ddf19129b"
+checksum = "fb9188fcb8dae57194b0213da0b960f0b889ca993ad8fdcab98acfedeb1bf243"
 dependencies = [
  "cadmpeg-container",
  "cadmpeg-core",
@@ -661,9 +661,9 @@ dependencies = [
 
 [[package]]
 name = "cadmpeg-codec-step"
-version = "0.6.2"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "08a9fe6b93af35c22b56cceccca9a8668dd1564e6544b8184c94d8b0d24a5ab5"
+checksum = "35e1b6d17cf26b31f59f2edab8ef5c29d2a33216c581fd913f012ad4869bd559"
 dependencies = [
  "base64 0.23.1",
  "cadmpeg-container",
@@ -678,37 +678,36 @@ dependencies = [
 
 [[package]]
 name = "cadmpeg-container"
-version = "0.6.2"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57950ab1450471cd674c635b00b18686e7f55366a6cf9961dabfc33fc6e420fb"
+checksum = "5ab7bcef48ac7480b4917820272d85cd2c9533e17904e15b0e4d22f19a6045bd"
 dependencies = [
  "cadmpeg-core",
  "crc32fast",
  "flate2",
  "zip",
- "zstd",
 ]
 
 [[package]]
 name = "cadmpeg-core"
-version = "0.6.2"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "45eac6de0b68d8ae9baf43e5f04780cc153100597ce73bd636c85b2059fee1bd"
+checksum = "e86bb7a40521832504bb1f5953a1c706b2c52aad73bf6d84e1b35e5cb0beae3f"
 dependencies = [
  "flate2",
  "memchr",
  "roxmltree 0.21.1",
+ "ruzstd",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
- "zstd",
 ]
 
 [[package]]
 name = "cadmpeg-ir"
-version = "0.6.2"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2cc818eeac208c9d09dc3a4f5ce4c431fe26acfab79ceb4a0a1570e03ff8bd55"
+checksum = "b570a1a8c579e407a9fd7bb10fa1900f8827f1d578b8fcb4ea2a056b5f323c72"
 dependencies = [
  "base64 0.23.1",
  "cadmpeg-core",
@@ -721,18 +720,18 @@ dependencies = [
 
 [[package]]
 name = "cadmpeg-parasolid"
-version = "0.6.2"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b7ca78dea14a05d84afd881d801189030b404f0f46c18d9370e5948ce945154"
+checksum = "e4ce6b70bbb33c4a2c2626488c482314fd3e367a8b42d783c4257e2cef234e2c"
 dependencies = [
  "cadmpeg-core",
 ]
 
 [[package]]
 name = "cadmpeg-protein"
-version = "0.6.2"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a12ffec0cd60836f7d6dd7662f4d1f21ac3f88fa03bdc29a0659fe5bdc6226e8"
+checksum = "95e7516087c0bb5ac54f6f9d28ee2a6add13158e7e5bb7606401dd3c05ceebdf"
 dependencies = [
  "cadmpeg-container",
  "cadmpeg-core",
@@ -745,9 +744,9 @@ dependencies = [
 
 [[package]]
 name = "cadmpeg-registry"
-version = "0.6.2"
+version = "0.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6952e28b9491c654f66bd317d30eeec83b6a78e12804097e42b7d640a09cce09"
+checksum = "b2be23469a9bca0b684f1811118fffb581ebd32ded08e6cc8b0716a41f8c1377"
 dependencies = [
  "cadmpeg-codec-f3d",
  "cadmpeg-codec-inventor",
@@ -1442,7 +1441,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3181,7 +3180,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3189,6 +3188,15 @@ name = "rustversion"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
+
+[[package]]
+name = "ruzstd"
+version = "0.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "69e4ce4a039f42bf25920b95667e4d789e98749ab11bbb8d2c2936f788421bb5"
+dependencies = [
+ "twox-hash",
+]
 
 [[package]]
 name = "same-file"
@@ -3540,10 +3548,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.5",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3742,6 +3750,12 @@ name = "ttf-parser"
 version = "0.25.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d2df906b07856748fa3f6e0ad0cbaa047052d4a7dd609e231c4f72cee8c36f31"
+
+[[package]]
+name = "twox-hash"
+version = "2.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86a801b3cea342a06d468c8710662aa29e5e05e4f5c0d62f00bbb7f2ad7941c2"
 
 [[package]]
 name = "type-map"
@@ -4266,7 +4280,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4898,7 +4912,6 @@ dependencies = [
  "memchr",
  "nix",
  "typed-path",
- "zstd",
 ]
 
 [[package]]
@@ -4912,34 +4925,6 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
-
-[[package]]
-name = "zstd"
-version = "0.14.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db3ae9bf90af6e40197bef767eeefc46ad6397420fe873830bd85e5fbbfb3c70"
-dependencies = [
- "zstd-safe",
-]
-
-[[package]]
-name = "zstd-safe"
-version = "8.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ded520f16b29e1a9b771c722221b2b0a0398c2316d9bb3c42b458a5414d7434b"
-dependencies = [
- "zstd-sys",
-]
-
-[[package]]
-name = "zstd-sys"
-version = "2.1.2+zstd.1.5.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "481ada9c543b2323cbb7bbdbb5249177fbf0188ed959ed2c15e4b22421c84ed3"
-dependencies = [
- "cc",
- "pkg-config",
-]
 
 [[package]]
 name = "zune-core"

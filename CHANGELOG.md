@@ -14,6 +14,10 @@ report's schema name changes when a field does).
   shows what was written and its losses, and opens in SolidCraft or in its folder. Day and Night
   themes, following the system's setting. It ships in the release archives.
 
+### Reading
+
+- Reads native files with cadmpeg 0.6.3.
+
 ### Feature history
 
 - Lofts through profiles of two or more sketches map onto SolidCraft lofts, when they have no
