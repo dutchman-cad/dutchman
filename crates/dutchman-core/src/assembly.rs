@@ -408,7 +408,10 @@ fn only(model: &Model, document: &Value, bodies: &[&str], name: String) -> Resul
         fields.insert("model".to_owned(), Value::Object(reduced));
         fields.remove("native");
     }
-    let ir = cadmpeg_ir::CadIr::from_json(&part.to_string())
+    // cadmpeg is third-party code; a panic in it is a reason, not a crash.
+    let text = part.to_string();
+    let ir = std::panic::catch_unwind(|| cadmpeg_ir::CadIr::from_json(&text))
+        .map_err(|_| "cadmpeg failed unexpectedly on a component's geometry".to_owned())?
         .map_err(|err| format!("a component's geometry does not stand alone: {err}"))?;
     Ok(Model {
         ir,

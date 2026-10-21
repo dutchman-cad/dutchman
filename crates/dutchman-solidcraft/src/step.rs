@@ -15,7 +15,21 @@ const PLACEHOLDER: &str = "'cadmpeg_model'";
 const MAX_STEP_BYTES: usize = 512 << 20;
 
 /// Restates the model as STEP AP214 text, recording what the restatement drops.
+///
+/// cadmpeg is third-party code run on models decoded from hostile input, so a panic inside it
+/// is caught and returned as [`Error::Encode`] instead of taking the process down.
 pub(crate) fn restate(model: &Model, report: &mut Report) -> Result<String, Error> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        restate_unguarded(model, report)
+    }))
+    .unwrap_or_else(|_| {
+        Err(Error::Encode(
+            "cadmpeg's STEP writer failed unexpectedly on this model".to_owned(),
+        ))
+    })
+}
+
+fn restate_unguarded(model: &Model, report: &mut Report) -> Result<String, Error> {
     let input = EncodeInput::new(&model.ir, model.fidelity.as_ref());
     let plan = build_encoder(Format::Step)
         .plan(input, TargetRequest::Explicit(SCHEMA))
