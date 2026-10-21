@@ -9,7 +9,6 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 use dutchman::{batch, formats, json, ConvertOptions};
 use dutchman_core::{Check, FeatureStatus, Format, Mode};
-use dutchman_solidcraft::SolidCraftWriter;
 use serde_json::Value;
 
 /// Ferries CAD designs between formats.
@@ -29,7 +28,7 @@ enum Command {
     Convert {
         /// The native design file to read (for example a `.f3d`, `.ipt` or `.sldprt`).
         input: PathBuf,
-        /// The `.solidcraft` file to write.
+        /// The `.solidcraft` file to write. An existing file is replaced, unless --no-clobber.
         output: PathBuf,
         #[command(flatten)]
         options: ConvertOptions,
@@ -43,7 +42,8 @@ enum Command {
         /// Files, and folders to search (with their subfolders) for files Dutchman knows.
         #[arg(required = true)]
         inputs: Vec<PathBuf>,
-        /// The folder to write the designs to, keeping each input folder's layout.
+        /// The folder to write the designs to, keeping each input folder's layout. Designs
+        /// already there are replaced, unless --no-clobber.
         #[arg(long, value_name = "DIR")]
         out_dir: PathBuf,
         /// How many files to convert at once (default: the machine's cores, at most 8).
@@ -80,7 +80,7 @@ fn main() -> ExitCode {
             output,
             options,
             json,
-        } => convert(&input, &output, &options.writer(), json, verbose),
+        } => convert(&input, &output, &options, json, verbose),
         Command::ConvertAll {
             inputs,
             out_dir,
@@ -88,7 +88,13 @@ fn main() -> ExitCode {
             options,
             json,
         } => {
-            let report = batch::convert_all(&inputs, &out_dir, &options.writer(), jobs);
+            let report = batch::convert_all(
+                &inputs,
+                &out_dir,
+                &options.writer(),
+                jobs,
+                !options.no_clobber,
+            );
             if json {
                 print_json(&report);
             } else {
@@ -111,11 +117,11 @@ fn main() -> ExitCode {
 fn convert(
     input: &Path,
     output: &Path,
-    writer: &SolidCraftWriter,
+    options: &ConvertOptions,
     as_json: bool,
     verbose: bool,
 ) -> ExitCode {
-    let report = dutchman::convert(input, output, writer);
+    let report = dutchman::convert(input, output, &options.writer(), !options.no_clobber);
     if as_json {
         print_json(&report);
     } else if let Some(message) = report.pointer("/error/message").and_then(Value::as_str) {

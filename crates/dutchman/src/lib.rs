@@ -29,6 +29,9 @@ pub struct ConvertOptions {
     /// Write history without checking it in SolidCraft.
     #[arg(long)]
     pub no_verify: bool,
+    /// Refuse to replace an existing .solidcraft file (by default it is replaced).
+    #[arg(long)]
+    pub no_clobber: bool,
     /// Seconds each SolidCraft check may run before the history is written unverified.
     #[arg(long, value_name = "SECONDS", default_value_t = DEFAULT_TIMEOUT.as_secs())]
     pub verify_timeout: u64,
@@ -40,6 +43,7 @@ impl Default for ConvertOptions {
             import_only: false,
             solidcraft: None,
             no_verify: false,
+            no_clobber: false,
             verify_timeout: DEFAULT_TIMEOUT.as_secs(),
         }
     }
@@ -61,9 +65,9 @@ impl ConvertOptions {
 }
 
 /// Converts `input` into `output`, writing nothing else, and returns the `dutchman.convert/1`
-/// report, failed or not.
-pub fn convert(input: &Path, output: &Path, writer: &SolidCraftWriter) -> Value {
-    match dutchman_core::convert(input, output, writer) {
+/// report, failed or not. An existing `output` is replaced only when `replace` is set.
+pub fn convert(input: &Path, output: &Path, writer: &SolidCraftWriter, replace: bool) -> Value {
+    match dutchman_core::convert_to(input, output, writer, replace) {
         Ok(report) => convert_success(input, output, &report),
         Err(err) => json::failure(json::CONVERT, json::input(input), &err.to_string()),
     }

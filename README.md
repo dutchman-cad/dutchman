@@ -112,7 +112,7 @@ server on stdio. It gives an agent four tools, each returning the same report as
 | Tool | Arguments | Returns |
 |---|---|---|
 | `inspect` | `input` | `dutchman.inspect/1` |
-| `convert` | `input`, `output`, and optionally `import_only`, `verify`, `solidcraft`, `verify_timeout` | `dutchman.convert/1` |
+| `convert` | `input`, `output`, and optionally `import_only`, `verify`, `solidcraft`, `verify_timeout`, `overwrite` | `dutchman.convert/1` |
 | `convert_all` | `inputs` (files and folders), `out_dir`, and optionally `jobs` and the convert options | `dutchman.convert-all/1` |
 | `formats` | none | `dutchman.formats/1` |
 

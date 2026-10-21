@@ -29,6 +29,8 @@ const DEFAULT_JOBS: usize = 8;
 pub struct Job {
     pub input: PathBuf,
     pub output: PathBuf,
+    /// Whether an existing design at `output` is replaced.
+    pub replace: bool,
 }
 
 /// What happens to a job while a batch runs.
@@ -41,18 +43,23 @@ pub enum Event {
 }
 
 /// Converts every file `inputs` names or holds into `out_dir`, `jobs` at a time, writing
-/// nothing outside `out_dir`, and returns the `dutchman.convert-all/1` report.
+/// nothing outside `out_dir` and replacing designs already there only when `replace` is set,
+/// and returns the `dutchman.convert-all/1` report.
 pub fn convert_all(
     inputs: &[PathBuf],
     out_dir: &Path,
     writer: &SolidCraftWriter,
     jobs: Option<NonZeroUsize>,
+    replace: bool,
 ) -> Value {
     let Plan {
-        jobs: work,
+        jobs: mut work,
         problems,
         skipped,
     } = plan(inputs, out_dir);
+    for job in &mut work {
+        job.replace = replace;
+    }
     let results = run(&work, writer, workers(jobs));
 
     let failed = results
@@ -211,6 +218,7 @@ pub fn plan(inputs: &[PathBuf], out_dir: &Path) -> Plan {
             jobs.push(Job {
                 input: path,
                 output,
+                replace: true,
             });
         }
     }
@@ -328,5 +336,5 @@ pub fn convert_job(job: &Job, writer: &SolidCraftWriter) -> Value {
             );
         }
     }
-    crate::convert(&job.input, &job.output, writer)
+    crate::convert(&job.input, &job.output, writer, job.replace)
 }

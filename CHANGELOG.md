@@ -28,6 +28,10 @@ report's schema name changes when a field does).
 - A tool call with arguments the tool cannot take returns a failure report as structured
   content too, the same shape as a failed conversion, not only text.
 
+- `--no-clobber` (`overwrite: false` in the MCP tools, and a checkbox in the desktop app) keeps an
+  existing `.solidcraft` file; that file's conversion fails instead. `--help` and the MCP tool
+  descriptions now say that an existing file is otherwise replaced.
+
 ### Checks
 
 - When `solidcraft-cli` is found, geometry written without history is opened in SolidCraft too,

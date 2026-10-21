@@ -193,6 +193,10 @@ fn option_properties() -> Map<String, Value> {
             "type": "string",
             "description": "Path of the SolidCraft CLI for the check (default: $SOLIDCRAFT_CLI, else solidcraft-cli on PATH).",
         },
+        "overwrite": {
+            "type": "boolean",
+            "description": "Replace an existing .solidcraft file at the output (default true). When false, an existing file is left alone and that file's conversion fails, saying so.",
+        },
         "verify_timeout": {
             "type": "integer",
             "minimum": 1,
@@ -214,7 +218,7 @@ fn tools() -> Value {
     convert.insert("input".to_owned(), input.clone());
     convert.insert(
         "output".to_owned(),
-        json!({"type": "string", "description": "Absolute path of the .solidcraft file to write. Nothing else is written."}),
+        json!({"type": "string", "description": "Absolute path of the .solidcraft file to write. An existing file there is replaced, unless overwrite is false. Nothing else is written."}),
     );
     let mut all = option_properties();
     all.insert(
@@ -228,7 +232,7 @@ fn tools() -> Value {
     );
     all.insert(
         "out_dir".to_owned(),
-        json!({"type": "string", "description": "Absolute path of the folder to write the designs to, keeping each input folder's layout. Nothing is written outside it."}),
+        json!({"type": "string", "description": "Absolute path of the folder to write the designs to, keeping each input folder's layout. Designs already there are replaced, unless overwrite is false. Nothing is written outside it."}),
     );
     all.insert(
         "jobs".to_owned(),
@@ -302,7 +306,13 @@ fn count(arguments: &Arguments, key: &str) -> Result<Option<NonZeroUsize>, Strin
     }
 }
 
-const OPTIONS: [&str; 4] = ["import_only", "verify", "solidcraft", "verify_timeout"];
+const OPTIONS: [&str; 5] = [
+    "import_only",
+    "verify",
+    "solidcraft",
+    "verify_timeout",
+    "overwrite",
+];
 
 fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
     let defaults = ConvertOptions::default();
@@ -313,6 +323,7 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
     Ok(ConvertOptions {
         import_only: flag(arguments, "import_only", false)?,
         no_verify: !flag(arguments, "verify", true)?,
+        no_clobber: !flag(arguments, "overwrite", true)?,
         solidcraft,
         verify_timeout: count(arguments, "verify_timeout")?
             .map_or(defaults.verify_timeout, |n| n.get() as u64),
@@ -322,10 +333,12 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
 fn convert(arguments: &Arguments) -> Result<Value, String> {
     only(arguments, &[&["input", "output"][..], &OPTIONS].concat())?;
     let (input, output) = (path(arguments, "input")?, path(arguments, "output")?);
+    let options = options(arguments)?;
     Ok(crate::convert(
         &input,
         &output,
-        &options(arguments)?.writer(),
+        &options.writer(),
+        !options.no_clobber,
     ))
 }
 
@@ -352,11 +365,13 @@ fn convert_all(arguments: &Arguments) -> Result<Value, String> {
     };
     let out_dir = path(arguments, "out_dir")?;
     let jobs = count(arguments, "jobs")?;
+    let options = options(arguments)?;
     Ok(crate::batch::convert_all(
         &inputs,
         &out_dir,
-        &options(arguments)?.writer(),
+        &options.writer(),
         jobs,
+        !options.no_clobber,
     ))
 }
 
