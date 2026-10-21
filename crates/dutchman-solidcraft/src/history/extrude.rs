@@ -198,12 +198,15 @@ pub(super) fn body_names(
         if let Some(look) = row.get("color").and_then(look) {
             ctx.looks.insert(name.clone(), look);
         }
+        if let Some(id) = row.get("id").and_then(Value::as_str) {
+            ctx.named_bodies.push((id.to_owned(), name.clone()));
+        }
     }
     Some(names)
 }
 
 /// A CADIR colour (`{r, g, b, a}`, 0 to 1) as a SolidCraft look.
-fn look(color: &Value) -> Option<Value> {
+pub(super) fn look(color: &Value) -> Option<Value> {
     let channel = |key: &str| number(color.get(key)).filter(|c| (0.0..=1.0).contains(c));
     let rgb = [channel("r")?, channel("g")?, channel("b")?].map(|c| (c * 255.0).round() as u8);
     let opacity = channel("a").unwrap_or(1.0);

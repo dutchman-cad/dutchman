@@ -112,8 +112,15 @@ pub(crate) fn history_design(
         "next_id": original.saturating_add(1),
         "features": features,
     });
-    if let (false, Some(fields)) = (history.looks.is_empty(), doc.as_object_mut()) {
-        fields.insert("appearances".to_owned(), json!({"bodies": history.looks}));
+    let has_looks = !history.looks.is_empty() || !history.face_looks.is_empty();
+    if let (true, Some(fields)) = (has_looks, doc.as_object_mut()) {
+        let mut appearances = json!({"bodies": history.looks});
+        if let (false, Some(look_fields)) =
+            (history.face_looks.is_empty(), appearances.as_object_mut())
+        {
+            look_fields.insert("faces".to_owned(), json!(history.face_looks));
+        }
+        fields.insert("appearances".to_owned(), appearances);
     }
     doc
 }
@@ -234,6 +241,7 @@ mod history_tests {
                 json!({"id": 2, "name": "Extrude1", "type": "extrude", "suppressed": false}),
             ],
             looks: Default::default(),
+            face_looks: Vec::new(),
             next_id: 3,
             mapped: 2,
             total: 2,

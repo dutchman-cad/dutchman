@@ -10,6 +10,7 @@
 
 mod constraints;
 mod extrude;
+mod faces;
 mod params;
 mod pattern;
 mod profile;
@@ -32,6 +33,9 @@ pub(crate) struct History {
     pub(crate) features: Vec<Value>,
     /// The looks of the bodies the history makes, by body name.
     pub(crate) looks: BTreeMap<String, Value>,
+    /// Looks of faces of those bodies that differ from their body's, as SolidCraft face looks
+    /// (a point on the face, in the design's frame).
+    pub(crate) face_looks: Vec<Value>,
     /// The id the next feature after the history takes.
     pub(crate) next_id: u64,
     /// Source features that became SolidCraft features or needed none.
@@ -137,6 +141,8 @@ struct Context<'a> {
     looks: BTreeMap<String, Value>,
     /// The timeline name each mapped source feature took, by CADIR feature id.
     feature_names: BTreeMap<String, String>,
+    /// The source bodies the history makes under their own names: (CADIR body id, name).
+    named_bodies: Vec<(String, String)>,
     /// Whether a feature that builds geometry has been mapped.
     builds: bool,
 }
@@ -150,6 +156,7 @@ impl<'a> Context<'a> {
             sketches: BTreeMap::new(),
             looks: BTreeMap::new(),
             feature_names: BTreeMap::new(),
+            named_bodies: Vec::new(),
             builds: false,
         }
     }
@@ -285,6 +292,15 @@ fn map_into(
     }
     history.params = params;
     history.looks = std::mem::take(&mut ctx.looks);
+    let (face_looks, unplaced) = faces::looks(&ctx);
+    history.face_looks = face_looks;
+    if unplaced > 0 {
+        report.push(
+            Severity::Info,
+            "appearance",
+            format!("{unplaced} coloured curved faces keep their body's colour"),
+        );
+    }
     history.next_id = ctx.next_id;
     Ok(history)
 }

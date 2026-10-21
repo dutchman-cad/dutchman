@@ -177,8 +177,9 @@ and synthetic files from cadmpeg's public test suite (provenance in
   maps and checks out as a single part's would: its features are authored in its component,
   their ids moved into the design's, and parameters whose names another part already uses are
   renamed with the component's name (`Second_d1`) wherever they are used. Joints come next.
-- **Appearances**: body colours carry across (through STEP for imports, as looks for
-  replayed bodies); face colours and materials come next.
+- **Appearances**: body and face colours carry across: through STEP for imports; as looks for
+  replayed bodies, with a planar face's own colour placed by a point inside the face (curved
+  faces, and faces of parts inside assemblies, keep their body's colour). Materials come next.
 - More formats as cadmpeg's codecs mature. The state of each format and the upstream gaps that
   keep its history from replaying are tracked in [fusion.md](fusion.md),
   [inventor.md](inventor.md) and [sldprt.md](sldprt.md).
