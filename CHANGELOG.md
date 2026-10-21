@@ -13,6 +13,8 @@ report's schema name changes when a field does).
 - Lofts guided by one or two rails of sketch curves keep their rails. A loft along a centreline
   still flattens, with the reason.
 - Mirrors of earlier features across a plane map onto SolidCraft mirrors.
+- Sphere and torus primitives map onto SolidCraft's (a torus about the Z axis). Boxes and
+  cylinder primitives still flatten, with the reason: cadmpeg does not yet say where they sit.
 
 ## 0.1.1 (2026-10-21)
 

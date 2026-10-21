@@ -1524,3 +1524,103 @@ fn solidcraft_mirrors_the_features_across_the_plane() {
         );
     }
 }
+
+/// The example cube's model with a history of one primitive feature, `definition`.
+fn primitive_history(definition: Value) -> Model {
+    let base = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let model = &mut wire["model"];
+    model["features"] = json!([{
+        "id": "f3d:model:feature#2",
+        "ordinal": 0,
+        "name": "Ball",
+        "suppressed": false,
+        "outputs": ["synthetic:cube:body#0"],
+        "definition": definition,
+    }]);
+    model["parameters"] = json!([]);
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    }
+}
+
+fn sphere() -> Value {
+    json!({"definition": "sphere", "center": {"x": 5.0, "y": 5.0, "z": 5.0}, "radius": 5.0, "op": "new_body"})
+}
+
+fn torus(axis: [f64; 3]) -> Value {
+    json!({"definition": "torus", "center": {"x": 0.0, "y": 0.0, "z": 2.0},
+           "axis": {"x": axis[0], "y": axis[1], "z": axis[2]},
+           "major_radius": 10.0, "minor_radius": 2.0, "op": "new_body"})
+}
+
+#[test]
+fn spheres_and_tori_become_solidcraft_primitives() {
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    let (document, report) = convert(&primitive_history(sphere()), &writer);
+    let ball = &document["features"][0];
+    assert_eq!(ball["type"], "sphere");
+    assert_eq!(ball["name"], "Ball");
+    assert_eq!(ball["center"], json!([5.0, 5.0, 5.0]));
+    assert_eq!(ball["radius"], "5 mm");
+    assert_eq!(ball["operation"], "new_body");
+    assert_eq!(ball["body_names"], json!(["unit cube"]));
+    assert!(
+        history_line(&report).contains("1 of 1 features mapped"),
+        "{}",
+        history_line(&report)
+    );
+
+    let (document, _) = convert(&primitive_history(torus([0.0, 0.0, -1.0])), &writer);
+    let ring = &document["features"][0];
+    assert_eq!(ring["type"], "torus");
+    assert_eq!(ring["center"], json!([0.0, 0.0, 2.0]));
+    assert_eq!(
+        (ring["major"].clone(), ring["minor"].clone()),
+        (json!("10 mm"), json!("2 mm"))
+    );
+}
+
+#[test]
+fn primitives_solidcraft_cannot_place_flatten_the_history() {
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    for (definition, reason) in [
+        (
+            torus([1.0, 0.0, 0.0]),
+            "a torus about an axis other than Z is not mapped yet",
+        ),
+        (
+            json!({"definition": "block", "dimensions": [10.0, 10.0, 10.0],
+                   "placement": [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
+                   "op": "new_body"}),
+            "cadmpeg does not say whether a box's placement is its corner or its centre",
+        ),
+    ] {
+        let (_, report) = convert(&primitive_history(definition), &writer);
+        assert!(
+            history_line(&report).contains(reason),
+            "{}",
+            history_line(&report)
+        );
+    }
+}
+
+#[test]
+fn solidcraft_builds_the_primitives() {
+    let Some(cli) = solidcraft() else { return };
+    let pi = std::f64::consts::PI;
+    for (definition, expected) in [
+        (sphere(), 4.0 / 3.0 * pi * 125.0),
+        (torus([0.0, 0.0, 1.0]), 2.0 * pi * pi * 10.0 * 4.0),
+    ] {
+        let volume = volumes(&cli, &written(&primitive_history(definition)).0);
+        assert_eq!(volume.len(), 1);
+        // SolidCraft measures curved solids numerically (a torus to about 1.5e-4 of the
+        // formula); the history check compares SolidCraft with itself, where that cancels.
+        assert!(
+            (volume[0] - expected).abs() / expected < 1e-3,
+            "{volume:?} vs {expected}"
+        );
+    }
+}
