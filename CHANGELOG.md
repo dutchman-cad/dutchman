@@ -15,6 +15,14 @@ report's schema name changes when a field does).
   trip pass. It brings cadmpeg fixes that are merged but not yet released; stable releases keep
   using released cadmpeg only. See [Channels](docs/guide.md#channels-stable-and-nightly).
 
+### Assemblies and components
+
+- Revolute and slider joints become SolidCraft revolute and slider joints, revolutes with their
+  limits, so the parts move as in the source; fixed joints keep their offset. Joint frames meet
+  face to face, as in Fusion.
+- Joined parts are placed where their joints put them, as Fusion can store a joined part where
+  it was before its joints were solved.
+
 ## 0.1.2 (2026-10-21)
 
 ### Testing on your own library

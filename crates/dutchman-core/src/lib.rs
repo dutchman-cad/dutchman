@@ -9,12 +9,13 @@ mod assembly;
 mod decode;
 mod error;
 mod format;
+pub mod placement;
 mod report;
 
 use std::path::Path;
 
 pub use assembly::{
-    local_assembly, Assembly, Joint, Placement, MAX_DEPTH, MAX_PARTS, MAX_PLACEMENTS,
+    local_assembly, Assembly, Joint, Motion, Placement, MAX_DEPTH, MAX_PARTS, MAX_PLACEMENTS,
 };
 pub use error::Error;
 pub use format::Format;

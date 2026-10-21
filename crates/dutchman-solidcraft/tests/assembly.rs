@@ -391,11 +391,27 @@ fn jointed() -> Model {
         [1.0, 0.0, 0.0, 0.0],
         [0.0, 0.0, 1.0, 0.0]
     ]);
-    let identity = serde_json::json!([
-        [1.0, 0.0, 0.0, 0.0],
-        [0.0, 1.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0, 0.0]
-    ]);
+    // Each connector frame is in its own part, placed so the joints hold the parts where they
+    // are stored, the second facing the first (half a turn about x): A's origin seen from B
+    // (30 mm on, a quarter turn round) is 30 mm along B's +Y, turned back; the root's origin
+    // seen from Top (at x = 100) is 100 mm back along X.
+    let frame = |key: Option<u32>| match key {
+        Some(1) => serde_json::json!([
+            [0.0, -1.0, 0.0, 0.0],
+            [-1.0, 0.0, 0.0, 30.0],
+            [0.0, 0.0, -1.0, 0.0]
+        ]),
+        Some(9) => serde_json::json!([
+            [1.0, 0.0, 0.0, -100.0],
+            [0.0, -1.0, 0.0, 0.0],
+            [0.0, 0.0, -1.0, 0.0]
+        ]),
+        _ => serde_json::json!([
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0]
+        ]),
+    };
     let side = |key: Option<u32>| {
         let operand = match key {
             None => {
@@ -406,7 +422,7 @@ fn jointed() -> Model {
                 "object": key.to_string(),
             }),
         };
-        serde_json::json!({"operand": operand, "frame": identity, "detached": false})
+        serde_json::json!({"operand": operand, "frame": frame(key), "detached": false})
     };
     let joint = |key: u32, a: Value, b: Value| {
         serde_json::json!({
@@ -439,7 +455,7 @@ fn fixed_joints_become_rigid_joints_that_hold_the_parts_as_placed() {
     assert_eq!(joints.len(), 2);
     assert!(joints
         .iter()
-        .all(|j| j["kind"] == "rigid" && j["flip"] == true));
+        .all(|j| j["kind"] == "rigid" && j["flip"] == false));
     // The blocks: A's frame is its own origin; B's is the same place seen from B, which sits
     // 30 mm further along X, turned a quarter turn: A's origin is 30 mm along B's +Y.
     let blocks = &joints[0];
@@ -499,17 +515,18 @@ fn solidcraft_reads_each_joint_as_built_and_solves_without_moving_anything() {
         .unwrap();
     assert!(status.success());
     let results: Value = serde_json::from_str(&std::fs::read_to_string(results).unwrap()).unwrap();
-    // As built: each joint's two frames, as SolidCraft places them in the world, coincide.
+    // As built: each joint's two frames, as SolidCraft places them in the world, meet face to
+    // face: the same origin, opposite z axes.
     let joints = results[0]["joints"].as_array().unwrap();
     assert_eq!(joints.len(), 2, "{results}");
     for joint in joints {
         assert_eq!(joint["type"], "rigid");
-        for key in ["origin", "z"] {
+        for (key, sign) in [("origin", 1.0), ("z", -1.0)] {
             let a = joint["frame_a"][key].as_array().unwrap();
             let b = joint["frame_b"][key].as_array().unwrap();
             for (a, b) in a.iter().zip(b) {
                 assert!(
-                    (a.as_f64().unwrap() - b.as_f64().unwrap()).abs() < 1e-9,
+                    (a.as_f64().unwrap() - sign * b.as_f64().unwrap()).abs() < 1e-9,
                     "{}: {key} {a} vs {b}",
                     joint["name"]
                 );
@@ -528,4 +545,180 @@ fn solidcraft_reads_each_joint_as_built_and_solves_without_moving_anything() {
     };
     assert_eq!(boxes(&before), boxes(&after));
     assert_eq!(before.len(), 2);
+}
+
+/// The two blocks at the root (A at x 0–10, B at x 30–40), A fixed to the design, and B joined
+/// to A by `kind` about a vertical axis through (20, 0, 0), each connector frame given in its
+/// own part, the second facing the first.
+fn hinged(kind: Value) -> Model {
+    let mut model = with_components(false);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    // The hinge at (20, 0, 0): 20 mm along A (at the origin), 10 mm back from B (at x = 30).
+    let at = |x: f64| {
+        serde_json::json!([
+            [1.0, 0.0, 0.0, x],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0]
+        ])
+    };
+    // Half a turn about x, as the second frame faces the first.
+    let facing = |x: f64| {
+        serde_json::json!([
+            [1.0, 0.0, 0.0, x],
+            [0.0, -1.0, 0.0, 0.0],
+            [0.0, 0.0, -1.0, 0.0]
+        ])
+    };
+    let side = |key: Option<u32>, at: Value| {
+        let operand = match key {
+            None => {
+                serde_json::json!({"container": {"container": "root"}, "object": "root:origin"})
+            }
+            Some(key) => serde_json::json!({
+                "container": {"container": "occurrence", "occurrence": format!("f3d:model:occurrence#{key}")},
+                "object": key.to_string(),
+            }),
+        };
+        serde_json::json!({"operand": operand, "frame": at, "detached": false})
+    };
+    let joint = |key: u32, kind: Value, a: Value, b: Value| {
+        serde_json::json!({
+            "id": format!("f3d:model:joint#{key}"),
+            "operands": {"arity": "pair", "kind": kind, "connectors": [a, b]},
+            "suppressed": false,
+        })
+    };
+    wire["model"]["assembly_joints"] = serde_json::json!([
+        joint(
+            1,
+            serde_json::json!({"kind": "fixed"}),
+            side(None, at(0.0)),
+            side(Some(0), facing(0.0))
+        ),
+        joint(
+            2,
+            kind,
+            side(Some(0), at(20.0)),
+            side(Some(1), facing(-10.0))
+        ),
+    ]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.assembly = dutchman_core::local_assembly(&model).unwrap();
+    model
+}
+
+#[test]
+fn revolute_and_slider_joints_are_written_with_their_motion() {
+    let (bytes, report) = written(&hinged(serde_json::json!({"kind": "revolute",
+        "angular_limits": {"bounds": "range", "minimum": -1.0, "maximum": 2.0}})));
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut text = String::new();
+    archive
+        .by_name("document.json")
+        .unwrap()
+        .read_to_string(&mut text)
+        .unwrap();
+    let document: Value = serde_json::from_str(&text).unwrap();
+    let hinge = &document["assembly"]["joints"][1];
+    assert_eq!(hinge["kind"], "revolute");
+    assert_eq!(hinge["name"], "Revolute 1");
+    assert_eq!(hinge["values"], serde_json::json!([0.0]));
+    assert_eq!(hinge["limits"], serde_json::json!([[-1.0, 2.0]]));
+    // A's frame is at the hinge in A's coordinates (A is at the origin); B's in B's, 30 mm on.
+    assert_eq!(
+        hinge["a"]["snap"]["origin"],
+        serde_json::json!([20.0, 0.0, 0.0])
+    );
+    assert_eq!(
+        hinge["b"]["snap"]["origin"],
+        serde_json::json!([-10.0, 0.0, 0.0])
+    );
+    assert!(report.losses().iter().any(|loss| loss.detail
+        == "2 joint(s) written as built (1 revolute, 1 rigid), holding their parts as placed"));
+}
+
+/// Drives the joint named `joint` to `value` (degrees, or mm for a slider) in SolidCraft and
+/// returns each body's bounding box after: min x, y, z, max x, y.
+fn driven(cli: &Path, design: &[u8], joint: &str, value: f64) -> Vec<[f64; 5]> {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("design.solidcraft");
+    let moved = dir.path().join("moved.solidcraft");
+    let script = dir.path().join("drive.json");
+    std::fs::write(&input, design).unwrap();
+    std::fs::write(
+        &script,
+        serde_json::json!([{"command": "joint.drive", "params": {"joint": joint, "value": value}}])
+            .to_string(),
+    )
+    .unwrap();
+    let status = std::process::Command::new(cli)
+        .arg("run")
+        .arg(&script)
+        .arg("--in")
+        .arg(&input)
+        .arg("--save")
+        .arg(&moved)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let mut boxes: Vec<[f64; 5]> = evaluate(cli, &std::fs::read(&moved).unwrap())
+        .iter()
+        .map(|b| {
+            let c = |k: &str, i: usize| (b["bbox"][k][i].as_f64().unwrap() * 1e6).round() / 1e6;
+            [
+                c("min", 0),
+                c("min", 1),
+                c("min", 2),
+                c("max", 0),
+                c("max", 1),
+            ]
+        })
+        .collect();
+    boxes.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    boxes
+}
+
+#[test]
+fn solidcraft_moves_the_part_when_the_joint_is_driven() {
+    let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) else {
+        eprintln!("skipped: set {CLI_ENV} to drive the joints in SolidCraft");
+        return;
+    };
+    // A quarter turn about the hinge at (20, 0): B swings from x 30–40, y 0–10 to x 10–20,
+    // y 10–20; A, fixed to the design, stays at the origin.
+    let revolute = written(&hinged(serde_json::json!({"kind": "revolute"}))).0;
+    assert_eq!(
+        driven(&cli, &revolute, "Revolute 1", 90.0),
+        [[0.0, 0.0, 0.0, 10.0, 10.0], [10.0, 10.0, 0.0, 20.0, 20.0]]
+    );
+    // A slider along the hinge's z: B rises 5 mm and stays over x 30–40.
+    let slider = written(&hinged(serde_json::json!({"kind": "slider"}))).0;
+    assert_eq!(
+        driven(&cli, &slider, "Slider 1", 5.0),
+        [[0.0, 0.0, 0.0, 10.0, 10.0], [30.0, 0.0, 5.0, 40.0, 10.0]]
+    );
+}
+
+#[test]
+fn a_joined_part_is_placed_where_its_joint_puts_it_not_where_it_was_stored() {
+    // Store B 40 mm further on than its joint puts it, as an unsolved placement would be.
+    let mut model = hinged(serde_json::json!({"kind": "revolute"}));
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["occurrences"][1]["transform"][0][3] = serde_json::json!(70.0);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.assembly = dutchman_core::local_assembly(&model).unwrap();
+    let placed = &model.assembly.as_ref().unwrap().placements;
+    assert_eq!(placed[1].transform[0][3], 30.0, "{placed:?}");
+
+    let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) else {
+        eprintln!("skipped: set {CLI_ENV} to open the design in SolidCraft");
+        return;
+    };
+    let (bytes, _) = written(&model);
+    let mut starts: Vec<f64> = evaluate(&cli, &bytes)
+        .iter()
+        .map(|b| b["bbox"]["min"][0].as_f64().unwrap())
+        .collect();
+    starts.sort_by(f64::total_cmp);
+    assert_eq!(starts, [0.0, 30.0]);
 }
