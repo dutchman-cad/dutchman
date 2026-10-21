@@ -59,6 +59,36 @@ pub(crate) fn find_cli(verification: &Verification) -> Result<PathBuf, String> {
     }
 }
 
+/// The version the SolidCraft CLI `verification` finds prints (`solidcraft-cli 0.18.2`),
+/// when there is one and it answers within a few seconds.
+pub fn solidcraft_version(verification: &Verification) -> Option<String> {
+    let cli = find_cli(verification).ok()?;
+    let mut child = Command::new(cli)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let started = Instant::now();
+    while child.try_wait().ok()?.is_none() {
+        if started.elapsed() > Duration::from_secs(10) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return None;
+        }
+        std::thread::sleep(POLL);
+    }
+    let mut text = String::new();
+    std::io::Read::read_to_string(
+        &mut std::io::Read::take(child.stdout.take()?, 4096),
+        &mut text,
+    )
+    .ok()?;
+    let line = text.lines().next()?.trim();
+    (!line.is_empty()).then(|| line.to_owned())
+}
+
 fn on_path() -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     std::env::split_paths(&path)

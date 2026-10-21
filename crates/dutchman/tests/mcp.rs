@@ -163,5 +163,25 @@ fn an_mcp_client_converts_through_dutchman() {
     assert!(out_dir.join("generated_unit_cube.solidcraft").is_file());
     assert!(out_dir.join("synthetic_cube.solidcraft").is_file());
 
+    // The same batch, each file in a converter of its own, with an anonymous report.
+    let anon = dir.path().join("anon.json");
+    let journal = dir.path().join("journal.jsonl");
+    let all = client.call(
+        "convert_all",
+        json!({"inputs": [cube], "out_dir": out_dir, "verify": false, "timeout": 300,
+               "max_memory_mb": 4096, "journal": journal, "report_anon": anon}),
+    );
+    assert_eq!(all["isError"], false, "{all}");
+    let salt = all["structuredContent"]["report_anon"]["salt"]
+        .as_str()
+        .unwrap();
+    assert_eq!(salt.len(), 32);
+    let report: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&anon).unwrap()).unwrap();
+    assert_eq!(report["schema"], "dutchman.report-anon/1");
+    assert_eq!(report["totals"]["converted"], 1);
+    assert_eq!(report["run"]["max_memory_mb"], 4096);
+    assert!(journal.is_file());
+
     client.finish();
 }

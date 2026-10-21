@@ -523,3 +523,192 @@ fn no_clobber_keeps_an_existing_design() {
     );
     assert!(out_dir.join("generated_unit_cube.solidcraft").is_file());
 }
+
+/// A library whose folder, files and parts carry names that must not reach a shared report.
+fn private_library(root: &std::path::Path) -> PathBuf {
+    let library = root.join("AcmeClient_Confidential");
+    let nested = library.join("Prototype_Gearbox_X93");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::copy(
+        fixture("generated_unit_cube.f3d"),
+        library.join("Housing_Rev7_Secret.f3d"),
+    )
+    .unwrap();
+    std::fs::copy(
+        fixture("synthetic_cube.ipt"),
+        nested.join("Bracket_K42.ipt"),
+    )
+    .unwrap();
+    std::fs::write(nested.join("Broken_Widget_Q8.f3d"), [0xffu8; 256]).unwrap();
+    std::fs::write(library.join("pricing_notes.txt"), b"not a design").unwrap();
+    library
+}
+
+#[test]
+fn the_anonymous_report_names_no_file_and_matches_its_ids_to_the_files() {
+    let root = std::env::temp_dir().join(format!("dutchman-anon-{}", std::process::id()));
+    let library = private_library(&root);
+    let out_dir = root.join("Converted_For_AcmeClient");
+    let anon = root.join("report-anon.json");
+    let key = root.join("report-key.json");
+    let missing = library.join("Missing_Part_Z5.f3d");
+
+    let out = dutchman(&[
+        "convert-all",
+        "--no-verify",
+        "--out-dir",
+        out_dir.to_str().unwrap(),
+        "--report-anon",
+        anon.to_str().unwrap(),
+        "--report-key",
+        key.to_str().unwrap(),
+        library.to_str().unwrap(),
+        missing.to_str().unwrap(),
+    ]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let salt = stderr
+        .split("the salt ")
+        .nth(1)
+        .and_then(|rest| rest.get(..32))
+        .unwrap()
+        .to_owned();
+
+    let text = std::fs::read_to_string(&anon).unwrap();
+    for secret in [
+        root.to_str().unwrap(),
+        "AcmeClient",
+        "Confidential",
+        "Prototype_Gearbox",
+        "Gearbox",
+        "Housing_Rev7",
+        "Secret",
+        "Bracket_K42",
+        "Broken_Widget",
+        "Missing_Part",
+        "pricing",
+        "Converted_For",
+        &salt,
+    ] {
+        assert!(!text.contains(secret), "{secret} in {text}");
+    }
+    let report: serde_json::Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(report["schema"], "dutchman.report-anon/1");
+    assert_eq!(report["totals"]["files"], 4);
+    assert_eq!(report["totals"]["converted"], 2);
+    assert_eq!(report["totals"]["failed"], 2);
+    assert_eq!(report["totals"]["skipped"], 1);
+    assert_eq!(report["skipped_by_extension"]["txt"], 1);
+    assert_eq!(report["formats"]["fusion_archive"]["files"], 3);
+    assert_eq!(report["formats"]["inventor_part"]["converted"], 1);
+    assert_eq!(report["stages"]["decode"]["failed"], 1, "{report}");
+    assert_eq!(report["stages"]["input"]["failed"], 1, "{report}");
+    assert!(report["versions"]["dutchman"].is_string());
+    assert!(report["versions"]["cadmpeg"]
+        .as_str()
+        .unwrap()
+        .starts_with("0."));
+    assert_eq!(
+        report["timing"]["count"], 3,
+        "the missing file was never timed"
+    );
+    assert!(report["losses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|loss| loss["code"] == "f3d/material.not-transferred" && loss["stage"] == "decode"));
+
+    // The key, kept by whoever ran the batch, says which file each id is; the same salt
+    // gives the same ids again.
+    let key: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&key).unwrap()).unwrap();
+    assert_eq!(key["salt"], salt.as_str());
+    let failed = report["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|error| error["stage"] == "decode")
+        .unwrap();
+    let id = failed["file_ids"][0].as_str().unwrap();
+    assert!(key["files"][id]
+        .as_str()
+        .unwrap()
+        .ends_with("Broken_Widget_Q8.f3d"));
+    let again = root.join("again.json");
+    dutchman(&[
+        "convert-all",
+        "--no-verify",
+        "--out-dir",
+        out_dir.to_str().unwrap(),
+        "--report-anon",
+        again.to_str().unwrap(),
+        "--report-salt",
+        &salt,
+        library.to_str().unwrap(),
+    ]);
+    let again = std::fs::read_to_string(&again).unwrap();
+    assert!(again.contains(id), "{again}");
+}
+
+#[test]
+fn a_journal_lets_a_stopped_run_carry_on_without_converting_files_again() {
+    let root = std::env::temp_dir().join(format!("dutchman-journal-{}", std::process::id()));
+    let library = private_library(&root);
+    let out_dir = root.join("out");
+    let journal = root.join("journal.jsonl");
+    let run = || {
+        json_of(&dutchman(&[
+            "convert-all",
+            "--json",
+            "--no-verify",
+            "--out-dir",
+            out_dir.to_str().unwrap(),
+            "--journal",
+            journal.to_str().unwrap(),
+            library.to_str().unwrap(),
+        ]))
+    };
+    let first = run();
+    assert_eq!(first["resumed"], 0);
+    assert_eq!(first["converted"], 2);
+    assert_eq!(
+        std::fs::read_to_string(&journal).unwrap().lines().count(),
+        3
+    );
+    let second = run();
+    assert_eq!(second["resumed"], 3, "{second}");
+    assert_eq!(second["converted"], 2);
+    assert_eq!(second["failed"], 1);
+
+    // A design removed since is made again; a changed file is converted again.
+    std::fs::remove_file(out_dir.join("Housing_Rev7_Secret.solidcraft")).unwrap();
+    let third = run();
+    assert_eq!(third["resumed"], 2, "{third}");
+    assert!(out_dir.join("Housing_Rev7_Secret.solidcraft").is_file());
+}
+
+#[test]
+fn a_file_over_its_time_or_memory_is_stopped_and_the_batch_carries_on() {
+    let root = std::env::temp_dir().join(format!("dutchman-limits-{}", std::process::id()));
+    let library = private_library(&root);
+    let out = dutchman(&[
+        "convert-all",
+        "--json",
+        "--no-verify",
+        "--max-memory",
+        "1",
+        "--out-dir",
+        root.join("out").to_str().unwrap(),
+        library.to_str().unwrap(),
+    ]);
+    let report = json_of(&out);
+    // Every file still has a report: a converter stopped for its memory fails alone.
+    assert_eq!(report["results"].as_array().unwrap().len(), 3, "{report}");
+    for result in report["results"].as_array().unwrap() {
+        if let Some(message) = result["error"]["message"].as_str() {
+            if message.starts_with("stopped when it held") {
+                assert_ne!(result["error"]["stage"], serde_json::Value::Null);
+            }
+        }
+    }
+}

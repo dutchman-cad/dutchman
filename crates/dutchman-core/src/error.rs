@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use crate::Format;
+use crate::{Format, Stage};
 
 /// Why a conversion stopped. Anything that merely lost detail is a [`crate::Loss`] instead.
 #[derive(Debug, thiserror::Error)]
@@ -32,8 +32,9 @@ pub enum Error {
     UnknownFormat { path: PathBuf },
     /// The format is known but no reader exists for it yet.
     #[error(
-        "{} files are not supported yet. Export a STEP file for SolidCraft to open, or follow \
-         the {} work in cadmpeg (https://github.com/cadmpeg/cadmpeg).",
+        "{} files are not supported yet. Export a STEP file for SolidCraft to open; Dutchman's \
+         issues (https://github.com/dutchman-cad/dutchman/issues) say when {} files will \
+         convert.",
         format.name(),
         format.family()
     )]
@@ -53,4 +54,43 @@ pub enum Error {
     /// The model could not be encoded into the target format.
     #[error("cannot convert this design: {0}")]
     Encode(String),
+    /// An assembly's files do not make a whole assembly: its parts are missing, or it places
+    /// itself.
+    #[error("cannot read this design: {0}")]
+    Assembly(String),
+    /// The model was read but holds no geometry the target can take.
+    #[error("cannot convert this design: {0}")]
+    NoGeometry(String),
+    /// cadmpeg could not restate the model as STEP for the target.
+    #[error("cannot convert this design: {0}")]
+    Restate(String),
+}
+
+impl Error {
+    /// Where in the conversion it stopped.
+    pub fn stage(&self) -> Stage {
+        match self {
+            Error::Io { .. }
+            | Error::NotAFile { .. }
+            | Error::TooLarge { .. }
+            | Error::UnknownFormat { .. }
+            | Error::OutputExists { .. }
+            | Error::WrongOutputExtension { .. }
+            | Error::Assembly(_) => Stage::Input,
+            Error::NotSupportedYet { .. } | Error::Decode(_) => Stage::Decode,
+            Error::NoGeometry(_) => Stage::Project,
+            Error::Encode(_) | Error::Restate(_) => Stage::Write,
+        }
+    }
+
+    /// The project whose code it stopped in, when it is not Dutchman's own.
+    pub fn upstream(&self) -> Option<&'static str> {
+        match self {
+            Error::NotSupportedYet { .. }
+            | Error::Decode(_)
+            | Error::NoGeometry(_)
+            | Error::Restate(_) => Some("cadmpeg"),
+            _ => None,
+        }
+    }
 }

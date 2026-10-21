@@ -63,7 +63,7 @@ only when `solidcraft-cli` is on the server's `PATH`, and is reported unverified
 |---|---|---|---|
 | `inspect` | `input` | `dutchman.inspect/1` | nothing |
 | `convert` | `input`, `output`, and optionally `import_only`, `verify`, `solidcraft`, `verify_timeout`, `overwrite` | `dutchman.convert/1` | the `output` file |
-| `convert_all` | `inputs`, `out_dir`, and optionally `jobs`, `import_only`, `verify`, `solidcraft`, `verify_timeout`, `overwrite` | `dutchman.convert-all/1` | inside `out_dir` |
+| `convert_all` | `inputs`, `out_dir`, and optionally `jobs`, `timeout`, `max_memory_mb`, `journal`, `report_anon`, `report_salt`, `report_key`, `import_only`, `verify`, `solidcraft`, `verify_timeout`, `overwrite` | `dutchman.convert-all/1` | inside `out_dir`, and the `journal`, `report_anon` and `report_key` files |
 | `formats` | none | `dutchman.formats/1` | nothing |
 
 | Argument | Type | Meaning |
@@ -73,6 +73,12 @@ only when `solidcraft-cli` is on the server's `PATH`, and is reported unverified
 | `inputs` | array of strings, at least one | Absolute paths of files, and of folders to search (with their subfolders) for files Dutchman knows. |
 | `out_dir` | string | Absolute path of the folder for the designs, keeping each input folder's layout. Created if missing. |
 | `jobs` | integer, at least 1 | How many files to convert at once. Default: the machine's cores, at most 8. |
+| `timeout` | integer, at least 1 | Seconds one file may take before it is stopped and reported as failed. Default 900. |
+| `max_memory_mb` | integer | Megabytes one file may hold before it is stopped and reported as failed. Default 8192; 0 for no limit. |
+| `journal` | path | A file recording each file's result as it finishes; files it already records, unchanged since, are not converted again. |
+| `report_anon` | path | Also write the anonymous report ([`dutchman.report-anon/1`](report-anon.md)) there. The result then carries `report_anon: {"path", "salt"}`; the salt stays private. |
+| `report_salt` | 32 hex digits | The salt for the anonymous report's file ids, to get the same ids as an earlier run. |
+| `report_key` | path | Write the key from each anonymous id to its file's path there. Keep it private. |
 | `import_only` | boolean | Write the geometry as one non-parametric import, never the feature history. |
 | `verify` | boolean | Check a converted history in SolidCraft. Default `true`; skipped, and the history marked unverified, when no `solidcraft-cli` is found. |
 | `solidcraft` | string | Path of `solidcraft-cli` for the check. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`. |
@@ -137,7 +143,7 @@ A conversion that fails is a tool error (`isError: true`) carrying its failure r
 {"jsonrpc":"2.0","id":4,"result":{"isError":true,"content":"…","structuredContent":{
   "schema":"dutchman.convert/1","ok":false,
   "input":{"format":"solidworks_assembly","format_name":"SolidWorks assembly (.sldasm)","path":"/home/me/designs/a.sldasm"},
-  "error":{"message":"SolidWorks assembly (.sldasm) files are not supported yet. Export a STEP file for SolidCraft to open, or follow the SolidWorks work in cadmpeg (https://github.com/cadmpeg/cadmpeg)."}}}}
+  "error":{"message":"SolidWorks assembly (.sldasm) files are not supported yet. Export a STEP file for SolidCraft to open; Dutchman's issues (https://github.com/dutchman-cad/dutchman/issues) say when SolidWorks files will convert."}}}}
 ```
 
 Arguments a tool cannot take (a missing `output`, an unknown argument, a mistyped value) fail

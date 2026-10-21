@@ -10,7 +10,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use dutchman_core::{Assembly, Joint};
-use dutchman_core::{Check, Error, FeatureOutcome, Mode, Model, Outcome, Report, Severity};
+use dutchman_core::{Check, Error, FeatureOutcome, Mode, Model, Outcome, Report, Severity, Stage};
 use serde_json::{json, Value};
 
 use crate::container::Container;
@@ -394,7 +394,8 @@ impl Builder<'_> {
                 Check::Verified
             }
             verify::Outcome::Unverified(why) => {
-                self.report.push(
+                self.report.push_at(
+                    Stage::SolidCraft,
                     Severity::Info,
                     HISTORY,
                     format!("{file}: {summary}; unverified: {why}"),

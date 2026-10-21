@@ -4,10 +4,12 @@
 //!
 //! This is the front ends' shared code, not a stable library API.
 
+pub mod anon;
 pub mod batch;
 pub mod formats;
 pub mod json;
 pub mod mcp;
+pub mod worker;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -50,16 +52,20 @@ impl Default for ConvertOptions {
 }
 
 impl ConvertOptions {
-    /// The writer these options describe.
-    pub fn writer(&self) -> SolidCraftWriter {
-        let verification = match (self.no_verify, &self.solidcraft) {
+    /// How these options check written designs in SolidCraft.
+    pub fn verification(&self) -> Verification {
+        match (self.no_verify, &self.solidcraft) {
             (true, _) => Verification::Off,
             (false, Some(path)) => Verification::With(path.clone()),
             (false, None) => Verification::Auto,
-        };
+        }
+    }
+
+    /// The writer these options describe.
+    pub fn writer(&self) -> SolidCraftWriter {
         SolidCraftWriter::new()
             .import_only(self.import_only)
-            .verification(verification)
+            .verification(self.verification())
             .timeout(Duration::from_secs(self.verify_timeout))
     }
 }
@@ -69,7 +75,7 @@ impl ConvertOptions {
 pub fn convert(input: &Path, output: &Path, writer: &SolidCraftWriter, replace: bool) -> Value {
     match dutchman_core::convert_to(input, output, writer, replace) {
         Ok(report) => convert_success(input, output, &report),
-        Err(err) => json::failure(json::CONVERT, json::input(input), &err.to_string()),
+        Err(err) => json::error(json::CONVERT, json::input(input), &err),
     }
 }
 
@@ -123,7 +129,7 @@ pub fn inspect(input: &Path) -> Result<Inspection, Error> {
 pub fn inspect_report(input: &Path) -> Value {
     match inspect(input) {
         Ok(inspection) => inspection.json(input),
-        Err(err) => json::failure(json::INSPECT, json::input(input), &err.to_string()),
+        Err(err) => json::error(json::INSPECT, json::input(input), &err),
     }
 }
 

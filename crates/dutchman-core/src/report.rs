@@ -25,6 +25,75 @@ impl From<CadmpegSeverity> for Severity {
     }
 }
 
+/// Where in a conversion a loss or a failure arose, so a report of it reaches the code that
+/// can fix it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Stage {
+    /// The file itself, or how it was asked for: missing, too large, the wrong kind.
+    Input,
+    /// cadmpeg reading the file's bytes.
+    Decode,
+    /// cadmpeg turning what it read into its neutral model.
+    Project,
+    /// Dutchman mapping the neutral model onto SolidCraft's.
+    Map,
+    /// Writing the design: Dutchman's writer, and cadmpeg's STEP restatement within it.
+    Write,
+    /// SolidCraft opening or checking the written design.
+    SolidCraft,
+}
+
+impl Stage {
+    /// Its name in the reports.
+    pub fn id(self) -> &'static str {
+        match self {
+            Stage::Input => "input",
+            Stage::Decode => "decode",
+            Stage::Project => "project",
+            Stage::Map => "map",
+            Stage::Write => "write",
+            Stage::SolidCraft => "solidcraft",
+        }
+    }
+
+    /// Every stage, in conversion order.
+    pub const ALL: [Stage; 6] = [
+        Stage::Input,
+        Stage::Decode,
+        Stage::Project,
+        Stage::Map,
+        Stage::Write,
+        Stage::SolidCraft,
+    ];
+}
+
+/// The cadmpeg loss-code words that say the source's bytes could not be read (a record
+/// undecoded, unparsed, untyped or badly framed; a stream missing or unreadable), rather than
+/// read and not carried into the neutral model (unprojected, unresolved, unbound, kept native,
+/// capped).
+const DECODE_WORDS: [&str; 11] = [
+    "undecoded",
+    "not-decoded",
+    "unparsed",
+    "untyped",
+    "framing",
+    "unreadable",
+    "container-missing",
+    "missing-geometry-stream",
+    "not-transferred",
+    "truncated",
+    "malformed",
+];
+
+/// The stage of a cadmpeg loss reported while reading a file, from its code.
+pub fn read_stage(code: &str) -> Stage {
+    if DECODE_WORDS.iter().any(|word| code.contains(word)) {
+        Stage::Decode
+    } else {
+        Stage::Project
+    }
+}
+
 /// One thing that did not survive the conversion intact.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Loss {
@@ -38,6 +107,21 @@ pub struct Loss {
     pub code: Option<String>,
     /// What happened to it.
     pub detail: String,
+    /// Where in the conversion it arose.
+    pub stage: Stage,
+}
+
+impl Loss {
+    /// The project whose code the loss arose in, when it is not Dutchman's own: `cadmpeg` for
+    /// what cadmpeg reported, `solidcraft` for what SolidCraft found.
+    pub fn upstream(&self) -> Option<&'static str> {
+        match self.stage {
+            Stage::Decode | Stage::Project => Some("cadmpeg"),
+            Stage::Write if self.code.is_some() => Some("cadmpeg"),
+            Stage::SolidCraft => Some("solidcraft"),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for Loss {
@@ -119,9 +203,20 @@ pub enum FeatureStatus {
 }
 
 impl Report {
-    /// Records a loss.
+    /// Records a loss in Dutchman's own mapping.
     pub fn push(
         &mut self,
+        severity: Severity,
+        subject: impl Into<String>,
+        detail: impl Into<String>,
+    ) {
+        self.push_at(Stage::Map, severity, subject, detail);
+    }
+
+    /// Records a loss that arose at `stage`.
+    pub fn push_at(
+        &mut self,
+        stage: Stage,
         severity: Severity,
         subject: impl Into<String>,
         detail: impl Into<String>,
@@ -131,20 +226,37 @@ impl Report {
             subject: subject.into(),
             code: None,
             detail: detail.into(),
+            stage,
         });
     }
 
-    /// Records cadmpeg's loss notes (from a decode or an export), each under its loss code.
+    /// Records cadmpeg's loss notes from reading a file, each under its loss code: at the
+    /// decode stage when the code says the source could not be read, else at projection.
     pub fn extend_from_cadmpeg<'a>(&mut self, notes: impl IntoIterator<Item = &'a LossNote>) {
         for note in notes {
             let code = note.code.to_string();
-            self.losses.push(Loss {
-                severity: note.severity.into(),
-                subject: code.clone(),
-                code: Some(code),
-                detail: note.message.clone(),
-            });
+            self.push_cadmpeg(read_stage(&code), note, code);
         }
+    }
+
+    /// Records cadmpeg's loss notes from restating the model as STEP, at the write stage.
+    pub fn extend_from_cadmpeg_export<'a>(
+        &mut self,
+        notes: impl IntoIterator<Item = &'a LossNote>,
+    ) {
+        for note in notes {
+            self.push_cadmpeg(Stage::Write, note, note.code.to_string());
+        }
+    }
+
+    fn push_cadmpeg(&mut self, stage: Stage, note: &LossNote, code: String) {
+        self.losses.push(Loss {
+            severity: note.severity.into(),
+            subject: code.clone(),
+            code: Some(code),
+            detail: note.message.clone(),
+            stage,
+        });
     }
 
     /// Records every loss of `other`, after this report's own.
@@ -179,5 +291,44 @@ impl Report {
     /// Whether the conversion was lossless.
     pub fn is_lossless(&self) -> bool {
         self.losses.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cadmpeg_losses_are_staged_by_their_code() {
+        for code in [
+            "f3d/geometry.not-transferred",
+            "f3d/geometry.brep-blob-undecoded",
+            "f3d/history.record-framing-failed",
+            "f3d/parameter.record-unparsed",
+            "f3d/source.archive-entry-unreadable",
+            "f3d/container.missing-geometry-stream",
+        ] {
+            assert_eq!(read_stage(code), Stage::Decode, "{code}");
+        }
+        for code in [
+            "f3d/feature.definition-incomplete",
+            "f3d/feature.scope-payload-uninterpreted",
+            "f3d/sketch.curve-unprojected",
+            "f3d/feature.profile-selection-native",
+            "f3d/assembly.components-external",
+            "f3d/parameter.expression-unbound",
+        ] {
+            assert_eq!(read_stage(code), Stage::Project, "{code}");
+        }
+    }
+
+    #[test]
+    fn a_loss_names_the_project_it_arose_in() {
+        let mut report = Report::default();
+        report.push(Severity::Degraded, "history", "a fillet is not mapped yet");
+        report.push_at(Stage::SolidCraft, Severity::Info, "geometry", "not checked");
+        report.push_at(Stage::Project, Severity::Info, "validation", "a finding");
+        let upstream: Vec<_> = report.losses().iter().map(Loss::upstream).collect();
+        assert_eq!(upstream, [None, Some("solidcraft"), Some("cadmpeg")]);
     }
 }

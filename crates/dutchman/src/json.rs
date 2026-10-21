@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use dutchman_core::{Check, FeatureStatus, Format, Mode, Outcome, Report, Severity};
+use dutchman_core::{Check, Error, FeatureStatus, Format, Mode, Outcome, Report, Severity, Stage};
 use serde_json::{json, Map, Value};
 
 /// The schema of `dutchman convert --json`.
@@ -55,13 +55,37 @@ pub fn first_sentence(text: &str) -> (String, bool) {
 /// What the text reports say once when they cut a note short.
 pub const CUT_NOTE: &str = "notes are cut to their first sentence; --verbose prints them in full";
 
-/// A report of a run that stopped with `message`.
+/// A report of a run that stopped with `message`, at the input stage (the file, or how it
+/// was asked for).
 pub fn failure(schema: &str, input: Value, message: &str) -> Value {
+    failure_at(schema, input, message, Stage::Input, None)
+}
+
+/// A report of a run that stopped with `error`.
+pub fn error(schema: &str, input: Value, error: &Error) -> Value {
+    failure_at(
+        schema,
+        input,
+        &error.to_string(),
+        error.stage(),
+        error.upstream(),
+    )
+}
+
+/// A report of a run that stopped with `message` at `stage`, in `upstream`'s code when it is
+/// not Dutchman's own.
+pub fn failure_at(
+    schema: &str,
+    input: Value,
+    message: &str,
+    stage: Stage,
+    upstream: Option<&str>,
+) -> Value {
     json!({
         "schema": schema,
         "ok": false,
         "input": input,
-        "error": {"message": message},
+        "error": {"message": message, "stage": stage.id(), "upstream": upstream},
     })
 }
 
@@ -142,6 +166,8 @@ pub fn losses(report: &Report) -> Value {
                 "code": loss.code,
                 "subject": loss.subject,
                 "message": loss.detail,
+                "stage": loss.stage.id(),
+                "upstream": loss.upstream(),
             })
         })
         .collect()

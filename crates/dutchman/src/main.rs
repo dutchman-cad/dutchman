@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use dutchman::{batch, formats, json, ConvertOptions};
+use dutchman::{anon, batch, formats, json, worker, ConvertOptions};
 use dutchman_core::{Check, FeatureStatus, Format, Mode};
 use serde_json::Value;
 
@@ -49,6 +49,28 @@ enum Command {
         /// How many files to convert at once (default: the machine's cores, at most 8).
         #[arg(long, value_name = "N")]
         jobs: Option<std::num::NonZeroUsize>,
+        /// Seconds one file may take before it is stopped and reported as failed.
+        #[arg(long, value_name = "SECONDS", default_value_t = worker::DEFAULT_TIMEOUT.as_secs())]
+        timeout: u64,
+        /// Megabytes of memory one file may hold before it is stopped and reported as failed
+        /// (0: no limit).
+        #[arg(long, value_name = "MB", default_value_t = worker::DEFAULT_MAX_MEMORY_MB)]
+        max_memory: u64,
+        /// Record each file's result in FILE as it finishes; files already recorded there,
+        /// unchanged since, are not converted again, so a stopped run carries on.
+        #[arg(long, value_name = "FILE")]
+        journal: Option<PathBuf>,
+        /// Also write an anonymous report to FILE: counts, causes and timings with no file
+        /// names, paths or geometry, safe to share (see docs/report-anon.md).
+        #[arg(long, value_name = "FILE")]
+        report_anon: Option<PathBuf>,
+        /// The salt for the anonymous report's file ids (32 hex digits), to get the same ids as
+        /// an earlier run (default: a new one, printed when the run ends).
+        #[arg(long, value_name = "HEX", requires = "report_anon")]
+        report_salt: Option<String>,
+        /// Write the key from each anonymous id to its file's path to FILE. Keep it private.
+        #[arg(long, value_name = "FILE", requires = "report_anon")]
+        report_key: Option<PathBuf>,
         #[command(flatten)]
         options: ConvertOptions,
         /// Print one machine-readable report on stdout instead of the text report.
@@ -72,6 +94,9 @@ enum Command {
 }
 
 fn main() -> ExitCode {
+    if let Some(code) = worker::run_if_worker() {
+        return code;
+    }
     let cli = Cli::parse();
     let verbose = cli.verbose;
     match cli.command {
@@ -85,20 +110,68 @@ fn main() -> ExitCode {
             inputs,
             out_dir,
             jobs,
+            timeout,
+            max_memory,
+            journal,
+            report_anon,
+            report_salt,
+            report_key,
             options,
             json,
         } => {
-            let report = batch::convert_all(
-                &inputs,
-                &out_dir,
-                &options.writer(),
-                jobs,
-                !options.no_clobber,
-            );
+            let anon = match report_salt.as_deref().map(anon::Salt::parse).transpose() {
+                Ok(salt) => report_anon.map(|path| anon::Request {
+                    path,
+                    salt,
+                    key: report_key,
+                }),
+                Err(err) => {
+                    eprintln!("dutchman: --report-salt: {err}");
+                    return ExitCode::from(2);
+                }
+            };
+            let settings = match batch::Settings::isolated() {
+                Ok(settings) => batch::Settings {
+                    jobs,
+                    journal,
+                    limits: worker::Limits {
+                        timeout: std::time::Duration::from_secs(timeout.max(1)),
+                        max_memory: (max_memory > 0).then_some(max_memory.saturating_mul(1 << 20)),
+                    },
+                    ..settings
+                },
+                Err(err) => {
+                    eprintln!("dutchman: {err}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let report = match batch::convert_all(&inputs, &out_dir, &options, &settings) {
+                Ok(report) => report,
+                Err(err) => {
+                    eprintln!("dutchman: {err}");
+                    return ExitCode::FAILURE;
+                }
+            };
             if json {
                 print_json(&report);
             } else {
                 print!("{}", batch::text(&report, verbose));
+            }
+            if let Some(request) = anon {
+                match anon::write(&request, &report, &inputs, &out_dir, &options, &settings) {
+                    Ok(salt) => eprintln!(
+                        "dutchman: anonymous report written to {}. Its file ids use the salt {}: \
+                         keep the salt to yourself, and give --report-salt {} to get the same ids \
+                         next time.",
+                        request.path.display(),
+                        salt.hex(),
+                        salt.hex()
+                    ),
+                    Err(err) => {
+                        eprintln!("dutchman: cannot write the anonymous report: {err}");
+                        return ExitCode::FAILURE;
+                    }
+                }
             }
             exit(&report)
         }
@@ -145,11 +218,7 @@ fn inspect(input: &Path, as_json: bool, verbose: bool) -> ExitCode {
         Ok(inspection) => inspection,
         Err(err) => {
             if as_json {
-                print_json(&json::failure(
-                    json::INSPECT,
-                    json::input(input),
-                    &err.to_string(),
-                ));
+                print_json(&json::error(json::INSPECT, json::input(input), &err));
             } else {
                 eprintln!("dutchman: {err}");
             }

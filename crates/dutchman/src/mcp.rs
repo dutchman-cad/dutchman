@@ -238,6 +238,30 @@ fn tools() -> Value {
         "jobs".to_owned(),
         json!({"type": "integer", "minimum": 1, "description": "How many files to convert at once (default: the machine's cores, at most 8)."}),
     );
+    all.insert(
+        "timeout".to_owned(),
+        json!({"type": "integer", "minimum": 1, "description": "Seconds one file may take before it is stopped and reported as failed (default 900)."}),
+    );
+    all.insert(
+        "max_memory_mb".to_owned(),
+        json!({"type": "integer", "minimum": 0, "description": "Megabytes of memory one file may hold before it is stopped and reported as failed (default 8192; 0: no limit)."}),
+    );
+    all.insert(
+        "journal".to_owned(),
+        json!({"type": "string", "description": "Absolute path of a file recording each file's result as it finishes. Files already recorded there, unchanged since, are not converted again, so a stopped run carries on."}),
+    );
+    all.insert(
+        "report_anon".to_owned(),
+        json!({"type": "string", "description": "Absolute path to also write an anonymous report to: counts, causes and timings with no file names, paths or geometry, safe to share (docs/report-anon.md). The result's report_anon gives its path and the salt of its file ids, which stays private."}),
+    );
+    all.insert(
+        "report_salt".to_owned(),
+        json!({"type": "string", "description": "The salt for the anonymous report's file ids (32 hex digits), to get the same ids as an earlier run (default: a new one)."}),
+    );
+    all.insert(
+        "report_key".to_owned(),
+        json!({"type": "string", "description": "Absolute path to write the key from each anonymous id to its file's path to. Keep it private."}),
+    );
     json!([
         {
             "name": "convert",
@@ -350,7 +374,21 @@ fn inspect(arguments: &Arguments) -> Result<Value, String> {
 fn convert_all(arguments: &Arguments) -> Result<Value, String> {
     only(
         arguments,
-        &[&["inputs", "out_dir", "jobs"][..], &OPTIONS].concat(),
+        &[
+            &[
+                "inputs",
+                "out_dir",
+                "jobs",
+                "timeout",
+                "max_memory_mb",
+                "journal",
+                "report_anon",
+                "report_salt",
+                "report_key",
+            ][..],
+            &OPTIONS,
+        ]
+        .concat(),
     )?;
     let inputs = match arguments.get("inputs") {
         Some(Value::Array(items)) if !items.is_empty() => items
@@ -364,15 +402,59 @@ fn convert_all(arguments: &Arguments) -> Result<Value, String> {
         None => return Err("inputs is required".to_owned()),
     };
     let out_dir = path(arguments, "out_dir")?;
-    let jobs = count(arguments, "jobs")?;
     let options = options(arguments)?;
-    Ok(crate::batch::convert_all(
-        &inputs,
-        &out_dir,
-        &options.writer(),
-        jobs,
-        !options.no_clobber,
-    ))
+    let optional = |key: &str| match arguments.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(_) => path(arguments, key).map(Some),
+    };
+    let anon = match optional("report_anon")? {
+        Some(path) => Some(crate::anon::Request {
+            path,
+            salt: match arguments.get("report_salt") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(hex)) => Some(
+                    crate::anon::Salt::parse(hex).map_err(|err| format!("report_salt: {err}"))?,
+                ),
+                Some(_) => return Err("report_salt must be 32 hex digits".to_owned()),
+            },
+            key: optional("report_key")?,
+        }),
+        None if arguments.contains_key("report_salt") || arguments.contains_key("report_key") => {
+            return Err("report_salt and report_key need report_anon".to_owned())
+        }
+        None => None,
+    };
+    let max_memory = match arguments.get("max_memory_mb") {
+        None | Some(Value::Null) => Some(crate::worker::DEFAULT_MAX_MEMORY_MB << 20),
+        Some(value) => match value.as_u64() {
+            Some(0) => None,
+            Some(mb) => Some(mb.saturating_mul(1 << 20)),
+            None => return Err("max_memory_mb must be a whole number".to_owned()),
+        },
+    };
+    let settings = crate::batch::Settings {
+        jobs: count(arguments, "jobs")?,
+        journal: optional("journal")?,
+        limits: crate::worker::Limits {
+            timeout: count(arguments, "timeout")?.map_or(crate::worker::DEFAULT_TIMEOUT, |n| {
+                std::time::Duration::from_secs(n.get() as u64)
+            }),
+            max_memory,
+        },
+        ..crate::batch::Settings::isolated()?
+    };
+    let mut report = crate::batch::convert_all(&inputs, &out_dir, &options, &settings)?;
+    if let Some(request) = anon {
+        let salt = crate::anon::write(&request, &report, &inputs, &out_dir, &options, &settings)
+            .map_err(|err| format!("cannot write the anonymous report: {err}"))?;
+        if let Some(fields) = report.as_object_mut() {
+            fields.insert(
+                "report_anon".to_owned(),
+                json!({"path": request.path.display().to_string(), "salt": salt.hex()}),
+            );
+        }
+    }
+    Ok(report)
 }
 
 // Test helpers outside `#[test]` functions are not covered by clippy.toml's test allowances.

@@ -154,6 +154,14 @@ number of times.
   tagged `Info` (no effect on geometry), `Degraded` (carried in weaker form, such as history
   flattened to a body) or `Dropped`. cadmpeg's own `DecodeReport` / `LossNote`s are folded
   into the same report, so the user sees one list.
+- Every `Loss` and `Error` carries a **`Stage`**: `input`, `decode` and `project` (cadmpeg),
+  `map` and `write` (Dutchman; cadmpeg's STEP restatement within writing), `solidcraft`. The
+  reports name the upstream project from it, so a report reaches the code that can fix it.
+- **`convert-all`** converts each file in a child process (the same program, started with a
+  worker argument), which prints the file's report and marks each stage on stderr as it
+  begins. The parent stops a child past its time or memory limit, and reports the stage it had
+  reached. A journal of finished files lets a stopped run carry on, and `anon` turns the
+  batch's reports into one with no names in it.
 - The CLI prints losses to stderr and exits 0 on success, 1 on a conversion error, 2 on a
   usage error. With `--json`, `convert` and `inspect` print one report on stdout instead, with
   stable field names (`docs/json.md`). The writer records a structured outcome in the `Report`

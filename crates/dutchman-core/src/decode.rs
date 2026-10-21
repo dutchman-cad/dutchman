@@ -14,7 +14,7 @@ use cadmpeg_registry::{
     forced_input, InputCatalog, ResolveSourceError, ResolvedSource, DETECTION_PREFIX_LEN,
 };
 
-use crate::{Error, Format, Model, Report, MAX_INPUT_BYTES};
+use crate::{Error, Format, Model, Report, Stage, MAX_INPUT_BYTES};
 
 /// cadmpeg's desktop ceilings in salvage mode: a successful decode keeps going past a loss
 /// and reports it, rather than refusing the whole file. The input cap is Dutchman's own.
@@ -102,7 +102,8 @@ fn decode_unguarded(
         )));
     }
     for finding in &validation.findings {
-        report.push(
+        report.push_at(
+            Stage::Project,
             finding.severity.into(),
             "validation",
             finding.message.clone(),
