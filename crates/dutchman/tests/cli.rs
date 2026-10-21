@@ -311,3 +311,58 @@ fn a_multi_document_archive_converts_like_a_fusion_archive() {
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("cannot read this design"));
 }
+
+#[test]
+fn convert_all_converts_a_folder_and_reports_each_file() {
+    let root = std::env::temp_dir().join(format!("dutchman-batch-{}", std::process::id()));
+    let project = root.join("project");
+    let nested = project.join("parts");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::copy(fixture("generated_unit_cube.f3d"), project.join("cube.f3d")).unwrap();
+    std::fs::copy(fixture("synthetic_cube.ipt"), nested.join("block.ipt")).unwrap();
+    std::fs::write(nested.join("broken.f3d"), [0xffu8; 256]).unwrap();
+    std::fs::write(project.join("notes.txt"), b"not a design").unwrap();
+    let out_dir = root.join("out");
+    let missing = root.join("missing.f3d");
+
+    let out = dutchman(&[
+        "convert-all",
+        "--json",
+        "--no-verify",
+        "--jobs",
+        "2",
+        "--out-dir",
+        out_dir.to_str().unwrap(),
+        project.to_str().unwrap(),
+        missing.to_str().unwrap(),
+    ]);
+    assert_eq!(out.status.code(), Some(1), "a failure makes the run fail");
+    let report = json_of(&out);
+    assert_eq!(report["schema"], "dutchman.convert-all/1");
+    assert_eq!(report["ok"], false);
+    assert_eq!(report["converted"], 2);
+    assert_eq!(report["failed"], 2);
+    let results = report["results"].as_array().unwrap();
+    assert_eq!(
+        results.len(),
+        4,
+        "the text file is not a design and is skipped"
+    );
+    for result in results {
+        assert_eq!(result["schema"], "dutchman.convert/1");
+    }
+    assert!(out_dir.join("cube.solidcraft").is_file());
+    assert!(out_dir.join("parts").join("block.solidcraft").is_file());
+    assert!(!out_dir.join("parts").join("broken.solidcraft").exists());
+
+    let text = dutchman(&[
+        "convert-all",
+        "--no-verify",
+        "--out-dir",
+        out_dir.to_str().unwrap(),
+        project.join("cube.f3d").to_str().unwrap(),
+    ]);
+    assert_eq!(text.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&text.stdout);
+    assert!(stdout.ends_with("1 converted, 0 failed\n"), "{stdout}");
+}

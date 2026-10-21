@@ -3,6 +3,7 @@
 //! Exit codes: 0 when the design was converted (or inspected), 1 when it could not be, 2 for a
 //! usage error. See `docs/json.md` for the `--json` reports.
 
+mod batch;
 mod formats;
 mod json;
 
@@ -23,6 +24,38 @@ struct Cli {
     command: Command,
 }
 
+/// How a design is converted.
+#[derive(clap::Args)]
+struct ConvertOptions {
+    /// Write the geometry as one non-parametric import, never the feature history.
+    #[arg(long)]
+    import_only: bool,
+    /// The SolidCraft CLI that checks a written history against the original geometry
+    /// (default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`).
+    #[arg(long, value_name = "PATH", conflicts_with = "no_verify")]
+    solidcraft: Option<PathBuf>,
+    /// Write history without checking it in SolidCraft.
+    #[arg(long)]
+    no_verify: bool,
+    /// Seconds each SolidCraft check may run before the history is written unverified.
+    #[arg(long, value_name = "SECONDS", default_value_t = DEFAULT_TIMEOUT.as_secs())]
+    verify_timeout: u64,
+}
+
+impl ConvertOptions {
+    fn writer(&self) -> SolidCraftWriter {
+        let verification = match (self.no_verify, &self.solidcraft) {
+            (true, _) => Verification::Off,
+            (false, Some(path)) => Verification::With(path.clone()),
+            (false, None) => Verification::Auto,
+        };
+        SolidCraftWriter::new()
+            .import_only(self.import_only)
+            .verification(verification)
+            .timeout(Duration::from_secs(self.verify_timeout))
+    }
+}
+
 #[derive(Subcommand)]
 enum Command {
     /// Convert a native CAD file into a SolidCraft design.
@@ -31,19 +64,26 @@ enum Command {
         input: PathBuf,
         /// The `.solidcraft` file to write.
         output: PathBuf,
-        /// Write the geometry as one non-parametric import, never the feature history.
+        #[command(flatten)]
+        options: ConvertOptions,
+        /// Print one machine-readable report on stdout instead of the text report.
         #[arg(long)]
-        import_only: bool,
-        /// The SolidCraft CLI that checks a written history against the original geometry
-        /// (default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`).
-        #[arg(long, value_name = "PATH", conflicts_with = "no_verify")]
-        solidcraft: Option<PathBuf>,
-        /// Write history without checking it in SolidCraft.
-        #[arg(long)]
-        no_verify: bool,
-        /// Seconds each SolidCraft check may run before the history is written unverified.
-        #[arg(long, value_name = "SECONDS", default_value_t = DEFAULT_TIMEOUT.as_secs())]
-        verify_timeout: u64,
+        json: bool,
+    },
+    /// Convert every native CAD file given, and those in the folders given, into SolidCraft
+    /// designs under one folder.
+    ConvertAll {
+        /// Files, and folders to search (with their subfolders) for files Dutchman knows.
+        #[arg(required = true)]
+        inputs: Vec<PathBuf>,
+        /// The folder to write the designs to, keeping each input folder's layout.
+        #[arg(long, value_name = "DIR")]
+        out_dir: PathBuf,
+        /// How many files to convert at once (default: the machine's cores, at most 8).
+        #[arg(long, value_name = "N")]
+        jobs: Option<std::num::NonZeroUsize>,
+        #[command(flatten)]
+        options: ConvertOptions,
         /// Print one machine-readable report on stdout instead of the text report.
         #[arg(long)]
         json: bool,
@@ -70,23 +110,16 @@ fn main() -> ExitCode {
         Command::Convert {
             input,
             output,
-            import_only,
-            solidcraft,
-            no_verify,
-            verify_timeout,
+            options,
             json,
-        } => {
-            let verification = match (no_verify, solidcraft) {
-                (true, _) => Verification::Off,
-                (false, Some(path)) => Verification::With(path),
-                (false, None) => Verification::Auto,
-            };
-            let writer = SolidCraftWriter::new()
-                .import_only(import_only)
-                .verification(verification)
-                .timeout(Duration::from_secs(verify_timeout));
-            convert(&input, &output, &writer, json)
-        }
+        } => convert(&input, &output, &options.writer(), json),
+        Command::ConvertAll {
+            inputs,
+            out_dir,
+            jobs,
+            options,
+            json,
+        } => batch::convert_all(&inputs, &out_dir, &options.writer(), jobs, json),
         Command::Inspect { input, json } => inspect(&input, json),
         Command::Formats { json } => {
             if json {
