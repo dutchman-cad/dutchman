@@ -29,17 +29,16 @@ Apple silicon and Intel Macs alike, with the `dutchman` and `dutchman-mcp` comma
 Dutchman is not signed with an Apple Developer ID, so the first time you open it macOS stops
 it with this box:
 
-> **“Dutchman” Not Opened**
->
-> Apple could not verify “Dutchman” is free of malware that may harm your Mac or compromise
-> your privacy.
+<img alt="The macOS box: “Dutchman” Not Opened. Apple could not verify “Dutchman” is free of malware that may harm your Mac or compromise your privacy. Buttons: Move to Trash, Done." src="images/macos-not-opened.png" width="260">
 
-Click **Done** (not Move to Trash), then:
+Click **Done**, not Move to Trash, then:
 
 1. Open **System Settings** › **Privacy & Security**.
 2. Scroll down to **Security**. It says “Dutchman” was blocked to protect your Mac.
 3. Click **Open Anyway**, enter your password, then click **Open Anyway** in the box that
    follows.
+
+<img alt="System Settings, Privacy & Security, Security: “Dutchman” was blocked to protect your Mac, with an Open Anyway button." src="images/macos-open-anyway.png" width="450">
 
 macOS remembers the choice; from then on Dutchman opens like any other app. Right-click ›
 Open, which older macOS versions offered, no longer gets past the box.
