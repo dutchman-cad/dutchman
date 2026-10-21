@@ -24,6 +24,15 @@ report's schema name changes when a field does).
   trip pass. It brings cadmpeg fixes that are merged but not yet released; stable releases keep
   using released cadmpeg only. See [Channels](docs/guide.md#channels-stable-and-nightly).
 
+### Reports
+
+- A file with more than 12 losses is summarised by component in the text reports: the design
+  first, then each part with its counts and, when its history was flattened, why. `--verbose`
+  prints every line. `convert --log FILE` writes the whole report, every loss in full, to a
+  file, and `convert-all` writes one for the run to `dutchman.log` in its output folder (or
+  `--log FILE`). The desktop app folds each part's losses under its own heading and saves the
+  full log with **Save the full log…**.
+
 ### Assemblies and components
 
 - An assembly's conversion says how complete it is, before you open it: `assembly: 18 of 20

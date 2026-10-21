@@ -1,6 +1,7 @@
 //! The machine-readable reports `--json` prints. Their field names are stable: fields are
 //! added, never renamed or removed. See `docs/json.md`.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use dutchman_core::{
@@ -52,6 +53,170 @@ pub fn first_sentence(text: &str) -> (String, bool) {
         Some(at) => (format!("{} …", text.get(..=at).unwrap_or(text)), true),
         None => (text.to_owned(), false),
     }
+}
+
+/// The losses of one component of a design: the design's own, or a part file's.
+#[derive(Debug, PartialEq)]
+pub struct Component<'a> {
+    /// The part file's name; `None` for the design itself.
+    pub file: Option<String>,
+    /// How many losses it has at each level: Dropped, Degraded, Info.
+    pub dropped: usize,
+    pub degraded: usize,
+    pub info: usize,
+    /// Why its feature history was not written, when it was not.
+    pub flattened: Option<String>,
+    /// Its losses, in the order they occurred.
+    pub losses: Vec<&'a Value>,
+}
+
+/// The extensions of the files a design's components are read from.
+const COMPONENT_FILES: [&str; 6] = [".ipt", ".iam", ".f3d", ".f3z", ".sldprt", ".sldasm"];
+
+/// The component a loss belongs to: the deepest part file its subject names
+/// (`sub.iam: pin.ipt: …`), else the part file its message starts with
+/// (`history: pin.ipt: flattened: …`), else the design itself.
+fn component_of(loss: &Value) -> Option<String> {
+    let field = |key: &str| loss.get(key).and_then(Value::as_str).unwrap_or("");
+    let is_file = |segment: &str| {
+        let lower = segment.to_lowercase();
+        COMPONENT_FILES.iter().any(|ext| lower.ends_with(ext))
+    };
+    let subject = field("subject");
+    subject
+        .split(": ")
+        .filter(|segment| is_file(segment))
+        .last()
+        .or_else(|| {
+            field("message")
+                .split(": ")
+                .next()
+                .filter(|segment| is_file(segment))
+        })
+        .map(str::to_owned)
+}
+
+/// A report's losses by component: the design's own first, then the components with the most
+/// that matters (Dropped, then Degraded), then by name.
+pub fn components(report: &Value) -> Vec<Component<'_>> {
+    let mut by_file: BTreeMap<Option<String>, Component<'_>> = BTreeMap::new();
+    for loss in report
+        .get("losses")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let file = component_of(loss);
+        let component = by_file.entry(file.clone()).or_insert_with(|| Component {
+            file,
+            dropped: 0,
+            degraded: 0,
+            info: 0,
+            flattened: None,
+            losses: Vec::new(),
+        });
+        match loss.get("level").and_then(Value::as_str) {
+            Some("Dropped") => component.dropped += 1,
+            Some("Degraded") => component.degraded += 1,
+            _ => component.info += 1,
+        }
+        let message = loss.get("message").and_then(Value::as_str).unwrap_or("");
+        if component.flattened.is_none() {
+            let flattened = match &component.file {
+                Some(file) => message
+                    .strip_prefix(file.as_str())
+                    .and_then(|rest| rest.strip_prefix(": flattened: ")),
+                None => message.strip_prefix("flattened: "),
+            };
+            if loss.get("subject").and_then(Value::as_str) == Some("history") {
+                component.flattened = flattened.map(str::to_owned);
+            }
+        }
+        component.losses.push(loss);
+    }
+    let mut out: Vec<Component<'_>> = by_file.into_values().collect();
+    out.sort_by(|a, b| {
+        a.file
+            .is_some()
+            .cmp(&b.file.is_some())
+            .then_with(|| b.dropped.cmp(&a.dropped))
+            .then_with(|| b.degraded.cmp(&a.degraded))
+            .then_with(|| a.file.cmp(&b.file))
+    });
+    out
+}
+
+impl Component<'_> {
+    /// Its counts in words: `history flattened (fillet is not mapped yet); 2 Dropped, 1
+    /// Degraded`.
+    pub fn summary(&self) -> String {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(reason) = &self.flattened {
+            let (reason, _) = first_sentence(reason);
+            parts.push(format!("history flattened ({reason})"));
+        }
+        let counts: Vec<String> = [
+            (self.dropped, "Dropped"),
+            (self.degraded, "Degraded"),
+            (self.info, "Info"),
+        ]
+        .into_iter()
+        .filter(|(n, _)| *n > 0)
+        .map(|(n, level)| format!("{n} {level}"))
+        .collect();
+        if !counts.is_empty() {
+            parts.push(counts.join(", "));
+        }
+        parts.join("; ")
+    }
+}
+
+/// Up to this many losses are listed one by one; more are summarised by component.
+pub const LISTED: usize = 12;
+
+/// The components [`grouped_lines`] lists before saying how many more there are.
+const COMPONENTS_SHOWN: usize = 15;
+
+/// A report's losses in a few lines, by component: `the design: 2 Degraded`, then
+/// `pin.ipt: history flattened (…); 1 Dropped`, most that matters first.
+pub fn grouped_lines(report: &Value) -> Vec<String> {
+    let components = components(report);
+    let total: usize = components.iter().map(|c| c.losses.len()).sum();
+    let mut lines = vec![format!(
+        "losses: {total} in {} component{}",
+        components.len(),
+        if components.len() == 1 { "" } else { "s" }
+    )];
+    for component in components.iter().take(COMPONENTS_SHOWN) {
+        let name = component.file.as_deref().unwrap_or("the design");
+        lines.push(format!("  {name}: {}", component.summary()));
+    }
+    if components.len() > COMPONENTS_SHOWN {
+        lines.push(format!(
+            "  and {} more components",
+            components.len() - COMPONENTS_SHOWN
+        ));
+    }
+    lines
+}
+
+/// The whole text report of one file, every note in full: what it became, how complete it
+/// is, then every loss by component.
+pub fn full_log(report: &Value, line: &str) -> String {
+    let mut out = format!("{line}\n");
+    for completeness in completeness_lines(report) {
+        out.push_str(&completeness);
+        out.push('\n');
+    }
+    for component in components(report) {
+        let name = component.file.as_deref().unwrap_or("the design");
+        out.push_str(&format!("\n{name}: {}\n", component.summary()));
+        for loss in component.losses {
+            let (line, _) = loss_line(loss, true);
+            out.push_str(&format!("  {line}\n"));
+        }
+    }
+    out
 }
 
 /// What the text reports say once when they cut a note short.
@@ -251,6 +416,47 @@ mod tests {
     use dutchman_core::FeatureOutcome;
 
     use super::*;
+
+    #[test]
+    fn losses_are_grouped_by_the_part_they_belong_to() {
+        let report = json!({"losses": [
+            {"level": "Info", "subject": "history", "message": "flattened: the design carries no feature history"},
+            {"level": "Dropped", "subject": "occurrence \"Pin:1\"", "message": "pin.ipt: not found"},
+            {"level": "Info", "subject": "history", "message": "base.ipt: flattened: feature \"Fillet1\": fillet is not mapped yet"},
+            {"level": "Degraded", "subject": "base.ipt: f3d/material.not-transferred", "message": "Materials were not transferred."},
+            {"level": "Degraded", "subject": "sub.iam: arm.ipt: validation", "message": "a check"},
+        ]});
+        let components = components(&report);
+        let names: Vec<Option<&str>> = components.iter().map(|c| c.file.as_deref()).collect();
+        // The design first, then the parts with the most that matters: the part not found
+        // carries the placement it cost.
+        assert_eq!(
+            names,
+            [None, Some("pin.ipt"), Some("arm.ipt"), Some("base.ipt")]
+        );
+        assert_eq!(components[1].dropped, 1);
+        assert_eq!(
+            components[3].summary(),
+            "history flattened (feature \"Fillet1\": fillet is not mapped yet); 1 Degraded, 1 Info"
+        );
+        assert_eq!(
+            grouped_lines(&report),
+            [
+                "losses: 5 in 4 components",
+                "  the design: history flattened (the design carries no feature history); 1 Info",
+                "  pin.ipt: 1 Dropped",
+                "  arm.ipt: 1 Degraded",
+                "  base.ipt: history flattened (feature \"Fillet1\": fillet is not mapped yet); 1 Degraded, 1 Info",
+            ]
+        );
+        let log = full_log(&report, "converted  top.iam -> top.solidcraft");
+        assert!(
+            log.starts_with("converted  top.iam -> top.solidcraft\n"),
+            "{log}"
+        );
+        assert!(log.contains("\nbase.ipt: history flattened"), "{log}");
+        assert!(log.contains("  Degraded: base.ipt: f3d/material.not-transferred: Materials were not transferred.\n"), "{log}");
+    }
 
     #[test]
     fn an_assembly_says_how_much_of_it_was_placed() {

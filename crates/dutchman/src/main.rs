@@ -32,6 +32,9 @@ enum Command {
         output: PathBuf,
         #[command(flatten)]
         options: ConvertOptions,
+        /// Also write the whole text report, every loss in full, to FILE.
+        #[arg(long, value_name = "FILE")]
+        log: Option<PathBuf>,
         /// Print one machine-readable report on stdout instead of the text report.
         #[arg(long)]
         json: bool,
@@ -73,6 +76,10 @@ enum Command {
         report_key: Option<PathBuf>,
         #[command(flatten)]
         options: ConvertOptions,
+        /// Write the whole text report, every loss of every file in full, to FILE (default:
+        /// dutchman.log in the output folder).
+        #[arg(long, value_name = "FILE")]
+        log: Option<PathBuf>,
         /// Print one machine-readable report on stdout instead of the text report.
         #[arg(long)]
         json: bool,
@@ -113,8 +120,9 @@ fn main() -> ExitCode {
             input,
             output,
             options,
+            log,
             json,
-        } => convert(&input, &output, &options, json, verbose),
+        } => convert(&input, &output, &options, log.as_deref(), json, verbose),
         Command::ConvertAll {
             inputs,
             out_dir,
@@ -126,6 +134,7 @@ fn main() -> ExitCode {
             report_salt,
             report_key,
             options,
+            log,
             json,
         } => {
             let anon = match report_salt.as_deref().map(anon::Salt::parse).transpose() {
@@ -165,6 +174,17 @@ fn main() -> ExitCode {
                 print_json(&report);
             } else {
                 print!("{}", batch::text(&report, verbose));
+            }
+            let log = log.unwrap_or_else(|| out_dir.join(batch::LOG_NAME));
+            let written = log
+                .parent()
+                .filter(|folder| !folder.as_os_str().is_empty())
+                .map_or(Ok(()), std::fs::create_dir_all)
+                .and_then(|()| std::fs::write(&log, batch::full_log(&report)));
+            match written {
+                Ok(()) if !json => eprintln!("dutchman: every loss, in full: {}", log.display()),
+                Ok(()) => {}
+                Err(err) => eprintln!("dutchman: cannot write {}: {err}", log.display()),
             }
             if let Some(request) = anon {
                 match anon::write(&request, &report, &inputs, &out_dir, &options, &settings) {
@@ -213,6 +233,7 @@ fn convert(
     input: &Path,
     output: &Path,
     options: &ConvertOptions,
+    log: Option<&Path>,
     as_json: bool,
     verbose: bool,
 ) -> ExitCode {
@@ -223,6 +244,12 @@ fn convert(
         !options.no_clobber,
         &options.part_search(),
     );
+    if let Some(log) = log {
+        let text = json::full_log(&report, &batch::line(&report));
+        if let Err(err) = std::fs::write(log, text) {
+            eprintln!("dutchman: cannot write {}: {err}", log.display());
+        }
+    }
     if as_json {
         print_json(&report);
     } else if let Some(message) = report.pointer("/error/message").and_then(Value::as_str) {
@@ -233,13 +260,23 @@ fn convert(
         for line in json::completeness_lines(&report) {
             println!("{line}");
         }
-        print_losses(
-            report
-                .get("losses")
-                .and_then(Value::as_array)
-                .map_or(&[][..], Vec::as_slice),
-            verbose,
-        );
+        let losses = report
+            .get("losses")
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice);
+        if verbose || losses.len() <= json::LISTED {
+            print_losses(losses, verbose);
+        } else {
+            for line in json::grouped_lines(&report) {
+                eprintln!("dutchman: {line}");
+            }
+            match log {
+                Some(log) => eprintln!("dutchman: every loss, in full: {}", log.display()),
+                None => eprintln!(
+                    "dutchman: (--verbose prints every loss; --log FILE writes them to FILE)"
+                ),
+            }
+        }
     }
     exit(&report)
 }

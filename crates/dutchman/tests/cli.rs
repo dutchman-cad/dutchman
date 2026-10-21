@@ -373,6 +373,14 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
     }
     assert!(out_dir.join("cube.solidcraft").is_file());
     assert!(out_dir.join("parts").join("block.solidcraft").is_file());
+    // The whole text report, every loss in full, beside the designs.
+    let log = std::fs::read_to_string(out_dir.join("dutchman.log")).unwrap();
+    assert!(
+        log.contains("converted") && log.contains("cube.f3d"),
+        "{log}"
+    );
+    assert!(log.contains("missing.f3d: no such file or folder"), "{log}");
+    assert!(log.ends_with("2 converted, 2 failed, 1 skipped\n"), "{log}");
     assert!(!out_dir.join("parts").join("broken.solidcraft").exists());
 
     let text = dutchman(&[

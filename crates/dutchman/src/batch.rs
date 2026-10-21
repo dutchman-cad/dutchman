@@ -216,17 +216,24 @@ pub fn text(report: &Value, verbose: bool) -> String {
             out.push_str(&line);
             out.push('\n');
         }
-        for loss in result
+        let losses = result
             .get("losses")
             .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            let (line, shortened) = report::loss_line(loss, verbose);
-            cut |= shortened;
-            out.push_str("           ");
-            out.push_str(&line);
-            out.push('\n');
+            .map_or(&[][..], Vec::as_slice);
+        if verbose || losses.len() <= report::LISTED {
+            for loss in losses {
+                let (line, shortened) = report::loss_line(loss, verbose);
+                cut |= shortened;
+                out.push_str("           ");
+                out.push_str(&line);
+                out.push('\n');
+            }
+        } else {
+            for line in report::grouped_lines(result) {
+                out.push_str("           ");
+                out.push_str(&line);
+                out.push('\n');
+            }
         }
     }
     let count = |key: &str| report.get(key).and_then(Value::as_u64).unwrap_or(0);
@@ -245,6 +252,32 @@ pub fn text(report: &Value, verbose: bool) -> String {
     if cut {
         out.push_str(&format!("({})\n", report::CUT_NOTE));
     }
+    out
+}
+
+/// The name of the whole text report `convert-all` writes in its output folder.
+pub const LOG_NAME: &str = "dutchman.log";
+
+/// The whole text report of a `dutchman.convert-all/1` report, every note in full: each
+/// file's line, how complete it is and its losses by component, then the counts.
+pub fn full_log(report: &Value) -> String {
+    let mut out = String::new();
+    for result in report
+        .get("results")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        out.push_str(&report::full_log(result, &line(result)));
+        out.push('\n');
+    }
+    let count = |key: &str| report.get(key).and_then(Value::as_u64).unwrap_or(0);
+    out.push_str(&format!(
+        "{} converted, {} failed, {} skipped\n",
+        count("converted"),
+        count("failed"),
+        count("skipped")
+    ));
     out
 }
 

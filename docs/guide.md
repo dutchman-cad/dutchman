@@ -176,7 +176,8 @@ dutchman convert --json generated_unit_cube.f3d cube.solidcraft
 | `--project DIR` | The project folder an Inventor assembly's part files are searched in when they are not at their stored paths. Default: the nearest folder above the assembly holding an `.ipj`, else two folders up. See [Finding the part files](inventor.md#finding-the-part-files). |
 | `--search DIR` | Another folder to search for part files the project folder does not hold, such as a shared library. May be given more than once. |
 | `--json` | One JSON report on stdout instead of the text report. |
-| `--verbose` | Print each loss note in full; the text report cuts long ones to their first sentence. The JSON report always has them in full. |
+| `--verbose` | Print every loss, each note in full. Without it, a file with more than 12 losses is summarised by component (below), and long notes are cut to their first sentence. The JSON report always has them all in full. |
+| `--log FILE` | Also write the whole text report, every loss in full, grouped by component, to `FILE`. |
 
 ## Look before you convert: inspect
 
@@ -231,8 +232,11 @@ converted  project/sub/synthetic_cube.ipt -> converted/sub/synthetic_cube.solidc
 2 converted, 1 failed, 1 skipped (not in a format Dutchman knows)
 ```
 
-Each converted file's loss report is listed beneath it. Files in the folders that are not in a
-format Dutchman knows (`notes.txt`, say) are skipped and counted at the end. The exit code is 0
+Each converted file's loss report is listed beneath it, summarised by component when it has
+more than 12 losses. The whole report, every loss in full, is written to `dutchman.log` in the
+output folder (`--log FILE` puts it elsewhere): attach it to an issue rather than copying
+lines. Files in the folders that are not in a format Dutchman knows (`notes.txt`, say) are
+skipped and counted at the end. The exit code is 0
 only when every file converted, else 1. `--jobs N` sets how many files
 convert at once (default: the machine's cores, at most 8). It takes the same options as
 `convert`, and `--json` prints one `dutchman.convert-all/1` report holding a
@@ -297,8 +301,23 @@ cost. A part not found usually means its project folder is elsewhere: give it wi
 [Finding the part files](inventor.md#finding-the-part-files)). `inspect` says the same as
 `would place: …`.
 
-Every conversion lists what it could not carry across intact. Each line reads
-`LEVEL: SUBJECT: MESSAGE`:
+Every conversion lists what it could not carry across intact. A design with more than 12
+losses, an assembly's usually, gets them by component instead, the design itself first, then
+the parts with the most that matters:
+
+```text
+losses: 182 in 14 components
+  the design: 1 Degraded, 3 Info
+  pin.ipt: 1 Dropped
+  base.ipt: history flattened (feature "Fillet1": fillet is not mapped yet); 2 Degraded, 9 Info
+  …
+```
+
+`--verbose` prints every line, and `--log FILE` writes them all to a file. In the desktop app,
+each part's losses fold away under its own heading, and **Save the full log…** writes them
+out.
+
+Each loss line reads `LEVEL: SUBJECT: MESSAGE`:
 
 | Level | Meaning | What to do |
 |---|---|---|

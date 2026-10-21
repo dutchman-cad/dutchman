@@ -143,6 +143,14 @@ pub fn pick(kind: Pick, messages: Sender<Message>, ctx: egui::Context) {
                     .await
                     .into_iter()
                     .collect(),
+                Pick::SaveLog(_) => dialog
+                    .set_title("Save the full log")
+                    .set_file_name("dutchman.log")
+                    .add_filter("Log", &["log", "txt"])
+                    .save_file()
+                    .await
+                    .into_iter()
+                    .collect(),
                 Pick::SearchFile(_) => dialog
                     .set_title("Find a missing part file")
                     .add_filter("Inventor parts and assemblies", &["ipt", "iam"])
@@ -176,4 +184,6 @@ pub enum Pick {
     SearchFolder(usize),
     /// One of those files, whose folder is then searched.
     SearchFile(usize),
+    /// Where to save the full log of the result row at this index.
+    SaveLog(usize),
 }
