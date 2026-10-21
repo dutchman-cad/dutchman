@@ -8,7 +8,7 @@ use std::f64::consts::TAU;
 
 use serde_json::{json, Value};
 
-use super::sketch::{number, unit, v3};
+use super::sketch::{cross, dot, number, unit, v3};
 use super::{name, Context};
 
 /// How far from a full turn (radians) a circular pattern may be and still be one.
@@ -39,7 +39,21 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
             None => return Err("its seed is malformed".to_owned()),
         }
     }
-    let layout = layout(definition.get("pattern"))?;
+    let pattern = definition.get("pattern");
+    if pattern.and_then(|p| p.get("kind")).and_then(Value::as_str) == Some("mirror") {
+        let plane = mirror_plane(pattern)?;
+        let id = ctx.id();
+        ctx.builds = true;
+        return Ok(json!({
+            "id": id,
+            "name": name(feature).map(str::to_owned).unwrap_or_else(|| format!("Mirror{id}")),
+            "type": "mirror",
+            "suppressed": false,
+            "features": features,
+            "plane": plane,
+        }));
+    }
+    let layout = layout(pattern)?;
     let id = ctx.id();
     ctx.builds = true;
     Ok(json!({
@@ -50,6 +64,30 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         "features": features,
         "pattern": layout,
     }))
+}
+
+/// The SolidCraft plane of a CADIR mirror: through its point, square to its normal. Which two
+/// directions span it does not matter to a reflection, so any pair square to the normal does.
+fn mirror_plane(pattern: Option<&Value>) -> Result<Value, String> {
+    let pattern = pattern.ok_or("it has no layout")?;
+    let origin = v3(pattern.get("plane_origin")).ok_or("its mirror plane is malformed")?;
+    let normal = v3(pattern.get("plane_normal"))
+        .and_then(unit)
+        .ok_or("its mirror plane is malformed")?;
+    let away = if normal[0].abs() < 0.9 {
+        [1.0, 0.0, 0.0]
+    } else {
+        [0.0, 1.0, 0.0]
+    };
+    let along = dot(away, normal);
+    let x = unit([
+        away[0] - along * normal[0],
+        away[1] - along * normal[1],
+        away[2] - along * normal[2],
+    ])
+    .ok_or("its mirror plane is malformed")?;
+    let y = cross(normal, x);
+    Ok(json!({"type": "custom", "plane": {"origin": origin, "x_dir": x, "y_dir": y}}))
 }
 
 /// The SolidCraft pattern layout for a CADIR pattern transform.

@@ -1460,3 +1460,67 @@ fn solidcraft_colours_the_face_of_each_parts_own_body() {
     assert_eq!(face_colours(&results[0]), ["#0000ff"], "{results}");
     assert!(face_colours(&results[1]).is_empty(), "{results}");
 }
+
+fn mirrored(origin: [f64; 3], normal: [f64; 3]) -> Model {
+    patterned(json!({"kind": "mirror",
+        "plane_origin": {"x": origin[0], "y": origin[1], "z": origin[2]},
+        "plane_normal": {"x": normal[0], "y": normal[1], "z": normal[2]}}))
+}
+
+#[test]
+fn a_mirror_of_features_becomes_a_solidcraft_mirror() {
+    let (document, report) = convert(
+        &mirrored([20.0, 0.0, 0.0], [1.0, 0.0, 0.0]),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("3 of 3 features mapped"),
+        "{}",
+        history_line(&report)
+    );
+    let mirror = &document["features"][2];
+    assert_eq!(mirror["type"], "mirror");
+    assert_eq!(mirror["name"], "Copies");
+    assert_eq!(mirror["features"], json!(["Block"]));
+    let plane = &mirror["plane"]["plane"];
+    assert_eq!(mirror["plane"]["type"], "custom");
+    assert_eq!(plane["origin"], json!([20.0, 0.0, 0.0]));
+    // The plane is spanned by two directions square to the normal.
+    for key in ["x_dir", "y_dir"] {
+        assert!(plane[key][0].as_f64().unwrap().abs() < 1e-12, "{plane}");
+    }
+}
+
+#[test]
+fn solidcraft_mirrors_the_features_across_the_plane() {
+    let Some(cli) = solidcraft() else { return };
+    let h = std::f64::consts::FRAC_1_SQRT_2;
+    for (origin, normal, copy_min, copy_max) in [
+        // Across x = 20: the copy spans 30 to 40 along X.
+        (
+            [20.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [30.0, 0.0, 0.0],
+            [40.0, 10.0, 10.0],
+        ),
+        // Across x + y = 0: (x, y) goes to (-y, -x).
+        (
+            [0.0, 0.0, 0.0],
+            [h, h, 0.0],
+            [-10.0, -10.0, 0.0],
+            [0.0, 0.0, 10.0],
+        ),
+    ] {
+        let design = written(&mirrored(origin, normal)).0;
+        let total: f64 = volumes(&cli, &design).iter().sum();
+        assert!((total - 2000.0).abs() < 1e-6, "{total}");
+        let boxes = bounds(&cli, &design);
+        let near = |a: [f64; 3], b: [f64; 3]| a.iter().zip(b).all(|(a, b)| (a - b).abs() < 1e-6);
+        assert!(
+            boxes
+                .iter()
+                .any(|(min, max)| near(*min, copy_min) && near(*max, copy_max)),
+            "{normal:?}: {boxes:?}"
+        );
+    }
+}
