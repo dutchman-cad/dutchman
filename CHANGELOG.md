@@ -24,6 +24,9 @@ report's schema name changes when a field does).
 
 ### Checks
 
+- The check of geometry written without history also reads each body's volume in SolidCraft:
+  a solid it gives no volume (an empty shell) or a body it reads inside out is reported as
+  `Degraded: geometry`, as missing faces already were.
 - Installing the SolidCraft app is enough to check histories: without `SOLIDCRAFT_CLI` or
   `solidcraft-cli` on `PATH`, Dutchman uses the CLI inside the newest installed SolidCraft app
   (macOS `SolidCraft*.app`, Windows `Program Files\SolidCraft`). The desktop app says which CLI

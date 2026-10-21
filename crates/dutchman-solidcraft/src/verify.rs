@@ -218,7 +218,24 @@ pub(crate) enum Shown {
 
 /// Evaluates `design`, written as an import of a model with `faces` faces, and says whether
 /// SolidCraft shows all of it.
-pub(crate) fn check_import(cli: &Path, timeout: Duration, design: &[u8], faces: usize) -> Shown {
+/// What a design written as geometry holds, to compare with what SolidCraft shows of it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Expected {
+    /// Its faces; 0 when not counted.
+    pub faces: usize,
+    /// Its solid bodies, each of which should have a volume; 0 when not counted.
+    pub solids: usize,
+}
+
+/// A body volume, in cubic millimetres, below which SolidCraft gives the body none.
+const NO_VOLUME: f64 = 1e-6;
+
+pub(crate) fn check_import(
+    cli: &Path,
+    timeout: Duration,
+    design: &[u8],
+    expected: Expected,
+) -> Shown {
     let dir = match tempfile::tempdir() {
         Ok(dir) => dir,
         Err(err) => return Shown::Unchecked(format!("no scratch folder: {err}")),
@@ -230,16 +247,32 @@ pub(crate) fn check_import(cli: &Path, timeout: Duration, design: &[u8], faces: 
         }
         Err(why) => return Shown::Unchecked(why),
     };
-    shown(&eval, faces)
+    shown(&eval, expected)
 }
 
-fn shown(eval: &Eval, faces: usize) -> Shown {
+fn shown(eval: &Eval, expected: Expected) -> Shown {
     let mut problems: Vec<String> = eval.errors.clone();
+    let faces = expected.faces;
     match eval.faces {
         Some(shown) if shown < faces as u64 => {
             problems.insert(0, format!("SolidCraft shows {shown} of its {faces} faces"));
         }
         _ => {}
+    }
+    let inside_out = eval.volumes.iter().filter(|v| **v < -NO_VOLUME).count();
+    if inside_out > 0 {
+        problems.push(format!(
+            "SolidCraft reads {inside_out} bod{} inside out, with a negative volume",
+            if inside_out == 1 { "y" } else { "ies" }
+        ));
+    }
+    let with_volume = eval.volumes.iter().filter(|v| **v > NO_VOLUME).count();
+    if with_volume < expected.solids {
+        problems.push(format!(
+            "SolidCraft gives {with_volume} of its {} solids a volume; the others open as \
+             empty shells",
+            expected.solids
+        ));
     }
     problems.extend(eval.warnings.iter().cloned());
     if problems.is_empty() {
@@ -427,18 +460,48 @@ mod tests {
             }))
             .unwrap()
         };
-        assert_eq!(shown(&eval(6, None), 6), Shown::Whole);
+        let six = Expected {
+            faces: 6,
+            solids: 1,
+        };
+        assert_eq!(shown(&eval(6, None), six), Shown::Whole);
         assert_eq!(
             shown(
                 &eval(3, Some("solid 'cube': 3 face(s) could not be meshed")),
-                6
+                six
             ),
             Shown::Short(
                 "SolidCraft shows 3 of its 6 faces; solid 'cube': 3 face(s) could not be meshed"
                     .to_owned()
             )
         );
-        assert!(matches!(shown(&eval(6, Some("odd")), 6), Shown::Short(_)));
+        assert!(matches!(shown(&eval(6, Some("odd")), six), Shown::Short(_)));
+    }
+
+    #[test]
+    fn solids_without_a_volume_or_inside_out_are_reported() {
+        let eval = |volumes: &[f64]| Eval {
+            volumes: volumes.to_vec(),
+            errors: Vec::new(),
+            faces: None,
+            warnings: Vec::new(),
+        };
+        let two = Expected {
+            faces: 0,
+            solids: 2,
+        };
+        assert_eq!(shown(&eval(&[1000.0, 8.0]), two), Shown::Whole);
+        assert_eq!(
+            shown(&eval(&[1000.0, 0.0, 0.0]), two),
+            Shown::Short(
+                "SolidCraft gives 1 of its 2 solids a volume; the others open as empty shells"
+                    .to_owned()
+            )
+        );
+        assert_eq!(
+            shown(&eval(&[1000.0, -65.4]), Expected::default()),
+            Shown::Short("SolidCraft reads 1 body inside out, with a negative volume".to_owned())
+        );
     }
 
     #[test]
@@ -572,7 +635,15 @@ mod cli_tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = tempfile::tempdir().unwrap();
         let cli = fake_cli(dir.path(), script);
-        check_import(&cli, DEFAULT_TIMEOUT, b"design", 6)
+        check_import(
+            &cli,
+            DEFAULT_TIMEOUT,
+            b"design",
+            Expected {
+                faces: 6,
+                solids: 0,
+            },
+        )
     }
 
     #[test]
