@@ -142,19 +142,27 @@ fn answer(method: &str, params: &Value) -> Result<Value, (i64, String)> {
                 Some(Value::Object(arguments)) => arguments,
                 Some(_) => return Err((INVALID_PARAMS, "arguments must be an object".to_owned())),
             };
-            let report = match name {
-                "convert" => convert(arguments),
-                "inspect" => inspect(arguments),
-                "formats" => only(arguments, &[]).map(|()| crate::formats::json()),
-                "convert_all" => convert_all(arguments),
+            let (report, schema) = match name {
+                "convert" => (convert(arguments), crate::json::CONVERT),
+                "inspect" => (inspect(arguments), crate::json::INSPECT),
+                "formats" => (
+                    only(arguments, &[]).map(|()| crate::formats::json()),
+                    crate::formats::SCHEMA,
+                ),
+                "convert_all" => (convert_all(arguments), crate::batch::SCHEMA),
                 _ => return Err((INVALID_PARAMS, format!("no tool named {name}"))),
             };
-            Ok(match report {
-                Ok(report) => result(&report),
-                Err(message) => {
-                    json!({"content": [{"type": "text", "text": message}], "isError": true})
-                }
-            })
+            // Arguments the tool cannot take fail as the tool fails: a report with the reason,
+            // so a client that reads only the structured content sees it too.
+            Ok(result(&report.unwrap_or_else(|message| {
+                let input = arguments
+                    .get("input")
+                    .and_then(Value::as_str)
+                    .map_or(Value::Null, |input| {
+                        crate::json::input(std::path::Path::new(input))
+                    });
+                crate::json::failure(schema, input, &message)
+            })))
         }
         _ => Err((METHOD_NOT_FOUND, format!("no method {method}"))),
     }
@@ -411,9 +419,20 @@ mod tests {
         ] {
             let result = &call(name, arguments)["result"];
             assert_eq!(result["isError"], true, "{name}");
-            let text = result["content"][0]["text"].as_str().unwrap();
-            assert!(text.contains(says), "{name}: {text}");
+            // The same shape as a failed conversion: a report, as structured content and text.
+            let report = &result["structuredContent"];
+            assert_eq!(report["ok"], false, "{name}");
+            let message = report["error"]["message"].as_str().unwrap();
+            assert!(message.contains(says), "{name}: {message}");
+            let text: Value =
+                serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+            assert_eq!(&text, report, "{name}");
         }
+        let report = &call("convert", json!({"input": "/x/a.f3d"}))["result"]["structuredContent"];
+        assert_eq!(report["schema"], "dutchman.convert/1");
+        assert_eq!(report["input"]["path"], "/x/a.f3d");
+        let report = &call("formats", json!({"x": 1}))["result"]["structuredContent"];
+        assert_eq!(report["schema"], "dutchman.formats/1");
     }
 
     #[test]
