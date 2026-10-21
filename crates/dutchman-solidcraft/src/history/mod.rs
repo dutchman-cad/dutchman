@@ -411,7 +411,8 @@ fn check_version(document: &Value) -> Result<(), String> {
 fn map_feature(feature: &Value, ctx: &mut Context, report: &mut Report) -> Result<Mapped, String> {
     let definition = operation(feature);
     match definition.get("definition").and_then(Value::as_str) {
-        Some("datum_principal_plane") => Ok(Mapped::Nothing),
+        // A folder, a PartDesign Body or another node that orders the tree and builds nothing.
+        Some("datum_principal_plane" | "tree_node") => Ok(Mapped::Nothing),
         Some("sketch") => sketch::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some("extrude") => extrude::map(feature, definition, ctx).map(Mapped::Feature),
         Some("revolve") => revolve::map(feature, definition, ctx).map(Mapped::Feature),
@@ -507,6 +508,28 @@ mod tests {
         let model = with(cube(), json!([datum(1, 0), datum(2, 1)]), json!([]));
         let err = map(&model, &mut Report::default()).result.unwrap_err();
         assert_eq!(err, "no feature in the history builds geometry");
+    }
+
+    #[test]
+    fn tree_nodes_build_nothing_and_block_nothing() {
+        let body = feature(
+            2,
+            1,
+            "Body",
+            json!({"definition": "tree_node", "role": "history"}),
+        );
+        let model = with(cube(), json!([datum(1, 0), body]), json!([]));
+        let mapping = map(&model, &mut Report::default());
+        // Nothing else builds geometry here; the node itself does not stop the history.
+        assert_eq!(
+            mapping.result.unwrap_err(),
+            "no feature in the history builds geometry"
+        );
+        let statuses: Vec<FeatureStatus> = mapping.features.iter().map(|f| f.status).collect();
+        assert_eq!(
+            statuses,
+            [FeatureStatus::NotNeeded, FeatureStatus::NotNeeded]
+        );
     }
 
     #[test]
