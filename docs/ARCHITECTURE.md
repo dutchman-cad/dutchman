@@ -153,7 +153,10 @@ Hostile input comes back as an error, never a panic: workspace lints deny `unwra
 `expect`, `panic!`, `todo!`, `unreachable!` and slice indexing outside tests; `unsafe` is
 forbidden. Inputs are size-checked before opening (`MAX_INPUT_BYTES`), cadmpeg decodes
 run under its `DecodePolicy` resource limits (salvage mode, desktop ceilings), and a panic
-inside cadmpeg is caught at the decode seam. Release builds therefore keep `panic = "unwind"`.
+inside cadmpeg is caught wherever Dutchman calls it (decoding, STEP restatement, cutting a
+component's geometry out). A test feeds every fixture, cut short and corrupted in several
+hundred deterministic ways, through the whole conversion and requires a design or an error
+each time, never a crash and never a partial file. Release builds therefore keep `panic = "unwind"`.
 Output is encoded in memory and written only when the whole conversion succeeds.
 
 ## v0.1: one format, end to end
