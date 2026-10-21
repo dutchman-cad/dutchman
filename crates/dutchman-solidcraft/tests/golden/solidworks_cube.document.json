@@ -13,7 +13,7 @@
       "id": 3,
       "name": "solidworks_cube",
       "step": "",
-      "step_blob": "blobs/2ea192264ee43146833a01a7a8a687a82d73a6eaa6b57fd1663272496b9cfc97.step",
+      "step_blob": "blobs/<sha256>.step",
       "suppressed": false,
       "type": "import"
     }

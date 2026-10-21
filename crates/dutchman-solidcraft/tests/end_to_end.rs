@@ -112,7 +112,9 @@ fn converts_to_an_import(file: &str) {
     assert_eq!(import["step_blob"], blob.as_str());
     assert_eq!(import["file"], file);
 
-    let pretty = serde_json::to_string_pretty(&document).unwrap() + "\n";
+    // The STEP blob's name depends on cadmpeg's STEP writer, not on the document.
+    let pretty = (serde_json::to_string_pretty(&document).unwrap() + "\n")
+        .replace(blob.as_str(), "blobs/<sha256>.step");
     let golden = golden(&format!("{stem}.document.json"));
     if std::env::var_os("UPDATE_GOLDEN").is_some() {
         std::fs::write(&golden, &pretty).unwrap();
