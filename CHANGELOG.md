@@ -8,6 +8,13 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Checks
+
+- Installing the SolidCraft app is enough to check histories: without `SOLIDCRAFT_CLI` or
+  `solidcraft-cli` on `PATH`, Dutchman uses the CLI inside the newest installed SolidCraft app
+  (macOS `SolidCraft*.app`, Windows `Program Files\SolidCraft`). The desktop app says which CLI
+  it checks with. `dutchman_solidcraft::find_cli` is public.
+
 ### Releases
 
 - The README, and each release's notes, start with a direct download for each platform, with

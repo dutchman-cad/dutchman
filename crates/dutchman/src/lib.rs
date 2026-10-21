@@ -26,7 +26,8 @@ pub struct ConvertOptions {
     #[arg(long)]
     pub import_only: bool,
     /// The SolidCraft CLI that checks a written history against the original geometry
-    /// (default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`).
+    /// (default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an
+    /// installed SolidCraft app).
     #[arg(long, value_name = "PATH", conflicts_with = "no_verify")]
     pub solidcraft: Option<PathBuf>,
     /// Write history without checking it in SolidCraft.

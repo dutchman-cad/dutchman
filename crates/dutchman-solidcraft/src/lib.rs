@@ -24,7 +24,9 @@ use std::time::Duration;
 use dutchman_core::{Check, Error, Mode, Model, Outcome, Report, Severity, Stage, Writer};
 use serde_json::Value;
 
-pub use verify::{solidcraft_version, Verification, CLI_ENV, DEFAULT_TIMEOUT, VOLUME_TOLERANCE};
+pub use verify::{
+    find_cli, solidcraft_version, Verification, CLI_ENV, DEFAULT_TIMEOUT, VOLUME_TOLERANCE,
+};
 
 use document::Live;
 
