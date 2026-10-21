@@ -46,6 +46,15 @@ report's schema name changes when a field does).
 - Sphere and torus primitives map onto SolidCraft's (a torus about the Z axis). Boxes and
   cylinder primitives still flatten, with the reason: cadmpeg does not yet say where they sit.
 
+## Unreleased
+
+### Assemblies and components
+
+- Revolute and slider joints become SolidCraft revolute and slider joints, revolutes with their
+  limits, so the parts move as in the source; fixed joints keep their offset.
+- Joined parts are placed where their joints put them, as Fusion can store a joined part where
+  it was before its joints were solved.
+
 ## 0.1.1 (2026-10-21)
 
 ### Desktop app

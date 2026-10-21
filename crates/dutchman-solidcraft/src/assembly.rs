@@ -9,7 +9,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use dutchman_core::{Assembly, Joint};
+use dutchman_core::placement::{compose, IDENTITY};
+use dutchman_core::{Assembly, Joint, Motion};
 use dutchman_core::{Check, Error, FeatureOutcome, Mode, Model, Outcome, Report, Severity, Stage};
 use serde_json::{json, Value};
 
@@ -239,8 +240,9 @@ impl Builder<'_> {
     /// is the same place in the world, given in B's component.
     fn joints(&mut self, joints: &[Joint], top: &[Option<u64>]) -> Vec<Value> {
         let mut out = Vec::new();
+        let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
         for joint in joints {
-            let (Some((a, world_a)), Some((b, world_b))) =
+            let (Some((a, _)), Some((b, _))) =
                 (self.resolve(&joint.a, top), self.resolve(&joint.b, top))
             else {
                 self.report.push(
@@ -250,16 +252,28 @@ impl Builder<'_> {
                 );
                 continue;
             };
-            let b_frame = compose(&inverse(&world_b), &world_a);
+            // Each frame is in its own part, and the parts are placed where the joint puts
+            // them (B's frame on A's, moved by the joint's value), so solving moves nothing.
+            let (kind, values, limits) = match &joint.motion {
+                Motion::Rigid => ("rigid", json!([]), json!([])),
+                Motion::Revolute { angle, limits } => (
+                    "revolute",
+                    json!([angle]),
+                    json!([limits.map(|(min, max)| [min, max])]),
+                ),
+                Motion::Slider { distance } => ("slider", json!([distance]), json!([null])),
+            };
+            let (a_frame, b_frame) = (joint.frame_a, joint.frame_b);
             let id = self.id();
+            *counts.entry(kind).or_insert(0) += 1;
             let mut row = json!({
                 "id": id,
-                "name": format!("Rigid {}", out.len() + 1),
-                "kind": "rigid",
-                "a": {"occurrence": a, "snap": snap(&IDENTITY)},
+                "name": format!("{} {}", title(kind), counts.get(kind).copied().unwrap_or(1)),
+                "kind": kind,
+                "a": {"occurrence": a, "snap": snap(&a_frame)},
                 "b": {"occurrence": b, "snap": snap(&b_frame)},
-                "values": [],
-                "limits": [],
+                "values": values,
+                "limits": limits,
                 "flip": true,
                 "offset": 0.0,
                 "angle": 0.0,
@@ -270,12 +284,17 @@ impl Builder<'_> {
             out.push(row);
         }
         if !out.is_empty() {
+            let kinds: Vec<String> = counts
+                .iter()
+                .map(|(kind, n)| format!("{n} {kind}"))
+                .collect();
             self.report.push(
                 Severity::Info,
                 "joints",
                 format!(
-                    "{} joint(s) written as rigid joints holding their parts as placed",
-                    out.len()
+                    "{} joint(s) written as built ({}), holding their parts as placed",
+                    out.len(),
+                    kinds.join(", ")
                 ),
             );
         }
@@ -437,49 +456,13 @@ impl Builder<'_> {
     }
 }
 
-/// The identity placement, row-major 3 × 4.
-const IDENTITY: [[f64; 4]; 3] = [
-    [1.0, 0.0, 0.0, 0.0],
-    [0.0, 1.0, 0.0, 0.0],
-    [0.0, 0.0, 1.0, 0.0],
-];
-
-/// `outer` after `inner`: a point placed by `inner`, then by `outer`.
-fn compose(outer: &[[f64; 4]; 3], inner: &[[f64; 4]; 3]) -> [[f64; 4]; 3] {
-    let mut out = [[0.0; 4]; 3];
-    for (row, out_row) in outer.iter().zip(out.iter_mut()) {
-        for (col, value) in out_row.iter_mut().enumerate() {
-            let mut sum: f64 = row
-                .iter()
-                .take(3)
-                .zip(inner.iter())
-                .map(|(r, inner_row)| r * inner_row.get(col).copied().unwrap_or(0.0))
-                .sum();
-            if col == 3 {
-                sum += row.get(3).copied().unwrap_or(0.0);
-            }
-            *value = sum;
-        }
+/// A joint kind's name for the joints' own names.
+fn title(kind: &str) -> &'static str {
+    match kind {
+        "revolute" => "Revolute",
+        "slider" => "Slider",
+        _ => "Rigid",
     }
-    out
-}
-
-/// The inverse of a rigid placement.
-fn inverse(placement: &[[f64; 4]; 3]) -> [[f64; 4]; 3] {
-    let mut out = [[0.0; 4]; 3];
-    for (i, out_row) in out.iter_mut().enumerate() {
-        // The rotation transposed, and the translation taken back through it.
-        let mut moved = 0.0;
-        for (j, row) in placement.iter().enumerate() {
-            let r = row.get(i).copied().unwrap_or(0.0);
-            if let Some(cell) = out_row.get_mut(j) {
-                *cell = r;
-            }
-            moved -= r * row.get(3).copied().unwrap_or(0.0);
-        }
-        out_row[3] = moved;
-    }
-    out
 }
 
 /// A SolidCraft joint origin at a placement: its origin, and its z and x axes.

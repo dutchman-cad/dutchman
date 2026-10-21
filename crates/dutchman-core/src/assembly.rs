@@ -6,11 +6,12 @@
 //! it, so a part is looked for at that path, then by its file name next to the assembly. Each
 //! part file is read once, however often it is placed.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use crate::placement::{compose, inverse, Placement3x4, IDENTITY};
 use crate::{Error, Format, Model, Report, Severity, Stage};
 
 /// The most part files one assembly may bring in.
@@ -37,9 +38,9 @@ pub struct Assembly {
     pub joints: Vec<Joint>,
 }
 
-/// A joint that holds two placed parts where they are, relative to each other: rigid, as
-/// built.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// A joint between two placed parts. Its parts are placed where the joint puts them:
+/// `A · frame_a · motion = B · frame_b`, with A and B the sides' placements in the world.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Joint {
     /// The first side: the indices of the placements leading to it, from the top assembly's
     /// [`Assembly::placements`] down through each sub-assembly's; empty for the top assembly
@@ -47,8 +48,50 @@ pub struct Joint {
     pub a: Vec<usize>,
     /// The second side, the same way.
     pub b: Vec<usize>,
+    /// The joint's frame on the first side, in that side's own part.
+    pub frame_a: crate::placement::Placement3x4,
+    /// The joint's frame on the second side, in that side's own part.
+    pub frame_b: crate::placement::Placement3x4,
     /// Whether the source suppresses it.
     pub suppressed: bool,
+    /// How the second side moves against the first, and where it is now.
+    pub motion: Motion,
+}
+
+/// How a joint lets its second side move, and where it is now.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Motion {
+    /// Not at all: the frames coincide.
+    Rigid,
+    /// Turning about the frames' z axis, now `angle` radians from where their x axes agree,
+    /// within `limits` (radians), when it has them.
+    Revolute {
+        angle: f64,
+        limits: Option<(f64, f64)>,
+    },
+    /// Sliding along the frames' z axis, now `distance` mm from where they coincide.
+    Slider { distance: f64 },
+}
+
+impl Motion {
+    /// The placement of the second frame in the first, where the joint is now.
+    pub fn transform(&self) -> crate::placement::Placement3x4 {
+        match *self {
+            Motion::Rigid => IDENTITY,
+            Motion::Revolute { angle, .. } => turn(angle),
+            Motion::Slider { distance } => {
+                let mut out = IDENTITY;
+                out[2][3] = distance;
+                out
+            }
+        }
+    }
+}
+
+/// A turn of `angle` radians about z.
+fn turn(angle: f64) -> Placement3x4 {
+    let (s, c) = angle.sin_cos();
+    [[c, -s, 0.0, 0.0], [s, c, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]]
 }
 
 /// One part placed in an assembly.
@@ -341,7 +384,8 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
         );
     }
     let mut parts = std::mem::take(&mut tree.parts);
-    let (joints, left_out) = joints(arena("assembly_joints"), &tree.paths);
+    let worlds = world_placements(&occurrences)?;
+    let (joints, mut left_out) = joints(arena("assembly_joints"), &tree.paths, &worlds);
 
     // Bodies no component owns are the design's own, placed where they are.
     let loose: Vec<&str> = arena("bodies")
@@ -357,87 +401,337 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
             transform: IDENTITY,
         });
     }
-    Ok(Some((
-        Assembly {
-            parts,
-            placements,
-            joints,
-        },
-        left_out,
-    )))
+    let mut assembly = Assembly {
+        parts,
+        placements,
+        joints,
+    };
+    left_out.extend(place_by_joints(&mut assembly));
+    Ok(Some((assembly, left_out)))
 }
 
-/// The joints that can be written as rigid joints between placed parts, and why each other
-/// one cannot. `paths` gives each occurrence's placement path and whether it is inside a
-/// component placed more than once.
-fn joints(rows: &[Value], paths: &BTreeMap<&str, (Vec<usize>, bool)>) -> (Vec<Joint>, Vec<String>) {
-    let mut joints = Vec::new();
-    let mut left_out = Vec::new();
-    for (index, row) in rows.iter().enumerate() {
-        let name = format!("joint {}", index + 1);
-        match joint(row, paths) {
-            Ok(joint) => joints.push(joint),
-            Err(reason) => left_out.push(format!("{name}: {reason}")),
+/// Places the parts the joints join where the joints put them, as cadmpeg's own placements
+/// of joined parts may be where they were before the joints were solved. Parts no joint
+/// moves keep their placements; from them, each joint places the side not yet placed. A
+/// joint whose two sides were both placed already is left for SolidCraft to check, with a
+/// note when they do not meet.
+fn place_by_joints(assembly: &mut Assembly) -> Vec<String> {
+    let joints = assembly.joints.clone();
+    let mut notes = Vec::new();
+    let mut fixed: BTreeSet<Vec<usize>> = BTreeSet::from([Vec::new()]);
+    let moved: BTreeSet<&Vec<usize>> = joints.iter().flat_map(|j| [&j.a, &j.b]).collect();
+    for joint in &joints {
+        for side in [&joint.a, &joint.b] {
+            if !moved.contains(side) {
+                fixed.insert(side.clone());
+            }
         }
     }
-    (joints, left_out)
+    let mut pending: Vec<usize> = (0..joints.len()).collect();
+    while !pending.is_empty() {
+        let next = pending
+            .iter()
+            .position(|&i| {
+                joints
+                    .get(i)
+                    .is_some_and(|j| fixed.contains(&j.a) || fixed.contains(&j.b))
+            })
+            .unwrap_or(0);
+        let index = pending.remove(next);
+        let Some(joint) = joints.get(index) else {
+            continue;
+        };
+        let (Some(a), Some(b)) = (world_at(assembly, &joint.a), world_at(assembly, &joint.b))
+        else {
+            continue;
+        };
+        let reach = compose(&compose(&a, &joint.frame_a), &joint.motion.transform());
+        match (fixed.contains(&joint.a), fixed.contains(&joint.b)) {
+            (true, true) => {
+                let b_frame = compose(&b, &joint.frame_b);
+                if !same(&b_frame, &reach) {
+                    notes.push(format!(
+                        "joint {}: its parts are placed by other joints where it cannot hold them; \
+                         SolidCraft reports the conflict",
+                        index + 1
+                    ));
+                }
+            }
+            (false, true) => {
+                // A goes where B's frame, taken back through the motion, meets A's frame.
+                let at = compose(
+                    &compose(
+                        &compose(&b, &joint.frame_b),
+                        &inverse(&joint.motion.transform()),
+                    ),
+                    &inverse(&joint.frame_a),
+                );
+                set_world_at(assembly, &joint.a, &at);
+                fixed.insert(joint.a.clone());
+            }
+            _ => {
+                fixed.insert(joint.a.clone());
+                set_world_at(
+                    assembly,
+                    &joint.b,
+                    &compose(&reach, &inverse(&joint.frame_b)),
+                );
+                fixed.insert(joint.b.clone());
+            }
+        }
+    }
+    notes
 }
 
-fn joint(row: &Value, paths: &BTreeMap<&str, (Vec<usize>, bool)>) -> Result<Joint, String> {
+/// Whether two placements agree, to a micrometre and a nanoradian.
+fn same(a: &Placement3x4, b: &Placement3x4) -> bool {
+    a.iter().zip(b).all(|(ra, rb)| {
+        ra.iter()
+            .zip(rb)
+            .enumerate()
+            .all(|(c, (x, y))| (x - y).abs() <= if c == 3 { 1e-3 } else { 1e-9 })
+    })
+}
+
+/// The placement in the world of the occurrence a placement path leads to.
+fn world_at(assembly: &Assembly, path: &[usize]) -> Option<Placement3x4> {
+    let mut world = IDENTITY;
+    let mut level = assembly;
+    for (depth, index) in path.iter().enumerate() {
+        let placement = level.placements.get(*index)?;
+        world = compose(&world, &placement.transform);
+        if depth + 1 < path.len() {
+            level = level.parts.get(placement.part)?.assembly.as_ref()?;
+        }
+    }
+    Some(world)
+}
+
+/// Moves the occurrence a placement path leads to so that it is at `world`.
+fn set_world_at(assembly: &mut Assembly, path: &[usize], world: &Placement3x4) {
+    let Some((last, outer)) = path.split_last() else {
+        return;
+    };
+    let Some(parent) = world_at(assembly, outer) else {
+        return;
+    };
+    let mut level = assembly;
+    for index in outer {
+        let Some(part) = level.placements.get(*index).map(|p| p.part) else {
+            return;
+        };
+        let Some(next) = level
+            .parts
+            .get_mut(part)
+            .and_then(|part| part.assembly.as_mut())
+        else {
+            return;
+        };
+        level = next;
+    }
+    if let Some(placement) = level.placements.get_mut(*last) {
+        placement.transform = compose(&inverse(&parent), world);
+    }
+}
+
+/// Each occurrence's placement in the world: its own, after those of the occurrences it is
+/// placed in.
+fn world_placements<'a>(
+    occurrences: &[&'a Value],
+) -> Result<BTreeMap<&'a str, Placement3x4>, String> {
+    let by_id: BTreeMap<&str, &Value> = occurrences
+        .iter()
+        .filter_map(|row| Some((row.get("id")?.as_str()?, *row)))
+        .collect();
+    let mut out = BTreeMap::new();
+    for (id, row) in &by_id {
+        let mut world = transform(row)?;
+        let mut parent = row.pointer("/parent/occurrence").and_then(Value::as_str);
+        let mut depth = 0;
+        while let Some(up) = parent {
+            depth += 1;
+            let row = by_id.get(up).filter(|_| depth <= MAX_DEPTH);
+            let Some(row) = row else {
+                break;
+            };
+            world = compose(&transform(row)?, &world);
+            parent = row.pointer("/parent/occurrence").and_then(Value::as_str);
+        }
+        out.insert(*id, world);
+    }
+    Ok(out)
+}
+
+/// The joints that can be written between placed parts, and a note for each that cannot.
+/// `paths` gives each occurrence's placement path and whether it is inside a component placed
+/// more than once; `worlds`, its placement in the world as cadmpeg stores it.
+fn joints(
+    rows: &[Value],
+    paths: &BTreeMap<&str, (Vec<usize>, bool)>,
+    worlds: &BTreeMap<&str, Placement3x4>,
+) -> (Vec<Joint>, Vec<String>) {
+    let mut joints = Vec::new();
+    let mut notes = Vec::new();
+    for (index, row) in rows.iter().enumerate() {
+        match joint(row, paths, worlds) {
+            Ok((joint, note)) => {
+                if let Some(note) = note {
+                    notes.push(format!("joint {}: {note}", index + 1));
+                }
+                joints.push(joint);
+            }
+            Err(reason) => notes.push(format!("joint {}: {reason}", index + 1)),
+        }
+    }
+    (joints, notes)
+}
+
+fn joint(
+    row: &Value,
+    paths: &BTreeMap<&str, (Vec<usize>, bool)>,
+    worlds: &BTreeMap<&str, Placement3x4>,
+) -> Result<(Joint, Option<String>), String> {
     let operands = row.get("operands").unwrap_or(&Value::Null);
     if operands.get("arity").and_then(Value::as_str) != Some("pair") {
         return Err("a joint to the ground alone is not converted yet".to_owned());
     }
-    let kind = operands
-        .pointer("/kind/kind")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown");
-    if kind != "fixed" {
-        return Err(format!("{kind} joints are not converted yet"));
-    }
-    let side = |index: usize| -> Result<Vec<usize>, String> {
-        let operand = operands
-            .pointer(&format!("/connectors/{index}/operand"))
+    let kind = operands.get("kind").unwrap_or(&Value::Null);
+    let side = |index: usize| -> Result<(Vec<usize>, Placement3x4), String> {
+        let connector = operands
+            .pointer(&format!("/connectors/{index}"))
             .ok_or("it is malformed")?;
-        side_path(operand, paths)
+        let frame = connector
+            .get("frame")
+            .and_then(matrix)
+            .ok_or("its connector frames are malformed")?;
+        let (path, container, side) = side_path(
+            connector.get("operand").unwrap_or(&Value::Null),
+            paths,
+            worlds,
+        )?;
+        // The frame is in its operand's own container; the side is the deepest occurrence
+        // the operand names, inside that container.
+        Ok((path, compose(&compose(&inverse(&side), &container), &frame)))
     };
-    let (a, b) = (side(0)?, side(1)?);
+    let ((a, frame_a), (b, frame_b)) = (side(0)?, side(1)?);
     if a == b {
         return Err("it joins a component to itself".to_owned());
     }
-    Ok(Joint {
-        a,
-        b,
-        suppressed: row
-            .get("suppressed")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-    })
+    let number = |key: &str| kind.get(key).and_then(Value::as_f64).unwrap_or(0.0);
+    let mut note = None;
+    let (motion, frame_a) = match kind
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+    {
+        "fixed" => {
+            // The offset carries B's frame from A's: along A's frame, then turned about z.
+            let t = kind
+                .get("translation_offset")
+                .and_then(Value::as_array)
+                .map(|t| [0, 1, 2].map(|i| t.get(i).and_then(Value::as_f64).unwrap_or(0.0)))
+                .unwrap_or([0.0; 3]);
+            let mut offset = turn(number("angle"));
+            for (row, value) in offset.iter_mut().zip(t) {
+                row[3] = value;
+            }
+            (Motion::Rigid, compose(&frame_a, &offset))
+        }
+        "revolute" => {
+            let limits = match kind.get("angular_limits") {
+                None | Some(Value::Null) => None,
+                Some(limits) => match limits.get("bounds").and_then(Value::as_str) {
+                    Some("range") => {
+                        let bound = |key: &str| limits.get(key).and_then(Value::as_f64);
+                        match (bound("minimum"), bound("maximum")) {
+                            (Some(min), Some(max)) => Some((min, max)),
+                            _ => return Err("its limits are malformed".to_owned()),
+                        }
+                    }
+                    _ => {
+                        note = Some("its limit on one side only is left out".to_owned());
+                        None
+                    }
+                },
+            };
+            (
+                Motion::Revolute {
+                    angle: number("angle"),
+                    limits,
+                },
+                frame_a,
+            )
+        }
+        "slider" => (
+            Motion::Slider {
+                distance: number("distance"),
+            },
+            frame_a,
+        ),
+        other => return Err(format!("{other} joints are not converted yet")),
+    };
+    Ok((
+        Joint {
+            a,
+            b,
+            frame_a,
+            frame_b,
+            suppressed: row
+                .get("suppressed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            motion,
+        },
+        note,
+    ))
 }
 
-/// The placement path of one side of a joint: the design itself for its root, else the
-/// deepest occurrence the operand names.
+/// A placement stored as rows, `[[r00, r01, r02, tx], …]`.
+fn matrix(rows: &Value) -> Option<Placement3x4> {
+    let rows = rows.as_array().filter(|rows| rows.len() == 3)?;
+    let mut out = [[0.0; 4]; 3];
+    for (row, values) in out.iter_mut().zip(rows) {
+        let values = values.as_array().filter(|values| values.len() == 4)?;
+        for (cell, value) in row.iter_mut().zip(values) {
+            *cell = value.as_f64().filter(|v| v.is_finite())?;
+        }
+    }
+    Some(out)
+}
+
+/// The values of a list, or none.
+fn listed(value: Option<&Value>) -> &[Value] {
+    value
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice)
+}
+
+/// The placement path of one side of a joint (the design itself for its root, else the
+/// deepest occurrence the operand names), with the world placements, as stored, of the
+/// operand's container and of that occurrence.
 fn side_path(
     operand: &Value,
     paths: &BTreeMap<&str, (Vec<usize>, bool)>,
-) -> Result<Vec<usize>, String> {
+    worlds: &BTreeMap<&str, Placement3x4>,
+) -> Result<(Vec<usize>, Placement3x4, Placement3x4), String> {
     let container = operand.get("container").unwrap_or(&Value::Null);
     match container.get("container").and_then(Value::as_str) {
-        Some("root") => Ok(Vec::new()),
+        Some("root") => Ok((Vec::new(), IDENTITY, IDENTITY)),
         Some("occurrence") => {
             let id = container
                 .get("occurrence")
                 .and_then(Value::as_str)
                 .ok_or("it is malformed")?;
             // Occurrences nested inside the named one are listed by their keys, outermost
-            // first, and their ids are built the same way as its: the deepest one placed wins.
+            // first (as `occurrence_path`, or as the object's subelements), and their ids are
+            // built the same way as its: the deepest one placed wins.
             let object = operand.get("object").and_then(Value::as_str).unwrap_or("");
             let prefix = id.strip_suffix(object).filter(|_| !object.is_empty());
-            let nested = operand
-                .get("subelements")
-                .and_then(Value::as_array)
-                .map_or(&[][..], Vec::as_slice)
+            let nested = listed(container.get("occurrence_path"))
                 .iter()
+                .chain(listed(operand.get("subelements")))
+                .collect::<Vec<_>>()
+                .into_iter()
                 .rev()
                 .filter_map(Value::as_str)
                 .filter_map(|key| {
@@ -445,25 +739,20 @@ fn side_path(
                     paths.get_key_value(nested.as_str()).map(|(id, _)| *id)
                 })
                 .next();
+            let named = nested.unwrap_or(id);
             let (path, shared) = paths
-                .get(nested.unwrap_or(id))
+                .get(named)
                 .ok_or("it joins a component the design does not place")?;
             if *shared {
                 return Err("it joins a component inside one placed more than once".to_owned());
             }
-            Ok(path.clone())
+            let world = |id: &str| worlds.get(id).copied().unwrap_or(IDENTITY);
+            Ok((path.clone(), world(id), world(named)))
         }
         Some("external") => Err("it joins a component of another design".to_owned()),
         _ => Err("it is malformed".to_owned()),
     }
 }
-
-/// The identity placement, row-major 3 × 4.
-const IDENTITY: [[f64; 4]; 3] = [
-    [1.0, 0.0, 0.0, 0.0],
-    [0.0, 1.0, 0.0, 0.0],
-    [0.0, 0.0, 1.0, 0.0],
-];
 
 /// A definition built into a part: the part, and the components it holds (each one's
 /// definition and placement), which every other occurrence of it at that level must match.
@@ -1147,6 +1436,141 @@ mod tests {
         json!({"operand": operand, "frame": IDENTITY, "detached": false})
     }
 
+    /// A connector on occurrence `key` (with nested occurrence keys) with its frame `frame`.
+    fn connector_at(key: u32, nested: &[&str], frame: Placement3x4) -> Value {
+        let mut out = connector(Some((key, nested)));
+        out["frame"] = json!(frame);
+        out
+    }
+
+    /// A placement at `origin`, turned by `turn` radians about z.
+    fn at(origin: [f64; 3], turn: f64) -> Placement3x4 {
+        let (s, c) = turn.sin_cos();
+        [
+            [c, -s, 0.0, origin[0]],
+            [s, c, 0.0, origin[1]],
+            [0.0, 0.0, 1.0, origin[2]],
+        ]
+    }
+
+    /// Block 2's placement in the world (and the joint, and the notes) once one joint `kind`
+    /// joins block 1 (placed at x = 100 in the world) and block 2 (stored at x = 130) with
+    /// these connectors.
+    fn joined(kind: Value, a: Value, b: Value) -> (Placement3x4, Joint, Vec<String>) {
+        let model = with_joints(nested(false, None), json!([joint(1, kind, a, b)]));
+        let (assembly, notes) = local_components(&model).unwrap().unwrap();
+        let world = world_at(&assembly, &[0, 1]).unwrap();
+        (world, assembly.joints[0].clone(), notes)
+    }
+
+    fn near(a: &Placement3x4, b: &Placement3x4) -> bool {
+        same(a, b)
+    }
+
+    #[test]
+    fn a_joint_places_its_second_part_where_its_frames_meet() {
+        // A hinge 10 mm past block 1's origin and at block 2's own origin: whatever block 2's
+        // stored placement, the joint puts it at x = 110.
+        let (world, joint, notes) = joined(
+            json!({"kind": "revolute"}),
+            connector_at(1, &[], at([10.0, 0.0, 0.0], 0.0)),
+            connector_at(2, &[], at([0.0, 0.0, 0.0], 0.0)),
+        );
+        assert!(notes.is_empty(), "{notes:?}");
+        assert!(near(&world, &at([110.0, 0.0, 0.0], 0.0)), "{world:?}");
+        assert_eq!(joint.frame_a, at([10.0, 0.0, 0.0], 0.0));
+        // Turned half a radian, block 2 turns with it about the hinge.
+        let (world, _, _) = joined(
+            json!({"kind": "revolute", "angle": 0.5}),
+            connector_at(1, &[], at([10.0, 0.0, 0.0], 0.0)),
+            connector_at(2, &[], at([0.0, 0.0, 0.0], 0.0)),
+        );
+        assert!(near(&world, &at([110.0, 0.0, 0.0], 0.5)), "{world:?}");
+        // A slider 7 mm out along z.
+        let (world, _, _) = joined(
+            json!({"kind": "slider", "distance": 7.0}),
+            connector_at(1, &[], at([10.0, 0.0, 0.0], 0.0)),
+            connector_at(2, &[], at([0.0, 0.0, 0.0], 0.0)),
+        );
+        assert!(near(&world, &at([110.0, 0.0, 7.0], 0.0)), "{world:?}");
+        // A fixed joint carries its offset: 5 mm along the frame, a quarter turn about it.
+        let (world, _, _) = joined(
+            json!({"kind": "fixed", "angle": std::f64::consts::FRAC_PI_2,
+                   "translation_offset": [5.0, 0.0, 0.0]}),
+            connector_at(1, &[], at([10.0, 0.0, 0.0], 0.0)),
+            connector_at(2, &[], at([0.0, 0.0, 0.0], 0.0)),
+        );
+        assert!(
+            near(&world, &at([115.0, 0.0, 0.0], std::f64::consts::FRAC_PI_2)),
+            "{world:?}"
+        );
+    }
+
+    #[test]
+    fn a_frame_named_through_its_container_is_moved_into_the_part_it_is_on() {
+        // Block 2's frame, given in the Frame occurrence's space (which places block 2 at
+        // x = 30 in it): 30 mm in, it is block 2's own origin.
+        let (world, joint, _) = joined(
+            json!({"kind": "revolute"}),
+            connector_at(1, &[], at([10.0, 0.0, 0.0], 0.0)),
+            connector_at(0, &["2"], at([30.0, 0.0, 0.0], 0.0)),
+        );
+        assert!(near(&joint.frame_b, &IDENTITY), "{:?}", joint.frame_b);
+        assert!(near(&world, &at([110.0, 0.0, 0.0], 0.0)), "{world:?}");
+    }
+
+    #[test]
+    fn revolute_limits_are_kept_and_a_one_sided_one_is_left_out() {
+        let (_, joint, notes) = joined(
+            json!({"kind": "revolute", "angular_limits": {"bounds": "range", "minimum": -1.0, "maximum": 1.0}}),
+            connector_at(1, &[], IDENTITY),
+            connector_at(2, &[], IDENTITY),
+        );
+        assert!(notes.is_empty());
+        assert_eq!(
+            joint.motion,
+            Motion::Revolute {
+                angle: 0.0,
+                limits: Some((-1.0, 1.0))
+            }
+        );
+        let (_, joint, notes) = joined(
+            json!({"kind": "revolute", "angular_limits": {"bounds": "minimum", "minimum": -1.0}}),
+            connector_at(1, &[], IDENTITY),
+            connector_at(2, &[], IDENTITY),
+        );
+        assert!(matches!(
+            joint.motion,
+            Motion::Revolute { limits: None, .. }
+        ));
+        assert_eq!(notes, ["joint 1: its limit on one side only is left out"]);
+    }
+
+    #[test]
+    fn joints_that_place_a_part_two_ways_are_reported() {
+        let rigid = json!({"kind": "fixed"});
+        let model = with_joints(
+            nested(false, None),
+            json!([
+                joint(
+                    1,
+                    rigid.clone(),
+                    connector_at(1, &[], IDENTITY),
+                    connector_at(2, &[], IDENTITY)
+                ),
+                joint(
+                    2,
+                    rigid,
+                    connector_at(1, &[], IDENTITY),
+                    connector_at(2, &[], at([1.0, 0.0, 0.0], 0.0))
+                ),
+            ]),
+        );
+        let (_, notes) = local_components(&model).unwrap().unwrap();
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(notes[0].starts_with("joint 2: its parts are placed by other joints"));
+    }
+
     fn joint(key: u32, kind: Value, a: Value, b: Value) -> Value {
         json!({
             "id": format!("f3d:model:joint#{key}"),
@@ -1170,12 +1594,13 @@ mod tests {
                 ),
                 // The frame to the design itself.
                 joint(2, fixed.clone(), connector(None), connector(Some((0, &[])))),
-                // The second block, named through the frame it sits in.
+                // The second block, named through the frame it sits in: its frame is in the
+                // frame's space, where the block is stored 30 mm along X.
                 joint(
                     3,
                     fixed.clone(),
                     connector(Some((1, &[]))),
-                    connector(Some((0, &["2"])))
+                    connector_at(0, &["2"], at([30.0, 0.0, 0.0], 0.0))
                 ),
             ]),
         );
@@ -1204,7 +1629,7 @@ mod tests {
             json!([
                 joint(
                     1,
-                    json!({"kind": "revolute"}),
+                    json!({"kind": "ball"}),
                     connector(Some((1, &[]))),
                     connector(Some((2, &[])))
                 ),
@@ -1235,7 +1660,7 @@ mod tests {
         assert_eq!(
             left_out,
             [
-                "joint 1: revolute joints are not converted yet",
+                "joint 1: ball joints are not converted yet",
                 "joint 2: it joins a component to itself",
                 "joint 3: it joins a component the design does not place",
                 "joint 4: it joins a component of another design",

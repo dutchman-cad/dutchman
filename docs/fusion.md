@@ -34,11 +34,16 @@ transform, and each component as a product definition.
   hold the same components in the same places each time; when it does not, or when a placement
   is inside an occurrence the design does not place, the design converts as stored and the
   report says why.
-- **Joints** between components become SolidCraft rigid joints written as built: each holds its
-  two occurrences where they are placed, so moving one in SolidCraft moves the other. A joint to
-  the design's root component holds its occurrence fixed. cadmpeg 0.6.3 reads Fusion joints as
-  fixed joints only (motion types such as revolute or slider are not decoded yet), so every
-  converted joint is rigid. A joint is left out, and reported as Dropped (`joints`), when it is
+- **Joints** between components become SolidCraft joints: fixed ones rigid (their offset kept),
+  revolute ones turning about the connector's z axis with their limits, slider ones along it.
+  Each connector frame is in its own part, as cadmpeg gives it, which is how SolidCraft takes
+  it. Fusion can store a joined part where it was before its joints were solved, so Dutchman
+  places joined parts where their joints put them: from the parts no joint moves, each joint
+  places the part at its other end. A part two joints would place differently is reported,
+  and SolidCraft reports the conflict when it solves. A joint to the design's root component
+  holds its occurrence to the design. cadmpeg reads Fusion joint motion from its next release
+  on (before it, every Fusion joint is fixed). A revolute limit on one side only is left out,
+  and the report says so. A joint is left out, and reported as Dropped (`joints`), when it is
   of another kind, joins a component to itself or to one in another design, or joins a component
   inside one placed more than once (the SolidCraft design holds that component once, so it would
   not say which copy).
@@ -49,8 +54,9 @@ transform, and each component as a product definition.
    component to its entities (its naming space): the bodies whose body-map entries lie in the
    component's entity range. A component placed by an operation the file does not bind (as in
    some copy-and-paste designs) has no bodies, so that design converts as stored.
-2. **Joint motion.** cadmpeg reads Fusion joints as fixed only; revolute, slider and the other
-   motion types, and joint limits, wait on it decoding them.
+2. **Joint motion.** cadmpeg reads revolute and slider joints, and revolute limits, from its
+   next release; other motion types, slider limits and one-sided limits stay fixed with its
+   `assembly.joint-motion-undecoded` loss, which the report carries.
 
 `.f3z` multi-document archives (a design with the designs it references) convert like `.f3d`:
 cadmpeg merges the referenced designs into the root design with their placements, as
