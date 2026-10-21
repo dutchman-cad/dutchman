@@ -8,6 +8,11 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Command line
+
+- `convert-all` lists each converted file's losses beneath it, as `convert` does, and counts the
+  files it skipped as not in a format it knows (`skipped` in `--json`).
+
 ### Checks
 
 - When `solidcraft-cli` is found, geometry written without history is opened in SolidCraft too,

@@ -342,6 +342,7 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
     assert_eq!(report["ok"], false);
     assert_eq!(report["converted"], 2);
     assert_eq!(report["failed"], 2);
+    assert_eq!(report["skipped"], 1, "notes.txt");
     let results = report["results"].as_array().unwrap();
     assert_eq!(
         results.len(),
@@ -365,4 +366,47 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
     assert_eq!(text.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&text.stdout);
     assert!(stdout.ends_with("1 converted, 0 failed\n"), "{stdout}");
+    // Each converted file's losses are listed beneath it, as `convert` prints them.
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert!(lines[0].starts_with("converted  "), "{stdout}");
+    assert!(
+        lines[1..lines.len() - 1]
+            .iter()
+            .all(|line| line.starts_with("           ") && line.contains(": ")),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("Degraded: f3d/material.not-transferred"),
+        "{stdout}"
+    );
+
+    // A folder with a file Dutchman does not know says so in the counts.
+    let text = dutchman(&[
+        "convert-all",
+        "--no-verify",
+        "--out-dir",
+        out_dir.to_str().unwrap(),
+        nested.to_str().unwrap(),
+        project
+            .join("notes.txt")
+            .parent()
+            .unwrap()
+            .join("cube.f3d")
+            .to_str()
+            .unwrap(),
+    ]);
+    let stdout = String::from_utf8_lossy(&text.stdout);
+    assert!(stdout.ends_with("2 converted, 1 failed\n"), "{stdout}");
+    let text = dutchman(&[
+        "convert-all",
+        "--no-verify",
+        "--out-dir",
+        out_dir.to_str().unwrap(),
+        project.to_str().unwrap(),
+    ]);
+    let stdout = String::from_utf8_lossy(&text.stdout);
+    assert!(
+        stdout.ends_with("2 converted, 1 failed, 1 skipped (not in a format Dutchman knows)\n"),
+        "{stdout}"
+    );
 }

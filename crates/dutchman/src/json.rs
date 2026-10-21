@@ -22,6 +22,17 @@ pub fn input(path: &Path) -> Value {
     })
 }
 
+/// One loss of a report as the text reports print it: `LEVEL: SUBJECT: MESSAGE`.
+pub fn loss_line(loss: &Value) -> String {
+    let field = |name: &str| loss.get(name).and_then(Value::as_str).unwrap_or("");
+    format!(
+        "{}: {}: {}",
+        field("level"),
+        field("subject"),
+        field("message")
+    )
+}
+
 /// A report of a run that stopped with `message`.
 pub fn failure(schema: &str, input: Value, message: &str) -> Value {
     json!({

@@ -52,7 +52,7 @@ impl Run {
             };
             // A panic here must not take the window down; it ends the run.
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let (jobs, problems) = batch::plan(&inputs, &out_dir);
+                let batch::Plan { jobs, problems, .. } = batch::plan(&inputs, &out_dir);
                 send(Message::Planned {
                     problems,
                     jobs: jobs.clone(),

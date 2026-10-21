@@ -200,12 +200,6 @@ fn print_losses(report: &Value) {
         .into_iter()
         .flatten()
     {
-        let field = |name: &str| loss.get(name).and_then(Value::as_str).unwrap_or("");
-        eprintln!(
-            "dutchman: {}: {}: {}",
-            field("level"),
-            field("subject"),
-            field("message")
-        );
+        eprintln!("dutchman: {}", json::loss_line(loss));
     }
 }

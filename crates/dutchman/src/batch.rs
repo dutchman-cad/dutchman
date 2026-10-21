@@ -48,7 +48,11 @@ pub fn convert_all(
     writer: &SolidCraftWriter,
     jobs: Option<NonZeroUsize>,
 ) -> Value {
-    let (work, problems) = plan(inputs, out_dir);
+    let Plan {
+        jobs: work,
+        problems,
+        skipped,
+    } = plan(inputs, out_dir);
     let results = run(&work, writer, workers(jobs));
 
     let failed = results
@@ -64,6 +68,7 @@ pub fn convert_all(
         "ok": failed == 0,
         "converted": converted,
         "failed": failed,
+        "skipped": skipped,
         "results": all,
     })
 }
@@ -80,7 +85,8 @@ pub fn workers(jobs: Option<NonZeroUsize>) -> usize {
     )
 }
 
-/// The text report of a `dutchman.convert-all/1` report: one line per file, then the counts.
+/// The text report of a `dutchman.convert-all/1` report: one line per file, each converted
+/// file's losses indented beneath it, then the counts.
 pub fn text(report: &Value) -> String {
     let mut out = String::new();
     for result in report
@@ -91,13 +97,30 @@ pub fn text(report: &Value) -> String {
     {
         out.push_str(&line(result));
         out.push('\n');
+        for loss in result
+            .get("losses")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            out.push_str("           ");
+            out.push_str(&report::loss_line(loss));
+            out.push('\n');
+        }
     }
     let count = |key: &str| report.get(key).and_then(Value::as_u64).unwrap_or(0);
     out.push_str(&format!(
-        "{} converted, {} failed\n",
+        "{} converted, {} failed",
         count("converted"),
         count("failed")
     ));
+    if count("skipped") > 0 {
+        out.push_str(&format!(
+            ", {} skipped (not in a format Dutchman knows)",
+            count("skipped")
+        ));
+    }
+    out.push('\n');
     out
 }
 
@@ -126,16 +149,29 @@ fn line(result: &Value) -> String {
     }
 }
 
-/// The files to convert, with their output paths; and failure reports for inputs that are
-/// neither a known file nor a readable folder.
-pub fn plan(inputs: &[PathBuf], out_dir: &Path) -> (Vec<Job>, Vec<Value>) {
+/// What a run will convert.
+#[derive(Debug)]
+pub struct Plan {
+    /// The files to convert, with their output paths.
+    pub jobs: Vec<Job>,
+    /// Failure reports for inputs that are neither a known file nor a readable folder.
+    pub problems: Vec<Value>,
+    /// Files in the folders searched that are not in a format Dutchman knows.
+    pub skipped: usize,
+}
+
+/// The files to convert, with their output paths; failure reports for inputs that are
+/// neither a known file nor a readable folder; and how many files in the folders searched
+/// were skipped as not in a format Dutchman knows.
+pub fn plan(inputs: &[PathBuf], out_dir: &Path) -> Plan {
     let mut jobs = Vec::new();
     let mut problems = Vec::new();
+    let mut skipped = 0;
     let mut outputs = BTreeSet::new();
     for input in inputs {
         let mut found = Vec::new();
         if input.is_dir() {
-            search(input, input, 0, &mut found);
+            search(input, input, 0, &mut found, &mut skipped);
         } else if input.is_file() {
             let name = input.file_name().map(PathBuf::from).unwrap_or_default();
             found.push((input.clone(), name));
@@ -166,12 +202,22 @@ pub fn plan(inputs: &[PathBuf], out_dir: &Path) -> (Vec<Job>, Vec<Value>) {
             });
         }
     }
-    (jobs, problems)
+    Plan {
+        jobs,
+        problems,
+        skipped,
+    }
 }
 
 /// The files Dutchman knows under `folder`, with their paths relative to `root`. Symbolic
 /// links are not followed, so a link cannot make the search loop.
-fn search(root: &Path, folder: &Path, depth: usize, out: &mut Vec<(PathBuf, PathBuf)>) {
+fn search(
+    root: &Path,
+    folder: &Path,
+    depth: usize,
+    out: &mut Vec<(PathBuf, PathBuf)>,
+    skipped: &mut usize,
+) {
     if depth > MAX_DEPTH {
         return;
     }
@@ -185,8 +231,10 @@ fn search(root: &Path, folder: &Path, depth: usize, out: &mut Vec<(PathBuf, Path
             continue;
         };
         if meta.is_dir() {
-            search(root, &path, depth + 1, out);
-        } else if meta.is_file() && Format::from_path(&path).is_some() {
+            search(root, &path, depth + 1, out, skipped);
+        } else if meta.is_file() && Format::from_path(&path).is_none() {
+            *skipped += 1;
+        } else if meta.is_file() {
             let relative = path
                 .strip_prefix(root)
                 .map(Path::to_path_buf)
