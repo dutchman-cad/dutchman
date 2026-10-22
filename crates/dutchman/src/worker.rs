@@ -107,11 +107,12 @@ impl ConvertOptions {
     /// part files are looked for is the job's (see [`search_args`]).
     pub fn to_args(&self) -> Vec<OsString> {
         let mut args: Vec<OsString> = Vec::new();
-        args.push("--to".into());
-        args.push(match self.to {
-            crate::OutputFormat::Solidcraft => "solidcraft".into(),
-            crate::OutputFormat::Freecad => "freecad".into(),
-        });
+        // Only a choice other than the default is passed, so the arguments of a SolidCraft run
+        // stay those every `dutchman` takes.
+        if self.to == crate::OutputFormat::Freecad {
+            args.push("--to".into());
+            args.push("freecad".into());
+        }
         if self.import_only {
             args.push("--import-only".into());
         }

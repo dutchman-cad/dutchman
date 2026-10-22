@@ -428,27 +428,32 @@ impl App {
             );
             ui.add_space(theme::SPACE_2);
             ui.add_enabled_ui(!self.running(), |ui| {
-                egui::ComboBox::from_label("Output format")
-                    .selected_text(match self.options.to {
-                        dutchman::OutputFormat::Solidcraft => "SolidCraft",
-                        dutchman::OutputFormat::Freecad => "FreeCAD macro (experimental)",
-                    })
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(
-                            &mut self.options.to,
-                            dutchman::OutputFormat::Solidcraft,
-                            "SolidCraft",
-                        );
-                        ui.selectable_value(
-                            &mut self.options.to,
-                            dutchman::OutputFormat::Freecad,
-                            "FreeCAD macro (experimental)",
-                        );
-                    });
-                ui.checkbox(
-                    &mut self.options.import_only,
-                    "Write geometry only, without feature history",
-                );
+                // On the line of the geometry-only choice, so the window keeps its height and
+                // Convert stays in view.
+                ui.horizontal_wrapped(|ui| {
+                    ui.checkbox(
+                        &mut self.options.import_only,
+                        "Write geometry only, without feature history",
+                    );
+                    ui.add_space(theme::SPACE_4);
+                    egui::ComboBox::from_label("Output format")
+                        .selected_text(match self.options.to {
+                            dutchman::OutputFormat::Solidcraft => "SolidCraft",
+                            dutchman::OutputFormat::Freecad => "FreeCAD macro (experimental)",
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(
+                                &mut self.options.to,
+                                dutchman::OutputFormat::Solidcraft,
+                                "SolidCraft",
+                            );
+                            ui.selectable_value(
+                                &mut self.options.to,
+                                dutchman::OutputFormat::Freecad,
+                                "FreeCAD macro (experimental)",
+                            );
+                        });
+                });
                 let mut replace = !self.options.no_clobber;
                 if ui
                     .checkbox(&mut replace, "Replace designs already in the output folder")
