@@ -114,7 +114,7 @@ pub(crate) fn map(
                     "constraints": [],
                 },
             }));
-            sections.push(json!({"sketch": id, "point": "origin"}));
+            sections.push(json!({"sketch": id, "point": "origin", "profiles": {"type": "all"}}));
             continue;
         }
         let (sketch_id, profiles) = profile(Some(section), ctx)?;

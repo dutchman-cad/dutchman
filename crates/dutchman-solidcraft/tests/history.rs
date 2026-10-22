@@ -554,7 +554,7 @@ fn resolved_loft_point_ends_become_sketch_points() {
             let index = if first { 0 } else { 1 };
             let section = &loft["sections"][index];
             assert_eq!(section["point"], "origin");
-            assert!(section.get("profiles").is_none());
+            assert_eq!(section["profiles"], json!({"type": "all"}));
             let sketch = features
                 .iter()
                 .find(|f| f["id"] == section["sketch"])
@@ -655,11 +655,6 @@ fn loft_sections_in_one_sketch_keep_their_selected_regions() {
 #[test]
 fn solidcraft_lofts_to_resolved_point_ends() {
     let Some(cli) = solidcraft() else { return };
-    // SolidCraft lofts to a sketch point from 0.19 on.
-    if !solidcraft_at_least(&cli, [0, 19, 0]) {
-        eprintln!("skipped: this SolidCraft is older than 0.19");
-        return;
-    }
     for vertex in [false, true] {
         for first in [false, true] {
             let volume = volumes(&cli, &written(&pointed_loft(vertex, first)).0);
@@ -989,24 +984,6 @@ fn with_param(bytes: &[u8], name: &str, expr: &str) -> Vec<u8> {
         std::io::Write::write_all(&mut out, &data).unwrap();
     }
     out.finish().unwrap().into_inner()
-}
-
-/// Whether the SolidCraft CLI's `--version` is `least` or newer.
-fn solidcraft_at_least(cli: &Path, least: [u64; 3]) -> bool {
-    let out = std::process::Command::new(cli)
-        .arg("--version")
-        .output()
-        .unwrap();
-    let text = String::from_utf8_lossy(&out.stdout);
-    let version: Vec<u64> = text
-        .split_whitespace()
-        .last()
-        .unwrap()
-        .trim_start_matches('v')
-        .split('.')
-        .map(|part| part.parse().unwrap())
-        .collect();
-    version.as_slice() >= least.as_slice()
 }
 
 /// SolidCraft's body volumes for a design.
