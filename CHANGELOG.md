@@ -18,6 +18,9 @@ report's schema name changes when a field does).
 
 ### Feature history
 
+- Nodes that only order the feature tree (folders, FreeCAD's PartDesign Body, comment and
+  annotation containers) are counted as not needed instead of stopping the history.
+
 - Simple holes drilled at a sketch's circle centres, arc centres or points map onto
   SolidCraft holes: through all, or to a depth with a flat end or a drill point. FreeCAD's
   Hole is one; counterbores, countersinks and holes placed on faces are not mapped yet.
