@@ -52,7 +52,7 @@ pub struct App {
     notice: Option<String>,
     has_app: bool,
     /// The SolidCraft CLI that checks histories when nothing else is chosen, if one is found.
-    checker: Option<PathBuf>,
+    checker: Result<PathBuf, dutchman_solidcraft::NoCli>,
     /// What to scroll into view on the next frame, so the results are seen without looking
     /// for them.
     reveal: Option<Reveal>,
@@ -83,7 +83,7 @@ impl App {
             sender,
             notice: None,
             has_app: platform::has_solidcraft_app(),
-            checker: dutchman_solidcraft::find_cli(&dutchman_solidcraft::Verification::Auto).ok(),
+            checker: dutchman_solidcraft::usable_cli(&dutchman_solidcraft::Verification::Auto),
             reveal: None,
         }
     }
@@ -446,8 +446,11 @@ impl App {
                     self.options.no_verify = !verify;
                 }
                 let checker = match &self.checker {
-                    Some(cli) => format!("Checks with {}.", display(cli)),
-                    None => format!(
+                    Ok(cli) => format!("Checks with {}.", display(cli)),
+                    Err(dutchman_solidcraft::NoCli::TooOld(why)) => {
+                        format!("History is written unchecked: {why}.")
+                    }
+                    Err(dutchman_solidcraft::NoCli::NotFound(_)) => format!(
                         "No SolidCraft found, so history is written unchecked: install SolidCraft, \
                          or set {} to its solidcraft-cli.",
                         dutchman_solidcraft::CLI_ENV

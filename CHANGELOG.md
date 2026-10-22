@@ -8,6 +8,13 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Checks
+
+- A `solidcraft-cli` older than SolidCraft 0.18.2, the oldest that opens and checks Dutchman's
+  designs, is not used: the history is written unverified, saying so and naming the version
+  found, and the desktop app says it too. CI opens converted designs in SolidCraft 0.18.2 and
+  0.19.0, and the nightly checks with 0.19.0. The guide says which versions are supported.
+
 ### Reports
 
 - An assembly says what it brought across: the JSON reports give the joints written by kind

@@ -68,6 +68,63 @@ pub fn find_cli(verification: &Verification) -> Result<PathBuf, String> {
     }
 }
 
+/// The oldest SolidCraft Dutchman's output is checked with, and opens in.
+pub const OLDEST_SOLIDCRAFT: [u64; 3] = [0, 18, 2];
+
+/// Why no SolidCraft CLI checks a design.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NoCli {
+    /// None is found, or checking is turned off.
+    NotFound(String),
+    /// The one found is older than [`OLDEST_SOLIDCRAFT`].
+    TooOld(String),
+}
+
+impl std::fmt::Display for NoCli {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NoCli::NotFound(why) | NoCli::TooOld(why) => f.write_str(why),
+        }
+    }
+}
+
+/// [`find_cli`], refused with the reason when the CLI found says it is older than
+/// [`OLDEST_SOLIDCRAFT`]. One that does not say its version is used as it is.
+pub fn usable_cli(verification: &Verification) -> Result<PathBuf, NoCli> {
+    let cli = find_cli(verification).map_err(NoCli::NotFound)?;
+    let Some(line) = version_of(&cli) else {
+        return Ok(cli);
+    };
+    match parse_version(&line) {
+        Some(version) if version < OLDEST_SOLIDCRAFT => {
+            let [major, minor, patch] = OLDEST_SOLIDCRAFT;
+            Err(NoCli::TooOld(format!(
+                "{line} at {} is older than SolidCraft {major}.{minor}.{patch}, the oldest that \
+                 opens and checks Dutchman's designs; install a newer SolidCraft",
+                cli.display()
+            )))
+        }
+        _ => Ok(cli),
+    }
+}
+
+/// The version a `--version` line gives (`solidcraft-cli 0.18.2` as `[0, 18, 2]`).
+fn parse_version(line: &str) -> Option<[u64; 3]> {
+    let word = line.split_whitespace().last()?.trim_start_matches('v');
+    let mut parts = word.split('.').map(|part| {
+        part.chars()
+            .take_while(char::is_ascii_digit)
+            .collect::<String>()
+            .parse::<u64>()
+            .ok()
+    });
+    Some([
+        parts.next()??,
+        parts.next()??,
+        parts.next().flatten().unwrap_or(0),
+    ])
+}
+
 /// The CLI inside an installed SolidCraft app, where this system installs apps.
 fn installed() -> Option<PathBuf> {
     if cfg!(target_os = "macos") {
@@ -145,7 +202,11 @@ fn bundle_version(app: &Path) -> Vec<u64> {
 /// The version the SolidCraft CLI `verification` finds prints (`solidcraft-cli 0.18.2`),
 /// when there is one and it answers within a few seconds.
 pub fn solidcraft_version(verification: &Verification) -> Option<String> {
-    let cli = find_cli(verification).ok()?;
+    version_of(&find_cli(verification).ok()?)
+}
+
+/// The first line `cli --version` prints, when it answers within a few seconds.
+fn version_of(cli: &Path) -> Option<String> {
     let mut child = Command::new(cli)
         .arg("--version")
         .stdin(Stdio::null())
@@ -721,5 +782,47 @@ mod cli_tests {
             1,
         );
         assert!(matches!(outcome, Outcome::Unverified(_)));
+    }
+    #[test]
+    fn versions_are_read_from_the_cli_line() {
+        assert_eq!(parse_version("solidcraft-cli 0.19.0"), Some([0, 19, 0]));
+        assert_eq!(parse_version("solidcraft-cli v0.18"), Some([0, 18, 0]));
+        assert_eq!(parse_version("solidcraft-cli 1.2.3-beta"), Some([1, 2, 3]));
+        assert_eq!(parse_version("no version here"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_solidcraft_too_old_is_refused_with_the_reason() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let cli = |name: &str, version: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(
+                &path,
+                format!("#!/bin/sh\necho 'solidcraft-cli {version}'\n"),
+            )
+            .unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        };
+        let old = cli("old", "0.17.0");
+        match usable_cli(&Verification::With(old)) {
+            Err(NoCli::TooOld(why)) => assert!(
+                why.starts_with("solidcraft-cli 0.17.0 at ")
+                    && why.ends_with(
+                        "is older than SolidCraft 0.18.2, the oldest that opens \
+                                      and checks Dutchman's designs; install a newer SolidCraft"
+                    ),
+                "{why}"
+            ),
+            other => panic!("{other:?}"),
+        }
+        let new = cli("new", "0.19.0");
+        assert_eq!(usable_cli(&Verification::With(new.clone())), Ok(new));
+        assert!(matches!(
+            usable_cli(&Verification::Off),
+            Err(NoCli::NotFound(_))
+        ));
     }
 }
