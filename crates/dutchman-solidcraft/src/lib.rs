@@ -102,6 +102,7 @@ impl SolidCraftWriter {
             Some(_) => {
                 Err("none of the assembly's parts has geometry SolidCraft can import".to_owned())
             }
+            None if parameters_only(model) => Ok(()),
             None => step::restatable(model).map_err(|err| match err {
                 Error::Encode(reason) | Error::NoGeometry(reason) | Error::Restate(reason) => {
                     reason
@@ -116,6 +117,9 @@ impl SolidCraftWriter {
     pub fn plan(&self, model: &Model, report: &mut Report) -> Outcome {
         if let Some(assembly) = &model.assembly {
             return assembly::plan(self, assembly, report);
+        }
+        if parameters_only(model) {
+            return parameters_outcome(model);
         }
         if self.import_only {
             return Outcome {
@@ -262,6 +266,33 @@ fn no_decoded_history(features: &[FeatureOutcome]) -> Option<String> {
     })
 }
 
+/// Whether `model` is a part holding parameters and nothing else: no features and no
+/// geometry SolidCraft can import. It is a design of parameters other designs use, written
+/// as a design of parameters alone.
+fn parameters_only(model: &Model) -> bool {
+    model.assembly.is_none()
+        && !model.ir.model.parameters.is_empty()
+        && model.ir.model.features.is_empty()
+        && matches!(step::restatable(model), Err(Error::NoGeometry(_)))
+}
+
+/// What writing a design of parameters alone does.
+fn parameters_outcome(model: &Model) -> Outcome {
+    Outcome {
+        mode: Mode::Import,
+        check: Check::NotApplicable(format!(
+            "the design holds {} and no geometry",
+            count(model.ir.model.parameters.len(), "parameter", "parameters")
+        )),
+        features: Vec::new(),
+    }
+}
+
+/// `n` and the noun for one or for many.
+fn count(n: usize, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
 /// How many of the model's bodies are solids, each of which should have a volume.
 fn solid_bodies(model: &Model) -> usize {
     model
@@ -351,6 +382,23 @@ impl Writer for SolidCraftWriter {
                 ..verify::Expected::default()
             };
             self.check_geometry(&bytes, expected, report);
+            return out
+                .write_all(&bytes)
+                .map_err(|err| Error::Encode(format!("cannot write the design: {err}")));
+        }
+        if parameters_only(model) {
+            let (params, _) = history::params::map(&model.ir.model.parameters, report);
+            report.push(
+                Severity::Info,
+                GEOMETRY,
+                format!(
+                    "none: the design holds {} and no geometry",
+                    count(params.len(), "parameter", "parameters")
+                ),
+            );
+            let bytes = container::Container::empty()
+                .finish(&document::parameters_design(model, &params))?;
+            report.set_outcome(parameters_outcome(model));
             return out
                 .write_all(&bytes)
                 .map_err(|err| Error::Encode(format!("cannot write the design: {err}")));

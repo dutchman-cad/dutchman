@@ -1956,3 +1956,75 @@ fn a_design_cadmpeg_decodes_no_feature_of_has_no_history_to_flatten() {
         outcome.check
     );
 }
+
+/// A design of user parameters and no geometry, as a Fusion design other designs take their
+/// parameters from: `W1` = 20 mm, `half` = W1 / 2 and an angle.
+fn parameters_alone() -> Model {
+    let ir = cadmpeg_ir::examples::unit_cube().unwrap();
+    let mut wire = serde_json::to_value(&ir).unwrap();
+    if let Some(arenas) = wire["model"].as_object_mut() {
+        for rows in arenas.values_mut() {
+            if rows.is_array() {
+                *rows = json!([]);
+            }
+        }
+    }
+    wire["model"]["parameters"] = json!([
+        {"id": "f3d:model:parameter#1", "ordinal": 0, "name": "W1", "expression": "20 mm",
+         "value": {"kind": "length", "value": 20.0}},
+        {"id": "f3d:model:parameter#2", "ordinal": 1, "name": "half", "expression": "W1 / 2",
+         "value": {"kind": "length", "value": 10.0},
+         "dependencies": ["f3d:model:parameter#1"]},
+        {"id": "f3d:model:parameter#3", "ordinal": 2, "name": "tilt", "expression": "15 deg",
+         "value": {"kind": "angle", "value": 15.0_f64.to_radians()}},
+    ]);
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        fidelity: None,
+        name: "Parameters".to_owned(),
+        source_file: Some("Parameters.f3d".to_owned()),
+        assembly: None,
+    }
+}
+
+#[test]
+fn a_design_of_parameters_alone_is_written_with_its_parameters() {
+    let model = parameters_alone();
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    assert_eq!(writer.convertible(&model), Ok(()));
+    let reason = "the design holds 3 parameters and no geometry".to_owned();
+    let mut report = Report::default();
+    let planned = writer.plan(&model, &mut report);
+    assert_eq!(planned.check, Check::NotApplicable(reason.clone()));
+    let (document, report) = convert(&model, &writer);
+    assert_eq!(
+        document["params"],
+        json!([
+            {"name": "W1", "expr": "20 mm", "unit": "mm", "model": false},
+            {"name": "half", "expr": "W1 / 2", "unit": "mm", "model": false},
+            {"name": "tilt", "expr": "15 deg", "unit": "deg", "model": false},
+        ])
+    );
+    assert_eq!(document["features"], json!([]));
+    let outcome = report.outcome().unwrap();
+    assert_eq!(outcome.mode, Mode::Import);
+    assert_eq!(outcome.check, Check::NotApplicable(reason));
+    assert!(report.losses().iter().any(|loss| loss.subject == "geometry"
+        && loss.detail == "none: the design holds 3 parameters and no geometry"));
+
+    // A design with neither geometry nor parameters still has nothing to write.
+    let mut empty = parameters_alone();
+    let mut wire = serde_json::to_value(&empty.ir).unwrap();
+    wire["model"]["parameters"] = json!([]);
+    empty.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    assert!(writer.convertible(&empty).is_err());
+}
+
+#[test]
+fn solidcraft_opens_a_design_of_parameters_alone() {
+    let Some(cli) = solidcraft() else { return };
+    assert_eq!(
+        volumes(&cli, &written(&parameters_alone()).0),
+        Vec::<f64>::new()
+    );
+}
