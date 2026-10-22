@@ -560,7 +560,10 @@ mod tests {
         assert_eq!(report["error"]["upstream"], "cadmpeg");
         let message = report["error"]["message"].as_str().unwrap();
         assert!(message.contains("download or copy it again"), "{message}");
-        assert!(message.contains("template=file-did-not-convert.yml"), "{message}");
+        assert!(
+            message.contains("template=file-did-not-convert.yml"),
+            "{message}"
+        );
         assert!(!output.exists());
         assert_eq!(call("formats", json!({}))["result"]["isError"], false);
     }
