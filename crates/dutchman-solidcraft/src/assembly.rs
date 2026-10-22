@@ -35,6 +35,7 @@ pub(crate) fn write(
         occurrences: Vec::new(),
         features: Vec::new(),
         params: Vec::new(),
+        sheet_rules: Vec::new(),
         taken: BTreeSet::new(),
         looks: BTreeMap::new(),
         face_looks: Vec::new(),
@@ -73,6 +74,12 @@ pub(crate) fn write(
     }
     if let (false, Some(fields)) = (appearances.is_empty(), doc.as_object_mut()) {
         fields.insert("appearances".to_owned(), Value::Object(appearances));
+    }
+    if let (Some(first), Some(fields)) = (builder.sheet_rules.first(), doc.as_object_mut()) {
+        fields.insert(
+            "sheet".to_owned(),
+            json!({"active": first.get("name"), "rules": builder.sheet_rules}),
+        );
     }
     if let (false, Some(fields)) = (joints.is_empty(), doc.as_object_mut()) {
         fields.insert("assembly".to_owned(), json!({"joints": joints}));
@@ -171,6 +178,8 @@ struct Builder<'r> {
     features: Vec<Value>,
     /// The design's parameters, from every part whose history is written.
     params: Vec<Value>,
+    /// The sheet rules the parts' histories use, each once by name.
+    sheet_rules: Vec<Value>,
     /// Parameter names given so far.
     taken: BTreeSet<String>,
     /// Looks of the bodies the parts' histories make, by body name.
@@ -448,6 +457,15 @@ impl Builder<'_> {
         self.next_id = history.next_id;
         self.features.append(&mut history.features);
         self.params.append(&mut history.params);
+        for rule in history.sheet_rules.drain(..) {
+            if !self
+                .sheet_rules
+                .iter()
+                .any(|known| known.get("name") == rule.get("name"))
+            {
+                self.sheet_rules.push(rule);
+            }
+        }
         self.looks.append(&mut history.looks);
         self.face_looks.append(&mut history.face_looks);
         self.histories.push(check);

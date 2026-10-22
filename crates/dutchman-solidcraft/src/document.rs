@@ -112,6 +112,12 @@ pub(crate) fn history_design(
         "next_id": original.saturating_add(1),
         "features": features,
     });
+    if let (Some(first), Some(fields)) = (history.sheet_rules.first(), doc.as_object_mut()) {
+        fields.insert(
+            "sheet".to_owned(),
+            json!({"active": first.get("name"), "rules": history.sheet_rules}),
+        );
+    }
     let has_looks = !history.looks.is_empty() || !history.face_looks.is_empty();
     if let (true, Some(fields)) = (has_looks, doc.as_object_mut()) {
         let mut appearances = json!({"bodies": history.looks});
@@ -242,6 +248,7 @@ mod history_tests {
             ],
             looks: Default::default(),
             face_looks: Vec::new(),
+            sheet_rules: Vec::new(),
             next_id: 3,
             mapped: 2,
             total: 2,

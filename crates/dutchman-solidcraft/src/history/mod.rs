@@ -19,6 +19,7 @@ mod pattern;
 mod primitive;
 mod profile;
 mod revolve;
+mod sheet;
 mod sketch;
 mod sweep;
 
@@ -42,6 +43,8 @@ pub(crate) struct History {
     /// (a point on the face, in the frame the body is built in: the design's, or its
     /// component's inside an assembly, which SolidCraft applies to every occurrence).
     pub(crate) face_looks: Vec<Value>,
+    /// The sheet rules its sheet-metal features use, as SolidCraft stores them.
+    pub(crate) sheet_rules: Vec<Value>,
     /// The id the next feature after the history takes.
     pub(crate) next_id: u64,
     /// Source features that became SolidCraft features or needed none.
@@ -232,6 +235,8 @@ struct Context<'a> {
     named_bodies: Vec<(String, String)>,
     /// Whether a feature that builds geometry has been mapped.
     builds: bool,
+    /// The sheet thicknesses (mm) its sheet-metal features use, each with its rule's name.
+    sheet_rules: Vec<(f64, String)>,
 }
 
 impl<'a> Context<'a> {
@@ -245,6 +250,7 @@ impl<'a> Context<'a> {
             feature_names: BTreeMap::new(),
             named_bodies: Vec::new(),
             builds: false,
+            sheet_rules: Vec::new(),
         }
     }
 
@@ -277,6 +283,20 @@ impl<'a> Context<'a> {
         let id = self.next_id;
         self.next_id = self.next_id.saturating_add(1);
         id
+    }
+
+    /// The name of the sheet rule of `thickness` mm, made the first time it is asked for.
+    fn sheet_rule(&mut self, thickness: f64) -> String {
+        if let Some((_, name)) = self
+            .sheet_rules
+            .iter()
+            .find(|(known, _)| (known - thickness).abs() < 1e-9)
+        {
+            return name.clone();
+        }
+        let name = format!("Sheet {thickness} mm");
+        self.sheet_rules.push((thickness, name.clone()));
+        name
     }
 
     /// The rows of a CADIR arena.
@@ -388,6 +408,11 @@ fn map_into(
             format!("{unplaced} coloured curved faces keep their body's colour"),
         );
     }
+    history.sheet_rules = ctx
+        .sheet_rules
+        .iter()
+        .map(|(thickness, name)| sheet::rule(name, *thickness))
+        .collect();
     history.next_id = ctx.next_id;
     Ok(history)
 }
@@ -426,6 +451,9 @@ fn map_feature(feature: &Value, ctx: &mut Context, report: &mut Report) -> Resul
         Some(kind @ ("block" | "primitive")) => Err(primitive::unplaced(kind)),
         Some("pattern") => pattern::map(feature, definition, ctx).map(Mapped::Feature),
         Some("hole") => hole::map(feature, definition, ctx).map(Mapped::Feature),
+        Some("sheet_metal_base_flange") => {
+            sheet::base_flange(feature, definition, ctx).map(Mapped::Feature)
+        }
         Some("base_feature") => base::map(feature, definition, ctx).map(Mapped::Feature),
         // A placed datum plane: what is sketched on it carries the same frame of its own.
         Some("datum_plane") if definition.get("frame").is_some_and(Value::is_object) => {
