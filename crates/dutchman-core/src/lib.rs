@@ -9,6 +9,7 @@ mod assembly;
 mod decode;
 mod error;
 mod format;
+mod hidden;
 mod locate;
 pub mod placement;
 mod report;
@@ -131,7 +132,33 @@ fn decode_file(format: Format, input: &Path, report: &mut Report) -> Result<Mode
         path: input.to_path_buf(),
         source,
     })?;
-    decode::decode(format, input, &bytes, report)
+    let model = decode::decode(format, input, &bytes, report)?;
+    if format != Format::FreeCadDocument {
+        return Ok(model);
+    }
+    match hidden::shown(&model) {
+        Ok(None) => Ok(model),
+        Ok(Some((shown, hidden))) => {
+            report.push(
+                Severity::Info,
+                "bodies",
+                format!(
+                    "{hidden} hidden {} (the shapes of a Body's steps) not converted: \
+                     FreeCAD shows only the Body's own shape",
+                    if hidden == 1 { "body" } else { "bodies" }
+                ),
+            );
+            Ok(shown)
+        }
+        Err(why) => {
+            report.push(
+                Severity::Degraded,
+                "bodies",
+                format!("hidden bodies converted too, as {why}"),
+            );
+            Ok(model)
+        }
+    }
 }
 
 /// Converts the file at `input` into `output` through `writer`, replacing an existing output.

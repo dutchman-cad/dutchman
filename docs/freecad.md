@@ -23,6 +23,11 @@ against cadmpeg's `main`, carry the fixes as they land.
 ## What converts
 
 - **Geometry**, written as a SolidCraft import and checked in SolidCraft like any other.
+  Only the bodies FreeCAD shows convert: a body cadmpeg marks hidden (`visible: false`, as it
+  marks the shape of each step inside a PartDesign Body) is left out, with the geometry only
+  it uses, and the report says how many were (`Info`). A document that hides every body
+  converts all of them, as stored. cadmpeg 0.6.3 marks none, so this takes effect with the
+  cadmpeg release that does.
 - **Components**, when cadmpeg says which bodies each owns, as for a Fusion design.
 - **Feature history** is not mapped yet, so every document converts as geometry without
   history, and the report names the first feature that stopped it. FreeCAD's PartDesign
