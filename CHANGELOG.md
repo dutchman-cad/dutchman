@@ -39,6 +39,10 @@ report's schema name changes when a field does).
 
 ### Feature history
 
+- Extrudes that start or end at a planar face of an earlier body, one-sided extrudes with a
+  taper, start offsets against the sketch normal, and two-sided revolves with equal angles
+  map to SolidCraft.
+
 - Sweeps now carry end scale and fixed-binormal orientation, and sketch profiles can sweep into
   surfaces; taper, corner transitions and changing sections remain unmapped.
 

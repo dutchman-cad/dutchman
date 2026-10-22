@@ -120,9 +120,13 @@ dimension linked to its parameter (a constraint that does not map is dropped and
 since the geometry is already exact); extrudes of a whole sketch, of selected sketch
 profiles, of profile regions (whole loops with their holes, or regions bounded by pieces of
 curves) or of selected curves, one-sided, symmetric or two-sided, blind or through all, from the sketch plane or an
-offset, as new body, join, cut or intersect (a new body keeps its source name and colour); revolves about a line in the sketch plane that
-are symmetric or a full turn (CADIR does not state which way a revolve turns, so a partial
-one-sided or two-sided revolve is not mapped); lofts through two to fifty profile or terminal point sections,
+offset, or a resolved parallel planar face on an earlier named body; one-sided extrudes may
+end on such a face with an offset and may carry draft (positive grows outward); two-sided
+extrudes may use a non-blind positive-normal end when the negative-normal end is blind.
+Extrudes map as new body, join, cut or intersect (a new body keeps its source name and colour);
+revolves about a line in the sketch plane that are symmetric, equal-angle two-sided or a full
+turn (CADIR does not state which way a revolve turns, so partial one-sided and unequal
+two-sided revolves are not mapped); lofts through two to fifty profile or terminal point sections,
 open, smooth and solid, guided by up to two rails of sketch curves (sections can select
 separate regions of one sketch; resolved point and vertex ends become sketch points); sweeps of one sketch profile along
 sketch curves (whole path, solid or surface, square to it, held as drawn or with a fixed

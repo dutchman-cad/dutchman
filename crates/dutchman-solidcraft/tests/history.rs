@@ -2971,3 +2971,301 @@ fn solidcraft_opens_a_design_of_parameters_alone() {
         Vec::<f64>::new()
     );
 }
+
+/// Change only the extrusion definition of the synthetic cube history.
+fn changed_extrude(change: impl FnOnce(&mut Value)) -> Model {
+    let mut model = cube_with_history(10.0, whole_sketch(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    change(&mut wire["model"]["features"][1]["definition"]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn one_sided_extrude_draft_keeps_its_sign_in_both_directions() {
+    for direction in ["profile_normal", "reversed_profile_normal"] {
+        for degrees in [-10.0_f64, 10.0] {
+            let model = changed_extrude(|definition| {
+                definition["direction"] = json!({"kind": direction});
+                definition["extent"]["side"]["draft"] = json!(degrees.to_radians());
+            });
+            let (document, report) = convert(
+                &model,
+                &SolidCraftWriter::new().verification(Verification::Off),
+            );
+            assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+            let extent = &document["features"][1]["extent"];
+            assert_eq!(extent["taper"], format!("{degrees} deg"));
+            let expected_direction = if direction == "profile_normal" {
+                "positive"
+            } else {
+                "negative"
+            };
+            assert_eq!(extent["direction"], expected_direction);
+        }
+    }
+}
+
+#[test]
+fn solidcraft_rebuilds_drafted_extrude_volumes() {
+    let Some(cli) = solidcraft() else { return };
+    for direction in ["profile_normal", "reversed_profile_normal"] {
+        for degrees in [-10.0_f64, 10.0] {
+            let model = changed_extrude(|definition| {
+                definition["direction"] = json!({"kind": direction});
+                definition["extent"]["side"]["draft"] = json!(degrees.to_radians());
+            });
+            let (bytes, _) = written(&model);
+            // Positive taper grows a 10 mm square outward as it travels 10 mm.
+            let top = 10.0 + 20.0 * degrees.to_radians().tan();
+            let expected = 10.0 / 3.0 * (100.0 + 10.0 * top + top * top);
+            let actual = volumes(&cli, &bytes);
+            assert_eq!(actual.len(), 1);
+            assert!(
+                (actual[0] - expected).abs() < 1e-4,
+                "{actual:?}, {expected}"
+            );
+        }
+    }
+}
+
+/// An earlier cube followed by another extrusion using its top face as an end or start.
+fn face_ended_extrude(from_face: bool, offset: f64, resolved: bool) -> Model {
+    let mut model = cube_with_history(10.0, whole_sketch(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let selection = if resolved {
+        json!({"kind": "resolved", "value": {
+            "faces": ["synthetic:cube:face#top"], "native": "synthetic top face"
+        }})
+    } else {
+        json!({"kind": "faces", "value": ["synthetic:cube:face#top"]})
+    };
+    let mut next = wire["model"]["features"][1].clone();
+    next["id"] = json!("f3d:model:feature#3");
+    next["ordinal"] = json!(2);
+    next["name"] = json!("Face extent");
+    next["outputs"] = json!([]);
+    next["dependencies"] = json!(["f3d:model:feature#2"]);
+    if from_face {
+        next["definition"]["start"] = json!({
+            "kind": "from_face", "face": selection, "offset": offset
+        });
+        next["definition"]["extent"]["side"]["termination"]["length"] = json!(2.0);
+    } else {
+        next["definition"]["start"] = json!({"kind": "offset_profile_plane", "offset": 12.0});
+        next["definition"]["direction"] = json!({"kind": "reversed_profile_normal"});
+        next["definition"]["extent"]["side"]["termination"] = json!({
+            "kind": "to_face", "face": selection, "offset": offset
+        });
+    }
+    wire["model"]["features"].as_array_mut().unwrap().push(next);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn resolved_face_ends_and_starts_use_solidcraft_picks() {
+    for resolved in [false, true] {
+        for from in [false, true] {
+            let (document, report) = convert(
+                &face_ended_extrude(from, -0.5, resolved),
+                &SolidCraftWriter::new().verification(Verification::Off),
+            );
+            assert!(
+                history_line(&report).starts_with("3 of 3 features mapped"),
+                "{}",
+                history_line(&report)
+            );
+            let extent = &document["features"][2]["extent"];
+            let pick = &extent[if from { "from" } else { "to" }];
+            assert_eq!(pick[2], 10.0);
+            assert!(pick[0].as_f64().unwrap() > 0.0 && pick[0].as_f64().unwrap() < 10.0);
+            assert!(pick[1].as_f64().unwrap() > 0.0 && pick[1].as_f64().unwrap() < 10.0);
+            if from {
+                assert_eq!(extent["start_offset"], "-0.5 mm");
+                assert_eq!(extent["distance"], "2 mm");
+            } else {
+                assert_eq!(extent["start_offset"], "12 mm");
+                assert_eq!(extent["to_offset"], "-0.5 mm");
+                assert_eq!(extent["distance"], "0 mm");
+            }
+        }
+    }
+}
+
+#[test]
+fn solidcraft_rebuilds_face_ended_and_face_started_extrudes() {
+    let Some(cli) = solidcraft() else { return };
+    for (from, expected) in [(false, 150.0), (true, 200.0)] {
+        let (bytes, report) = written(&face_ended_extrude(from, -0.5, false));
+        assert!(history_line(&report).starts_with("3 of 3 features mapped"));
+        let mut actual = volumes(&cli, &bytes);
+        actual.sort_by(f64::total_cmp);
+        assert_eq!(actual.len(), 2);
+        assert!((actual[0] - expected).abs() < 1e-4, "{actual:?}");
+        assert!((actual[1] - 1000.0).abs() < 1e-4, "{actual:?}");
+    }
+}
+
+#[test]
+fn reverse_start_offsets_and_two_sided_distances_follow_the_normal() {
+    let model = changed_extrude(|definition| {
+        definition["direction"] = json!({"kind": "reversed_profile_normal"});
+        definition["start"] = json!({"kind": "offset_profile_plane", "offset": 3.0});
+        definition["extent"] = json!({"kind": "two_sided",
+            "first": {"termination": {"kind": "blind", "length": 7.0}},
+            "second": {"termination": {"kind": "blind", "length": 2.0}}});
+    });
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+    assert_eq!(
+        document["features"][1]["extent"],
+        json!({
+            "direction": "positive", "distance": "2 mm", "distance2": "7 mm", "start_offset": "3 mm"
+        })
+    );
+    if let Some(cli) = solidcraft() {
+        let (bytes, _) = written(&model);
+        let actual = volumes(&cli, &bytes);
+        assert_eq!(actual.len(), 1);
+        assert!((actual[0] - 900.0).abs() < 1e-4);
+    }
+}
+
+#[test]
+fn equal_two_sided_revolves_become_symmetric() {
+    let model = ring_history(json!({"kind": "two_sided",
+        "first": {"kind": "angle", "angle": std::f64::consts::FRAC_PI_2},
+        "second": {"kind": "angle", "angle": std::f64::consts::FRAC_PI_2}}));
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+    assert_eq!(document["features"][1]["symmetric"], true);
+    assert_eq!(document["features"][1]["angle"], "180 deg");
+    if let Some(cli) = solidcraft() {
+        let (bytes, _) = written(&model);
+        let actual = volumes(&cli, &bytes);
+        assert_eq!(actual.len(), 1);
+        assert!((actual[0] - 375.0 * std::f64::consts::PI).abs() < 1e-3);
+    }
+}
+
+#[test]
+fn unsupported_end_combinations_keep_specific_refusals() {
+    for kind in ["symmetric", "two_sided"] {
+        let model = changed_extrude(|definition| {
+            let side = json!({"termination": {"kind": "blind", "length": 4.0}, "draft": 0.1});
+            definition["extent"] = if kind == "symmetric" {
+                json!({"kind": kind, "side": side})
+            } else {
+                json!({"kind": kind, "first": side, "second": side})
+            };
+        });
+        let (_, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(history_line(&report).contains("draft on a symmetric or two-sided extrude"));
+    }
+    let model = ring_history(json!({"kind": "one_sided", "termination": {
+        "kind": "to_face", "face": {"kind": "faces", "value": ["synthetic:cube:face#top"]}
+    }}));
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).contains("CADIR does not state which way it turns"));
+}
+
+#[test]
+fn face_selections_that_cannot_be_placed_stop_the_history() {
+    for (selection, reason) in [
+        (
+            json!({"kind": "native", "value": "synthetic top face"}),
+            "not resolved to model faces",
+        ),
+        (
+            json!({"kind": "faces", "value": []}),
+            "without exactly one face",
+        ),
+        (
+            json!({"kind": "faces", "value": ["synthetic:cube:face#top", "synthetic:cube:face#bottom"]}),
+            "without exactly one face",
+        ),
+        (
+            json!({"kind": "faces", "value": ["synthetic:cube:face#front"]}),
+            "not parallel to its sketch",
+        ),
+    ] {
+        let mut model = face_ended_extrude(false, 0.0, false);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let termination =
+            &mut wire["model"]["features"][2]["definition"]["extent"]["side"]["termination"];
+        termination["face"] = selection;
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert_eq!(types(&document), [("import".to_owned(), false)]);
+        assert!(
+            history_line(&report).contains(reason),
+            "{}",
+            history_line(&report)
+        );
+    }
+    let model = changed_extrude(|definition| {
+        definition["extent"]["side"]["termination"] = json!({"kind": "to_face",
+            "face": {"kind": "faces", "value": ["synthetic:cube:face#top"]}});
+    });
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).contains("not on an earlier named body"));
+}
+
+#[test]
+fn a_two_sided_extrude_can_end_at_a_face_along_the_positive_normal() {
+    let mut model = face_ended_extrude(false, 0.0, false);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let definition = &mut wire["model"]["features"][2]["definition"];
+    let first = definition["extent"]["side"].clone();
+    definition["direction"] = json!({"kind": "profile_normal"});
+    definition["start"] = json!({"kind": "offset_profile_plane", "offset": 5.0});
+    definition["extent"] = json!({"kind": "two_sided", "first": first,
+        "second": {"termination": {"kind": "blind", "length": 2.0}}});
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).starts_with("3 of 3 features mapped"));
+    assert_eq!(document["features"][2]["extent"]["distance2"], "2 mm");
+    assert_eq!(document["features"][2]["extent"]["to"][2], 10.0);
+    if let Some(cli) = solidcraft() {
+        let (bytes, _) = written(&model);
+        let mut actual = volumes(&cli, &bytes);
+        actual.sort_by(f64::total_cmp);
+        assert_eq!(actual.len(), 2);
+        assert!((actual[0] - 700.0).abs() < 1e-4, "{actual:?}");
+    }
+}
+
+#[test]
+fn a_face_end_does_not_silently_reverse_the_extrude() {
+    let mut model = face_ended_extrude(false, 0.0, false);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"][2]["definition"]["direction"] = json!({"kind": "profile_normal"});
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).contains("not along the selected extrude side"));
+}
