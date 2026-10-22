@@ -6,7 +6,7 @@ report's schema name changes when a field does).
 
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
-## Unreleased
+## 0.1.3 (2026-10-21)
 
 ### Formats
 
@@ -15,27 +15,6 @@ report's schema name changes when a field does).
   Stable builds say so instead, until a cadmpeg release reads FreeCAD solids right. FreeCAD
   support is the `freecad` cargo feature, which the nightly build turns on. See
   [docs/freecad.md](docs/freecad.md).
-
-### Assemblies
-
-- An Inventor assembly's part files are also searched for in the folders its Inventor project
-  file (`.ipj`) names: the workspace, workgroup and library folders, and the
-  imported-components folder. The project file is the nearest one in or above the project
-  folder, so `--project` given a folder inside a larger project still finds the files
-  elsewhere in it. The report lists the folders searched, and a part not found says how many
-  were. Folders below the project folder that hold a project file of their own (Pack and Go
-  copies) are no longer searched.
-- A design inserted into a Fusion archive (`.f3z`) is placed as a sub-assembly, named as the
-  archive names it, and a joint to a component inside it joins that design as a whole (its own
-  joints are not carried yet). Such an archive converted as geometry alone before, without its
-  joints.
-- A revolute or slider joint whose parts already turn or slide on its axis where they are
-  placed holds them there, at the angle or distance their placements give, instead of moving
-  them to the value the source stores. Revolute limits that this angle lies outside are left
-  out, with a loss saying so.
-- A revolute joint's angle in the source is taken as the angular offset that aligns its frames,
-  as a fixed joint's is, not as where it has turned to: Fusion stores no current angle, only
-  the placements. Its limits hold from the aligned frames.
 
 ### Feature history
 
@@ -87,6 +66,9 @@ report's schema name changes when a field does).
 
 - The README, and each release's notes, start with a direct download for each platform, with
   its checksum, and how to tell which Mac you have.
+- [Testing Dutchman on your library](docs/testing-your-library.md) is updated for this
+  release: the macOS app, SolidCraft found in its app, Inventor project search, the incomplete
+  count and `dutchman.log`, and when to try the nightly.
 - A nightly build: Dutchman's main built against cadmpeg's main every day, when either has
   changed, and published as the `nightly` pre-release once every test and the SolidCraft round
   trip pass. It brings cadmpeg fixes that are merged but not yet released; stable releases keep
@@ -124,6 +106,24 @@ report's schema name changes when a field does).
   face to face, as in Fusion.
 - Joined parts are placed where their joints put them, as Fusion can store a joined part where
   it was before its joints were solved.
+- An Inventor assembly's part files are also searched for in the folders its Inventor project
+  file (`.ipj`) names: the workspace, workgroup and library folders, and the
+  imported-components folder. The project file is the nearest one in or above the project
+  folder, so `--project` given a folder inside a larger project still finds the files
+  elsewhere in it. The report lists the folders searched, and a part not found says how many
+  were. Folders below the project folder that hold a project file of their own (Pack and Go
+  copies) are no longer searched.
+- A design inserted into a Fusion archive (`.f3z`) is placed as a sub-assembly, named as the
+  archive names it, and a joint to a component inside it joins that design as a whole (its own
+  joints are not carried yet). Such an archive converted as geometry alone before, without its
+  joints.
+- A revolute or slider joint whose parts already turn or slide on its axis where they are
+  placed holds them there, at the angle or distance their placements give, instead of moving
+  them to the value the source stores. Revolute limits that this angle lies outside are left
+  out, with a loss saying so.
+- A revolute joint's angle in the source is taken as the angular offset that aligns its frames,
+  as a fixed joint's is, not as where it has turned to: Fusion stores no current angle, only
+  the placements. Its limits hold from the aligned frames.
 
 ## 0.1.2 (2026-10-21)
 
