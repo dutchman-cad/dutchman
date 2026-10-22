@@ -23,6 +23,10 @@ report's schema name changes when a field does).
 
 ### Feature history
 
+- Sheet-metal base flanges map onto SolidCraft base flanges, under a sheet rule of their
+  thickness, on the sketch's side the source puts them. A flange thick on both sides of its
+  sketch is not mapped yet.
+
 - Fusion base features (bodies a timeline holds as they are, modelled directly or imported)
   map onto SolidCraft Import features at their place in the timeline, each holding its own
   bodies as STEP, so the features after them keep their history instead of the whole design

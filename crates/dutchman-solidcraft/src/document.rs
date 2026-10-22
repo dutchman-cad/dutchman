@@ -248,6 +248,7 @@ mod history_tests {
             ],
             looks: Default::default(),
             face_looks: Vec::new(),
+            sheet_rules: Vec::new(),
             next_id: 3,
             mapped: 2,
             total: 2,
