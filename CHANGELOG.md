@@ -16,6 +16,17 @@ report's schema name changes when a field does).
   support is the `freecad` cargo feature, which the nightly build turns on. See
   [docs/freecad.md](docs/freecad.md).
 
+### Assemblies
+
+- A design inserted into a Fusion archive (`.f3z`) is placed as a sub-assembly, named as the
+  archive names it, and a joint to a component inside it joins that design as a whole (its own
+  joints are not carried yet). Such an archive converted as geometry alone before, without its
+  joints.
+- A revolute or slider joint whose parts already turn or slide on its axis where they are
+  placed holds them there, at the angle or distance their placements give, instead of moving
+  them to the value the source stores. Revolute limits that this angle lies outside are left
+  out, with a loss saying so.
+
 ### Feature history
 
 - Datum planes the source places (FreeCAD's PartDesign Plane) are counted as not needed:

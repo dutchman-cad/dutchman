@@ -7,6 +7,7 @@
 //! part file is read once, however often it is placed.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::f64::consts::{PI, TAU};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -470,9 +471,25 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
             .and_then(Value::as_array)
             .map_or(&[][..], Vec::as_slice)
     };
-    let mut occurrences: Vec<&Value> = arena("occurrences")
+    // A design inserted into this one whose contents the file carries (as an .f3z carries
+    // its other designs) is an external occurrence holding local ones: it is placed as a
+    // sub-assembly of them.
+    let all = arena("occurrences");
+    let holds_local = |row: &Value| {
+        let id = row.get("id").and_then(Value::as_str);
+        id.is_some()
+            && all.iter().any(|child| {
+                scope(child) == Some("local")
+                    && child.pointer("/parent/occurrence").and_then(Value::as_str) == id
+            })
+    };
+    let mut occurrences: Vec<&Value> = all
         .iter()
-        .filter(|row| row.pointer("/prototype/scope").and_then(Value::as_str) == Some("local"))
+        .filter(|row| match scope(row) {
+            Some("local") => true,
+            Some("external") => holds_local(row),
+            _ => false,
+        })
         .collect();
     if occurrences.is_empty() {
         return Ok(None);
@@ -528,7 +545,8 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
     }
     let mut parts = std::mem::take(&mut tree.parts);
     let worlds = world_placements(&occurrences)?;
-    let (joints, mut left_out) = joints(arena("assembly_joints"), &tree.paths, &worlds);
+    let inserted = inserted_designs(&occurrences);
+    let (joints, mut left_out) = joints(arena("assembly_joints"), &tree.paths, &worlds, &inserted);
 
     // Bodies no component owns are the design's own, placed where they are.
     let loose: Vec<&str> = arena("bodies")
@@ -559,7 +577,9 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
 /// stays put; from it, each joint places the side not yet placed. A joint neither of whose
 /// sides is placed yet keeps its second side and moves its first to it, as Fusion moves the
 /// first part picked for a joint to the second. A joint whose two sides were both placed
-/// already is left for SolidCraft to check, with a note when they do not meet.
+/// already is left for SolidCraft to check, with a note when they do not meet. A revolute or
+/// slider joint whose parts already turn or slide on its axis where they are placed holds
+/// them there instead, at the value their placements give it.
 fn place_by_joints(assembly: &mut Assembly) -> Vec<String> {
     let joints = assembly.joints.clone();
     let mut notes = Vec::new();
@@ -582,6 +602,18 @@ fn place_by_joints(assembly: &mut Assembly) -> Vec<String> {
         else {
             continue;
         };
+        if let Some((motion, frame_b, note)) = as_built(&a, &b, joint) {
+            if let Some(row) = assembly.joints.get_mut(index) {
+                row.motion = motion;
+                row.frame_b = frame_b;
+            }
+            if let Some(note) = note {
+                notes.push(format!("joint {}: {note}", index + 1));
+            }
+            fixed.insert(joint.a.clone());
+            fixed.insert(joint.b.clone());
+            continue;
+        }
         let reach = compose(&compose(&a, &joint.frame_a), &joint.meeting());
         match (fixed.contains(&joint.a), fixed.contains(&joint.b)) {
             (true, true) => {
@@ -615,6 +647,51 @@ fn place_by_joints(assembly: &mut Assembly) -> Vec<String> {
         }
     }
     notes
+}
+
+/// A revolute or slider joint as it holds its parts where they are placed (`a` and `b`, in the
+/// world), when they already turn or slide on its axis there: its frames' z axes parallel or
+/// opposed, and their origins apart only along them (to a micrometre). Its value is measured
+/// from the placements, a revolute's angle the turn nearest the source's own, and B's frame
+/// is taken from where A's meets it, so what else lies between the frames (a revolute's shift
+/// along its axis, a slider's turn about it) is kept as built. A revolute's limits are left
+/// out, with the reason, when the measured angle lies outside them.
+fn as_built(
+    a: &Placement3x4,
+    b: &Placement3x4,
+    joint: &Joint,
+) -> Option<(Motion, Placement3x4, Option<String>)> {
+    let wa = compose(a, &joint.frame_a);
+    // B's frame in A's, taken back through the half turn: on the axis, a turn about z and a
+    // shift along it, with z itself kept or reversed.
+    let between = compose(
+        &compose(&inverse(&wa), &compose(b, &joint.frame_b)),
+        &inverse(&FACING),
+    );
+    let [[r00, _, _, x], [r10, _, _, y], [_, _, r22, z]] = between;
+    if (r22.abs() - 1.0).abs() > 1e-9 || x.hypot(y) > 1e-3 {
+        return None;
+    }
+    let mut note = None;
+    let motion = match joint.motion {
+        Motion::Rigid => return None,
+        Motion::Revolute { angle, limits } => {
+            let turned = r10.atan2(r00);
+            let angle = angle + (turned - angle + PI).rem_euclid(TAU) - PI;
+            let limits = match limits {
+                Some((min, max)) if angle < min - 1e-9 || angle > max + 1e-9 => {
+                    note = Some("its limits are left out: its angle lies outside them".to_owned());
+                    None
+                }
+                limits => limits,
+            };
+            Motion::Revolute { angle, limits }
+        }
+        Motion::Slider { .. } => Motion::Slider { distance: z },
+    };
+    let meeting = compose(&motion.transform(), &FACING);
+    let frame_b = compose(&inverse(b), &compose(&wa, &meeting));
+    Some((motion, frame_b, note))
 }
 
 /// Whether two placements agree, to a micrometre and a nanoradian.
@@ -703,11 +780,12 @@ fn joints(
     rows: &[Value],
     paths: &BTreeMap<&str, (Vec<usize>, bool)>,
     worlds: &BTreeMap<&str, Placement3x4>,
+    inserted: &BTreeMap<&str, &str>,
 ) -> (Vec<Joint>, Vec<String>) {
     let mut joints = Vec::new();
     let mut notes = Vec::new();
     for (index, row) in rows.iter().enumerate() {
-        match joint(row, paths, worlds) {
+        match joint(row, paths, worlds, inserted) {
             Ok((joint, note)) => {
                 if let Some(note) = note {
                     notes.push(format!("joint {}: {note}", index + 1));
@@ -724,6 +802,7 @@ fn joint(
     row: &Value,
     paths: &BTreeMap<&str, (Vec<usize>, bool)>,
     worlds: &BTreeMap<&str, Placement3x4>,
+    inserted: &BTreeMap<&str, &str>,
 ) -> Result<(Joint, Option<String>), String> {
     let operands = row.get("operands").unwrap_or(&Value::Null);
     if operands.get("arity").and_then(Value::as_str) != Some("pair") {
@@ -742,6 +821,7 @@ fn joint(
             connector.get("operand").unwrap_or(&Value::Null),
             paths,
             worlds,
+            inserted,
         )?;
         // The frame is in its operand's own container; the side is the deepest occurrence
         // the operand names, inside that container.
@@ -847,6 +927,7 @@ fn side_path(
     operand: &Value,
     paths: &BTreeMap<&str, (Vec<usize>, bool)>,
     worlds: &BTreeMap<&str, Placement3x4>,
+    inserted: &BTreeMap<&str, &str>,
 ) -> Result<(Vec<usize>, Placement3x4, Placement3x4), String> {
     let container = operand.get("container").unwrap_or(&Value::Null);
     match container.get("container").and_then(Value::as_str) {
@@ -883,7 +964,36 @@ fn side_path(
             let world = |id: &str| worlds.get(id).copied().unwrap_or(IDENTITY);
             Ok((path.clone(), world(id), world(named)))
         }
-        Some("external") => Err("it joins a component of another design".to_owned()),
+        Some("external") => {
+            // A component inside a design inserted into this one, whose contents the file
+            // carries: the operand names the occurrences inside it by their keys, outermost
+            // first. Its frame is in the inserted design's own space, the placement of the
+            // occurrence that inserts it, and the joint holds that occurrence: the inserted
+            // design's own joints are not carried, so its parts move as one.
+            let named = listed(operand.get("subelements"))
+                .iter()
+                .rev()
+                .filter_map(Value::as_str)
+                .find_map(|key| {
+                    let mut found = inserted
+                        .keys()
+                        .filter(|id| id.rsplit_once('#').map(|(_, own)| own) == Some(key));
+                    match (found.next(), found.next()) {
+                        (Some(id), None) => Some(*id),
+                        _ => None,
+                    }
+                })
+                .ok_or("it joins a component of another design")?;
+            let holder = inserted.get(named).copied().unwrap_or(named);
+            let (path, shared) = paths
+                .get(holder)
+                .ok_or("it joins a component the design does not place")?;
+            if *shared {
+                return Err("it joins a component inside one placed more than once".to_owned());
+            }
+            let world = worlds.get(holder).copied().unwrap_or(IDENTITY);
+            Ok((path.clone(), world, world))
+        }
         _ => Err("it is malformed".to_owned()),
     }
 }
@@ -922,11 +1032,7 @@ impl<'a> Tree<'a> {
         occurrences: &[&'a Value],
         shared: bool,
     ) -> Result<Vec<Placement>, String> {
-        let definition = |row: &Value| {
-            row.pointer("/prototype/definition")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        };
+        let definition = |row: &Value| definition_key(row).map(str::to_owned);
         let mut placements = Vec::with_capacity(occurrences.len());
         for (index, occurrence) in occurrences.iter().enumerate() {
             let copies = occurrences
@@ -974,11 +1080,10 @@ impl<'a> Tree<'a> {
     /// The part an occurrence places: its definition's bodies, and, when components are
     /// placed inside it, those as a sub-assembly beside them.
     fn part(&mut self, occurrence: &'a Value, shared: bool) -> Result<usize, String> {
-        let definition = occurrence
-            .pointer("/prototype/definition")
-            .and_then(Value::as_str)
-            .ok_or("a component placement names no component")?;
+        let definition =
+            definition_key(occurrence).ok_or("a component placement names no component")?;
         let id = occurrence.get("id").and_then(Value::as_str).unwrap_or("");
+        let external = scope(occurrence) == Some("external");
         let inner: Vec<&'a Value> = self.children.get(id).cloned().unwrap_or_default();
         let signature = inner
             .iter()
@@ -1003,16 +1108,26 @@ impl<'a> Tree<'a> {
         if self.open.contains(&id) || self.open.len() >= MAX_DEPTH {
             return Err("its components nest too deep or inside themselves".to_owned());
         }
-        let row = self
-            .definitions
-            .get(definition)
-            .ok_or("a component placement names a component the design lacks")?;
+        let empty = Value::Null;
+        let row = if external {
+            &empty
+        } else {
+            self.definitions
+                .get(definition)
+                .ok_or("a component placement names a component the design lacks")?
+        };
         let bodies: Vec<&str> = row
             .get("bodies")
             .and_then(Value::as_array)
             .map(|bodies| bodies.iter().filter_map(Value::as_str).collect())
             .unwrap_or_default();
-        let name = name_of(row)
+        let inserted_name = if external {
+            inserted_design_name(self.document, occurrence)
+        } else {
+            None
+        };
+        let name = inserted_name
+            .or_else(|| name_of(row))
             .map(str::to_owned)
             .unwrap_or_else(|| format!("{} component {}", self.model.name, self.parts.len() + 1));
         let model = if inner.is_empty() {
@@ -1056,6 +1171,67 @@ impl<'a> Tree<'a> {
         self.built.insert(definition, (index, signature));
         Ok(index)
     }
+}
+
+/// Whether an occurrence places a component of this design (`local`) or another design
+/// (`external`).
+fn scope(occurrence: &Value) -> Option<&str> {
+    occurrence
+        .pointer("/prototype/scope")
+        .and_then(Value::as_str)
+}
+
+/// What makes two placements copies of each other: the component they place, or for a
+/// design inserted into this one, the occurrence itself.
+fn definition_key(occurrence: &Value) -> Option<&str> {
+    match scope(occurrence) {
+        Some("external") => occurrence.get("id").and_then(Value::as_str),
+        _ => occurrence
+            .pointer("/prototype/definition")
+            .and_then(Value::as_str),
+    }
+}
+
+/// Each occurrence inside a design inserted into this one, with the occurrence that inserts
+/// that design (the nearest external occurrence above it).
+fn inserted_designs<'a>(occurrences: &[&'a Value]) -> BTreeMap<&'a str, &'a str> {
+    let by_id: BTreeMap<&str, &Value> = occurrences
+        .iter()
+        .filter_map(|row| Some((row.get("id")?.as_str()?, *row)))
+        .collect();
+    let mut out = BTreeMap::new();
+    for (id, row) in &by_id {
+        let mut parent = row.pointer("/parent/occurrence").and_then(Value::as_str);
+        let mut depth = 0;
+        while let Some(up) = parent {
+            depth += 1;
+            let Some(row) = by_id.get(up).filter(|_| depth <= MAX_DEPTH) else {
+                break;
+            };
+            if scope(row) == Some("external") {
+                out.insert(*id, up);
+                break;
+            }
+            parent = row.pointer("/parent/occurrence").and_then(Value::as_str);
+        }
+    }
+    out
+}
+
+/// The name of the design an external occurrence inserts, as the file stores it with the
+/// inserted design's file name.
+fn inserted_design_name<'v>(document: &'v Value, occurrence: &Value) -> Option<&'v str> {
+    let path = occurrence
+        .pointer("/prototype/document/path")
+        .and_then(Value::as_str)?;
+    let file = file_name(path);
+    document
+        .pointer("/native/f3d/xref_designs")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|design| design.get("target_file_name").and_then(Value::as_str) == Some(file))
+        .and_then(|design| design.get("display_name").and_then(Value::as_str))
+        .filter(|name| !name.trim().is_empty())
 }
 
 fn name_of(definition: &Value) -> Option<&str> {
@@ -1787,6 +1963,159 @@ mod tests {
             "operands": {"arity": "pair", "kind": kind, "connectors": [a, b]},
             "suppressed": false,
         })
+    }
+
+    /// Block 2 stored 10 mm above block 1, turned 0.3 rad about z, both inside the frame at
+    /// x = 100, and joined by one joint `kind`: a frame on block 2's origin facing down, and
+    /// one on block 1's facing up. Block 2's placement in the world, the joint and the notes.
+    fn on_its_axis(kind: Value) -> (Placement3x4, Joint, Vec<String>) {
+        let mut turned = placed(2, "block", inside(0), 0.0);
+        turned["transform"] = json!(at([0.0, 0.0, 10.0], 0.3));
+        let rows = json!([
+            placed(0, "frame", root(), 100.0),
+            placed(1, "block", inside(0), 0.0),
+            turned
+        ]);
+        let model = with_joints(
+            nested(false, Some(rows)),
+            json!([joint(
+                1,
+                kind,
+                connector_at(2, &[], facing(IDENTITY)),
+                connector_at(1, &[], IDENTITY)
+            )]),
+        );
+        let (assembly, notes) = local_components(&model).unwrap().unwrap();
+        let world = world_at(&assembly, &[0, 1]).unwrap();
+        let joint = assembly.joints[0].clone();
+        // Wherever it leaves them, the joint holds its parts where they are.
+        let a = compose(&world, &joint.frame_a);
+        let b = compose(&world_at(&assembly, &[0, 0]).unwrap(), &joint.frame_b);
+        assert!(near(&compose(&a, &joint.meeting()), &b), "{joint:?}");
+        (world, joint, notes)
+    }
+
+    #[test]
+    fn a_revolute_whose_parts_turn_on_its_axis_holds_them_as_built() {
+        // The source says 0.5 rad, but the parts are placed 0.3 rad apart about the axis:
+        // they stay as placed, at the angle their placements give.
+        let (world, joint, notes) = on_its_axis(json!({"kind": "revolute", "angle": 0.5,
+            "angular_limits": {"bounds": "range", "minimum": -1.0, "maximum": 1.0}}));
+        assert!(near(&world, &at([100.0, 0.0, 10.0], 0.3)), "{world:?}");
+        let Motion::Revolute { angle, limits } = joint.motion else {
+            panic!("{:?}", joint.motion);
+        };
+        assert!((angle - 0.3).abs() < 1e-9, "{angle}");
+        assert_eq!(limits, Some((-1.0, 1.0)));
+        assert!(notes.is_empty(), "{notes:?}");
+        // The turn nearest the source's own angle: 0.3 rad is also 0.3 - 2π, nearer -6.
+        let (_, joint, _) = on_its_axis(json!({"kind": "revolute", "angle": -6.0}));
+        let Motion::Revolute { angle, .. } = joint.motion else {
+            panic!("{:?}", joint.motion);
+        };
+        assert!((angle - (0.3 - TAU)).abs() < 1e-9, "{angle}");
+        // Limits the angle lies outside are left out, with the reason.
+        let (_, joint, notes) = on_its_axis(json!({"kind": "revolute", "angle": 0.0,
+            "angular_limits": {"bounds": "range", "minimum": -0.2, "maximum": 0.2}}));
+        assert!(matches!(
+            joint.motion,
+            Motion::Revolute { limits: None, .. }
+        ));
+        assert_eq!(
+            notes,
+            ["joint 1: its limits are left out: its angle lies outside them"]
+        );
+    }
+
+    #[test]
+    fn a_slider_whose_parts_lie_on_its_axis_holds_them_as_built() {
+        let (world, joint, notes) = on_its_axis(json!({"kind": "slider", "distance": 2.0}));
+        assert!(near(&world, &at([100.0, 0.0, 10.0], 0.3)), "{world:?}");
+        let Motion::Slider { distance } = joint.motion else {
+            panic!("{:?}", joint.motion);
+        };
+        assert!((distance - 10.0).abs() < 1e-9, "{distance}");
+        assert!(notes.is_empty(), "{notes:?}");
+    }
+
+    /// A block placed at the origin, and a design inserted into this one (as an .f3z carries
+    /// it, named `Gripper`) holding a block 5 mm along x, joined by `joints`.
+    fn with_inserted_design(joints: Value) -> Model {
+        let model = nested(false, Some(json!([])));
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut finger = placed(9, "block", json!({}), 5.0);
+        finger["id"] = json!("f3d:xref/role-1/model:occurrence#finger");
+        finger["parent"] = inside(8);
+        wire["model"]["occurrences"] = json!([
+            placed(0, "block", root(), 0.0),
+            {
+                "id": "f3d:model:occurrence#8",
+                "prototype": {"scope": "external",
+                    "document": {"resolution": "path", "path": "gripper.f3d"}},
+                "parent": root(),
+                "ordinal": 1,
+                "transform": IDENTITY,
+                "scale": [1.0, 1.0, 1.0],
+            },
+            finger,
+        ]);
+        wire["model"]["assembly_joints"] = joints;
+        wire["native"]["f3d"]["xref_designs"] = json!([
+            {"id": "f3d:xref:design#0", "display_name": "Gripper",
+             "target_file_name": "gripper.f3d"},
+        ]);
+        Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        }
+    }
+
+    /// A connector on the component keyed `key` inside a design inserted into this one.
+    fn inserted_connector(key: &str) -> Value {
+        json!({"operand": {"container": {"container": "external",
+                "external_document": {"resolution": "document_id", "document_id": "d"}},
+              "object": "o", "subelements": [key]},
+            "frame": IDENTITY, "detached": false})
+    }
+
+    #[test]
+    fn a_design_inserted_into_this_one_is_placed_and_joined_as_a_whole() {
+        // The gripper's own frame faces the block's 50 mm up: the whole gripper stands there.
+        let model = with_inserted_design(json!([joint(
+            1,
+            json!({"kind": "fixed"}),
+            inserted_connector("finger"),
+            connector_at(0, &[], at([0.0, 0.0, 50.0], 0.0)),
+        )]));
+        let (assembly, notes) = local_components(&model).unwrap().unwrap();
+        assert!(notes.is_empty(), "{notes:?}");
+        let gripper = assembly
+            .placements
+            .iter()
+            .position(|p| assembly.parts[p.part].name == "Gripper")
+            .unwrap();
+        let inner = assembly.parts[assembly.placements[gripper].part]
+            .assembly
+            .as_ref()
+            .unwrap();
+        assert_eq!(inner.placements.len(), 1);
+        assert_eq!(inner.placements[0].transform[0][3], 5.0);
+        assert_eq!(assembly.joints[0].a, [gripper]);
+        let world = world_at(&assembly, &[gripper]).unwrap();
+        assert!(
+            near(&world, &facing(at([0.0, 0.0, 50.0], 0.0))),
+            "{world:?}"
+        );
+        // A key no component inside it has joins nothing.
+        let model = with_inserted_design(json!([joint(
+            1,
+            json!({"kind": "fixed"}),
+            inserted_connector("thumb"),
+            connector_at(0, &[], IDENTITY),
+        )]));
+        let (assembly, notes) = local_components(&model).unwrap().unwrap();
+        assert!(assembly.joints.is_empty());
+        assert_eq!(notes, ["joint 1: it joins a component of another design"]);
     }
 
     #[test]
