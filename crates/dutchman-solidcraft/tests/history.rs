@@ -4766,3 +4766,552 @@ fn a_face_end_does_not_silently_reverse_the_extrude() {
     );
     assert!(history_line(&report).contains("not along the selected extrude side"));
 }
+
+/// Synthetic sketch additions on the example cube; every relation is tested alone so
+/// another relation cannot hide a missing mapping by already determining the sketch.
+fn sketch_relation_history(definition: Value) -> Model {
+    let mut model = cube_with_history(10.0, whole_sketch(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let rows = wire["model"]["sketch_entities"].as_array_mut().unwrap();
+    let mut extra = vec![
+        entity(
+            5,
+            json!({"kind": "circle", "center": {"u": 20.0, "v": 20.0}, "radius": 2.0}),
+        ),
+        entity(
+            6,
+            json!({"kind": "circle", "center": {"u": 20.0, "v": 20.0}, "radius": 2.0}),
+        ),
+        entity(
+            7,
+            json!({"kind": "ellipse", "center": {"u": 20.0, "v": 20.0},
+            "major_angle": 0.0, "major_radius": 4.0, "minor_radius": 2.0}),
+        ),
+        entity(
+            8,
+            json!({"kind": "point", "position": {"u": 5.0, "v": 5.0}}),
+        ),
+        entity(
+            9,
+            json!({"kind": "arc", "center": {"u": 10.0, "v": 2.0},
+            "radius": 2.0, "start_angle": -std::f64::consts::FRAC_PI_2, "end_angle": 0.0}),
+        ),
+        line(10, [10.0, 0.0], [20.0, 0.0]),
+    ];
+    for row in &mut extra {
+        row["construction"] = json!(true);
+    }
+    rows.extend(extra);
+    wire["model"]["sketch_constraints"] = json!([{
+        "id": "f3d:model:sketch-constraint#1", "sketch": SKETCH, "definition": definition,
+    }]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+fn sketch_locus(kind: &str, key: u32) -> Value {
+    json!({"kind": kind, "entity": format!("f3d:model:sketch-entity#{key}")})
+}
+
+#[test]
+fn additional_sketch_relations_keep_their_intent_and_cube_volume() {
+    let id = |key| format!("f3d:model:sketch-entity#{key}");
+    let parameter = "f3d:model:parameter#2";
+    let cases = vec![
+        (
+            json!({"kind": "same_coordinate", "relation": {
+            "first": sketch_locus("start", 1), "second": sketch_locus("end", 3), "axis": "u"}}),
+            "vertical_points",
+        ),
+        (
+            json!({"kind": "point_coordinate_values", "point": sketch_locus("entity", 8),
+            "values": [5.0, 5.0]}),
+            "fix",
+        ),
+        (
+            json!({"kind": "at_intersection", "point": sketch_locus("end", 1),
+            "first": id(1), "second": id(2)}),
+            "point_on_curve",
+        ),
+        (
+            json!({"kind": "coradial", "first": id(5), "second": id(6)}),
+            "concentric",
+        ),
+        (
+            json!({"kind": "tangent_loci", "first": sketch_locus("end", 1),
+            "second": sketch_locus("start", 9)}),
+            "tangent",
+        ),
+        (
+            json!({"kind": "curvature", "first": id(1), "second": id(10)}),
+            "smooth",
+        ),
+        (
+            json!({"kind": "point_symmetric", "first": sketch_locus("start", 1),
+            "second": sketch_locus("start", 3), "center": sketch_locus("entity", 8)}),
+            "midpoint",
+        ),
+        (
+            json!({"kind": "polygon", "polygon": {"entities": [id(1), id(2), id(3), id(4)]}}),
+            "equal",
+        ),
+        (
+            json!({"kind": "distance_loci_value", "first": sketch_locus("start", 1),
+            "second": sketch_locus("end", 1), "distance": 10.0, "parameter": parameter}),
+            "distance",
+        ),
+        (
+            json!({"kind": "repeated_length", "entities": [id(1), id(2)], "parameter": parameter}),
+            "length",
+        ),
+        (
+            json!({"kind": "repeated_distance", "measurements": [
+            {"kind": "horizontal", "first": sketch_locus("start", 1), "second": sketch_locus("end", 2)},
+            {"kind": "vertical", "first": sketch_locus("start", 4), "second": sketch_locus("end", 10)}],
+            "parameter": parameter}),
+            "distance_x",
+        ),
+        (
+            json!({"kind": "arc_angle", "entity": id(9), "angle": std::f64::consts::FRAC_PI_2}),
+            "arc_sweep",
+        ),
+        (
+            json!({"kind": "polar_distance", "first": sketch_locus("start", 1),
+            "second": sketch_locus("end", 1), "distance": 10.0, "angle": 0.0,
+            "distance_parameter": parameter}),
+            "length",
+        ),
+        (
+            json!({"kind": "equal_distance", "first": {"first": sketch_locus("start", 1), "second": sketch_locus("end", 1)},
+            "second": {"first": sketch_locus("start", 2), "second": sketch_locus("end", 2)}}),
+            "equal",
+        ),
+        (
+            json!({"kind": "midpoint_coordinate", "first": sketch_locus("start", 1),
+            "second": sketch_locus("end", 1), "axis": "u", "value": 5.0}),
+            "midpoint",
+        ),
+        (
+            json!({"kind": "parallel_line_set_distance", "first": [id(1), id(10)],
+            "second": [id(3)], "parameter": parameter}),
+            "parallel",
+        ),
+    ];
+    let cli = solidcraft();
+    for (definition, expected) in cases {
+        let model = sketch_relation_history(definition.clone());
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert_eq!(
+            document["features"][0]["type"],
+            "sketch",
+            "{definition}: {:?}",
+            report.losses()
+        );
+        assert!(
+            !report
+                .losses()
+                .iter()
+                .any(|loss| loss.detail.contains("constraints not carried")),
+            "{definition}: {:?}",
+            report.losses()
+        );
+        let constraints = document["features"][0]["sketch"]["constraints"]
+            .as_array()
+            .unwrap();
+        assert_eq!(constraints[0]["type"], expected, "{definition}");
+        if definition["parameter"] == parameter || definition["distance_parameter"] == parameter {
+            assert!(
+                constraints.iter().any(|c| c["param"] == "side"),
+                "{definition}: {constraints:?}"
+            );
+        }
+        if let Some(cli) = &cli {
+            let got = volumes(cli, &written(&model).0);
+            assert_eq!(got.len(), 1, "{definition}: {got:?}");
+            assert!((got[0] - 1000.0).abs() < 1e-6, "{definition}: {got:?}");
+        }
+    }
+}
+
+#[test]
+fn fixed_curves_hold_the_radius_and_ellipse_radius_dimensions_use_the_minor_radius() {
+    for key in [5, 7] {
+        let model = sketch_relation_history(
+            json!({"kind": "fixed", "entity": format!("f3d:model:sketch-entity#{key}")}),
+        );
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(!report
+            .losses()
+            .iter()
+            .any(|loss| loss.detail.contains("constraints not carried")));
+        assert_eq!(
+            document["features"][0]["sketch"]["curves"][key - 1]["fixed"],
+            true
+        );
+        if let Some(cli) = solidcraft() {
+            assert_eq!(volumes(&cli, &written(&model).0), [1000.0]);
+        }
+    }
+    for kind in ["radius", "repeated_radius", "repeated_diameter"] {
+        let mut definition = json!({"kind": kind, "parameter": "f3d:model:parameter#3"});
+        if kind == "radius" {
+            definition["entity"] = json!("f3d:model:sketch-entity#7");
+        } else {
+            definition["entities"] =
+                json!(["f3d:model:sketch-entity#5", "f3d:model:sketch-entity#6"]);
+        }
+        let mut model = sketch_relation_history(definition);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let value = if kind == "repeated_diameter" {
+            4.0
+        } else {
+            2.0
+        };
+        wire["model"]["parameters"].as_array_mut().unwrap().push(json!({
+            "id": "f3d:model:parameter#3", "name": "round_size", "expression": format!("{value} mm"),
+            "value": {"kind": "length", "value": value},
+        }));
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(!report
+            .losses()
+            .iter()
+            .any(|loss| loss.detail.contains("constraints not carried")));
+        let constraints = document["features"][0]["sketch"]["constraints"]
+            .as_array()
+            .unwrap();
+        assert_eq!(constraints.len(), if kind == "radius" { 1 } else { 2 });
+        for c in constraints {
+            assert_eq!(c["value"], value);
+            assert_eq!(c["param"], "round_size");
+        }
+        if let Some(cli) = solidcraft() {
+            assert_eq!(volumes(&cli, &written(&model).0), [1000.0]);
+        }
+    }
+}
+
+fn bounded_conic_history(geometry: Value, start: [f64; 2], end: [f64; 2]) -> Model {
+    let mut model = cube_with_history(10.0, whole_sketch(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["sketches"][0]["profiles"] = json!([]);
+    wire["model"]["sketch_constraints"] = json!([]);
+    wire["model"]["sketch_entities"] = json!([entity(1, geometry), line(2, end, start)]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn bounded_conics_and_weighted_beziers_preserve_their_shape() {
+    let h = 0.5_f64;
+    let cases = vec![
+        (
+            json!({"kind": "ellipse", "center": {"u": 0.0, "v": 0.0}, "major_angle": 0.0,
+            "major_radius": 4.0, "minor_radius": 2.0, "bounds": [0.0, std::f64::consts::FRAC_PI_2]}),
+            [4.0, 0.0],
+            [0.0, 2.0],
+            20.0 * (std::f64::consts::PI - 2.0),
+        ),
+        (
+            json!({"kind": "parabola", "vertex": {"u": 0.0, "v": 0.0}, "axis_angle": 0.0,
+            "focal_length": 1.0, "bounds": [-2.0, 2.0]}),
+            [1.0, -2.0],
+            [1.0, 2.0],
+            80.0 / 3.0,
+        ),
+        (
+            json!({"kind": "hyperbola", "center": {"u": 0.0, "v": 0.0}, "major_angle": 0.0,
+            "major_radius": 4.0, "minor_radius": 2.0, "bounds": [-h, h]}),
+            [4.0 * h.cosh(), -2.0 * h.sinh()],
+            [4.0 * h.cosh(), 2.0 * h.sinh()],
+            80.0 * (h.sinh() * h.cosh() - h),
+        ),
+        (
+            json!({"kind": "nurbs", "curve": {"degree": 2, "periodic": false,
+            "knots": [0.0, 0.0, 0.0, 1.0, 1.0, 1.0], "poles": {"form": "rational", "points": [
+                {"point": {"u": 4.0, "v": 0.0}, "weight": 1.0},
+                {"point": {"u": 4.0, "v": 2.0}, "weight": std::f64::consts::FRAC_1_SQRT_2},
+                {"point": {"u": 0.0, "v": 2.0}, "weight": 1.0}]}}}),
+            [4.0, 0.0],
+            [0.0, 2.0],
+            20.0 * (std::f64::consts::PI - 2.0),
+        ),
+    ];
+    let cli = solidcraft();
+    for (geometry, start, end, expected_volume) in cases {
+        let model = bounded_conic_history(geometry.clone(), start, end);
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        let sketch = &document["features"][0]["sketch"];
+        assert_eq!(
+            document["features"][0]["type"],
+            "sketch",
+            "{geometry}: {:?}",
+            report.losses()
+        );
+        assert_eq!(sketch["curves"][0]["type"], "conic");
+        assert_eq!(sketch["curves"][0]["a"], sketch["curves"][1]["b"]);
+        assert_eq!(sketch["curves"][0]["b"], sketch["curves"][1]["a"]);
+        let rho = sketch["curves"][0]["rho"].as_f64().unwrap();
+        let weight = match geometry["kind"].as_str().unwrap() {
+            "parabola" => 1.0,
+            "hyperbola" => h.cosh(),
+            _ => std::f64::consts::FRAC_1_SQRT_2,
+        };
+        assert!((rho - weight / (1.0 + weight)).abs() < 1e-12);
+        let apex = usize::try_from(sketch["curves"][0]["apex"].as_u64().unwrap()).unwrap();
+        let expected_apex = match geometry["kind"].as_str().unwrap() {
+            "parabola" => [-1.0, 0.0],
+            "hyperbola" => [4.0 / h.cosh(), 0.0],
+            _ => [4.0, 2.0],
+        };
+        for (index, expected) in expected_apex.into_iter().enumerate() {
+            assert!(
+                (sketch["points"][apex]["pos"][index].as_f64().unwrap() - expected).abs() < 1e-12
+            );
+        }
+        if let Some(cli) = &cli {
+            let got = volumes(cli, &written(&model).0);
+            assert_eq!(got.len(), 1, "{geometry}: {got:?}");
+            assert!(
+                (got[0] - expected_volume).abs() / expected_volume < 1e-3,
+                "{geometry}: {got:?} vs {expected_volume}"
+            );
+        }
+    }
+}
+
+#[test]
+fn static_pattern_and_projected_copy_relations_map_to_point_and_radius_associations() {
+    let id = |key| format!("f3d:model:sketch-entity#{key}");
+    let cases = [
+        json!({"kind": "projected_copy", "source": id(5), "result": id(6)}),
+        json!({"kind": "rectangular_pattern", "pattern": {
+            "directions": [{"direction": [1.0, 0.0], "spacing": 10.0},
+                {"direction": [0.0, 1.0], "spacing": 10.0}],
+            "rows": [[{"entities": [id(5)]}], [{"entities": [id(6)]}]],
+        }}),
+        json!({"kind": "circular_pattern", "pattern": {"center": id(8), "angle": std::f64::consts::PI,
+            "seed": [id(5)], "instances": [{"angle": std::f64::consts::PI, "entities": [id(6)]}],
+        }}),
+    ];
+    let cli = solidcraft();
+    for definition in cases {
+        let kind = definition["kind"].as_str().unwrap();
+        let mut model = sketch_relation_history(definition.clone());
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        if kind == "rectangular_pattern" {
+            wire["model"]["sketch_entities"][5]["geometry"]["center"] =
+                json!({"u": 30.0, "v": 20.0});
+        } else if kind == "circular_pattern" {
+            wire["model"]["sketch_entities"][5]["geometry"]["center"] =
+                json!({"u": -10.0, "v": -10.0});
+        }
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            !report
+                .losses()
+                .iter()
+                .any(|loss| loss.detail.contains("constraints not carried")),
+            "{definition}: {:?}",
+            report.losses()
+        );
+        let constraints = document["features"][0]["sketch"]["constraints"]
+            .as_array()
+            .unwrap();
+        assert!(constraints.iter().any(|c| c["type"] == "pattern_radius"));
+        if kind != "projected_copy" {
+            let point = constraints
+                .iter()
+                .find(|c| c["type"] == "pattern_point")
+                .unwrap();
+            if kind == "rectangular_pattern" {
+                assert_eq!(point["offset"], json!([10.0, 0.0]));
+            } else {
+                assert!(point["center"].is_number());
+                assert_eq!(point["angle"], std::f64::consts::PI);
+            }
+        }
+        if let Some(cli) = &cli {
+            assert_eq!(volumes(cli, &written(&model).0), [1000.0]);
+        }
+    }
+}
+
+#[test]
+fn vertical_axis_angles_use_a_fixed_construction_axis_and_keep_the_parameter() {
+    let mut model = sketch_relation_history(json!({"kind": "angle_to_axis", "axis": "vertical",
+        "entity": "f3d:model:sketch-entity#1", "parameter": "f3d:model:parameter#3"}));
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["parameters"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "id": "f3d:model:parameter#3", "name": "theta", "expression": "90 deg",
+            "value": {"kind": "angle", "value": std::f64::consts::FRAC_PI_2},
+        }));
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(!report
+        .losses()
+        .iter()
+        .any(|loss| loss.detail.contains("constraints not carried")));
+    let sketch = &document["features"][0]["sketch"];
+    assert_eq!(sketch["constraints"][0]["type"], "angle");
+    assert_eq!(sketch["constraints"][0]["param"], "theta");
+    assert_eq!(
+        sketch["curves"].as_array().unwrap().last().unwrap()["fixed"],
+        true
+    );
+    if let Some(cli) = solidcraft() {
+        assert_eq!(volumes(&cli, &written(&model).0), [1000.0]);
+    }
+}
+
+#[test]
+fn solver_only_sketch_relations_are_counted_without_flattening() {
+    let mut model =
+        sketch_relation_history(json!({"kind": "scalar_equality", "first": 1, "second": 2}));
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["sketch_constraints"].as_array_mut().unwrap().push(json!({
+        "id": "f3d:model:sketch-constraint#2", "sketch": SKETCH,
+        "definition": {"kind": "angle_difference", "first": 1, "second": 2, "difference": 3, "value": 0.0},
+    }));
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_eq!(document["features"][0]["type"], "sketch");
+    let loss = report
+        .losses()
+        .iter()
+        .find(|loss| loss.detail.contains("2 of 2 constraints not carried"))
+        .unwrap();
+    assert_eq!(loss.severity, Severity::Degraded);
+    assert!(loss
+        .detail
+        .contains("solver scalar identities have no sketch entity binding"));
+}
+
+#[test]
+fn equal_weight_rational_splines_are_polynomial_control_splines() {
+    let model = bounded_conic_history(
+        json!({"kind": "nurbs", "curve": {
+        "degree": 3, "periodic": false, "knots": [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+        "poles": {"form": "rational", "points": [
+            {"point": {"u": 0.0, "v": 0.0}, "weight": 2.0},
+            {"point": {"u": 10.0, "v": 20.0}, "weight": 2.0},
+            {"point": {"u": 20.0, "v": 20.0}, "weight": 2.0},
+            {"point": {"u": 30.0, "v": 0.0}, "weight": 2.0},
+        ]}}}),
+        [0.0, 0.0],
+        [30.0, 0.0],
+    );
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_eq!(
+        document["features"][0]["type"],
+        "sketch",
+        "{:?}",
+        report.losses()
+    );
+    let curve = &document["features"][0]["sketch"]["curves"][0];
+    assert_eq!(curve["type"], "spline");
+    assert_eq!(curve["control"], true);
+    assert_eq!(curve["degree"], 3);
+    assert_eq!(curve["pts"].as_array().unwrap().len(), 4);
+    if let Some(cli) = solidcraft() {
+        let got = volumes(&cli, &written(&model).0);
+        assert_eq!(got.len(), 1);
+        assert!((got[0] - 3000.0).abs() / 3000.0 < 1e-3, "{got:?}");
+    }
+}
+
+#[test]
+fn major_elliptical_arcs_are_exact_conic_chains_in_a_whole_sketch() {
+    let geometry = json!({"kind": "ellipse", "center": {"u": 0.0, "v": 0.0}, "major_angle": 0.0,
+        "major_radius": 4.0, "minor_radius": 2.0, "bounds": [0.0, 3.0 * std::f64::consts::FRAC_PI_2]});
+    let model = bounded_conic_history(geometry, [4.0, 0.0], [0.0, -2.0]);
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_eq!(
+        document["features"][0]["type"],
+        "sketch",
+        "{:?}",
+        report.losses()
+    );
+    let curves = document["features"][0]["sketch"]["curves"]
+        .as_array()
+        .unwrap();
+    assert_eq!(curves.len(), 5);
+    for pair in curves[..4].windows(2) {
+        assert_eq!(pair[0]["type"], "conic");
+        assert_eq!(pair[0]["b"], pair[1]["a"]);
+    }
+    assert_eq!(curves[0]["a"], curves[4]["b"]);
+    assert_eq!(curves[3]["b"], curves[4]["a"]);
+    if let Some(cli) = solidcraft() {
+        let got = volumes(&cli, &written(&model).0);
+        let expected = 40.0 * (3.0 * std::f64::consts::FRAC_PI_2 + 1.0);
+        assert_eq!(got.len(), 1);
+        assert!(
+            (got[0] - expected).abs() / expected < 1e-3,
+            "{got:?} vs {expected}"
+        );
+    }
+}
+
+#[test]
+fn virtual_relations_are_counted_and_inactive_or_disabled_relations_are_quiet() {
+    let mut model = sketch_relation_history(json!({"kind": "disabled"}));
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["sketch_constraints"]
+        .as_array_mut()
+        .unwrap()
+        .extend([
+            json!({"id": "f3d:model:sketch-constraint#2", "sketch": SKETCH, "virtual_space": true,
+            "definition": {"kind": "horizontal", "entity": "f3d:model:sketch-entity#1"}}),
+            json!({"id": "f3d:model:sketch-constraint#3", "sketch": SKETCH, "active": false,
+            "definition": {"kind": "scalar_equality", "first": 1, "second": 2}}),
+        ]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_eq!(document["features"][0]["type"], "sketch");
+    assert!(document["features"][0]["sketch"]["constraints"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    let loss = report
+        .losses()
+        .iter()
+        .find(|loss| loss.detail.contains("constraints not carried"))
+        .unwrap();
+    assert!(loss.detail.starts_with("1 of 2 constraints not carried"));
+    assert!(loss.detail.contains("virtual sketch space"));
+}

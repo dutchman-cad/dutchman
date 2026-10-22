@@ -143,3 +143,12 @@ dutchman convert-all --json --out-dir /abs/converted /abs/project
 ```
 
 Exit codes: 0 converted, 1 could not convert (report has `ok: false`), 2 usage error.
+
+When a sketch reports `constraints not carried`, translate the count and reason as lost
+editability: the solved geometry remains exact. Coordinate, intersection, coradial,
+endpoint tangency, curvature, point symmetry, regular polygon, and repeated dimensions can
+now carry across. Static patterns keep point and radius associations, but driving count
+or span parameters still need a loss. Bounded parabolas and hyperbolas, elliptical arcs
+up to one turn, rational quadratic Béziers, and equal-weight rational splines map; selected
+multi-piece elliptical arcs, unbounded conics, other weighted/nonuniform splines, and text without
+solved outlines still prevent the sketch's history from mapping.

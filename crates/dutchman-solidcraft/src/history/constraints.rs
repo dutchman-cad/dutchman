@@ -20,13 +20,13 @@ pub(crate) fn map(
     sketch_id: &str,
     label: &str,
     ctx: &Context,
-    builder: &Builder,
+    builder: &mut Builder,
     report: &mut Report,
 ) -> Vec<Value> {
     let mut out = Vec::new();
     let mut dropped: BTreeMap<String, usize> = BTreeMap::new();
     let mut total = 0usize;
-    let mapper = Mapper { ctx, builder };
+    let mut mapper = Mapper { ctx, builder };
     for row in ctx
         .arena("sketch_constraints")
         .iter()
@@ -36,6 +36,15 @@ pub(crate) fn map(
             continue;
         }
         total += 1;
+        if row.get("virtual_space").and_then(Value::as_bool) == Some(true) {
+            *dropped
+                .entry(
+                    "virtual sketch space: SolidCraft has no separate virtual solver space"
+                        .to_owned(),
+                )
+                .or_default() += 1;
+            continue;
+        }
         let definition = row.get("definition").unwrap_or(&Value::Null);
         match mapper.map(definition) {
             Ok(mapped) => {
@@ -80,13 +89,13 @@ pub(crate) fn map(
 /// Maps one constraint definition onto the sketch's points and curves.
 struct Mapper<'a> {
     ctx: &'a Context<'a>,
-    builder: &'a Builder,
+    builder: &'a mut Builder,
 }
 
 impl Mapper<'_> {
     /// The SolidCraft constraints for one CADIR constraint definition (none when it is already
     /// true by construction), or the kind that did not map.
-    fn map(&self, definition: &Value) -> Result<Vec<Value>, String> {
+    fn map(&mut self, definition: &Value) -> Result<Vec<Value>, String> {
         let kind = definition
             .get("kind")
             .and_then(Value::as_str)
@@ -100,9 +109,47 @@ impl Mapper<'_> {
                     .and_then(Value::as_str)
                     .unwrap_or("constraint")
             ),
+            "internal_alignment" => format!(
+                "internal alignment {}",
+                definition
+                    .get("alignment")
+                    .and_then(|value| value.get("alignment"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("helper")
+            ),
             other => other.replace('_', " "),
         };
         let mapped = match kind {
+            "disabled" => Some(Vec::new()),
+            "projected_copy" => {
+                self.copy_relation(field("source"), field("result"), None, 0.0, [0.0, 0.0])
+            }
+            "rectangular_pattern" => self.rectangular_pattern(field("pattern")),
+            "circular_pattern" => self.circular_pattern(field("pattern")),
+            "same_coordinate" => self.same_coordinate(field("relation")),
+            "point_coordinate_values" => self.point_coordinate_values(definition),
+            "at_intersection" => self.intersection(definition),
+            "coradial" => self
+                .pair("concentric", definition, &["circle", "arc"])
+                .zip(self.equal(definition))
+                .map(|(mut center, radius)| {
+                    center.extend(radius);
+                    center
+                }),
+            "tangent_loci" => self.tangent_loci(definition),
+            "curvature" => self.curvature(definition),
+            "point_symmetric" => self.point_symmetric(definition),
+            "polygon" => self.polygon(field("polygon")),
+            "distance_loci_value" => self.loci_distance("distance_loci", definition),
+            "repeated_distance" => self.repeated_distance(definition),
+            "repeated_length" | "repeated_radius" | "repeated_diameter" => {
+                self.repeated(kind, definition)
+            }
+            "parallel_line_set_distance" => self.line_set_distance(definition),
+            "arc_angle" => self.arc_angle(definition),
+            "polar_distance" => self.polar_distance(definition),
+            "equal_distance" => self.equal_distance(definition),
+            "midpoint_coordinate" => self.midpoint_coordinate(definition),
             "coincident" => {
                 let points = field("entities")
                     .as_array()
@@ -125,7 +172,7 @@ impl Mapper<'_> {
             "point_on_object" => {
                 let p = self.point(field("point"));
                 match (p, self.shape(field("entity"))) {
-                    (Some(p), Some(Shape::Curve(c))) => Some(vec![
+                    (Some(p), Some(Shape::Curve(c))) if c.kind != "compound_conic" => Some(vec![
                         json!({"type": "point_on_curve", "p": p, "c": c.index}),
                     ]),
                     (Some(p), Some(Shape::Point(q))) => Some(coincident(&[p, *q])),
@@ -136,23 +183,28 @@ impl Mapper<'_> {
                 .point(field("point"))
                 .zip(self.curve(field("entity"), &["line"]))
                 .map(|(p, l)| vec![json!({"type": "midpoint", "p": p, "l": l.index})]),
-            "concentric" => self.pair("concentric", definition, &["circle", "arc"]),
+            "concentric" => self.concentric(definition),
             "collinear" => self.pair("collinear", definition, &["line"]),
             "parallel" => self.pair("parallel", definition, &["line"]),
             "perpendicular" => self.pair("perpendicular", definition, &["line"]),
-            "tangent" => self.pair("tangent", definition, &["line", "circle", "arc"]),
+            "tangent" => self.pair(
+                "tangent",
+                definition,
+                &["line", "circle", "arc", "spline", "conic"],
+            ),
             "equal" => self.equal(definition),
             "horizontal" | "vertical" => self
                 .curve(field("entity"), &["line"])
                 .map(|l| vec![json!({"type": kind, "l": l.index})]),
-            "fixed" => match self.shape(field("entity")) {
+            "fixed" => match self.shape(field("entity")).cloned() {
                 Some(Shape::Point(p)) => Some(vec![json!({"type": "fix", "p": p})]),
-                Some(Shape::Curve(c)) if c.kind == "line" => c.start.zip(c.end).map(|(a, b)| {
-                    vec![
-                        json!({"type": "fix", "p": a}),
-                        json!({"type": "fix", "p": b}),
-                    ]
-                }),
+                Some(Shape::Curve(c)) => {
+                    let count = if c.kind == "compound_conic" { 4 } else { 1 };
+                    (c.index..c.index + count)
+                        .map(|index| self.builder.fix_curve(index))
+                        .collect::<Option<Vec<_>>>()
+                        .map(|_| Vec::new())
+                }
                 _ => None,
             },
             "symmetric" => {
@@ -175,7 +227,573 @@ impl Mapper<'_> {
             "angle_to_axis" => self.angle_to_axis(definition),
             _ => None,
         };
-        mapped.ok_or_else(unmapped)
+        mapped.ok_or_else(|| {
+            let reason = match kind {
+                "angle_difference" | "scalar_equality" => "solver scalar identities have no sketch entity binding",
+                "snells_law" => "SolidCraft has no refraction constraint",
+                "weight" => "SolidCraft has no driving rational spline weight dimension",
+                "ellipse_angle" => "SolidCraft has no elliptical parameter sweep dimension",
+                "internal_alignment" => "the source helper relation has no matching SolidCraft constraint",
+                "midpoint_coordinate" => "requires two resolved point loci and a matching solved coordinate",
+                "equal_distance" => "requires two resolved point pairs for equal-length construction carriers",
+                "polar_distance" => "requires resolved points and a displacement matching their solved positions",
+                "rectangular_pattern" | "circular_pattern" => "requires resolved matching instances, no driving count or span parameters, and at most 500 instances per direction",
+                "offset" => "source offset pairs are not bound to a SolidCraft offset association",
+                "projected_copy" => "requires matching resolved point or curve carriers; no external projection link can be reconstructed",
+                "spline_group" => "SolidCraft has no source spline helper group constraint",
+                "text_frame" | "text_path" | "text" => "the source text has no mapped SolidCraft text link",
+                "group" => "SolidCraft has no source construction handle constraint",
+                "native" => "its native operands have no resolved neutral relation",
+                _ => "its operands or dimension value cannot be expressed by this SolidCraft constraint",
+            };
+            format!("{}: {reason}", unmapped())
+        })
+    }
+
+    fn shape_points(&self, entity: &Value) -> Option<Vec<usize>> {
+        match self.shape(entity)? {
+            Shape::Point(p) => Some(vec![*p]),
+            Shape::Curve(c) => {
+                let row = self.builder_curve(c.index)?;
+                if c.kind == "spline" {
+                    return row
+                        .get("pts")?
+                        .as_array()?
+                        .iter()
+                        .map(|p| usize::try_from(p.as_u64()?).ok())
+                        .collect();
+                }
+                let keys: &[&str] = match c.kind {
+                    "line" => &["a", "b"],
+                    "circle" => &["c"],
+                    "arc" => &["c", "a", "b"],
+                    "ellipse" => &["c", "m"],
+                    "conic" => &["a", "b", "apex"],
+                    _ => return None,
+                };
+                keys.iter()
+                    .map(|key| usize::try_from(row.get(*key)?.as_u64()?).ok())
+                    .collect()
+            }
+        }
+    }
+
+    fn copy_relation(
+        &self,
+        source: &Value,
+        result: &Value,
+        center: Option<usize>,
+        angle: f64,
+        offset: P2,
+    ) -> Option<Vec<Value>> {
+        let a = self.shape(source)?;
+        let b = self.shape(result)?;
+        let mut out = Vec::new();
+        match (a, b) {
+            (Shape::Point(_), Shape::Point(_)) => {}
+            (Shape::Curve(a), Shape::Curve(b)) if a.kind == b.kind => {
+                let first = self.builder_curve(a.index)?;
+                let second = self.builder_curve(b.index)?;
+                if a.kind == "conic" && first.get("rho") != second.get("rho") {
+                    return None;
+                }
+                if a.kind == "spline" && first.get("degree") != second.get("degree") {
+                    return None;
+                }
+                if matches!(a.kind, "circle" | "ellipse") {
+                    if (number(first.get("r"))? - number(second.get("r"))?).abs() > 1e-6 {
+                        return None;
+                    }
+                    out.push(json!({"type": "pattern_radius", "a": a.index, "b": b.index}));
+                }
+            }
+            _ => return None,
+        }
+        let source = self.shape_points(source)?;
+        let result = self.shape_points(result)?;
+        if source.len() != result.len() || angle.abs() > TAU {
+            return None;
+        }
+        let c = match center {
+            Some(p) => self.position(p)?,
+            None => [0.0, 0.0],
+        };
+        for (p, q) in source.into_iter().zip(result) {
+            let at = self.position(p)?;
+            let d = [at[0] - c[0], at[1] - c[1]];
+            let expected = [
+                c[0] + d[0] * angle.cos() - d[1] * angle.sin() + offset[0],
+                c[1] + d[0] * angle.sin() + d[1] * angle.cos() + offset[1],
+            ];
+            if distance(expected, self.position(q)?) > 1e-6 {
+                return None;
+            }
+            if p != q {
+                out.push(
+                    json!({"type": "pattern_point", "p": p, "q": q, "center": center,
+                    "angle": angle, "offset": offset, "directions": [null, null]}),
+                );
+            }
+        }
+        Some(out)
+    }
+
+    fn rectangular_pattern(&self, pattern: &Value) -> Option<Vec<Value>> {
+        let directions = pattern.get("directions")?.as_array()?;
+        let displacement = |direction: &Value| {
+            if direction.get("distance").is_some_and(|v| !v.is_null())
+                || direction
+                    .get("count_parameter")
+                    .is_some_and(|v| !v.is_null())
+            {
+                return None;
+            }
+            let dir = direction.get("direction")?.as_array()?;
+            let spacing = number(direction.get("spacing"))?;
+            Some([
+                number(dir.first())? * spacing,
+                number(dir.get(1))? * spacing,
+            ])
+        };
+        let first = displacement(directions.first()?)?;
+        let second = displacement(directions.get(1)?)?;
+        let rows = pattern.get("rows")?.as_array()?;
+        let seed = rows
+            .first()?
+            .as_array()?
+            .first()?
+            .get("entities")?
+            .as_array()?;
+        if rows.len() > 500
+            || rows
+                .iter()
+                .any(|row| row.as_array().is_none_or(|row| row.len() > 500))
+        {
+            return None;
+        }
+        let mut out = Vec::new();
+        for (i, row) in rows.iter().enumerate() {
+            for (j, instance) in row.as_array()?.iter().enumerate() {
+                if i == 0 && j == 0 {
+                    continue;
+                }
+                let entities = instance.get("entities")?.as_array()?;
+                if entities.len() != seed.len() {
+                    return None;
+                }
+                let offset = [
+                    first[0] * i as f64 + second[0] * j as f64,
+                    first[1] * i as f64 + second[1] * j as f64,
+                ];
+                for (a, b) in seed.iter().zip(entities) {
+                    out.extend(self.copy_relation(a, b, None, 0.0, offset)?);
+                }
+            }
+        }
+        Some(out)
+    }
+
+    fn circular_pattern(&self, pattern: &Value) -> Option<Vec<Value>> {
+        if ["angle_parameter", "count_parameter"]
+            .iter()
+            .any(|key| pattern.get(*key).is_some_and(|v| !v.is_null()))
+        {
+            return None;
+        }
+        let center = self.point(&json!({"kind": "entity", "entity": pattern.get("center")?}))?;
+        let seed = pattern.get("seed")?.as_array()?;
+        let instances = pattern.get("instances")?.as_array()?;
+        if instances.len() >= 500 {
+            return None;
+        }
+        let mut out = Vec::new();
+        for instance in instances {
+            let angle = number(instance.get("angle"))?;
+            let entities = instance.get("entities")?.as_array()?;
+            if entities.len() != seed.len() {
+                return None;
+            }
+            for (a, b) in seed.iter().zip(entities) {
+                out.extend(self.copy_relation(a, b, Some(center), angle, [0.0, 0.0])?);
+            }
+        }
+        Some(out)
+    }
+
+    /// A construction carrier lets SolidCraft express relations between existing loci
+    /// without replacing the profile's original entities.
+    fn carrier(&mut self, p: usize, q: usize) -> Option<usize> {
+        if p == q {
+            return None;
+        }
+        let l = self.builder.curve_count();
+        self.builder.curve(
+            None,
+            "l",
+            true,
+            json!({"type": "line", "a": p, "b": q}),
+            &[],
+        );
+        Some(l)
+    }
+
+    fn polar_distance(&mut self, definition: &Value) -> Option<Vec<Value>> {
+        let p = self.point(definition.get("first")?)?;
+        let q = self.point(definition.get("second")?)?;
+        let value = number(definition.get("distance"))?;
+        if value <= 1e-12 {
+            return Some(coincident(&[p, q]));
+        }
+        let a = self.position(p)?;
+        let b = self.position(q)?;
+        let angle = number(definition.get("angle"))?;
+        if (distance(a, b) - value).abs() > 1e-6
+            || wrap((b[1] - a[1]).atan2(b[0] - a[0]) - angle).abs() > ANGLE_TOLERANCE
+        {
+            return None;
+        }
+        let l = self.carrier(p, q)?;
+        let mut length = json!({"type": "length", "l": l, "value": value});
+        if let Some(param) = definition
+            .get("distance_parameter")
+            .and_then(Value::as_str)
+            .and_then(|id| self.ctx.params.get(id))
+        {
+            length
+                .as_object_mut()?
+                .insert("param".to_owned(), json!(param));
+        }
+        Some(vec![
+            length,
+            json!({"type": "line_angle", "l": l, "value": angle}),
+        ])
+    }
+
+    fn equal_distance(&mut self, definition: &Value) -> Option<Vec<Value>> {
+        let pair = |key| {
+            let pair = definition.get(key)?;
+            Some((
+                self.point(pair.get("first")?)?,
+                self.point(pair.get("second")?)?,
+            ))
+        };
+        let (p, q) = pair("first")?;
+        let (r, s) = pair("second")?;
+        if p == q || r == s {
+            return Some([coincident(&[p, q]), coincident(&[r, s])].concat());
+        }
+        let a = self.carrier(p, q)?;
+        let b = self.carrier(r, s)?;
+        Some(vec![json!({"type": "equal", "a": a, "b": b})])
+    }
+
+    fn midpoint_coordinate(&mut self, definition: &Value) -> Option<Vec<Value>> {
+        let p = self.point(definition.get("first")?)?;
+        let q = self.point(definition.get("second")?)?;
+        let a = self.position(p)?;
+        let b = self.position(q)?;
+        let midpoint = [a[0] * 0.5 + b[0] * 0.5, a[1] * 0.5 + b[1] * 0.5];
+        let (axis, kind) = match definition.get("axis")?.as_str()? {
+            "u" => (0, "distance_x"),
+            "v" => (1, "distance_y"),
+            _ => return None,
+        };
+        let value = number(definition.get("value"))?;
+        if (midpoint.get(axis)? - value).abs() > 1e-6 {
+            return None;
+        }
+        let (point, mut out) = if p == q {
+            (p, Vec::new())
+        } else {
+            let l = self.carrier(p, q)?;
+            let point = self.builder.own_point(midpoint);
+            (point, vec![json!({"type": "midpoint", "p": point, "l": l})])
+        };
+        out.push(json!({"type": kind, "p": 0, "q": point, "value": value.abs()}));
+        Some(out)
+    }
+
+    fn same_coordinate(&self, relation: &Value) -> Option<Vec<Value>> {
+        let p = self.point(relation.get("first")?)?;
+        let q = self.point(relation.get("second")?)?;
+        if p == q {
+            return Some(Vec::new());
+        }
+        let kind = match relation.get("axis")?.as_str()? {
+            "u" => "vertical_points",
+            "v" => "horizontal_points",
+            _ => return None,
+        };
+        Some(vec![json!({"type": kind, "p": p, "q": q})])
+    }
+
+    fn point_coordinate_values(&self, definition: &Value) -> Option<Vec<Value>> {
+        let p = self.point(definition.get("point")?)?;
+        let values = definition.get("values")?.as_array()?;
+        let [u, v] = self.position(p)?;
+        if (number(values.first())? - u).abs() > 1e-6 || (number(values.get(1))? - v).abs() > 1e-6 {
+            return None;
+        }
+        Some(vec![json!({"type": "fix", "p": p})])
+    }
+
+    fn intersection(&self, definition: &Value) -> Option<Vec<Value>> {
+        let p = self.point(definition.get("point")?)?;
+        ["first", "second"]
+            .into_iter()
+            .map(|key| {
+                let c = self.curve(
+                    definition.get(key)?,
+                    &["line", "circle", "arc", "ellipse", "spline", "conic"],
+                )?;
+                Some(json!({"type": "point_on_curve", "p": p, "c": c.index}))
+            })
+            .collect()
+    }
+
+    fn concentric(&self, definition: &Value) -> Option<Vec<Value>> {
+        let a = self.curve(
+            definition.get("first")?,
+            &["circle", "arc", "ellipse", "compound_conic"],
+        )?;
+        let b = self.curve(
+            definition.get("second")?,
+            &["circle", "arc", "ellipse", "compound_conic"],
+        )?;
+        // SolidCraft's Concentric accepts circular curves only; shared centers also
+        // express the neutral relation for ellipses.
+        if matches!(a.kind, "ellipse" | "compound_conic")
+            || matches!(b.kind, "ellipse" | "compound_conic")
+        {
+            Some(coincident(&[a.center?, b.center?]))
+        } else {
+            self.pair("concentric", definition, &["circle", "arc"])
+        }
+    }
+
+    fn tangent_loci(&self, definition: &Value) -> Option<Vec<Value>> {
+        let first = definition.get("first")?;
+        let second = definition.get("second")?;
+        let endpoint = |locus: &Value| {
+            matches!(
+                locus.get("kind").and_then(Value::as_str),
+                Some("start" | "end")
+            )
+        };
+        if !endpoint(first) || !endpoint(second) {
+            return None;
+        }
+        let p = self.point(first)?;
+        let q = self.point(second)?;
+        let pair = json!({"first": first.get("entity")?, "second": second.get("entity")?});
+        let mut out = self.pair("tangent", &pair, &["line", "arc", "spline", "conic"])?;
+        out.extend(coincident(&[p, q]));
+        Some(out)
+    }
+
+    fn curvature(&self, definition: &Value) -> Option<Vec<Value>> {
+        let a = self.curve(
+            definition.get("first")?,
+            &["line", "arc", "spline", "conic"],
+        )?;
+        let b = self.curve(
+            definition.get("second")?,
+            &["line", "arc", "spline", "conic"],
+        )?;
+        let ends = [a.start?, a.end?];
+        if a.index == b.index || ![b.start?, b.end?].iter().any(|p| ends.contains(p)) {
+            return None;
+        }
+        Some(vec![json!({"type": "smooth", "a": a.index, "b": b.index})])
+    }
+
+    fn point_symmetric(&mut self, definition: &Value) -> Option<Vec<Value>> {
+        let p = self.point(definition.get("first")?)?;
+        let q = self.point(definition.get("second")?)?;
+        let center = self.point(definition.get("center")?)?;
+        let a = self.position(p)?;
+        let b = self.position(q)?;
+        if distance(
+            self.position(center)?,
+            [a[0] * 0.5 + b[0] * 0.5, a[1] * 0.5 + b[1] * 0.5],
+        ) > 1e-6
+        {
+            return None;
+        }
+        if p == q {
+            return Some(coincident(&[p, center]));
+        }
+        let l = self.builder.curve_count();
+        self.builder.curve(
+            None,
+            "l",
+            true,
+            json!({"type": "line", "a": p, "b": q}),
+            &[],
+        );
+        Some(vec![json!({"type": "midpoint", "p": center, "l": l})])
+    }
+
+    fn polygon(&mut self, polygon: &Value) -> Option<Vec<Value>> {
+        let lines: Vec<Curve> = polygon
+            .get("entities")?
+            .as_array()?
+            .iter()
+            .map(|id| self.curve(id, &["line"]).cloned())
+            .collect::<Option<_>>()?;
+        if !(3..=200).contains(&lines.len()) {
+            return None;
+        }
+        let mut corners = Vec::new();
+        let mut degrees = BTreeMap::new();
+        for line in &lines {
+            for p in [line.start?, line.end?] {
+                *degrees.entry(p).or_insert(0usize) += 1;
+                if !corners.contains(&p) {
+                    corners.push(p);
+                }
+            }
+        }
+        if corners.len() != lines.len() || degrees.values().any(|n| *n != 2) {
+            return None;
+        }
+        let positions: Vec<P2> = corners
+            .iter()
+            .map(|p| self.position(*p))
+            .collect::<Option<_>>()?;
+        let center = positions
+            .iter()
+            .fold([0.0, 0.0], |[x, y], p| [x + p[0], y + p[1]])
+            .map(|v| v / positions.len() as f64);
+        let radius =
+            positions.iter().map(|p| distance(*p, center)).sum::<f64>() / positions.len() as f64;
+        let length = lines
+            .first()
+            .and_then(|l| Some(distance(self.position(l.start?)?, self.position(l.end?)?)))?;
+        if radius <= 1e-9
+            || positions
+                .iter()
+                .any(|p| (distance(*p, center) - radius).abs() > 1e-6)
+            || lines.iter().any(|l| {
+                l.start
+                    .zip(l.end)
+                    .and_then(|(a, b)| Some(distance(self.position(a)?, self.position(b)?)))
+                    .is_none_or(|v| (v - length).abs() > 1e-6)
+            })
+        {
+            return None;
+        }
+        let c = self.builder.own_point(center);
+        let circle = self.builder.curve_count();
+        self.builder.curve(
+            None,
+            "c",
+            true,
+            json!({"type": "circle", "c": c, "r": radius}),
+            &[],
+        );
+        let mut out: Vec<Value> = lines
+            .windows(2)
+            .filter_map(|pair| {
+                Some(json!({"type": "equal", "a": pair.first()?.index, "b": pair.get(1)?.index}))
+            })
+            .collect();
+        out.extend(
+            corners
+                .into_iter()
+                .map(|p| json!({"type": "point_on_curve", "p": p, "c": circle})),
+        );
+        Some(out)
+    }
+
+    fn repeated_distance(&self, definition: &Value) -> Option<Vec<Value>> {
+        let mut out = Vec::new();
+        for measurement in definition.get("measurements")?.as_array()? {
+            let kind = match measurement.get("kind")?.as_str()? {
+                "distance" => "distance_loci",
+                "horizontal" => "horizontal_distance",
+                "vertical" => "vertical_distance",
+                _ => return None,
+            };
+            let mut dimension = measurement.clone();
+            dimension
+                .as_object_mut()?
+                .insert("parameter".to_owned(), definition.get("parameter")?.clone());
+            out.extend(self.loci_distance(kind, &dimension)?);
+        }
+        Some(out)
+    }
+
+    fn repeated(&self, kind: &str, definition: &Value) -> Option<Vec<Value>> {
+        let mut out = Vec::new();
+        for entity in definition.get("entities")?.as_array()? {
+            let dimension = json!({"entity": entity, "entities": [entity], "parameter": definition.get("parameter")?});
+            out.extend(match kind {
+                "repeated_length" => self.entity_distance(&dimension)?,
+                "repeated_radius" => self.radius("radius", &dimension)?,
+                "repeated_diameter" => self.radius("diameter", &dimension)?,
+                _ => return None,
+            });
+        }
+        Some(out)
+    }
+
+    fn line_set_distance(&self, definition: &Value) -> Option<Vec<Value>> {
+        let first: Vec<&Curve> = definition
+            .get("first")?
+            .as_array()?
+            .iter()
+            .map(|id| self.curve(id, &["line"]))
+            .collect::<Option<_>>()?;
+        let second: Vec<&Curve> = definition
+            .get("second")?
+            .as_array()?
+            .iter()
+            .map(|id| self.curve(id, &["line"]))
+            .collect::<Option<_>>()?;
+        let a = *first.first()?;
+        let b = *second.first()?;
+        let mut out = vec![json!({"type": "parallel", "a": a.index, "b": b.index})];
+        for set in [&first, &second] {
+            for pair in set.windows(2) {
+                out.push(
+                    json!({"type": "collinear", "a": pair.first()?.index, "b": pair.get(1)?.index}),
+                );
+            }
+        }
+        let p = a.start?;
+        let value = point_line(
+            self.position(p)?,
+            self.position(b.start?)?,
+            self.position(b.end?)?,
+        )?;
+        out.extend(self.dimension(
+            json!({"type": "point_line_distance", "p": p, "l": b.index, "value": value}),
+            definition,
+        ));
+        Some(out)
+    }
+
+    fn arc_angle(&self, definition: &Value) -> Option<Vec<Value>> {
+        let c = self.curve(definition.get("entity")?, &["arc"])?;
+        let value = number(definition.get("angle"))?;
+        if value > TAU {
+            return None;
+        }
+        let center = self.position(c.center?)?;
+        let a = self.position(c.start?)?;
+        let b = self.position(c.end?)?;
+        let sweep = signed_angle(
+            [a[0] - center[0], a[1] - center[1]],
+            [b[0] - center[0], b[1] - center[1]],
+        )?
+        .rem_euclid(TAU);
+        if wrap(sweep - value).abs() > ANGLE_TOLERANCE {
+            return None;
+        }
+        Some(vec![
+            json!({"type": "arc_sweep", "c": c.index, "value": value}),
+        ])
     }
 
     /// What the source entity `id` became.
@@ -211,6 +829,11 @@ impl Mapper<'_> {
     fn pair(&self, kind: &str, definition: &Value, kinds: &[&str]) -> Option<Vec<Value>> {
         let a = self.curve(definition.get("first")?, kinds)?;
         let b = self.curve(definition.get("second")?, kinds)?;
+        let kind = if kind == "tangent" && a.kind == "line" && b.kind == "line" {
+            "collinear"
+        } else {
+            kind
+        };
         Some(vec![json!({"type": kind, "a": a.index, "b": b.index})])
     }
 
@@ -289,9 +912,14 @@ impl Mapper<'_> {
     }
 
     fn radius(&self, kind: &str, definition: &Value) -> Option<Vec<Value>> {
-        let c = self.curve(definition.get("entity")?, &["circle", "arc"])?;
+        let kinds: &[&str] = if kind == "radius" {
+            &["circle", "arc", "ellipse"]
+        } else {
+            &["circle", "arc"]
+        };
+        let c = self.curve(definition.get("entity")?, kinds)?;
         let radius = match c.kind {
-            "circle" => number(self.builder_curve(c.index)?.get("r"))?,
+            "circle" | "ellipse" => number(self.builder_curve(c.index)?.get("r"))?,
             _ => distance(self.position(c.center?)?, self.position(c.start?)?),
         };
         let value = if kind == "diameter" {
@@ -342,7 +970,32 @@ impl Mapper<'_> {
     /// A line's angle from the sketch's horizontal axis, as SolidCraft's signed line angle.
     /// Only written when the geometry and the parameter agree on the sign, so the parameter
     /// drives it the same way.
-    fn angle_to_axis(&self, definition: &Value) -> Option<Vec<Value>> {
+    fn angle_to_axis(&mut self, definition: &Value) -> Option<Vec<Value>> {
+        if definition.get("axis")?.as_str()? == "vertical" {
+            let l = self.curve(definition.get("entity")?, &["line"])?.clone();
+            let d = self.direction(&l)?;
+            let measured = d[1].atan2(d[0]) - PI * 0.5;
+            let value = self.angle_value(definition).unwrap_or(measured);
+            let (reverse, flip) = [(false, false), (false, true), (true, false), (true, true)]
+                .into_iter()
+                .find(|(reverse, flip)| {
+                    let turn = if *reverse { -measured } else { measured };
+                    wrap(turn - value - if *flip { PI } else { 0.0 }).abs() <= ANGLE_TOLERANCE
+                })?;
+            let a = self.builder.own_point([0.0, 0.0]);
+            let b = self.builder.own_point([0.0, 1.0]);
+            let axis = self.carrier(a, b)?;
+            self.builder.fix_curve(axis)?;
+            let (first, second) = if reverse {
+                (l.index, axis)
+            } else {
+                (axis, l.index)
+            };
+            return Some(self.dimension(
+                json!({"type": "angle", "a": first, "b": second, "value": value, "flip": flip}),
+                definition,
+            ));
+        }
         if definition.get("axis")?.as_str()? != "horizontal" {
             return None;
         }
@@ -476,7 +1129,7 @@ mod tests {
         for e in entities() {
             builder.entity(&e, &mut report).unwrap();
         }
-        let out = map(SKETCH, "sketch \"Base\"", &ctx, &builder, &mut report);
+        let out = map(SKETCH, "sketch \"Base\"", &ctx, &mut builder, &mut report);
         (out, report)
     }
 
@@ -560,7 +1213,7 @@ mod tests {
         for e in entities() {
             builder.entity(&e, &mut report).unwrap();
         }
-        map(SKETCH, "sketch", &ctx, &builder, &mut report)
+        map(SKETCH, "sketch", &ctx, &mut builder, &mut report)
     }
 
     fn angle_param(degrees: f64) -> Value {
@@ -607,7 +1260,7 @@ mod tests {
         assert_eq!(out[0]["type"], "line_angle");
         assert_eq!(out[0]["l"], 5);
         assert!(to_axis(-theta, "horizontal").is_empty());
-        assert!(to_axis(90.0 - theta, "vertical").is_empty());
+        assert_eq!(to_axis(90.0 - theta, "vertical")[0]["type"], "angle");
     }
 
     #[test]
@@ -623,10 +1276,11 @@ mod tests {
         let loss = report.losses().first().unwrap();
         assert_eq!(loss.severity, Severity::Degraded);
         assert_eq!(loss.subject, "sketch \"Base\"");
-        assert_eq!(
-            loss.detail,
-            "4 of 5 constraints not carried (angle, horizontal, native Linear Dimension-1 ×2); its geometry is exact"
-        );
+        assert!(loss.detail.starts_with("4 of 5 constraints not carried ("));
+        assert!(loss.detail.contains(
+            "native Linear Dimension-1: its native operands have no resolved neutral relation ×2"
+        ));
+        assert!(loss.detail.ends_with("; its geometry is exact"));
     }
 
     #[test]

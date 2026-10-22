@@ -229,3 +229,10 @@ to download or copy it again, check its extension, and report it on the
 form with the file's anonymous report if the original opens in its CAD program.
 For failure reports, request `report_anon`, review that file before sharing, and keep normal
 JSON, logs, the journal, the key, and the salt private. Do not attach design files publicly.
+
+Sketch history uses the same conic and constraint mappings as the CLI. Bounded parabolas,
+hyperbolas, elliptical arcs up to one turn, and rational quadratic Béziers retain editable
+geometry. An unsupported relation appears in `losses` as a counted `Degraded` sketch
+message with its reason, while the solved sketch remains mapped. Static sketch patterns
+retain point and radius associations; driving count and span parameters still produce a
+constraint loss.
