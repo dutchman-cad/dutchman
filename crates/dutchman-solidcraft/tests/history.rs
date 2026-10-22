@@ -3197,6 +3197,298 @@ fn patterned(layout: Value) -> Model {
     model
 }
 
+/// Change a synthetic pattern's operands without passing through a native decoder.
+fn pattern_seeds(mut model: Model, seeds: Value) -> Model {
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"][2]["definition"]["seeds"] = seeds;
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn body_patterns_use_names_assigned_by_earlier_features() {
+    for selection in [
+        json!({"kind": "bodies", "value": ["synthetic:cube:body#0"]}),
+        json!({"kind": "resolved", "value": {
+            "bodies": ["synthetic:cube:body#0"], "native": "selection"}}),
+        json!({"kind": "resolved_set", "value": {"members": [
+            {"body": "synthetic:cube:body#0", "native": "selection"}]}}),
+    ] {
+        let model = pattern_seeds(
+            patterned(json!({"kind": "linear",
+                "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 20.0, "count": 3})),
+            json!([{"kind": "bodies", "value": selection}]),
+        );
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(history_line(&report).starts_with("3 of 3 features mapped"));
+        assert_eq!(document["features"][2]["bodies"], json!(["unit cube"]));
+        assert_eq!(document["features"][2]["features"], json!([]));
+        if let Some(cli) = solidcraft() {
+            assert!((volumes(&cli, &written(&model).0).iter().sum::<f64>() - 3000.0).abs() < 1e-6);
+        }
+    }
+}
+
+#[test]
+fn regular_explicit_pattern_locations_map_to_spacing_and_span() {
+    let direction = json!({"x": 1.0, "y": 0.0, "z": 0.0});
+    for (layout, field, expected) in [
+        (
+            json!({"kind": "linear_offsets", "direction": direction, "offsets": [0.0, 20.0, 40.0]}),
+            "spacing1",
+            "20 mm",
+        ),
+        (
+            json!({"kind": "circular_angles",
+            "axis_origin": {"x": -20.0, "y": 0.0, "z": 0.0},
+            "axis_dir": {"x": 0.0, "y": 0.0, "z": 1.0},
+            "angles": [0.0, std::f64::consts::FRAC_PI_4, std::f64::consts::FRAC_PI_2]}),
+            "angle",
+            "90 deg",
+        ),
+    ] {
+        let model = patterned(layout);
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(history_line(&report).starts_with("3 of 3 features mapped"));
+        assert_eq!(document["features"][2]["pattern"][field], expected);
+        if let Some(cli) = solidcraft() {
+            assert!((volumes(&cli, &written(&model).0).iter().sum::<f64>() - 3000.0).abs() < 1e-6);
+        }
+    }
+    let model = patterned(json!({"kind": "circular_angles",
+        "axis_origin": {"x": -20.0, "y": 0.0, "z": 0.0},
+        "axis_dir": {"x": 0.0, "y": 0.0, "z": 1.0},
+        "angles": [0.0, std::f64::consts::FRAC_PI_2, std::f64::consts::PI,
+            3.0 * std::f64::consts::FRAC_PI_2]}));
+    let (document, _) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_eq!(document["features"][2]["pattern"]["angle"], "360 deg");
+    assert_eq!(document["features"][2]["pattern"]["count"], "4");
+    if let Some(cli) = solidcraft() {
+        assert!((volumes(&cli, &written(&model).0).iter().sum::<f64>() - 4000.0).abs() < 1e-6);
+    }
+}
+
+#[test]
+fn two_linear_stages_become_a_rectangular_pattern() {
+    let model = patterned(json!({"kind": "composite", "stages": [
+        {"pattern": {"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0},
+            "spacing": 20.0, "count": 3}},
+        {"pattern": {"kind": "linear", "direction": {"x": 0.0, "y": 1.0, "z": 0.0},
+            "spacing": 30.0, "count": 2}},
+    ]}));
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).starts_with("3 of 3 features mapped"));
+    assert_eq!(
+        document["features"][2]["pattern"],
+        json!({
+        "type": "rectangular", "dir1": [1.0, 0.0, 0.0], "count1": "3", "spacing1": "20 mm",
+        "dir2": [0.0, 1.0, 0.0], "count2": "2", "spacing2": "30 mm"})
+    );
+    if let Some(cli) = solidcraft() {
+        assert!((volumes(&cli, &written(&model).0).iter().sum::<f64>() - 6000.0).abs() < 1e-6);
+    }
+}
+
+/// Reuse the sweep fixture's mapped path sketch, lengthened to contain three copies.
+fn path_pattern(whole_sketch: bool) -> Model {
+    let mut model = sweep_history(|_| {});
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    for row in wire["model"]["sketch_entities"].as_array_mut().unwrap() {
+        if row["id"] == "f3d:model:sketch-entity#21" {
+            row["geometry"]["end"]["v"] = json!(60.0);
+        }
+    }
+    let features = wire["model"]["features"].as_array_mut().unwrap();
+    features[2] = serde_json::to_value(&cube_with_history(10.0, first_profile(), None).ir).unwrap()
+        ["model"]["features"][1]
+        .clone();
+    features[2]["ordinal"] = json!(2);
+    let path = if whole_sketch {
+        json!({"kind": "sketch", "value": PATH})
+    } else {
+        json!({"kind": "sketch_curves", "value": {"sketch": PATH,
+            "curves": ["f3d:model:sketch-entity#21"]}})
+    };
+    features.push(json!({"id": "f3d:model:feature#4", "ordinal": 3,
+        "name": "Copies", "suppressed": false, "definition": {
+            "definition": "pattern", "seeds": [{"kind": "feature", "value": "f3d:model:feature#2"}],
+            "pattern": {"kind": "curve_driven", "path": path, "spacing": 20.0, "count": 3}}}));
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn path_patterns_use_mapped_sketch_curves_and_arc_length_spacing() {
+    for whole_sketch in [false, true] {
+        let model = path_pattern(whole_sketch);
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(history_line(&report).starts_with("4 of 4 features mapped"));
+        let pattern = &document["features"][3]["pattern"];
+        assert_eq!(pattern["type"], "path");
+        assert_eq!(pattern["path_sketch"], document["features"][1]["id"]);
+        assert_eq!(pattern["count"], "3");
+        assert_eq!(pattern["spacing"], "20 mm");
+        assert_eq!(pattern["path"].as_array().unwrap().len(), 1);
+        if let Some(cli) = solidcraft() {
+            let mut starts: Vec<f64> = bounds(&cli, &written(&model).0)
+                .iter()
+                .map(|(min, _)| min[2])
+                .collect();
+            starts.sort_by(f64::total_cmp);
+            assert_eq!(starts, [0.0, 20.0, 40.0]);
+        }
+    }
+}
+
+#[test]
+fn pattern_refusals_identify_the_unrepresentable_option() {
+    for (layout, reason) in [
+        (
+            json!({"kind": "linear_offsets", "direction": {"x": 1.0, "y": 0.0, "z": 0.0},
+            "offsets": [0.0, 20.0, 60.0]}),
+            "nonuniform linear offsets",
+        ),
+        (
+            json!({"kind": "circular_angles", "axis_origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "axis_dir": {"x": 0.0, "y": 0.0, "z": 1.0}, "angles": [0.0, 0.5, 2.0]}),
+            "nonuniform circular angles",
+        ),
+        (
+            json!({"kind": "circular_angles", "axis_origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "axis_dir": {"x": 0.0, "y": 0.0, "z": 1.0}, "angles": [0.0, std::f64::consts::TAU]}),
+            "repeating the seed at a full turn",
+        ),
+        (
+            json!({"kind": "curve_driven", "path": {"kind": "native", "value": "path"},
+            "spacing": 20.0, "count": 3}),
+            "pattern paths from native",
+        ),
+        (
+            json!({"kind": "curve_driven", "spacing": 20.0, "count": 3}),
+            "its pattern path is not resolved",
+        ),
+        (
+            json!({"kind": "unresolved", "form": "curve_driven"}),
+            "cadmpeg does not decode its curve driven pattern layout yet",
+        ),
+        (
+            json!({"kind": "composite", "stages": [
+                {"pattern": {"kind": "circular", "axis_origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+                    "axis_dir": {"x": 0.0, "y": 0.0, "z": 1.0}, "angle": 1.0, "count": 2}},
+                {"pattern": {"kind": "circular", "axis_origin": {"x": 5.0, "y": 0.0, "z": 0.0},
+                    "axis_dir": {"x": 0.0, "y": 0.0, "z": 1.0}, "angle": 1.0, "count": 2}}
+            ]}),
+            "2 stages (circular then circular)",
+        ),
+        (
+            json!({"kind": "scale", "center": {"kind": "first_seed_centroid"},
+            "final_factor": 2.0, "count": 3}),
+            "progressively scaled patterns",
+        ),
+        (
+            json!({"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0},
+            "spacing": 20.0, "count": 10001}),
+            "more than 10000 instances",
+        ),
+    ] {
+        let (_, report) = convert(
+            &patterned(layout),
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).contains(reason),
+            "{}",
+            history_line(&report)
+        );
+    }
+}
+
+#[test]
+fn unresolved_pattern_seeds_and_mixed_seed_kinds_have_specific_refusals() {
+    let layout = json!({"kind": "linear",
+        "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 20.0, "count": 3});
+    for (seeds, reason) in [
+        (
+            json!([{"kind": "bodies", "value": {"kind": "unresolved"}}]),
+            "cadmpeg does not resolve which bodies",
+        ),
+        (
+            json!([{"kind": "bodies", "value": {"kind": "native", "value": "body"}}]),
+            "cadmpeg does not resolve which bodies",
+        ),
+        (
+            json!([{"kind": "bodies", "value": {"kind": "native_set", "value": ["body"]}}]),
+            "cadmpeg does not resolve which bodies",
+        ),
+        (
+            json!([{"kind": "faces", "value": {"kind": "native", "value": "face"}}]),
+            "SolidCraft patterns repeat whole features or bodies",
+        ),
+        (
+            json!([{"kind": "feature", "value": "f3d:model:feature#2"},
+            {"kind": "bodies", "value": {"kind": "bodies", "value": ["synthetic:cube:body#0"]}}]),
+            "SolidCraft requires one seed kind",
+        ),
+    ] {
+        let model = pattern_seeds(patterned(layout.clone()), seeds);
+        let (_, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).contains(reason),
+            "{}",
+            history_line(&report)
+        );
+    }
+}
+
+#[test]
+fn patterns_refuse_unnamed_bodies_and_excessive_rectangular_products() {
+    let model = pattern_seeds(
+        patterned(
+            json!({"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0},
+            "spacing": 20.0, "count": 3}),
+        ),
+        json!([{"kind": "bodies", "value": {"kind": "bodies", "value": ["synthetic:cube:body#0"]}}]),
+    );
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"][1]["outputs"] = json!([]);
+    let unnamed = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    };
+    let (_, report) = convert(
+        &unnamed,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).contains("body without an earlier mapped name"));
+
+    let too_many = patterned(json!({"kind": "linear",
+        "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 20.0, "count": 101,
+        "second": {"direction": {"x": 0.0, "y": 1.0, "z": 0.0}, "spacing": 20.0, "count": 100}}));
+    let (_, report) = convert(
+        &too_many,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).contains("more than 10000 instances"));
+}
+
 #[test]
 fn a_feature_pattern_names_its_seed() {
     let model = patterned(json!({"kind": "linear",

@@ -441,6 +441,15 @@ angles, ends at a face, vertex or body, full-turn surface revolves, and faces bu
 the way FreeCAD's default (bullseye) face maker builds them stop the history, and the report
 names which.
 
+Patterns can repeat earlier features or named bodies in one or two linear directions,
+around an axis, or at fixed spacing along curves of an earlier planar sketch. Explicit
+linear offsets and circular angles map when their intervals are equal; two linear composite
+stages map to a rectangular grid. Patterns are limited to 10,000 instances. Nonuniform or
+skipped instances, progressive scaling, face seeds, and unresolved body or path references
+flatten the history with a specific reason. This CADIR version has no solid-pattern symmetry
+or extent fields, so Dutchman cannot recover those settings independently of the decoded
+spacing and locations.
+
 A converted history is checked by replaying it in `solidcraft-cli` and comparing the bodies
 and their volumes with the original. The result is in the `history:` line of the report, and
 in `verification.status` in `--json`:
