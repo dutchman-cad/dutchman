@@ -15,6 +15,9 @@ report's schema name changes when a field does).
 - Lofts map in more forms: surface lofts become SolidCraft surface lofts, and ruled lofts
   through two sections map. Loft rails share the sweep path reader, so a single-curve
   whole-sketch rail maps and each unsupported rail kind gives its own reason.
+- Hole history keeps chamfered entries and ISO metric thread labels on tapped holes (thread
+  details SolidCraft has no field for are reported, not blocking), and names the unsupported
+  hole forms, placements, and ends it refuses.
 - A second issue form, **A file didn't convert**, reports one file: its format, the versions,
   the operating system, what was expected and what happened, and that file's anonymous
   report. Both forms list FreeCAD documents (`.FCStd`), and the agent skill does too.

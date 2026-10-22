@@ -3,13 +3,19 @@
 
 use std::collections::BTreeSet;
 
+use dutchman_core::{Report, Severity};
 use serde_json::{json, Value};
 
 use super::sketch::{dot, number, unit, v3, Mapped, Shape, V3};
-use super::{name, Context};
+use super::{describe, name, Context};
 
 /// Maps a hole feature whose operation is `definition`.
-pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Result<Value, String> {
+pub(crate) fn map(
+    feature: &Value,
+    definition: &Value,
+    ctx: &mut Context,
+    report: &mut Report,
+) -> Result<Value, String> {
     let (position, direction, points) = placement(feature, definition, ctx)?;
 
     let shape = definition.get("shape").unwrap_or(&Value::Null);
@@ -17,19 +23,20 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         return Err("a hole with an exit treatment is not mapped yet".to_owned());
     }
     let construction = shape.get("construction").unwrap_or(&Value::Null);
-    if construction
-        .pointer("/specification/kind")
-        .and_then(Value::as_str)
-        == Some("threaded")
-        && construction
-            .pointer("/specification/modeled")
-            .and_then(Value::as_bool)
-            == Some(true)
-    {
-        return Err("a hole with a modeled thread is not mapped yet".to_owned());
+    if construction.get("construction").and_then(Value::as_str) == Some("native_thread") {
+        return Err("a hole with native thread geometry is not mapped yet".to_owned());
     }
     let form = construction.get("kind").unwrap_or(&Value::Null);
+    if definition.pointer("/bottom/kind").and_then(Value::as_str) == Some("angled")
+        && matches!(
+            form.get("kind").and_then(Value::as_str),
+            Some("counterbore" | "countersink" | "chamfer")
+        )
+    {
+        return Err("a counterbore or countersink with a drill point is not mapped yet".to_owned());
+    }
     let diameter = number(shape.get("diameter")).ok_or("its diameter is not given")?;
+    let (thread, thread_note) = cosmetic_thread(construction.get("specification"), diameter)?;
     let mut hole = match (
         construction.get("construction").and_then(Value::as_str),
         form.get("kind").and_then(Value::as_str),
@@ -41,7 +48,7 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
                 .ok_or("its drill point's angle is not given")?;
             json!({"type": "drilled", "tip_angle": format!("{}", angle.to_degrees())})
         }
-        (Some("form"), Some("counterbore" | "countersink")) => {
+        (Some("form"), Some("counterbore" | "countersink" | "chamfer")) => {
             let entry = number(form.get("diameter"))
                 .filter(|d| *d > diameter)
                 .ok_or("its entry diameter must be greater than its bore diameter")?;
@@ -58,6 +65,24 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
                 json!({"type": "countersink", "cs_diameter": format!("{entry} mm"),
                     "cs_angle": format!("{}", angle.to_degrees())})
             }
+        }
+        (Some("form"), Some("counterbore_drilled")) => {
+            return Err("a counterbore with a drill point is not mapped yet".to_owned())
+        }
+        (Some("form"), Some("counterdrill")) => {
+            return Err(
+                "a counterdrill with a conical entry and cylindrical recess is not mapped yet"
+                    .to_owned(),
+            )
+        }
+        (Some("form"), Some("partial_counterbore")) => {
+            return Err("its counterbore diameter or depth is not resolved".to_owned())
+        }
+        (Some("form"), Some("partial_countersink")) => {
+            return Err("its countersink diameter or angle is not resolved".to_owned())
+        }
+        (Some("form"), Some("unresolved")) => {
+            return Err("its hole entry form or dimensions are not resolved".to_owned())
         }
         (Some("form"), Some(kind)) => return Err(format!("a {kind} hole is not mapped yet")),
         _ => return Err("a hole of this construction is not mapped yet".to_owned()),
@@ -84,17 +109,6 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
                     depth = Some(length);
                 }
                 Some("angled") => {
-                    // SolidCraft's entry forms have no drill-point fields. Replacing the
-                    // form with `drilled` would silently discard the entry recess.
-                    if !matches!(
-                        form.get("kind").and_then(Value::as_str),
-                        Some("simple" | "simple_drilled")
-                    ) {
-                        return Err(
-                            "a counterbore or countersink with a drill point is not mapped yet"
-                                .to_owned(),
-                        );
-                    }
                     let angle = number(bottom.get("included_angle"))
                         .filter(|a| *a > 0.0 && *a < std::f64::consts::PI)
                         .ok_or("its drill point's angle is not given")?;
@@ -131,6 +145,25 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
             }
             to = Some(face.point);
         }
+        Some("unresolved") => return Err("its hole termination is not resolved".to_owned()),
+        Some("through_next") => {
+            return Err("a hole through the next material region is not mapped yet".to_owned())
+        }
+        Some("to_first") => {
+            return Err("a hole ending at the first encountered face is not mapped yet".to_owned())
+        }
+        Some("to_last") => {
+            return Err("a hole ending at the last encountered face is not mapped yet".to_owned())
+        }
+        Some("to_vertex") => {
+            return Err("a hole ending at a source vertex is not mapped yet".to_owned())
+        }
+        Some("offset_from_face") => {
+            return Err("a hole that ends offset from a face is not mapped yet".to_owned())
+        }
+        Some("to_shape") => {
+            return Err("a hole ending at a selected shape is not mapped yet".to_owned())
+        }
         Some(other) => return Err(format!("a hole that ends {other} is not mapped yet")),
     }
     if definition.get("taper_angle").is_some_and(|t| !t.is_null()) {
@@ -153,6 +186,9 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         fields.insert("depth".to_owned(), json!(format!("{depth} mm")));
     }
     if let Some(fields) = out.as_object_mut() {
+        if let Some(thread) = thread {
+            fields.insert("thread".to_owned(), json!(thread));
+        }
         if let Some(points) = points {
             fields.insert("points".to_owned(), points);
         }
@@ -160,7 +196,159 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
             fields.insert("to".to_owned(), json!(to));
         }
     }
+    if let Some(note) = thread_note {
+        report.push(Severity::Degraded, describe(feature), note);
+    }
     Ok(out)
+}
+
+/// The cosmetic thread label a threaded hole keeps, and a note on what of its thread does
+/// not survive. SolidCraft labels a hole with an ISO metric thread (`M6x1`) and keeps the
+/// source's resolved bore diameter; it has no hand, class or thread-length controls, so
+/// those are reported rather than blocking a hole whose geometry maps exactly. A modeled
+/// (helical) thread changes the geometry and is refused.
+fn cosmetic_thread(
+    specification: Option<&Value>,
+    bore: f64,
+) -> Result<(Option<String>, Option<String>), String> {
+    let Some(specification) = specification.filter(|value| !value.is_null()) else {
+        return Ok((None, None));
+    };
+    if specification.get("kind").and_then(Value::as_str) != Some("threaded") {
+        return Ok((None, None));
+    }
+    if specification.get("modeled").and_then(Value::as_bool) == Some(true) {
+        return Err("a hole with a modeled thread is not mapped yet".to_owned());
+    }
+    let designation = specification
+        .get("designation")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let pitch = number(specification.get("pitch")).filter(|p| *p > 0.0);
+    let label = match designation {
+        None => Err("its thread size is not given".to_owned()),
+        Some(designation) => match metric_thread(designation, pitch) {
+            None => Err(format!(
+                "SolidCraft labels ISO metric threads only, not {designation}"
+            )),
+            Some((major, pitch)) if !thread_fits(major, pitch, bore) => Err(format!(
+                "an {designation} thread does not fit its {bore} mm bore"
+            )),
+            Some((major, pitch)) => Ok(format!("M{major}x{pitch}")),
+        },
+    };
+    let label = match label {
+        Ok(label) => label,
+        Err(why) => {
+            return Ok((
+                None,
+                Some(format!("its thread is left out ({why}); the bore is kept")),
+            ))
+        }
+    };
+    let mut lost = Vec::new();
+    if specification.get("hand").and_then(Value::as_str) == Some("left") {
+        lost.push("its left-hand direction".to_owned());
+    }
+    if let Some(class) = specification.get("class").and_then(Value::as_str) {
+        lost.push(format!("its {class} tolerance class"));
+    }
+    match specification.pointer("/depth/kind").and_then(Value::as_str) {
+        Some("blind") => match number(specification.pointer("/depth/depth")) {
+            Some(depth) => lost.push(format!("its {depth} mm thread length")),
+            None => lost.push("its thread length".to_owned()),
+        },
+        Some("tapped_standard") => lost.push("its standard tapped runout".to_owned()),
+        _ => {}
+    }
+    let note = (!lost.is_empty()).then(|| {
+        format!(
+            "its thread is kept as a cosmetic {label} label over the whole hole, without {}",
+            series(&lost)
+        )
+    });
+    Ok((Some(label), note))
+}
+
+/// `a`, `a and b`, or `a, b, and c`.
+fn series(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [one] => one.clone(),
+        [first, second] => format!("{first} and {second}"),
+        [rest @ .., last] => format!("{}, and {last}", rest.join(", ")),
+    }
+}
+
+/// ISO 261 coarse pitches, for a metric designation that gives no pitch.
+const ISO_COARSE: [(f64, f64); 34] = [
+    (1.0, 0.25),
+    (1.2, 0.25),
+    (1.4, 0.3),
+    (1.6, 0.35),
+    (1.8, 0.35),
+    (2.0, 0.4),
+    (2.5, 0.45),
+    (3.0, 0.5),
+    (3.5, 0.6),
+    (4.0, 0.7),
+    (5.0, 0.8),
+    (6.0, 1.0),
+    (7.0, 1.0),
+    (8.0, 1.25),
+    (10.0, 1.5),
+    (12.0, 1.75),
+    (14.0, 2.0),
+    (16.0, 2.0),
+    (18.0, 2.5),
+    (20.0, 2.5),
+    (22.0, 2.5),
+    (24.0, 3.0),
+    (27.0, 3.0),
+    (30.0, 3.5),
+    (33.0, 3.5),
+    (36.0, 4.0),
+    (39.0, 4.0),
+    (42.0, 4.5),
+    (45.0, 4.5),
+    (48.0, 5.0),
+    (52.0, 5.0),
+    (56.0, 5.5),
+    (60.0, 5.5),
+    (64.0, 6.0),
+];
+
+/// The major diameter and pitch (mm) of an ISO metric designation such as `M6`, `M6x0.75`
+/// or `M6x1-6H`; a pitch the designation leaves out comes from `pitch`, then the coarse
+/// series. A class or hand after the size is not part of it.
+fn metric_thread(designation: &str, pitch: Option<f64>) -> Option<(f64, f64)> {
+    let upper = designation.trim().to_ascii_uppercase();
+    let body = upper.strip_prefix('M')?;
+    let size: String = body
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || matches!(c, '.' | 'X' | '\u{d7}' | ' '))
+        .filter(|c| *c != ' ')
+        .collect();
+    let (major, own_pitch) = match size.split_once(['X', '\u{d7}']) {
+        Some((major, pitch)) => (major.parse::<f64>().ok()?, Some(pitch.parse::<f64>().ok()?)),
+        None => (size.parse::<f64>().ok()?, None),
+    };
+    let pitch = own_pitch.or(pitch).or_else(|| {
+        ISO_COARSE
+            .iter()
+            .find(|(size, _)| (size - major).abs() < 1e-9)
+            .map(|(_, pitch)| *pitch)
+    })?;
+    (major.is_finite() && pitch.is_finite() && major > 0.0 && pitch > 0.0 && pitch < major)
+        .then_some((major, pitch))
+}
+
+/// Whether SolidCraft accepts a thread of `major` and `pitch` on a hole of `bore`: the bore
+/// is near the thread's minor diameter or its tap drill.
+fn thread_fits(major: f64, pitch: f64, bore: f64) -> bool {
+    (major - pitch * 1.0825 - bore).abs() < 0.2 * major
+        || (major - pitch - bore).abs() < 0.15 * major
 }
 
 /// A complete placement, or sketch locations that keep following their sketch.
@@ -221,6 +409,18 @@ fn placement(
     let sketch_id = match kind {
         Some("sketch") => value.as_str(),
         Some("sketch_entities") => value.get("sketch").and_then(Value::as_str),
+        Some("sketch_profiles" | "sketch_regions") => {
+            return Err("holes placed from sketch profile regions are not mapped yet".to_owned())
+        }
+        Some("sketch_selection") => {
+            return Err("its selected sketch hole locations are not resolved".to_owned())
+        }
+        Some("historical_faces" | "faces") => {
+            return Err("holes placed from face profiles are not mapped yet".to_owned())
+        }
+        Some("feature" | "generated") => {
+            return Err("holes placed from generated curve profiles are not mapped yet".to_owned())
+        }
         _ => return Err("a hole placed without resolved points is not mapped yet".to_owned()),
     }
     .ok_or("its sketch is not resolved")?;
@@ -675,7 +875,12 @@ mod tests {
         let model = json!({});
         let mut ctx = Context::new(&model);
         ctx.sketches.insert("s".to_owned(), sketch());
-        map(&json!({"name": "Hole"}), definition, &mut ctx)
+        map(
+            &json!({"name": "Hole"}),
+            definition,
+            &mut ctx,
+            &mut Report::default(),
+        )
     }
 
     #[test]
@@ -782,7 +987,7 @@ mod tests {
             "kind": {"kind": "counterbore_drilled"}}, "diameter": 5.0}}));
         assert_eq!(
             mapped(&counterbore).unwrap_err(),
-            "a counterbore_drilled hole is not mapped yet"
+            "a counterbore with a drill point is not mapped yet"
         );
         let to_face = hole(json!({"extent": {"kind": "to_face"}}));
         assert_eq!(mapped(&to_face).unwrap_err(), "its face is not resolved");

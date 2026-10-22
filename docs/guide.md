@@ -417,6 +417,11 @@ cadmpeg; in `--json` it is the `code` field, which scripts can match on.
 
 ## Feature history and the SolidCraft check
 
+Hole history includes chamfered entries and tapped holes: the hole keeps its bore and an ISO
+metric thread label such as `M6x1`. A thread's hand, tolerance class, and length don't carry
+across; the report lists them as Degraded. Taper, exit treatments, modeled threads, and entry
+recesses combined with drill points are not supported yet, and the report names the option.
+
 When every feature in a design's history maps onto SolidCraft (sketches, extrudes, revolves
 and patterns so far), the design keeps that history, editable, with the original geometry
 kept beside it as a suppressed import named "Original geometry (imported)". Otherwise the

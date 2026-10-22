@@ -59,6 +59,11 @@ For a blocked sweep, `history.features[].reason` names the unsupported option, s
 post-sweep simplification also block history. These are messages within the existing schema;
 no report fields change.
 
+For holes, a blocked feature's `reason` names the unsupported entry form, placement, or end
+(for example, `a hole ending at the last encountered face is not mapped yet`). A tapped hole
+maps with an ISO metric thread label; thread details it can't keep are a `Degraded` loss on
+that feature. The wording is text for people, not a stable code.
+
 A failure carries `"ok": false`, `input` and `error`, and exits 1:
 
 ```json

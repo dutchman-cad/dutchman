@@ -146,7 +146,10 @@ entity selections), or at a directed spatial placement, through all or to a dept
 for simple holes, with a drill point; axes placed on proven earlier extrusion caps and holes
 ending at those caps (the cap must match the sole polygonal profile of the last earlier
 solid feature's one-sided new-body extrusion; a face from final geometry alone is not enough);
-entry recesses combined with drill points, taper and physical threads are not mapped;
+chamfered entries map as countersinks; a tapped hole keeps its resolved bore and an ISO
+metric thread label (`M6x1`, the pitch from the designation, the source, or the coarse
+series), and the thread's hand, class, and length are reported as Degraded, not mapped;
+entry recesses combined with drill points, exit treatments, taper, and modeled threads are not mapped;
 patterns of earlier features, linear in one or
 two directions, or circular over a partial span or all the way round, and mirrors of earlier
 features across a plane (features are named uniquely on the timeline,

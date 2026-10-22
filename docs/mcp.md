@@ -76,6 +76,11 @@ interpolation, tangent-path extension, or simplification. Paths and guide rails 
 ordered sketch curves or a whole sketch with one non-construction curve. A blocked sweep
 keeps the original geometry when converted.
 
+Hole history keeps chamfered entries and tapped holes (the bore and an ISO metric thread
+label); thread details it can't keep are `Degraded` losses. Unsupported hole forms,
+placements, and ends appear in `history.features[].reason`, and conversion keeps the
+geometry when the history can't map.
+
 | Tool | Arguments | Returns | Writes |
 |---|---|---|---|
 | `inspect` | `input`, and optionally `project`, `search` | `dutchman.inspect/1` | nothing |
