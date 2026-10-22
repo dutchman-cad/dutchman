@@ -7,6 +7,7 @@ use std::path::Path;
 use cadmpeg_core::decode::{
     DecodeArena, DecodeContext, DecodeDepth, DecodePolicy, ResourceLimits, View,
 };
+use cadmpeg_core::CodecError;
 use cadmpeg_ir::codec::{Codec, DecodeFailure, DecodeOptions};
 use cadmpeg_ir::report::Severity as CadmpegSeverity;
 use cadmpeg_ir::validate::validate_neutral_for_decode;
@@ -124,10 +125,7 @@ fn decode_unguarded(
     let options = DecodeOptions { depth, policy };
     let decoded = codec
         .decode(&mut Cursor::new(bytes), &options)
-        .map_err(|err| match err {
-            DecodeFailure::Codec(err) => Error::Decode(err.to_string()),
-            other => Error::Decode(other.to_string()),
-        })
+        .map_err(|err| decode_failure(format, err))
         .map_err(other)?;
     let (ir, decode_report, fidelity) = decoded.into_parts();
     // An assembly's geometry is in its parts' files, read afterwards.
@@ -177,6 +175,31 @@ fn decode_unguarded(
             .map(|name| name.to_string_lossy().into_owned()),
         assembly: None,
     })
+}
+
+/// Keep cadmpeg's cause, and give a recovery step for unreadable containers.
+fn decode_failure(format: Format, err: DecodeFailure) -> Error {
+    let recovery = matches!(
+        &err,
+        DecodeFailure::Codec(
+            CodecError::Malformed(_) | CodecError::WrongFormat(_) | CodecError::Truncated { .. }
+        )
+    );
+    let cause = match err {
+        DecodeFailure::Codec(err) => err.to_string(),
+        other => other.to_string(),
+    };
+    if recovery {
+        Error::Decode(format!(
+            "{cause}. The file may be incomplete or not a {} file; download or copy it again, \
+             or check its extension. If the original opens in {}, see the anonymous reporting \
+             guide: https://github.com/dutchman-cad/dutchman/blob/main/docs/testing-your-library.md",
+            format.name(),
+            format.family()
+        ))
+    } else {
+        Error::Decode(cause)
+    }
 }
 
 /// Picks the codec for `bytes`: the one cadmpeg recognises from the contents, or, when the
@@ -241,6 +264,32 @@ fn design_name(path: &Path) -> String {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn recovery_advice_is_for_unreadable_containers_not_missing_capabilities() {
+        for cause in [
+            CodecError::Malformed("ZIP end record is absent".to_owned()),
+            CodecError::WrongFormat("not a Fusion archive".to_owned()),
+        ] {
+            let message = decode_failure(Format::FusionArchive, cause.into());
+            assert_eq!(message.stage(), Stage::Decode);
+            assert_eq!(message.upstream(), Some("cadmpeg"));
+            let message = message.to_string();
+            assert!(message.contains("download or copy it again"), "{message}");
+            assert!(
+                message.contains("If the original opens in Fusion"),
+                "{message}"
+            );
+        }
+        let gap = decode_failure(
+            Format::FusionArchive,
+            CodecError::NotImplemented("a new container version".to_owned()).into(),
+        );
+        assert_eq!(
+            gap.to_string(),
+            "cannot read this design: not implemented yet: a new container version"
+        );
+    }
 
     fn cube() -> Model {
         crate::read(

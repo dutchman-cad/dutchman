@@ -29,6 +29,9 @@ they are connected (`inspect`, `convert`, `convert_all`, `formats`); otherwise r
 The extensions that convert are `.f3d`, `.f3z`, `.ipt`, `.iam` and `.sldprt`. Call `formats`
 if unsure; its `status` is `converts`, `coming` or `not_supported`.
 
+What the installed build converts is what its `formats` says; check it rather than this
+list when unsure.
+
 For anything else, don't try workarounds such as renaming the file. Tell the user plainly:
 
 - **STEP (`.step`, `.stp`)**: SolidCraft opens these itself; Dutchman is not needed.
@@ -41,6 +44,8 @@ For anything else, don't try workarounds such as renaming the file. Tell the use
 
 Call `inspect` with `input`. It writes nothing. Read:
 
+- `conversion.possible` and `conversion.reason`: whether conversion can succeed and why it
+  cannot. `ok: true` means inspection succeeded, even when conversion is impossible.
 - `geometry.bodies`, `geometry.faces`: what was read.
 - `mode`: `history` (editable feature history) or `import` (solid geometry only).
 - `verification.reason`: why there is no history, when there is none.
@@ -57,10 +62,19 @@ get the solid shape without the feature history."
 - Many files or a folder: `convert_all` with `inputs` and `out_dir`. One failure does not stop
   the rest; the call is an error when any file failed, and each file has its own report in
   `results`.
+  Designs and the default log go inside `out_dir`; optional `journal`, `report_anon`, and
+  `report_key` files go to their specified paths, which may be outside it.
 - `import_only: true` when the user wants only the shape. Leave `verify` at its default.
 
 A failed conversion comes back with `ok: false` and `error.message`. The message already says
-what to do next; pass it on in plain words. Nothing was written.
+what to do next; pass it on in plain words. A failed file creates no design. A mixed batch
+may still write successful designs, logs, and requested reports.
+
+For unreadable archives, suggest downloading or copying again and checking the extension.
+If the original opens in its CAD program, use the anonymous reporting route in
+`docs/testing-your-library.md`: request `report_anon`, review it before sharing, and keep
+ordinary JSON, logs, the journal, the key, and the salt private. Do not attach designs
+publicly; a user who wants to share a reproducer can offer it privately in the issue.
 
 ## 4. Verify in SolidCraft
 

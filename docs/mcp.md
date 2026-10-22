@@ -17,8 +17,9 @@ it and talks to it.
 claude mcp add dutchman -- dutchman-mcp
 ```
 
-To have it check converted histories in SolidCraft, pass the path of `solidcraft-cli` if it is
-not on your `PATH`:
+Optional: if Dutchman cannot find `solidcraft-cli` on `PATH` or inside an installed SolidCraft
+app, pass its path. Replace `/path/to/solidcraft-cli` with the installed executable's absolute
+path before running this command:
 
 ```sh
 claude mcp add dutchman --env SOLIDCRAFT_CLI=/path/to/solidcraft-cli -- dutchman-mcp
@@ -33,10 +34,14 @@ In `~/.codex/config.toml`:
 ```toml
 [mcp_servers.dutchman]
 command = "dutchman-mcp"
-env = { SOLIDCRAFT_CLI = "/path/to/solidcraft-cli" }
 ```
 
-Leave out the `env` line when `solidcraft-cli` is on your `PATH`.
+Optional, inside that same table, add the following line only after replacing the placeholder
+with the installed executable's absolute path:
+
+```toml
+env = { SOLIDCRAFT_CLI = "/path/to/solidcraft-cli" }
+```
 
 ### Other clients
 
@@ -46,24 +51,31 @@ Most clients (Claude Desktop, Cursor, Windsurf, and others) take an `mcpServers`
 {
   "mcpServers": {
     "dutchman": {
-      "command": "dutchman-mcp",
-      "env": {"SOLIDCRAFT_CLI": "/path/to/solidcraft-cli"}
+      "command": "dutchman-mcp"
     }
   }
 }
 ```
 
+If needed, add an optional `"env": {"SOLIDCRAFT_CLI": "/path/to/solidcraft-cli"}` member beside
+`command`, with a comma between them. Replace the placeholder with the installed executable's
+absolute path; on Windows, use `.exe` and escape backslashes as `\\` in JSON.
+
 If the client cannot find `dutchman-mcp`, give its full path as `command` (on Windows,
-including `.exe`). `SOLIDCRAFT_CLI` is optional: without it, a converted history is checked
-only when `solidcraft-cli` is on the server's `PATH`, and is reported unverified otherwise.
+including `.exe`). `SOLIDCRAFT_CLI` is optional: without it, Dutchman looks on the server's
+`PATH` and inside an installed SolidCraft app, and reports the history unverified if neither
+provides a usable CLI.
 
 ## Tools
+
+For `inspect`, `ok: true` means the file was read. Check `conversion.possible` and
+`conversion.reason` before converting: inspection can succeed even when conversion cannot.
 
 | Tool | Arguments | Returns | Writes |
 |---|---|---|---|
 | `inspect` | `input`, and optionally `project`, `search` | `dutchman.inspect/1` | nothing |
 | `convert` | `input`, `output`, and optionally `import_only`, `verify`, `solidcraft`, `verify_timeout`, `overwrite`, `project`, `search` | `dutchman.convert/1` | the `output` file |
-| `convert_all` | `inputs`, `out_dir`, and optionally `jobs`, `timeout`, `max_memory_mb`, `journal`, `report_anon`, `report_salt`, `report_key`, `import_only`, `verify`, `solidcraft`, `verify_timeout`, `overwrite`, `project`, `search` | `dutchman.convert-all/1` | inside `out_dir`, and the `journal`, `report_anon` and `report_key` files |
+| `convert_all` | `inputs`, `out_dir`, and optionally `jobs`, `timeout`, `max_memory_mb`, `journal`, `report_anon`, `report_salt`, `report_key`, `import_only`, `verify`, `solidcraft`, `verify_timeout`, `overwrite`, `project`, `search` | `dutchman.convert-all/1` | designs and the default log inside `out_dir`, plus `journal`, `report_anon`, and `report_key` at their specified paths |
 | `formats` | none | `dutchman.formats/1` | nothing |
 
 | Argument | Type | Meaning |
@@ -184,11 +196,13 @@ still converted and each has its own report (shortened here):
 - **Everything stays on your machine.** The server reads and writes local files only and
   sends nothing over the network. It runs `solidcraft-cli` locally for the history check.
 - **What it writes.** `inspect` and `formats` write nothing. `convert` writes only its
-  `output` file, which must end in `.solidcraft`; `convert_all` writes only inside `out_dir`.
-  Nothing is written when a conversion fails, and a design is written only once it is
-  complete. The server has no list of allowed folders: it can read and write wherever the
-  account running it can. Point `output` and `out_dir` at a folder for converted designs, and
-  check what your assistant asks for before you approve it.
+  `output` file, which must end in `.solidcraft`. `convert_all` writes converted designs and
+  its default log inside `out_dir`. If supplied, `journal`, `report_anon`, and `report_key`
+  are also written at their specified paths. A failed file creates no design; a mixed batch
+  can still write successful designs, logs, and requested reports. A design is written only
+  once it is complete. The server has no list of allowed folders: it can read and write
+  wherever the account running it can. Point `output` and `out_dir` at a folder for converted
+  designs, and check what your assistant asks for before you approve it.
 - **Existing files.** `convert` replaces an existing `output` file, and `convert_all`
   replaces designs of the same name in `out_dir`. Use a fresh folder when that matters.
 - **Caps.** Input files over 1 GiB are refused before they are read. One `convert_all`
@@ -198,3 +212,9 @@ still converted and each has its own report (shortened here):
   with an error and skipped.
 - **Hostile files.** A damaged or unexpected file comes back as an error report, never as a
   crash of the server.
+
+For an unreadable archive, the error keeps cadmpeg's cause and adds advice
+to download or copy it again, check its extension, and use the
+[anonymous reporting guide](testing-your-library.md) if the original opens in its CAD program.
+For failure reports, request `report_anon`, review that file before sharing, and keep normal
+JSON, logs, the journal, the key, and the salt private. Do not attach design files publicly.

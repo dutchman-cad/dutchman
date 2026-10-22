@@ -95,6 +95,10 @@ dutchman --version
 The `export` lasts for this shell; add the same line to your shell's profile (`~/.bashrc`,
 `~/.zshrc`) to keep it. The `dutchman*` pattern installs the desktop app, `dutchman-gui`, too.
 
+On Linux, launch the desktop app with `dutchman-gui` from a terminal. It needs an X11 or
+Wayland desktop session with working OpenGL. See [Troubleshooting](#troubleshooting) if no
+window appears.
+
 On macOS, `shasum -a 256 -c` takes the place of `sha256sum -c`. The programs are not signed
 with a Developer ID, so macOS blocks each the first time, as it does
 [the app](#opening-the-app-the-first-time); allow it in System Settings › Privacy & Security,
@@ -184,6 +188,11 @@ dutchman: Info: step/native.passthrough-record-omitted: 1 uninterpreted passthro
 dutchman: Info: history: flattened: the design carries no feature history
 dutchman: (notes are cut to their first sentence; --verbose prints them in full)
 ```
+
+The synthetic SolidWorks cube lacks native version and configuration metadata, so those
+warnings are expected for this sample. The internal records omitted from STEP do not change
+its shape: the written geometry should be one 10 mm cube (1,000 mm³). The sample has no
+editable feature history. Check the result in SolidCraft as [below](#open-the-result-in-solidcraft).
 
 The exit code is 0, and the first line, on stdout, says what was written where: here the
 geometry, as this file has no feature history (else `editable history, verified in SolidCraft`
@@ -286,9 +295,10 @@ converted  project/sub/synthetic_cube.ipt -> converted/sub/synthetic_cube.solidc
 
 Each converted file's loss report is listed beneath it, summarised by component when it has
 more than 12 losses. The whole report, every loss in full, is written to `dutchman.log` in the
-output folder (`--log FILE` puts it elsewhere): attach it to an issue rather than copying
-lines. Files in the folders that are not in a format Dutchman knows (`notes.txt`, say) are
-skipped and counted at the end. The exit code is 0
+output folder (`--log FILE` puts it elsewhere). This log, ordinary JSON, and the journal hold
+file names and paths; keep them private. For an issue, request `--report-anon FILE`, review
+it, and share that report as [below](#troubleshooting). Files in the folders that are not in
+a format Dutchman knows (`notes.txt`, say) are skipped and counted at the end. The exit code is 0
 only when every file converted, else 1. `--jobs N` sets how many files
 convert at once (default: the machine's cores, at most 8). It takes the same options as
 `convert`, and `--json` prints one `dutchman.convert-all/1` report holding a
@@ -323,9 +333,9 @@ dutchman formats
 ```
 
 ```text
-Fusion archive (.f3d)            converts  geometry; feature history (sketches, constraints, dimensions, extrudes, revolves, lofts, sweeps, spheres, tori, coils) when every feature maps; components when the file says which bodies they own
+Fusion archive (.f3d)            converts  geometry; feature history (sketches, constraints, dimensions, extrudes, revolves, lofts, sweeps, spheres, tori) when every feature maps; components when the file says which bodies they own
 Fusion multi-document archive (.f3z) converts  as a Fusion archive, with the designs it references merged in by cadmpeg
-Inventor part (.ipt)             converts  geometry; feature history (sketches, constraints, extrudes) when every feature maps
+Inventor part (.ipt)             converts  geometry; feature history waits on cadmpeg resolving extrude profiles
 Inventor assembly (.iam)         converts  placed parts and sub-assemblies, read from their files in the project
 SolidWorks part (.sldprt)        converts  geometry; feature history waits on cadmpeg binding sketches and extrude profiles
 SolidWorks assembly (.sldasm)    not yet   nothing yet
@@ -449,8 +459,29 @@ agent can do the same through SolidCraft's MCP server: open the design with
 
 ## Troubleshooting
 
+For a failed conversion, or a design that looks wrong in SolidCraft, start with an anonymous
+report (replace `part.f3d` with your file or folder):
+
+```sh
+dutchman convert-all --out-dir converted --report-anon report-anon.json part.f3d
+```
+
+Review `report-anon.json` before sharing it on
+[Dutchman's issues](https://github.com/dutchman-cad/dutchman/issues). Keep ordinary logs,
+JSON output, the journal, the report key, and the salt private: they contain names, paths,
+or a way to identify files. Do not attach design files publicly. If you want to share a
+small reproducer you made yourself, offer it privately in the issue. See
+[Testing Dutchman on your library](testing-your-library.md#5-report-what-you-found).
+
+On Linux, run `dutchman-gui` from a terminal and confirm that your X11 or Wayland desktop
+session has working OpenGL and graphics drivers. Include the terminal diagnostics when
+reporting startup trouble. A graphics startup error prints that advice and exits with
+status 1, as does a start that stalls for 30 seconds. The command-line `dutchman convert` works without
+a desktop session.
+
 Every error is one line on stderr, and the exit code is 1 (2 for a mistake on the command
-line). Nothing is written when a conversion fails.
+line). A failed file creates no design; a batch can still write successful designs, logs,
+and requested reports.
 
 | Message | What to do |
 |---|---|
@@ -459,13 +490,9 @@ line). Nothing is written when a conversion fails.
 | `SolidWorks assembly (.sldasm) files are not supported yet. Export a STEP file for SolidCraft to open; Dutchman's issues (…) say when …` | Export the assembly as STEP from the program that made it and open that in SolidCraft. |
 | `cannot read this design: its contents are inventor data, not Fusion archive (.f3d); rename it to match` | The file's extension does not match its contents. Rename it with the right extension. |
 | `cannot read this design: no geometry could be read from this Fusion archive (.f3d) file` | The file holds no geometry Dutchman can read yet, for example a design saved without bodies, or one whose geometry is stored in a form cadmpeg does not read yet. |
-| `cannot read this design: malformed container: …` | The file is cut short or damaged, for example by an unfinished download or copy. Get a fresh copy. If the original opens in the program that made it, please report it. |
+| `cannot read this design: malformed container: …` | Download or copy the file again, or check its extension. If the original opens in the program that made it, use the anonymous reporting route above. |
 | `cannot convert this design: the model has no solids or surfaces SolidCraft can import` | The file was read but held nothing SolidCraft can hold as a solid or surface. |
 | `missing.f3d: No such file or directory (os error 2)` | Check the path. |
 | `part.f3d: the file is … bytes, over Dutchman's 1073741824-byte limit` | Dutchman opens files up to 1 GiB. |
 | `history: …; unverified: …` | Not an error: the history was written without the SolidCraft check. Install `solidcraft-cli`, or point `--solidcraft` or `SOLIDCRAFT_CLI` at it, and convert again. |
 | `history: flattened: replay differs (…)` | Not an error: the history did not rebuild the same shape in SolidCraft, so the geometry was written instead. `--no-verify` keeps the history, unchecked. |
-
-A design that converts but looks wrong in SolidCraft is worth a report. Please open an issue
-with the loss report and, if you can share it, a small file that shows the problem. Only
-share files you made yourself and are free to share.

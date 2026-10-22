@@ -74,6 +74,30 @@ fn convert_reports_missing_input() {
 }
 
 #[test]
+fn an_unreadable_archive_suggests_recovery_in_text_and_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("incomplete.f3d");
+    let output = dir.path().join("out.solidcraft");
+    std::fs::write(&input, b"not an archive").unwrap();
+    let args = [input.to_str().unwrap(), output.to_str().unwrap()];
+    let text = dutchman(&["convert", args[0], args[1]]);
+    assert_eq!(text.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&text.stderr);
+    assert!(stderr.contains("download or copy it again"), "{stderr}");
+    assert!(stderr.contains("check its extension"), "{stderr}");
+    assert!(stderr.contains("testing-your-library.md"), "{stderr}");
+    let json = dutchman(&["convert", "--json", args[0], args[1]]);
+    assert_eq!(json.status.code(), Some(1));
+    assert!(json.stderr.is_empty());
+    let report = json_of(&json);
+    assert_eq!(report["error"]["stage"], "decode");
+    assert_eq!(report["error"]["upstream"], "cadmpeg");
+    let message = report["error"]["message"].as_str().unwrap();
+    assert_eq!(stderr.trim(), format!("dutchman: {message}"));
+    assert!(!output.exists());
+}
+
+#[test]
 fn missing_arguments_is_a_usage_error() {
     let out = dutchman(&["convert"]);
     assert_eq!(out.status.code(), Some(2));
