@@ -351,9 +351,11 @@ impl App {
                     ui.add_space(theme::SPACE_4);
                     ui.label(RichText::new("Drop design files or folders here").heading());
                     ui.label(
-                        RichText::new(
-                            "Fusion (.f3d, .f3z), Inventor (.ipt, .iam) and SolidWorks (.sldprt)",
-                        )
+                        RichText::new(if cfg!(feature = "freecad") {
+                            "Fusion (.f3d, .f3z), Inventor (.ipt, .iam), SolidWorks (.sldprt) and FreeCAD (.FCStd)"
+                        } else {
+                            "Fusion (.f3d, .f3z), Inventor (.ipt, .iam) and SolidWorks (.sldprt)"
+                        })
                         .small()
                         .color(p.tide),
                     );

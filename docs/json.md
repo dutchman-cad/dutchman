@@ -42,7 +42,7 @@ version (`dutchman.convert/2`).
 | Field | Meaning |
 |---|---|
 | `ok` | `true` when the design was written. |
-| `input.format` | `fusion_archive`, `fusion_multi_document`, `inventor_part`, `inventor_assembly`, `solidworks_part`, `solidworks_assembly`, or `null` for an unknown extension. `format_name` is the same for people. |
+| `input.format` | `fusion_archive`, `fusion_multi_document`, `inventor_part`, `inventor_assembly`, `solidworks_part`, `solidworks_assembly`, `freecad_document`, or `null` for an unknown extension. `format_name` is the same for people. |
 | `output.format` | The SolidCraft design format written. |
 | `mode` | `history`: editable feature history, with the original geometry kept beside it, suppressed. `import`: the geometry alone. |
 | `verification.status` | `verified`: the history was replayed in SolidCraft and matches the original. `unverified`: the history was written without that check (`reason` says why: no `solidcraft-cli`, a timeout, `--no-verify`). `flattened`: the design has a history but it was not written (`reason`: the first feature that does not map, or `replay differs (…)`). `not_applicable`: there was no history to write, or `--import-only`. |

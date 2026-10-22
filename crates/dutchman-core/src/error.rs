@@ -30,14 +30,8 @@ pub enum Error {
         Format::supported_names()
     )]
     UnknownFormat { path: PathBuf },
-    /// The format is known but no reader exists for it yet.
-    #[error(
-        "{} files are not supported yet. Export a STEP file for SolidCraft to open; Dutchman's \
-         issues (https://github.com/dutchman-cad/dutchman/issues) say when {} files will \
-         convert.",
-        format.name(),
-        format.family()
-    )]
+    /// The format is known but no reader exists for it yet, or not in this build.
+    #[error("{}", not_supported(*format))]
     NotSupportedYet { format: Format },
     /// The output file exists and replacing it was not allowed.
     #[error("{}: already exists; it is not replaced when overwriting is turned off", path.display())]
@@ -86,11 +80,35 @@ impl Error {
     /// The project whose code it stopped in, when it is not Dutchman's own.
     pub fn upstream(&self) -> Option<&'static str> {
         match self {
+            // A FreeCAD file in a build without FreeCAD is this build's doing.
+            Error::NotSupportedYet {
+                format: Format::FreeCadDocument,
+            } => None,
             Error::NotSupportedYet { .. }
             | Error::Decode(_)
             | Error::NoGeometry(_)
             | Error::Restate(_) => Some("cadmpeg"),
             _ => None,
         }
+    }
+}
+
+/// Where the nightly builds are.
+pub const NIGHTLY: &str = "https://github.com/dutchman-cad/dutchman/releases/tag/nightly";
+
+/// What to do with a file of a format this build does not convert.
+fn not_supported(format: Format) -> String {
+    match format {
+        // Built without the `freecad` feature.
+        Format::FreeCadDocument => {
+            format!("FreeCAD files convert in nightly builds for now: {NIGHTLY}")
+        }
+        _ => format!(
+            "{} files are not supported yet. Export a STEP file for SolidCraft to open; \
+             Dutchman's issues (https://github.com/dutchman-cad/dutchman/issues) say when {} \
+             files will convert.",
+            format.name(),
+            format.family()
+        ),
     }
 }

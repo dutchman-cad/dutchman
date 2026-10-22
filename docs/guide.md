@@ -273,13 +273,15 @@ dutchman formats
 Fusion archive (.f3d)            converts  geometry; feature history (sketches, constraints, dimensions, extrudes, revolves) when every feature maps; components when the file says which bodies they own
 Fusion multi-document archive (.f3z) converts  as a Fusion archive, with the designs it references merged in by cadmpeg
 Inventor part (.ipt)             converts  geometry; feature history waits on cadmpeg resolving extrude profiles
-Inventor assembly (.iam)         converts  placed parts and sub-assemblies, read from the part files next to it
+Inventor assembly (.iam)         converts  placed parts and sub-assemblies, read from their files in the project
 SolidWorks part (.sldprt)        converts  geometry; feature history waits on cadmpeg binding sketches and extrude profiles
 SolidWorks assembly (.sldasm)    not yet   nothing yet
+FreeCAD document (.FCStd)        not yet   in nightly builds for now: https://github.com/dutchman-cad/dutchman/releases/tag/nightly
 ```
 
 The state of each format, and what is still missing upstream, is in [fusion.md](fusion.md),
-[inventor.md](inventor.md) and [sldprt.md](sldprt.md). Reading native files is done by
+[inventor.md](inventor.md), [sldprt.md](sldprt.md) and [freecad.md](freecad.md). Reading
+native files is done by
 [cadmpeg](https://github.com/cadmpeg/cadmpeg); a format improves in Dutchman when it improves
 there.
 

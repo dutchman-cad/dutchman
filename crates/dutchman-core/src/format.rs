@@ -16,17 +16,20 @@ pub enum Format {
     SolidWorksPart,
     /// SolidWorks assembly (`.sldasm`).
     SolidWorksAssembly,
+    /// FreeCAD document (`.FCStd`).
+    FreeCadDocument,
 }
 
 impl Format {
     /// Every recognised format.
-    pub const ALL: [Format; 6] = [
+    pub const ALL: [Format; 7] = [
         Format::InventorPart,
         Format::InventorAssembly,
         Format::FusionArchive,
         Format::FusionMultiDocument,
         Format::SolidWorksPart,
         Format::SolidWorksAssembly,
+        Format::FreeCadDocument,
     ];
 
     /// A stable identifier for scripts (`fusion_archive`, `inventor_part`, …).
@@ -38,6 +41,7 @@ impl Format {
             Format::FusionMultiDocument => "fusion_multi_document",
             Format::SolidWorksPart => "solidworks_part",
             Format::SolidWorksAssembly => "solidworks_assembly",
+            Format::FreeCadDocument => "freecad_document",
         }
     }
 
@@ -50,6 +54,7 @@ impl Format {
             Format::FusionMultiDocument => "f3z",
             Format::SolidWorksPart => "sldprt",
             Format::SolidWorksAssembly => "sldasm",
+            Format::FreeCadDocument => "FCStd",
         }
     }
 
@@ -62,6 +67,7 @@ impl Format {
             Format::FusionMultiDocument => "Fusion multi-document archive (.f3z)",
             Format::SolidWorksPart => "SolidWorks part (.sldprt)",
             Format::SolidWorksAssembly => "SolidWorks assembly (.sldasm)",
+            Format::FreeCadDocument => "FreeCAD document (.FCStd)",
         }
     }
 
@@ -71,6 +77,7 @@ impl Format {
             Format::InventorPart | Format::InventorAssembly => "Inventor",
             Format::FusionArchive | Format::FusionMultiDocument => "Fusion",
             Format::SolidWorksPart | Format::SolidWorksAssembly => "SolidWorks",
+            Format::FreeCadDocument => "FreeCAD",
         }
     }
 
@@ -96,6 +103,8 @@ impl Format {
             Format::InventorPart | Format::InventorAssembly => Some("inventor"),
             Format::SolidWorksPart => Some("sldprt"),
             Format::SolidWorksAssembly => None,
+            Format::FreeCadDocument if cfg!(feature = "freecad") => Some("fcstd"),
+            Format::FreeCadDocument => None,
         }
     }
 
@@ -109,6 +118,7 @@ impl Format {
         match id {
             "f3d" => Some(Format::FusionArchive),
             "sldprt" => Some(Format::SolidWorksPart),
+            "fcstd" => Some(Format::FreeCadDocument),
             _ => None,
         }
     }

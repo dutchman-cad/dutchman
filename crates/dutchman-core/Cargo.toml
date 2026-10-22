@@ -15,6 +15,13 @@ cadmpeg-registry.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
+[features]
+default = []
+# FreeCAD documents (.FCStd), through cadmpeg's fcstd codec. Off by default until a cadmpeg
+# release reads FreeCAD solids right (docs/freecad.md); the nightly build turns it on, and a
+# build without it says FreeCAD files convert in nightly builds.
+freecad = ["cadmpeg-registry/fcstd"]
+
 [dev-dependencies]
 tempfile.workspace = true
 

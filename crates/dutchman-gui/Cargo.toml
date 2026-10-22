@@ -12,6 +12,11 @@ publish = false
 name = "dutchman-gui"
 path = "src/main.rs"
 
+[features]
+default = []
+# FreeCAD documents (.FCStd); see dutchman-core's feature of the same name.
+freecad = ["dutchman/freecad"]
+
 [dependencies]
 dutchman.workspace = true
 dutchman-solidcraft.workspace = true

@@ -68,7 +68,7 @@ only when `solidcraft-cli` is on the server's `PATH`, and is reported unverified
 
 | Argument | Type | Meaning |
 |---|---|---|
-| `input` | string | Absolute path of a native CAD file: `.f3d`, `.f3z`, `.ipt`, `.iam` or `.sldprt`. |
+| `input` | string | Absolute path of a native CAD file: `.f3d`, `.f3z`, `.ipt`, `.iam` or `.sldprt`, and `.FCStd` in [nightly builds](freecad.md). |
 | `output` | string | Absolute path of the `.solidcraft` file to write. An existing file is replaced, unless `overwrite` is false. |
 | `inputs` | array of strings, at least one | Absolute paths of files, and of folders to search (with their subfolders) for files Dutchman knows. |
 | `out_dir` | string | Absolute path of the folder for the designs, keeping each input folder's layout. Created if missing. |

@@ -51,9 +51,20 @@ fn convert_rejects_unknown_input() {
     std::fs::write(&input, b"hello").unwrap();
     let out = dutchman(&["convert", input.to_str().unwrap(), "x.solidcraft"]);
     assert_eq!(out.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&out.stderr).contains(
-        "Dutchman does not convert this kind of file. It converts Inventor part (.ipt), Inventor assembly (.iam), Fusion archive (.f3d), Fusion multi-document archive (.f3z) and SolidWorks part (.sldprt) files."
-    ));
+    let converts = if cfg!(feature = "freecad") {
+        "Inventor part (.ipt), Inventor assembly (.iam), Fusion archive (.f3d), Fusion \
+         multi-document archive (.f3z), SolidWorks part (.sldprt) and FreeCAD document (.FCStd)"
+    } else {
+        "Inventor part (.ipt), Inventor assembly (.iam), Fusion archive (.f3d), Fusion \
+         multi-document archive (.f3z) and SolidWorks part (.sldprt)"
+    };
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains(&format!(
+            "Dutchman does not convert this kind of file. It converts {converts} files."
+        )),
+        "{stderr}"
+    );
 }
 
 #[test]
@@ -719,4 +730,58 @@ fn a_file_over_its_time_or_memory_is_stopped_and_the_batch_carries_on() {
             }
         }
     }
+}
+
+#[cfg(feature = "freecad")]
+#[test]
+fn a_freecad_document_converts() {
+    let out_dir = tempfile::tempdir().unwrap();
+    let output = out_dir.path().join("product.solidcraft");
+    let out = dutchman(&[
+        "convert",
+        "--json",
+        "--no-verify",
+        &fixture("core_design_product.FCStd"),
+        output.to_str().unwrap(),
+    ]);
+    let report = json_of(&out);
+    assert_eq!(report["ok"], true, "{report}");
+    assert_eq!(report["input"]["format"], "freecad_document");
+    assert!(output.is_file());
+    let formats = json_of(&dutchman(&["formats", "--json"]));
+    let freecad = formats["formats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["id"] == "freecad_document")
+        .unwrap();
+    assert_eq!(freecad["status"], "converts");
+}
+
+#[cfg(not(feature = "freecad"))]
+#[test]
+fn a_build_without_freecad_says_where_freecad_files_convert() {
+    let out_dir = tempfile::tempdir().unwrap();
+    let output = out_dir.path().join("product.solidcraft");
+    let out = dutchman(&[
+        "convert",
+        "--json",
+        &fixture("core_design_product.FCStd"),
+        output.to_str().unwrap(),
+    ]);
+    assert_eq!(out.status.code(), Some(1));
+    let report = json_of(&out);
+    assert_eq!(
+        report["error"]["message"],
+        "FreeCAD files convert in nightly builds for now: \
+         https://github.com/dutchman-cad/dutchman/releases/tag/nightly"
+    );
+    assert_eq!(report["error"]["upstream"], serde_json::Value::Null);
+    assert!(!output.exists());
+    let text = String::from_utf8(dutchman(&["formats"]).stdout).unwrap();
+    let line = text.lines().find(|l| l.starts_with("FreeCAD")).unwrap();
+    assert!(
+        line.contains("not yet") && line.contains("in nightly builds for now"),
+        "{line}"
+    );
 }

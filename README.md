@@ -33,8 +33,9 @@ minute. Every release is on the [releases page](https://github.com/dutchman-cad/
 ## What converts
 
 Early development. Fusion (`.f3d`, `.f3z`) designs, Inventor parts (`.ipt`), Inventor
-assemblies (`.iam`, with their parts found anywhere in the project) and SolidWorks parts (`.sldprt`)
-convert today:
+assemblies (`.iam`, with their parts found anywhere in the project) and SolidWorks parts
+(`.sldprt`) convert today, and FreeCAD documents (`.FCStd`) in the
+[nightly builds](docs/freecad.md):
 
 - When every feature in a design's history maps onto SolidCraft (sketches and extrudes so
   far), the SolidCraft design keeps that history, editable, with the original geometry kept
@@ -87,7 +88,7 @@ desktop portal, and dropping files works without it.
 - [Testing Dutchman on your library](docs/testing-your-library.md): convert your own files
   and report what broke, without sharing a file.
 - Formats: [Fusion](docs/fusion.md), [Inventor](docs/inventor.md),
-  [SolidWorks](docs/sldprt.md).
+  [SolidWorks](docs/sldprt.md), [FreeCAD](docs/freecad.md).
 - Contributing: [CONTRIBUTING.md](CONTRIBUTING.md), and [AGENTS.md](AGENTS.md) for AI
   contributors.
 

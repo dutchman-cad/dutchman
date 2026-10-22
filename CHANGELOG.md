@@ -8,6 +8,14 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Formats
+
+- **FreeCAD** documents (`.FCStd`) convert in the nightly builds, through cadmpeg's FreeCAD
+  codec: their geometry, and their components when cadmpeg says which bodies each owns.
+  Stable builds say so instead, until a cadmpeg release reads FreeCAD solids right. FreeCAD
+  support is the `freecad` cargo feature, which the nightly build turns on. See
+  [docs/freecad.md](docs/freecad.md).
+
 ### Feature history
 
 - Simple holes drilled at a sketch's circle centres, arc centres or points map onto
