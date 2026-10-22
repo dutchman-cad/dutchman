@@ -973,9 +973,9 @@ fn side_path(
         Some("external") => {
             // A component inside a design inserted into this one, whose contents the file
             // carries: the operand names the occurrences inside it by their keys, outermost
-            // first. Its frame is in the inserted design's own space, the placement of the
-            // occurrence that inserts it, and the joint holds that occurrence: the inserted
-            // design's own joints are not carried, so its parts move as one.
+            // first. Its frame is in the deepest of them, and the joint holds the occurrence
+            // that inserts the design: the inserted design's own joints are not carried, so
+            // its parts move as one.
             let named = listed(operand.get("subelements"))
                 .iter()
                 .rev()
@@ -997,8 +997,8 @@ fn side_path(
             if *shared {
                 return Err("it joins a component inside one placed more than once".to_owned());
             }
-            let world = worlds.get(holder).copied().unwrap_or(IDENTITY);
-            Ok((path.clone(), world, world))
+            let world = |id: &str| worlds.get(id).copied().unwrap_or(IDENTITY);
+            Ok((path.clone(), world(named), world(holder)))
         }
         _ => Err("it is malformed".to_owned()),
     }
@@ -2133,7 +2133,9 @@ mod tests {
 
     #[test]
     fn a_design_inserted_into_this_one_is_placed_and_joined_as_a_whole() {
-        // The gripper's own frame faces the block's 50 mm up: the whole gripper stands there.
+        // The joint's frame on the gripper is the finger's own, 5 mm along x inside it: it
+        // faces the block's 50 mm up, and the whole gripper stands so the finger's frame is
+        // there.
         let model = with_inserted_design(json!([joint(
             1,
             json!({"kind": "fixed"}),
@@ -2155,8 +2157,12 @@ mod tests {
         assert_eq!(inner.placements[0].transform[0][3], 5.0);
         assert_eq!(assembly.joints[0].a, [gripper]);
         let world = world_at(&assembly, &[gripper]).unwrap();
+        let finger = at([5.0, 0.0, 0.0], 0.0);
         assert!(
-            near(&world, &facing(at([0.0, 0.0, 50.0], 0.0))),
+            near(
+                &compose(&world, &finger),
+                &facing(at([0.0, 0.0, 50.0], 0.0))
+            ),
             "{world:?}"
         );
         // A key no component inside it has joins nothing.
