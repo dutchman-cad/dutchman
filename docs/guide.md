@@ -564,8 +564,9 @@ numeric properties; editing those properties does not recompute the coil.
 
 A part whose history cannot be rebuilt is kept as an embedded STEP solid or surface in a
 Body. Examples include unresolved source selections, intersect operations, fixed-orientation,
-guided or twisted sweeps and lofts, two-direction patterns, and histories spanning multiple
-bodies. The report gives one result per source feature, including the reason each feature
+guided, twisted, scaled or binormal sweeps and lofts, lofts ending at a point, extrudes from
+or to a point or face or with taper, counterbored, countersunk or face-ended holes, coils
+about an axis other than Z, two-direction patterns, and histories spanning multiple bodies. The report gives one result per source feature, including the reason each feature
 was not rebuilt. `--import-only` keeps every part as STEP. Assemblies retain placements;
 joints are not rebuilt. Pattern counts are limited to 10,000. Solid lines drawn corner to
 corner across a profile taken whole (a centre rectangle's diagonals, when the source does

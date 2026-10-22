@@ -217,3 +217,39 @@ fn step_freecad_cannot_read_is_refused_before_the_macro_is_written() {
     assert!(readable("#1 = LINE('',#2,#3);\n").is_ok());
     assert!(readable("#29 = CURVE_REPLICA('',#24,#28);\n").is_err());
 }
+
+#[test]
+fn options_the_script_would_ignore_are_refused_with_a_reason() {
+    let base = json!({"id": 2, "name": "F", "type": "extrude", "operation": "join",
+        "extent": {"direction": "positive", "distance": "5 mm"}});
+    assert!(generate::history(std::slice::from_ref(&base)).is_ok());
+    for (key, value) in [
+        (
+            "extent",
+            json!({"direction": "positive", "distance": "5 mm", "taper": "2 deg"}),
+        ),
+        (
+            "extent",
+            json!({"direction": "positive", "distance": "0 mm", "to": [0.0, 0.0, 9.0]}),
+        ),
+    ] {
+        let mut row = base.clone();
+        row[key] = value;
+        let reason = generate::history(&[row]).unwrap_err();
+        assert!(
+            reason.contains("not supported yet in FreeCAD output"),
+            "{reason}"
+        );
+    }
+    let counterbore = json!({"id": 3, "name": "H", "type": "hole", "diameter": "4 mm",
+        "hole": {"type": "counterbore", "cb_diameter": "8 mm"}});
+    assert!(generate::history(&[counterbore])
+        .unwrap_err()
+        .contains("counterbored"));
+    let tilted = json!({"id": 4, "name": "C", "type": "coil", "axis": [1.0, 0.0, 0.0]});
+    assert!(generate::history(&[tilted])
+        .unwrap_err()
+        .contains("other than Z"));
+    let scaled = json!({"id": 5, "name": "S", "type": "sweep", "scale": "2"});
+    assert!(generate::history(&[scaled]).is_err());
+}

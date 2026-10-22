@@ -42,6 +42,42 @@ pub(crate) fn data(value: &Value) -> Result<String, Error> {
     Ok(format!("json.loads({})", quoted(&json(value, 0)?)?))
 }
 
+/// Mapped options the rebuild script does not apply yet, named for the report. Anything the
+/// script would silently ignore is refused here so the part stays STEP and the reason is told.
+fn unsupported(kind: &str, row: &Value) -> Option<&'static str> {
+    match kind {
+        "extrude" => {
+            let extent = row.get("extent")?;
+            ["from", "to", "to_offset", "taper"]
+                .iter()
+                .any(|key| extent.get(*key).is_some())
+                .then_some("extrudes from or to a point or face, or with taper,")
+        }
+        "hole" => {
+            let form = row.get("hole").and_then(|hole| hole.get("type"));
+            (row.get("to").is_some()
+                || !matches!(form.and_then(Value::as_str), Some("simple" | "drilled")))
+            .then_some("counterbored, countersunk or face-ended holes")
+        }
+        "loft" => row
+            .get("sections")
+            .and_then(Value::as_array)?
+            .iter()
+            .any(|section| section.get("point").is_some())
+            .then_some("lofts that end at a point"),
+        "coil" => {
+            let axis = row.get("axis").and_then(Value::as_array)?;
+            let along_z = axis.len() == 3
+                && axis
+                    .iter()
+                    .map(Value::as_f64)
+                    .eq([Some(0.0), Some(0.0), Some(1.0)]);
+            (!along_z).then_some("coils about an axis other than Z")
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn history(rows: &[Value]) -> Result<String, String> {
     if rows.len() > 100_000 {
         return Err("more than 100000 mapped features are not supported yet".to_owned());
@@ -82,9 +118,14 @@ pub(crate) fn history(rows: &[Value]) -> Result<String, String> {
                 "feature {name:?}: intersect operations are not supported yet in FreeCAD output"
             ));
         }
-        if row.get("orientation").and_then(Value::as_str) == Some("parallel") {
+        if row.get("orientation").is_some() || row.get("scale").is_some() {
             return Err(format!(
-                "feature {name:?}: fixed sweep orientation is not supported yet in FreeCAD output"
+                "feature {name:?}: fixed, binormal or scaled sweeps are not supported yet in FreeCAD output"
+            ));
+        }
+        if let Some(reason) = unsupported(kind, row) {
+            return Err(format!(
+                "feature {name:?}: {reason} are not supported yet in FreeCAD output"
             ));
         }
         if row.get("rails").is_some() || row.get("twist").is_some() {
