@@ -135,6 +135,9 @@ impl fmt::Display for Loss {
     }
 }
 
+/// The most names one report records: enough for any real design, bounded for a hostile one.
+const MAX_NAMES: usize = 100_000;
+
 /// Everything a conversion could not carry across. A conversion that returns a report
 /// succeeded; the report says how faithfully.
 #[derive(Clone, Debug, Default)]
@@ -143,6 +146,7 @@ pub struct Report {
     outcome: Option<Outcome>,
     completeness: Option<Completeness>,
     joints: std::collections::BTreeMap<String, u64>,
+    names: std::collections::BTreeSet<String>,
 }
 
 /// How much of an assembly was placed: every placement its file and its placed sub-assemblies'
@@ -306,6 +310,7 @@ impl Report {
     /// Records every loss of `other`, after this report's own.
     pub fn append(&mut self, other: Report) {
         self.losses.extend(other.losses);
+        self.names.extend(other.names);
     }
 
     /// Records every loss of `other` under `prefix` (`part.ipt: …`), after this report's own.
@@ -315,6 +320,22 @@ impl Report {
                 subject: format!("{prefix}: {}", loss.subject),
                 ..loss
             }));
+        self.names.extend(other.names);
+    }
+
+    /// Records a name the conversion met: a file's, folder's or path's, or one the design
+    /// gives a part, component, body, feature, sketch or parameter. They are never reported;
+    /// they are what an anonymous report must take out of messages.
+    pub fn saw(&mut self, name: &str) {
+        let name = name.trim();
+        if !name.is_empty() && self.names.len() < MAX_NAMES {
+            self.names.insert(name.to_owned());
+        }
+    }
+
+    /// Every name the conversion met (see [`Report::saw`]).
+    pub fn names(&self) -> &std::collections::BTreeSet<String> {
+        &self.names
     }
 
     /// Records what the writer made of the design.

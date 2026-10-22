@@ -302,12 +302,14 @@ pub(crate) fn resolve(
         };
         let path = match finder.locate(stored, folder) {
             Ok(found) => {
+                crate::names::saw_path(&found.path, report);
                 if let Some((count, used)) = found.ambiguous {
+                    crate::names::saw_stored(&used, report);
                     report.push_at(
                         Stage::Input,
                         Severity::Info,
                         file,
-                        format!("{count} files in the project have this name; used {used}"),
+                        format!("{count} files in the project have this name; used \"{used}\""),
                     );
                 }
                 found.path
@@ -1701,6 +1703,23 @@ mod tests {
             sub.placements.len(),
             1,
             "the sub-assembly's cube, found by searching"
+        );
+        // Each part found, and the folders it was found in, are names the report met: by
+        // name, as every system spells the path to them its own way (`\\`, `/private/var`).
+        for name in ["Robot", "Parts", "SubAssembly", "cube.ipt", "cube"] {
+            assert!(
+                report.names().contains(name),
+                "{name}: {:?}",
+                report.names()
+            );
+        }
+        assert!(
+            report
+                .names()
+                .iter()
+                .any(|name| name.ends_with("cube.ipt") && name.contains("Parts")),
+            "the whole path found: {:?}",
+            report.names()
         );
     }
 

@@ -211,6 +211,22 @@ impl Finder {
         }
     }
 
+    /// Every path the search was given or found: the project folder, its Inventor project
+    /// files, the folders they name (as stored and as found) and the other folders searched.
+    pub(crate) fn paths(&self) -> Vec<String> {
+        let mut out: Vec<String> = self.given.iter().map(|p| p.display().to_string()).collect();
+        out.extend(self.also.iter().map(|(p, _)| p.display().to_string()));
+        if let Some(project) = self.project.get() {
+            out.push(project.root.display().to_string());
+            out.extend(project.files.iter().map(|p| p.display().to_string()));
+            for (folder, _) in &project.named {
+                out.push(folder.stored.clone());
+                out.extend(folder.path.iter().map(|p| p.display().to_string()));
+            }
+        }
+        out
+    }
+
     /// When a part was searched for: the folders searched, in order, for the report.
     pub(crate) fn searched_note(&self) -> Option<String> {
         self.index.get()?;

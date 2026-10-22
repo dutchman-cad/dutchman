@@ -302,7 +302,8 @@ Large batches:
   reported as failed, and the rest carry on. A file that crashes the converter fails alone.
 - **Carry on where you stopped.** `--journal FILE` records each file's result as it finishes.
   Run the same command again and the files already recorded, unchanged since, are not
-  converted again; their results come from the journal.
+  converted again; their results come from the journal. Files another version of Dutchman
+  recorded, or an older journal format (before 0.1.4), are converted again.
 - **A report you can share.** `--report-anon FILE` also writes an anonymous report: counts by
   format, every loss and failure by cause and stage, and timings, with no file names, paths or
   geometry. See [Testing Dutchman on your library](testing-your-library.md) and

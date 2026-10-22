@@ -9,10 +9,17 @@ which files were in it. It is made to be shared: posted in an issue, sent to the
 - **No file or folder names, no paths.** Each file appears only as an id, `f` and 16 hex
   digits: a SHA-256 hash of the file's full path and a secret salt. Nobody can turn an id back
   into a path without the salt and the path.
-- **No part, component, feature or sketch names.** Messages keep their wording, but every path,
-  file name, quoted name (`"…"`, `'…'`, `` `…` ``, `“…”`), each file's own feature names and
-  every long hexadecimal id (a GUID, a hash) in them are replaced by `<path>`, `<file>`,
-  `<name>` or `<id>`.
+- **No part, component, feature or sketch names.** Messages keep their wording, but every
+  name the conversion met is replaced by `<name>`: the names of the files and folders it read
+  from (the project folder, the Inventor project file and the folders it names, every part
+  found), and every name the design gives a part, component, body, feature, sketch, parameter
+  or property (each convert report lists them in `names`). Every path, file name, quoted name
+  (`"…"`, `'…'`, `` `…` ``, `“…”`), word with a path separator in it, and long hexadecimal id
+  (a GUID, a hash) is replaced by `<path>`, `<file>`, `<name>` or `<id>` too. A name is taken
+  out where it stands as a word of its own; plain lower-case words (`import`, `parts`) are
+  left, as messages are made of them.
+- **No names in codes.** A loss code is cadmpeg's own fixed code, or `dutchman/` and one of a
+  fixed set of words (`history`, `feature`, `sketch`, `joints`, `parts`, …, `other`).
 - **No geometry**: no coordinates, sizes, volumes or models.
 - **No salt.** The salt is printed on your screen when the run ends, and written to the key
   file if you ask for one. It is never in the report.
@@ -71,7 +78,7 @@ When a maintainer asks about `f3a9c0e1d2b4f5a6`, look it up in your key.
 | `skipped_by_extension` | The skipped files by extension: lower case, `none`, or `other` for one that is not 1–8 letters and digits. |
 | `stages` | For each stage (`input`, `decode`, `project`, `map`, `write`, `solidcraft`; see [Stages](json.md#stages)): the files that `failed` there, the `losses` that arose there, and the `files` with either. |
 | `errors` | Every distinct failure, most files first. Messages that differ only in their numbers are one cause. |
-| `losses` | Every distinct loss: by cadmpeg's loss `code`, or for Dutchman's own by `dutchman/<kind>` (what it is about: `history`, `feature`, `sketch`, `joints`, …) and message. `example` is one message, cleaned. |
+| `losses` | Every distinct loss: by cadmpeg's loss `code`, or for Dutchman's own by `dutchman/<kind>` (what it is about: `appearance`, `assembly`, `bodies`, `components`, `constraints`, `feature`, `full`, `geometry`, `history`, `joints`, `occurrence`, `parameter`, `parts`, `pattern`, `profile`, `sketch`, `validation`, `writer`, else `other`) and message. `example` is one message, cleaned. |
 | `blocked_features` | The source features that kept a history from being written, by `kind` and `reason`. |
 | `verification` | Why histories were written unchecked (`unverified`), not written (`flattened`), or not applicable, by reason. |
 | `timing` | Times per file, in milliseconds: the nearest-rank 50th, 90th and 99th percentiles, the longest and the total. Files that were never started (a path that does not exist) are not timed. |

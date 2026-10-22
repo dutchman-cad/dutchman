@@ -55,6 +55,13 @@ const EXTENSIONS: [&str; 24] = [
     "solidcraft",
 ];
 
+/// Words messages join with slashes (`body/region/shell/face`, `and/or`); a slashed word of
+/// anything else is taken for a path.
+const ALTERNATIVES: [&str; 22] = [
+    "and", "or", "body", "region", "shell", "face", "loop", "coedge", "edge", "vertex", "point",
+    "curve", "surface", "solid", "sheet", "wire", "inside", "outside", "x", "y", "z", "s",
+];
+
 /// The secret that makes the report's file ids: whoever holds it can tell which file an id
 /// is, by hashing their own files' paths with it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -154,6 +161,7 @@ pub fn report(
         if let Some(output) = result.pointer("/output/path").and_then(Value::as_str) {
             scrub.know_path(Path::new(output));
         }
+        scrub.know_names_in(result);
         let id = salt.file_id(&input);
         key.insert(id.clone(), input.display().to_string());
         files.push(File::read(result, id));
@@ -271,8 +279,6 @@ pub fn write(
 /// What the report needs of one file's convert report.
 struct File<'a> {
     id: String,
-    /// Its features' names, taken out of its messages.
-    names: Vec<String>,
     format: String,
     report: &'a Value,
     ok: bool,
@@ -286,17 +292,8 @@ impl<'a> File<'a> {
             .and_then(Value::as_str)
             .and_then(|id| Format::ALL.iter().find(|f| f.id() == id))
             .map_or_else(|| "unknown".to_owned(), |f| f.id().to_owned());
-        let names = report
-            .pointer("/history/features")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|feature| feature.get("name").and_then(Value::as_str))
-            .map(str::to_owned)
-            .collect();
         File {
             id,
-            names,
             format,
             ok: report.get("ok") == Some(&json!(true)),
             elapsed_ms: report.get("elapsed_ms").and_then(Value::as_u64),
@@ -463,10 +460,7 @@ fn ranked(causes: BTreeMap<String, Cause>) -> Value {
 fn errors(files: &[File], scrub: &Scrubber) -> Value {
     let mut causes: BTreeMap<String, Cause> = BTreeMap::new();
     for file in files.iter().filter(|f| !f.ok) {
-        let message = scrub.text_naming(
-            file.field("/error/message").unwrap_or("failed"),
-            &file.names,
-        );
+        let message = scrub.text(file.field("/error/message").unwrap_or("failed"));
         let stage = file.field("/error/stage").unwrap_or("input");
         let upstream = file.report.pointer("/error/upstream").cloned();
         let cause = causes
@@ -491,9 +485,9 @@ fn losses(files: &[File], scrub: &Scrubber) -> Value {
     for file in files {
         for loss in file.losses() {
             let text = |key: &str| loss.get(key).and_then(Value::as_str).unwrap_or("");
-            let message = scrub.text_naming(text("message"), &file.names);
+            let message = scrub.text(text("message"));
             let code = match loss.get("code").and_then(Value::as_str) {
-                Some(code) => scrub.text(code),
+                Some(code) => generic(code, "cadmpeg/other"),
                 None => format!("dutchman/{}", subject_kind(text("subject"))),
             };
             let grouping = if loss.get("code").and_then(Value::as_str).is_some() {
@@ -538,13 +532,15 @@ fn blocked(files: &[File], scrub: &Scrubber) -> Value {
             if feature.get("status").and_then(Value::as_str) != Some("blocked") {
                 continue;
             }
-            let kind = scrub.text(feature.get("kind").and_then(Value::as_str).unwrap_or("?"));
-            let reason = scrub.text_naming(
+            let kind = generic(
+                feature.get("kind").and_then(Value::as_str).unwrap_or("?"),
+                "other",
+            );
+            let reason = scrub.text(
                 feature
                     .get("reason")
                     .and_then(Value::as_str)
                     .unwrap_or("not mapped"),
-                &file.names,
             );
             let cause = causes
                 .entry(format!("{kind}|{}", template(&reason)))
@@ -568,10 +564,7 @@ fn verification(files: &[File], scrub: &Scrubber) -> Value {
         if matches!(status, "verified" | "none") {
             continue;
         }
-        let reason = scrub.text_naming(
-            file.field("/verification/reason").unwrap_or(""),
-            &file.names,
-        );
+        let reason = scrub.text(file.field("/verification/reason").unwrap_or(""));
         let cause = causes
             .entry(format!("{status}|{}", template(&reason)))
             .or_default();
@@ -625,24 +618,50 @@ fn slowest(files: &[File]) -> Value {
     )
 }
 
+/// The kinds of thing Dutchman's own losses are about, as their codes name them. A subject
+/// is a name (a file's, a part's) as often as a kind, so a code is only ever one of these.
+const KINDS: [&str; 18] = [
+    "appearance",
+    "assembly",
+    "bodies",
+    "components",
+    "constraints",
+    "feature",
+    "full",
+    "geometry",
+    "history",
+    "joints",
+    "occurrence",
+    "parameter",
+    "parts",
+    "pattern",
+    "profile",
+    "sketch",
+    "validation",
+    "writer",
+];
+
 /// The kind of thing a loss of Dutchman's own is about: the first word of its subject (the
-/// part after a part file's name in an assembly), lower case, letters only.
-fn subject_kind(subject: &str) -> String {
+/// part after a part file's name in an assembly) when it is one of [`KINDS`], else `other`.
+fn subject_kind(subject: &str) -> &'static str {
     let own = subject.rsplit(": ").next().unwrap_or(subject);
-    let word: String = own
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .chars()
-        .filter(char::is_ascii_alphabetic)
-        .take(24)
-        .collect::<String>()
-        .to_ascii_lowercase();
-    if word.is_empty() {
-        "other".to_owned()
-    } else {
-        word
-    }
+    let word = own.split_whitespace().next().unwrap_or("");
+    KINDS
+        .iter()
+        .find(|kind| kind.eq_ignore_ascii_case(word))
+        .copied()
+        .unwrap_or("other")
+}
+
+/// `code` when it is a code (lower-case letters, digits and `_ . / -`, at most 80), else
+/// `fallback`: cadmpeg's codes are fixed words, and nothing else is let through as one.
+fn generic(code: &str, fallback: &str) -> String {
+    let fixed = !code.is_empty()
+        && code.len() <= 80
+        && code.chars().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '.' | '/' | '-')
+        });
+    if fixed { code } else { fallback }.to_owned()
 }
 
 /// `text` with every run of digits written `N`, so messages that differ only in their counts
@@ -679,53 +698,122 @@ fn version_only(text: &str) -> String {
 /// like a path, a file name, a quoted name or a long id.
 #[derive(Default)]
 pub struct Scrubber {
-    /// Text known to name a file or folder, longest first when used.
-    known: BTreeSet<String>,
+    /// Text known to be a path, taken out wherever it appears.
+    paths: BTreeSet<String>,
+    /// Names known to name a file, folder, part or anything else in a design, taken out where
+    /// they stand as words of their own.
+    names: BTreeSet<String>,
+    /// Both, matched in one pass, longest first; built on first use.
+    matcher: std::sync::OnceLock<Option<Matcher>>,
+}
+
+/// Every known path and name, as one automaton, with which of the two each pattern is.
+struct Matcher {
+    automaton: aho_corasick::AhoCorasick,
+    is_path: Vec<bool>,
 }
 
 impl Scrubber {
-    /// Learns `path`: its full and given forms, its file name, and its stem when that is
-    /// distinctive (six characters or more, or with anything but letters).
+    /// Learns `path`: its given and full forms whole, and each of its folders' and its own
+    /// names.
     pub fn know_path(&mut self, path: &Path) {
-        let mut forms = vec![path.to_path_buf()];
+        let mut forms = vec![path.display().to_string()];
         if let Ok(full) = std::fs::canonicalize(path) {
-            forms.push(full);
+            forms.push(full.display().to_string());
         }
         for form in forms {
-            self.know(&form.display().to_string());
-            for part in [form.file_name(), form.file_stem()].into_iter().flatten() {
-                let part = part.to_string_lossy();
-                if distinctive(&part) {
-                    self.know(&part);
-                }
+            self.know_stored(&form);
+        }
+    }
+
+    /// Learns a path in any machine's form, and each of its parts and their stems.
+    fn know_stored(&mut self, stored: &str) {
+        if stored.contains(['/', '\\']) && stored.chars().count() >= 3 {
+            self.paths.insert(stored.to_owned());
+        }
+        for part in stored.split(['/', '\\']) {
+            self.know_name(part);
+            if let Some((stem, _)) = part.rsplit_once('.') {
+                self.know_name(stem);
             }
         }
     }
 
-    fn know(&mut self, text: &str) {
-        if text.chars().count() >= 3 {
-            self.known.insert(text.to_owned());
+    /// Learns `name` when it is distinctive enough to take out wherever it stands.
+    fn know_name(&mut self, name: &str) {
+        let name = name.trim();
+        if distinctive(name) {
+            self.names.insert(name.to_owned());
         }
+    }
+
+    /// Learns every name a convert report says its conversion met (`names`) and the names of
+    /// its features.
+    pub fn know_names_in(&mut self, report: &Value) {
+        let met = report.get("names").and_then(Value::as_array);
+        let features = report
+            .pointer("/history/features")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|feature| feature.get("name"));
+        for name in met.into_iter().flatten().chain(features) {
+            if let Some(name) = name.as_str() {
+                self.know_stored(name);
+                self.know_name(name);
+            }
+        }
+    }
+
+    fn matcher(&self) -> Option<&Matcher> {
+        self.matcher
+            .get_or_init(|| {
+                let patterns: Vec<&String> = self.paths.iter().chain(&self.names).collect();
+                if patterns.is_empty() {
+                    return None;
+                }
+                let automaton = aho_corasick::AhoCorasick::builder()
+                    .match_kind(aho_corasick::MatchKind::LeftmostLongest)
+                    .build(&patterns)
+                    .ok()?;
+                let is_path = (0..patterns.len()).map(|i| i < self.paths.len()).collect();
+                Some(Matcher { automaton, is_path })
+            })
+            .as_ref()
+    }
+
+    /// `text` with every known path and name taken out.
+    fn known(&self, text: &str) -> String {
+        let Some(matcher) = self.matcher() else {
+            return text.to_owned();
+        };
+        let mut out = String::with_capacity(text.len());
+        let mut kept = 0;
+        for found in matcher.automaton.find_iter(text) {
+            let is_path = matcher
+                .is_path
+                .get(found.pattern().as_usize())
+                .copied()
+                .unwrap_or(false);
+            let word = |c: Option<char>| c.is_some_and(char::is_alphanumeric);
+            let before = text
+                .get(..found.start())
+                .and_then(|t| t.chars().next_back());
+            let after = text.get(found.end()..).and_then(|t| t.chars().next());
+            if !is_path && (word(before) || word(after)) {
+                continue;
+            }
+            out.push_str(text.get(kept..found.start()).unwrap_or(""));
+            out.push_str(if is_path { "<file>" } else { "<name>" });
+            kept = found.end();
+        }
+        out.push_str(text.get(kept..).unwrap_or(""));
+        out
     }
 
     /// `text` with every name taken out.
     pub fn text(&self, text: &str) -> String {
-        self.text_naming(text, &[])
-    }
-
-    /// `text` with every name taken out, `names` (a file's own feature names) among them.
-    pub fn text_naming(&self, text: &str, names: &[String]) -> String {
-        let mut out = text.to_owned();
-        let mut known: Vec<&String> = self.known.iter().collect();
-        known.sort_by_key(|k| std::cmp::Reverse(k.len()));
-        for path in known {
-            out = out.replace(path.as_str(), "<file>");
-        }
-        let mut names: Vec<&String> = names.iter().filter(|n| n.chars().count() >= 3).collect();
-        names.sort_by_key(|n| std::cmp::Reverse(n.len()));
-        for name in names {
-            out = out.replace(name.as_str(), "<name>");
-        }
+        let out = self.known(text);
         let out = quoted(&out);
         let out = out.split(' ').map(token).collect::<Vec<_>>().join(" ");
         let out = long_ids(&out);
@@ -737,12 +825,13 @@ impl Scrubber {
     }
 }
 
-/// Whether a file or folder name is distinctive enough to take out wherever it appears: six
-/// characters or more, or with anything but letters in it. Shorter plain words (`out`,
-/// `parts`) would take words out of every message; they show only within paths, which go
-/// whole.
+/// Whether a name is distinctive enough to take out wherever it stands as a word: three
+/// characters or more, with anything but lower-case ASCII letters in it (a capital, a digit, a
+/// space, punctuation, any other script). Plain lower-case words (`import`, `parts`) are the
+/// words messages are made of; they go only within the paths and quoted names they are part
+/// of.
 fn distinctive(name: &str) -> bool {
-    name.chars().count() >= 6 || !name.chars().all(char::is_alphabetic)
+    name.chars().count() >= 3 && !name.chars().all(|c| c.is_ascii_lowercase())
 }
 
 /// `text` with what is inside double quotes, curly quotes, backticks and single quotes
@@ -818,8 +907,13 @@ fn token(word: &str) -> String {
     });
     let drive = core.len() > 2 && core.as_bytes().get(1) == Some(&b':') && core.contains('\\');
     let rooted = core.starts_with('/') || core.starts_with('~') || core.starts_with("\\\\");
-    let separated = core.contains('/') || core.contains('\\');
-    if rooted || drive || separated && (has_extension || core.starts_with('.')) {
+    // A relative path (`Vendor Parts/M3/screw.ipt`, `acme/jigs`), unless it is words of a
+    // message joined by slashes, as messages write alternatives (`body/region/shell/face`).
+    let separated = core.contains(['/', '\\'])
+        && !core
+            .split('/')
+            .all(|word| ALTERNATIVES.contains(&word.to_ascii_lowercase().as_str()));
+    if rooted || drive || separated {
         format!("{before}<path>{after}")
     } else if has_extension {
         format!("{before}<file>{after}")
@@ -916,6 +1010,177 @@ mod tests {
         }
     }
 
+    /// Every string anywhere in `value`.
+    fn all_text(value: &Value, out: &mut String) {
+        match value {
+            Value::String(text) => {
+                out.push_str(text);
+                out.push('\n');
+            }
+            Value::Array(values) => values.iter().for_each(|v| all_text(v, out)),
+            Value::Object(fields) => fields.iter().for_each(|(k, v)| {
+                out.push_str(k);
+                out.push('\n');
+                all_text(v, out);
+            }),
+            _ => {}
+        }
+    }
+
+    /// Names a user's library might hold, each a thing the report must never show.
+    const NASTY: [&str; 12] = [
+        "Kunde Müller GmbH",
+        "Projekt Ω-7",
+        "Kühlkörper_v2",
+        "Secret Rover",
+        "Gripper Jaw (left)",
+        "ACME-0042",
+        "Pack 'Go' 3_2_1",
+        "Version 1 - Clamp",
+        "設計部",
+        "Lid Assy",
+        "Cam Follower",
+        "FlangeMount",
+    ];
+
+    /// A batch of convert reports that name the [`NASTY`] names everywhere a conversion can:
+    /// loss subjects and messages, feature names, reasons, errors, codes, paths relative to
+    /// an Inventor project and its folders, and the names cadmpeg and Dutchman met.
+    fn nasty_batch(root: &Path) -> (Value, Vec<PathBuf>) {
+        let project = root.join("Kunde Müller GmbH").join("Projekt Ω-7");
+        let library = root.join("設計部").join("Vendor Parts");
+        let assembly = project.join("Secret Rover").join("Lid Assy.iam");
+        let part = project.join("Version 1 - Clamp").join("Kühlkörper_v2.ipt");
+        let used = "Pack 'Go' 3_2_1/Version 1 - Clamp/Kühlkörper_v2.ipt";
+        let results = json!([
+            {"ok": true, "input": {"path": assembly, "format": "inventor_assembly"},
+             "output": {"path": root.join("out").join("Lid Assy.solidcraft")},
+             "mode": "import",
+             "verification": {"status": "flattened",
+                              "reason": "feature \"Gripper Jaw (left)\": not mapped"},
+             "names": ["Lid Assy", "Gripper Jaw (left)", "Cam Follower", "ACME-0042",
+                       used, library.join("FlangeMount.ipt"), project],
+             "losses": [
+                {"level": "Info", "stage": "input", "code": null,
+                 "subject": "Kühlkörper_v2.ipt",
+                 "message": format!("2 files in the project have this name; used \"{used}\"")},
+                {"level": "Info", "stage": "input", "code": null,
+                 "subject": "parts search",
+                 "message": format!("parts not at their stored paths were searched for in the \
+                    project folder {}, then the folders the Inventor project file \
+                    Projekt Ω-7.ipj names: library {}", project.display(), library.display())},
+                {"level": "Dropped", "stage": "input", "code": null,
+                 "subject": "occurrence \"Cam Follower:1\"",
+                 "message": "FlangeMount.ipt: not found; Cam Follower stays out"},
+                {"level": "Dropped", "stage": "map", "code": null,
+                 "subject": "Kühlkörper_v2.ipt: feature \"Gripper Jaw (left)\"",
+                 "message": "Kühlkörper_v2.ipt: Gripper Jaw (left) is not mapped yet"},
+                {"level": "Degraded", "stage": "decode",
+                 "code": "inventor/Secret Rover.missing", "subject": "x",
+                 "message": "component Lid Assy has no bodies; part number ACME-0042"},
+                {"level": "Info", "stage": "map", "code": null, "subject": "FlangeMount",
+                 "message": "Version 1 - Clamp/FlangeMount carried as a body"},
+             ],
+             "history": {"features": [
+                {"name": "Gripper Jaw (left)", "kind": "Secret Rover", "status": "blocked",
+                 "reason": "Gripper Jaw (left) uses 設計部 geometry"}]}},
+            {"ok": false, "input": {"path": part, "format": "inventor_part"},
+             "error": {"message": format!("cannot read {}: Kühlkörper_v2 is locked by \
+                Kunde Müller GmbH", part.display()), "stage": "decode"}},
+        ]);
+        let batch = json!({"results": results, "skipped": 0});
+        (batch, vec![root.to_path_buf()])
+    }
+
+    #[test]
+    fn no_name_a_conversion_met_reaches_the_report() {
+        let root = Path::new("/home/someone/CAD");
+        let (batch, inputs) = nasty_batch(root);
+        let salt = Salt::random().unwrap();
+        let (anon, _) = report(&batch, &inputs, &root.join("out"), &salt, &Run::default());
+        let mut text = String::new();
+        all_text(&anon, &mut text);
+        for name in NASTY.iter().chain(&["someone", "Vendor Parts", "Projekt"]) {
+            assert!(!text.contains(name), "{name} is in the report:\n{text}");
+        }
+        // Codes are fixed words, never a name.
+        let codes: Vec<&str> = anon["losses"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|loss| loss["code"].as_str().unwrap())
+            .collect();
+        for code in &codes {
+            assert!(
+                code.starts_with("cadmpeg/") && *code == "cadmpeg/other"
+                    || KINDS
+                        .iter()
+                        .chain(&["other"])
+                        .any(|k| *code == format!("dutchman/{k}")),
+                "{code}"
+            );
+        }
+        assert!(codes.contains(&"dutchman/parts"), "{codes:?}");
+        assert_eq!(anon["blocked_features"][0]["kind"], "other");
+        // What is left still says what happened.
+        assert!(text.contains("files in the project have this name; used"));
+        assert!(text.contains("is not mapped yet"));
+    }
+
+    #[test]
+    fn plain_words_stay_and_names_go_only_where_they_stand_alone() {
+        let mut scrub = Scrubber::default();
+        scrub.know_path(Path::new("/data/import/Block/Blocker.ipt"));
+        assert_eq!(
+            scrub.text("SolidCraft can import it; Block and Blocks"),
+            "SolidCraft can import it; <name> and Blocks"
+        );
+        // A path no conversion met loses every word with a separator in it.
+        assert_eq!(
+            scrub.text("used Vendor Parts/M3/screw.ipt and acme/jigs, not body/region/shell"),
+            "used Vendor <path> and <path>, not body/region/shell"
+        );
+    }
+
+    #[test]
+    fn a_large_batch_is_scrubbed_in_one_pass() {
+        let mut results = Vec::new();
+        for i in 0..8000 {
+            let path = format!(
+                "/library/Customer {i}/Assembly {}/Part Number {i}.ipt",
+                i % 97
+            );
+            let names: Vec<String> = (0..40).map(|n| format!("Feature {i}-{n}")).collect();
+            let losses: Vec<Value> = (0..6)
+                .map(|n| {
+                    json!({"level": "Degraded", "stage": "map", "code": null,
+                           "subject": format!("feature \"Feature {i}-{n}\""),
+                           "message": format!("Feature {i}-{n} in Part Number {i}.ipt is not \
+                                               mapped yet")})
+                })
+                .collect();
+            results.push(
+                json!({"ok": true, "input": {"path": path, "format": "inventor_part"},
+                                "names": names, "losses": losses}),
+            );
+        }
+        let batch = json!({"results": results});
+        let started = std::time::Instant::now();
+        let (anon, _) = report(
+            &batch,
+            &[PathBuf::from("/library")],
+            Path::new("/out"),
+            &Salt::random().unwrap(),
+            &Run::default(),
+        );
+        let took = started.elapsed();
+        assert!(took.as_secs() < 60, "{took:?}");
+        let mut text = String::new();
+        all_text(&anon, &mut text);
+        assert!(!text.contains("Customer"), "{text}");
+        assert!(!text.contains("Feature 7"), "{text}");
+    }
+
     #[test]
     fn messages_that_differ_only_in_counts_are_one_cause() {
         assert_eq!(
@@ -924,6 +1189,8 @@ mod tests {
         );
         assert_eq!(subject_kind("part.ipt: feature \"Boss\""), "feature");
         assert_eq!(subject_kind("joints"), "joints");
+        assert_eq!(subject_kind("Gearbox_Housing.ipt"), "other");
+        assert_eq!(subject_kind("Housing"), "other");
         assert_eq!(version_only("solidcraft-cli 0.18.2\n"), "0.18.2");
     }
 }

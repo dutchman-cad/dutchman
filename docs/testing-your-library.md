@@ -6,6 +6,8 @@ Dutchman writes an **anonymous report**: what converted and what did not, by cau
 file names, paths, part names or geometry in it. You read it, then share it or the parts of
 it you choose.
 
+If you used 0.1.3's report-anon.json, re-run with 0.1.4 before sharing it.
+
 Fusion (`.f3d`, `.f3z`) libraries are the main target. Inventor (`.ipt`, `.iam`) and
 SolidWorks (`.sldprt`) files are welcome too, and FreeCAD (`.FCStd`) ones with a nightly build,
 including ones you cannot open any more.
