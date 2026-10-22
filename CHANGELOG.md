@@ -10,10 +10,10 @@ report's schema name changes when a field does).
 
 ### cadmpeg
 
-- Dutchman builds against cadmpeg at one tested commit of its `main` branch (dbf8cd4), the
+- Dutchman builds against cadmpeg at one tested commit of its `main` branch (60b6065), the
   same for every cadmpeg crate, instead of the cadmpeg 0.6.3 release. That brings Inventor
-  extrude profiles resolved to sketch profiles and regions, with arcs and more sketch
-  constraints, so Inventor part histories replay; FreeCAD bodies read as FreeCAD shows them;
+  extrude profiles resolved to sketch profiles and regions (trimmed curves included), with
+  arcs, polygons and more sketch constraints, so Inventor part histories replay; FreeCAD bodies read as FreeCAD shows them;
   Fusion component names; FreeCAD spreadsheet values; and fixes to how ASM pcurves, torus
   pcurves and tolerant edges are read. The
   nightly build still takes cadmpeg's latest `main`. Building from source works as before,
