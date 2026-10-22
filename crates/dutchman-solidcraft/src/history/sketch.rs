@@ -41,6 +41,28 @@ pub(crate) struct Mapped {
 }
 
 impl Mapped {
+    /// Boundary pieces keep their source curve's id: SolidCraft splits curves again on
+    /// recompute, so selections follow the original geometry and its constraints.
+    pub(crate) fn boundaries(
+        &self,
+        entities: Vec<Vec<String>>,
+    ) -> Result<Vec<Vec<String>>, String> {
+        entities
+            .into_iter()
+            .map(|ring| {
+                ring.into_iter()
+                    .map(|entity| {
+                        self.curve(&entity)
+                            .map(|curve| curve.id.clone())
+                            .ok_or_else(|| {
+                                "its profile uses a curve the sketch does not carry".to_owned()
+                            })
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
     /// Where the sketch point `at` is in model space.
     pub(crate) fn world(&self, at: P2) -> V3 {
         let [u, v] = at;

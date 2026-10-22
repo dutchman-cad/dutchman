@@ -137,6 +137,13 @@ features across a plane (features are named uniquely on the timeline,
 since SolidCraft patterns refer to them by name). Parameters keep their expressions where SolidCraft reads them the same way, else
 their evaluated values.
 
+Selected straight profile loops that cross or retrace their own curves are split at
+intersections into bounded regions for selection. The sketch keeps its original curves and
+constraints; SolidCraft matches the pieces on recompute. Selected subsets with overlapping
+curves, ambiguous boundary matches or curved crossing arrangements still flatten the history.
+Native profile picks within a known sketch also map when even-odd nesting identifies exactly one material
+region, with its holes; multiple islands and touching loops remain ambiguous.
+
 A written history is checked in SolidCraft itself, since Dutchman has no kernel. The writer
 runs `solidcraft-cli eval` on the design as written and on a copy with the history suppressed
 and the original live, and compares body count and volumes (relative tolerance 1e-4). A
