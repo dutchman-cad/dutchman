@@ -114,10 +114,6 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
-          - os: macos-latest
-            target: aarch64-apple-darwin
-          - os: macos-latest
-            target: x86_64-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
@@ -135,32 +131,7 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          name="dutchman-nightly-${{ matrix.target }}"
-          mkdir -p "dist/$name"
-          exe=""
-          [[ "${{ matrix.target }}" == *windows* ]] && exe=".exe"
-          for program in dutchman dutchman-mcp dutchman-gui; do
-            cp "target/${{ matrix.target }}/release/$program$exe" "dist/$name/"
-          done
-          cp LICENSE NOTICE "dist/$name/"
-          python3 -I scripts/archive-readme.py "${{ needs.changes.outputs.dutchman }}" README.md "dist/$name/README.md"
-          mkdir -p "dist/$name/licences"
-          cp crates/dutchman-gui/assets/fonts/*.txt "dist/$name/licences/"
-          "dist/$name/dutchman$exe" --version
-          echo '{"jsonrpc":"2.0","id":1,"method":"ping"}' | "dist/$name/dutchman-mcp$exe" | grep -q '"result"'
-          cd dist
-          if [[ "${{ matrix.target }}" == *windows* ]]; then
-            7z a -tzip "$name.zip" "$name" > /dev/null
-            archive="$name.zip"
-          else
-            tar czf "$name.tar.gz" "$name"
-            archive="$name.tar.gz"
-          fi
-          if command -v sha256sum > /dev/null; then
-            sha256sum "$archive" > "$archive.sha256"
-          else
-            shasum -a 256 "$archive" > "$archive.sha256"
-          fi
+          archive=$(scripts/package-archive.sh ${{ matrix.target }} "dutchman-nightly-${{ matrix.target }}" "${{ needs.changes.outputs.dutchman }}")
           echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@v4
         with:
@@ -170,8 +141,46 @@ jobs:
             dist/${{ env.ARCHIVE }}.sha256
           retention-days: 7
 
+  # Both Mac targets on one Apple silicon runner (Intel cross-compiled), then the disk image.
+  macos:
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.changes.outputs.dutchman }}
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - run: scripts/use-cadmpeg-main.sh "${{ needs.changes.outputs.cadmpeg }}"
+      - run: |
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            cargo build --release -p dutchman -p dutchman-gui --target "$target"
+          done
+      - name: Package
+        run: |
+          ref="${{ needs.changes.outputs.dutchman }}"
+          version=$(cargo metadata --format-version 1 --no-deps \
+            | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "dutchman"))')
+          scripts/package-archive.sh aarch64-apple-darwin dutchman-nightly-aarch64-apple-darwin "$ref"
+          SKIP_RUN=1 scripts/package-archive.sh x86_64-apple-darwin dutchman-nightly-x86_64-apple-darwin "$ref"
+          scripts/macos-dmg.sh "$version" nightly \
+            target/aarch64-apple-darwin/release target/x86_64-apple-darwin/release \
+            dist/dutchman-nightly-macos-universal.dmg
+          (cd dist && shasum -a 256 dutchman-nightly-macos-universal.dmg > dutchman-nightly-macos-universal.dmg.sha256)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dutchman-nightly-macos
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+            dist/*.dmg
+            dist/*.dmg.sha256
+          retention-days: 7
+
   publish:
-    needs: [changes, test, roundtrip, build]
+    needs: [changes, test, roundtrip, build, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write

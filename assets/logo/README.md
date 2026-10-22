@@ -14,6 +14,7 @@ lantern at the masthead is the one warm light.
 | `dutchman-mark-mono.svg` | The mark in one ink, where colour is not available. |
 | `dutchman-lockup.svg` | Mark and name on light grounds. |
 | `dutchman-lockup-night.svg` | Mark and name on dark grounds. |
+| `dutchman-app-icon.svg` | The macOS app icon: the mark on a Day-surface rounded square on Apple's 1024 grid. `cargo run -p dutchman-gui --example icns -- crates/dutchman-gui/assets/Dutchman.icns` renders it into the app's icon file. |
 | `dutchman-lockup.png`, `dutchman-lockup-night.png` | The lockups rendered at 3× with the name set in Spectral, for places that cannot load the font (GitHub's README view). |
 
 The lockup's name is set in [Spectral](https://github.com/productiontype/Spectral) SemiBold

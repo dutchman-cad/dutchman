@@ -16,6 +16,50 @@ reading what the conversion reports, and opening the result in SolidCraft.
 
 ## Install
 
+### macOS: the app
+
+From 0.1.3 on, each release has `dutchman-VERSION-macos-universal.dmg`: **Dutchman.app**, for
+Apple silicon and Intel Macs alike, with the `dutchman` and `dutchman-mcp` commands inside it.
+
+1. Open the disk image and drag **Dutchman** onto **Applications**.
+2. Open Dutchman from Applications.
+
+#### Opening the app the first time
+
+Dutchman is not signed with an Apple Developer ID, so the first time you open it macOS stops
+it with this box:
+
+<img alt="The macOS box: “Dutchman” Not Opened. Apple could not verify “Dutchman” is free of malware that may harm your Mac or compromise your privacy. Buttons: Move to Trash, Done." src="images/macos-not-opened.png" width="260">
+
+Click **Done**, not Move to Trash, then:
+
+1. Open **System Settings** › **Privacy & Security**.
+2. Scroll down to **Security**. It says “Dutchman” was blocked to protect your Mac.
+3. Click **Open Anyway**, enter your password, then click **Open Anyway** in the box that
+   follows.
+
+<img alt="System Settings, Privacy & Security, Security: “Dutchman” was blocked to protect your Mac, with an Open Anyway button." src="images/macos-open-anyway.png" width="450">
+
+macOS remembers the choice; from then on Dutchman opens like any other app. Right-click ›
+Open, which older macOS versions offered, no longer gets past the box.
+
+Or clear the download's quarantine flag once, in Terminal:
+
+```sh
+xattr -dr com.apple.quarantine /Applications/Dutchman.app
+```
+
+The app is signed ad hoc, so macOS never calls it “damaged”. If it does, the download was
+cut short or changed: download it again and check it against its `.sha256`
+(`shasum -a 256 -c dutchman-VERSION-macos-universal.dmg.sha256`).
+
+To use the commands from Terminal, link them onto your `PATH`:
+
+```sh
+sudo ln -sf /Applications/Dutchman.app/Contents/Helpers/dutchman /usr/local/bin/dutchman
+sudo ln -sf /Applications/Dutchman.app/Contents/Helpers/dutchman-mcp /usr/local/bin/dutchman-mcp
+```
+
 ### From a release archive
 
 Each [release](https://github.com/dutchman-cad/dutchman/releases) has one archive per
@@ -52,11 +96,12 @@ The `export` lasts for this shell; add the same line to your shell's profile (`~
 `~/.zshrc`) to keep it. The `dutchman*` pattern installs the desktop app, `dutchman-gui`, too.
 
 On macOS, `shasum -a 256 -c` takes the place of `sha256sum -c`. The programs are not signed
-yet, so the first run may be blocked; allow it in System Settings, Privacy & Security, or
-clear the quarantine flag:
+with a Developer ID, so macOS blocks each the first time, as it does
+[the app](#opening-the-app-the-first-time); allow it in System Settings › Privacy & Security,
+or clear the quarantine flag:
 
 ```sh
-xattr -d com.apple.quarantine dutchman dutchman-mcp
+xattr -d com.apple.quarantine dutchman dutchman-mcp dutchman-gui
 ```
 
 On Windows, in PowerShell, compare the hash with the one in the `.sha256` file, then unpack

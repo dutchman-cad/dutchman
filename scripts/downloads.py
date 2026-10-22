@@ -15,6 +15,9 @@ REPO = "https://github.com/dutchman-cad/dutchman"
 START = "<!-- downloads -->"
 END = "<!-- /downloads -->"
 
+# The first release with the macOS disk image, Dutchman.app for Apple silicon and Intel.
+DMG_SINCE = (0, 1, 3)
+
 # (who it is for, target, archive extension)
 PLATFORMS = [
     ("Mac with Apple silicon (M1 or later)", "aarch64-apple-darwin", "tar.gz"),
@@ -34,6 +37,12 @@ def table(version: str) -> str:
         "| Your computer | Download | Checksum |",
         "|---|---|---|",
     ]
+    if version == "nightly" or tuple(int(n) for n in version.split(".")[:3]) >= DMG_SINCE:
+        name = f"{stem}-macos-universal.dmg"
+        url = f"{REPO}/releases/download/{tag}/{name}"
+        rows.append(
+            f"| Mac, the desktop app (Apple silicon or Intel) | [{name}]({url}) | [SHA-256]({url}.sha256) |"
+        )
     for who, target, ext in PLATFORMS:
         name = f"{stem}-{target}.{ext}"
         url = f"{REPO}/releases/download/{tag}/{name}"

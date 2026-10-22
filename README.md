@@ -65,7 +65,9 @@ system's light or dark setting, or can be set to Day or Night.
   <img alt="The Dutchman app after converting three files: two converted, one failed with its reason" src="docs/images/dutchman-gui-day.png" width="480">
 </picture>
 
-It ships in the release archives beside `dutchman` (from 0.1.1 on), or build it from source
+On macOS it comes as **Dutchman.app** in a disk image (from 0.1.3 on; see
+[opening it the first time](docs/guide.md#opening-the-app-the-first-time)). It ships in the
+release archives beside `dutchman` (from 0.1.1 on), or build it from source
 with Rust 1.88 or newer:
 
 ```sh

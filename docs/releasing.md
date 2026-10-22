@@ -8,10 +8,14 @@ A release is cut from `main` once CI is green there.
    `scripts/downloads.py X.Y.Z README.md` so the README's download table links the new
    archives (a test checks it does).
 2. Merge that, then tag the merge commit `vX.Y.Z` and push the tag.
-3. The `Release builds` workflow on `main` keeps each platform's archive (`dutchman` and
-   `dutchman-mcp`, with LICENSE, NOTICE, README and a SHA-256) as workflow artifacts. Attach
-   them to a GitHub release for the tag. Its notes start with the download table,
-   `scripts/downloads.py X.Y.Z`, then the changelog entry.
+3. Pushing the tag runs the `Release builds` workflow. It keeps each platform's archive
+   (`scripts/package-archive.sh`: `dutchman`, `dutchman-mcp` and `dutchman-gui`, with LICENSE,
+   NOTICE, README and a SHA-256), and the macOS disk image (`scripts/macos-dmg.sh`:
+   Dutchman.app, universal, signed ad hoc), as workflow artifacts; both Mac targets build on
+   one Apple silicon runner. Attach them to a GitHub release for the tag. Its notes start with
+   the download table, `scripts/downloads.py X.Y.Z`, then the changelog entry. The workflow
+   also runs on demand (`gh workflow run release-build.yml`) and for a pull request that
+   changes the packaging, but not for every push to `main`.
 4. crates.io: releases ship as GitHub release archives only, until the core API settles. The
    crates.io `dutchman` crate stays the 0.0.1 placeholder. When crates are published, the
    order matters: `dutchman` depends on `dutchman-core` and `dutchman-solidcraft`, so those go
