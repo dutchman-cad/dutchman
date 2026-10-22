@@ -8,6 +8,12 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Reports
+
+- An assembly says what it brought across: the JSON reports give the joints written by kind
+  (`joints`), and the desktop app's card reads `41 components, 6 joints (5 revolute, 1 rigid)`,
+  or `18 of 20 components placed, …` when some were left out.
+
 ### Feature history
 
 - A component inserted, or a joint made, in a Fusion timeline is counted as not needed in the

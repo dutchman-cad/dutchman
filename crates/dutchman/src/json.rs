@@ -268,6 +268,9 @@ pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value
     if let Some(completeness) = report.completeness() {
         out.insert("completeness".to_owned(), completeness_json(completeness));
     }
+    if !report.joints().is_empty() {
+        out.insert("joints".to_owned(), json!(report.joints()));
+    }
     out.insert("losses".to_owned(), losses(report));
     out
 }
@@ -291,6 +294,49 @@ pub fn completeness_json(completeness: &Completeness) -> Value {
         "placements": completeness.placements(),
         "left_out": left_out,
     })
+}
+
+/// What a report's assembly brought across, in words, when it is of an assembly: `41
+/// components, 6 joints (5 revolute, 1 rigid)`, or `18 of 20 components placed, …` when some
+/// were left out.
+pub fn assembly_line(report: &Value) -> Option<String> {
+    let completeness = report.get("completeness")?;
+    let count = |key: &str| completeness.get(key).and_then(Value::as_u64).unwrap_or(0);
+    let (placed, placements) = (count("placed"), count("placements"));
+    let components = if placed == placements {
+        format!("{placed} component{}", plural(placed))
+    } else {
+        format!("{placed} of {placements} components placed")
+    };
+    let kinds: Vec<(String, u64)> = report
+        .get("joints")
+        .and_then(Value::as_object)
+        .map(|joints| {
+            joints
+                .iter()
+                .filter_map(|(kind, n)| Some((kind.clone(), n.as_u64()?)))
+                .collect()
+        })
+        .unwrap_or_default();
+    let total: u64 = kinds.iter().map(|(_, n)| n).sum();
+    let joints = if total == 0 {
+        "no joints".to_owned()
+    } else {
+        let each: Vec<String> = kinds
+            .iter()
+            .map(|(kind, n)| format!("{n} {kind}"))
+            .collect();
+        format!("{total} joint{} ({})", plural(total), each.join(", "))
+    };
+    Some(format!("{components}, {joints}"))
+}
+
+fn plural(n: u64) -> &'static str {
+    if n == 1 {
+        ""
+    } else {
+        "s"
+    }
 }
 
 /// The most causes [`completeness_lines`] lists.
@@ -539,5 +585,26 @@ mod tests {
         assert_eq!(out["history"]["total"], 3);
         assert_eq!(out["history"]["features"][3]["status"], "left_out");
         assert_eq!(out["losses"], json!([]));
+    }
+    #[test]
+    fn an_assembly_line_counts_components_and_joints() {
+        let whole = json!({"completeness": {"placed": 41, "placements": 41, "left_out": []},
+            "joints": {"revolute": 5, "rigid": 1}});
+        assert_eq!(
+            assembly_line(&whole).unwrap(),
+            "41 components, 6 joints (5 revolute, 1 rigid)"
+        );
+        let short = json!({"completeness": {"placed": 1, "placements": 2, "left_out": [{}]}});
+        assert_eq!(
+            assembly_line(&short).unwrap(),
+            "1 of 2 components placed, no joints"
+        );
+        let one = json!({"completeness": {"placed": 1, "placements": 1},
+            "joints": {"slider": 1}});
+        assert_eq!(
+            assembly_line(&one).unwrap(),
+            "1 component, 1 joint (1 slider)"
+        );
+        assert_eq!(assembly_line(&json!({"losses": []})), None);
     }
 }
