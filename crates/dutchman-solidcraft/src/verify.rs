@@ -205,15 +205,33 @@ pub fn solidcraft_version(verification: &Verification) -> Option<String> {
     version_of(&find_cli(verification).ok()?)
 }
 
+/// How many times to try running a CLI the system says is busy being written.
+const BUSY_TRIES: u32 = 50;
+
 /// The first line `cli --version` prints, when it answers within a few seconds.
 fn version_of(cli: &Path) -> Option<String> {
-    let mut child = Command::new(cli)
-        .arg("--version")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
+    let spawn = || {
+        Command::new(cli)
+            .arg("--version")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+    };
+    // A CLI just written, as an installer or update leaves it, can be busy for a moment while
+    // another process still holds it open for writing.
+    let mut tries = 0;
+    let mut child = loop {
+        match spawn() {
+            Err(err)
+                if err.kind() == std::io::ErrorKind::ExecutableFileBusy && tries < BUSY_TRIES =>
+            {
+                tries += 1;
+                std::thread::sleep(POLL);
+            }
+            spawned => break spawned.ok()?,
+        }
+    };
     let started = Instant::now();
     while child.try_wait().ok()?.is_none() {
         if started.elapsed() > Duration::from_secs(10) {
