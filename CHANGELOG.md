@@ -6,6 +6,16 @@ report's schema name changes when a field does).
 
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
+## Unreleased
+
+### Feature history
+
+- A sketch profile with curves drawn across it, such as a rectangle with its diagonals, maps
+  when the feature takes every profile of the sketch. Fusion walks such a profile along each
+  inner curve both ways; Dutchman selected it by those curves and SolidCraft found no profile
+  bounded by them, so the replay failed and the history was flattened. Any other such selection
+  is reported as not mapped yet.
+
 ## 0.1.3 (2026-10-21)
 
 ### Formats
