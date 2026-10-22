@@ -20,6 +20,9 @@ report's schema name changes when a field does).
 
 ### Feature history
 
+- Lofts map resolved point and vertex ends and retain separate profile selections for sections
+  that share a sketch.
+
 - Coils map to SolidCraft coils: along any axis, up or down it, of round or square section,
   inside, centred on or outside their path, turning either way, by turns and pitch, turns and
   height, or height and pitch. Tapered coils, flat spirals and triangular sections are not
