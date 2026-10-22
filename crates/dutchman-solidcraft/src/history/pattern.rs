@@ -16,11 +16,17 @@ const FULL_TURN: f64 = 1e-9;
 
 /// Maps a pattern feature whose operation is `definition`.
 pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Result<Value, String> {
+    let unresolved =
+        definition.pointer("/pattern/kind").and_then(Value::as_str) == Some("unresolved");
     let seeds = definition
         .get("seeds")
         .and_then(Value::as_array)
         .filter(|seeds| !seeds.is_empty())
-        .ok_or("it patterns nothing")?;
+        .ok_or(if unresolved {
+            "cadmpeg does not decode what it repeats or how yet"
+        } else {
+            "it patterns nothing"
+        })?;
     let mut features = Vec::with_capacity(seeds.len());
     for seed in seeds {
         match seed.get("kind").and_then(Value::as_str) {
@@ -34,6 +40,13 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
                     .get(id)
                     .ok_or("it patterns a feature that did not map")?;
                 features.push(name.clone());
+            }
+            Some(other)
+                if seed.pointer("/value/kind").and_then(Value::as_str) == Some("native") =>
+            {
+                return Err(format!(
+                    "patterns of {other} are not mapped yet: cadmpeg does not resolve which"
+                ))
             }
             Some(other) => return Err(format!("patterns of {other} are not mapped yet")),
             None => return Err("its seed is malformed".to_owned()),
@@ -100,6 +113,7 @@ fn layout(pattern: Option<&Value>) -> Result<Value, String> {
             .ok_or_else(|| "its count is malformed".to_owned())
     };
     match pattern.get("kind").and_then(Value::as_str) {
+        Some("unresolved") => Err("cadmpeg does not decode its layout yet".to_owned()),
         Some("linear") => {
             let dir = v3(pattern.get("direction"))
                 .and_then(unit)
@@ -180,5 +194,32 @@ mod tests {
         assert_eq!(layout(Some(&circular(TAU))).unwrap()["angle"], "360 deg");
         assert!(layout(Some(&circular(TAU / 2.0))).is_err());
         assert!(layout(Some(&json!({"kind": "linear", "spacing": 1.0, "count": 2}))).is_err());
+    }
+    #[test]
+    fn patterns_cadmpeg_does_not_decode_say_so() {
+        let model = json!({});
+        let reason = |definition: Value| {
+            let mut ctx = Context::new(&model);
+            map(&json!({"name": "Pattern"}), &definition, &mut ctx).unwrap_err()
+        };
+        assert_eq!(
+            reason(json!({"seeds": [], "pattern": {"kind": "unresolved", "form": "linear"}})),
+            "cadmpeg does not decode what it repeats or how yet"
+        );
+        assert_eq!(
+            reason(json!({"seeds": [], "pattern": {"kind": "linear"}})),
+            "it patterns nothing"
+        );
+        assert_eq!(
+            reason(
+                json!({"seeds": [{"kind": "faces", "value": {"kind": "native", "value": "n"}}],
+                "pattern": {"kind": "circular"}})
+            ),
+            "patterns of faces are not mapped yet: cadmpeg does not resolve which"
+        );
+        assert_eq!(
+            layout(Some(&json!({"kind": "unresolved", "form": "mirror"}))).unwrap_err(),
+            "cadmpeg does not decode its layout yet"
+        );
     }
 }
