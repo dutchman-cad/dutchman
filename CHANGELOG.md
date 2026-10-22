@@ -69,6 +69,10 @@ report's schema name changes when a field does).
 
 ### Assemblies and components
 
+- A joint to a component inside a design inserted into a Fusion archive takes its frame in
+  that component's own space, as Fusion stores it, not in the inserted design's: the robot
+  arm's gripper sat 52 mm off its wrist flange.
+
 - A fixed joint whose parts' stored placements already meet, with its frames opposed or (as
   Fusion mates a flipped joint) aligned, holds them where they are, as revolute and slider
   joints already did, instead of turning one part over to mate the frames opposed. Fusion's
