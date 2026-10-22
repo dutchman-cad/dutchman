@@ -42,6 +42,10 @@ pub(crate) fn restatable(model: &Model) -> Result<(), Error> {
 
 /// cadmpeg's plan for restating the model as STEP, refused when it carries no geometry.
 fn plan(model: &Model) -> Result<cadmpeg_ir::codec::write::ExportPlan, Error> {
+    // With no bodies at all, cadmpeg plans an empty file rather than saying so.
+    if model.ir.model.bodies.is_empty() {
+        return Err(no_geometry());
+    }
     let input = EncodeInput::new(&model.ir, model.fidelity.as_ref());
     let plan = build_encoder(Format::Step)
         .plan(input, TargetRequest::Explicit(SCHEMA))
@@ -52,11 +56,13 @@ fn plan(model: &Model) -> Result<cadmpeg_ir::codec::write::ExportPlan, Error> {
         .iter()
         .any(|loss| loss.code.to_string() == "step/export.no-exportable-solids")
     {
-        return Err(Error::NoGeometry(
-            "the model has no solids or surfaces SolidCraft can import".to_owned(),
-        ));
+        return Err(no_geometry());
     }
     Ok(plan)
+}
+
+fn no_geometry() -> Error {
+    Error::NoGeometry("the model has no solids or surfaces SolidCraft can import".to_owned())
 }
 
 fn restate_unguarded(model: &Model, report: &mut Report) -> Result<String, Error> {

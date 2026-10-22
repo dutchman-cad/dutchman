@@ -78,6 +78,18 @@ pub(crate) enum Live {
     Original,
 }
 
+/// The document of a design holding `params` and no geometry or features.
+pub(crate) fn parameters_design(model: &Model, params: &[Value]) -> Value {
+    json!({
+        "format": FORMAT,
+        "name": model.name,
+        "units": "mm",
+        "params": params,
+        "next_id": 1,
+        "features": [],
+    })
+}
+
 /// A design holding the replayed `history`, then the original geometry (STEP at
 /// `step_blob`) as an Import at the end of the timeline, with only the `live` side
 /// unsuppressed.

@@ -14,7 +14,7 @@ mod extrude;
 mod faces;
 mod hole;
 mod loft;
-mod params;
+pub(crate) mod params;
 mod pattern;
 mod primitive;
 mod profile;

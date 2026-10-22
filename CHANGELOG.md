@@ -8,6 +8,15 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Parameters
+
+- A design holding parameters and nothing else (no features, no geometry), as a Fusion
+  design other designs take their parameters from, converts as a SolidCraft design of those
+  parameters, with verification `not_applicable` ("the design holds 11 parameters and no
+  geometry") and an `Info` line, instead of failing for want of geometry. A design with no
+  bodies at all and no parameters now fails up front, saying it has no geometry, rather
+  than writing an empty import SolidCraft cannot open.
+
 ### Reports
 
 - A design none of whose features cadmpeg decodes, such as an Inventor part made of a base
