@@ -80,7 +80,7 @@ For `inspect`, `ok: true` means the file was read. Check `conversion.possible` a
 
 | Argument | Type | Meaning |
 |---|---|---|
-| `input` | string | Absolute path of a native CAD file: `.f3d`, `.f3z`, `.ipt`, `.iam` or `.sldprt`, and `.FCStd` in [nightly builds](freecad.md). |
+| `input` | string | Absolute path of a native CAD file: `.f3d`, `.f3z`, `.ipt`, `.iam` or `.sldprt` or `.FCStd`. |
 | `output` | string | Absolute path of the `.solidcraft` file to write. An existing file is replaced, unless `overwrite` is false. |
 | `inputs` | array of strings, at least one | Absolute paths of files, and of folders to search (with their subfolders) for files Dutchman knows. |
 | `out_dir` | string | Absolute path of the folder for the designs, keeping each input folder's layout. Created if missing. |

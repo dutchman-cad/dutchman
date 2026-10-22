@@ -93,15 +93,18 @@ impl Error {
     }
 }
 
-/// Where the nightly builds are.
-pub const NIGHTLY: &str = "https://github.com/dutchman-cad/dutchman/releases/tag/nightly";
+/// Where Dutchman's release builds are.
+pub const RELEASES: &str = "https://github.com/dutchman-cad/dutchman/releases";
 
 /// What to do with a file of a format this build does not convert.
 fn not_supported(format: Format) -> String {
     match format {
         // Built without the `freecad` feature.
         Format::FreeCadDocument => {
-            format!("FreeCAD files convert in nightly builds for now: {NIGHTLY}")
+            format!(
+                "this build leaves FreeCAD files out (built without the `freecad` feature); \
+                 Dutchman's release builds convert them: {RELEASES}"
+            )
         }
         _ => format!(
             "{} files are not supported yet. Export a STEP file for SolidCraft to open; \

@@ -47,8 +47,8 @@ For `upstream:cadmpeg`:
    company from a report, and no proprietary format content in public text. Describe the
    cause in cadmpeg's own terms (the loss code, the record kind) with the synthetic test.
 4. **Link** the upstream item from every Dutchman issue it covers.
-5. **Close** those issues when a cadmpeg release with the fix is out and Dutchman has moved to
-   it, saying "fixed in 0.1.x" and which release to install.
+5. **Close** those issues when Dutchman's cadmpeg pin has moved past the fix and a Dutchman
+   release carries it, saying "fixed in 0.1.x" and which release to install.
 
 For `upstream:solidcraft`, the same: group by root cause, one upstream item per cause, linked
 from each issue, closed when a Dutchman release that writes for the fixed SolidCraft ships.

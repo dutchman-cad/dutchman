@@ -20,17 +20,28 @@ fn main() {
     );
 }
 
-/// The version of the `cadmpeg-core` package a lock file holds.
+/// The version of the `cadmpeg-core` package a lock file holds, with the commit it is taken
+/// from when it comes from git (`0.6.3+dbf8cd4`).
 fn cadmpeg_version(lock: &str) -> Option<String> {
     let mut lines = lock.lines();
     while let Some(line) = lines.next() {
         if line.trim() == "name = \"cadmpeg-core\"" {
-            let next = lines.next()?;
-            return next
+            let version = lines
+                .next()?
                 .trim()
                 .strip_prefix("version = \"")
-                .and_then(|rest| rest.strip_suffix('"'))
-                .map(str::to_owned);
+                .and_then(|rest| rest.strip_suffix('"'))?
+                .to_owned();
+            let commit = lines
+                .next()
+                .and_then(|source| source.trim().strip_prefix("source = \"git+"))
+                .and_then(|source| source.rsplit_once('#'))
+                .map(|(_, commit)| commit.trim_end_matches('"'))
+                .and_then(|commit| commit.get(..7));
+            return Some(match commit {
+                Some(commit) => format!("{version}+{commit}"),
+                None => version,
+            });
         }
     }
     None

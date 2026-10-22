@@ -1,6 +1,6 @@
 # Fusion: what converts today, and what stands in the way
 
-Dutchman reads Fusion archives (`.f3d`) through cadmpeg's published Fusion codec (0.6),
+Dutchman reads Fusion archives (`.f3d`) through cadmpeg's Fusion codec,
 cadmpeg's most complete native reader. This page says what Dutchman makes of what that codec
 gives and which upstream gaps remain. Improvements land in cadmpeg and reach Dutchman when the
 pin is bumped.

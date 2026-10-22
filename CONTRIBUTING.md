@@ -109,6 +109,12 @@ are synthetic inputs from cadmpeg's test suite, or generated with cadmpeg's own 
 none is a real design. Their README records where each came from. Expected results are kept
 as golden files in `crates/dutchman-solidcraft/tests/golden/`.
 
+## Moving the cadmpeg pin
+
+Dutchman pins cadmpeg to one commit of its `main` (the `rev` in the workspace `Cargo.toml`).
+Move it after a batch of cadmpeg merges, never for one commit alone: run the tests, the
+SolidCraft round trip and the anonymous-report leak check first (docs/releasing.md).
+
 ## Adding a format
 
 Dutchman never parses a native format itself. A new format starts in cadmpeg: once cadmpeg

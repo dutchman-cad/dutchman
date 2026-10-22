@@ -27,7 +27,10 @@ fn rows() -> [(Format, Status, String); 7] {
     } else {
         (
             Status::NotSupported,
-            format!("in nightly builds for now: {}", dutchman_core::NIGHTLY),
+            format!(
+                "left out of this build (the `freecad` feature); release builds convert them: {}",
+                dutchman_core::RELEASES
+            ),
         )
     };
     [
