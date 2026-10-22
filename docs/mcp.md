@@ -9,6 +9,11 @@ It comes in every release archive and with `cargo install` (see the [guide](guid
 It speaks JSON-RPC over stdio, one message per line, and takes no arguments: the client starts
 it and talks to it.
 
+Sheet-metal history follows the same mapping limits in the [guide](guide.md) as the CLI:
+base flanges map; edge flanges and hems appear as the first blocked feature's reason, and
+the conversion keeps the geometry. K-factor and relief use the target rule defaults because
+CADIR does not supply them.
+
 ## Set up a client
 
 ### Claude Code

@@ -30,6 +30,9 @@ report's schema name changes when a field does).
 - Body mirror patterns and body booleans (join, cut, or intersect, optionally keeping the
   tools) map to SolidCraft. Shells and drafts, shape-replacing mirrors, and threads without a
   resolved standard and pitch say why they are not mapped.
+- Sheet-metal edge flanges and hems say why they are not mapped: an edge flange's edge is
+  known only after the flange has bent it, and a hem's developed length or its rolled,
+  teardrop, or unresolved form has no SolidCraft equivalent.
 
 ### FreeCAD output (experimental)
 

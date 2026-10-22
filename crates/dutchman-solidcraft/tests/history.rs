@@ -4324,6 +4324,95 @@ fn solidcraft_builds_the_base_flange_as_the_original() {
     );
 }
 
+/// A base sheet followed by a synthetic operation on its front top edge.
+fn sheet_operation(mut definition: Value) -> Model {
+    let mut model = flanged_cube(10.0, "forward");
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    definition["edges"] = json!({"kind": "edges", "value": ["synthetic:cube:edge#4"]});
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "id": "f3d:model:feature#3", "ordinal": 2, "name": "Sheet wall",
+            "suppressed": false, "definition": definition,
+        }));
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn edge_flanges_wait_on_input_edge_geometry() {
+    // The selected edge exists only on the final body, where it has become the bend.
+    let model = sheet_operation(json!({
+        "definition": "sheet_metal_edge_flange",
+        "height": {"kind": "distance", "value": 30.0},
+        "angle": std::f64::consts::FRAC_PI_2,
+        "height_datum": "outer_faces",
+        "bend_position": "outside",
+        "width": {"kind": "full_edge"},
+        "bend_radius": 2.0,
+    }));
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("edge flanges wait on input edge geometry"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn hems_explain_the_form_or_dimension_that_cannot_be_expressed() {
+    for (form, direction, reason) in [
+        (
+            json!({"kind": "flat", "value": {"length": 20.0}}),
+            "forward",
+            "developed length",
+        ),
+        (
+            json!({"kind": "open", "value": {"gap": 2.0, "length": 20.0}}),
+            "reverse",
+            "developed length",
+        ),
+        (
+            json!({"kind": "gap_length", "value": {"gap": 2.0, "length": 20.0}}),
+            "forward",
+            "unresolved flat-or-open",
+        ),
+        (
+            json!({"kind": "rolled", "value": {"radius": 2.0, "angle": 1.0}}),
+            "forward",
+            "rolled hem",
+        ),
+        (
+            json!({"kind": "teardrop", "value": {"gap": 2.0, "length": 20.0, "radius": 2.0}}),
+            "forward",
+            "teardrop hem",
+        ),
+        (
+            json!({"kind": "flat", "value": {"length": 20.0}}),
+            "unresolved",
+            "unresolved fold direction",
+        ),
+    ] {
+        let model = sheet_operation(json!({
+            "definition": "sheet_metal_hem", "bend_position": "adjacent",
+            "form": form, "direction": direction, "bend_radius": 2.0,
+        }));
+        let (_, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).contains(reason),
+            "{}",
+            history_line(&report)
+        );
+    }
+}
+
 /// The example cube under a timeline of `features`, each `(name, definition)`.
 fn cube_under(features: &[(&str, Value)]) -> Model {
     let ir = cadmpeg_ir::examples::unit_cube().unwrap();
