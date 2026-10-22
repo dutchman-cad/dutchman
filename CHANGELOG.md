@@ -8,6 +8,12 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Desktop app
+
+- The macOS app icon is a white rounded square with the mark, as macOS icons are, and the Dock
+  shows it while the app runs too: it showed the bare mark there, dark on the Dock's dark
+  glass. Elsewhere the window icon stays the mark.
+
 ### Reports
 
 - A design SolidCraft opens with faces missing says so plainly: "SolidCraft opens 52 of the 53

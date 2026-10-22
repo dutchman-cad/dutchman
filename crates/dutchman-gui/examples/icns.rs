@@ -52,7 +52,13 @@ fn png(svg: &[u8], size: u32) -> Vec<u8> {
         &Default::default(),
     )
     .unwrap();
-    let rgba = image::RgbaImage::from_raw(size, size, image.as_raw().to_vec()).unwrap();
+    // egui's pixels are premultiplied; a PNG's are not.
+    let raw = image
+        .pixels
+        .iter()
+        .flat_map(|pixel| pixel.to_srgba_unmultiplied())
+        .collect();
+    let rgba = image::RgbaImage::from_raw(size, size, raw).unwrap();
     let mut out = std::io::Cursor::new(Vec::new());
     rgba.write_to(&mut out, image::ImageFormat::Png).unwrap();
     out.into_inner()
