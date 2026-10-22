@@ -90,7 +90,9 @@ pub(crate) fn coil(
         .and_then(unit)
         .ok_or("its start direction is malformed")?;
     if number(construction.get("taper")).ok_or("its taper is malformed")? != 0.0 {
-        return Err("a tapered coil is not mapped yet".to_owned());
+        return Err(
+            "a tapered coil is not mapped yet: SolidCraft's coil has no taper option".to_owned(),
+        );
     }
     let diameter = length(construction.get("diameter"), "diameter")?;
     let extent = construction
@@ -128,7 +130,12 @@ pub(crate) fn coil(
                 pitch < 0.0,
             )
         }
-        Some("spiral") => return Err("a flat spiral coil is not mapped yet".to_owned()),
+        Some("spiral") => {
+            return Err(
+                "a flat spiral coil is not mapped yet: SolidCraft's coil has no spiral mode"
+                    .to_owned(),
+            )
+        }
         _ => return Err("its extent is malformed".to_owned()),
     };
     let axis = if down { axis.map(|v| -v) } else { axis };
@@ -143,7 +150,11 @@ pub(crate) fn coil(
         ),
         Some("square") => ("square", length(section.get("size"), "section size")?),
         Some("external_triangle" | "internal_triangle") => {
-            return Err("a coil of triangular section is not mapped yet".to_owned())
+            return Err(
+                "a coil of triangular section is not mapped yet: SolidCraft's coil only has \
+                 circular and square sections"
+                    .to_owned(),
+            )
         }
         _ => return Err("its section is malformed".to_owned()),
     };

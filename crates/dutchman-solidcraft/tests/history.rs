@@ -2521,14 +2521,25 @@ fn coils_solidcraft_cannot_build_flatten_the_history() {
     for (definition, reason) in [
         (
             with(&["construction", "taper"], json!(0.1)),
-            "a tapered coil is not mapped yet",
+            "a tapered coil is not mapped yet: SolidCraft's coil has no taper option",
+        ),
+        (
+            with(&["construction", "taper"], json!(-0.1)),
+            "a tapered coil is not mapped yet: SolidCraft's coil has no taper option",
         ),
         (
             with(
                 &["construction", "extent"],
                 json!({"kind": "spiral", "revolutions": 3.0, "radial_pitch": 2.0}),
             ),
-            "a flat spiral coil is not mapped yet",
+            "a flat spiral coil is not mapped yet: SolidCraft's coil has no spiral mode",
+        ),
+        (
+            with(
+                &["construction", "extent"],
+                json!({"kind": "spiral", "revolutions": 3.0, "radial_pitch": -2.0}),
+            ),
+            "a flat spiral coil is not mapped yet: SolidCraft's coil has no spiral mode",
         ),
         (
             with(
@@ -2542,10 +2553,30 @@ fn coils_solidcraft_cannot_build_flatten_the_history() {
                 &["construction", "section"],
                 json!({"kind": "external_triangle", "size": 2.0}),
             ),
-            "a coil of triangular section is not mapped yet",
+            "a coil of triangular section is not mapped yet: SolidCraft's coil only has \
+             circular and square sections",
+        ),
+        (
+            with(
+                &["construction", "section"],
+                json!({"kind": "internal_triangle", "size": 2.0}),
+            ),
+            "a coil of triangular section is not mapped yet: SolidCraft's coil only has \
+             circular and square sections",
         ),
     ] {
-        let (_, report) = convert(&primitive_history(definition), &writer);
+        let (document, report) = convert(&primitive_history(definition), &writer);
+        assert_eq!(types(&document), [("import".to_owned(), false)]);
+        let outcome = report.outcome().unwrap();
+        assert_eq!(outcome.mode, Mode::Import);
+        assert!(matches!(outcome.check, Check::Flattened(_)));
+        assert_eq!(outcome.features.len(), 1);
+        assert_eq!(outcome.features[0].kind, "coil");
+        assert_eq!(outcome.features[0].reason.as_deref(), Some(reason));
+        assert_eq!(
+            outcome.features[0].status,
+            dutchman_core::FeatureStatus::Blocked
+        );
         assert!(
             history_line(&report).contains(reason),
             "{}",
