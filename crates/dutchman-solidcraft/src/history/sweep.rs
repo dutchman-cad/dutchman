@@ -1,10 +1,9 @@
 //! Sweeps, as SolidCraft sweep features.
 //!
-//! A solid sweep of one sketch profile along curves of a planar sketch maps when SolidCraft
-//! builds the same shape from it: the profile square to the path as it turns (or held as
-//! drawn), optionally twisted, along the whole path, optionally guided by one rail of sketch
-//! curves. Sweeps of surfaces, of several sections, along part of a path, with a taper or a
-//! scale, or oriented by a guide surface or a direction are not mapped.
+//! A solid or surface sweep of one sketch profile along planar sketch curves maps with
+//! rotation-minimizing, fixed or fixed-binormal orientation, optional twist and end scale,
+//! or one guide rail. Taper, corner transitions, several sections, partial paths and other
+//! orientation or profile interpolation laws are not mapped.
 
 use serde_json::{json, Map, Value};
 
@@ -19,11 +18,11 @@ const WHOLE: f64 = 1e-9;
 /// Maps a sweep feature whose operation is `definition`.
 pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Result<Value, String> {
     let shape = definition.get("shape").unwrap_or(&Value::Null);
-    match shape.get("mode").and_then(Value::as_str) {
-        Some("solid") => {}
-        Some("surface") => return Err("surface sweeps are not mapped yet".to_owned()),
+    let surface = match shape.get("mode").and_then(Value::as_str) {
+        Some("solid") => false,
+        Some("surface") => true,
         _ => return Err("its swept shape is not resolved".to_owned()),
-    }
+    };
     if shape
         .get("sections")
         .and_then(Value::as_array)
@@ -54,6 +53,15 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         Some("fixed") => {
             extra.insert("orientation".to_owned(), json!("parallel"));
         }
+        Some("binormal") => {
+            let direction = definition.pointer("/orientation/direction");
+            let coordinates = ["x", "y", "z"]
+                .map(|axis| number(direction.and_then(|direction| direction.get(axis))));
+            let [Some(x), Some(y), Some(z)] = coordinates else {
+                return Err("its sweep binormal direction is not resolved".to_owned());
+            };
+            extra.insert("orientation".to_owned(), json!({"direction": [x, y, z]}));
+        }
         Some(other) => {
             return Err(format!(
                 "sweeps oriented by {} are not mapped yet",
@@ -76,16 +84,31 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
     if number(definition.get("taper")).is_some_and(|taper| taper != 0.0) {
         return Err("tapered sweeps are not mapped yet".to_owned());
     }
-    if number(definition.get("scale")).is_some_and(|scale| (scale - 1.0).abs() > WHOLE) {
-        return Err("scaled sweeps are not mapped yet".to_owned());
+    if let Some(scale) = number(definition.get("scale")).filter(|scale| *scale != 1.0) {
+        if !(0.01..=100.0).contains(&scale) {
+            return Err("sweep end scales outside 0.01 to 100 are not mapped yet".to_owned());
+        }
+        extra.insert("scale".to_owned(), json!(scale.to_string()));
     }
     if let Some(twist) = number(definition.get("twist")).filter(|twist| *twist != 0.0) {
+        if twist.abs() > 4.0 * std::f64::consts::TAU {
+            return Err("sweep twists beyond four turns are not mapped yet".to_owned());
+        }
         extra.insert(
             "twist".to_owned(),
             json!(format!("{} deg", twist.to_degrees())),
         );
     }
     if let Some(rail) = definition.get("guide_rail").filter(|rail| !rail.is_null()) {
+        if ["orientation", "twist", "scale"]
+            .iter()
+            .any(|key| extra.contains_key(*key))
+        {
+            return Err(
+                "sweeps combining a guide rail with orientation, twist or scale are not mapped yet"
+                    .to_owned(),
+            );
+        }
         let (rail_sketch, rail_curves) = curves(rail.get("path"), ctx, "guide rail")?;
         whole(rail.get("extent"), "guide rail")?;
         extra.insert(
@@ -93,7 +116,11 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
             json!([{"sketch": rail_sketch, "curves": rail_curves}]),
         );
     }
-    let operation = operation(shape.get("op"))?;
+    let operation = if surface {
+        "new_body"
+    } else {
+        operation(shape.get("op"))?
+    };
     let body_names = body_names(feature, ctx, operation);
 
     let id = ctx.id();
@@ -101,7 +128,7 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
     let mut out = json!({
         "id": id,
         "name": name(feature).map(str::to_owned).unwrap_or_else(|| format!("Sweep{id}")),
-        "type": "sweep",
+        "type": if surface { "surface_sweep" } else { "sweep" },
         "suppressed": false,
         "sketch": sketch,
         "profiles": profiles,
@@ -110,6 +137,9 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         "operation": operation,
     });
     if let Some(fields) = out.as_object_mut() {
+        if surface {
+            fields.remove("operation");
+        }
         fields.extend(extra);
         if let Some(names) = body_names {
             fields.insert("body_names".to_owned(), json!(names));
