@@ -354,7 +354,19 @@ fn shown(eval: &Eval, expected: Expected) -> Shown {
     let faces = expected.faces;
     match eval.faces {
         Some(shown) if shown < faces as u64 => {
-            problems.insert(0, format!("SolidCraft shows {shown} of its {faces} faces"));
+            let missing = faces as u64 - shown;
+            let (missing_s, are) = if missing == 1 {
+                ("", "is")
+            } else {
+                ("s", "are")
+            };
+            problems.insert(
+                0,
+                format!(
+                    "SolidCraft opens {shown} of the {faces} faces converted: {missing} \
+                     face{missing_s} {are} missing there"
+                ),
+            );
         }
         _ => {}
     }
@@ -556,7 +568,7 @@ mod tests {
                 six
             ),
             Shown::Short(
-                "SolidCraft shows 3 of its 6 faces; solid 'cube': 3 face(s) could not be meshed"
+                "SolidCraft opens 3 of the 6 faces converted: 3 faces are missing there; solid 'cube': 3 face(s) could not be meshed"
                     .to_owned()
             )
         );
@@ -765,7 +777,7 @@ mod cli_tests {
         assert_eq!(
             import_check(short),
             Shown::Short(
-                "SolidCraft shows 3 of its 6 faces; 3 face(s) could not be meshed".to_owned()
+                "SolidCraft opens 3 of the 6 faces converted: 3 faces are missing there; 3 face(s) could not be meshed".to_owned()
             )
         );
         assert!(matches!(import_check("exit 3"), Shown::Short(_)));

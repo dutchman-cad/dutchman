@@ -8,18 +8,22 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Reports
+
+- A design SolidCraft opens with faces missing says so plainly: "SolidCraft opens 52 of the 53
+  faces converted: 1 face is missing there", in place of "SolidCraft shows 52 of its 53
+  faces". The guide says what to do about it.
+
+- An assembly says what it brought across: the JSON reports give the joints written by kind
+  (`joints`), and the desktop app's card reads `41 components, 6 joints (5 revolute, 1 rigid)`,
+  or `18 of 20 components placed, …` when some were left out.
+
 ### Checks
 
 - A `solidcraft-cli` older than SolidCraft 0.18.2, the oldest that opens and checks Dutchman's
   designs, is not used: the history is written unverified, saying so and naming the version
   found, and the desktop app says it too. CI opens converted designs in SolidCraft 0.18.2 and
   0.19.0, and the nightly checks with 0.19.0. The guide says which versions are supported.
-
-### Reports
-
-- An assembly says what it brought across: the JSON reports give the joints written by kind
-  (`joints`), and the desktop app's card reads `41 components, 6 joints (5 revolute, 1 rigid)`,
-  or `18 of 20 components placed, …` when some were left out.
 
 ### Feature history
 

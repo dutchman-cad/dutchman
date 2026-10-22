@@ -420,8 +420,10 @@ in `verification.status` in `--json`:
 When the design is written as geometry, the same `solidcraft-cli` opens it too. If SolidCraft
 shows fewer faces than the source model has, or warns about it (for example faces it cannot
 mesh), the report says so as `Degraded: geometry: …`, such as
-`Degraded: geometry: SolidCraft shows 3 of its 6 faces; solid 'unit cube': 3 face(s) could not be meshed and are not shown`.
-The geometry was written, but check it in SolidCraft before relying on it. `--no-verify`
+`Degraded: geometry: SolidCraft opens 3 of the 6 faces converted: 3 faces are missing there; solid 'unit cube': 3 face(s) could not be meshed and are not shown`.
+The geometry was written whole; SolidCraft does not show all of it. Look over those bodies in
+SolidCraft before relying on them. When SolidCraft says why, the reason follows (faces it
+cannot mesh, open shells, bodies inside out). `--no-verify`
 skips this check too.
 
 ## Open the result in SolidCraft
