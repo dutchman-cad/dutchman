@@ -19,6 +19,7 @@ body:
         - Inventor part (.ipt)
         - Inventor assembly (.iam)
         - SolidWorks part (.sldprt)
+        - FreeCAD document (.FCStd)
         - Other
     validations:
       required: true
@@ -26,8 +27,8 @@ body:
     id: source-version
     attributes:
       label: Version that made the files
-      description: The Fusion, Inventor or SolidWorks version or year, if you know it.
-      placeholder: "Fusion 2.0.20xxx, Inventor 2024, SolidWorks 2022, unknown"
+      description: The Fusion, Inventor, SolidWorks, or FreeCAD version or year, if you know it.
+      placeholder: "Fusion 2.0.20xxx, Inventor 2024, SolidWorks 2022, FreeCAD 1.0, unknown"
   - type: dropdown
     id: stage
     attributes:

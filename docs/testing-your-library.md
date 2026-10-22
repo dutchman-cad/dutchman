@@ -118,7 +118,10 @@ see which of your files it is. [The report's fields](report-anon.md) are all des
 ## 5. Report what you found
 
 File every report on **Dutchman's issues**,
-<https://github.com/dutchman-cad/dutchman/issues>, with the **Library test report** form.
+<https://github.com/dutchman-cad/dutchman/issues>, with the **Library test report** form
+(for a single file, the
+[**A file didn't convert**](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
+form).
 Even when the report says `upstream: cadmpeg` or `upstream: solidcraft`, file it on Dutchman,
 not there: we work out where the fix belongs and take it upstream ourselves, then tell you in
 the issue when a Dutchman release fixes it.

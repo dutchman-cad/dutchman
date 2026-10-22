@@ -9,6 +9,7 @@ each report and take what belongs upstream there ourselves.
 | Label | Meaning |
 |---|---|
 | `library-report` | Came from a library test report (the issue form). |
+| `bug` | Came from the **A file didn't convert** form (one file), or is a bug found otherwise. |
 | `stage:input` | The file itself or how it was given: missing parts, a file too large. |
 | `stage:decode` | cadmpeg could not read the file's bytes. |
 | `stage:project` | cadmpeg read it but did not carry something into its neutral model. |

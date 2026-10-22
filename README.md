@@ -91,6 +91,9 @@ desktop portal, and dropping files works without it.
   and report what broke, without sharing a file.
 - Formats: [Fusion](docs/fusion.md), [Inventor](docs/inventor.md),
   [SolidWorks](docs/sldprt.md), [FreeCAD](docs/freecad.md).
+- Reporting a problem: a file that doesn't convert goes on the
+  [**A file didn't convert**](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
+  form, with no design file; see [Troubleshooting](docs/guide.md#troubleshooting).
 - Contributing: [CONTRIBUTING.md](CONTRIBUTING.md), and [AGENTS.md](AGENTS.md) for AI
   contributors.
 
