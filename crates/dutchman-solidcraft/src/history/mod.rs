@@ -8,6 +8,7 @@
 //! the stable contract cadmpeg publishes, rather than its Rust accessors. It knows the wire
 //! versions in [`IR_VERSIONS`] and refuses others rather than misread them.
 
+pub(crate) mod base;
 mod constraints;
 mod extrude;
 mod faces;
@@ -31,7 +32,7 @@ use serde_json::Value;
 const IR_VERSIONS: [&str; 2] = ["6", "7"];
 
 /// A replayable history: SolidCraft parameters and features in timeline order.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct History {
     pub(crate) params: Vec<Value>,
     pub(crate) features: Vec<Value>,
@@ -425,6 +426,7 @@ fn map_feature(feature: &Value, ctx: &mut Context, report: &mut Report) -> Resul
         Some(kind @ ("block" | "primitive")) => Err(primitive::unplaced(kind)),
         Some("pattern") => pattern::map(feature, definition, ctx).map(Mapped::Feature),
         Some("hole") => hole::map(feature, definition, ctx).map(Mapped::Feature),
+        Some("base_feature") => base::map(feature, definition, ctx).map(Mapped::Feature),
         // A placed datum plane: what is sketched on it carries the same frame of its own.
         Some("datum_plane") if definition.get("frame").is_some_and(Value::is_object) => {
             Ok(Mapped::Nothing)

@@ -1241,7 +1241,12 @@ fn name_of(definition: &Value) -> Option<&str> {
 }
 
 /// `model` reduced to `bodies` and the geometry they reach, named `name`.
-fn only(model: &Model, document: &Value, bodies: &[&str], name: String) -> Result<Model, String> {
+pub(crate) fn only(
+    model: &Model,
+    document: &Value,
+    bodies: &[&str],
+    name: String,
+) -> Result<Model, String> {
     let wire = document
         .get("model")
         .and_then(Value::as_object)

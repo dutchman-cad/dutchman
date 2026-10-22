@@ -114,6 +114,13 @@ pub fn read_in(
     Ok(model)
 }
 
+/// The part of `model` holding only `bodies` (CADIR body ids) and what they are made of, named
+/// `name`; why it cannot stand alone, else.
+pub fn with_bodies(model: &Model, bodies: &[&str], name: String) -> Result<Model, String> {
+    let document = serde_json::to_value(&model.ir).map_err(|err| err.to_string())?;
+    assembly::only(model, &document, bodies, name)
+}
+
 /// Decodes one file, without reading the parts an assembly places.
 fn decode_file(format: Format, input: &Path, report: &mut Report) -> Result<Model, Error> {
     if format.codec_id().is_none() {

@@ -53,6 +53,7 @@ pub(crate) fn write(
             "none of the assembly's parts has geometry SolidCraft can import".to_owned(),
         ));
     }
+    history::base::store(&mut builder.features, &mut builder.container)?;
     let mut doc = json!({
         "format": FORMAT,
         "name": model.name,
@@ -391,7 +392,10 @@ impl Builder<'_> {
                 feature.name = Some(format!("{file}: {}", feature.name.unwrap_or_default()));
                 feature
             }));
-        let mut history = match mapping.result {
+        let restated = mapping
+            .result
+            .and_then(|mut history| history::base::restate(&mut history, part).map(|()| history));
+        let mut history = match restated {
             Ok(history) => history,
             Err(reason) => {
                 if !mapping.features.is_empty() {

@@ -1723,3 +1723,83 @@ fn solidcraft_builds_the_primitives() {
         );
     }
 }
+
+/// The holed cube's history with its sketch and extrude replaced by a base feature holding
+/// the cube's body as it is, as Fusion holds a body modelled directly or imported.
+fn based_cube() -> Model {
+    let mut model = holed_cube(4.0, |_| {});
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    let body = m["bodies"][0]["id"].clone();
+    let features = m["features"].as_array_mut().unwrap();
+    features.retain(|feature| feature["ordinal"].as_u64() >= Some(2));
+    features.push(json!({
+        "id": "f3d:model:feature#1",
+        "ordinal": 0,
+        "name": "Base Feature 1",
+        "suppressed": false,
+        "definition": {"definition": "base_feature",
+            "bodies": {"kind": "resolved", "value": {"bodies": [body], "native": "f3d:base#1"}}},
+    }));
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn a_base_feature_is_imported_where_it_stands_in_the_timeline() {
+    let (document, report) = convert(
+        &based_cube(),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("3 of 3 features mapped"),
+        "{}",
+        history_line(&report)
+    );
+    let base = &document["features"][0];
+    assert_eq!(base["type"], "import");
+    assert_eq!(base["name"], "Base Feature 1");
+    assert!(base["step_blob"]
+        .as_str()
+        .is_some_and(|blob| blob.starts_with("blobs/")));
+    assert!(base.get("_step").is_none() && base.get("_bodies").is_none());
+    // The hole after it keeps its history; the original geometry still ends the timeline.
+    assert_eq!(
+        types(&document),
+        [
+            ("import".to_owned(), false),
+            ("sketch".to_owned(), false),
+            ("hole".to_owned(), false),
+            ("import".to_owned(), true),
+        ]
+    );
+}
+
+#[test]
+fn solidcraft_drills_into_the_imported_base_body() {
+    let Some(cli) = solidcraft() else { return };
+    let bore = std::f64::consts::PI * 2.0_f64.powi(2);
+    let got = volumes(&cli, &written(&based_cube()).0);
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert!((got[0] - (1000.0 - bore * 10.0)).abs() < 1.0, "{got:?}");
+}
+
+#[test]
+fn a_base_feature_alone_is_verified_against_the_original() {
+    let Some(cli) = solidcraft() else { return };
+    let mut model = based_cube();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|feature| feature["ordinal"] == 0);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::With(cli)),
+    );
+    assert_eq!(
+        history_line(&report),
+        "1 of 1 features mapped; verified against the original in SolidCraft"
+    );
+}
