@@ -1,11 +1,14 @@
 //! Lofts, as SolidCraft loft features.
 //!
 //! A loft through sketch profiles maps when SolidCraft builds the same shape from it: open,
-//! solid, smooth (not ruled), with no degree limit, through two to fifty sections (several may
-//! be profiles of one sketch), guided by at most two rails of sketch curves (not by a
-//! centreline). A first or last section that is a point (a position or a vertex) becomes a
-//! sketch holding that point, written just before the loft, since SolidCraft takes a loft's
-//! point end as a sketch point.
+//! with no degree limit, through two to fifty sections (several may be profiles of one
+//! sketch), guided by at most two rails of sketch curves or one-curve whole sketches (not by
+//! a centreline). A ruled loft maps through two sections without rails, where SolidCraft's loft
+//! is ruled too. A surface loft becomes a SolidCraft surface loft (walls only, a new surface
+//! body). A first or last section of a solid loft that is a point (a position or a vertex)
+//! becomes a sketch holding that point, written just before the loft, since SolidCraft takes a
+//! loft's point end as a sketch point. Edge and face simplification after the loft changes no
+//! shape and is left to SolidCraft.
 
 use serde_json::{json, Value};
 
@@ -52,12 +55,8 @@ pub(crate) fn map(
     if flag("closed", false) {
         return Err("closed lofts are not mapped yet".to_owned());
     }
-    if !flag("solid", true) {
-        return Err("surface lofts are not mapped yet".to_owned());
-    }
-    if flag("ruled", false) {
-        return Err("ruled lofts are not mapped yet".to_owned());
-    }
+    let surface = !flag("solid", true);
+    let ruled = flag("ruled", false);
     if definition.get("max_degree").is_some_and(|d| !d.is_null()) {
         return Err("lofts with a degree limit are not mapped yet".to_owned());
     }
@@ -69,6 +68,14 @@ pub(crate) fn map(
     if !(2..=50).contains(&sources.len()) {
         return Err("a loft needs between two and fifty sections".to_owned());
     }
+    // SolidCraft rules a loft between two sections and runs one smooth surface through
+    // three or more, so a ruled loft is the same shape only through two, without rails.
+    if ruled && sources.len() > 2 {
+        return Err("ruled lofts through more than two sections are not mapped yet".to_owned());
+    }
+    if ruled && !rails.is_empty() {
+        return Err("ruled lofts along guide rails are not mapped yet".to_owned());
+    }
     let mut sections = Vec::with_capacity(sources.len());
     let mut apex_sketches = Vec::new();
     for (index, section) in sources.iter().enumerate() {
@@ -76,6 +83,9 @@ pub(crate) fn map(
             section.get("kind").and_then(Value::as_str),
             Some("point" | "native_point" | "vertex")
         ) {
+            if surface {
+                return Err("surface lofts to a point are not mapped yet".to_owned());
+            }
             if index != 0 && index + 1 != sources.len() {
                 return Err("lofts with an interior point section are not mapped yet".to_owned());
             }
@@ -124,7 +134,12 @@ pub(crate) fn map(
             .ok_or("a section's sketch is not an earlier mapped sketch")?;
         sections.push(json!({"sketch": sketch.feature, "profiles": profiles}));
     }
-    let operation = operation(definition.get("op"))?;
+    // A surface loft is a sheet of its own; SolidCraft makes it a new surface body.
+    let operation = if surface {
+        "new_body"
+    } else {
+        operation(definition.get("op"))?
+    };
     let body_names = body_names(feature, ctx, operation);
 
     let id = ctx.id();
@@ -132,12 +147,15 @@ pub(crate) fn map(
     let mut out = json!({
         "id": id,
         "name": name(feature).map(str::to_owned).unwrap_or_else(|| format!("Loft{id}")),
-        "type": "loft",
+        "type": if surface { "surface_loft" } else { "loft" },
         "suppressed": false,
         "sections": sections,
         "operation": operation,
     });
     if let Some(fields) = out.as_object_mut() {
+        if surface {
+            fields.remove("operation");
+        }
         if !rails.is_empty() {
             fields.insert("rails".to_owned(), json!(rails));
         }

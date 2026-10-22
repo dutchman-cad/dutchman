@@ -128,8 +128,11 @@ Extrudes map as new body, join, cut or intersect (a new body keeps its source na
 revolves about a line in the sketch plane that are symmetric, equal-angle two-sided or a full
 turn (CADIR does not state which way a revolve turns, so partial one-sided and unequal
 two-sided revolves are not mapped); lofts through two to fifty profile or terminal point sections,
-open, smooth and solid, guided by up to two rails of sketch curves (sections can select
-separate regions of one sketch; resolved point and vertex ends become sketch points); sweeps of one sketch profile along
+open, smooth (or ruled through two sections without rails), solid or surface (a surface loft
+becomes a new surface body, without point ends), guided by up to two rails of sketch curves or
+one-curve whole sketches (sections can select separate regions of one sketch; resolved point and
+vertex ends become sketch points; closed, centreline and degree-limited lofts, and rails of
+edges or model-space curves, are not mapped); sweeps of one sketch profile along
 sketch curves (whole path, solid or surface, square to it, held as drawn or with a fixed
 binormal, optionally twisted up to four turns and scaled at the end by 0.01–100, or guided by
 one rail without other orientation, twist, or scale options; a whole-sketch path or rail maps

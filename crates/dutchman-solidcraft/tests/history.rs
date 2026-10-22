@@ -795,7 +795,12 @@ fn a_loft_between_sketch_profiles_becomes_a_solidcraft_loft() {
 #[test]
 fn lofts_solidcraft_would_build_differently_flatten_the_history() {
     for (change, reason) in [
-        (json!({"ruled": true}), "ruled lofts are not mapped yet"),
+        (
+            json!({"ruled": true, "sections": [first_profile(),
+                {"kind": "sketch_profiles", "value": {"sketch": TOP, "profiles": [0]}},
+                {"kind": "point", "value": {"x": 5.0, "y": 5.0, "z": 20.0}}]}),
+            "ruled lofts through more than two sections are not mapped yet",
+        ),
         (json!({"closed": true}), "closed lofts are not mapped yet"),
         (
             json!({"max_degree": 3}),
@@ -819,7 +824,11 @@ fn lofts_solidcraft_would_build_differently_flatten_the_history() {
             json!({"sections": vec![first_profile(); 51]}),
             "a loft needs between two and fifty sections",
         ),
-        (json!({"solid": false}), "surface lofts are not mapped yet"),
+        (
+            json!({"solid": false, "sections": [first_profile(),
+                {"kind": "point", "value": {"x": 5.0, "y": 5.0, "z": 10.0}}]}),
+            "surface lofts to a point are not mapped yet",
+        ),
     ] {
         let model = loft_history(10.0, |definition| {
             for (key, value) in change.as_object().unwrap() {
@@ -1089,6 +1098,108 @@ fn railed_loft(top: f64) -> Model {
     }
 }
 
+/// A whole-sketch rail: the rail line, or with `split` that line in two spans, beside a
+/// construction line and a standalone point.
+fn whole_sketch_railed_loft(split: bool) -> Model {
+    let model = railed_loft(10.0);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    m["features"][3]["definition"]["guidance"]["path"] = json!([{"kind": "sketch", "value": RAIL}]);
+    let entities = m["sketch_entities"].as_array_mut().unwrap();
+    if split {
+        let first = entities
+            .iter_mut()
+            .find(|e| e["id"] == "f3d:model:sketch-entity#31")
+            .unwrap();
+        first["geometry"]["end"]["v"] = json!(5.0);
+        let mut second = line(32, [0.0, 5.0], [0.0, 10.0]);
+        second["sketch"] = json!(RAIL);
+        entities.push(second);
+    }
+    let mut construction = line(33, [1.0, 0.0], [1.0, 10.0]);
+    construction["sketch"] = json!(RAIL);
+    construction["construction"] = json!(true);
+    let mut point = entity(
+        34,
+        json!({"kind": "point", "position": {"u": 2.0, "v": 2.0}}),
+    );
+    point["sketch"] = json!(RAIL);
+    entities.extend([construction, point]);
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    }
+}
+
+#[test]
+fn a_whole_sketch_loft_rail_is_its_one_curve() {
+    let (document, report) = convert(
+        &whole_sketch_railed_loft(false),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let features = document["features"].as_array().unwrap();
+    let sketch = features
+        .iter()
+        .find(|f| f["name"] == "Rail sketch")
+        .unwrap();
+    let loft = features.iter().find(|f| f["type"] == "loft").unwrap();
+    let curve = sketch["sketch"]["curves"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["construction"] != json!(true))
+        .unwrap();
+    assert_eq!(loft["rails"][0]["sketch"], sketch["id"]);
+    assert_eq!(loft["rails"][0]["curves"], json!([curve["id"]]));
+    assert!(history_line(&report).contains("4 of 4 features mapped"));
+
+    let (_, report) = convert(
+        &whole_sketch_railed_loft(true),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains(
+            "a whole-sketch guide rail with several curves has no resolved traversal order"
+        ),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn a_loft_rail_of_edges_is_refused() {
+    let model = loft_history(10.0, |definition| {
+        definition["guidance"] = json!({"kind": "guides", "path": [
+            {"kind": "edges", "value": []}
+        ]});
+    });
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|f| f["type"] != "loft"));
+    assert!(
+        history_line(&report).contains("a guide rail of topological edges is not mapped yet"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn solidcraft_lofts_along_a_whole_sketch_rail() {
+    let Some(cli) = solidcraft() else { return };
+    let volume = volumes(&cli, &written(&whole_sketch_railed_loft(false)).0);
+    assert_eq!(volume.len(), 1);
+    assert!(
+        (volume[0] - 1000.0).abs() / 1000.0 < dutchman_solidcraft::VOLUME_TOLERANCE,
+        "{volume:?}"
+    );
+}
+
 #[test]
 fn a_loft_along_a_guide_rail_keeps_its_rail() {
     let (document, report) = convert(
@@ -1148,6 +1259,80 @@ fn solidcraft_lofts_along_the_rail() {
         "{}",
         history_line(&report)
     );
+}
+
+#[test]
+fn ruled_and_surface_lofts_map_to_what_solidcraft_builds() {
+    for (change, kind) in [
+        (json!({"ruled": true}), "loft"),
+        (json!({"solid": false}), "surface_loft"),
+        (json!({"linearize": true}), "loft"),
+    ] {
+        let model = loft_history(4.0, |definition| {
+            for (key, value) in change.as_object().unwrap() {
+                definition[key] = value.clone();
+            }
+        });
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        let features = document["features"].as_array().unwrap();
+        let loft = features.iter().find(|f| f["name"] == "Block").unwrap();
+        assert_eq!(loft["type"], kind, "{change}");
+        assert_eq!(loft["sections"].as_array().unwrap().len(), 2);
+        assert_eq!(loft.get("operation").is_none(), kind == "surface_loft");
+        assert!(
+            history_line(&report).contains("3 of 3 features mapped"),
+            "{}",
+            history_line(&report)
+        );
+    }
+    let railed = railed_loft(10.0);
+    let mut wire = serde_json::to_value(&railed.ir).unwrap();
+    for feature in wire["model"]["features"].as_array_mut().unwrap() {
+        if feature["definition"]["definition"] == "loft" {
+            feature["definition"]["ruled"] = json!(true);
+        }
+    }
+    let model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..railed
+    };
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("ruled lofts along guide rails are not mapped yet"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn solidcraft_replays_ruled_and_surface_lofts() {
+    let Some(cli) = solidcraft() else { return };
+    // A ruled frustum from the 10 mm base square to a 4 mm top: 520 mm³.
+    let ruled = loft_history(4.0, |d| d["ruled"] = json!(true));
+    let volume = volumes(&cli, &written(&ruled).0);
+    assert_eq!(volume.len(), 1);
+    assert!((volume[0] - 520.0).abs() < 1e-6, "{volume:?}");
+
+    // The surface loft is the cube's four walls: one sheet with the cube's bounds.
+    let surface = loft_history(10.0, |d| {
+        d["solid"] = json!(false);
+    });
+    let boxes = bounds(&cli, &written(&surface).0);
+    assert_eq!(boxes.len(), 1);
+    for (actual, expected) in [
+        (boxes[0].0, [0.0, 0.0, 0.0]),
+        (boxes[0].1, [10.0, 10.0, 10.0]),
+    ] {
+        for (actual, expected) in actual.into_iter().zip(expected) {
+            assert!((actual - expected).abs() < 1e-6, "{boxes:?}");
+        }
+    }
 }
 
 #[test]
