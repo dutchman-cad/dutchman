@@ -21,7 +21,8 @@ fn rows() -> [(Format, Status, String); 7] {
     let freecad = if Format::FreeCadDocument.codec_id().is_some() {
         (
             Status::Converts,
-            "geometry, and components; feature history is not mapped yet".to_owned(),
+            "geometry and components; feature history (sketches, pads, simple holes) when every feature maps"
+                .to_owned(),
         )
     } else {
         (
@@ -44,7 +45,7 @@ fn rows() -> [(Format, Status, String); 7] {
         (
             Format::InventorPart,
             Status::Converts,
-            "geometry; feature history waits on cadmpeg resolving extrude profiles",
+            "geometry; feature history (sketches, constraints, extrudes) when every feature maps",
         ),
         (
             Format::InventorAssembly,

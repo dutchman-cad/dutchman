@@ -6,19 +6,16 @@ and answer a `.FCStd` file with "FreeCAD files convert in nightly builds for now
 
 ## Why only nightly
 
-cadmpeg 0.6.3 reads FreeCAD documents, but not yet their solids as FreeCAD shows them. Checked
-in SolidCraft, none of 18 single-part test documents (pads, pockets, revolves, holes, shells)
-came out as one solid of the right volume:
+cadmpeg 0.6.3 reads FreeCAD documents, but not yet their solids as FreeCAD shows them: some
+faces are stored as replicas of curves, which SolidCraft leaves out, the intermediate shape
+of each feature comes through as a body of its own, and revolved faces can face inwards.
+Checked in SolidCraft, none of 18 single-part test documents came out as one solid of the
+right volume.
 
-- some of FreeCAD's faces are stored as replicas of curves, which SolidCraft leaves out, so
-  solids open as empty shells of zero volume;
-- the intermediate shapes FreeCAD keeps for each feature come through as bodies of their own,
-  beside the part;
-- revolved faces can face inwards, so their volume reads wrong.
-
-A cadmpeg release that takes only each Body's Tip shape, keeps those faces and sets their
-sense makes stable builds convert FreeCAD documents too; until then the nightly builds, made
-against cadmpeg's `main`, carry the fixes as they land.
+cadmpeg's `main` takes only each Body's shape and fixes those faces: built against it, all 19
+of the test documents (pads, pockets, revolves, holes, fillets, chamfers, shells and a
+three-part assembly) come out at FreeCAD's volume. Stable builds convert FreeCAD documents
+from the cadmpeg release that carries this; until then the nightly builds do.
 
 ## What converts
 
@@ -26,12 +23,13 @@ against cadmpeg's `main`, carry the fixes as they land.
   Only the bodies FreeCAD shows convert: a body cadmpeg marks hidden (`visible: false`, as it
   marks the shape of each step inside a PartDesign Body) is left out, with the geometry only
   it uses, and the report says how many were (`Info`). A document that hides every body
-  converts all of them, as stored. cadmpeg 0.6.3 marks none, so this takes effect with the
-  cadmpeg release that does.
+  converts all of them, as stored. cadmpeg 0.6.3 marks none; its `main` does, so this takes
+  effect in stable builds with cadmpeg's next release.
 - **Components**, when cadmpeg says which bodies each owns, as for a Fusion design.
-- **Feature history** is not mapped yet, so every document converts as geometry without
-  history, and the report names the first feature that stopped it. FreeCAD's PartDesign
-  Body, its sketches, Pads, Pockets, Revolutions, Holes and Thicknesses are the next to map.
+- **Feature history**, when every feature maps: sketches, pads and simple holes, replayed
+  and checked in SolidCraft like a Fusion history. Fillets, chamfers, thicknesses (shells),
+  counterbored holes and revolutions short of a full turn are not mapped yet; a document
+  holding one converts as geometry, and the report names the first feature that stopped it.
 
 ## Building with FreeCAD
 
