@@ -28,6 +28,19 @@ report's schema name changes when a field does).
   the operating system, what was expected and what happened, and that file's anonymous
   report. Both forms list FreeCAD documents (`.FCStd`), and the agent skill does too.
 
+### FreeCAD output (experimental)
+
+- `dutchman convert --to freecad` (and `convert-all`, the MCP tools and the desktop app's
+  output choice) writes a FreeCAD rebuild macro (`.FCMacro`) instead of a SolidCraft design:
+  it rebuilds the mapped history through FreeCAD's public scripting API and keeps the
+  original geometry as embedded STEP, which it restores when the rebuild fails or differs.
+  Dutchman does not run FreeCAD, so these histories are unverified. Geometry whose STEP uses
+  replicated trimming curves (`CURVE_REPLICA`), which crash FreeCAD 1.1's reader, is refused.
+
+### cadmpeg
+
+
+
 ## 0.1.5 (2026-10-22)
 
 ### Inventor history, and FreeCAD in stable builds
@@ -75,14 +88,6 @@ report's schema name changes when a field does).
   where it is stored, so the assembly's other joints keep their motion.
 - Leaving out a FreeCAD document's hidden bodies no longer takes their sketches with them.
 
-- A grounded joint in a FreeCAD assembly becomes a rigid joint to the design, holding its part
-  where it is stored, so the assembly's other joints keep their motion. It was left out ("a
-  joint to the ground alone is not converted yet").
-- Leaving out a FreeCAD document's hidden bodies no longer takes their sketches with them: a
-  sketch's own wire body is hidden, and only the hidden bodies' own B-rep is left out now.
-  Every FreeCAD history had stopped at its first sketch ("the sketch it binds is missing")
-  once cadmpeg marks those bodies hidden.
-
 ### Assemblies
 
 - An Inventor assembly that places no parts, as Inventor's own assembly templates do,
@@ -109,10 +114,6 @@ report's schema name changes when a field does).
 - The guide and CONTRIBUTING start problem reports from an anonymous report, explain the
   sample cube's expected warnings, and the MCP tool descriptions say exactly what
   `convert_all` writes and that a successful `inspect` does not mean a file converts.
-
-### FreeCAD output
-
-- Add FreeCAD rebuild macros through `--to freecad`, MCP and the desktop app, with embedded STEP recovery.
 
 ### Feature history
 

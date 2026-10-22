@@ -345,6 +345,8 @@ Inventor assembly (.iam)         converts  placed parts and sub-assemblies, read
 SolidWorks part (.sldprt)        converts  geometry; feature history waits on cadmpeg binding sketches and extrude profiles
 SolidWorks assembly (.sldasm)    not yet   nothing yet
 FreeCAD document (.FCStd)        converts  geometry and components; feature history (sketches, pads, simple holes) when every feature maps
+
+Written as a SolidCraft design (.solidcraft), or, experimental, as a FreeCAD rebuild macro (.FCMacro, --to freecad)
 ```
 
 The state of each format, and what is still missing upstream, is in [fusion.md](fusion.md),
@@ -541,7 +543,10 @@ and requested reports.
 | `history: …; unverified: …` | Not an error: the history was written without the SolidCraft check. Install `solidcraft-cli`, or point `--solidcraft` or `SOLIDCRAFT_CLI` at it, and convert again. |
 | `history: flattened: replay differs (…)` | Not an error: the history did not rebuild the same shape in SolidCraft, so the geometry was written instead. `--no-verify` keeps the history, unchecked. |
 
-## FreeCAD output
+## FreeCAD output (experimental)
+
+**Experimental.** The macro, its options and what it rebuilds may change between releases,
+and Dutchman cannot check the rebuilt part itself: open it in FreeCAD and compare.
 
 Write a self-contained FreeCAD rebuild macro instead of a SolidCraft design:
 

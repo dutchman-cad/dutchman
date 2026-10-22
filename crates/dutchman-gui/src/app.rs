@@ -431,7 +431,7 @@ impl App {
                 egui::ComboBox::from_label("Output format")
                     .selected_text(match self.options.to {
                         dutchman::OutputFormat::Solidcraft => "SolidCraft",
-                        dutchman::OutputFormat::Freecad => "FreeCAD macro",
+                        dutchman::OutputFormat::Freecad => "FreeCAD macro (experimental)",
                     })
                     .show_ui(ui, |ui| {
                         ui.selectable_value(
@@ -442,7 +442,7 @@ impl App {
                         ui.selectable_value(
                             &mut self.options.to,
                             dutchman::OutputFormat::Freecad,
-                            "FreeCAD macro",
+                            "FreeCAD macro (experimental)",
                         );
                     });
                 ui.checkbox(

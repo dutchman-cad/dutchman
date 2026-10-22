@@ -22,8 +22,10 @@ use serde_json::{json, Value};
 /// The format written by a conversion; independent of FreeCAD input support.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
 pub enum OutputFormat {
+    /// A SolidCraft design (`.solidcraft`).
     #[default]
     Solidcraft,
+    /// A FreeCAD rebuild macro (`.FCMacro`). Experimental.
     Freecad,
 }
 
@@ -67,7 +69,8 @@ impl Writer for OutputWriter {
 /// How a design is converted.
 #[derive(Clone, Debug, clap::Args)]
 pub struct ConvertOptions {
-    /// Output format: SolidCraft design or a self-contained FreeCAD rebuild macro.
+    /// Output format: a SolidCraft design (the default), or a self-contained FreeCAD rebuild
+    /// macro (experimental: rebuilt in FreeCAD, not checked by Dutchman).
     #[arg(long, value_enum, default_value = "solidcraft")]
     pub to: OutputFormat,
     /// Write the geometry as one non-parametric import, never the feature history.

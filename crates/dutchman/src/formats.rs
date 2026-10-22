@@ -89,6 +89,10 @@ pub fn text() -> String {
         };
         out.push_str(&format!("{:<32} {status:<9} {converts}\n", format.name()));
     }
+    out.push_str(
+        "\nWritten as a SolidCraft design (.solidcraft), or, experimental, as a FreeCAD rebuild \
+         macro (.FCMacro, --to freecad)\n",
+    );
     out
 }
 
