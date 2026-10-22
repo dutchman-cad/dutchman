@@ -16,6 +16,7 @@ dutchman = { path = "crates/dutchman", version = "0.1.3", default-features = fal
 dutchman-core = { path = "crates/dutchman-core", version = "0.1.3", default-features = false }
 dutchman-solidcraft = { path = "crates/dutchman-solidcraft", version = "0.1.3", default-features = false }
 clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
+aho-corasick = "1.1"
 cadmpeg-core = "0.6"
 cadmpeg-ir = "0.6"
 cadmpeg-registry = { version = "0.6", default-features = false, features = ["f3d", "inventor", "sldprt", "step"] }

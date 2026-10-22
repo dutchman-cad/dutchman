@@ -25,6 +25,7 @@ default = []
 freecad = ["dutchman-core/freecad"]
 
 [dependencies]
+aho-corasick.workspace = true
 clap.workspace = true
 dutchman-core.workspace = true
 dutchman-solidcraft.workspace = true

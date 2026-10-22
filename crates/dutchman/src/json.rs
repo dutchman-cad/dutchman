@@ -272,6 +272,9 @@ pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value
         out.insert("joints".to_owned(), json!(report.joints()));
     }
     out.insert("losses".to_owned(), losses(report));
+    if !report.names().is_empty() {
+        out.insert("names".to_owned(), json!(report.names()));
+    }
     out
 }
 

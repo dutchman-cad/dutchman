@@ -11,6 +11,7 @@ mod error;
 mod format;
 mod hidden;
 mod locate;
+mod names;
 pub mod placement;
 mod report;
 
@@ -87,6 +88,9 @@ pub fn read_in(
         &finder,
         &mut Vec::new(),
     )?;
+    for path in finder.paths() {
+        names::saw_stored(&path, report);
+    }
     if let Some(searched) = finder.searched_note() {
         report.push_at(Stage::Input, Severity::Info, "parts search", searched);
     }
@@ -127,12 +131,14 @@ fn decode_file(format: Format, input: &Path, report: &mut Report) -> Result<Mode
     if format.codec_id().is_none() {
         return Err(Error::NotSupportedYet { format });
     }
+    names::saw_path(input, report);
     check_input(input)?;
     let bytes = std::fs::read(input).map_err(|source| Error::Io {
         path: input.to_path_buf(),
         source,
     })?;
     let model = decode::decode(format, input, &bytes, report)?;
+    names::saw_model(&model, report);
     if format != Format::FreeCadDocument {
         return Ok(model);
     }

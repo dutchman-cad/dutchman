@@ -8,6 +8,21 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Privacy
+
+- **The anonymous report (`--report-anon`) of 0.1.3 can hold names: re-run with 0.1.4 before
+  sharing one.** Two causes, both fixed. Codes of Dutchman's own losses were made from the
+  loss's subject, which is a file name as often as a kind (`dutchman/<letters of a file
+  name>`); a code is now `dutchman/` and one of a fixed set of words, else `dutchman/other`,
+  and a cadmpeg code that is not a plain code reads `cadmpeg/other`. And paths relative to an
+  Inventor project or the folders its project file names, and part names the report was never
+  told of, were left in messages. Each conversion now records every name it meets (the paths
+  and folders it reads from, and every name the design gives anything; `names` in the convert
+  report), and the anonymous report takes each one out, with any word holding a path
+  separator.
+- The anonymous report of a large batch is made in one pass over each message: one of about
+  7,000 files had not finished after an hour and a half; 8,000 files now take seconds.
+
 ### FreeCAD
 
 - Bodies a FreeCAD document keeps hidden, such as the shape of each step inside a PartDesign
