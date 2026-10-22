@@ -1704,11 +1704,23 @@ mod tests {
             1,
             "the sub-assembly's cube, found by searching"
         );
-        // Each part found, and the folders it was found in, are names the report met.
-        let found = top.join("Parts/cube.ipt").display().to_string();
-        for name in [found.as_str(), "Robot", "Parts", "SubAssembly", "cube.ipt"] {
-            assert!(report.names().contains(name), "{name}");
+        // Each part found, and the folders it was found in, are names the report met: by
+        // name, as every system spells the path to them its own way (`\\`, `/private/var`).
+        for name in ["Robot", "Parts", "SubAssembly", "cube.ipt", "cube"] {
+            assert!(
+                report.names().contains(name),
+                "{name}: {:?}",
+                report.names()
+            );
         }
+        assert!(
+            report
+                .names()
+                .iter()
+                .any(|name| name.ends_with("cube.ipt") && name.contains("Parts")),
+            "the whole path found: {:?}",
+            report.names()
+        );
     }
 
     /// cadmpeg's example 10 mm cube in a design whose component `Block` owns it, placed at
