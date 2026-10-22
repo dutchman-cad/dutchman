@@ -26,6 +26,8 @@ from the cadmpeg release that carries this; until then the nightly builds do.
   converts all of them, as stored. cadmpeg 0.6.3 marks none; its `main` does, so this takes
   effect in stable builds with cadmpeg's next release.
 - **Components**, when cadmpeg says which bodies each owns, as for a Fusion design.
+- **Grounded joints** hold their part fixed to the design where it is stored, as a rigid
+  joint to the design; the assembly's revolute and slider joints keep their motion.
 - **Feature history**, when every feature maps: sketches, pads and simple holes, replayed
   and checked in SolidCraft like a Fusion history. Fillets, chamfers, thicknesses (shells),
   counterbored holes and revolutions short of a full turn are not mapped yet; a document

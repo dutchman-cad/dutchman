@@ -10,6 +10,9 @@ report's schema name changes when a field does).
 
 ### FreeCAD
 
+- A grounded joint in a FreeCAD assembly becomes a rigid joint to the design, holding its part
+  where it is stored, so the assembly's other joints keep their motion. It was left out ("a
+  joint to the ground alone is not converted yet").
 - Leaving out a FreeCAD document's hidden bodies no longer takes their sketches with them: a
   sketch's own wire body is hidden, and only the hidden bodies' own B-rep is left out now.
   Every FreeCAD history had stopped at its first sketch ("the sketch it binds is missing")

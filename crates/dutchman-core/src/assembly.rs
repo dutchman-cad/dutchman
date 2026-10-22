@@ -813,8 +813,33 @@ fn joint(
     inserted: &BTreeMap<&str, &str>,
 ) -> Result<(Joint, Option<String>), String> {
     let operands = row.get("operands").unwrap_or(&Value::Null);
+    if operands.get("arity").and_then(Value::as_str) == Some("grounded") {
+        let operand = operands
+            .pointer("/connector/operand")
+            .ok_or("it is malformed")?;
+        let (path, _, world) = side_path(operand, paths, worlds, inserted)?;
+        if path.is_empty() {
+            return Err("it joins a component to itself".to_owned());
+        }
+        // Grounding fixes the occurrence where it is stored. Use the same rigid joint to
+        // the design as a paired joint to the root, with frames that preserve its placement.
+        return Ok((
+            Joint {
+                a: Vec::new(),
+                b: path,
+                frame_a: world,
+                frame_b: FACING,
+                suppressed: row
+                    .get("suppressed")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                motion: Motion::Rigid,
+            },
+            None,
+        ));
+    }
     if operands.get("arity").and_then(Value::as_str) != Some("pair") {
-        return Err("a joint to the ground alone is not converted yet".to_owned());
+        return Err("its operands are not supported yet".to_owned());
     }
     let kind = operands.get("kind").unwrap_or(&Value::Null);
     let side = |index: usize| -> Result<(Vec<usize>, Placement3x4), String> {
@@ -2236,6 +2261,33 @@ mod tests {
                 (vec![0, 0], vec![0, 1])
             ]
         );
+    }
+
+    #[test]
+    fn a_grounded_nested_occurrence_keeps_its_world_placement() {
+        let model = with_joints(
+            nested(false, None),
+            json!([{
+                "id": "f3d:model:joint#1",
+                "operands": {
+                    "arity": "grounded",
+                    "connector": connector_at(0, &["2"], at([8.0, 9.0, 10.0], 0.5)),
+                    "offset_frame": at([1.0, 2.0, 3.0], 0.25),
+                },
+                "suppressed": false,
+            }]),
+        );
+        let (assembly, notes) = local_components(&model).unwrap().unwrap();
+        assert!(notes.is_empty(), "{notes:?}");
+        assert_eq!(assembly.joints.len(), 1);
+        let ground = &assembly.joints[0];
+        assert!(ground.a.is_empty());
+        assert_eq!(ground.b, [0, 1]);
+        assert_eq!(ground.motion, Motion::Rigid);
+        let world = at([130.0, 0.0, 0.0], 0.0);
+        assert_eq!(world_at(&assembly, &ground.b), Some(world));
+        assert_eq!(ground.frame_a, world);
+        assert_eq!(ground.frame_b, FACING);
     }
 
     #[test]
