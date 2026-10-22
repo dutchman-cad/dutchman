@@ -22,12 +22,17 @@ including ones you cannot open any more.
 
 ## 1. Install
 
-1. Install Dutchman 0.1.2 or newer from a release archive, as [the guide](guide.md#install)
-   shows. Check that `dutchman --version` prints the version.
-2. Optional, recommended: install SolidCraft's command-line tool, `solidcraft-cli`, from a
-   [SolidCraft release](https://github.com/tangency-labs/solidcraft/releases). With it,
-   Dutchman checks every converted design in SolidCraft: whether a feature history replays to
-   the same shape, and whether the geometry shows whole. Tell Dutchman where it is:
+1. Install Dutchman 0.1.3 or newer, as [the guide](guide.md#install) shows: on a Mac, the
+   disk image (`Dutchman.app`, with the `dutchman` command inside it, which the guide shows
+   how to put on your `PATH`); elsewhere, the release archive. Check that `dutchman --version`
+   prints the version.
+2. Optional, recommended: install SolidCraft. With it, Dutchman checks every converted design
+   in SolidCraft: whether a feature history replays to the same shape, and whether the
+   geometry shows whole, with a volume. Dutchman finds the command-line tool inside an
+   installed SolidCraft app (`SolidCraft.app` on macOS, under Program Files on Windows). If
+   you have only the tool, `solidcraft-cli` from a
+   [SolidCraft release](https://github.com/tangency-labs/solidcraft/releases), put it on your
+   `PATH` or tell Dutchman where it is:
 
    ```sh
    export SOLIDCRAFT_CLI=/path/to/solidcraft-cli          # macOS, Linux
@@ -40,7 +45,7 @@ including ones you cannot open any more.
 ### Stable or nightly
 
 Use the latest stable release. When an issue you filed says the fix is "merged, not released
-yet", you can try it at once with the
+yet", or a fix depends on a cadmpeg change not released yet, you can try it at once with the
 [`nightly`](https://github.com/dutchman-cad/dutchman/releases/tag/nightly) pre-release:
 Dutchman's and cadmpeg's latest code, rebuilt each day once every test passes. Run the same
 batch with it (a new `--journal`, since a different version converts everything again), and
@@ -68,6 +73,14 @@ dutchman convert-all ~/CAD \
   that with `--timeout SECONDS` and `--max-memory MB`.
 - **Stopped part way?** Run the same command again. The journal remembers every file already
   done, and only the rest are converted.
+- Inventor assemblies find their part files as Inventor does: at the paths they store, else
+  in the project the nearest Inventor project file (`.ipj`) above them describes, with its
+  workspace, library and imported-components folders. A shared library kept elsewhere is
+  searched too with `--search DIR` (give it more than once for several). See
+  [Finding the part files](inventor.md#finding-the-part-files).
+- As it runs, Dutchman prints each file's result, with what it lost grouped by component for
+  assemblies; an assembly with parts left out is counted as converted but **incomplete**.
+  Every loss of every file, in full, goes to `dutchman.log` in the `--out-dir` folder.
 - When it ends, Dutchman prints the report's salt. Keep it to yourself (it is also in the key
   file). To make the next run's ids match this one's, add `--report-salt` with that salt.
 
@@ -76,7 +89,8 @@ dutchman convert-all ~/CAD \
 `report-anon.json` is plain JSON; any text editor shows it. The parts that matter most:
 
 - `totals` and `formats`: how many files converted, how (editable history, checked or not, or
-  geometry only), how many failed.
+  geometry only), how many converted incomplete (assemblies with parts left out), how many
+  failed.
 - `stages`: where the trouble was. `decode` and `project` are cadmpeg reading the file, `map`
   and `write` are Dutchman, `solidcraft` is SolidCraft checking the result, `input` is the file
   itself (missing parts beside an assembly, say).
@@ -95,7 +109,7 @@ see which of your files it is. [The report's fields](report-anon.md) are all des
 | `report-anon.json` | **Yes**, after reading it. It holds no names, paths or geometry. If you find a name in it, leave that part out and tell us: it is a bug. |
 | Parts of it (one cause, a few ids) | Yes. |
 | `report-key.json`, the salt | **No.** They turn ids back into your file paths. |
-| The journal, `--json` output, the printed results | No. They hold your file paths and names. |
+| The journal, `dutchman.log`, `--json` output, the printed results | No. They hold your file paths and names. |
 | The converted designs, your files | No, unless you choose to (below). |
 
 ## 5. Report what you found
@@ -136,7 +150,7 @@ anywhere, and do not post anything to GitHub or elsewhere yourself.
      --report-key <RESULTS FOLDER>/report-key.json
    (or the dutchman-mcp convert_all tool with the same options). If it stops, run it again;
    the journal carries on. Do not show me the salt or the key's contents in your summary.
-2. Read report-anon.json only (not the key, not the journal). Summarise totals, formats,
+2. Read report-anon.json only (not the key, not the journal, not dutchman.log). Summarise totals, formats,
    stages and the slowest files in a few lines.
 3. Group the causes in errors, losses (Degraded and Dropped only) and blocked_features into
    distinct issues, most files first. Merge entries that are clearly one cause.
