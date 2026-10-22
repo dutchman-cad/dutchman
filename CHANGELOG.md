@@ -6,6 +6,16 @@ report's schema name changes when a field does).
 
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
+## Unreleased
+
+### Reports
+
+- A design none of whose features cadmpeg decodes, such as an Inventor part made of a base
+  solid, has no history to write: it converts as geometry with verification `not_applicable`
+  ("no feature history cadmpeg decodes: its one feature is kept in its native form") and an
+  `Info` line, not as a history flattened. A native feature beside ones that map still
+  flattens the history, as before.
+
 ## 0.1.4 (2026-10-22)
 
 ### Privacy
