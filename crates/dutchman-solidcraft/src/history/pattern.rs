@@ -1,8 +1,8 @@
 //! Patterns of features, as SolidCraft patterns.
 //!
 //! A linear pattern (in one or two directions) maps to a rectangular one. A circular pattern
-//! maps when it goes all the way round: neither CADIR nor SolidCraft fixes how a partial
-//! span spreads its instances, so a partial one stops the history instead of risking a shift.
+//! uses the same total span and instance count: partial spans include both ends, while a
+//! full turn spaces the instances around the circle without repeating the original.
 
 use std::f64::consts::TAU;
 
@@ -150,16 +150,26 @@ fn layout(pattern: Option<&Value>) -> Result<Value, String> {
             let axis = v3(pattern.get("axis_dir"))
                 .and_then(unit)
                 .ok_or("its axis is malformed")?;
-            let angle = number(pattern.get("angle")).ok_or("its angle is malformed")?;
-            if (TAU - angle).abs() > FULL_TURN {
-                return Err("a circular pattern short of a full turn is not mapped yet".to_owned());
+            let angle = number(pattern.get("angle"))
+                .filter(|angle| *angle > 0.0)
+                .ok_or("its angle is malformed")?;
+            // CADIR 0.6.3 PatternTransform::Circular defines angle as the angular span,
+            // and count includes the original. SolidCraft 0.19 uses the same convention
+            // (three instances over 90 degrees land at 0, 45 and 90 degrees).
+            let degrees = if (TAU - angle).abs() <= FULL_TURN {
+                360.0
+            } else {
+                angle.to_degrees()
+            };
+            if !degrees.is_finite() {
+                return Err("its angle is malformed".to_owned());
             }
             Ok(json!({
                 "type": "circular",
                 "origin": origin,
                 "axis": axis,
                 "count": count(pattern.get("count"))?.to_string(),
-                "angle": "360 deg",
+                "angle": format!("{degrees} deg"),
             }))
         }
         Some(other) => Err(format!("{other} patterns are not mapped yet")),
@@ -185,14 +195,34 @@ mod tests {
     }
 
     #[test]
-    fn only_full_circular_patterns_map() {
-        let circular = |angle: f64| {
+    fn circular_patterns_keep_their_span_and_total_count() {
+        let circular = |angle: f64, count: u32| {
             json!({"kind": "circular",
             "axis_origin": {"x": 0.0, "y": 0.0, "z": 0.0},
-            "axis_dir": {"x": 0.0, "y": 0.0, "z": 1.0}, "angle": angle, "count": 6})
+            "axis_dir": {"x": 0.0, "y": 0.0, "z": 2.0}, "angle": angle, "count": count})
         };
-        assert_eq!(layout(Some(&circular(TAU))).unwrap()["angle"], "360 deg");
-        assert!(layout(Some(&circular(TAU / 2.0))).is_err());
+        for (angle, expected) in [
+            (TAU / 4.0, "90 deg"),
+            (TAU / 2.0, "180 deg"),
+            (TAU, "360 deg"),
+            (TAU + FULL_TURN / 2.0, "360 deg"),
+            (TAU * 1.25, "450 deg"),
+        ] {
+            for count in [1, 2, 3, 6] {
+                assert_eq!(
+                    layout(Some(&circular(angle, count))).unwrap(),
+                    json!({"type": "circular", "origin": [0.0, 0.0, 0.0],
+                        "axis": [0.0, 0.0, 1.0], "count": count.to_string(), "angle": expected})
+                );
+            }
+        }
+        for angle in [0.0, -1.0, f64::MAX] {
+            assert_eq!(
+                layout(Some(&circular(angle, 3))).unwrap_err(),
+                "its angle is malformed"
+            );
+        }
+        assert!(layout(Some(&circular(TAU / 4.0, 0))).is_err());
         assert!(layout(Some(&json!({"kind": "linear", "spacing": 1.0, "count": 2}))).is_err());
     }
     #[test]
