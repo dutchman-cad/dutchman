@@ -413,6 +413,8 @@ fn map_feature(feature: &Value, ctx: &mut Context, report: &mut Report) -> Resul
     match definition.get("definition").and_then(Value::as_str) {
         // A folder, a PartDesign Body or another node that orders the tree and builds nothing.
         Some("datum_principal_plane" | "tree_node") => Ok(Mapped::Nothing),
+        // A component inserted, or a joint made, in the timeline: the assembly carries it.
+        Some("insert_component" | "assembly_joint") => Ok(Mapped::Nothing),
         Some("sketch") => sketch::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some("extrude") => extrude::map(feature, definition, ctx).map(Mapped::Feature),
         Some("revolve") => revolve::map(feature, definition, ctx).map(Mapped::Feature),
@@ -534,6 +536,30 @@ mod tests {
             statuses,
             [FeatureStatus::NotNeeded, FeatureStatus::NotNeeded]
         );
+    }
+
+    #[test]
+    fn components_inserted_and_joints_made_in_the_timeline_are_not_needed() {
+        let insert = feature(
+            2,
+            1,
+            "Component Insert 1",
+            json!({"definition": "insert_component", "occurrence": "f3d:model:occurrence#1"}),
+        );
+        let joint = feature(
+            3,
+            2,
+            "Joint 1",
+            json!({"definition": "assembly_joint", "joint": "f3d:model:joint#1"}),
+        );
+        let model = with(cube(), json!([datum(1, 0), insert, joint]), json!([]));
+        let mapping = map(&model, &mut Report::default());
+        assert_eq!(
+            mapping.result.unwrap_err(),
+            "no feature in the history builds geometry"
+        );
+        let statuses: Vec<FeatureStatus> = mapping.features.iter().map(|f| f.status).collect();
+        assert_eq!(statuses, [FeatureStatus::NotNeeded; 3]);
     }
 
     #[test]
