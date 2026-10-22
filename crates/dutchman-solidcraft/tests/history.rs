@@ -1451,6 +1451,51 @@ fn solidcraft_replays_feature_patterns() {
     );
 }
 
+#[test]
+fn partial_circular_patterns_include_both_ends() {
+    let model = patterned(json!({"kind": "circular",
+        "axis_origin": {"x": -20.0, "y": 0.0, "z": 0.0},
+        "axis_dir": {"x": 0.0, "y": 0.0, "z": 2.0},
+        "angle": std::f64::consts::FRAC_PI_2, "count": 3}));
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).starts_with("3 of 3 features mapped"));
+    assert_eq!(document["features"][2]["features"], json!(["Block"]));
+    assert_eq!(
+        document["features"][2]["pattern"],
+        json!({"type": "circular", "origin": [-20.0, 0.0, 0.0],
+            "axis": [0.0, 0.0, 1.0], "count": "3", "angle": "90 deg"})
+    );
+
+    let Some(cli) = solidcraft() else { return };
+    let design = written(&model).0;
+    let mut boxes = bounds(&cli, &design);
+    boxes.sort_by(|(a, _), (b, _)| b[0].total_cmp(&a[0]));
+    let root2 = std::f64::consts::SQRT_2;
+    // Rotate the seed's [0, 10]^3 box about (-20, 0, 0) by 0, 45 and 90 degrees.
+    // The middle box distinguishes a total span from a per-instance angle.
+    let expected = [
+        ([0.0, 0.0, 0.0], [10.0, 10.0, 10.0]),
+        (
+            [-20.0 + 5.0 * root2, 10.0 * root2, 0.0],
+            [-20.0 + 15.0 * root2, 20.0 * root2, 10.0],
+        ),
+        ([-30.0, 20.0, 0.0], [-20.0, 30.0, 10.0]),
+    ];
+    assert_eq!(boxes.len(), expected.len());
+    for ((min, max), (want_min, want_max)) in boxes.iter().zip(expected) {
+        for axis in 0..3 {
+            assert!((min[axis] - want_min[axis]).abs() < 1e-6, "{boxes:?}");
+            assert!((max[axis] - want_max[axis]).abs() < 1e-6, "{boxes:?}");
+        }
+    }
+    let copies = volumes(&cli, &design);
+    assert_eq!(copies.len(), 3);
+    assert!(copies.iter().all(|volume| (volume - 1000.0).abs() < 1e-6));
+}
+
 /// Each body's bounding box (min, max) as SolidCraft evaluates the design.
 fn bounds(cli: &Path, design: &[u8]) -> Vec<([f64; 3], [f64; 3])> {
     let dir = tempfile::tempdir().unwrap();

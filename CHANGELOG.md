@@ -17,6 +17,7 @@ report's schema name changes when a field does).
 
 ### Feature history
 
+- Circular feature patterns over a partial turn now map with copies at both ends of the span.
 - Coils map to SolidCraft coils: up the Z axis, of round or square section, inside, centred on
   or outside their path, turning either way, by turns and pitch, turns and height, or height and
   pitch. Tapered coils, flat spirals and triangular sections are not mapped yet.

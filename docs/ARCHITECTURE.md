@@ -130,8 +130,8 @@ placing them); coils up the Z axis, of round or square section, turning either w
 coils, flat spirals and triangular sections are not mapped); simple holes drilled at the circle centres, arc centres or points of a sketch,
 through all or to a depth, flat or with a drill point (counterbores, countersinks and holes
 placed on faces are not mapped); patterns of earlier features, linear in one or
-two directions, or circular all the way round, and mirrors of earlier features across a
-plane (features are named uniquely on the timeline,
+two directions, or circular over a partial span or all the way round, and mirrors of earlier
+features across a plane (features are named uniquely on the timeline,
 since SolidCraft patterns refer to them by name). Parameters keep their expressions where SolidCraft reads them the same way, else
 their evaluated values.
 
