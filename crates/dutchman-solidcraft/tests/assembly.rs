@@ -35,6 +35,7 @@ fn placed_twice() -> Model {
         assembly: Some(Assembly {
             joints: Vec::new(),
             left_out: Vec::new(),
+            held: Vec::new(),
             parts: vec![part.clone()],
             placements: vec![
                 Placement {
@@ -178,6 +179,7 @@ fn nested() -> Model {
         assembly: Some(Assembly {
             joints: Vec::new(),
             left_out: Vec::new(),
+            held: Vec::new(),
             parts: vec![pair, cube.clone()],
             placements: vec![
                 Placement {
@@ -634,6 +636,83 @@ fn hinged(kind: Value) -> Model {
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model.assembly = dutchman_core::local_assembly(&model).unwrap();
     model
+}
+
+#[test]
+fn a_held_placement_is_written_grounded() {
+    let mut model = placed_twice();
+    if let Some(assembly) = &mut model.assembly {
+        assembly.held = vec![vec![1]];
+    }
+    let (bytes, _) = written(&model);
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut text = String::new();
+    archive
+        .by_name("document.json")
+        .unwrap()
+        .read_to_string(&mut text)
+        .unwrap();
+    let document: Value = serde_json::from_str(&text).unwrap();
+    let grounded: Vec<&Value> = document["occurrences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|occurrence| occurrence["grounded"] == true)
+        .map(|occurrence| &occurrence["name"])
+        .collect();
+    assert_eq!(grounded, [&serde_json::json!("Moved")]);
+}
+
+#[test]
+fn joints_tied_to_nothing_ground_one_part_and_keep_their_frame_sense() {
+    // The hinge alone, without the joint holding its first part to the design, and with its
+    // frames aligned: its fixed side is grounded, and it is written flipped.
+    let mut model = hinged(serde_json::json!({"kind": "revolute"}));
+    if let Some(assembly) = &mut model.assembly {
+        assembly.joints.remove(0);
+        assembly.joints[0].flip = true;
+    }
+    let (bytes, report) = written(&model);
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut text = String::new();
+    archive
+        .by_name("document.json")
+        .unwrap()
+        .read_to_string(&mut text)
+        .unwrap();
+    let document: Value = serde_json::from_str(&text).unwrap();
+    let hinge = &document["assembly"]["joints"][0];
+    assert_eq!(hinge["flip"], true);
+    let grounded: Vec<&Value> = document["occurrences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|occurrence| occurrence["grounded"] == true)
+        .map(|occurrence| &occurrence["id"])
+        .collect();
+    assert_eq!(grounded, [&hinge["b"]["occurrence"]]);
+    assert!(
+        report.losses().iter().any(|loss| loss.subject == "joints"
+            && loss.detail.contains("is grounded, inferred")
+            && loss.detail.contains("\"Revolute 1\"")),
+        "{report:?}"
+    );
+
+    // Held to the design, nothing is grounded: the design holds the parts.
+    let (bytes, _) = written(&hinged(serde_json::json!({"kind": "revolute"})));
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut text = String::new();
+    archive
+        .by_name("document.json")
+        .unwrap()
+        .read_to_string(&mut text)
+        .unwrap();
+    let document: Value = serde_json::from_str(&text).unwrap();
+    assert!(document["occurrences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|occurrence| occurrence["grounded"] == false));
 }
 
 #[test]

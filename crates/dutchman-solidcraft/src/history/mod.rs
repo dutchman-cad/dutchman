@@ -31,7 +31,7 @@ use serde_json::Value;
 
 /// The CADIR wire versions the mapping reads. Version 7 adds only assembly joint kinds and a
 /// sheet-metal thickness side, neither of which the mapping uses.
-const IR_VERSIONS: [&str; 2] = ["6", "7"];
+const IR_VERSIONS: [&str; 5] = ["6", "7", "8", "9", "10"];
 
 /// A replayable history: SolidCraft parameters and features in timeline order.
 #[derive(Clone, Debug, Default)]

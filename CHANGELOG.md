@@ -8,6 +8,20 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Assemblies
+
+- A joint whose connector frames point the same way (CADIR `frame_sense: "aligned"`) is
+  written as a flipped SolidCraft joint, and a part a joint places meets its other part z to
+  z rather than face to face. A Fusion robot arm's gripper mounted on its wrist this way had
+  been turned over into the wrist.
+- When the source grounds none of the parts a set of joints ties together, Dutchman grounds
+  the fixed side of that set's first joint, so SolidCraft's solver holds the set where the
+  source places it, and the report names the occurrence as inferred (`Info`, `joints`).
+- A Fusion design's root component is grounded where it is: the document's own, and the
+  root of each design inserted into it, held by the occurrence that inserts it. Both were left
+  free to move.
+- CADIR versions 8, 9 and 10 are read.
+
 - The desktop app prints `--version` and `--help` without opening a window, shows its version
   in the title, and has a **Report a problem** link to the **A file didn't convert** form. An
   unreadable-file error links to that form too.

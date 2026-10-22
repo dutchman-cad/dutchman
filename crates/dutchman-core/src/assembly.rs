@@ -41,6 +41,10 @@ pub struct Assembly {
     pub joints: Vec<Joint>,
     /// The placements its file records that are not placed, and why.
     pub left_out: Vec<LeftOut>,
+    /// The placements (paths, as [`Joint::a`]) held where they are in what holds them: a
+    /// design's own root component, which Fusion holds to its document, or to the occurrence
+    /// that inserts the design.
+    pub held: Vec<Vec<usize>>,
 }
 
 /// A placement an assembly's file records that is not placed.
@@ -128,6 +132,9 @@ pub struct Joint {
     pub suppressed: bool,
     /// How the second side moves against the first, and where it is now.
     pub motion: Motion,
+    /// Whether the two frames meet with their z axes the same way (the source's frame sense
+    /// `aligned`), rather than face to face as two snapped faces do.
+    pub flip: bool,
 }
 
 /// How a joint lets its second side move, and where it is now.
@@ -168,10 +175,20 @@ const FACING: Placement3x4 = [
     [0.0, 0.0, -1.0, 0.0],
 ];
 
+/// How the second frame of a joint meets the first: face to face, or, flipped, with their z
+/// axes the same way.
+fn facing(flip: bool) -> Placement3x4 {
+    if flip {
+        IDENTITY
+    } else {
+        FACING
+    }
+}
+
 impl Joint {
     /// The placement of the second frame in the first, where the joint is now.
     pub fn meeting(&self) -> Placement3x4 {
-        compose(&self.motion.transform(), &FACING)
+        compose(&self.motion.transform(), &facing(self.flip))
     }
 }
 
@@ -413,6 +430,7 @@ pub(crate) fn resolve(
         placements,
         joints: Vec::new(),
         left_out,
+        held: Vec::new(),
     })
 }
 
@@ -572,11 +590,20 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
             transform: IDENTITY,
         });
     }
+    // A design's root component is held by what holds the design: the document, or the
+    // occurrence that inserts it. cadmpeg names its occurrence `root-…`.
+    let held = tree
+        .paths
+        .iter()
+        .filter(|(id, _)| id.contains("occurrence#root-"))
+        .map(|(_, (path, _))| path.clone())
+        .collect();
     let mut assembly = Assembly {
         parts,
         placements,
         joints,
         left_out: Vec::new(),
+        held,
     };
     left_out.extend(place_by_joints(&mut assembly));
     Ok(Some((assembly, left_out)))
@@ -678,7 +705,7 @@ fn as_built(
     // shift along it, with z itself kept or reversed.
     let between = compose(
         &compose(&inverse(&wa), &compose(b, &joint.frame_b)),
-        &inverse(&FACING),
+        &inverse(&facing(joint.flip)),
     );
     let [[r00, _, _, x], [r10, _, _, y], [_, _, r22, z]] = between;
     if (r22.abs() - 1.0).abs() > 1e-9 || x.hypot(y) > 1e-3 {
@@ -705,7 +732,7 @@ fn as_built(
         }
         Motion::Slider { .. } => Motion::Slider { distance: z },
     };
-    let meeting = compose(&motion.transform(), &FACING);
+    let meeting = compose(&motion.transform(), &facing(joint.flip));
     let frame_b = compose(&inverse(b), &compose(&wa, &meeting));
     Some((motion, frame_b, note))
 }
@@ -837,6 +864,7 @@ fn joint(
                 b: path,
                 frame_a: world,
                 frame_b: FACING,
+                flip: false,
                 suppressed: row
                     .get("suppressed")
                     .and_then(Value::as_bool)
@@ -936,6 +964,8 @@ fn joint(
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
             motion,
+            // Absent or `opposed`: the frames meet face to face.
+            flip: row.get("frame_sense").and_then(Value::as_str) == Some("aligned"),
         },
         note,
     ))
@@ -1204,6 +1234,7 @@ impl<'a> Tree<'a> {
                 placements,
                 joints: Vec::new(),
                 left_out: Vec::new(),
+                held: Vec::new(),
             });
             holder
         };
@@ -1554,6 +1585,7 @@ mod tests {
             placements: assembly.placements.clone(),
             joints: Vec::new(),
             left_out: assembly.left_out.clone(),
+            held: Vec::new(),
         });
         assert_eq!((completeness.placed, completeness.placements()), (5, 6));
         assert_eq!(
@@ -1917,6 +1949,41 @@ mod tests {
 
     fn near(a: &Placement3x4, b: &Placement3x4) -> bool {
         same(a, b)
+    }
+
+    #[test]
+    fn an_aligned_joint_meets_its_frames_z_to_z() {
+        // The same rigid joint with both frames pointing up: face to face (no sense, or
+        // `opposed`), block 2 is turned over to meet block 1; `aligned`, it is not turned.
+        let placed_with = |sense: Option<&str>| {
+            let mut row = joint(
+                1,
+                json!({"kind": "fixed"}),
+                connector_at(2, &[], at([0.0, 0.0, 0.0], 0.0)),
+                connector_at(1, &[], at([10.0, 0.0, 0.0], 0.0)),
+            );
+            if let Some(sense) = sense {
+                row["frame_sense"] = json!(sense);
+            }
+            let model = with_joints(nested(false, None), json!([row]));
+            let (assembly, notes) = local_components(&model).unwrap().unwrap();
+            assert!(notes.is_empty(), "{notes:?}");
+            (
+                world_at(&assembly, &[0, 1]).unwrap(),
+                assembly.joints[0].flip,
+            )
+        };
+        let (aligned, flip) = placed_with(Some("aligned"));
+        assert!(flip);
+        assert!(near(&aligned, &at([110.0, 0.0, 0.0], 0.0)), "{aligned:?}");
+        for sense in [None, Some("opposed")] {
+            let (facing, flip) = placed_with(sense);
+            assert!(!flip);
+            assert!(
+                near(&facing, &compose(&at([110.0, 0.0, 0.0], 0.0), &FACING)),
+                "{sense:?}: {facing:?}"
+            );
+        }
     }
 
     #[test]
@@ -2409,6 +2476,24 @@ mod tests {
 
     fn inside(key: u32) -> Value {
         json!({"kind": "occurrence", "occurrence": format!("f3d:model:occurrence#{key}")})
+    }
+
+    #[test]
+    fn a_designs_root_component_is_held_where_it_is() {
+        // The frame is the document's root component, and the first block the root of a
+        // design inserted inside it: both are held; the second block is not.
+        let mut frame = placed(0, "frame", root(), 100.0);
+        frame["id"] = json!("f3d:model:occurrence#root-0");
+        let inside_root = json!({"kind": "occurrence", "occurrence": "f3d:model:occurrence#root-0"});
+        let mut first = placed(1, "block", inside_root.clone(), 0.0);
+        first["id"] = json!("f3d:model:occurrence#root-1");
+        let second = placed(2, "block", inside_root, 30.0);
+        let assembly = local_assembly(&nested(false, Some(json!([frame, first, second]))))
+            .unwrap()
+            .unwrap();
+        let mut held = assembly.held.clone();
+        held.sort();
+        assert_eq!(held, [vec![0], vec![0, 0]]);
     }
 
     #[test]
