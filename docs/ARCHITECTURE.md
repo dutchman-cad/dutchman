@@ -136,9 +136,13 @@ and changing sections are not mapped); spheres, and tori about the Z axis (boxes
 placing them); coils along any axis, travelling up or down it, of round or square section,
 turning either way (tapered coils, flat spirals and triangular sections are not mapped);
 simple, counterbore and countersink
-holes drilled at the circle centres, arc centres or points of a sketch, through all or to a
-depth, flat or, for simple holes, with a drill point (entry recesses combined with drill points,
-and holes placed on faces, are not mapped); patterns of earlier features, linear in one or
+holes drilled at the circle centres, arc centres or points of a sketch (including explicit
+entity selections), or at a directed spatial placement, through all or to a depth, flat or,
+for simple holes, with a drill point; axes placed on proven earlier extrusion caps and holes
+ending at those caps (the cap must match the sole polygonal profile of the last earlier
+solid feature's one-sided new-body extrusion; a face from final geometry alone is not enough);
+entry recesses combined with drill points, taper and physical threads are not mapped;
+patterns of earlier features, linear in one or
 two directions, or circular over a partial span or all the way round, and mirrors of earlier
 features across a plane (features are named uniquely on the timeline,
 since SolidCraft patterns refer to them by name). Parameters keep their expressions where SolidCraft reads them the same way, else
