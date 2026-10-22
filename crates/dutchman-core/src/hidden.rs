@@ -1,0 +1,209 @@
+//! Bodies a design keeps hidden. A FreeCAD document stores the shape of every step of a
+//! PartDesign Body (each Pad and Pocket result, its tool shapes) beside the Body's own shape,
+//! and shows only the last; cadmpeg marks the others `visible: false`. They are not parts of
+//! the design, so they are left out rather than converted as bodies of their own.
+
+use std::collections::BTreeSet;
+
+use serde_json::Value;
+
+use crate::assembly::{strings, NOT_GEOMETRY};
+use crate::Model;
+
+/// `model` without its hidden bodies and the geometry only they reach, with how many were
+/// left out; `None` when it hides none, or nothing but hidden bodies (then what it hides is
+/// all there is, so it converts as stored). History, structure and parameters are kept.
+pub(crate) fn shown(model: &Model) -> Result<Option<(Model, usize)>, String> {
+    let bodies = &model.ir.model.bodies;
+    let hidden = bodies.iter().filter(|b| b.visible == Some(false)).count();
+    if hidden == 0 || hidden == bodies.len() {
+        return Ok(None);
+    }
+    let mut document = serde_json::to_value(&model.ir).map_err(|err| err.to_string())?;
+    let wire = document
+        .get_mut("model")
+        .and_then(Value::as_object_mut)
+        .ok_or("the model is malformed")?;
+    let shown_rows: Vec<&Value> = listed(wire.get("bodies"))
+        .iter()
+        .filter(|body| body.get("visible").and_then(Value::as_bool) != Some(false))
+        .collect();
+    let geometry: BTreeSet<&str> = wire
+        .iter()
+        .filter(|(arena, _)| !NOT_GEOMETRY.contains(&arena.as_str()))
+        .flat_map(|(_, rows)| listed(Some(rows)))
+        .filter_map(|row| row.get("id").and_then(Value::as_str))
+        .collect();
+    let rows: std::collections::BTreeMap<&str, &Value> = wire
+        .values()
+        .flat_map(|rows| listed(Some(rows)))
+        .filter_map(|row| Some((row.get("id").and_then(Value::as_str)?, row)))
+        .collect();
+    // The geometry the shown bodies reach; the rest of the geometry is the hidden bodies'.
+    let mut reached: BTreeSet<String> = BTreeSet::new();
+    let mut queue: Vec<&Value> = shown_rows;
+    while let Some(row) = queue.pop() {
+        let mut refs = Vec::new();
+        strings(row, &mut refs);
+        for reference in refs {
+            if geometry.contains(reference) && reached.insert(reference.to_owned()) {
+                if let Some(next) = rows.get(reference) {
+                    queue.push(next);
+                }
+            }
+        }
+    }
+    let unreached: BTreeSet<String> = geometry
+        .iter()
+        .filter(|id| !reached.contains(**id))
+        .map(|id| (*id).to_owned())
+        .collect();
+    for (arena, values) in wire.iter_mut() {
+        let Some(values) = values.as_array_mut() else {
+            continue;
+        };
+        values.retain(|row| {
+            let id = row.get("id").and_then(Value::as_str).unwrap_or_default();
+            if arena == "bodies" {
+                row.get("visible").and_then(Value::as_bool) != Some(false)
+            } else {
+                !unreached.contains(id)
+            }
+        });
+    }
+    // cadmpeg is third-party code; a panic in it is a reason, not a crash.
+    let text = document.to_string();
+    let ir = std::panic::catch_unwind(|| cadmpeg_ir::CadIr::from_json(&text))
+        .map_err(|_| "cadmpeg failed unexpectedly on the shown bodies".to_owned())?
+        .map_err(|err| format!("the shown bodies do not stand alone: {err}"))?;
+    Ok(Some((
+        Model {
+            ir,
+            fidelity: model.fidelity.clone(),
+            name: model.name.clone(),
+            source_file: model.source_file.clone(),
+            assembly: model.assembly.clone(),
+        },
+        hidden,
+    )))
+}
+
+fn listed(value: Option<&Value>) -> &[Value] {
+    value
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::path::Path;
+
+    use serde_json::json;
+
+    use super::*;
+    use crate::{Format, Report};
+
+    /// cadmpeg's example 10 mm cube twice over: the second a copy of every geometry row under
+    /// new ids, its body `visible` as given.
+    fn two_cubes(second_visible: Option<bool>) -> Model {
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/synthetic_cube.ipt");
+        let part = crate::read(Format::InventorPart, &fixture, &mut Report::default()).unwrap();
+        let mut wire = serde_json::to_value(&part.ir).unwrap();
+        let model = wire["model"].as_object_mut().unwrap();
+        let ids: BTreeMap<String, String> = model
+            .iter()
+            .filter(|(arena, _)| {
+                arena.as_str() == "bodies" || !NOT_GEOMETRY.contains(&arena.as_str())
+            })
+            .flat_map(|(_, rows)| listed(Some(rows)))
+            .filter_map(|row| row.get("id").and_then(Value::as_str))
+            .map(|id| (id.to_owned(), format!("{id}~copy")))
+            .collect();
+        fn renamed(value: &Value, ids: &BTreeMap<String, String>) -> Value {
+            match value {
+                Value::String(s) => json!(ids.get(s).unwrap_or(s)),
+                Value::Array(values) => values.iter().map(|v| renamed(v, ids)).collect(),
+                Value::Object(fields) => fields
+                    .iter()
+                    .map(|(k, v)| (k.clone(), renamed(v, ids)))
+                    .collect(),
+                other => other.clone(),
+            }
+        }
+        for (arena, rows) in model.iter_mut() {
+            if arena != "bodies" && NOT_GEOMETRY.contains(&arena.as_str()) {
+                continue;
+            }
+            let rows = rows.as_array_mut().unwrap();
+            let copies: Vec<Value> = rows
+                .iter()
+                .map(|row| {
+                    let mut copy = renamed(row, &ids);
+                    if arena == "bodies" {
+                        match second_visible {
+                            Some(visible) => copy["visible"] = json!(visible),
+                            None => {
+                                if let Some(fields) = copy.as_object_mut() {
+                                    fields.remove("visible");
+                                }
+                            }
+                        }
+                    }
+                    copy
+                })
+                .collect();
+            rows.extend(copies);
+        }
+        Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..part
+        }
+    }
+
+    #[test]
+    fn hidden_bodies_and_their_geometry_are_left_out() {
+        let model = two_cubes(Some(false));
+        assert_eq!(model.ir.model.bodies.len(), 2);
+        assert_eq!(model.ir.model.faces.len(), 12);
+        let (shown, hidden) = shown(&model).unwrap().unwrap();
+        assert_eq!(hidden, 1);
+        assert_eq!(shown.ir.model.bodies.len(), 1);
+        assert_eq!(shown.ir.model.faces.len(), 6);
+        assert_eq!(shown.ir.model.edges.len(), 12);
+        assert_eq!(shown.ir.model.bodies[0].id, model.ir.model.bodies[0].id);
+    }
+
+    #[test]
+    fn structure_naming_a_hidden_body_still_reads() {
+        let mut model = two_cubes(Some(false));
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let ids: Vec<Value> = listed(wire["model"].get("bodies"))
+            .iter()
+            .map(|body| body["id"].clone())
+            .collect();
+        wire["model"]["product_definitions"] = json!([{
+            "id": "fcstd:model:component#body", "kind": "part", "label": "Body", "bodies": ids,
+        }]);
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (shown, _) = shown(&model).unwrap().unwrap();
+        assert_eq!(shown.ir.model.bodies.len(), 1);
+    }
+
+    #[test]
+    fn bodies_shown_or_unstated_are_all_kept() {
+        assert!(shown(&two_cubes(Some(true))).unwrap().is_none());
+        assert!(shown(&two_cubes(None)).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_design_hiding_every_body_converts_as_stored() {
+        let mut model = two_cubes(Some(false));
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["bodies"][0]["visible"] = json!(false);
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        assert!(shown(&model).unwrap().is_none());
+    }
+}

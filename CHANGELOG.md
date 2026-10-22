@@ -8,6 +8,12 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### FreeCAD
+
+- Bodies a FreeCAD document keeps hidden, such as the shape of each step inside a PartDesign
+  Body, are left out with the geometry only they use, and the report says how many (`Info`);
+  history and structure are kept. It takes effect once cadmpeg marks those bodies hidden.
+
 ### Checks
 
 - Sheet bodies (surfaces, open by design) are no longer reported as bodies inside out or

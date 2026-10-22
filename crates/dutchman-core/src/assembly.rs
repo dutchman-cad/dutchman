@@ -426,7 +426,7 @@ fn leave_out(
 
 /// Arenas a component's own geometry never reaches into: other components' bodies are kept
 /// out by not following `bodies`, and these hold structure and history, not geometry.
-const NOT_GEOMETRY: [&str; 6] = [
+pub(crate) const NOT_GEOMETRY: [&str; 6] = [
     "bodies",
     "product_definitions",
     "occurrences",
@@ -1323,7 +1323,7 @@ pub(crate) fn only(
 }
 
 /// Every string inside `value`.
-fn strings<'v>(value: &'v Value, out: &mut Vec<&'v str>) {
+pub(crate) fn strings<'v>(value: &'v Value, out: &mut Vec<&'v str>) {
     match value {
         Value::String(s) => out.push(s),
         Value::Array(values) => values.iter().for_each(|v| strings(v, out)),
