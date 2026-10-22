@@ -44,8 +44,8 @@ transform, and each component as a product definition.
   joint neither of whose parts is placed yet moves its first part to its second, as Fusion
   moves the first part picked for a joint. A part two joints would place differently is reported,
   and SolidCraft reports the conflict when it solves. A joint to the design's root component
-  holds its occurrence to the design. cadmpeg reads Fusion joint motion from its next release
-  on (before it, every Fusion joint is fixed). A revolute limit on one side only is left out,
+  holds its occurrence to the design. Fusion joint motion converts from Dutchman 0.1.5 on
+  (before it, every Fusion joint was fixed). A revolute limit on one side only is left out,
   and the report says so. A joint is left out, and reported as Dropped (`joints`), when it is
   of another kind, joins a component to itself or to one in another design, or joins a component
   inside one placed more than once (the SolidCraft design holds that component once, so it would
@@ -57,8 +57,8 @@ transform, and each component as a product definition.
    component to its entities (its naming space): the bodies whose body-map entries lie in the
    component's entity range. A component placed by an operation the file does not bind (as in
    some copy-and-paste designs) has no bodies, so that design converts as stored.
-2. **Joint motion.** cadmpeg reads revolute and slider joints, and revolute limits, from its
-   next release; other motion types, slider limits and one-sided limits stay fixed with its
+2. **Joint motion.** cadmpeg reads revolute and slider joints, and revolute limits; other
+   motion types, slider limits and one-sided limits stay fixed with its
    `assembly.joint-motion-undecoded` loss, which the report carries.
 3. **Joints between referenced designs.** In an `.f3z`, a joint names each part by its design's
    Fusion document id and occurrence id, which cadmpeg does not yet tie to the occurrences it
