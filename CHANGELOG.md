@@ -18,6 +18,10 @@ report's schema name changes when a field does).
 - Hole history keeps chamfered entries and ISO metric thread labels on tapped holes (thread
   details SolidCraft has no field for are reported, not blocking), and names the unsupported
   hole forms, placements, and ends it refuses.
+- Revolves keep more of their history: unequal sides that add up to a full turn, surface
+  revolves short of a full turn, and an axis drawn in the profile's sketch (kept as that
+  line). Ends at a face, vertex or body and other face makers stop the history with a reason
+  that names them.
 - A second issue form, **A file didn't convert**, reports one file: its format, the versions,
   the operating system, what was expected and what happened, and that file's anonymous
   report. Both forms list FreeCAD documents (`.FCStd`), and the agent skill does too.

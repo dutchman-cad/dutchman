@@ -125,9 +125,11 @@ offset, or a resolved parallel planar face on an earlier named body; one-sided e
 end on such a face with an offset and may carry draft (positive grows outward); two-sided
 extrudes may use a non-blind positive-normal end when the negative-normal end is blind.
 Extrudes map as new body, join, cut or intersect (a new body keeps its source name and colour);
-revolves about a line in the sketch plane that are symmetric, equal-angle two-sided or a full
-turn (CADIR does not state which way a revolve turns, so partial one-sided and unequal
-two-sided revolves are not mapped); lofts through two to fifty profile or terminal point sections,
+revolves about a line in the sketch plane (a line of the profile's sketch stays that line)
+that are symmetric, equal-angle two-sided or a full turn, including unequal sides that add up
+to one (CADIR does not state which way a revolve turns, so partial one-sided and unequal
+partial two-sided revolves are not mapped), as solids or, short of a full turn, as surfaces;
+lofts through two to fifty profile or terminal point sections,
 open, smooth (or ruled through two sections without rails), solid or surface (a surface loft
 becomes a new surface body, without point ends), guided by up to two rails of sketch curves or
 one-curve whole sketches (sections can select separate regions of one sketch; resolved point and

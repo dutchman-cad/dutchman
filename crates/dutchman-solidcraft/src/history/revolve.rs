@@ -1,7 +1,9 @@
 //! Revolves, as SolidCraft revolve features.
 //!
 //! CADIR does not state which way a revolve turns, so only revolves whose result does not
-//! depend on it are mapped: symmetric ones, equal two-sided ones, and one-sided full turns.
+//! depend on it are mapped: symmetric ones, equal two-sided ones, and full turns (unequal
+//! sides that add up to one included). Surface revolves map short of a full turn, and an
+//! axis chosen as a line of the profile's sketch stays that line.
 
 use std::f64::consts::TAU;
 
@@ -9,7 +11,7 @@ use serde_json::{json, Value};
 
 use super::extrude::{body_names, operation};
 use super::profile::profile;
-use super::sketch::{dot, number, unit, v3};
+use super::sketch::{dot, number, unit, v3, Mapped};
 use super::{name, Context};
 
 /// How far from a full turn (radians) a one-sided revolve may be and still be one.
@@ -22,17 +24,46 @@ const IN_PLANE: f64 = 1e-6;
 pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Result<Value, String> {
     let construction = definition.get("construction").unwrap_or(&Value::Null);
     if construction.get("state").and_then(Value::as_str) != Some("resolved") {
-        return Err("its construction is not resolved".to_owned());
+        let missing = construction
+            .get("missing")
+            .and_then(Value::as_str)
+            .unwrap_or("construction");
+        return Err(format!("its revolve {missing} is not resolved"));
     }
+    let surface = construction.get("solid").and_then(Value::as_bool) == Some(false);
+    match construction.get("face_maker_class").and_then(Value::as_str) {
+        // SolidCraft builds profile regions with nested islands, as the bullseye maker does.
+        None | Some("Part::FaceMakerBullseye") => {}
+        Some(maker) => {
+            return Err(format!(
+                "revolves whose faces are built by {maker} are not supported yet \
+                 (SolidCraft builds profile regions as Part::FaceMakerBullseye does)"
+            ))
+        }
+    }
+    // The fuse order and the single-face policy do not change the result of a revolve that
+    // was built: the order only swaps the fuse operands, and the policy only rejects a
+    // profile of several faces.
     let (sketch_id, profiles) = profile(construction.get("profile"), ctx)?;
     let sketch = ctx
         .sketches
         .get(&sketch_id)
         .ok_or("its sketch is not an earlier mapped sketch")?;
     let sketch_feature = sketch.feature;
-    let axis = axis(construction.get("axis"), sketch.normal, sketch.origin)?;
+    let placed = axis(construction.get("axis"), sketch.normal, sketch.origin)?;
+    let axis = sketch_line(construction.get("axis"), &sketch_id, sketch).unwrap_or(placed);
     let (angle, symmetric) = sweep(construction.get("extent"))?;
-    let operation = operation(definition.get("op"))?;
+    if surface && TAU - angle <= FULL_TURN {
+        return Err(
+            "full-turn surface revolves are not supported yet (SolidCraft closes them into a solid)"
+                .to_owned(),
+        );
+    }
+    let operation = if surface {
+        "new_body"
+    } else {
+        operation(definition.get("op"))?
+    };
     let body_names = body_names(feature, ctx, operation);
 
     let id = ctx.id();
@@ -40,7 +71,7 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
     let mut out = json!({
         "id": id,
         "name": name(feature).map(str::to_owned).unwrap_or_else(|| format!("Revolve{id}")),
-        "type": "revolve",
+        "type": if surface { "surface_revolve" } else { "revolve" },
         "suppressed": false,
         "sketch": sketch_feature,
         "profiles": profiles,
@@ -50,6 +81,10 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         "convention": "sketch_normal",
     });
     if let Some(fields) = out.as_object_mut() {
+        if surface {
+            fields.remove("operation");
+            fields.remove("convention");
+        }
         if symmetric {
             fields.insert("symmetric".to_owned(), json!(true));
         }
@@ -58,6 +93,23 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         }
     }
     Ok(out)
+}
+
+/// The axis as a line of the profile's own sketch, when the source chose one.
+fn sketch_line(axis: Option<&Value>, sketch_id: &str, sketch: &Mapped) -> Option<Value> {
+    let reference = axis?.get("reference")?;
+    if reference.get("kind").and_then(Value::as_str) != Some("sketch_curves") {
+        return None;
+    }
+    let value = reference.get("value")?;
+    if value.get("sketch").and_then(Value::as_str) != Some(sketch_id) {
+        return None;
+    }
+    let [entity] = value.get("curves")?.as_array()?.as_slice() else {
+        return None;
+    };
+    let curve = sketch.curve(entity.as_str()?)?;
+    (curve.kind == "line").then(|| json!({"type": "sketch_line", "curve": curve.id}))
 }
 
 /// The axis as a SolidCraft line in model space, which must lie in the sketch plane.
@@ -88,12 +140,33 @@ fn sweep(extent: Option<&Value>) -> Result<(f64, bool), String> {
                 .filter(|angle| *angle > 0.0 && *angle <= TAU + FULL_TURN)
                 .map(|angle| angle.min(TAU))
                 .ok_or_else(|| "its angle is malformed".to_owned()),
+            Some("to_face") if number(termination.get("offset")).is_some_and(|v| v != 0.0) => Err(
+                "to-face revolves with an offset are not supported yet (SolidCraft has no angular end offset option)"
+                    .to_owned(),
+            ),
             Some("to_face") => Err(
                 "to-face revolves are not supported yet (CADIR does not state which way it turns; \
                  SolidCraft's to option turns on one side only)"
                     .to_owned(),
             ),
-            Some(other) => Err(format!("{other} revolve ends are not mapped yet")),
+            Some("to_vertex") => Err(
+                "to-vertex revolves are not supported yet (CADIR does not state which way it turns; \
+                 SolidCraft's to option turns on one side only)"
+                    .to_owned(),
+            ),
+            Some("offset_from_face") => Err(
+                "offset-from-face revolves are not supported yet (SolidCraft has no angular end offset option)"
+                    .to_owned(),
+            ),
+            Some("to_shape") => Err(
+                "to-shape revolves are not supported yet (SolidCraft cannot terminate a revolve at the first face of a target body)"
+                    .to_owned(),
+            ),
+            Some(kind @ ("through_all" | "through_next" | "to_first" | "to_last")) => Err(format!(
+                "{kind} revolve ends are not supported yet (SolidCraft has no material-search termination option)"
+            )),
+            Some("unresolved") => Err("its revolve termination is not resolved".to_owned()),
+            Some(other) => Err(format!("{other} revolve ends are not supported yet")),
             None => Err("its extent is malformed".to_owned()),
         }
     };
@@ -121,6 +194,9 @@ fn sweep(extent: Option<&Value>) -> Result<(f64, bool), String> {
             }
             if first == second {
                 Ok(((first + second).min(TAU), true))
+            } else if TAU - (first + second) <= FULL_TURN {
+                // The angular start is immaterial once the two sides cover a full turn.
+                Ok((TAU, false))
             } else {
                 Err(
                     "unequal two-sided revolves are not mapped yet (CADIR does not state \
