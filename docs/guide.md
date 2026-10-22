@@ -466,10 +466,11 @@ report (replace `part.f3d` with your file or folder):
 dutchman convert-all --out-dir converted --report-anon report-anon.json part.f3d
 ```
 
-Review `report-anon.json` before sharing it on
-[Dutchman's issues](https://github.com/dutchman-cad/dutchman/issues). Keep ordinary logs,
-JSON output, the journal, the report key, and the salt private: they contain names, paths,
-or a way to identify files. Do not attach design files publicly. If you want to share a
+Review `report-anon.json`, then paste it into the
+[**A file didn't convert**](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
+form on Dutchman's issues (for a whole library, the **Library test report** form). Keep
+ordinary logs, JSON output, the journal, the report key, and the salt private: they contain
+names, paths, or a way to identify files. Do not attach design files publicly. If you want to share a
 small reproducer you made yourself, offer it privately in the issue. See
 [Testing Dutchman on your library](testing-your-library.md#5-report-what-you-found).
 

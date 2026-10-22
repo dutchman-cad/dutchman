@@ -1,7 +1,7 @@
 # Instructions for AI contributors
 
 Dutchman converts native CAD files (Fusion `.f3d`/`.f3z`, Inventor `.ipt`/`.iam`, SolidWorks
-`.sldprt`) into SolidCraft designs (`.solidcraft`). It is pure Rust, Apache-2.0. Native files
+`.sldprt`, FreeCAD `.FCStd`) into SolidCraft designs (`.solidcraft`). It is pure Rust, Apache-2.0. Native files
 are decoded by [cadmpeg](https://github.com/cadmpeg/cadmpeg); Dutchman maps cadmpeg's neutral
 model (CADIR) onto SolidCraft. [CONTRIBUTING.md](CONTRIBUTING.md) has the full rules for
 everyone; this file is the short version, plus what an AI working in the repository needs.

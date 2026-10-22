@@ -1,6 +1,6 @@
 ---
 name: dutchman-converting
-description: Use when someone wants a native CAD file (Fusion .f3d or .f3z, Inventor .ipt or .iam, SolidWorks .sldprt) turned into a SolidCraft design (.solidcraft) with Dutchman, through the dutchman-mcp tools or the dutchman command. Covers inspecting first, converting one file or a folder, checking the result in SolidCraft, explaining the loss report in plain words, and what to say about formats Dutchman does not convert.
+description: Use when someone wants a native CAD file (Fusion .f3d or .f3z, Inventor .ipt or .iam, SolidWorks .sldprt, FreeCAD .FCStd) turned into a SolidCraft design (.solidcraft) with Dutchman, through the dutchman-mcp tools or the dutchman command. Covers inspecting first, converting one file or a folder, checking the result in SolidCraft, explaining the loss report in plain words, and what to say about formats Dutchman does not convert.
 ---
 
 # Converting CAD files with Dutchman
@@ -26,8 +26,8 @@ they are connected (`inspect`, `convert`, `convert_all`, `formats`); otherwise r
 
 ## 1. Check the format
 
-The extensions that convert are `.f3d`, `.f3z`, `.ipt`, `.iam` and `.sldprt`. Call `formats`
-if unsure; its `status` is `converts`, `coming` or `not_supported`.
+The extensions that convert are `.f3d`, `.f3z`, `.ipt`, `.iam`, `.sldprt`, and `.FCStd`. Call
+`formats` if unsure; its `status` is `converts`, `coming` or `not_supported`.
 
 What the installed build converts is what its `formats` says; check it rather than this
 list when unsure.
@@ -71,10 +71,22 @@ what to do next; pass it on in plain words. A failed file creates no design. A m
 may still write successful designs, logs, and requested reports.
 
 For unreadable archives, suggest downloading or copying again and checking the extension.
-If the original opens in its CAD program, use the anonymous reporting route in
-`docs/testing-your-library.md`: request `report_anon`, review it before sharing, and keep
-ordinary JSON, logs, the journal, the key, and the salt private. Do not attach designs
-publicly; a user who wants to share a reproducer can offer it privately in the issue.
+
+### Reporting a problem
+
+When a file fails, loses something it should not, or looks wrong in SolidCraft, and the
+original opens in its CAD program, point the user to Dutchman's
+[**A file didn't convert**](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
+form (for a whole library, the **Library test report** form and
+`docs/testing-your-library.md`). It asks for the format, the versions, the operating system,
+what was expected and what happened, and an anonymous report for that one file:
+`convert_all` with only that file in `inputs` and a `report_anon` path (or `dutchman
+convert-all --out-dir converted --report-anon report-anon.json /abs/part.f3d`). The user
+reads that report before pasting it; ordinary JSON, logs, the journal, the key, and the salt
+stay private. Do not attach designs publicly; a user who wants to share a reproducer can
+offer it privately in the issue. The issue goes on Dutchman even when the report says
+`upstream: cadmpeg` or `upstream: solidcraft`. Draft the issue for the user to post; don't
+post it yourself.
 
 ## 4. Verify in SolidCraft
 
