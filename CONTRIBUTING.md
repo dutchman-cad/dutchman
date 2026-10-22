@@ -6,15 +6,20 @@ synthetic test files and pull requests are all welcome.
 
 ## Reporting a problem
 
-Open an issue with:
+Start with an anonymous report:
 
-- the command you ran and its full output (with `--json` if you can);
-- `dutchman --version`, and your SolidCraft version if the result looks wrong in SolidCraft;
-- if you can share it, a small file that shows the problem.
+```sh
+dutchman convert-all --out-dir converted --report-anon report-anon.json part.f3d
+```
 
-Only share files you made yourself and are free to share. Please don't attach designs from
-your employer or customers, or models downloaded from model libraries. A small part made for
-the report, with the one feature that goes wrong, is the most useful.
+Replace `part.f3d` with your file or folder. Review `report-anon.json`, then open an issue
+with the cause, counts, and versions it records. Ordinary logs, JSON output, and journals
+contain file names and paths; keep them, the report key, and the salt private.
+
+Do not attach design files publicly. If you are willing to share a small reproducer you
+made yourself, say so in the issue and wait for a private way to send it. Do not share designs
+from your employer or customers, or models downloaded from libraries. See
+[Testing Dutchman on your library](docs/testing-your-library.md#5-report-what-you-found).
 
 Always report it here, on Dutchman, even when the report names cadmpeg or SolidCraft (an
 `upstream` field, or a `f3d/…`, `inventor/…` or `sldprt/…` loss code). Don't file it on cadmpeg

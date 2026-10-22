@@ -143,7 +143,8 @@ server on stdio. It gives an agent four tools, each returning the same report as
 
 A conversion that fails comes back as a tool error carrying its failure report. Paths are on
 the machine running the server, so give absolute ones. `convert` writes only its `output`
-file, and `convert_all` writes only inside `out_dir`.
+file. `convert_all` writes converted designs and its default log inside `out_dir`. If supplied,
+`journal`, `report_anon`, and `report_key` are also written at their specified paths.
 
 For Claude Code:
 
@@ -157,15 +158,16 @@ For other clients, the usual configuration entry is:
 {
   "mcpServers": {
     "dutchman": {
-      "command": "dutchman-mcp",
-      "env": {"SOLIDCRAFT_CLI": "/path/to/solidcraft-cli"}
+      "command": "dutchman-mcp"
     }
   }
 }
 ```
 
-`SOLIDCRAFT_CLI` is optional: without it, a written history is checked only when
-`solidcraft-cli` is on the server's `PATH`, and is reported unverified otherwise.
+Dutchman finds `solidcraft-cli` on the server's `PATH` or inside an installed SolidCraft app.
+Otherwise, a written history is reported unverified. To set an optional `SOLIDCRAFT_CLI`
+path, see [client setup](docs/mcp.md#set-up-a-client); replace the placeholder with your
+installed executable's absolute path.
 
 ## Building
 

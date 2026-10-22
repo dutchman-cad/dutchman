@@ -258,7 +258,7 @@ fn tools() -> Value {
     );
     all.insert(
         "out_dir".to_owned(),
-        json!({"type": "string", "description": "Absolute path of the folder to write the designs to, keeping each input folder's layout. Designs already there are replaced, unless overwrite is false. Nothing is written outside it."}),
+        json!({"type": "string", "description": "Absolute path of the folder to write the designs to, keeping each input folder's layout. Designs already there are replaced, unless overwrite is false. Converted designs are written only inside out_dir. If supplied, journal, report_anon, and report_key are also written at their specified paths."}),
     );
     all.insert(
         "jobs".to_owned(),
@@ -298,7 +298,7 @@ fn tools() -> Value {
         {
             "name": "inspect",
             "title": "Inspect a CAD file",
-            "description": "Read one native CAD file and report what converting it would carry across, without writing anything. Returns the dutchman.inspect/1 report.",
+            "description": "Read one native CAD file and report what converting it would carry across, without writing anything. Returns the dutchman.inspect/1 report. Check conversion.possible and conversion.reason: ok means inspection succeeded, not that conversion is possible.",
             "inputSchema": {"type": "object", "properties": {"input": input, "project": project_property(), "search": search_property()}, "required": ["input"], "additionalProperties": false},
             "annotations": {"readOnlyHint": true},
         },
@@ -517,6 +517,53 @@ fn convert_all(arguments: &Arguments) -> Result<Value, String> {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn batch_schema_describes_every_write_destination() {
+        let tools = tools();
+        let batch = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == "convert_all")
+            .unwrap();
+        let properties = &batch["inputSchema"]["properties"];
+        let description = properties["out_dir"]["description"].as_str().unwrap();
+        assert!(description.contains("Converted designs are written only inside out_dir"));
+        assert!(!description.contains("Nothing is written outside it"));
+        for option in ["journal", "report_anon", "report_key"] {
+            assert!(description.contains(option), "{description}");
+            assert_eq!(properties[option]["type"], "string");
+        }
+        let inspect = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == "inspect")
+            .unwrap();
+        assert!(inspect["description"]
+            .as_str()
+            .unwrap()
+            .contains("conversion.possible and conversion.reason"));
+    }
+
+    #[test]
+    fn an_unreadable_archive_has_recovery_advice_and_no_output() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("incomplete.f3d");
+        let output = dir.path().join("out.solidcraft");
+        std::fs::write(&input, b"not an archive").unwrap();
+        let result = call("convert", json!({"input": input, "output": output}));
+        let report = &result["result"]["structuredContent"];
+        assert_eq!(result["result"]["isError"], true);
+        assert_eq!(report["error"]["stage"], "decode");
+        assert_eq!(report["error"]["upstream"], "cadmpeg");
+        let message = report["error"]["message"].as_str().unwrap();
+        assert!(message.contains("download or copy it again"), "{message}");
+        assert!(message.contains("testing-your-library.md"), "{message}");
+        assert!(!output.exists());
+        assert_eq!(call("formats", json!({}))["result"]["isError"], false);
+    }
 
     fn call(name: &str, arguments: Value) -> Value {
         let message = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call",

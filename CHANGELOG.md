@@ -8,6 +8,18 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Getting started
+
+- A file that cannot be read as its format (cut short, damaged or misnamed) says how to
+  recover: copy it again or check its extension, and report it anonymously if the original
+  opens. The CLI and the MCP tools give the same advice.
+- The desktop app says what to check when its window cannot start (a desktop session and
+  working graphics drivers), and exits with that advice when graphics start stalls for 30
+  seconds instead of waiting.
+- The guide and CONTRIBUTING start problem reports from an anonymous report, explain the
+  sample cube's expected warnings, and the MCP tool descriptions say exactly what
+  `convert_all` writes and that a successful `inspect` does not mean a file converts.
+
 ### FreeCAD
 
 - Leaving out a FreeCAD document's hidden bodies no longer takes their sketches with them: a
