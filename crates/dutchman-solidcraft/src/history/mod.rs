@@ -423,6 +423,10 @@ fn map_feature(feature: &Value, ctx: &mut Context, report: &mut Report) -> Resul
         Some(kind @ ("block" | "primitive")) => Err(primitive::unplaced(kind)),
         Some("pattern") => pattern::map(feature, definition, ctx).map(Mapped::Feature),
         Some("hole") => hole::map(feature, definition, ctx).map(Mapped::Feature),
+        // A placed datum plane: what is sketched on it carries the same frame of its own.
+        Some("datum_plane") if definition.get("frame").is_some_and(Value::is_object) => {
+            Ok(Mapped::Nothing)
+        }
         _ => Err(format!("{} is not mapped yet", kind(feature))),
     }
 }
@@ -521,6 +525,29 @@ mod tests {
         let model = with(cube(), json!([datum(1, 0), body]), json!([]));
         let mapping = map(&model, &mut Report::default());
         // Nothing else builds geometry here; the node itself does not stop the history.
+        assert_eq!(
+            mapping.result.unwrap_err(),
+            "no feature in the history builds geometry"
+        );
+        let statuses: Vec<FeatureStatus> = mapping.features.iter().map(|f| f.status).collect();
+        assert_eq!(
+            statuses,
+            [FeatureStatus::NotNeeded, FeatureStatus::NotNeeded]
+        );
+    }
+
+    #[test]
+    fn a_placed_datum_plane_is_not_needed() {
+        let frame = json!({"origin": {"x": 0.0, "y": 0.0, "z": 15.0},
+            "normal": {"x": 0.0, "y": 0.0, "z": 1.0}, "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0}});
+        let placed = feature(
+            2,
+            1,
+            "DatumPlane",
+            json!({"definition": "datum_plane", "frame": frame}),
+        );
+        let model = with(cube(), json!([datum(1, 0), placed]), json!([]));
+        let mapping = map(&model, &mut Report::default());
         assert_eq!(
             mapping.result.unwrap_err(),
             "no feature in the history builds geometry"

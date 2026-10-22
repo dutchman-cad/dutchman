@@ -18,6 +18,9 @@ report's schema name changes when a field does).
 
 ### Feature history
 
+- Datum planes the source places (FreeCAD's PartDesign Plane) are counted as not needed:
+  what is sketched on them keeps the same plane of its own.
+
 - Nodes that only order the feature tree (folders, FreeCAD's PartDesign Body, comment and
   annotation containers) are counted as not needed instead of stopping the history.
 
