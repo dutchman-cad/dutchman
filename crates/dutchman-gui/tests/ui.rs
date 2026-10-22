@@ -46,6 +46,21 @@ fn convert(harness: &mut Harness<'static, App>) {
 }
 
 #[test]
+fn the_window_offers_the_file_problem_form_and_names_its_version() {
+    let mut harness = harness();
+    harness.run();
+    assert!(harness.query_by_label("Report a problem").is_some());
+    assert_eq!(
+        dutchman_gui::WINDOW_TITLE,
+        format!("Dutchman {}", env!("CARGO_PKG_VERSION"))
+    );
+    assert_eq!(
+        dutchman_gui::REPORT_PROBLEM_URL,
+        "https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml"
+    );
+}
+
+#[test]
 fn designs_convert_from_the_window() {
     let out = tempfile::tempdir().unwrap();
     let mut harness = harness();

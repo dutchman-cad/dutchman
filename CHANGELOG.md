@@ -8,6 +8,9 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+- The desktop app prints `--version` and `--help` without opening a window, shows its version
+  in the title, and has a **Report a problem** link to the **A file didn't convert** form. An
+  unreadable-file error links to that form too.
 - Sweeps accept single-curve whole-sketch paths and guide rails, and report specific reasons for unsupported corner transitions, section laws, tangent extension, and simplification.
 - Lofts map in more forms: surface lofts become SolidCraft surface lofts, and ruled lofts
   through two sections map. Loft rails share the sweep path reader, so a single-curve

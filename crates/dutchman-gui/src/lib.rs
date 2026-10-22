@@ -9,10 +9,17 @@ pub mod worker;
 
 pub use app::App;
 
+/// The desktop window's title, including the version of this build.
+pub const WINDOW_TITLE: &str = concat!("Dutchman ", env!("CARGO_PKG_VERSION"));
+
+/// The issue form for a file that did not convert.
+pub const REPORT_PROBLEM_URL: &str =
+    "https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml";
+
 /// The window's options: its size, title and icon.
 pub fn options() -> eframe::NativeOptions {
     let mut viewport = eframe::egui::ViewportBuilder::default()
-        .with_title("Dutchman")
+        .with_title(WINDOW_TITLE)
         .with_app_id("dutchman")
         .with_inner_size([760.0, 680.0])
         .with_min_inner_size([520.0, 420.0])

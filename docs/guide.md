@@ -99,6 +99,11 @@ On Linux, launch the desktop app with `dutchman-gui` from a terminal. It needs a
 Wayland desktop session with working OpenGL. See [Troubleshooting](#troubleshooting) if no
 window appears.
 
+The window's title shows its version, and its **Report a problem** link opens the
+[A file didn't convert](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
+form. `dutchman-gui --version` and `dutchman-gui --help` print and exit without opening a
+window (on Windows, read the version with `dutchman --version`).
+
 On macOS, `shasum -a 256 -c` takes the place of `sha256sum -c`. The programs are not signed
 with a Developer ID, so macOS blocks each the first time, as it does
 [the app](#opening-the-app-the-first-time); allow it in System Settings › Privacy & Security,
