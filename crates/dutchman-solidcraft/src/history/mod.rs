@@ -10,6 +10,7 @@
 
 pub(crate) mod base;
 mod constraints;
+mod crossing;
 mod extrude;
 mod faces;
 mod hole;

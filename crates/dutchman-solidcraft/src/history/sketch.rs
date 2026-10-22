@@ -92,18 +92,48 @@ pub(crate) fn map(
         },
     ) = plane(sketch)?;
 
-    let mut builder = Builder::default();
-    for entity in ctx
+    let entities: Vec<&Value> = ctx
         .arena("sketch_entities")
         .iter()
         .filter(|row| row.get("sketch").and_then(Value::as_str) == Some(sketch_id))
-    {
-        builder.entity(entity, report)?;
+        .collect();
+    let crossing = super::crossing::crossing(sketch, &entities);
+    let mut builder = Builder::default();
+    for entity in &entities {
+        let is_crossing = entity
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| crossing.contains(id));
+        if is_crossing {
+            let mut construction = (*entity).clone();
+            if let Some(fields) = construction.as_object_mut() {
+                fields.insert("construction".to_owned(), Value::Bool(true));
+            }
+            builder.entity(&construction, report)?;
+        } else {
+            builder.entity(entity, report)?;
+        }
     }
     let id = ctx.id();
     let name = name(feature)
         .map(str::to_owned)
         .unwrap_or_else(|| format!("Sketch{id}"));
+    if !crossing.is_empty() {
+        report.push(
+            Severity::Info,
+            format!("sketch \"{name}\""),
+            format!(
+                "{} drawn across a profile the sketch takes whole written as construction: \
+                 solid, {} would split it",
+                if crossing.len() == 1 {
+                    "1 line".to_owned()
+                } else {
+                    format!("{} lines", crossing.len())
+                },
+                if crossing.len() == 1 { "it" } else { "they" },
+            ),
+        );
+    }
     let constraints = constraints::map(
         sketch_id,
         &format!("sketch \"{name}\""),
@@ -608,7 +638,7 @@ pub(crate) fn number(value: Option<&Value>) -> Option<f64> {
         .filter(|n| n.is_finite())
 }
 
-fn p2(value: Option<&Value>) -> Option<P2> {
+pub(crate) fn p2(value: Option<&Value>) -> Option<P2> {
     let value = value?;
     Some([number(value.get("u"))?, number(value.get("v"))?])
 }
