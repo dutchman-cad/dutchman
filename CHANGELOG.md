@@ -33,6 +33,9 @@ report's schema name changes when a field does).
 
 ### Feature history
 
+- A profile cadmpeg keeps as a native selection maps when its sketch has one profile, which
+  the selection can only be; in a sketch of several it says it is not mapped yet.
+
 - Sheet-metal base flanges map onto SolidCraft base flanges, under a sheet rule of their
   thickness, on the sketch's side the source puts them. A flange thick on both sides of its
   sketch is not mapped yet.
@@ -60,7 +63,6 @@ report's schema name changes when a field does).
   joints already did, instead of turning one part over to mate the frames opposed. Fusion's
   files do not yet say which joints are flipped; a part only a flipped joint places, such as
   a design inserted into an archive, can still come out turned over.
-
 
 ## 0.1.3 (2026-10-21)
 
