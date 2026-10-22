@@ -1145,7 +1145,7 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
 name = "dutchman"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "aho-corasick",
  "clap",
@@ -1159,7 +1159,7 @@ dependencies = [
 
 [[package]]
 name = "dutchman-core"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "cadmpeg-core",
  "cadmpeg-ir",
@@ -1172,7 +1172,7 @@ dependencies = [
 
 [[package]]
 name = "dutchman-gui"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "dutchman",
  "dutchman-solidcraft",
@@ -1188,7 +1188,7 @@ dependencies = [
 
 [[package]]
 name = "dutchman-solidcraft"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "cadmpeg-ir",
  "cadmpeg-registry",
