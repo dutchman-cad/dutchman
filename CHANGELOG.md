@@ -8,6 +8,14 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Feature history
+
+- A solid line drawn across a sketch profile from one point of its boundary to another, such
+  as the diagonals of an Inventor centre-point rectangle, is written as construction when the
+  sketch's profile table takes that profile whole: solid, it would split the profile, and
+  SolidCraft found no profile to match. cadmpeg does not yet say which Inventor sketch curves
+  are construction. The report says how many lines were written so (`Info`).
+
 ### Parameters
 
 - A design holding parameters and nothing else (no features, no geometry), as a Fusion
