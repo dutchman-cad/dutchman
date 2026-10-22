@@ -645,6 +645,90 @@ fn revolute_and_slider_joints_are_written_with_their_motion() {
     assert_eq!(kinds, [("revolute", 1), ("rigid", 1)]);
 }
 
+/// A grounded base and a hinge, both turned a quarter turn about Z and translated.
+fn grounded_hinge() -> Model {
+    let mut model = hinged(serde_json::json!({"kind": "revolute"}));
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let connector = wire["model"]["assembly_joints"][0]["operands"]["connectors"][1].clone();
+    wire["model"]["assembly_joints"][0]["operands"] = serde_json::json!({
+        "arity": "grounded", "connector": connector,
+    });
+    for (index, y) in [5.0, 35.0].into_iter().enumerate() {
+        wire["model"]["occurrences"][index]["transform"] = serde_json::json!([
+            [0.0, -1.0, 0.0, 15.0],
+            [1.0, 0.0, 0.0, y],
+            [0.0, 0.0, 1.0, 7.0],
+        ]);
+    }
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.assembly = dutchman_core::local_assembly(&model).unwrap();
+    model
+}
+
+#[test]
+fn a_grounded_joint_fixes_its_occurrence_and_keeps_the_revolute_joint() {
+    let model = grounded_hinge();
+    let assembly = model.assembly.as_ref().unwrap();
+    assert!(assembly.left_out.is_empty(), "{:?}", assembly.left_out);
+    assert_eq!(assembly.joints.len(), 2);
+    let ground = &assembly.joints[0];
+    assert!(ground.a.is_empty());
+    assert_eq!(ground.b, [0]);
+    assert_eq!(ground.motion, dutchman_core::Motion::Rigid);
+    assert_eq!(ground.frame_a, assembly.placements[0].transform);
+
+    let (bytes, report) = written(&model);
+    assert!(
+        report
+            .losses()
+            .iter()
+            .all(|loss| loss.severity != dutchman_core::Severity::Dropped),
+        "{report:?}"
+    );
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut text = String::new();
+    archive
+        .by_name("document.json")
+        .unwrap()
+        .read_to_string(&mut text)
+        .unwrap();
+    let document: Value = serde_json::from_str(&text).unwrap();
+    let occurrences = document["occurrences"].as_array().unwrap();
+    assert_eq!(occurrences.len(), 2);
+    assert_eq!(
+        occurrences[0]["transform"],
+        serde_json::json!([
+            [0.0, 1.0, 0.0, 0.0],
+            [-1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [15.0, 5.0, 7.0, 1.0],
+        ])
+    );
+    let joints = document["assembly"]["joints"].as_array().unwrap();
+    assert_eq!(joints.len(), 2);
+    assert_eq!(joints[0]["kind"], "rigid");
+    assert_eq!(joints[0]["a"]["occurrence"], 0);
+    assert_eq!(joints[0]["b"]["occurrence"], occurrences[0]["id"]);
+    assert_eq!(joints[1]["kind"], "revolute");
+    assert_eq!(joints[1]["a"]["occurrence"], occurrences[0]["id"]);
+    assert_eq!(joints[1]["b"]["occurrence"], occurrences[1]["id"]);
+    assert_eq!(report.joints().get("rigid"), Some(&1));
+    assert_eq!(report.joints().get("revolute"), Some(&1));
+}
+
+#[test]
+fn solidcraft_keeps_the_grounded_base_fixed_when_driving_its_hinge() {
+    let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) else {
+        eprintln!("skipped: set {CLI_ENV} to drive the joints in SolidCraft");
+        return;
+    };
+    let (bytes, _) = written(&grounded_hinge());
+    assert_eq!(
+        driven(&cli, &bytes, "Revolute 1", 90.0),
+        [[-5.0, 15.0, 7.0, 5.0, 25.0], [5.0, 5.0, 7.0, 15.0, 15.0]]
+    );
+}
+
 /// Drives the joint named `joint` to `value` (degrees, or mm for a slider) in SolidCraft and
 /// returns each body's bounding box after: min x, y, z, max x, y.
 fn driven(cli: &Path, design: &[u8], joint: &str, value: f64) -> Vec<[f64; 5]> {
