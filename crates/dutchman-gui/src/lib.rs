@@ -26,10 +26,16 @@ pub fn options() -> eframe::NativeOptions {
     }
 }
 
-/// The mark as the window icon.
+/// The window icon: on macOS, which shows it in the Dock while the app runs, the app icon
+/// (the mark on its light plate, as the app bundle's icon), elsewhere the mark itself.
 fn icon() -> Option<eframe::egui::IconData> {
+    let svg: &[u8] = if cfg!(target_os = "macos") {
+        include_bytes!("../assets/dutchman-app-icon.svg")
+    } else {
+        include_bytes!("../assets/dutchman-mark.svg")
+    };
     let image = egui_extras::image::load_svg_bytes_with_size(
-        include_bytes!("../assets/dutchman-mark.svg"),
+        svg,
         eframe::egui::SizeHint::Size {
             width: 256,
             height: 256,
@@ -40,7 +46,12 @@ fn icon() -> Option<eframe::egui::IconData> {
     .ok()?;
     let [width, height] = image.size;
     Some(eframe::egui::IconData {
-        rgba: image.as_raw().to_vec(),
+        // egui's pixels are premultiplied; an icon's are not.
+        rgba: image
+            .pixels
+            .iter()
+            .flat_map(|pixel| pixel.to_srgba_unmultiplied())
+            .collect(),
         width: u32::try_from(width).ok()?,
         height: u32::try_from(height).ok()?,
     })
