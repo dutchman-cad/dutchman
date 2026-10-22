@@ -39,6 +39,10 @@ report's schema name changes when a field does).
 
 ### Feature history
 
+- More holes map: at a directed position without a sketch, on an axis through the cap of the
+  extrusion before them, at selected sketch points and centres, with a drill-point form, and
+  ending at that earlier cap. A tapered hole is not mapped yet.
+
 - The report says why a tapered coil, a flat spiral or a coil of triangular section is not
   mapped: SolidCraft's coil has no such option.
 

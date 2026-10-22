@@ -1,31 +1,33 @@
-//! Holes drilled at the points of a sketch: simple, counterbore and countersink holes,
-//! through all or to a depth, as SolidCraft's Hole drills them.
+//! Holes at sketch locations or resolved spatial placements, with supported entry
+//! forms, drill points, and terminations proven against earlier extrusion caps.
+
+use std::collections::BTreeSet;
 
 use serde_json::{json, Value};
 
-use super::sketch::{number, unit, v3, Mapped, Shape};
+use super::sketch::{dot, number, unit, v3, Mapped, Shape, V3};
 use super::{name, Context};
 
 /// Maps a hole feature whose operation is `definition`.
 pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Result<Value, String> {
-    if definition.get("placements").is_some_and(|p| !p.is_null()) {
-        return Err("a hole placed without a sketch is not mapped yet".to_owned());
-    }
-    let profile = definition.get("profile").unwrap_or(&Value::Null);
-    if profile.get("kind").and_then(Value::as_str) != Some("sketch") {
-        return Err("a hole placed without a sketch is not mapped yet".to_owned());
-    }
-    let sketch_id = profile
-        .get("value")
-        .and_then(Value::as_str)
-        .ok_or("its sketch is not resolved")?;
-    let sketch = ctx
-        .sketches
-        .get(sketch_id)
-        .ok_or("its sketch is not an earlier mapped sketch")?;
+    let (position, direction, points) = placement(feature, definition, ctx)?;
 
     let shape = definition.get("shape").unwrap_or(&Value::Null);
+    if shape.get("exit_kind").is_some_and(|v| !v.is_null()) {
+        return Err("a hole with an exit treatment is not mapped yet".to_owned());
+    }
     let construction = shape.get("construction").unwrap_or(&Value::Null);
+    if construction
+        .pointer("/specification/kind")
+        .and_then(Value::as_str)
+        == Some("threaded")
+        && construction
+            .pointer("/specification/modeled")
+            .and_then(Value::as_bool)
+            == Some(true)
+    {
+        return Err("a hole with a modeled thread is not mapped yet".to_owned());
+    }
     let form = construction.get("kind").unwrap_or(&Value::Null);
     let diameter = number(shape.get("diameter")).ok_or("its diameter is not given")?;
     let mut hole = match (
@@ -33,6 +35,12 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         form.get("kind").and_then(Value::as_str),
     ) {
         (Some("form"), Some("simple")) => json!({"type": "simple"}),
+        (Some("form"), Some("simple_drilled")) => {
+            let angle = number(form.get("drill_point_angle"))
+                .filter(|a| *a > 0.0 && *a < std::f64::consts::PI)
+                .ok_or("its drill point's angle is not given")?;
+            json!({"type": "drilled", "tip_angle": format!("{}", angle.to_degrees())})
+        }
         (Some("form"), Some("counterbore" | "countersink")) => {
             let entry = number(form.get("diameter"))
                 .filter(|d| *d > diameter)
@@ -55,31 +63,33 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         _ => return Err("a hole of this construction is not mapped yet".to_owned()),
     };
 
-    let points = locations(sketch, definition.get("profile_filter"))?;
-    let first = points
-        .first()
-        .map(|(_, at)| *at)
-        .ok_or("its sketch has no points to drill at")?;
-
-    // The drilling direction, else into the sketch's side, against its normal.
-    let direction = match v3(definition.get("direction")) {
-        Some(direction) => unit(direction).ok_or("its direction is zero")?,
-        None => sketch.normal.map(|c| -c),
-    };
-
     let mut depth = None;
+    let mut to = None;
     let extent = definition.get("extent").unwrap_or(&Value::Null);
     match extent.get("kind").and_then(Value::as_str) {
         None | Some("through_all") => {}
         Some("blind") => {
-            let length = number(extent.get("length")).ok_or("its depth is not given")?;
+            let length = number(extent.get("length"))
+                .filter(|length| *length > 0.0)
+                .ok_or("its depth is not given")?;
             let bottom = definition.get("bottom").unwrap_or(&Value::Null);
             match bottom.get("kind").and_then(Value::as_str) {
-                None | Some("flat") => depth = Some(length),
+                None => depth = Some(length),
+                Some("flat") => {
+                    if form.get("kind").and_then(Value::as_str) == Some("simple_drilled") {
+                        return Err(
+                            "its flat bottom conflicts with its drill-point form".to_owned()
+                        );
+                    }
+                    depth = Some(length);
+                }
                 Some("angled") => {
                     // SolidCraft's entry forms have no drill-point fields. Replacing the
                     // form with `drilled` would silently discard the entry recess.
-                    if form.get("kind").and_then(Value::as_str) != Some("simple") {
+                    if !matches!(
+                        form.get("kind").and_then(Value::as_str),
+                        Some("simple" | "simple_drilled")
+                    ) {
                         return Err(
                             "a counterbore or countersink with a drill point is not mapped yet"
                                 .to_owned(),
@@ -104,14 +114,29 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
                 }
             }
         }
+        Some("to_face") => {
+            if number(extent.get("offset")).is_some_and(|offset| offset != 0.0) {
+                return Err("a hole that ends offset from a face is not mapped yet".to_owned());
+            }
+            if hole.get("type").and_then(Value::as_str) == Some("drilled")
+                || definition.pointer("/bottom/kind").and_then(Value::as_str) == Some("angled")
+            {
+                return Err("a hole to a face with a drill point is not mapped yet".to_owned());
+            }
+            let face = earlier_face(feature, extent.get("face"), ctx)?;
+            if dot(sub(face.point, position), direction) <= 0.0
+                || dot(face.normal, direction).abs() < 1.0 - 1e-9
+            {
+                return Err("its terminating face is not ahead of the hole".to_owned());
+            }
+            to = Some(face.point);
+        }
         Some(other) => return Err(format!("a hole that ends {other} is not mapped yet")),
     }
     if definition.get("taper_angle").is_some_and(|t| !t.is_null()) {
         return Err("a tapered hole is not mapped yet".to_owned());
     }
 
-    let (sketch_feature, position) = (sketch.feature, sketch.world(first));
-    let ids: Vec<String> = points.into_iter().map(|(id, _)| id).collect();
     let id = ctx.id();
     ctx.builds = true;
     let mut out = json!({
@@ -122,21 +147,438 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         "diameter": format!("{diameter} mm"),
         "direction": direction,
         "hole": hole,
-        "points": {
-            "sketch": sketch_feature,
-            "ids": ids,
-        },
         "position": position,
     });
     if let (Some(depth), Some(fields)) = (depth, out.as_object_mut()) {
         fields.insert("depth".to_owned(), json!(format!("{depth} mm")));
     }
+    if let Some(fields) = out.as_object_mut() {
+        if let Some(points) = points {
+            fields.insert("points".to_owned(), points);
+        }
+        if let Some(to) = to {
+            fields.insert("to".to_owned(), json!(to));
+        }
+    }
     Ok(out)
+}
+
+/// A complete placement, or sketch locations that keep following their sketch.
+fn placement(
+    feature: &Value,
+    definition: &Value,
+    ctx: &Context,
+) -> Result<(V3, V3, Option<Value>), String> {
+    if let Some(placements) = definition.get("placements").and_then(Value::as_array) {
+        let [placement] = placements.as_slice() else {
+            return Err("multiple spatial hole placements are not mapped yet".to_owned());
+        };
+        return match placement.get("kind").and_then(Value::as_str) {
+            Some("directed") => {
+                let position = v3(placement.get("position")).ok_or("its position is not given")?;
+                let direction = v3(placement.get("direction"))
+                    .and_then(unit)
+                    .ok_or("its direction is zero")?;
+                if definition.get("face").is_some_and(|face| !face.is_null()) {
+                    let face = earlier_face(feature, definition.get("face"), ctx)?;
+                    if dot(sub(position, face.point), face.normal).abs() > 1e-7
+                        || !face.contains(position)
+                        || dot(direction, face.normal) >= 0.0
+                    {
+                        return Err("its placement does not drill into its entry face".to_owned());
+                    }
+                }
+                Ok((position, direction, None))
+            }
+            Some("axis") => {
+                let face = earlier_face(feature, definition.get("face"), ctx)?;
+                let origin = v3(placement.get("origin")).ok_or("its axis origin is not given")?;
+                let axis = v3(placement.get("axis"))
+                    .and_then(unit)
+                    .ok_or("its axis is zero")?;
+                let cos = dot(axis, face.normal);
+                if cos.abs() < 1e-9 {
+                    return Err("its hole axis is parallel to its entry face".to_owned());
+                }
+                let position = add(
+                    origin,
+                    axis,
+                    dot(sub(face.point, origin), face.normal) / cos,
+                );
+                if !position.iter().all(|c| c.is_finite()) || !face.contains(position) {
+                    return Err("its hole axis misses its entry face".to_owned());
+                }
+                // An axis has no sign: the entry face supplies the inward direction.
+                let direction = axis.map(|c| if cos > 0.0 { -c } else { c });
+                Ok((position, direction, None))
+            }
+            _ => Err("a hole of this placement is not mapped yet".to_owned()),
+        };
+    }
+    let profile = definition.get("profile").unwrap_or(&Value::Null);
+    let kind = profile.get("kind").and_then(Value::as_str);
+    let value = profile.get("value").unwrap_or(&Value::Null);
+    let sketch_id = match kind {
+        Some("sketch") => value.as_str(),
+        Some("sketch_entities") => value.get("sketch").and_then(Value::as_str),
+        _ => return Err("a hole placed without resolved points is not mapped yet".to_owned()),
+    }
+    .ok_or("its sketch is not resolved")?;
+    let sketch = ctx
+        .sketches
+        .get(sketch_id)
+        .ok_or("its sketch is not an earlier mapped sketch")?;
+    let selected = if kind == Some("sketch_entities") {
+        let entities = value
+            .get("entities")
+            .and_then(Value::as_array)
+            .filter(|ids| !ids.is_empty() && ids.len() <= 4096)
+            .ok_or("its selected hole locations are not resolved")?;
+        let selected = entities
+            .iter()
+            .map(|id| {
+                id.as_str()
+                    .filter(|id| sketch.shapes.contains_key(*id))
+                    .ok_or("its selected hole locations are not in its sketch")
+            })
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        Some(selected)
+    } else {
+        None
+    };
+    let locations = locations(sketch, definition.get("profile_filter"), selected.as_ref())?;
+    let first = locations
+        .first()
+        .ok_or("its sketch has no points to drill at")?;
+    let direction = match v3(definition.get("direction")) {
+        Some(direction) => unit(direction).ok_or("its direction is zero")?,
+        None => sketch.normal.map(|c| -c),
+    };
+    // SolidCraft's multi-point placement drills perpendicular to the sketch.
+    if dot(direction, sketch.normal).abs() < 1.0 - 1e-9 {
+        return Err("a hole oblique to its location sketch is not mapped yet".to_owned());
+    }
+    let position = sketch.world(first.1);
+    let ids: Vec<String> = locations.into_iter().map(|(id, _)| id).collect();
+    Ok((
+        position,
+        direction,
+        Some(json!({"sketch": sketch.feature, "ids": ids})),
+    ))
+}
+
+/// A planar face with a point inside its boundary, as in `faces.rs`. The final B-rep
+/// alone cannot establish when a face existed: `earlier_face` also proves its cap
+/// against the last preceding solid feature's sketch and extrusion distance.
+struct PlanarFace {
+    point: V3,
+    normal: V3,
+    u: V3,
+    v: V3,
+    corners: Vec<V3>,
+}
+
+impl PlanarFace {
+    fn contains(&self, point: V3) -> bool {
+        let flat = |p: V3| [dot(p, self.u), dot(p, self.v)];
+        let polygon: Vec<[f64; 2]> = self.corners.iter().map(|p| flat(*p)).collect();
+        inside(&polygon, flat(point))
+    }
+}
+
+fn earlier_face(
+    feature: &Value,
+    selection: Option<&Value>,
+    ctx: &Context,
+) -> Result<PlanarFace, String> {
+    let selection = selection.ok_or("its face is not resolved")?;
+    let ids = match selection.get("kind").and_then(Value::as_str) {
+        Some("faces") => selection.get("value"),
+        Some("resolved") => selection.pointer("/value/faces"),
+        _ => None,
+    }
+    .and_then(Value::as_array)
+    .ok_or("its face has no resolved geometry")?;
+    let [id] = ids.as_slice() else {
+        return Err("a hole referring to several faces is not mapped yet".to_owned());
+    };
+    let face = id
+        .as_str()
+        .and_then(|id| ctx.row("faces", id))
+        .ok_or("its face is missing")?;
+    let geometry = face
+        .get("surface")
+        .and_then(Value::as_str)
+        .and_then(|id| ctx.row("surfaces", id))
+        .and_then(|row| row.get("geometry"))
+        .ok_or("its face's surface is missing")?;
+    if geometry.get("kind").and_then(Value::as_str) != Some("plane") {
+        return Err("a hole referring to a curved face is not mapped yet".to_owned());
+    }
+    let normal = v3(geometry.get("normal"))
+        .and_then(unit)
+        .ok_or("its face's normal is missing")?;
+    let u = v3(geometry.get("u_axis"))
+        .and_then(unit)
+        .ok_or("its face's axes are missing")?;
+    let v = [
+        normal[1] * u[2] - normal[2] * u[1],
+        normal[2] * u[0] - normal[0] * u[2],
+        normal[0] * u[1] - normal[1] * u[0],
+    ];
+    let origin = v3(geometry.get("origin")).ok_or("its face's origin is missing")?;
+    // Only the outer loop can be compared with an earlier extrusion cap. Inner
+    // loops in the saved result may have been introduced by this very hole; the
+    // proven earlier cap has the single, filled profile reconstructed below.
+    let boundary = face.get("loops").ok_or("its face's boundary is missing")?;
+    let id = match boundary.get("classification").and_then(Value::as_str) {
+        Some("classified") => boundary.get("outer"),
+        _ => boundary
+            .get("loops")
+            .and_then(Value::as_array)
+            .and_then(|ids| ids.first()),
+    }
+    .ok_or("its face's outer boundary is missing")?;
+    let lp = id
+        .as_str()
+        .and_then(|id| ctx.row("loops", id))
+        .ok_or("its face's boundary is missing")?;
+    let coedges = lp
+        .pointer("/boundary/coedges")
+        .and_then(Value::as_array)
+        .filter(|rows| rows.len() <= 4096)
+        .ok_or("its face's polygonal boundary is not resolved")?;
+    let mut corners = Vec::new();
+    for id in coedges {
+        let coedge = id
+            .as_str()
+            .and_then(|id| ctx.row("coedges", id))
+            .ok_or("its face's boundary is missing")?;
+        let edge = coedge
+            .get("edge")
+            .and_then(Value::as_str)
+            .and_then(|id| ctx.row("edges", id))
+            .ok_or("its face's edge is missing")?;
+        // A curved edge's endpoints do not describe the boundary polygon.
+        let curve = edge
+            .pointer("/carrier/curve")
+            .and_then(Value::as_str)
+            .and_then(|id| ctx.row("curves", id));
+        if curve
+            .and_then(|row| row.pointer("/geometry/kind"))
+            .and_then(Value::as_str)
+            != Some("line")
+        {
+            return Err(
+                "a hole referring to a face with curved edges is not mapped yet".to_owned(),
+            );
+        }
+        let reversed = coedge.get("sense").and_then(Value::as_str) == Some("reversed");
+        let vertex = edge
+            .get(if reversed { "end" } else { "start" })
+            .and_then(Value::as_str)
+            .and_then(|id| ctx.row("vertices", id))
+            .ok_or("its face's vertex is missing")?;
+        let point = vertex
+            .get("point")
+            .and_then(Value::as_str)
+            .and_then(|id| ctx.row("points", id))
+            .and_then(|row| v3(row.get("position")))
+            .ok_or("its face's point is missing")?;
+        if dot(sub(point, origin), normal).abs() > 1e-7 {
+            return Err("its face's boundary is not on its plane".to_owned());
+        }
+        corners.push(point);
+    }
+    if corners.len() < 3 {
+        return Err("its face has no polygonal boundary".to_owned());
+    }
+    let mut planar = PlanarFace {
+        point: [0.0; 3],
+        normal,
+        u,
+        v,
+        corners,
+    };
+    let outer = &planar.corners;
+    // As in faces.rs, choose the centroid of a nondegenerate corner triangle
+    // inside the earlier cap's filled outline.
+    planar.point = (0..outer.len())
+        .find_map(|i| {
+            let a = *outer.get((i + outer.len() - 1) % outer.len())?;
+            let b = *outer.get(i)?;
+            let c = *outer.get((i + 1) % outer.len())?;
+            let centre = [
+                (a[0] + b[0] + c[0]) / 3.0,
+                (a[1] + b[1] + c[1]) / 3.0,
+                (a[2] + b[2] + c[2]) / 3.0,
+            ];
+            let ab = sub(b, a);
+            let ac = sub(c, a);
+            let area = [
+                ab[1] * ac[2] - ab[2] * ac[1],
+                ab[2] * ac[0] - ab[0] * ac[2],
+                ab[0] * ac[1] - ab[1] * ac[0],
+            ];
+            (dot(area, area) > 1e-18 && planar.contains(centre)).then_some(centre)
+        })
+        .ok_or("its face has no resolved interior point")?;
+    if !earlier_cap(feature, &planar, ctx) {
+        return Err("its face is not proven to exist before the hole".to_owned());
+    }
+    // The underlying surface normal need not be the face's outward normal.
+    if face.get("sense").and_then(Value::as_str) == Some("reversed") {
+        planar.normal = planar.normal.map(|c| -c);
+    }
+    Ok(planar)
+}
+
+/// A deliberately narrow proof: one polygonal profile, extruded as a new body,
+/// with no intervening solid operation. Matching the cap's entire outer boundary
+/// rules out a blind bottom or shoulder introduced by this hole or a later cut.
+fn earlier_cap(feature: &Value, face: &PlanarFace, ctx: &Context) -> bool {
+    let Some(previous) = ctx
+        .arena("features")
+        .iter()
+        .filter(|row| {
+            row.get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| ctx.feature_names.contains_key(id))
+                && super::operation(row)
+                    .get("definition")
+                    .and_then(Value::as_str)
+                    != Some("sketch")
+                && row.get("ordinal").and_then(Value::as_u64)
+                    < feature.get("ordinal").and_then(Value::as_u64)
+        })
+        .max_by_key(|row| row.get("ordinal").and_then(Value::as_u64))
+    else {
+        return false;
+    };
+    let op = previous.get("definition").unwrap_or(&Value::Null);
+    if op.get("definition").and_then(Value::as_str) != Some("extrude")
+        || op.get("op").and_then(Value::as_str) != Some("new_body")
+        || op.pointer("/extent/kind").and_then(Value::as_str) != Some("one_sided")
+        || op
+            .pointer("/extent/side/termination/kind")
+            .and_then(Value::as_str)
+            != Some("blind")
+        || number(op.pointer("/extent/side/draft")).is_some_and(|a| a != 0.0)
+        || op
+            .get("start")
+            .is_some_and(|s| s.get("kind").and_then(Value::as_str) != Some("profile_plane"))
+    {
+        return false;
+    }
+    if !matches!(
+        op.pointer("/profile/kind").and_then(Value::as_str),
+        Some("sketch" | "sketch_profiles")
+    ) {
+        return false;
+    }
+    let Some(length) = number(op.pointer("/extent/side/termination/length")) else {
+        return false;
+    };
+    let Ok((sketch_id, _)) = super::profile::profile(op.get("profile"), ctx) else {
+        return false;
+    };
+    let Some(sketch) = ctx.sketches.get(&sketch_id) else {
+        return false;
+    };
+    let Some(profiles) = ctx
+        .row("sketches", &sketch_id)
+        .and_then(|row| row.get("profiles"))
+        .and_then(Value::as_array)
+    else {
+        return false;
+    };
+    let [profile] = profiles.as_slice() else {
+        return false;
+    };
+    let Some(uses) = profile.as_array() else {
+        return false;
+    };
+    let outer = &face.corners;
+    if uses.len() != outer.len() || dot(face.normal, sketch.normal).abs() < 1.0 - 1e-9 {
+        return false;
+    }
+    let unique: BTreeSet<_> = uses
+        .iter()
+        .filter_map(|entry| entry.get("entity").and_then(Value::as_str))
+        .collect();
+    if unique.len() != uses.len() {
+        return false;
+    }
+    let direction = match op.pointer("/direction/kind").and_then(Value::as_str) {
+        None | Some("profile_normal") => 1.0,
+        Some("reversed_profile_normal") => -1.0,
+        _ => return false,
+    };
+    [0.0, direction * length].into_iter().any(|height| {
+        uses.iter().all(|entry| {
+            let Some(curve) = entry
+                .get("entity")
+                .and_then(Value::as_str)
+                .and_then(|id| sketch.curve(id))
+            else {
+                return false;
+            };
+            if curve.kind != "line" {
+                return false;
+            }
+            let Some((_, start)) = curve.start.and_then(|i| sketch.points.get(i)) else {
+                return false;
+            };
+            let Some((_, end)) = curve.end.and_then(|i| sketch.points.get(i)) else {
+                return false;
+            };
+            let start = add(sketch.world(*start), sketch.normal, height);
+            let end = add(sketch.world(*end), sketch.normal, height);
+            let close = |a: V3, b: V3| dot(sub(a, b), sub(a, b)) < 1e-16;
+            outer.iter().enumerate().any(|(i, a)| {
+                outer.get((i + 1) % outer.len()).is_some_and(|b| {
+                    (close(start, *a) && close(end, *b)) || (close(start, *b) && close(end, *a))
+                })
+            })
+        })
+    })
+}
+
+fn sub(a: V3, b: V3) -> V3 {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+fn add(a: V3, direction: V3, distance: f64) -> V3 {
+    [
+        a[0] + direction[0] * distance,
+        a[1] + direction[1] * distance,
+        a[2] + direction[2] * distance,
+    ]
+}
+
+fn inside(polygon: &[[f64; 2]], p: [f64; 2]) -> bool {
+    let mut inside = false;
+    let n = polygon.len();
+    for i in 0..n {
+        let (Some(a), Some(b)) = (polygon.get(i), polygon.get((i + n - 1) % n)) else {
+            continue;
+        };
+        if (a[1] > p[1]) != (b[1] > p[1])
+            && p[0] < (b[0] - a[0]) * (p[1] - a[1]) / (b[1] - a[1]) + a[0]
+        {
+            inside = !inside;
+        }
+    }
+    inside
 }
 
 /// The sketch points holes are drilled at, with their positions in the sketch: the centres of
 /// its circles and arcs, and its points, as far as `filter` takes each, in the sketch's order.
-fn locations(sketch: &Mapped, filter: Option<&Value>) -> Result<Vec<(String, [f64; 2])>, String> {
+fn locations(
+    sketch: &Mapped,
+    filter: Option<&Value>,
+    selected: Option<&BTreeSet<&str>>,
+) -> Result<Vec<(String, [f64; 2])>, String> {
     let filter = filter.and_then(Value::as_str).unwrap_or("all");
     let (points, circles, arcs) = match filter {
         "points" => (true, false, false),
@@ -150,8 +592,9 @@ fn locations(sketch: &Mapped, filter: Option<&Value>) -> Result<Vec<(String, [f6
     };
     let mut indices: Vec<usize> = sketch
         .shapes
-        .values()
-        .filter_map(|shape| match shape {
+        .iter()
+        .filter(|(id, _)| selected.is_none_or(|ids| ids.contains(id.as_str())))
+        .filter_map(|(_, shape)| match shape {
             Shape::Point(index) if points => Some(*index),
             Shape::Curve(curve)
                 if (circles && curve.kind == "circle") || (arcs && curve.kind == "arc") =>
@@ -342,9 +785,6 @@ mod tests {
             "a counterbore_drilled hole is not mapped yet"
         );
         let to_face = hole(json!({"extent": {"kind": "to_face"}}));
-        assert_eq!(
-            mapped(&to_face).unwrap_err(),
-            "a hole that ends to_face is not mapped yet"
-        );
+        assert_eq!(mapped(&to_face).unwrap_err(), "its face is not resolved");
     }
 }

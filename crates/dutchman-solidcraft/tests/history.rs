@@ -1446,6 +1446,246 @@ fn solidcraft_drills_the_holes() {
     );
 }
 
+/// A spatial placement takes its position from the feature, without a sketch.
+fn directed_hole(hole: &mut Value) {
+    hole.as_object_mut().unwrap().remove("profile");
+    hole.as_object_mut().unwrap().remove("profile_filter");
+    hole["placements"] = json!([{"kind": "directed",
+        "position": {"x": 5.0, "y": 5.0, "z": 10.0},
+        "direction": {"x": 0.0, "y": 0.0, "z": -2.0}}]);
+}
+
+fn axis_hole(hole: &mut Value, sign: f64) {
+    directed_hole(hole);
+    hole["face"] = json!({"kind": "faces", "value": ["synthetic:cube:face#top"]});
+    hole["placements"] = json!([{"kind": "axis",
+        "origin": {"x": 5.0, "y": 5.0, "z": 6.0},
+        "axis": {"x": 0.0, "y": 0.0, "z": sign}}]);
+}
+
+fn to_face_hole(hole: &mut Value) {
+    hole["extent"] = json!({"kind": "to_face", "face": {
+        "kind": "resolved", "value": {"faces": ["synthetic:cube:face#bottom"], "native": "bottom"}}});
+    hole["bottom"] = json!({"kind": "flat"});
+}
+
+#[test]
+fn spatial_holes_keep_their_entry_position_and_inward_direction() {
+    for model in [
+        holed_cube(4.0, directed_hole),
+        holed_cube(4.0, |hole| axis_hole(hole, 1.0)),
+        holed_cube(4.0, |hole| axis_hole(hole, -1.0)),
+        holed_cube(4.0, |hole| {
+            directed_hole(hole);
+            hole["face"] = json!({"kind": "faces", "value": ["synthetic:cube:face#top"]});
+        }),
+    ] {
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).starts_with("4 of 4 features mapped"),
+            "{}",
+            history_line(&report)
+        );
+        let hole = &document["features"][3];
+        assert_eq!(hole["position"], json!([5.0, 5.0, 10.0]));
+        let direction: Vec<f64> = hole["direction"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_f64().unwrap())
+            .collect();
+        assert_eq!(direction, vec![0.0, 0.0, -1.0]);
+        assert!(hole.get("points").is_none());
+    }
+}
+
+#[test]
+fn a_hole_to_an_earlier_cap_keeps_a_point_on_that_face() {
+    let (document, report) = convert(
+        &holed_cube(4.0, to_face_hole),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("4 of 4 features mapped"),
+        "{}",
+        history_line(&report)
+    );
+    let hole = &document["features"][3];
+    let to = hole["to"].as_array().unwrap();
+    assert_eq!(to[2], 0.0);
+    assert!(to[0].as_f64().unwrap() > 0.0 && to[0].as_f64().unwrap() < 10.0);
+    assert!(to[1].as_f64().unwrap() > 0.0 && to[1].as_f64().unwrap() < 10.0);
+    assert!(hole.get("depth").is_none());
+}
+
+#[test]
+fn a_hole_can_select_sketch_points_or_circle_centres() {
+    for point in [false, true] {
+        let mut model = holed_cube(4.0, |hole| {
+            hole["profile"] = json!({"kind": "sketch_entities", "value": {
+                "sketch": HOLES, "entities": ["f3d:model:sketch-entity#9"]}});
+            hole["profile_filter"] = json!(if point { "points" } else { "circles" });
+        });
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let entities = wire["model"]["sketch_entities"].as_array_mut().unwrap();
+        if point {
+            entities.last_mut().unwrap()["geometry"] =
+                json!({"kind": "point", "position": {"u": 5.0, "v": 5.0}});
+        }
+        // An unselected entity of the same family must not create a second hole.
+        entities.push(json!({
+            "id": "f3d:model:sketch-entity#10", "sketch": HOLES, "construction": false,
+            "geometry": if point {
+                json!({"kind": "point", "position": {"u": 3.0, "v": 3.0}})
+            } else {
+                json!({"kind": "circle", "center": {"u": 3.0, "v": 3.0}, "radius": 1.0})
+            },
+        }));
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).starts_with("4 of 4 features mapped"),
+            "{}",
+            history_line(&report)
+        );
+        let hole = &document["features"][3];
+        assert_eq!(hole["position"], json!([5.0, 5.0, 10.0]));
+        assert_eq!(hole["points"]["ids"].as_array().unwrap().len(), 1);
+    }
+}
+
+#[test]
+fn a_drilled_form_keeps_its_included_angle_and_shoulder_depth() {
+    let (document, report) = convert(
+        &holed_cube(4.0, |hole| {
+            hole["shape"]["construction"]["kind"] = json!({"kind": "simple_drilled",
+                "drill_point_angle": std::f64::consts::FRAC_PI_2});
+            hole["extent"] = json!({"kind": "blind", "length": 6.0});
+        }),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("4 of 4 features mapped"),
+        "{}",
+        history_line(&report)
+    );
+    assert_eq!(
+        document["features"][3]["hole"],
+        json!({"type": "drilled", "tip_angle": "90"})
+    );
+    assert_eq!(document["features"][3]["depth"], "6 mm");
+}
+
+#[test]
+fn holes_refuse_unproven_faces_and_unsupported_geometry() {
+    for (change, reason) in [
+        (
+            json!({"taper_angle": 0.1}),
+            "a tapered hole is not mapped yet",
+        ),
+        (
+            json!({"shape": {"diameter": 4.0, "construction": {"construction": "form",
+            "kind": {"kind": "simple"}, "specification": {"kind": "threaded", "standard": "ISO",
+                "modeled": true, "cosmetic": false, "hand": "right", "depth": {"kind": "hole_depth"}}}}}),
+            "a hole with a modeled thread is not mapped yet",
+        ),
+        (
+            json!({"placements": [{"kind": "axis", "origin": {"x": 5.0, "y": 5.0, "z": 6.0},
+            "axis": {"x": 0.0, "y": 0.0, "z": 1.0}}]}),
+            "its face is not resolved",
+        ),
+        (
+            json!({"extent": {"kind": "to_face", "face": {"kind": "native", "value": "face"}}}),
+            "its face has no resolved geometry",
+        ),
+        (
+            json!({"extent": {"kind": "to_face", "offset": 1.0,
+            "face": {"kind": "faces", "value": ["synthetic:cube:face#bottom"]}}}),
+            "a hole that ends offset from a face is not mapped yet",
+        ),
+    ] {
+        let model = holed_cube(4.0, |hole| {
+            hole.as_object_mut()
+                .unwrap()
+                .extend(change.as_object().unwrap().clone());
+        });
+        let (_, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).contains(reason),
+            "{}",
+            history_line(&report)
+        );
+    }
+    // The saved top is at 10 mm, while the only earlier solid stops at 8 mm.
+    // Neither an entry nor an end can use it merely because it is in the final B-rep.
+    for entry in [true, false] {
+        let mut model = holed_cube(4.0, |hole| {
+            if entry {
+                axis_hole(hole, 1.0);
+            } else {
+                directed_hole(hole);
+                hole["placements"][0]["position"]["z"] = json!(0.0);
+                hole["placements"][0]["direction"]["z"] = json!(1.0);
+                hole["extent"] = json!({"kind": "to_face", "face": {
+                    "kind": "faces", "value": ["synthetic:cube:face#top"]}});
+            }
+        });
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["features"][1]["definition"]["extent"]["side"]["termination"]["length"] =
+            json!(8.0);
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (_, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).contains("its face is not proven to exist before the hole"),
+            "{}",
+            history_line(&report)
+        );
+    }
+}
+
+#[test]
+fn solidcraft_drills_spatial_and_to_face_holes_and_drilled_forms() {
+    let Some(cli) = solidcraft() else { return };
+    let bore = std::f64::consts::PI * 4.0;
+    for (model, removed) in [
+        (holed_cube(4.0, directed_hole), bore * 10.0),
+        (holed_cube(4.0, |hole| axis_hole(hole, 1.0)), bore * 10.0),
+        (holed_cube(4.0, to_face_hole), bore * 10.0),
+        (
+            holed_cube(4.0, |hole| {
+                hole["profile"] = json!({"kind": "sketch_entities", "value": {
+                "sketch": HOLES, "entities": ["f3d:model:sketch-entity#9"]}});
+            }),
+            bore * 10.0,
+        ),
+        (
+            holed_cube(4.0, |hole| {
+                hole["shape"]["construction"]["kind"] = json!({"kind": "simple_drilled",
+                "drill_point_angle": std::f64::consts::FRAC_PI_2});
+                hole["extent"] = json!({"kind": "blind", "length": 6.0});
+            }),
+            bore * (6.0 + 2.0 / 3.0),
+        ),
+    ] {
+        let got = volumes(&cli, &written(&model).0);
+        let want = 1000.0 - removed;
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!((got[0] - want).abs() / want < 1e-3, "{got:?} vs {want}");
+    }
+}
+
 /// The example cube's geometry with a right-triangle history: a fixed 40 mm horizontal base,
 /// a vertical side, and the hypotenuse at `theta` from the base (shown as 36.87°), extruded by
 /// 10 mm.
