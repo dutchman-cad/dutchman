@@ -283,6 +283,12 @@ impl Builder<'_> {
             }
             out.push(row);
         }
+        self.report.set_joints(
+            counts
+                .iter()
+                .map(|(kind, n)| ((*kind).to_owned(), u64::try_from(*n).unwrap_or(u64::MAX)))
+                .collect(),
+        );
         if !out.is_empty() {
             let kinds: Vec<String> = counts
                 .iter()

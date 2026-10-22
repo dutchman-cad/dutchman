@@ -637,6 +637,12 @@ fn revolute_and_slider_joints_are_written_with_their_motion() {
     );
     assert!(report.losses().iter().any(|loss| loss.detail
         == "2 joint(s) written as built (1 revolute, 1 rigid), holding their parts as placed"));
+    let kinds: Vec<(&str, u64)> = report
+        .joints()
+        .iter()
+        .map(|(kind, n)| (kind.as_str(), *n))
+        .collect();
+    assert_eq!(kinds, [("revolute", 1), ("rigid", 1)]);
 }
 
 /// Drives the joint named `joint` to `value` (degrees, or mm for a slider) in SolidCraft and

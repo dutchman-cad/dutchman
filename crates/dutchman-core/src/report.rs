@@ -142,6 +142,7 @@ pub struct Report {
     losses: Vec<Loss>,
     outcome: Option<Outcome>,
     completeness: Option<Completeness>,
+    joints: std::collections::BTreeMap<String, u64>,
 }
 
 /// How much of an assembly was placed: every placement its file and its placed sub-assemblies'
@@ -334,6 +335,16 @@ impl Report {
     /// How much of the assembly was placed, for an assembly.
     pub fn completeness(&self) -> Option<&Completeness> {
         self.completeness.as_ref()
+    }
+
+    /// Records the joints written, by kind (`revolute`, `slider`, `rigid`).
+    pub fn set_joints(&mut self, joints: std::collections::BTreeMap<String, u64>) {
+        self.joints = joints;
+    }
+
+    /// The joints written, by kind; empty when none were.
+    pub fn joints(&self) -> &std::collections::BTreeMap<String, u64> {
+        &self.joints
     }
 
     /// The recorded losses, in the order they occurred.

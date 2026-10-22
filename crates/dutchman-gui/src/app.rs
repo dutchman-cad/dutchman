@@ -696,9 +696,11 @@ fn row_ui(
         .on_hover_text(output);
         ui.label(RichText::new(outcome(report)).color(p.ink));
         let lines = dutchman::json::completeness_lines(report);
-        if let Some((first, causes)) = lines.split_first() {
+        if let (Some(summary), Some((_, causes))) =
+            (dutchman::json::assembly_line(report), lines.split_first())
+        {
             let colour = if incomplete(report) { p.danger } else { p.tide };
-            ui.label(RichText::new(first.trim_start_matches("assembly: ")).color(colour));
+            ui.label(RichText::new(summary).color(colour));
             for cause in causes {
                 ui.label(RichText::new(cause.trim()).small().color(p.ink));
             }
