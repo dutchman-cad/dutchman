@@ -1732,6 +1732,11 @@ fn counterbores_and_countersinks_keep_their_entry_dimensions() {
                 "angle": std::f64::consts::FRAC_PI_2}),
             json!({"type": "countersink", "cs_diameter": "8 mm", "cs_angle": "90"}),
         ),
+        (
+            json!({"kind": "chamfer", "diameter": 8.0,
+                "angle": std::f64::consts::FRAC_PI_2}),
+            json!({"type": "countersink", "cs_diameter": "8 mm", "cs_angle": "90"}),
+        ),
     ] {
         for blind in [false, true] {
             let model = holed_cube(4.0, |hole| {
@@ -1783,6 +1788,10 @@ fn solidcraft_drills_counterbores_and_countersinks() {
         ),
         (
             json!({"kind": "countersink", "diameter": 8.0, "angle": angle}),
+            sink_extra,
+        ),
+        (
+            json!({"kind": "chamfer", "diameter": 8.0, "angle": angle}),
             sink_extra,
         ),
     ] {
@@ -1965,6 +1974,272 @@ fn a_drilled_form_keeps_its_included_angle_and_shoulder_depth() {
         json!({"type": "drilled", "tip_angle": "90"})
     );
     assert_eq!(document["features"][3]["depth"], "6 mm");
+}
+
+fn cosmetic_hole_thread() -> Value {
+    json!({"kind": "threaded", "standard": "ISO", "designation": "M6",
+        "modeled": false, "cosmetic": true, "hand": "right", "depth": {"kind": "hole_depth"}})
+}
+
+#[test]
+fn cosmetic_hole_threads_keep_the_designation_and_resolved_bore() {
+    for blind in [false, true] {
+        let model = holed_cube(4.0, |hole| {
+            hole["shape"]["construction"]["specification"] = cosmetic_hole_thread();
+            if blind {
+                hole["extent"] = json!({"kind": "blind", "length": 6.0});
+            }
+        });
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).starts_with("4 of 4 features mapped"),
+            "{}",
+            history_line(&report)
+        );
+        let hole = &document["features"][3];
+        assert_eq!(hole["thread"], "M6x1");
+        assert_eq!(hole["diameter"], "4 mm");
+        assert_eq!(hole["hole"], json!({"type": "simple"}));
+        assert_eq!(hole["points"]["sketch"], document["features"][2]["id"]);
+        if blind {
+            assert_eq!(hole["depth"], "6 mm");
+        } else {
+            assert!(hole.get("depth").is_none());
+        }
+    }
+}
+
+#[test]
+fn solidcraft_keeps_the_bore_of_a_cosmetic_tapped_hole() {
+    let Some(cli) = solidcraft() else { return };
+    for depth in [None, Some(6.0)] {
+        let model = holed_cube(4.0, |hole| {
+            hole["shape"]["construction"]["specification"] = cosmetic_hole_thread();
+            if let Some(depth) = depth {
+                hole["extent"] = json!({"kind": "blind", "length": depth});
+            }
+        });
+        let got = volumes(&cli, &written(&model).0);
+        let want = 1000.0 - std::f64::consts::PI * 4.0 * depth.unwrap_or(10.0);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!((got[0] - want).abs() / want < 1e-3, "{got:?} vs {want}");
+    }
+}
+
+#[test]
+fn hole_thread_details_solidcraft_lacks_are_reported_not_blocking() {
+    let thread_note = |change: Value| {
+        let model = holed_cube(4.0, |hole| {
+            let mut specification = cosmetic_hole_thread();
+            specification
+                .as_object_mut()
+                .unwrap()
+                .extend(change.as_object().unwrap().clone());
+            specification
+                .as_object_mut()
+                .unwrap()
+                .retain(|_, v| !v.is_null());
+            hole["shape"]["construction"]["specification"] = specification;
+        });
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).starts_with("4 of 4 features mapped"),
+            "{change}: {}",
+            history_line(&report)
+        );
+        let note = report
+            .losses()
+            .iter()
+            .find(|loss| loss.detail.contains("thread"))
+            .map(|loss| loss.detail.clone())
+            .unwrap_or_default();
+        (document["features"][3]["thread"].clone(), note)
+    };
+    let (label, note) = thread_note(json!({"hand": "left", "class": "6H",
+        "depth": {"kind": "blind", "depth": 3.0}}));
+    assert_eq!(label, "M6x1");
+    assert_eq!(
+        note,
+        "its thread is kept as a cosmetic M6x1 label over the whole hole, without its \
+         left-hand direction, its 6H tolerance class, and its 3 mm thread length"
+    );
+    let (label, note) = thread_note(json!({"designation": "M5", "pitch": 0.5}));
+    assert_eq!(label, "M5x0.5");
+    assert!(note.is_empty(), "{note}");
+    let (label, _) = thread_note(json!({"designation": "M6 x 0.75-6H"}));
+    assert_eq!(label, "M6x0.75");
+    for (change, why) in [
+        (
+            json!({"designation": "1/4-20 UNC"}),
+            "ISO metric threads only",
+        ),
+        (json!({"designation": "M12"}), "does not fit its 4 mm bore"),
+        (json!({"designation": null}), "its thread size is not given"),
+    ] {
+        let (label, note) = thread_note(change);
+        assert!(label.is_null(), "{label}");
+        assert!(
+            note.contains(why) && note.contains("the bore is kept"),
+            "{note}"
+        );
+    }
+    let model = holed_cube(4.0, |hole| {
+        let mut specification = cosmetic_hole_thread();
+        specification["modeled"] = json!(true);
+        hole["shape"]["construction"]["specification"] = specification;
+    });
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).contains("a hole with a modeled thread"));
+}
+
+#[test]
+fn unsupported_hole_forms_have_specific_reasons() {
+    for (form, reason) in [
+        (
+            json!({"kind": "unresolved", "form": "chamfer"}),
+            "its hole entry form or dimensions are not resolved",
+        ),
+        (
+            json!({"kind": "partial_counterbore", "dimension": {"kind": "diameter", "diameter": 8.0}}),
+            "its counterbore diameter or depth is not resolved",
+        ),
+        (
+            json!({"kind": "partial_countersink", "dimension": {"kind": "angle", "angle": 1.5}}),
+            "its countersink diameter or angle is not resolved",
+        ),
+        (
+            json!({"kind": "counterbore_drilled", "diameter": 8.0, "depth": 2.0, "drill_point_angle": 1.5}),
+            "a counterbore with a drill point is not mapped yet",
+        ),
+        (
+            json!({"kind": "counterdrill", "diameter": 8.0, "entry_diameter": 9.0, "depth": 2.0, "angle": 1.5}),
+            "a counterdrill with a conical entry and cylindrical recess is not mapped yet",
+        ),
+    ] {
+        let model = holed_cube(4.0, |hole| {
+            hole["shape"]["construction"]["kind"] = form.clone()
+        });
+        let (_, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).contains(reason),
+            "{}",
+            history_line(&report)
+        );
+    }
+    for kind in ["counterbore", "countersink", "chamfer"] {
+        for blind in [false, true] {
+            let model = holed_cube(4.0, |hole| {
+                hole["shape"]["construction"]["kind"] = if kind == "counterbore" {
+                    json!({"kind": kind, "diameter": 8.0, "depth": 2.0})
+                } else {
+                    json!({"kind": kind, "diameter": 8.0, "angle": 1.5})
+                };
+                if blind {
+                    hole["extent"] = json!({"kind": "blind", "length": 6.0});
+                }
+                hole["bottom"] =
+                    json!({"kind": "angled", "included_angle": 1.5, "depth_to_tip": false});
+            });
+            let (_, report) = convert(
+                &model,
+                &SolidCraftWriter::new().verification(Verification::Off),
+            );
+            assert!(
+                history_line(&report).contains("a counterbore or countersink with a drill point")
+            );
+        }
+    }
+}
+
+#[test]
+fn unsupported_hole_ends_have_specific_reasons() {
+    for (extent, reason) in [
+        (
+            json!({"kind": "unresolved"}),
+            "its hole termination is not resolved",
+        ),
+        (
+            json!({"kind": "through_next"}),
+            "a hole through the next material region",
+        ),
+        (
+            json!({"kind": "to_first"}),
+            "a hole ending at the first encountered face",
+        ),
+        (
+            json!({"kind": "to_last"}),
+            "a hole ending at the last encountered face",
+        ),
+        (
+            json!({"kind": "to_vertex", "vertex": {"kind": "unresolved"}}),
+            "a hole ending at a source vertex",
+        ),
+        (
+            json!({"kind": "offset_from_face", "offset": 1.0,
+            "face": {"kind": "faces", "value": ["synthetic:cube:face#bottom"]}}),
+            "a hole that ends offset from a face",
+        ),
+        (
+            json!({"kind": "to_shape", "target": {"kind": "native", "value": "body"}}),
+            "a hole ending at a selected shape",
+        ),
+    ] {
+        let model = holed_cube(4.0, |hole| hole["extent"] = extent.clone());
+        let (_, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).contains(reason),
+            "{}",
+            history_line(&report)
+        );
+    }
+}
+
+#[test]
+fn native_threads_and_exit_treatments_are_refused() {
+    for (change, reason) in [
+        (
+            json!({"shape": {"diameter": 4.0, "construction": {"construction": "native_thread",
+                "major_diameter": 6.0, "thread_depth": 6.0, "pitch": 1.0,
+                "drill_point_angle": 1.5}}}),
+            "a hole with native thread geometry is not mapped yet",
+        ),
+        (
+            json!({"shape": {"diameter": 4.0, "construction": {"construction": "form",
+                "kind": {"kind": "simple"}}, "exit_kind": {"kind": "chamfer", "diameter": 6.0,
+                "angle": 1.5}}}),
+            "a hole with an exit treatment is not mapped yet",
+        ),
+    ] {
+        let model = holed_cube(4.0, |hole| {
+            hole.as_object_mut()
+                .unwrap()
+                .extend(change.as_object().unwrap().clone());
+        });
+        let (_, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).contains(reason),
+            "{}",
+            history_line(&report)
+        );
+    }
 }
 
 #[test]

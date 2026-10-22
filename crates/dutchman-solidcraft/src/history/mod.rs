@@ -462,7 +462,7 @@ fn map_feature(
         Some("coil") => primitive::coil(feature, definition, ctx).map(Mapped::Feature),
         Some(kind @ ("block" | "primitive")) => Err(primitive::unplaced(kind)),
         Some("pattern") => pattern::map(feature, definition, ctx).map(Mapped::Feature),
-        Some("hole") => hole::map(feature, definition, ctx).map(Mapped::Feature),
+        Some("hole") => hole::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some("sheet_metal_base_flange") => {
             sheet::base_flange(feature, definition, ctx).map(Mapped::Feature)
         }
