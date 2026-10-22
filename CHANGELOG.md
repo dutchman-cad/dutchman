@@ -16,6 +16,12 @@ report's schema name changes when a field does).
 
 ### Feature history
 
+- Fusion base features (bodies a timeline holds as they are, modelled directly or imported)
+  map onto SolidCraft Import features at their place in the timeline, each holding its own
+  bodies as STEP, so the features after them keep their history instead of the whole design
+  being flattened. A base body that later features change is caught by the check against
+  the original geometry.
+
 - A component inserted, or a joint made, in a Fusion timeline is counted as not needed in the
   part's history, since the assembly carries the component and the joint, instead of
   stopping the history.

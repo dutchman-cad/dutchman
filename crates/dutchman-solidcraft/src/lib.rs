@@ -163,8 +163,10 @@ impl SolidCraftWriter {
         step: &str,
         live: Live,
     ) -> Result<Vec<u8>, Error> {
-        let design = container::Container::new(step.as_bytes())?;
-        let doc: Value = document::history_design(model, history, design.step_blob(), live);
+        let mut design = container::Container::new(step.as_bytes())?;
+        let mut history = history.clone();
+        history::base::store(&mut history.features, &mut design)?;
+        let doc: Value = document::history_design(model, &history, design.step_blob(), live);
         design.finish(&doc)
     }
 
@@ -264,7 +266,12 @@ impl Writer for SolidCraftWriter {
             (self.import_design(model, &step, report)?, outcome)
         } else {
             let mut history_report = Report::default();
-            let mapping = history::map(model, &mut history_report);
+            let mut mapping = history::map(model, &mut history_report);
+            if let Ok(history) = &mut mapping.result {
+                if let Err(why) = history::base::restate(history, model) {
+                    mapping.result = Err(why);
+                }
+            }
             let flat = |reason: String| Outcome {
                 mode: Mode::Import,
                 check: Check::Flattened(reason),
