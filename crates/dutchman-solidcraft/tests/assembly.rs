@@ -64,6 +64,33 @@ fn written(model: &Model) -> (Vec<u8>, Report) {
 }
 
 #[test]
+fn an_assembly_that_places_no_parts_is_written_as_an_empty_design() {
+    let mut model = placed_twice();
+    if let Some(assembly) = &mut model.assembly {
+        assembly.parts.clear();
+        assembly.placements.clear();
+    }
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    assert_eq!(writer.convertible(&model), Ok(()));
+    let (bytes, report) = written(&model);
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut text = String::new();
+    archive
+        .by_name("document.json")
+        .unwrap()
+        .read_to_string(&mut text)
+        .unwrap();
+    let document: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(document["features"], serde_json::json!([]));
+    assert_eq!(
+        report.outcome().map(|outcome| outcome.check.clone()),
+        Some(dutchman_core::Check::NotApplicable(
+            "the assembly places no parts".to_owned()
+        ))
+    );
+}
+
+#[test]
 fn an_assembly_becomes_components_and_occurrences() {
     let (bytes, report) = written(&placed_twice());
     let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();

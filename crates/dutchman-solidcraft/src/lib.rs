@@ -98,7 +98,7 @@ impl SolidCraftWriter {
             })
         }
         match &model.assembly {
-            Some(assembly) if any_part(assembly) => Ok(()),
+            Some(assembly) if any_part(assembly) || assembly.placements.is_empty() => Ok(()),
             Some(_) => {
                 Err("none of the assembly's parts has geometry SolidCraft can import".to_owned())
             }
@@ -115,6 +115,9 @@ impl SolidCraftWriter {
     /// What writing `model` would do, without restating its geometry, writing anything or
     /// running SolidCraft: the history's mapping, as `dutchman inspect` shows it.
     pub fn plan(&self, model: &Model, report: &mut Report) -> Outcome {
+        if empty_assembly(model) {
+            return empty_outcome();
+        }
         if let Some(assembly) = &model.assembly {
             return assembly::plan(self, assembly, report);
         }
@@ -276,6 +279,23 @@ fn parameters_only(model: &Model) -> bool {
         && matches!(step::restatable(model), Err(Error::NoGeometry(_)))
 }
 
+/// Whether `model` is an assembly that places no parts, written as an empty design.
+fn empty_assembly(model: &Model) -> bool {
+    model
+        .assembly
+        .as_ref()
+        .is_some_and(|assembly| assembly.placements.is_empty())
+}
+
+/// What writing an assembly that places no parts does.
+fn empty_outcome() -> Outcome {
+    Outcome {
+        mode: Mode::Import,
+        check: Check::NotApplicable("the assembly places no parts".to_owned()),
+        features: Vec::new(),
+    }
+}
+
 /// What writing a design of parameters alone does.
 fn parameters_outcome(model: &Model) -> Outcome {
     Outcome {
@@ -374,6 +394,19 @@ impl Writer for SolidCraftWriter {
         out: &mut dyn std::io::Write,
         report: &mut Report,
     ) -> Result<(), Error> {
+        if empty_assembly(model) {
+            report.push(
+                Severity::Info,
+                GEOMETRY,
+                "none: the assembly places no parts",
+            );
+            let bytes =
+                container::Container::empty().finish(&document::parameters_design(model, &[]))?;
+            report.set_outcome(empty_outcome());
+            return out
+                .write_all(&bytes)
+                .map_err(|err| Error::Encode(format!("cannot write the design: {err}")));
+        }
         if let Some(assembly) = &model.assembly {
             let bytes = assembly::write(self, model, assembly, report)?;
             // Each part is placed any number of times, so only SolidCraft's own warnings count.
