@@ -1591,6 +1591,15 @@ fn ring_history(extent: Value) -> Model {
     model
 }
 
+fn changed_ring(change: impl FnOnce(&mut Value)) -> Model {
+    let mut model = ring_history(json!({"kind": "one_sided",
+        "termination": {"kind": "angle", "angle": std::f64::consts::TAU}}));
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    change(&mut wire["model"]["features"][1]["definition"]["construction"]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
 fn written(model: &Model) -> (Vec<u8>, Report) {
     let mut report = Report::default();
     let mut bytes = Vec::new();
@@ -1646,6 +1655,271 @@ fn revolves_rebuild_their_volume_in_solidcraft() {
     let quarter = ring_history(json!({"kind": "symmetric",
         "termination": {"kind": "angle", "angle": std::f64::consts::FRAC_PI_2}}));
     close(&volumes(&cli, &written(&quarter).0), ring / 4.0);
+}
+
+#[test]
+fn unequal_two_sided_full_turns_map_without_an_angular_start() {
+    for (first, second) in [(90.0_f64, 270.0_f64), (270.0, 90.0)] {
+        let model = ring_history(json!({"kind": "two_sided",
+            "first": {"kind": "angle", "angle": first.to_radians()},
+            "second": {"kind": "angle", "angle": second.to_radians()}}));
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+        let revolve = &document["features"][1];
+        assert_eq!(revolve["angle"], "360 deg");
+        assert_eq!(revolve["convention"], "sketch_normal");
+        assert!(revolve.get("symmetric").is_none());
+        assert!(revolve.get("angle2").is_none());
+        if let Some(cli) = solidcraft() {
+            let actual = volumes(&cli, &written(&model).0);
+            assert_eq!(actual.len(), 1);
+            let expected = 750.0 * std::f64::consts::PI;
+            assert!((actual[0] - expected).abs() / expected < 1e-3, "{actual:?}");
+        }
+    }
+}
+
+#[test]
+fn unequal_partial_and_overlapping_revolve_sides_are_refused() {
+    for (first, second, reason) in [
+        (30.0_f64, 60.0_f64, "which way each side turns"),
+        (180.0, 270.0, "beyond a full turn"),
+    ] {
+        let model = ring_history(json!({"kind": "two_sided",
+            "first": {"kind": "angle", "angle": first.to_radians()},
+            "second": {"kind": "angle", "angle": second.to_radians()}}));
+        let (_, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).contains(reason),
+            "{}",
+            history_line(&report)
+        );
+    }
+}
+
+#[test]
+fn every_non_angle_revolve_end_has_a_specific_refusal() {
+    let face = json!({"kind": "faces", "value": ["synthetic:cube:face#top"]});
+    for (termination, reason) in [
+        (json!({"kind": "unresolved"}), "termination is not resolved"),
+        (json!({"kind": "through_all"}), "through_all revolve ends"),
+        (json!({"kind": "through_next"}), "through_next revolve ends"),
+        (json!({"kind": "to_first"}), "to_first revolve ends"),
+        (json!({"kind": "to_last"}), "to_last revolve ends"),
+        (json!({"kind": "to_face", "face": face}), "to-face revolves"),
+        (
+            json!({"kind": "to_face", "face": face, "offset": 1.0}),
+            "to-face revolves with an offset",
+        ),
+        (
+            json!({"kind": "to_vertex", "vertex": {"kind": "unresolved"}}),
+            "to-vertex revolves",
+        ),
+        (
+            json!({"kind": "offset_from_face", "face": face, "offset": 1.0}),
+            "offset-from-face revolves",
+        ),
+        (
+            json!({"kind": "to_shape", "target": face}),
+            "to-shape revolves",
+        ),
+    ] {
+        for extent in [
+            json!({"kind": "one_sided", "termination": termination}),
+            json!({"kind": "symmetric", "termination": termination}),
+            json!({"kind": "two_sided", "first": termination,
+                "second": {"kind": "angle", "angle": 1.0}}),
+            json!({"kind": "two_sided", "first": {"kind": "angle", "angle": 1.0},
+                "second": termination}),
+        ] {
+            let (_, report) = convert(
+                &ring_history(extent),
+                &SolidCraftWriter::new().verification(Verification::Off),
+            );
+            assert!(
+                history_line(&report).contains(reason),
+                "{}",
+                history_line(&report)
+            );
+        }
+    }
+}
+
+#[test]
+fn revolve_axis_sources_use_the_resolved_line_placement() {
+    for reference in [
+        Value::Null,
+        json!({"kind": "native", "value": "synthetic datum axis"}),
+        json!({"kind": "sketch_curves", "value": {
+            "sketch": "f3d:model:sketch#9", "curves": ["f3d:model:sketch-entity#1"]}}),
+        json!({"kind": "edges", "value": ["synthetic:cube:edge#0"]}),
+        json!({"kind": "curves", "value": ["synthetic:cube:curve#0"]}),
+    ] {
+        let model = changed_ring(|construction| {
+            if !reference.is_null() {
+                construction["axis"]["reference"] = reference;
+            }
+            construction["axis"]["origin"]["z"] = json!(3.0);
+            construction["axis"]["direction"]["z"] = json!(-2.0);
+        });
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+        assert_eq!(
+            document["features"][1]["axis"],
+            json!({
+                "type": "line", "origin": [0.0, 0.0, 3.0], "dir": [0.0, 0.0, -1.0]
+            })
+        );
+    }
+}
+
+#[test]
+fn a_revolve_about_a_line_of_its_sketch_keeps_that_line() {
+    // The rectangle's inner side, 5 mm out from Z, turns the ring into a cylinder.
+    let model = changed_ring(|construction| {
+        construction["axis"]["origin"]["x"] = json!(5.0);
+        construction["axis"]["reference"] = json!({"kind": "sketch_curves", "value": {
+            "sketch": SKETCH, "curves": ["f3d:model:sketch-entity#4"]}});
+    });
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+    let axis = &document["features"][1]["axis"];
+    assert_eq!(axis["type"], "sketch_line");
+    let curve = axis["curve"].as_str().unwrap();
+    let sketch = &document["features"][0];
+    assert!(
+        sketch["sketch"]["curves"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["id"] == curve && c["type"] == "line"),
+        "{sketch}"
+    );
+    if let Some(cli) = solidcraft() {
+        let actual = volumes(&cli, &written(&model).0);
+        assert_eq!(actual.len(), 1);
+        let expected = 250.0 * std::f64::consts::PI;
+        assert!((actual[0] - expected).abs() / expected < 1e-3, "{actual:?}");
+    }
+}
+
+#[test]
+fn surface_revolves_short_of_a_full_turn_map() {
+    let quarter = json!({"kind": "symmetric",
+        "termination": {"kind": "angle", "angle": std::f64::consts::FRAC_PI_2}});
+    let model = changed_ring(|construction| {
+        construction["solid"] = json!(false);
+        construction["face_maker_class"] = json!("Part::FaceMakerBullseye");
+        construction["extent"] = quarter;
+    });
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+    let revolve = &document["features"][1];
+    assert_eq!(revolve["type"], "surface_revolve");
+    assert_eq!(revolve["angle"], "90 deg");
+    assert_eq!(revolve["symmetric"], true);
+    assert!(revolve.get("operation").is_none());
+    assert!(revolve.get("convention").is_none());
+    assert!(revolve["profiles"].is_object());
+    if let Some(cli) = solidcraft() {
+        let boxes = bounds(&cli, &written(&model).0);
+        assert_eq!(boxes.len(), 1, "{boxes:?}");
+        let (min, max) = boxes[0];
+        assert!(
+            min[2].abs() < 1e-6 && (max[2] - 10.0).abs() < 1e-6,
+            "{boxes:?}"
+        );
+        assert!((min[1] + max[1]).abs() < 1e-6 && max[1] > 0.0, "{boxes:?}");
+    }
+
+    let model = changed_ring(|construction| construction["solid"] = json!(false));
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("full-turn surface revolves are not supported yet"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn revolve_construction_options_map_or_name_the_face_maker() {
+    for maker in [
+        "Part::FaceMakerSimple",
+        "Part::FaceMakerCheese",
+        "Part::FaceMakerExtrusion",
+        "Part::FaceMakerUnified",
+        "SyntheticFaceMaker",
+    ] {
+        let model = changed_ring(|construction| construction["face_maker_class"] = json!(maker));
+        let (_, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).contains(&format!("revolves whose faces are built by {maker}")),
+            "{}",
+            history_line(&report)
+        );
+    }
+    for change in [
+        json!({"face_maker_class": "Part::FaceMakerBullseye", "solid": true}),
+        json!({"fuse_order": "base_first", "allow_multi_profile_faces": false}),
+        json!({"fuse_order": "feature_first", "allow_multi_profile_faces": true}),
+    ] {
+        let model = changed_ring(|construction| {
+            for (key, value) in change.as_object().unwrap() {
+                construction[key] = value.clone();
+            }
+        });
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).starts_with("2 of 2 features mapped"),
+            "{change}: {}",
+            history_line(&report)
+        );
+        assert_eq!(document["features"][1]["type"], "revolve");
+    }
+}
+
+#[test]
+fn unresolved_revolve_inputs_name_the_missing_operand() {
+    for missing in ["profile", "axis", "extent"] {
+        let model = changed_ring(|construction| {
+            construction["state"] = json!("unresolved");
+            construction["missing"] = json!(missing);
+            construction.as_object_mut().unwrap().remove(missing);
+        });
+        let (_, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).contains(&format!("revolve {missing} is not resolved")),
+            "{}",
+            history_line(&report)
+        );
+    }
 }
 
 const HOLES: &str = "f3d:model:sketch#3";

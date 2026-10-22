@@ -433,6 +433,14 @@ changing sections, tangent-path extension, and post-sweep simplification keep th
 geometry and report the unsupported option. Twist, end scale, and the supported orientations
 remain editable; a guide rail requires the default orientation without twist or scale.
 
+Revolves keep symmetric angles, equal angles on two sides, and full turns, including unequal
+sides that add up to a full turn. An axis that is a line of the profile's sketch stays that
+line; an edge or datum axis becomes a fixed line in the sketch plane. Surface revolves keep
+their history short of a full turn. Partial one-sided angles, unequal partial two-sided
+angles, ends at a face, vertex or body, full-turn surface revolves, and faces built other than
+the way FreeCAD's default (bullseye) face maker builds them stop the history, and the report
+names which.
+
 A converted history is checked by replaying it in `solidcraft-cli` and comparing the bodies
 and their volumes with the original. The result is in the `history:` line of the report, and
 in `verification.status` in `--json`:
