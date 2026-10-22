@@ -403,13 +403,20 @@ def profile(row, body, objects):
     selection = row.get('profiles', {'type':'all'})
     offset = quantity(row.get('extent', {}).get('start_offset', '0 mm'))
     source_data = objects[('data', row['sketch'])]['sketch']['curves']
-    dropped = crossing(source, source_data) if selection['type'] == 'all' else set()
+    dropped = crossing(source, source_data) if selection['type'] in ('all', 'curves') else set()
     if selection['type'] == 'all' and offset == 0 and not dropped:
         return source
     if selection['type'] == 'all':
         ids = None
     elif selection['type'] == 'curves':
         ids = set(curve for loop in selection['loops'] for curve in loop)
+        if dropped:
+            # Loops that split the region along those lines and between them take every
+            # boundary curve: the region whole, without the lines.
+            kept = set(c['id'] for i, c in enumerate(source_data) if not c.get('construction') and i not in dropped)
+            lines = set(source_data[i]['id'] for i in dropped)
+            if ids <= kept | lines and kept <= ids:
+                ids = kept
     elif selection['type'] == 'whole_boundaries':
         ids = set(curve for region in selection['profiles'] for loop in [region['outer']] + region['holes'] for curve in loop)
     else:
