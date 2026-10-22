@@ -30,7 +30,10 @@ enum Command {
         input: PathBuf,
         /// The `.solidcraft` or `.FCMacro` file to write, matching --to.
         /// An existing file is replaced, unless --no-clobber.
-        #[arg(required_unless_present = "output_flag", conflicts_with = "output_flag")]
+        #[arg(
+            required_unless_present = "output_flag",
+            conflicts_with = "output_flag"
+        )]
         output: Option<PathBuf>,
         /// Output path (an alternative to the positional output).
         #[arg(short = 'o', long = "output", value_name = "FILE")]
@@ -394,10 +397,21 @@ mod output_tests {
     fn freecad_output_accepts_short_output_flag_and_positional_output() {
         for args in [
             vec![
-                "dutchman", "convert", "in.f3d", "--to", "freecad", "-o", "out.FCMacro",
+                "dutchman",
+                "convert",
+                "in.f3d",
+                "--to",
+                "freecad",
+                "-o",
+                "out.FCMacro",
             ],
             vec![
-                "dutchman", "convert", "in.f3d", "out.FCMacro", "--to", "freecad",
+                "dutchman",
+                "convert",
+                "in.f3d",
+                "out.FCMacro",
+                "--to",
+                "freecad",
             ],
         ] {
             let cli = Cli::try_parse_from(args).unwrap();
@@ -419,11 +433,22 @@ mod output_tests {
     fn output_path_is_required_and_cannot_be_given_twice() {
         assert!(Cli::try_parse_from(["dutchman", "convert", "in.f3d", "--to", "freecad"]).is_err());
         assert!(Cli::try_parse_from([
-            "dutchman", "convert", "in.f3d", "a.FCMacro", "-o", "b.FCMacro",
+            "dutchman",
+            "convert",
+            "in.f3d",
+            "a.FCMacro",
+            "-o",
+            "b.FCMacro",
         ])
         .is_err());
         assert!(Cli::try_parse_from([
-            "dutchman", "convert", "in.f3d", "-o", "a.FCMacro", "--to", "unknown",
+            "dutchman",
+            "convert",
+            "in.f3d",
+            "-o",
+            "a.FCMacro",
+            "--to",
+            "unknown",
         ])
         .is_err());
     }

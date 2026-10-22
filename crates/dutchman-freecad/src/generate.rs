@@ -30,9 +30,7 @@ fn json(value: &Value, depth: usize) -> Result<String, Error> {
         Value::Object(fields) => {
             let fields = fields
                 .iter()
-                .map(|(key, value)| {
-                    Ok(format!("{}:{}", quoted(key)?, json(value, depth + 1)?))
-                })
+                .map(|(key, value)| Ok(format!("{}:{}", quoted(key)?, json(value, depth + 1)?)))
                 .collect::<Result<Vec<_>, Error>>()?;
             format!("{{{}}}", fields.join(","))
         }
@@ -59,8 +57,8 @@ pub(crate) fn history(rows: &[Value]) -> Result<String, String> {
             ));
         }
         match kind {
-            "sketch" | "extrude" | "revolve" | "loft" | "sweep" | "hole" | "pattern"
-            | "sphere" | "torus" | "coil" => {}
+            "sketch" | "extrude" | "revolve" | "loft" | "sweep" | "hole" | "pattern" | "sphere"
+            | "torus" | "coil" => {}
             _ => {
                 return Err(format!(
                     "feature {name:?}: {kind} features are not supported yet in FreeCAD output"
@@ -75,7 +73,9 @@ pub(crate) fn history(rows: &[Value]) -> Result<String, String> {
                     .is_some_and(|rows| rows.len() > 100_000)
             })
         {
-            return Err(format!("feature {name:?}: sketch size exceeds the macro limit"));
+            return Err(format!(
+                "feature {name:?}: sketch size exceeds the macro limit"
+            ));
         }
         if row.get("operation").and_then(Value::as_str) == Some("intersect") {
             return Err(format!(
@@ -348,12 +348,13 @@ def profile(row, body, objects):
     return selected
 
 def axis(body, origin, direction):
-    obj = body.newObject('Sketcher::SketchObject', 'ReferenceAxis')
-    obj.Placement = App.Placement(vector(origin), App.Rotation(App.Vector(1,0,0), vector(direction)))
-    obj.addGeometry(Part.LineSegment(App.Vector(), App.Vector(1,0,0)), True)
+    # A free datum line along its local Z; a sketch's H_Axis is only valid on the profile sketch.
+    obj = body.newObject('PartDesign::Line', 'ReferenceAxis')
+    obj.MapMode = 'Deactivated'
+    obj.Placement = App.Placement(vector(origin), App.Rotation(App.Vector(0,0,1), vector(direction)))
     doc.recompute()
     visible(obj, False)
-    return (obj, ['H_Axis'])
+    return (obj, [''])
 
 def rebuild(row, body, objects, names, tip):
     kind = row['type']

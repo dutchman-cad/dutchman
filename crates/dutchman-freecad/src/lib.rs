@@ -40,9 +40,10 @@ impl FreeCadWriter {
         if let Some(assembly) = &model.assembly {
             let mut rebuilt = false;
             for placement in &assembly.placements {
-                let part = assembly.parts.get(placement.part).ok_or_else(|| {
-                    Error::Encode("an assembly placement has no part".to_owned())
-                })?;
+                let part = assembly
+                    .parts
+                    .get(placement.part)
+                    .ok_or_else(|| Error::Encode("an assembly placement has no part".to_owned()))?;
                 script.push_str("parents.append(container(\n");
                 script.push_str(&generate::quoted(
                     placement.name.as_deref().unwrap_or(&part.name),

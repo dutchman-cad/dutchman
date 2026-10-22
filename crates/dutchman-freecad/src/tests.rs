@@ -124,7 +124,8 @@ fn import_only_and_unmapped_features_keep_step_and_report_each_feature() {
 
     let mut model = model;
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    wire["model"]["features"][1]["definition"] = json!({"definition": "native", "kind": "Synthetic unsupported feature"});
+    wire["model"]["features"][1]["definition"] =
+        json!({"definition": "native", "kind": "Synthetic unsupported feature"});
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     let (_, report) = written(&model, FreeCadWriter::new());
     assert_eq!(report.outcome().unwrap().features.len(), 2);
@@ -153,7 +154,9 @@ fn fixed_float_data_round_trips_without_turning_names_into_code() {
 
 #[test]
 fn huge_pattern_counts_are_reported_before_macro_execution() {
-    let rows = [json!({"type": "pattern", "name": "Too many", "pattern": {"type": "rectangular", "count1": "10001"}})];
+    let rows = [
+        json!({"type": "pattern", "name": "Too many", "pattern": {"type": "rectangular", "count1": "10001"}}),
+    ];
     assert!(generate::history(&rows)
         .unwrap_err()
         .contains("count exceeds"));
