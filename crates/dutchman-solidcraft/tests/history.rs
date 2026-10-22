@@ -1676,7 +1676,8 @@ fn unequal_two_sided_full_turns_map_without_an_angular_start() {
         if let Some(cli) = solidcraft() {
             let actual = volumes(&cli, &written(&model).0);
             assert_eq!(actual.len(), 1);
-            assert!((actual[0] - 750.0 * std::f64::consts::PI).abs() < 1e-3);
+            let expected = 750.0 * std::f64::consts::PI;
+            assert!((actual[0] - expected).abs() / expected < 1e-3, "{actual:?}");
         }
     }
 }
@@ -1757,8 +1758,8 @@ fn revolve_axis_sources_use_the_resolved_line_placement() {
         json!({"kind": "native", "value": "synthetic datum axis"}),
         json!({"kind": "sketch_curves", "value": {
             "sketch": "f3d:model:sketch#9", "curves": ["f3d:model:sketch-entity#1"]}}),
-        json!({"kind": "edges", "value": ["synthetic:edge#1"]}),
-        json!({"kind": "curves", "value": ["synthetic:curve#1"]}),
+        json!({"kind": "edges", "value": ["synthetic:cube:edge#0"]}),
+        json!({"kind": "curves", "value": ["synthetic:cube:curve#0"]}),
     ] {
         let model = changed_ring(|construction| {
             if !reference.is_null() {
@@ -1839,7 +1840,10 @@ fn surface_revolves_short_of_a_full_turn_map() {
         let boxes = bounds(&cli, &written(&model).0);
         assert_eq!(boxes.len(), 1, "{boxes:?}");
         let (min, max) = boxes[0];
-        assert!(min[2].abs() < 1e-6 && (max[2] - 10.0).abs() < 1e-6, "{boxes:?}");
+        assert!(
+            min[2].abs() < 1e-6 && (max[2] - 10.0).abs() < 1e-6,
+            "{boxes:?}"
+        );
         assert!((min[1] + max[1]).abs() < 1e-6 && max[1] > 0.0, "{boxes:?}");
     }
 
