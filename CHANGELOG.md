@@ -10,6 +10,10 @@ report's schema name changes when a field does).
 
 ### Feature history
 
+- A component inserted, or a joint made, in a Fusion timeline is counted as not needed in the
+  part's history, since the assembly carries the component and the joint, instead of
+  stopping the history.
+
 - A sketch profile with curves drawn across it, such as a rectangle with its diagonals, maps
   when the feature takes every profile of the sketch. Fusion walks such a profile along each
   inner curve both ways; Dutchman selected it by those curves and SolidCraft found no profile
