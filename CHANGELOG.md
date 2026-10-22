@@ -33,6 +33,9 @@ report's schema name changes when a field does).
   placed holds them there, at the angle or distance their placements give, instead of moving
   them to the value the source stores. Revolute limits that this angle lies outside are left
   out, with a loss saying so.
+- A revolute joint's angle in the source is taken as the angular offset that aligns its frames,
+  as a fixed joint's is, not as where it has turned to: Fusion stores no current angle, only
+  the placements. Its limits hold from the aligned frames.
 
 ### Feature history
 

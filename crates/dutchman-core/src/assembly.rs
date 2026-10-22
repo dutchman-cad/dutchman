@@ -7,7 +7,6 @@
 //! part file is read once, however often it is placed.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::f64::consts::{PI, TAU};
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -137,7 +136,8 @@ pub enum Motion {
     /// Not at all: the frames meet.
     Rigid,
     /// Turning about the first frame's z axis, now `angle` radians from where the frames meet,
-    /// within `limits` (radians), when it has them.
+    /// within `limits` (radians), when it has them. The source's angular offset is in the
+    /// first frame; the angle is where the placements put the joint.
     Revolute {
         angle: f64,
         limits: Option<(f64, f64)>,
@@ -652,7 +652,7 @@ fn place_by_joints(assembly: &mut Assembly) -> Vec<String> {
 /// A revolute or slider joint as it holds its parts where they are placed (`a` and `b`, in the
 /// world), when they already turn or slide on its axis there: its frames' z axes parallel or
 /// opposed, and their origins apart only along them (to a micrometre). Its value is measured
-/// from the placements, a revolute's angle the turn nearest the source's own, and B's frame
+/// from the placements (a revolute's within a half turn either way), and B's frame
 /// is taken from where A's meets it, so what else lies between the frames (a revolute's shift
 /// along its axis, a slider's turn about it) is kept as built. A revolute's limits are left
 /// out, with the reason, when the measured angle lies outside them.
@@ -675,9 +675,8 @@ fn as_built(
     let mut note = None;
     let motion = match joint.motion {
         Motion::Rigid => return None,
-        Motion::Revolute { angle, limits } => {
-            let turned = r10.atan2(r00);
-            let angle = angle + (turned - angle + PI).rem_euclid(TAU) - PI;
+        Motion::Revolute { limits, .. } => {
+            let angle = r10.atan2(r00);
             let limits = match limits {
                 Some((min, max)) if angle < min - 1e-9 || angle > max + 1e-9 => {
                     note = Some("its limits are left out: its angle lies outside them".to_owned());
@@ -868,12 +867,12 @@ fn joint(
                     }
                 },
             };
+            // The source's angle aligns the frames, as a fixed joint's does: it turns A's
+            // frame about z. Where the joint turns from there is in the placements alone, so
+            // it starts at none and is measured from them once the parts are placed.
             (
-                Motion::Revolute {
-                    angle: number("angle"),
-                    limits,
-                },
-                frame_a,
+                Motion::Revolute { angle: 0.0, limits },
+                compose(&frame_a, &turn(number("angle"))),
             )
         }
         "slider" => (
@@ -1997,23 +1996,28 @@ mod tests {
 
     #[test]
     fn a_revolute_whose_parts_turn_on_its_axis_holds_them_as_built() {
-        // The source says 0.5 rad, but the parts are placed 0.3 rad apart about the axis:
-        // they stay as placed, at the angle their placements give.
+        // The parts are placed 0.3 rad apart about the axis; the source's angle of 0.5 rad
+        // aligns the frames, so the joint has turned -0.2 rad from there. They stay as placed.
         let (world, joint, notes) = on_its_axis(json!({"kind": "revolute", "angle": 0.5,
             "angular_limits": {"bounds": "range", "minimum": -1.0, "maximum": 1.0}}));
         assert!(near(&world, &at([100.0, 0.0, 10.0], 0.3)), "{world:?}");
         let Motion::Revolute { angle, limits } = joint.motion else {
             panic!("{:?}", joint.motion);
         };
-        assert!((angle - 0.3).abs() < 1e-9, "{angle}");
+        assert!((angle + 0.2).abs() < 1e-9, "{angle}");
         assert_eq!(limits, Some((-1.0, 1.0)));
         assert!(notes.is_empty(), "{notes:?}");
-        // The turn nearest the source's own angle: 0.3 rad is also 0.3 - 2π, nearer -6.
-        let (_, joint, _) = on_its_axis(json!({"kind": "revolute", "angle": -6.0}));
-        let Motion::Revolute { angle, .. } = joint.motion else {
-            panic!("{:?}", joint.motion);
-        };
-        assert!((angle - (0.3 - TAU)).abs() < 1e-9, "{angle}");
+        // The limits hold from the aligned frames: -0.2 rad is inside these.
+        let (_, joint, notes) = on_its_axis(json!({"kind": "revolute", "angle": 0.5,
+            "angular_limits": {"bounds": "range", "minimum": -0.25, "maximum": 0.0}}));
+        assert!(matches!(
+            joint.motion,
+            Motion::Revolute {
+                limits: Some(_),
+                ..
+            }
+        ));
+        assert!(notes.is_empty(), "{notes:?}");
         // Limits the angle lies outside are left out, with the reason.
         let (_, joint, notes) = on_its_axis(json!({"kind": "revolute", "angle": 0.0,
             "angular_limits": {"bounds": "range", "minimum": -0.2, "maximum": 0.2}}));
