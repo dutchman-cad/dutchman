@@ -1,5 +1,5 @@
 //! Solid primitives, as SolidCraft primitive features: spheres, tori about the Z axis, and
-//! coils up the Z axis.
+//! coils along any axis.
 //!
 //! Boxes and cylinders are not mapped. cadmpeg gives a box as dimensions and a placement
 //! without saying whether the placement is the box's corner or its centre, and a cylinder
@@ -8,7 +8,7 @@
 use serde_json::{json, Value};
 
 use super::extrude::{body_names, operation};
-use super::sketch::{number, unit, v3};
+use super::sketch::{cross, dot, number, unit, v3};
 use super::{name, Context};
 
 /// How close to the Z axis (as a cosine) a torus's axis must be.
@@ -64,7 +64,8 @@ pub(crate) fn torus(
 ///
 /// CADIR says which way a coil turns as seen from its base looking along its axis; SolidCraft
 /// as seen looking back down the axis at its base. A coil CADIR calls clockwise is therefore
-/// one SolidCraft calls anticlockwise: a right-hand coil.
+/// one SolidCraft calls anticlockwise. Negative axial travel reverses the mapped axis and
+/// the turning flag together, preserving the source's angular travel about its original axis.
 pub(crate) fn coil(
     feature: &Value,
     definition: &Value,
@@ -88,11 +89,6 @@ pub(crate) fn coil(
     let radial = v3(placement.get("radial"))
         .and_then(unit)
         .ok_or("its start direction is malformed")?;
-    // SolidCraft measures a coil's start angle from X about Z; its frame about another axis
-    // is its own, so only coils up Z are placed.
-    if axis[2] < ALONG_Z {
-        return Err("a coil about an axis other than +Z is not mapped yet".to_owned());
-    }
     if number(construction.get("taper")).ok_or("its taper is malformed")? != 0.0 {
         return Err("a tapered coil is not mapped yet".to_owned());
     }
@@ -100,30 +96,43 @@ pub(crate) fn coil(
     let extent = construction
         .get("extent")
         .ok_or("its extent is malformed")?;
-    let positive = |key: &str| match number(extent.get(key)) {
-        Some(value) if value < 0.0 => {
-            Err("a coil running down its axis is not mapped yet".to_owned())
-        }
-        _ => length(extent.get(key), key),
+    let signed = |key: &str| {
+        number(extent.get(key))
+            .filter(|value| *value != 0.0)
+            .ok_or_else(|| format!("its {key} is malformed"))
     };
-    let (turns, pitch) = match extent.get("kind").and_then(Value::as_str) {
+    let (turns, pitch, down) = match extent.get("kind").and_then(Value::as_str) {
         Some("revolutions_pitch") => {
-            let turns = positive("revolutions")?;
-            (number_text(turns), mm(positive("pitch")?))
+            let turns = length(extent.get("revolutions"), "revolutions")?;
+            let pitch = signed("pitch")?;
+            (number_text(turns), mm(pitch.abs()), pitch < 0.0)
         }
         Some("revolutions_height") => {
-            let turns = positive("revolutions")?;
-            let height = positive("height")?;
-            (number_text(turns), format!("({height} mm) / ({turns})"))
+            let turns = length(extent.get("revolutions"), "revolutions")?;
+            let height = signed("height")?;
+            (
+                number_text(turns),
+                format!("({} mm) / ({turns})", height.abs()),
+                height < 0.0,
+            )
         }
         Some("height_pitch") => {
-            let height = positive("height")?;
-            let pitch = positive("pitch")?;
-            (format!("({height} mm) / ({pitch} mm)"), mm(pitch))
+            let height = signed("height")?;
+            let pitch = signed("pitch")?;
+            if height.is_sign_negative() != pitch.is_sign_negative() {
+                return Err("its extent is malformed".to_owned());
+            }
+            (
+                format!("({} mm) / ({} mm)", height.abs(), pitch.abs()),
+                mm(pitch.abs()),
+                pitch < 0.0,
+            )
         }
         Some("spiral") => return Err("a flat spiral coil is not mapped yet".to_owned()),
         _ => return Err("its extent is malformed".to_owned()),
     };
+    let axis = if down { axis.map(|v| -v) } else { axis };
+    let start = coil_start_angle(axis, radial)?;
     let section = construction
         .get("section")
         .ok_or("its section is malformed")?;
@@ -159,7 +168,7 @@ pub(crate) fn coil(
     };
     let mut fields = json!({
         "base": base,
-        "axis": [0.0, 0.0, 1.0],
+        "axis": axis,
         "diameter": mm(diameter),
         "turns": turns,
         "pitch": pitch,
@@ -167,18 +176,39 @@ pub(crate) fn coil(
         "section_size": mm(size),
     });
     if let Value::Object(fields) = &mut fields {
-        let start = radial[1].atan2(radial[0]).to_degrees();
         if start.abs() > 1e-9 {
             fields.insert("start_angle".to_owned(), json!(format!("{start} deg")));
         }
         if let Some(position) = position {
             fields.insert("position".to_owned(), json!(position));
         }
-        if !clockwise {
+        if clockwise == down {
             fields.insert("clockwise".to_owned(), json!(true));
         }
     }
     Ok(primitive(feature, ctx, operation, "coil", "Coil", fields))
+}
+
+/// SolidCraft 0.19 measures start angles from world X projected normal to the axis.
+/// Within 1e-6 of either X direction it instead starts at axis × Y (±Z).
+/// CLI quarter-turn and short-arc probes confirm both branches and their turning sense.
+fn coil_start_angle(axis: [f64; 3], radial: [f64; 3]) -> Result<f64, String> {
+    let world_x = [1.0, 0.0, 0.0];
+    let perpendicular = cross(axis, world_x);
+    let x = if dot(perpendicular, perpendicular).sqrt() > 1e-6 {
+        let projection = dot(axis, world_x);
+        unit([
+            1.0 - axis[0] * projection,
+            -axis[1] * projection,
+            -axis[2] * projection,
+        ])
+    } else {
+        unit(cross(axis, [0.0, 1.0, 0.0]))
+    }
+    .ok_or("its axis is malformed")?;
+    Ok(dot(radial, cross(axis, x))
+        .atan2(dot(radial, x))
+        .to_degrees())
 }
 
 /// Why a box or cylinder primitive is not mapped.

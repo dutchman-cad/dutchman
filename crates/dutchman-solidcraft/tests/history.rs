@@ -1852,6 +1852,43 @@ fn coils_become_solidcraft_coils() {
 }
 
 #[test]
+fn coils_map_signed_extents_and_reverse_the_axis_and_turning_flag_together() {
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    for sign in [1.0, -1.0] {
+        for (extent, turns, pitch) in [
+            (turns_and_pitch(2.0, sign * 4.0), "2", "4 mm"),
+            (
+                json!({"kind": "revolutions_height", "revolutions": 2.0, "height": sign * 8.0}),
+                "2",
+                "(8 mm) / (2)",
+            ),
+            (
+                json!({"kind": "height_pitch", "height": sign * 8.0, "pitch": sign * 4.0}),
+                "(8 mm) / (4 mm)",
+                "4 mm",
+            ),
+        ] {
+            for clockwise in [true, false] {
+                let mut definition = coil(extent.clone(), [0.0, 1.0, 0.0], clockwise);
+                definition["construction"]["placement"]["axis"] =
+                    json!({"x": 1.0, "y": 0.0, "z": 0.0});
+                let (document, report) = convert(&primitive_history(definition), &writer);
+                let spring = &document["features"][0];
+                assert_eq!(spring["type"], "coil", "{}", history_line(&report));
+                assert_eq!(spring["axis"], json!([sign, 0.0, 0.0]));
+                assert_eq!(spring["start_angle"], "-90 deg");
+                assert_eq!(spring["turns"], turns);
+                assert_eq!(spring["pitch"], pitch);
+                assert_eq!(
+                    spring.get("clockwise"),
+                    (clockwise == (sign < 0.0)).then_some(&json!(true))
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn coils_solidcraft_cannot_build_flatten_the_history() {
     let writer = SolidCraftWriter::new().verification(Verification::Off);
     let plain = || coil(turns_and_pitch(4.0, 5.0), [1.0, 0.0, 0.0], true);
@@ -1866,13 +1903,6 @@ fn coils_solidcraft_cannot_build_flatten_the_history() {
     };
     for (definition, reason) in [
         (
-            with(
-                &["construction", "placement", "axis"],
-                json!({"x": 0.0, "y": 1.0, "z": 0.0}),
-            ),
-            "a coil about an axis other than +Z is not mapped yet",
-        ),
-        (
             with(&["construction", "taper"], json!(0.1)),
             "a tapered coil is not mapped yet",
         ),
@@ -1884,8 +1914,11 @@ fn coils_solidcraft_cannot_build_flatten_the_history() {
             "a flat spiral coil is not mapped yet",
         ),
         (
-            with(&["construction", "extent"], turns_and_pitch(4.0, -5.0)),
-            "a coil running down its axis is not mapped yet",
+            with(
+                &["construction", "extent"],
+                json!({"kind": "height_pitch", "height": 8.0, "pitch": -4.0}),
+            ),
+            "its extent is malformed",
         ),
         (
             with(
@@ -1907,32 +1940,76 @@ fn coils_solidcraft_cannot_build_flatten_the_history() {
 #[test]
 fn solidcraft_turns_the_coil_the_way_cadir_says() {
     let Some(cli) = solidcraft() else { return };
-    // A quarter turn from +X: a right-hand coil (clockwise seen from its base) rises towards
-    // +Y, a left-hand one towards -Y.
-    for (clockwise, towards) in [(true, 1.0), (false, -1.0)] {
-        let design = written(&primitive_history(coil(
-            turns_and_pitch(0.25, 4.0),
-            [1.0, 0.0, 0.0],
-            clockwise,
-        )))
-        .0;
-        let boxes = bounds(&cli, &design);
-        assert_eq!(boxes.len(), 1, "{boxes:?}");
-        let (min, max) = boxes[0];
-        let (near, far) = if towards > 0.0 {
-            (-min[1], max[1])
-        } else {
-            (max[1], -min[1])
+    // Quarter turns expose the start direction and turning sense; a full turn would hide
+    // both. Include SolidCraft's alternate start frame close to X, and its usual projected-X
+    // frame on either side of that threshold. CADIR requires unit placement vectors.
+    for (axis, radial) in [
+        ([0.0, 0.0, 1.0], [1.0, 0.0, 0.0]),
+        ([0.0, 0.0, -1.0], [0.0, 1.0, 0.0]),
+        ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+        ([-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
+        ([0.0, 1.0, 0.0], [0.0, 0.0, 1.0]),
+        ([1.0, 2.0, 3.0], [2.0, -1.0, 0.0]),
+        ([1.0, 0.0, 0.0000005], [0.0, 1.0, 0.0]),
+        ([1.0, 0.0, 0.000002], [0.0, 1.0, 0.0]),
+    ] {
+        let normalize = |v: [f64; 3]| {
+            let length = v.iter().map(|c| c * c).sum::<f64>().sqrt();
+            v.map(|c| c / length)
         };
-        assert!(far > 10.5 && near < 1.5, "{clockwise}: {boxes:?}");
-        let volume = volumes(&cli, &design);
-        // The section's area along the helix: π × 1² × √((π × 20 / 4)² + 1²).
-        let pi = std::f64::consts::PI;
-        let expected = pi * ((pi * 5.0).powi(2) + 1.0).sqrt();
-        assert!(
-            (volume[0] - expected).abs() / expected < 1e-2,
-            "{volume:?} vs {expected}"
-        );
+        let axis = normalize(axis);
+        let radial = normalize(radial);
+        for clockwise in [true, false] {
+            for pitch in [4.0, -4.0] {
+                let mut definition = coil(turns_and_pitch(0.25, pitch), radial, clockwise);
+                definition["construction"]["placement"]["axis"] =
+                    json!({"x": axis[0], "y": axis[1], "z": axis[2]});
+                let base = [3.0, -2.0, 5.0];
+                definition["construction"]["placement"]["origin"] =
+                    json!({"x": base[0], "y": base[1], "z": base[2]});
+                let design = written(&primitive_history(definition)).0;
+                let boxes = bounds(&cli, &design);
+                assert_eq!(boxes.len(), 1, "{boxes:?}");
+                let (min, max) = boxes[0];
+                // Sample the CADIR helix directly, without using SolidCraft's start-angle frame.
+                // Its section is a unit circle in the radial/axis plane at each point.
+                let tangent = [
+                    axis[1] * radial[2] - axis[2] * radial[1],
+                    axis[2] * radial[0] - axis[0] * radial[2],
+                    axis[0] * radial[1] - axis[1] * radial[0],
+                ];
+                let mut expected_min = [f64::INFINITY; 3];
+                let mut expected_max = [f64::NEG_INFINITY; 3];
+                for step in 0..=1000 {
+                    let turns = 0.25 * f64::from(step) / 1000.0;
+                    let angle = std::f64::consts::TAU * turns * if clockwise { 1.0 } else { -1.0 };
+                    for i in 0..3 {
+                        let r = radial[i] * angle.cos() + tangent[i] * angle.sin();
+                        let center = base[i] + 10.0 * r + axis[i] * pitch * turns;
+                        let half_width = r.hypot(axis[i]);
+                        expected_min[i] = expected_min[i].min(center - half_width);
+                        expected_max[i] = expected_max[i].max(center + half_width);
+                    }
+                }
+                let case = format!("axis={axis:?}, clockwise={clockwise}, pitch={pitch}");
+                for i in 0..3 {
+                    assert!(
+                        (min[i] - expected_min[i]).abs() < 0.05
+                            && (max[i] - expected_max[i]).abs() < 0.05,
+                        "{case}: {boxes:?} vs {expected_min:?}, {expected_max:?}"
+                    );
+                }
+                let volume = volumes(&cli, &design);
+                assert_eq!(volume.len(), 1);
+                // The section's area along the helix: π × 1² × √((π × 20 / 4)² + 1²).
+                let pi = std::f64::consts::PI;
+                let expected = pi * ((pi * 5.0).powi(2) + 1.0).sqrt();
+                assert!(
+                    (volume[0] - expected).abs() / expected < 1e-2,
+                    "{volume:?} vs {expected}"
+                );
+            }
+        }
     }
 }
 
