@@ -1,5 +1,5 @@
-//! Holes drilled at the points of a sketch: simple holes, through all or to a depth, flat or
-//! with a drill point, as SolidCraft's Hole drills them.
+//! Holes drilled at the points of a sketch: simple, counterbore and countersink holes,
+//! through all or to a depth, as SolidCraft's Hole drills them.
 
 use serde_json::{json, Value};
 
@@ -26,15 +26,34 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
 
     let shape = definition.get("shape").unwrap_or(&Value::Null);
     let construction = shape.get("construction").unwrap_or(&Value::Null);
-    match (
+    let form = construction.get("kind").unwrap_or(&Value::Null);
+    let diameter = number(shape.get("diameter")).ok_or("its diameter is not given")?;
+    let mut hole = match (
         construction.get("construction").and_then(Value::as_str),
-        construction.pointer("/kind/kind").and_then(Value::as_str),
+        form.get("kind").and_then(Value::as_str),
     ) {
-        (Some("form"), Some("simple")) => {}
+        (Some("form"), Some("simple")) => json!({"type": "simple"}),
+        (Some("form"), Some("counterbore" | "countersink")) => {
+            let entry = number(form.get("diameter"))
+                .filter(|d| *d > diameter)
+                .ok_or("its entry diameter must be greater than its bore diameter")?;
+            if form.get("kind").and_then(Value::as_str) == Some("counterbore") {
+                let depth = number(form.get("depth"))
+                    .filter(|d| *d > 0.0)
+                    .ok_or("its counterbore depth is not given")?;
+                json!({"type": "counterbore", "cb_diameter": format!("{entry} mm"),
+                    "cb_depth": format!("{depth} mm")})
+            } else {
+                let angle = number(form.get("angle"))
+                    .filter(|a| *a > 0.0 && *a < std::f64::consts::PI)
+                    .ok_or("its countersink angle is not given")?;
+                json!({"type": "countersink", "cs_diameter": format!("{entry} mm"),
+                    "cs_angle": format!("{}", angle.to_degrees())})
+            }
+        }
         (Some("form"), Some(kind)) => return Err(format!("a {kind} hole is not mapped yet")),
         _ => return Err("a hole of this construction is not mapped yet".to_owned()),
-    }
-    let diameter = number(shape.get("diameter")).ok_or("its diameter is not given")?;
+    };
 
     let points = locations(sketch, definition.get("profile_filter"))?;
     let first = points
@@ -48,7 +67,6 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         None => sketch.normal.map(|c| -c),
     };
 
-    let mut hole = json!({"type": "simple"});
     let mut depth = None;
     let extent = definition.get("extent").unwrap_or(&Value::Null);
     match extent.get("kind").and_then(Value::as_str) {
@@ -59,6 +77,14 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
             match bottom.get("kind").and_then(Value::as_str) {
                 None | Some("flat") => depth = Some(length),
                 Some("angled") => {
+                    // SolidCraft's entry forms have no drill-point fields. Replacing the
+                    // form with `drilled` would silently discard the entry recess.
+                    if form.get("kind").and_then(Value::as_str) != Some("simple") {
+                        return Err(
+                            "a counterbore or countersink with a drill point is not mapped yet"
+                                .to_owned(),
+                        );
+                    }
                     let angle = number(bottom.get("included_angle"))
                         .filter(|a| *a > 0.0 && *a < std::f64::consts::PI)
                         .ok_or("its drill point's angle is not given")?;
@@ -256,12 +282,64 @@ mod tests {
     }
 
     #[test]
+    fn entry_forms_require_their_dimensions() {
+        for (form, reason) in [
+            (
+                json!({"kind": "counterbore"}),
+                "its entry diameter must be greater than its bore diameter",
+            ),
+            (
+                json!({"kind": "counterbore", "diameter": 5.0, "depth": 2.0}),
+                "its entry diameter must be greater than its bore diameter",
+            ),
+            (
+                json!({"kind": "counterbore", "diameter": 8.0}),
+                "its counterbore depth is not given",
+            ),
+            (
+                json!({"kind": "counterbore", "diameter": 8.0, "depth": 0.0}),
+                "its counterbore depth is not given",
+            ),
+            (
+                json!({"kind": "countersink", "diameter": 8.0}),
+                "its countersink angle is not given",
+            ),
+            (
+                json!({"kind": "countersink", "diameter": 8.0, "angle": std::f64::consts::PI}),
+                "its countersink angle is not given",
+            ),
+        ] {
+            let definition = hole(json!({"shape": {"construction": {
+                "construction": "form", "kind": form}, "diameter": 5.0}}));
+            assert_eq!(mapped(&definition).unwrap_err(), reason);
+        }
+    }
+
+    #[test]
+    fn entry_forms_with_a_drill_point_are_not_silently_simplified() {
+        for form in [
+            json!({"kind": "counterbore", "diameter": 8.0, "depth": 2.0}),
+            json!({"kind": "countersink", "diameter": 8.0, "angle": std::f64::consts::FRAC_PI_2}),
+        ] {
+            let definition = hole(json!({
+                "shape": {"construction": {"construction": "form", "kind": form}, "diameter": 5.0},
+                "extent": {"kind": "blind", "length": 6.0},
+                "bottom": {"kind": "angled", "included_angle": 118_f64.to_radians(), "depth_to_tip": false},
+            }));
+            assert_eq!(
+                mapped(&definition).unwrap_err(),
+                "a counterbore or countersink with a drill point is not mapped yet"
+            );
+        }
+    }
+
+    #[test]
     fn other_holes_say_why_they_are_not_mapped() {
         let counterbore = hole(json!({"shape": {"construction": {"construction": "form",
-            "kind": {"kind": "counterbore"}}, "diameter": 5.0}}));
+            "kind": {"kind": "counterbore_drilled"}}, "diameter": 5.0}}));
         assert_eq!(
             mapped(&counterbore).unwrap_err(),
-            "a counterbore hole is not mapped yet"
+            "a counterbore_drilled hole is not mapped yet"
         );
         let to_face = hole(json!({"extent": {"kind": "to_face"}}));
         assert_eq!(

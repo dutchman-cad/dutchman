@@ -28,10 +28,11 @@ from the cadmpeg release that carries this; until then the nightly builds do.
 - **Components**, when cadmpeg says which bodies each owns, as for a Fusion design.
 - **Grounded joints** hold their part fixed to the design where it is stored, as a rigid
   joint to the design; the assembly's revolute and slider joints keep their motion.
-- **Feature history**, when every feature maps: sketches, pads and simple holes, replayed
-  and checked in SolidCraft like a Fusion history. Fillets, chamfers, thicknesses (shells),
-  counterbored holes and revolutions short of a full turn are not mapped yet; a document
-  holding one converts as geometry, and the report names the first feature that stopped it.
+- **Feature history**, when every feature maps: sketches, pads, and simple, counterbored and
+  countersunk holes, replayed and checked in SolidCraft like a Fusion history. Fillets,
+  chamfers, thicknesses (shells), counterbores or countersinks with a drill point, and
+  revolutions short of a full turn are not mapped yet; a document holding one converts as
+  geometry, and the report names the first feature that stopped it.
 
 ## Building with FreeCAD
 
