@@ -8,6 +8,13 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Assemblies
+
+- An Inventor assembly that places no parts, as Inventor's own assembly templates do,
+  converts as an empty design with a note ("the assembly places no parts"), verification
+  `not_applicable`. It failed with "none of the assembly's parts could be found or read",
+  which sent users looking for part files that were never referenced.
+
 ### Getting started
 
 - A file that cannot be read as its format (cut short, damaged or misnamed) says how to

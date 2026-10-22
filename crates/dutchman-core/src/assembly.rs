@@ -393,7 +393,15 @@ pub(crate) fn resolve(
             ),
         );
     }
-    if placements.is_empty() {
+    // An assembly that places nothing, as Inventor's own templates do, is empty: there is
+    // nothing to search for, so it converts as an empty design.
+    if occurrences.is_empty() {
+        report.push(
+            Severity::Info,
+            "assembly",
+            "the assembly places no parts: it is empty, as Inventor's assembly templates are",
+        );
+    } else if placements.is_empty() {
         return Err(Error::Assembly(
             "none of the assembly's parts could be found or read; if they are elsewhere, give \
              the project folder that holds them"
@@ -1671,6 +1679,23 @@ mod tests {
             err.to_string()
                 .contains("give the project folder that holds them"),
             "{err}"
+        );
+    }
+
+    #[test]
+    fn an_assembly_that_places_nothing_is_empty_rather_than_missing_its_parts() {
+        let project = Project::new(&[("empty.iam", vec![])]);
+        let mut report = Report::default();
+        let model = project.read("empty.iam", &mut report).unwrap();
+        let assembly = model.assembly.unwrap();
+        assert!(assembly.parts.is_empty() && assembly.placements.is_empty());
+        assert!(
+            report
+                .losses()
+                .iter()
+                .any(|loss| loss.severity == Severity::Info
+                    && loss.detail.contains("the assembly places no parts")),
+            "{report:?}"
         );
     }
 
