@@ -8,6 +8,31 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### cadmpeg
+
+- Dutchman builds against cadmpeg at one tested commit of its `main` branch (60b6065), the
+  same for every cadmpeg crate, instead of the cadmpeg 0.6.3 release. That brings Inventor
+  extrude profiles resolved to sketch profiles and regions (trimmed curves included), with
+  arcs, polygons and more sketch constraints, so Inventor part histories replay; FreeCAD bodies read as FreeCAD shows them;
+  Fusion component names; FreeCAD spreadsheet values; and fixes to how ASM pcurves, torus
+  pcurves and tolerant edges are read. The
+  nightly build still takes cadmpeg's latest `main`. Building from source works as before,
+  with `cargo install --git`.
+
+### FreeCAD
+
+- FreeCAD documents (`.FCStd`) convert in stable builds: the `freecad` feature of `dutchman`
+  and `dutchman-gui` is on by default. A build without it (`--no-default-features`) says it
+  leaves FreeCAD files out and where the release builds are.
+
+- A grounded joint in a FreeCAD assembly becomes a rigid joint to the design, holding its part
+  where it is stored, so the assembly's other joints keep their motion. It was left out ("a
+  joint to the ground alone is not converted yet").
+- Leaving out a FreeCAD document's hidden bodies no longer takes their sketches with them: a
+  sketch's own wire body is hidden, and only the hidden bodies' own B-rep is left out now.
+  Every FreeCAD history had stopped at its first sketch ("the sketch it binds is missing")
+  once cadmpeg marks those bodies hidden.
+
 ### Assemblies
 
 - An Inventor assembly that places no parts, as Inventor's own assembly templates do,
@@ -26,16 +51,6 @@ report's schema name changes when a field does).
 - The guide and CONTRIBUTING start problem reports from an anonymous report, explain the
   sample cube's expected warnings, and the MCP tool descriptions say exactly what
   `convert_all` writes and that a successful `inspect` does not mean a file converts.
-
-### FreeCAD
-
-- A grounded joint in a FreeCAD assembly becomes a rigid joint to the design, holding its part
-  where it is stored, so the assembly's other joints keep their motion. It was left out ("a
-  joint to the ground alone is not converted yet").
-- Leaving out a FreeCAD document's hidden bodies no longer takes their sketches with them: a
-  sketch's own wire body is hidden, and only the hidden bodies' own B-rep is left out now.
-  Every FreeCAD history had stopped at its first sketch ("the sketch it binds is missing")
-  once cadmpeg marks those bodies hidden.
 
 ### Feature history
 

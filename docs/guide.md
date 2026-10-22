@@ -119,13 +119,13 @@ Expand-Archive dutchman-VERSION-x86_64-pc-windows-msvc.zip -DestinationPath .
 
 ### Channels: stable and nightly
 
-- **Stable** releases (`v0.1.4`, …) are the ones to use. Each is built against released
-  versions of cadmpeg, the library that reads the native files.
+- **Stable** releases (`v0.1.4`, …) are the ones to use. Each is built against one tested
+  commit of cadmpeg, the library that reads the native files.
 - **Nightly** is one pre-release, [`nightly`](https://github.com/dutchman-cad/dutchman/releases/tag/nightly),
   rebuilt each day from Dutchman's latest code against cadmpeg's latest code, and published
   only when every test passes. Its notes give both commits and the date. Its archives are
   named `dutchman-nightly-TARGET` and install the same way. Use it when an issue says a fix is
-  merged but not released yet; go back to stable once a stable release has it.
+  merged but not in a release yet; go back to stable once a stable release has it.
 
 ### From source
 
@@ -339,7 +339,7 @@ Inventor part (.ipt)             converts  geometry; feature history waits on ca
 Inventor assembly (.iam)         converts  placed parts and sub-assemblies, read from their files in the project
 SolidWorks part (.sldprt)        converts  geometry; feature history waits on cadmpeg binding sketches and extrude profiles
 SolidWorks assembly (.sldasm)    not yet   nothing yet
-FreeCAD document (.FCStd)        not yet   in nightly builds for now: https://github.com/dutchman-cad/dutchman/releases/tag/nightly
+FreeCAD document (.FCStd)        converts  geometry and components; feature history (sketches, pads, simple holes) when every feature maps
 ```
 
 The state of each format, and what is still missing upstream, is in [fusion.md](fusion.md),

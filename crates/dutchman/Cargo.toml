@@ -20,7 +20,7 @@ name = "dutchman-mcp"
 path = "src/bin/dutchman-mcp.rs"
 
 [features]
-default = []
+default = ["freecad"]
 # FreeCAD documents (.FCStd); see dutchman-core's feature of the same name.
 freecad = ["dutchman-core/freecad"]
 

@@ -1,13 +1,11 @@
 # Inventor: what converts today, and what stands in the way
 
-Dutchman reads Inventor through cadmpeg's published Inventor codec (cadmpeg-registry's
-`inventor` feature, 0.6). Improvements to Inventor decoding land in cadmpeg and reach Dutchman
+Dutchman reads Inventor through cadmpeg's Inventor codec (cadmpeg-registry's
+`inventor` feature). Improvements to Inventor decoding land in cadmpeg and reach Dutchman
 when the pin is bumped. This page says what Dutchman makes of what that codec gives, and which
 upstream gaps keep Inventor history from replaying. It drives what is asked of cadmpeg next.
 
-State as of cadmpeg's `main` (in the [nightly builds](https://github.com/dutchman-cad/dutchman/releases/tag/nightly)
-until its next release; cadmpeg 0.6.3 resolves no extrude profile, so stable builds convert
-Inventor parts as geometry).
+State as of the cadmpeg commit Dutchman pins (see `Cargo.toml`).
 
 ## Parts (`.ipt`)
 

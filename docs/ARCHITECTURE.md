@@ -68,14 +68,15 @@ design to SolidCraft in memory instead of as bytes). Neither crate changes.
 
 ## Depending on cadmpeg
 
-- From crates.io, semver-pinned (`cadmpeg-ir`, `cadmpeg-core`, `cadmpeg-registry` at `0.6`). cadmpeg publishes `cadmpeg-ir`,
-  `cadmpeg-core`, `cadmpeg-registry` and the codec crates; no git or path dependency is
-  needed, so CI and `cargo install` work without a cadmpeg checkout.
+- From cadmpeg's git repository, pinned to one tested commit of its `main` (`cadmpeg-ir`,
+  `cadmpeg-core`, `cadmpeg-registry`, the same `rev` for each); Cargo fetches it, so CI and
+  `cargo install --git` work without a cadmpeg checkout. docs/releasing.md says when the pin
+  moves; the nightly build takes cadmpeg's `main` instead.
 - `cadmpeg-registry` with `default-features = false` and only the codec features Dutchman
   ships (`f3d`, `inventor`, `sldprt`, and `step` for the restatement), to keep the build small;
-  `fcstd` with Dutchman's `freecad` feature, which the nightly build turns on.
-- Unreleased cadmpeg work is tried locally with a `[patch.crates-io]` path override that is
-  never committed.
+  `fcstd` with Dutchman's `freecad` feature, on by default.
+- Unmerged cadmpeg work is tried locally with a `[patch."https://github.com/cadmpeg/cadmpeg"]`
+  path override that is never committed.
 - Minimum Rust follows cadmpeg's (1.88 today).
 
 ## Writing SolidCraft designs
@@ -244,9 +245,9 @@ and synthetic files from cadmpeg's public test suite (provenance in
 Settled 2026-10-20:
 
 1. First format: Fusion `.f3d`, cadmpeg's most complete native codec. Inventor parts (`.ipt`)
-   follow through cadmpeg's published Inventor codec, pinned like f3d; improvements land
+   follow through cadmpeg's Inventor codec, pinned like f3d; improvements land
    upstream and reach Dutchman by bumping the pin. Assemblies (`.iam`) come later. SolidWorks
-   parts (`.sldprt`) follow the same way through cadmpeg's published SolidWorks codec.
+   parts (`.sldprt`) follow the same way through cadmpeg's SolidWorks codec.
 2. Dutchman ships cadmpeg's commercial-format codecs (f3d, ipt, sldprt) in its Apache-2.0
    binary; hosting them outside SolidCraft is its purpose.
 3. Crates: the CLI is `dutchman`; `dutchman-cad` is reserved for a library facade.

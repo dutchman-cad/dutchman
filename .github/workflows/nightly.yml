@@ -1,10 +1,10 @@
 name: Nightly
 
 # Builds Dutchman's main against cadmpeg's main, every day and on demand, and publishes the
-# archives as the rolling `nightly` pre-release: the way a cadmpeg fix that is merged but not
-# released reaches users before the next stable release. cadmpeg's main is taken only here, at
-# build time (scripts/use-cadmpeg-main.sh); nothing about it is committed, and stable releases
-# keep using crates.io cadmpeg. Nothing is published unless every test and the SolidCraft
+# archives as the rolling `nightly` pre-release: the way a cadmpeg fix merged after the commit
+# stable builds pin reaches users before the next stable release. cadmpeg's main is taken only
+# here, at build time (scripts/use-cadmpeg-main.sh); nothing about it is committed, and stable
+# releases keep the pinned commit. Nothing is published unless every test and the SolidCraft
 # round trip pass. A run is skipped when neither main changed since the last nightly.
 
 on:
@@ -71,7 +71,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - shell: bash
         run: scripts/use-cadmpeg-main.sh "${{ needs.changes.outputs.cadmpeg }}"
-      - run: cargo test --workspace --features dutchman/freecad,dutchman-gui/freecad
+      - run: cargo test --workspace
 
   roundtrip:
     needs: changes
@@ -126,8 +126,7 @@ jobs:
           targets: ${{ matrix.target }}
       - shell: bash
         run: scripts/use-cadmpeg-main.sh "${{ needs.changes.outputs.cadmpeg }}"
-      # FreeCAD documents convert in nightly builds only, for now (docs/freecad.md).
-      - run: cargo build --release -p dutchman -p dutchman-gui --features dutchman/freecad,dutchman-gui/freecad --target ${{ matrix.target }}
+      - run: cargo build --release -p dutchman -p dutchman-gui --target ${{ matrix.target }}
       - name: Package
         shell: bash
         run: |

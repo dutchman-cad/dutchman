@@ -1,7 +1,7 @@
 # SolidWorks: what converts today, and what stands in the way
 
-Dutchman reads SolidWorks parts through cadmpeg's published SolidWorks codec (cadmpeg-registry's
-`sldprt` feature, 0.6, at the same pin as f3d and Inventor). Improvements to SolidWorks
+Dutchman reads SolidWorks parts through cadmpeg's SolidWorks codec (cadmpeg-registry's
+`sldprt` feature, at the same pin as f3d and Inventor). Improvements to SolidWorks
 decoding land in cadmpeg and reach Dutchman when the pin is bumped. This page says what
 Dutchman makes of what that codec gives, and which upstream gaps keep SolidWorks history from
 replaying. It drives what is asked of cadmpeg next.

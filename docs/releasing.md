@@ -25,8 +25,11 @@ A release is cut from `main` once CI is green there.
 
 ## Stable and nightly
 
-A stable release depends only on cadmpeg versions published on crates.io; it never pins a
-cadmpeg git commit. A fix that is merged on cadmpeg's `main` but not yet released reaches
-users through the nightly channel: the `nightly` pre-release, rebuilt each day from Dutchman's
-`main` against cadmpeg's `main` (see `.github/workflows/nightly.yml`). The stable release
-that follows cadmpeg's next release carries it.
+A stable release depends on cadmpeg at one commit of its `main` branch, pinned as the same
+`rev` for every cadmpeg crate in the workspace `Cargo.toml`. Move the pin after a batch of
+cadmpeg merges: set the new commit, run `cargo update -p cadmpeg-core -p cadmpeg-ir -p
+cadmpeg-registry`, then the full tests, the SolidCraft round trip and the anonymous-report
+leak check on a real library before merging it. A fix merged on cadmpeg's `main` after the
+pinned commit reaches users through the nightly channel: the `nightly` pre-release, rebuilt
+each day from Dutchman's `main` against cadmpeg's `main` (`scripts/use-cadmpeg-main.sh`, see
+`.github/workflows/nightly.yml`). The stable release after the pin moves carries it.

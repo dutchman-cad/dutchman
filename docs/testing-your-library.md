@@ -9,7 +9,7 @@ it you choose.
 If you used 0.1.3's report-anon.json, re-run with 0.1.4 before sharing it.
 
 Fusion (`.f3d`, `.f3z`) libraries are the main target. Inventor (`.ipt`, `.iam`) and
-SolidWorks (`.sldprt`) files are welcome too, and FreeCAD (`.FCStd`) ones with a nightly build,
+SolidWorks (`.sldprt`) and FreeCAD (`.FCStd`) files are welcome too,
 including ones you cannot open any more.
 
 ## Everything stays on your machine
@@ -48,7 +48,7 @@ including ones you cannot open any more.
 ### Stable or nightly
 
 Use the latest stable release. When an issue you filed says the fix is "merged, not released
-yet", or a fix depends on a cadmpeg change not released yet, you can try it at once with the
+yet", or a fix depends on a cadmpeg change newer than the stable build's, you can try it at once with the
 [`nightly`](https://github.com/dutchman-cad/dutchman/releases/tag/nightly) pre-release:
 Dutchman's and cadmpeg's latest code, rebuilt each day once every test passes. Run the same
 batch with it (a new `--journal`, since a different version converts everything again), and

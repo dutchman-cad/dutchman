@@ -797,15 +797,15 @@ fn a_build_without_freecad_says_where_freecad_files_convert() {
     let report = json_of(&out);
     assert_eq!(
         report["error"]["message"],
-        "FreeCAD files convert in nightly builds for now: \
-         https://github.com/dutchman-cad/dutchman/releases/tag/nightly"
+        "this build leaves FreeCAD files out (built without the `freecad` feature); \
+         Dutchman's release builds convert them: https://github.com/dutchman-cad/dutchman/releases"
     );
     assert_eq!(report["error"]["upstream"], serde_json::Value::Null);
     assert!(!output.exists());
     let text = String::from_utf8(dutchman(&["formats"]).stdout).unwrap();
     let line = text.lines().find(|l| l.starts_with("FreeCAD")).unwrap();
     assert!(
-        line.contains("not yet") && line.contains("in nightly builds for now"),
+        line.contains("not yet") && line.contains("left out of this build"),
         "{line}"
     );
 }

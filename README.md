@@ -35,8 +35,7 @@ minute. Every release is on the [releases page](https://github.com/dutchman-cad/
 
 Early development. Fusion (`.f3d`, `.f3z`) designs, Inventor parts (`.ipt`), Inventor
 assemblies (`.iam`, with their parts found anywhere in the project) and SolidWorks parts
-(`.sldprt`) convert today, and FreeCAD documents (`.FCStd`) in the
-[nightly builds](docs/freecad.md):
+(`.sldprt`) and FreeCAD documents (`.FCStd`) convert today:
 
 - When every feature in a design's history maps onto SolidCraft (sketches and extrudes so
   far), the SolidCraft design keeps that history, editable, with the original geometry kept
