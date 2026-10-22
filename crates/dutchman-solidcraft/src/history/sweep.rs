@@ -2,8 +2,9 @@
 //!
 //! A solid or surface sweep of one sketch profile along planar sketch curves maps with
 //! rotation-minimizing, fixed or fixed-binormal orientation, optional twist and end scale,
-//! or one guide rail. Taper, corner transitions, several sections, partial paths and other
-//! orientation or profile interpolation laws are not mapped.
+//! or one guide rail. A whole-sketch path or rail maps when it has one curve. Taper, explicit
+//! corner transitions, several sections, partial paths, tangent extension, simplification
+//! and other orientation or profile interpolation laws are not mapped.
 
 use serde_json::{json, Map, Value};
 
@@ -31,8 +32,23 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         return Err("sweeps through several sections are not mapped yet".to_owned());
     }
     let section = shape.get("section").unwrap_or(&Value::Null);
-    if section.get("kind").and_then(Value::as_str) != Some("profile") {
-        return Err("its profile is not a sketch profile".to_owned());
+    match section.get("kind").and_then(Value::as_str) {
+        Some("profile") => {}
+        Some("generated") => {
+            return Err("sweeps with generated circular sections are not mapped yet".to_owned())
+        }
+        _ => return Err("its sweep section is not resolved".to_owned()),
+    }
+    if definition.get("path_tangent").and_then(Value::as_bool) == Some(true) {
+        return Err(
+            "sweeps that extend the path through tangent-connected edges are not mapped yet"
+                .to_owned(),
+        );
+    }
+    if definition.get("linearize").and_then(Value::as_bool) == Some(true) {
+        return Err(
+            "sweeps that simplify linear edges and planar faces are not mapped yet".to_owned(),
+        );
     }
     let (sketch_id, profiles) = profile(section.get("value"), ctx)?;
     let sketch = ctx
@@ -62,6 +78,12 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
             };
             extra.insert("orientation".to_owned(), json!({"direction": [x, y, z]}));
         }
+        Some("auxiliary") => {
+            return Err("sweeps oriented by an auxiliary path are not mapped yet".to_owned())
+        }
+        Some("guide_surface") => {
+            return Err("sweeps oriented by guide faces are not mapped yet".to_owned())
+        }
         Some(other) => {
             return Err(format!(
                 "sweeps oriented by {} are not mapped yet",
@@ -71,14 +93,25 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
     }
     match definition.get("transition").and_then(Value::as_str) {
         None | Some("transformed") => {}
-        Some(_) => return Err("sweeps with corner transitions are not mapped yet".to_owned()),
+        Some(transition) => {
+            return Err(format!(
+                "sweeps with {} corner transitions are not mapped yet",
+                transition.trim_end_matches("_corner").replace('_', " ")
+            ))
+        }
     }
     match definition.get("transformation").and_then(Value::as_str) {
         None | Some("constant") => {}
-        Some(_) => {
-            return Err(
-                "sweeps that change their profile along the path are not mapped yet".to_owned(),
-            )
+        Some(transformation) => {
+            let law = match transformation {
+                "multi_section" => "multiple",
+                "s_shape" => "S-shaped",
+                "interpolation" => "native smooth",
+                other => other,
+            };
+            return Err(format!(
+                "sweeps with {law} section interpolation are not mapped yet"
+            ));
         }
     }
     if number(definition.get("taper")).is_some_and(|taper| taper != 0.0) {
@@ -156,10 +189,55 @@ pub(super) fn curves(
     what: &str,
 ) -> Result<(u64, Vec<String>), String> {
     let path = path.ok_or_else(|| format!("it has no {what}"))?;
+    // A whole sketch with one non-construction curve has an unambiguous path. For
+    // several curves, the sketch's entity table does not establish traversal order.
+    if path.get("kind").and_then(Value::as_str) == Some("sketch") {
+        let sketch = path
+            .get("value")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("its {what} sketch is not resolved"))?;
+        let mapped = ctx
+            .sketches
+            .get(sketch)
+            .ok_or_else(|| format!("its {what} sketch is not an earlier mapped sketch"))?;
+        let mut entities = ctx.arena("sketch_entities").iter().filter(|entity| {
+            entity.get("sketch").and_then(Value::as_str) == Some(sketch)
+                && entity.get("construction").and_then(Value::as_bool) != Some(true)
+                && entity.pointer("/geometry/kind").and_then(Value::as_str) != Some("point")
+        });
+        let entity = entities
+            .next()
+            .ok_or_else(|| format!("its {what} sketch has no path curves"))?;
+        if entities.next().is_some() {
+            return Err(format!(
+                "a whole-sketch {what} with several curves has no resolved traversal order"
+            ));
+        }
+        let curve = entity
+            .get("id")
+            .and_then(Value::as_str)
+            .and_then(|id| mapped.curve(id))
+            .ok_or_else(|| format!("its {what} uses a curve the sketch does not carry"))?;
+        return Ok((mapped.feature, vec![curve.id.clone()]));
+    }
     match path.get("kind").and_then(Value::as_str) {
         Some("sketch_curves") => {}
         Some("spatial_sketch_curves" | "spatial_sketch_selection") => {
             return Err(format!("a {what} in a 3D sketch is not mapped yet"))
+        }
+        Some("unresolved") => return Err(format!("its {what} is not resolved")),
+        Some("native") => {
+            return Err(format!(
+                "a {what} given by a native reference is not mapped yet"
+            ))
+        }
+        Some("edges" | "historical_edges") => {
+            return Err(format!("a {what} of topological edges is not mapped yet"))
+        }
+        Some("curves") => {
+            return Err(format!(
+                "a {what} of geometric curves outside a sketch is not mapped yet"
+            ))
         }
         _ => return Err(format!("its {what} is not a set of sketch curves")),
     }

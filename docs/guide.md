@@ -338,9 +338,9 @@ dutchman formats
 ```
 
 ```text
-Fusion archive (.f3d)            converts  geometry; feature history (sketches, constraints, dimensions, extrudes, revolves, lofts, sweeps, spheres, tori) when every feature maps; components when the file says which bodies they own
+Fusion archive (.f3d)            converts  geometry; feature history (sketches, constraints, dimensions, extrudes, revolves, lofts, sweeps, spheres, tori, coils) when every feature maps; components when the file says which bodies they own
 Fusion multi-document archive (.f3z) converts  as a Fusion archive, with the designs it references merged in by cadmpeg
-Inventor part (.ipt)             converts  geometry; feature history waits on cadmpeg resolving extrude profiles
+Inventor part (.ipt)             converts  geometry; feature history (sketches, constraints, extrudes) when every feature maps
 Inventor assembly (.iam)         converts  placed parts and sub-assemblies, read from their files in the project
 SolidWorks part (.sldprt)        converts  geometry; feature history waits on cadmpeg binding sketches and extrude profiles
 SolidWorks assembly (.sldasm)    not yet   nothing yet
@@ -421,6 +421,12 @@ When every feature in a design's history maps onto SolidCraft (sketches, extrude
 and patterns so far), the design keeps that history, editable, with the original geometry
 kept beside it as a suppressed import named "Original geometry (imported)". Otherwise the
 design is the geometry alone, and the report says which feature stopped the history.
+
+Sweeps accept ordered sketch curves, or a whole sketch containing a single non-construction
+curve, for their path and optional guide rail. Taper, explicit right or round corners,
+changing sections, tangent-path extension, and post-sweep simplification keep the original
+geometry and report the unsupported option. Twist, end scale, and the supported orientations
+remain editable; a guide rail requires the default orientation without twist or scale.
 
 A converted history is checked by replaying it in `solidcraft-cli` and comparing the bodies
 and their volumes with the original. The result is in the `history:` line of the report, and

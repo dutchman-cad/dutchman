@@ -71,6 +71,11 @@ provides a usable CLI.
 For `inspect`, `ok: true` means the file was read. Check `conversion.possible` and
 `conversion.reason` before converting: inspection can succeed even when conversion cannot.
 
+For sweeps, `history.features[].reason` identifies unsupported corner transitions, section
+interpolation, tangent-path extension, or simplification. Paths and guide rails may select
+ordered sketch curves or a whole sketch with one non-construction curve. A blocked sweep
+keeps the original geometry when converted.
+
 | Tool | Arguments | Returns | Writes |
 |---|---|---|---|
 | `inspect` | `input`, and optionally `project`, `search` | `dutchman.inspect/1` | nothing |

@@ -316,6 +316,43 @@ fn inspect_prints_a_text_summary() {
 }
 
 #[test]
+fn formats_text_matches_guide() {
+    let out = dutchman(&["formats"]);
+    assert!(out.status.success(), "{out:?}");
+    let text = String::from_utf8(out.stdout).unwrap();
+    let guide = include_str!("../../../docs/guide.md");
+    let section = guide
+        .split_once("## Formats")
+        .unwrap()
+        .1
+        .split("\n## ")
+        .next()
+        .unwrap();
+    let listing = section
+        .split_once("```text")
+        .unwrap()
+        .1
+        .split_once("```")
+        .unwrap()
+        .0
+        .trim();
+    // Ignore column padding, and the FreeCAD line in a build without FreeCAD: the guide shows
+    // the default build.
+    let lines = |listing: &str| {
+        listing
+            .lines()
+            .filter(|line| cfg!(feature = "freecad") || !line.starts_with("FreeCAD document "))
+            .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        lines(&text),
+        lines(listing),
+        "Update the Formats listing in docs/guide.md to match dutchman formats"
+    );
+}
+
+#[test]
 fn formats_lists_what_converts() {
     let out = dutchman(&["formats", "--json"]);
     assert_eq!(out.status.code(), Some(0));
