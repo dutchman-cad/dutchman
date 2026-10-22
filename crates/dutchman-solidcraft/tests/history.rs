@@ -306,6 +306,8 @@ fn a_sweep_along_sketch_curves_becomes_a_solidcraft_sweep() {
     assert_eq!(sweep["operation"], "new_body");
     assert_eq!(sweep["body_names"], json!(["unit cube"]));
     assert!(sweep.get("twist").is_none());
+    assert!(sweep.get("scale").is_none());
+    assert!(sweep.get("orientation").is_none());
     assert!(
         history_line(&report).contains("3 of 3 features mapped"),
         "{}",
@@ -327,21 +329,157 @@ fn a_sweep_along_sketch_curves_becomes_a_solidcraft_sweep() {
 }
 
 #[test]
+fn sweep_options_keep_their_units_and_result_mode() {
+    for surface in [false, true] {
+        for (change, key, expected) in [
+            (json!({"scale": 2.0}), "scale", json!("2")),
+            (json!({"scale": 0.01}), "scale", json!("0.01")),
+            (json!({"scale": 100.0}), "scale", json!("100")),
+            (
+                json!({"orientation": {"kind": "binormal",
+                    "direction": {"x": 0.0, "y": 1.0, "z": 0.0}}}),
+                "orientation",
+                json!({"direction": [0.0, 1.0, 0.0]}),
+            ),
+            (
+                json!({"orientation": {"kind": "fixed"}}),
+                "orientation",
+                json!("parallel"),
+            ),
+            (
+                json!({"twist": -std::f64::consts::FRAC_PI_2}),
+                "twist",
+                json!("-90 deg"),
+            ),
+        ] {
+            let model = sweep_history(|d| {
+                if surface {
+                    d["shape"]["mode"] = json!("surface");
+                    d["shape"].as_object_mut().unwrap().remove("op");
+                }
+                for (key, value) in change.as_object().unwrap() {
+                    d[key] = value.clone();
+                }
+            });
+            let (document, report) = convert(
+                &model,
+                &SolidCraftWriter::new().verification(Verification::Off),
+            );
+            let kind = if surface { "surface_sweep" } else { "sweep" };
+            let sweep = document["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|f| f["type"] == kind)
+                .unwrap();
+            assert_eq!(sweep[key], expected);
+            assert!(sweep["profiles"].is_object());
+            assert_eq!(sweep["body_names"], json!(["unit cube"]));
+            assert_eq!(sweep.get("operation").is_none(), surface);
+            assert!(history_line(&report).contains("3 of 3 features mapped"));
+        }
+    }
+}
+
+#[test]
+fn guide_rails_cannot_be_combined_with_sweep_options() {
+    for change in [
+        json!({"scale": 2.0}),
+        json!({"twist": 0.5}),
+        json!({"orientation": {"kind": "fixed"}}),
+    ] {
+        let model = sweep_history(|d| {
+            d["guide_rail"] = json!({"path": d["path"].clone(),
+                "extent": {"along_fraction": 1.0, "against_fraction": 0.0}});
+            for (key, value) in change.as_object().unwrap() {
+                d[key] = value.clone();
+            }
+        });
+        let (_, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(history_line(&report).contains(
+            "sweeps combining a guide rail with orientation, twist or scale are not mapped yet"
+        ));
+    }
+}
+
+#[test]
+fn solidcraft_replays_scaled_and_binormal_sweeps_and_surface_sweeps() {
+    let Some(cli) = solidcraft() else { return };
+    // Linear scaling from 1 to 2 gives area 100 * (1 + t)^2 over 10 mm.
+    let scaled = sweep_history(|d| d["scale"] = json!(2.0));
+    let volume = volumes(&cli, &written(&scaled).0);
+    let expected = 1000.0 * 7.0 / 3.0;
+    assert_eq!(volume.len(), 1);
+    assert!((volume[0] - expected).abs() / expected < dutchman_solidcraft::VOLUME_TOLERANCE);
+
+    let directed = sweep_history(|d| {
+        d["orientation"] = json!({"kind": "binormal",
+            "direction": {"x": 0.0, "y": 1.0, "z": 0.0}});
+    });
+    let volume = volumes(&cli, &written(&directed).0);
+    assert_eq!(volume.len(), 1);
+    assert!((volume[0] - 1000.0).abs() / 1000.0 < dutchman_solidcraft::VOLUME_TOLERANCE);
+
+    let surface = sweep_history(|d| {
+        d["shape"]["mode"] = json!("surface");
+        d["shape"].as_object_mut().unwrap().remove("op");
+    });
+    let boxes = bounds(&cli, &written(&surface).0);
+    assert_eq!(boxes.len(), 1);
+    for (actual, expected) in [
+        (boxes[0].0, [0.0, 0.0, 0.0]),
+        (boxes[0].1, [10.0, 10.0, 10.0]),
+    ] {
+        for (actual, expected) in actual.into_iter().zip(expected) {
+            assert!((actual - expected).abs() < 1e-6, "{boxes:?}");
+        }
+    }
+}
+
+#[test]
 fn sweeps_solidcraft_would_build_differently_flatten_the_history() {
     for (change, reason) in [
         (
             json!({"shape": {"mode": "surface", "section": {"kind": "unresolved", "value": null}}}),
-            "surface sweeps are not mapped yet",
+            "its profile is not a sketch profile",
         ),
         (
             json!({"path_extent": {"along_fraction": 0.5, "against_fraction": 0.0}}),
             "sweeps along part of their path are not mapped yet",
         ),
         (json!({"taper": 0.1}), "tapered sweeps are not mapped yet"),
-        (json!({"scale": 2.0}), "scaled sweeps are not mapped yet"),
         (
-            json!({"orientation": {"kind": "binormal", "direction": {"x": 0.0, "y": 0.0, "z": 1.0}}}),
-            "sweeps oriented by binormal are not mapped yet",
+            json!({"scale": 0.001}),
+            "sweep end scales outside 0.01 to 100 are not mapped yet",
+        ),
+        (
+            json!({"scale": 101.0}),
+            "sweep end scales outside 0.01 to 100 are not mapped yet",
+        ),
+        (
+            json!({"twist": 5.0 * std::f64::consts::TAU}),
+            "sweep twists beyond four turns are not mapped yet",
+        ),
+        (
+            json!({"orientation": {"kind": "frenet"}}),
+            "sweeps oriented by frenet are not mapped yet",
+        ),
+        (
+            json!({"transition": "right_corner"}),
+            "sweeps with corner transitions are not mapped yet",
+        ),
+        (
+            json!({"transformation": "linear"}),
+            "sweeps that change their profile along the path are not mapped yet",
+        ),
+        (
+            json!({"shape": {"mode": "solid", "op": "new_body",
+                "section": {"kind": "profile", "value": first_profile()},
+                "sections": [{"kind": "profile", "value": first_profile()}]}}),
+            "sweeps through several sections are not mapped yet",
         ),
         (
             json!({"transition": "round_corner"}),
@@ -366,7 +504,7 @@ fn sweeps_solidcraft_would_build_differently_flatten_the_history() {
                 .as_array()
                 .unwrap()
                 .iter()
-                .all(|f| f["type"] != "sweep"),
+                .all(|f| f["type"] != "sweep" && f["type"] != "surface_sweep"),
             "{reason}"
         );
         assert!(

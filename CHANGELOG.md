@@ -39,6 +39,9 @@ report's schema name changes when a field does).
 
 ### Feature history
 
+- Sweeps now carry end scale and fixed-binormal orientation, and sketch profiles can sweep into
+  surfaces; taper, corner transitions and changing sections remain unmapped.
+
 - Selected self-crossed straight sketch profiles map through their split regions; native sketch selections resolve when even-odd nesting identifies one region with its holes.
 
 - Lofts map resolved point and vertex ends and retain separate profile selections for sections

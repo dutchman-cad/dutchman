@@ -125,8 +125,10 @@ are symmetric or a full turn (CADIR does not state which way a revolve turns, so
 one-sided or two-sided revolve is not mapped); lofts through two to fifty profile or terminal point sections,
 open, smooth and solid, guided by up to two rails of sketch curves (sections can select
 separate regions of one sketch; resolved point and vertex ends become sketch points); sweeps of one sketch profile along
-sketch curves (whole path, square to it or held as drawn, optionally twisted or guided by one
-rail); spheres, and tori about the Z axis (boxes and cylinder primitives wait on cadmpeg
+sketch curves (whole path, solid or surface, square to it, held as drawn or with a fixed
+binormal, optionally twisted up to four turns and scaled at the end by 0.01–100, or guided by
+one rail without other orientation, twist or scale options; taper, explicit corner transitions
+and changing sections are not mapped); spheres, and tori about the Z axis (boxes and cylinder primitives wait on cadmpeg
 placing them); coils along any axis, travelling up or down it, of round or square section,
 turning either way (tapered coils, flat spirals and triangular sections are not mapped);
 simple, counterbore and countersink
