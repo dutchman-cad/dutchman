@@ -11,7 +11,7 @@
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 
-use dutchman_core::{Model, Report, Writer};
+use dutchman_core::{Check, Mode, Model, Report, Writer};
 use dutchman_solidcraft::{SolidCraftWriter, Verification, CLI_ENV};
 use serde_json::{json, Value};
 use zip::ZipArchive;
@@ -1881,5 +1881,78 @@ fn solidcraft_builds_the_base_flange_as_the_original() {
     assert_eq!(
         history_line(&report),
         "2 of 2 features mapped; verified against the original in SolidCraft"
+    );
+}
+
+/// The example cube under a timeline of `features`, each `(name, definition)`.
+fn cube_under(features: &[(&str, Value)]) -> Model {
+    let ir = cadmpeg_ir::examples::unit_cube().unwrap();
+    let mut wire = serde_json::to_value(&ir).unwrap();
+    wire["model"]["features"] = features
+        .iter()
+        .enumerate()
+        .map(|(i, (name, definition))| {
+            json!({"id": format!("inventor:model:feature#{i}"), "ordinal": i, "name": name,
+                   "suppressed": false, "definition": definition})
+        })
+        .collect();
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        fidelity: None,
+        name: "cube".to_owned(),
+        source_file: Some("cube.ipt".to_owned()),
+        assembly: None,
+    }
+}
+
+#[test]
+fn a_design_cadmpeg_decodes_no_feature_of_has_no_history_to_flatten() {
+    // An Inventor part made of a base solid: its one feature is kept in its native form.
+    let native = json!({"definition": "native", "kind": "InventorClass:0843c7c2"});
+    let model = cube_under(&[("Base1", native.clone())]);
+    let mut report = Report::default();
+    let outcome = SolidCraftWriter::new().plan(&model, &mut report);
+    assert_eq!(outcome.mode, Mode::Import);
+    assert_eq!(
+        outcome.check,
+        Check::NotApplicable(
+            "no feature history cadmpeg decodes: its one feature is kept in its native form"
+                .to_owned()
+        )
+    );
+    let model = cube_under(&[("Base1", native.clone()), ("Composite1", native.clone())]);
+    let mut report = Report::default();
+    SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .write(&model, &mut Vec::new(), &mut report)
+        .unwrap();
+    let written = report.outcome().unwrap();
+    assert!(report
+        .losses()
+        .iter()
+        .any(|loss| loss.detail.starts_with("not written: no feature history")));
+    assert_eq!(
+        written.check,
+        Check::NotApplicable(
+            "no feature history cadmpeg decodes: its 2 features are kept in their native form"
+                .to_owned()
+        )
+    );
+    // Beside a feature that does map, a native one still flattens the history.
+    let mut model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    if let Some(features) = wire["model"]["features"].as_array_mut() {
+        features.push(
+            json!({"id": "f3d:model:feature#9", "ordinal": 9, "name": "Base1",
+                             "suppressed": false, "definition": native}),
+        );
+    }
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let mut report = Report::default();
+    let outcome = SolidCraftWriter::new().plan(&model, &mut report);
+    assert!(
+        matches!(outcome.check, Check::Flattened(_)),
+        "{:?}",
+        outcome.check
     );
 }

@@ -21,7 +21,10 @@ mod verify;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use dutchman_core::{Check, Error, Mode, Model, Outcome, Report, Severity, Stage, Writer};
+use dutchman_core::{
+    Check, Error, FeatureOutcome, FeatureStatus, Mode, Model, Outcome, Report, Severity, Stage,
+    Writer,
+};
 use serde_json::Value;
 
 pub use verify::{
@@ -123,6 +126,7 @@ impl SolidCraftWriter {
         }
         let mut history_report = Report::default();
         let mapping = history::map(model, &mut history_report);
+        let undecoded = no_decoded_history(&mapping.features);
         match mapping.result {
             Ok(_) => {
                 report.append(history_report);
@@ -136,6 +140,11 @@ impl SolidCraftWriter {
                 mode: Mode::Import,
                 check: Check::NotApplicable(reason),
                 features: Vec::new(),
+            },
+            Err(_) if undecoded.is_some() => Outcome {
+                mode: Mode::Import,
+                check: Check::NotApplicable(undecoded.unwrap_or_default()),
+                features: mapping.features,
             },
             Err(reason) => Outcome {
                 mode: Mode::Import,
@@ -227,6 +236,30 @@ fn sheet_bodies(model: &Model) -> usize {
         .iter()
         .filter(|body| matches!(body.kind, BodyKind::Sheet | BodyKind::General))
         .count()
+}
+
+/// Why a design has no history to write, when cadmpeg decodes none of its features: every one
+/// it keeps (suppressed ones and those SolidCraft needs none for aside) is in its native form,
+/// as a part made of imported or base bodies is. Such a design converts as geometry with no
+/// history lost, rather than as a history flattened.
+fn no_decoded_history(features: &[FeatureOutcome]) -> Option<String> {
+    let kept: Vec<&FeatureOutcome> = features
+        .iter()
+        .filter(|f| matches!(f.status, FeatureStatus::Mapped | FeatureStatus::Blocked))
+        .collect();
+    let native = kept
+        .iter()
+        .all(|f| f.status == FeatureStatus::Blocked && f.kind == "native");
+    (!kept.is_empty() && native).then(|| {
+        format!(
+            "no feature history cadmpeg decodes: {}",
+            if kept.len() == 1 {
+                "its one feature is kept in its native form".to_owned()
+            } else {
+                format!("its {} features are kept in their native form", kept.len())
+            }
+        )
+    })
 }
 
 /// How many of the model's bodies are solids, each of which should have a volume.
@@ -344,8 +377,17 @@ impl Writer for SolidCraftWriter {
                 check: Check::Flattened(reason),
                 features: mapping.features.clone(),
             };
-            match &mapping.result {
-                Err(reason) => {
+            match (&mapping.result, no_decoded_history(&mapping.features)) {
+                (Err(_), Some(why)) => {
+                    report.push(Severity::Info, HISTORY, format!("not written: {why}"));
+                    let outcome = Outcome {
+                        mode: Mode::Import,
+                        check: Check::NotApplicable(why),
+                        features: mapping.features.clone(),
+                    };
+                    (self.import_design(model, &step, report)?, outcome)
+                }
+                (Err(reason), None) => {
                     report.push(Severity::Info, HISTORY, format!("flattened: {reason}"));
                     let outcome = if mapping.features.is_empty() {
                         Outcome {
@@ -358,7 +400,7 @@ impl Writer for SolidCraftWriter {
                     };
                     (self.import_design(model, &step, report)?, outcome)
                 }
-                Ok(history) => {
+                (Ok(history), _) => {
                     let written = self.history_design(model, history, &step, Live::History)?;
                     let summary =
                         format!("{} of {} features mapped", history.mapped, history.total);
