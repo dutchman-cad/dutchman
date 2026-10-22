@@ -1173,7 +1173,7 @@ dependencies = [
 
 [[package]]
 name = "dutchman-freecad"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "cadmpeg-ir",
  "dutchman-core",

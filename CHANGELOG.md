@@ -37,10 +37,6 @@ report's schema name changes when a field does).
   Dutchman does not run FreeCAD, so these histories are unverified. Geometry whose STEP uses
   replicated trimming curves (`CURVE_REPLICA`), which crash FreeCAD 1.1's reader, is refused.
 
-### cadmpeg
-
-
-
 ## 0.1.5 (2026-10-22)
 
 ### Inventor history, and FreeCAD in stable builds
