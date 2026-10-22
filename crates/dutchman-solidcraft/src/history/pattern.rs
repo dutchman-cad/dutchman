@@ -1,4 +1,4 @@
-//! Patterns of features, as SolidCraft patterns.
+//! Patterns of features or named bodies, as SolidCraft patterns.
 //!
 //! A linear pattern (in one or two directions) maps to a rectangular one. A circular pattern
 //! uses the same total span and instance count: partial spans include both ends, while a
@@ -14,6 +14,9 @@ use super::{name, Context};
 /// How far from a full turn (radians) a circular pattern may be and still be one.
 const FULL_TURN: f64 = 1e-9;
 
+/// Bound the work a pattern asks SolidCraft to replay.
+const MAX_INSTANCES: u64 = 10_000;
+
 /// Maps a pattern feature whose operation is `definition`.
 pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Result<Value, String> {
     let unresolved =
@@ -27,7 +30,11 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         } else {
             "it patterns nothing"
         })?;
+    if seeds.len() > 10_000 {
+        return Err("patterns with more than 10000 seeds are not supported yet".to_owned());
+    }
     let mut features = Vec::with_capacity(seeds.len());
+    let mut bodies = Vec::new();
     for seed in seeds {
         match seed.get("kind").and_then(Value::as_str) {
             Some("feature") => {
@@ -41,6 +48,18 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
                     .ok_or("it patterns a feature that did not map")?;
                 features.push(name.clone());
             }
+            Some("bodies") => {
+                bodies.extend(body_seeds(seed.get("value"), ctx)?);
+                if bodies.len() > 10_000 {
+                    return Err("patterns with more than 10000 body seeds are not supported yet".to_owned());
+                }
+            }
+            Some("faces") => {
+                return Err("patterns of faces are not supported yet: SolidCraft patterns repeat whole features or bodies".to_owned())
+            }
+            Some("occurrences") => {
+                return Err("patterns of occurrences are not supported yet: occurrence selections do not identify SolidCraft component definitions".to_owned())
+            }
             Some(other)
                 if seed.pointer("/value/kind").and_then(Value::as_str) == Some("native") =>
             {
@@ -52,8 +71,14 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
             None => return Err("its seed is malformed".to_owned()),
         }
     }
+    if !features.is_empty() && !bodies.is_empty() {
+        return Err("patterns mixing feature and body seeds are not supported yet: SolidCraft requires one seed kind".to_owned());
+    }
     let pattern = definition.get("pattern");
     if pattern.and_then(|p| p.get("kind")).and_then(Value::as_str) == Some("mirror") {
+        if !bodies.is_empty() {
+            return Err("mirrors of bodies are not mapped yet".to_owned());
+        }
         let plane = mirror_plane(pattern)?;
         let id = ctx.id();
         ctx.builds = true;
@@ -66,17 +91,154 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
             "plane": plane,
         }));
     }
-    let layout = layout(pattern)?;
+    let layout = mapped_layout(pattern, ctx)?;
     let id = ctx.id();
     ctx.builds = true;
-    Ok(json!({
+    let mut out = json!({
         "id": id,
         "name": name(feature).map(str::to_owned).unwrap_or_else(|| format!("Pattern{id}")),
         "type": "pattern",
         "suppressed": false,
         "features": features,
         "pattern": layout,
-    }))
+    });
+    if !bodies.is_empty() {
+        if let Some(fields) = out.as_object_mut() {
+            fields.insert("bodies".to_owned(), json!(bodies));
+        }
+    }
+    Ok(out)
+}
+
+/// Resolve path references as well as the layout's numeric fields.
+fn mapped_layout(pattern: Option<&Value>, ctx: &Context) -> Result<Value, String> {
+    let pattern = pattern.ok_or("it has no layout")?;
+    match pattern.get("kind").and_then(Value::as_str) {
+        Some("curve_driven") => path_layout(Some(pattern), ctx),
+        Some("composite") => {
+            let stages = pattern
+                .get("stages")
+                .and_then(Value::as_array)
+                .ok_or("its pattern stages are malformed")?;
+            if stages.len() == 1 {
+                let stage = stages.first().and_then(|stage| stage.get("pattern"));
+                if stage
+                    .and_then(|stage| stage.get("kind"))
+                    .and_then(Value::as_str)
+                    == Some("curve_driven")
+                {
+                    return path_layout(stage, ctx);
+                }
+            }
+            composite_layout(pattern)
+        }
+        _ => layout(Some(pattern)),
+    }
+}
+
+/// Resolve only bodies whose earlier history actually assigned a SolidCraft name.
+fn body_seeds(selection: Option<&Value>, ctx: &Context) -> Result<Vec<String>, String> {
+    let selection = selection.ok_or("its body selection is malformed")?;
+    let value = selection.get("value").unwrap_or(&Value::Null);
+    let ids: Vec<&Value> = match selection.get("kind").and_then(Value::as_str) {
+        Some("bodies") => value.as_array().map(|rows| rows.iter().collect()),
+        Some("resolved") => value
+            .get("bodies")
+            .and_then(Value::as_array)
+            .map(|rows| rows.iter().collect()),
+        Some("resolved_set") => value
+            .get("members")
+            .and_then(Value::as_array)
+            .map(|rows| rows.iter().filter_map(|row| row.get("body")).collect()),
+        Some("historical" | "historical_set") => {
+            return Err("patterns of historical bodies are not supported yet: their input topology has no mapped body names".to_owned())
+        }
+        Some("generated" | "local") => {
+            return Err("patterns of feature-local bodies are not supported yet: their persistent identities have no mapped body names".to_owned())
+        }
+        Some("native" | "native_set" | "unresolved") => {
+            return Err("patterns of bodies are not supported yet: cadmpeg does not resolve which bodies".to_owned())
+        }
+        _ => return Err("its body selection is malformed".to_owned()),
+    }
+    .filter(|ids: &Vec<&Value>| !ids.is_empty())
+    .ok_or("its body selection is empty")?;
+    if ids.len() > 10_000 {
+        return Err("patterns with more than 10000 body seeds are not supported yet".to_owned());
+    }
+    ids.into_iter()
+        .map(|id| {
+            let id = id.as_str().ok_or("its body selection is malformed")?;
+            let (_, name) = ctx
+                .named_bodies
+                .iter()
+                .find(|(known, _)| known == id)
+                .ok_or("it patterns a body without an earlier mapped name")?;
+            if ctx
+                .named_bodies
+                .iter()
+                .any(|(known, other)| known != id && other == name)
+            {
+                return Err("it patterns a body whose name is ambiguous".to_owned());
+            }
+            Ok(name.clone())
+        })
+        .collect()
+}
+
+/// Fixed arc-length copies keep their seed orientation; CADIR carries no orientation law.
+fn path_layout(pattern: Option<&Value>, ctx: &Context) -> Result<Value, String> {
+    let pattern = pattern.ok_or("it has no layout")?;
+    let path = pattern
+        .get("path")
+        .ok_or("its pattern path is not resolved")?;
+    let kind = path
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("unresolved");
+    let (sketch, curves) = if kind == "sketch" {
+        let id = path
+            .get("value")
+            .and_then(Value::as_str)
+            .ok_or("its pattern path sketch is malformed")?;
+        // A whole sketch supplies its neutral entity order, without construction geometry.
+        let curves: Vec<Value> = ctx
+            .arena("sketch_entities")
+            .iter()
+            .filter(|row| row.get("sketch").and_then(Value::as_str) == Some(id))
+            .filter(|row| row.get("construction").and_then(Value::as_bool) != Some(true))
+            .filter_map(|row| {
+                let entity = row.get("id")?.as_str()?;
+                ctx.sketches.get(id)?.curve(entity)?;
+                Some(json!(entity))
+            })
+            .collect();
+        let selection = json!({"kind": "sketch_curves", "value": {"sketch": id, "curves": curves}});
+        super::sweep::curves(Some(&selection), ctx, "pattern path")?
+    } else if kind == "sketch_curves" {
+        super::sweep::curves(Some(path), ctx, "pattern path")?
+    } else {
+        return Err(format!("pattern paths from {} are not supported yet: SolidCraft requires curves of an earlier mapped planar sketch", kind.replace('_', " ")));
+    };
+    let spacing = number(pattern.get("spacing"))
+        .filter(|spacing| *spacing > 0.0)
+        .ok_or("its spacing is malformed")?;
+    Ok(
+        json!({"type": "path", "path_sketch": sketch, "path": curves,
+        "count": instance_count(pattern.get("count"))?.to_string(),
+        "spacing": format!("{spacing} mm")}),
+    )
+}
+
+fn instance_count(value: Option<&Value>) -> Result<u64, String> {
+    let count = value
+        .and_then(Value::as_u64)
+        .filter(|count| *count >= 1)
+        .ok_or("its count is malformed")?;
+    if count > MAX_INSTANCES {
+        return Err("patterns with more than 10000 instances are not supported yet".to_owned());
+    }
+    Ok(count)
 }
 
 /// The SolidCraft plane of a CADIR mirror: through its point, square to its normal. Which two
@@ -106,14 +268,11 @@ fn mirror_plane(pattern: Option<&Value>) -> Result<Value, String> {
 /// The SolidCraft pattern layout for a CADIR pattern transform.
 fn layout(pattern: Option<&Value>) -> Result<Value, String> {
     let pattern = pattern.ok_or("it has no layout")?;
-    let count = |value: Option<&Value>| {
-        value
-            .and_then(Value::as_u64)
-            .filter(|count| *count >= 1)
-            .ok_or_else(|| "its count is malformed".to_owned())
-    };
     match pattern.get("kind").and_then(Value::as_str) {
-        Some("unresolved") => Err("cadmpeg does not decode its layout yet".to_owned()),
+        Some("unresolved") => {
+            let form = pattern.get("form").and_then(Value::as_str).unwrap_or("unknown");
+            Err(format!("cadmpeg does not decode its {} pattern layout yet", form.replace('_', " ")))
+        }
         Some("linear") => {
             let dir = v3(pattern.get("direction"))
                 .and_then(unit)
@@ -124,7 +283,7 @@ fn layout(pattern: Option<&Value>) -> Result<Value, String> {
             let mut out = json!({
                 "type": "rectangular",
                 "dir1": dir,
-                "count1": count(pattern.get("count"))?.to_string(),
+                "count1": instance_count(pattern.get("count"))?.to_string(),
                 "spacing1": format!("{spacing} mm"),
             });
             if let Some(second) = pattern.get("second").filter(|s| !s.is_null()) {
@@ -138,12 +297,41 @@ fn layout(pattern: Option<&Value>) -> Result<Value, String> {
                     fields.insert("dir2".to_owned(), json!(dir2));
                     fields.insert(
                         "count2".to_owned(),
-                        json!(count(second.get("count"))?.to_string()),
+                        json!(instance_count(second.get("count"))?.to_string()),
                     );
                     fields.insert("spacing2".to_owned(), json!(format!("{spacing2} mm")));
                 }
             }
+            let count1 = instance_count(pattern.get("count"))?;
+            let count2 = pattern
+                .get("second")
+                .filter(|second| !second.is_null())
+                .map(|second| instance_count(second.get("count")))
+                .transpose()?
+                .unwrap_or(1);
+            if count1.saturating_mul(count2) > MAX_INSTANCES {
+                return Err("patterns with more than 10000 instances are not supported yet".to_owned());
+            }
             Ok(out)
+        }
+        Some("linear_offsets") => {
+            let (count, spacing) = regular_locations(pattern.get("offsets"), "linear offsets")?;
+            layout(Some(&json!({"kind": "linear", "direction": pattern.get("direction"),
+                "spacing": spacing, "count": count})))
+        }
+        Some("circular_angles") => {
+            let (count, spacing) = regular_locations(pattern.get("angles"), "circular angles")?;
+            let span = spacing * (count.saturating_sub(1) as f64);
+            if count > 1 && (span - TAU).abs() <= FULL_TURN {
+                return Err("circular patterns repeating the seed at a full turn are not supported yet: SolidCraft omits the duplicate endpoint".to_owned());
+            }
+            let angle = if count == 1 || (spacing * count as f64 - TAU).abs() <= FULL_TURN {
+                TAU
+            } else {
+                span
+            };
+            layout(Some(&json!({"kind": "circular", "axis_origin": pattern.get("axis_origin"),
+                "axis_dir": pattern.get("axis_dir"), "angle": angle, "count": count})))
         }
         Some("circular") => {
             let origin = v3(pattern.get("axis_origin")).ok_or("its axis is malformed")?;
@@ -168,13 +356,110 @@ fn layout(pattern: Option<&Value>) -> Result<Value, String> {
                 "type": "circular",
                 "origin": origin,
                 "axis": axis,
-                "count": count(pattern.get("count"))?.to_string(),
+                "count": instance_count(pattern.get("count"))?.to_string(),
                 "angle": format!("{degrees} deg"),
             }))
         }
+        Some("composite") => composite_layout(pattern),
+        Some("scale") => Err("progressively scaled patterns are not supported yet: SolidCraft pattern commands have no scale option".to_owned()),
+        Some("mirror") => Err("composite patterns containing a mirror are not supported yet: SolidCraft has no ordered composite pattern command".to_owned()),
+        Some("curve_driven") => Err("composite patterns combining a path with other stages are not supported yet: SolidCraft has no ordered composite pattern command".to_owned()),
+        Some("mirror_reference") => Err("mirrors using a referenced plane are not mapped yet: its plane frame is not resolved".to_owned()),
         Some(other) => Err(format!("{other} patterns are not mapped yet")),
         None => Err("its layout is malformed".to_owned()),
     }
+}
+
+/// Explicit locations fit a regular pattern only when every interval is equal.
+fn regular_locations(value: Option<&Value>, what: &str) -> Result<(u64, f64), String> {
+    let locations = value
+        .and_then(Value::as_array)
+        .filter(|rows| !rows.is_empty())
+        .ok_or_else(|| format!("its {what} are malformed"))?;
+    let count = u64::try_from(locations.len()).map_err(|_| "its count is too large")?;
+    instance_count(Some(&json!(count)))?;
+    if number(locations.first()) != Some(0.0) {
+        return Err(format!("its {what} do not start at zero"));
+    }
+    let spacing = if count == 1 {
+        1.0
+    } else {
+        number(locations.get(1))
+            .filter(|value| *value > 0.0)
+            .ok_or_else(|| format!("its {what} are malformed"))?
+    };
+    for (index, location) in locations.iter().enumerate() {
+        let expected = spacing * index as f64;
+        let actual = number(Some(location)).ok_or_else(|| format!("its {what} are malformed"))?;
+        if (actual - expected).abs() > 1e-9 * expected.abs().max(1.0) {
+            return Err(format!("nonuniform {what} are not supported yet: SolidCraft patterns have no per-instance locations or skipped instances"));
+        }
+    }
+    Ok((count, spacing))
+}
+
+/// A pair of independent linear stages is exactly a two-direction rectangular pattern.
+fn composite_layout(pattern: &Value) -> Result<Value, String> {
+    let stages = pattern
+        .get("stages")
+        .and_then(Value::as_array)
+        .ok_or("its pattern stages are malformed")?;
+    if stages.len() == 1 {
+        return layout(stages.first().and_then(|stage| stage.get("pattern")));
+    }
+    if stages.len() == 2 {
+        let mut layouts = stages.iter().map(|stage| layout(stage.get("pattern")));
+        let first = layouts.next().transpose()?;
+        let second = layouts.next().transpose()?;
+        if let (Some(first), Some(second)) = (first, second) {
+            if first.get("type").and_then(Value::as_str) == Some("rectangular")
+                && second.get("type").and_then(Value::as_str) == Some("rectangular")
+                && first.get("dir2").is_none()
+                && second.get("dir2").is_none()
+            {
+                let count1 = first
+                    .get("count1")
+                    .and_then(Value::as_str)
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .ok_or("its count is malformed")?;
+                let count2 = second
+                    .get("count1")
+                    .and_then(Value::as_str)
+                    .and_then(|value| value.parse::<u64>().ok())
+                    .ok_or("its count is malformed")?;
+                if count1.saturating_mul(count2) > MAX_INSTANCES {
+                    return Err(
+                        "patterns with more than 10000 instances are not supported yet".to_owned(),
+                    );
+                }
+                let mut out = first;
+                if let Some(fields) = out.as_object_mut() {
+                    for (from, to) in [
+                        ("dir1", "dir2"),
+                        ("count1", "count2"),
+                        ("spacing1", "spacing2"),
+                    ] {
+                        if let Some(value) = second.get(from) {
+                            fields.insert(to.to_owned(), value.clone());
+                        }
+                    }
+                }
+                return Ok(out);
+            }
+        }
+    }
+    let kinds = stages
+        .iter()
+        .take(8)
+        .map(|stage| {
+            stage
+                .pointer("/pattern/kind")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        })
+        .collect::<Vec<_>>()
+        .join(" then ");
+    Err(format!("composite patterns with {} stages ({kinds}) are not supported yet: SolidCraft has no ordered composite pattern command", stages.len()))
 }
 
 #[cfg(test)]
@@ -245,11 +530,11 @@ mod tests {
                 json!({"seeds": [{"kind": "faces", "value": {"kind": "native", "value": "n"}}],
                 "pattern": {"kind": "circular"}})
             ),
-            "patterns of faces are not mapped yet: cadmpeg does not resolve which"
+            "patterns of faces are not supported yet: SolidCraft patterns repeat whole features or bodies"
         );
         assert_eq!(
             layout(Some(&json!({"kind": "unresolved", "form": "mirror"}))).unwrap_err(),
-            "cadmpeg does not decode its layout yet"
+            "cadmpeg does not decode its mirror pattern layout yet"
         );
     }
 }

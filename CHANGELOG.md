@@ -22,6 +22,7 @@ report's schema name changes when a field does).
   revolves short of a full turn, and an axis drawn in the profile's sketch (kept as that
   line). Ends at a face, vertex or body and other face makers stop the history with a reason
   that names them.
+- Patterns map named bodies, planar sketch paths, regular explicit offsets and angles, and two linear composite stages; unsupported pattern options receive specific refusals.
 - A second issue form, **A file didn't convert**, reports one file: its format, the versions,
   the operating system, what was expected and what happened, and that file's anonymous
   report. Both forms list FreeCAD documents (`.FCStd`), and the agent skill does too.

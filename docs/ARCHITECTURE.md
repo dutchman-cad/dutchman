@@ -152,8 +152,10 @@ chamfered entries map as countersinks; a tapped hole keeps its resolved bore and
 metric thread label (`M6x1`, the pitch from the designation, the source, or the coarse
 series), and the thread's hand, class, and length are reported as Degraded, not mapped;
 entry recesses combined with drill points, exit treatments, taper, and modeled threads are not mapped;
-patterns of earlier features, linear in one or
-two directions, or circular over a partial span or all the way round, and mirrors of earlier
+patterns of earlier features or named bodies, linear in one or
+two directions, circular over a partial span or all the way round, or at fixed spacing along
+planar sketch curves; regular explicit offsets and angles, and pairs of linear composite
+stages, with at most 10,000 instances per pattern; and mirrors of earlier
 features across a plane (features are named uniquely on the timeline,
 since SolidCraft patterns refer to them by name). Parameters keep their expressions where SolidCraft reads them the same way, else
 their evaluated values.
