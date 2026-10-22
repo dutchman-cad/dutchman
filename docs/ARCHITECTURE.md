@@ -264,3 +264,12 @@ Settled 2026-10-20:
 3. Crates: the CLI is `dutchman`; `dutchman-cad` is reserved for a library facade.
 4. Output checks: golden files block CI; the SolidCraft round-trip job does not.
 5. Output form: the design container, as SolidCraft writes an import.
+
+## FreeCAD macro writer
+
+`dutchman-freecad` implements the same `Writer` seam for `.FCMacro`. It consumes the
+SolidCraft adapter's mapped-history data through a small workspace interface, sharing
+CADIR mapping and refusals without changing those history modules. It emits escaped data
+and fixed Python API calls, with guarded STEP restatement reused for the original geometry.
+Each placed part is rebuilt independently or kept as STEP. The macro keeps original geometry
+for runtime recovery. CLI, batch, MCP and the GUI share the output adapter selector.

@@ -28,6 +28,7 @@ freecad = ["dutchman-core/freecad"]
 aho-corasick.workspace = true
 clap.workspace = true
 dutchman-core.workspace = true
+dutchman-freecad.workspace = true
 dutchman-solidcraft.workspace = true
 getrandom.workspace = true
 serde_json.workspace = true

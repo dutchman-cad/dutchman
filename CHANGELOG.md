@@ -75,6 +75,14 @@ report's schema name changes when a field does).
   where it is stored, so the assembly's other joints keep their motion.
 - Leaving out a FreeCAD document's hidden bodies no longer takes their sketches with them.
 
+- A grounded joint in a FreeCAD assembly becomes a rigid joint to the design, holding its part
+  where it is stored, so the assembly's other joints keep their motion. It was left out ("a
+  joint to the ground alone is not converted yet").
+- Leaving out a FreeCAD document's hidden bodies no longer takes their sketches with them: a
+  sketch's own wire body is hidden, and only the hidden bodies' own B-rep is left out now.
+  Every FreeCAD history had stopped at its first sketch ("the sketch it binds is missing")
+  once cadmpeg marks those bodies hidden.
+
 ### Assemblies
 
 - An Inventor assembly that places no parts, as Inventor's own assembly templates do,
@@ -93,6 +101,77 @@ report's schema name changes when a field does).
 ### Getting started
 
 - A file that cannot be read as its format (cut short, damaged or misnamed) says how to
+  recover: copy it again or check its extension, and report it anonymously if the original
+  opens. The CLI and the MCP tools give the same advice.
+- The desktop app says what to check when its window cannot start (a desktop session and
+  working graphics drivers), and exits with that advice when graphics start stalls for 30
+  seconds instead of waiting.
+- The guide and CONTRIBUTING start problem reports from an anonymous report, explain the
+  sample cube's expected warnings, and the MCP tool descriptions say exactly what
+  `convert_all` writes and that a successful `inspect` does not mean a file converts.
+
+### FreeCAD output
+
+- Add FreeCAD rebuild macros through `--to freecad`, MCP and the desktop app, with embedded STEP recovery.
+
+### Feature history
+
+- More holes map: at a directed position without a sketch, on an axis through the cap of the
+  extrusion before them, at selected sketch points and centres, with a drill-point form, and
+  ending at that earlier cap. A tapered hole is not mapped yet.
+
+- The report says why a tapered coil, a flat spiral or a coil of triangular section is not
+  mapped: SolidCraft's coil has no such option.
+
+- Extrudes that start or end at a planar face of an earlier body, one-sided extrudes with a
+  taper, start offsets against the sketch normal, and two-sided revolves with equal angles
+  map to SolidCraft.
+
+- Sweeps now carry end scale and fixed-binormal orientation, and sketch profiles can sweep into
+  surfaces; taper, corner transitions and changing sections remain unmapped.
+
+- Selected self-crossed straight sketch profiles map through their split regions; native sketch selections resolve when even-odd nesting identifies one region with its holes.
+
+- Lofts map resolved point and vertex ends and retain separate profile selections for sections
+  that share a sketch.
+
+- Coils map to SolidCraft coils: along any axis, up or down it, of round or square section,
+  inside, centred on or outside their path, turning either way, by turns and pitch, turns and
+  height, or height and pitch. Tapered coils, flat spirals and triangular sections are not
+  mapped yet.
+
+- Circular feature patterns over a partial turn now map with copies at both ends of the span.
+- Counterbore and countersink holes at a sketch's points map to SolidCraft holes, through all
+  or to a flat-bottomed depth. One with a drill point at its bottom is not mapped yet.
+- Coils map to SolidCraft coils: up the Z axis, of round or square section, inside, centred on
+  or outside their path, turning either way, by turns and pitch, turns and height, or height and
+  pitch. Tapered coils, flat spirals and triangular sections are not mapped yet.
+- When cadmpeg's STEP writer leaves out a helix surface (the swept face of a coil or thread),
+  the report says so in plain words (`Degraded`, `geometry`): the solid it bounds opens without
+  it, with no volume.
+- A solid line drawn across a sketch profile from one point of its boundary to another, such
+  as the diagonals of an Inventor centre-point rectangle, is written as construction when the
+  sketch's profile table takes that profile whole: solid, it would split the profile, and
+  SolidCraft found no profile to match. cadmpeg does not yet say which Inventor sketch curves
+  are construction. The report says how many lines were written so (`Info`).
+
+### Parameters
+
+- A design holding parameters and nothing else (no features, no geometry), as a Fusion
+  design other designs take their parameters from, converts as a SolidCraft design of those
+  parameters, with verification `not_applicable` ("the design holds 11 parameters and no
+  geometry") and an `Info` line, instead of failing for want of geometry. A design with no
+  bodies at all and no parameters now fails up front, saying it has no geometry, rather
+  than writing an empty import SolidCraft cannot open.
+
+### Reports
+
+- A design none of whose features cadmpeg decodes, such as an Inventor part made of a base
+  solid, has no history to write: it converts as geometry with verification `not_applicable`
+  ("no feature history cadmpeg decodes: its one feature is kept in its native form") and an
+  `Info` line, not as a history flattened. A native feature beside ones that map still
+  flattens the history, as before.
+
   recover, in the CLI and the MCP tools alike.
 - The desktop app says what to check when its window cannot start, and exits with that advice
   when graphics start stalls for 30 seconds.

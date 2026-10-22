@@ -152,3 +152,16 @@ or span parameters still need a loss. Bounded parabolas and hyperbolas, elliptic
 up to one turn, rational quadratic Béziers, and equal-weight rational splines map; selected
 multi-piece elliptical arcs, unbounded conics, other weighted/nonuniform splines, and text without
 solved outlines still prevent the sketch's history from mapping.
+
+### FreeCAD output (experimental)
+
+When FreeCAD is the requested destination, pass `to: "freecad"` to `convert` or
+`convert_all`; use an output path ending in `.FCMacro` for a single conversion. The CLI
+form is `dutchman convert INPUT --to freecad -o OUTPUT.FCMacro`. This does not require the
+FreeCAD input feature. Tell the user to run the result in FreeCAD with **Macro > Macros… >
+Execute**, or `freecadcmd OUTPUT.FCMacro`, then save the document as `.FCStd` if needed.
+The macro embeds original STEP geometry; parts whose features cannot be rebuilt remain
+imported geometry. Explain `history.features` and their reasons, and that the history is
+unverified until the macro runs. The original remains available for comparison; a runtime
+failure restores it and warns in FreeCAD. Parameter values are kept; source expressions
+remain inert text. See `docs/guide.md#freecad-output` for the supported cases and limits.

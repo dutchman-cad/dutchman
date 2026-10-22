@@ -15,13 +15,61 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub use dutchman_core::PartSearch;
-use dutchman_core::{Error, Format, Report};
+use dutchman_core::{Error, Format, Model, Report, Writer};
 use dutchman_solidcraft::{SolidCraftWriter, Verification, DEFAULT_TIMEOUT};
 use serde_json::{json, Value};
+
+/// The format written by a conversion; independent of FreeCAD input support.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum OutputFormat {
+    #[default]
+    Solidcraft,
+    Freecad,
+}
+
+impl OutputFormat {
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Solidcraft => "solidcraft",
+            Self::Freecad => "FCMacro",
+        }
+    }
+}
+
+/// The selected output adapter.
+#[derive(Clone, Debug)]
+pub enum OutputWriter {
+    SolidCraft(SolidCraftWriter),
+    FreeCad(dutchman_freecad::FreeCadWriter),
+}
+
+impl Writer for OutputWriter {
+    fn extension(&self) -> &'static str {
+        match self {
+            Self::SolidCraft(writer) => writer.extension(),
+            Self::FreeCad(writer) => writer.extension(),
+        }
+    }
+
+    fn write(
+        &self,
+        model: &Model,
+        out: &mut dyn std::io::Write,
+        report: &mut Report,
+    ) -> Result<(), Error> {
+        match self {
+            Self::SolidCraft(writer) => writer.write(model, out, report),
+            Self::FreeCad(writer) => writer.write(model, out, report),
+        }
+    }
+}
 
 /// How a design is converted.
 #[derive(Clone, Debug, clap::Args)]
 pub struct ConvertOptions {
+    /// Output format: SolidCraft design or a self-contained FreeCAD rebuild macro.
+    #[arg(long, value_enum, default_value = "solidcraft")]
+    pub to: OutputFormat,
     /// Write the geometry as one non-parametric import, never the feature history.
     #[arg(long)]
     pub import_only: bool,
@@ -53,6 +101,7 @@ pub struct ConvertOptions {
 impl Default for ConvertOptions {
     fn default() -> Self {
         Self {
+            to: OutputFormat::default(),
             import_only: false,
             solidcraft: None,
             no_verify: false,
@@ -83,11 +132,18 @@ impl ConvertOptions {
     }
 
     /// The writer these options describe.
-    pub fn writer(&self) -> SolidCraftWriter {
-        SolidCraftWriter::new()
-            .import_only(self.import_only)
-            .verification(self.verification())
-            .timeout(Duration::from_secs(self.verify_timeout))
+    pub fn writer(&self) -> OutputWriter {
+        match self.to {
+            OutputFormat::Solidcraft => OutputWriter::SolidCraft(
+                SolidCraftWriter::new()
+                    .import_only(self.import_only)
+                    .verification(self.verification())
+                    .timeout(Duration::from_secs(self.verify_timeout)),
+            ),
+            OutputFormat::Freecad => OutputWriter::FreeCad(
+                dutchman_freecad::FreeCadWriter::new().import_only(self.import_only),
+            ),
+        }
     }
 }
 
@@ -97,7 +153,7 @@ impl ConvertOptions {
 pub fn convert(
     input: &Path,
     output: &Path,
-    writer: &SolidCraftWriter,
+    writer: &dyn Writer,
     replace: bool,
     search: &PartSearch,
 ) -> Value {
@@ -110,9 +166,18 @@ pub fn convert(
 /// The `dutchman.convert/1` report of a conversion that succeeded.
 pub fn convert_success(input: &Path, output: &Path, report: &Report) -> Value {
     let mut out = json::success(json::CONVERT, json::input(input), report);
+    let format = if output
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("FCMacro"))
+    {
+        dutchman_freecad::FORMAT
+    } else {
+        dutchman_solidcraft::FORMAT
+    };
     out.insert(
         "output".to_owned(),
-        json!({"path": output.display().to_string(), "format": dutchman_solidcraft::FORMAT}),
+        json!({"path": output.display().to_string(), "format": format}),
     );
     Value::Object(out)
 }

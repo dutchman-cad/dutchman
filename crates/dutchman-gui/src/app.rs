@@ -428,6 +428,23 @@ impl App {
             );
             ui.add_space(theme::SPACE_2);
             ui.add_enabled_ui(!self.running(), |ui| {
+                egui::ComboBox::from_label("Output format")
+                    .selected_text(match self.options.to {
+                        dutchman::OutputFormat::Solidcraft => "SolidCraft",
+                        dutchman::OutputFormat::Freecad => "FreeCAD macro",
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.options.to,
+                            dutchman::OutputFormat::Solidcraft,
+                            "SolidCraft",
+                        );
+                        ui.selectable_value(
+                            &mut self.options.to,
+                            dutchman::OutputFormat::Freecad,
+                            "FreeCAD macro",
+                        );
+                    });
                 ui.checkbox(
                     &mut self.options.import_only,
                     "Write geometry only, without feature history",
@@ -652,6 +669,15 @@ fn row_ui(
             let Some(output) = output else { return };
             if ui.button("Show in folder").clicked() {
                 action = Some(Action::Reveal(output.clone()));
+            }
+            if output
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("FCMacro"))
+            {
+                ui.label("Run macro in FreeCAD")
+                    .on_hover_text("In FreeCAD, choose Macro > Macros… > Execute.");
+                return;
             }
             let open = ui.button("Open in SolidCraft");
             let open = if has_app {

@@ -248,7 +248,12 @@ pub fn write(
         Some(salt) => salt.clone(),
         None => Salt::random()?,
     };
-    let solidcraft = dutchman_solidcraft::solidcraft_version(&options.verification());
+    let solidcraft = match options.to {
+        crate::OutputFormat::Solidcraft => {
+            dutchman_solidcraft::solidcraft_version(&options.verification())
+        }
+        crate::OutputFormat::Freecad => None,
+    };
     let run = Run {
         verify: solidcraft.is_some(),
         solidcraft,

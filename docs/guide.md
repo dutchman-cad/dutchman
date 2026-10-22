@@ -540,3 +540,45 @@ and requested reports.
 | `part.f3d: the file is … bytes, over Dutchman's 1073741824-byte limit` | Dutchman opens files up to 1 GiB. |
 | `history: …; unverified: …` | Not an error: the history was written without the SolidCraft check. Install `solidcraft-cli`, or point `--solidcraft` or `SOLIDCRAFT_CLI` at it, and convert again. |
 | `history: flattened: replay differs (…)` | Not an error: the history did not rebuild the same shape in SolidCraft, so the geometry was written instead. `--no-verify` keeps the history, unchecked. |
+
+## FreeCAD output
+
+Write a self-contained FreeCAD rebuild macro instead of a SolidCraft design:
+
+```sh
+dutchman convert in.f3d --to freecad -o out.FCMacro
+```
+
+The positional output path still works. `convert-all --to freecad --out-dir DIR` writes
+`.FCMacro` files; the desktop app's **Output format** choice offers **FreeCAD macro** too.
+This output works independently of the `freecad` feature used to read `.FCStd` inputs.
+
+The macro makes a Body for each placed part, preserving nested assembly placements. It
+uses Dutchman's existing history mapping and timeline order to rebuild planar sketches
+(lines, circles, arcs, ellipses and supported B-splines), constraints, pads and pockets,
+full-turn or symmetric revolves, unguided lofts, sweeps, simple holes, linear and circular
+feature patterns, spheres, tori and coils. Numeric feature values are retained. A parameter
+object keeps evaluated scalar values and source expressions as text; source expressions
+are never executed. Coils are rebuilt with Part geometry and stored as a feature, with
+numeric properties; editing those properties does not recompute the coil.
+
+A part whose history cannot be rebuilt is kept as an embedded STEP solid or surface in a
+Body. Examples include unresolved source selections, intersect operations, fixed-orientation,
+guided or twisted sweeps and lofts, two-direction patterns, and histories spanning multiple
+bodies. The report gives one result per source feature, including the reason each feature
+was not rebuilt. `--import-only` keeps every part as STEP. Assemblies retain placements;
+joints are not rebuilt. Pattern counts are limited to 10,000.
+
+Open the macro in FreeCAD with **Macro > Macros… > Execute**, or run:
+
+```sh
+freecadcmd out.FCMacro
+```
+
+The macro creates a new document; save it as `.FCStd` from FreeCAD. The command-line form
+creates the document in memory and does not save it automatically. No FreeCAD installation
+is needed to generate a macro. Dutchman does not run FreeCAD during conversion, so these
+histories are reported as unverified. The original STEP geometry remains in the document,
+hidden after a successful rebuild. The macro compares rebuilt geometry with STEP; a rebuild failure or difference restores
+the original and prints a warning in
+FreeCAD's report view. Temporary STEP files are removed after reading.
