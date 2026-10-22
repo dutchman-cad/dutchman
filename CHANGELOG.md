@@ -10,6 +10,11 @@ report's schema name changes when a field does).
 
 ### Reports
 
+- A pattern cadmpeg does not decode says so ("cadmpeg does not decode what it repeats or how
+  yet", "… its layout yet", "patterns of faces are not mapped yet: cadmpeg does not resolve
+  which") instead of "it patterns nothing", which now means a pattern that really repeats
+  nothing.
+
 - A design SolidCraft opens with faces missing says so plainly: "SolidCraft opens 52 of the 53
   faces converted: 1 face is missing there", in place of "SolidCraft shows 52 of its 53
   faces". The guide says what to do about it.
