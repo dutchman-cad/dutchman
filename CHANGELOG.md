@@ -8,6 +8,7 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+- Sweeps accept single-curve whole-sketch paths and guide rails, and report specific reasons for unsupported corner transitions, section laws, tangent extension, and simplification.
 - A second issue form, **A file didn't convert**, reports one file: its format, the versions,
   the operating system, what was expected and what happened, and that file's anonymous
   report. Both forms list FreeCAD documents (`.FCStd`), and the agent skill does too.

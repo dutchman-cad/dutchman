@@ -52,6 +52,11 @@ Call `inspect` with `input`. It writes nothing. Read:
 - `history.features`: each feature's `status`; a `blocked` one has a `reason`.
 - `losses`: everything that will not carry across intact.
 
+Sweep histories support twist, end scale, supported orientations, and one guide rail, with
+single-curve whole sketches accepted as paths or rails. A blocked sweep's reason names
+unsupported corner transitions, section interpolation, tangent-path extension or
+simplification. Explain that the converted design keeps its original geometry.
+
 Tell the user what to expect in one or two sentences before converting, for example: "This
 part has one body. Its history won't carry across (the fillet isn't supported yet), so you'll
 get the solid shape without the feature history."

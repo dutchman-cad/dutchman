@@ -417,6 +417,12 @@ and patterns so far), the design keeps that history, editable, with the original
 kept beside it as a suppressed import named "Original geometry (imported)". Otherwise the
 design is the geometry alone, and the report says which feature stopped the history.
 
+Sweeps accept ordered sketch curves, or a whole sketch containing a single non-construction
+curve, for their path and optional guide rail. Taper, explicit right or round corners,
+changing sections, tangent-path extension, and post-sweep simplification keep the original
+geometry and report the unsupported option. Twist, end scale, and the supported orientations
+remain editable; a guide rail requires the default orientation without twist or scale.
+
 A converted history is checked by replaying it in `solidcraft-cli` and comparing the bodies
 and their volumes with the original. The result is in the `history:` line of the report, and
 in `verification.status` in `--json`:
