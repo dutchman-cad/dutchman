@@ -53,6 +53,15 @@ report's schema name changes when a field does).
   bounded by them, so the replay failed and the history was flattened. Any other such selection
   is reported as not mapped yet.
 
+### Assemblies and components
+
+- A fixed joint whose parts' stored placements already meet, with its frames opposed or (as
+  Fusion mates a flipped joint) aligned, holds them where they are, as revolute and slider
+  joints already did, instead of turning one part over to mate the frames opposed. Fusion's
+  files do not yet say which joints are flipped; a part only a flipped joint places, such as
+  a design inserted into an archive, can still come out turned over.
+
+
 ## 0.1.3 (2026-10-21)
 
 ### Formats

@@ -649,9 +649,11 @@ fn place_by_joints(assembly: &mut Assembly) -> Vec<String> {
     notes
 }
 
-/// A revolute or slider joint as it holds its parts where they are placed (`a` and `b`, in the
-/// world), when they already turn or slide on its axis there: its frames' z axes parallel or
-/// opposed, and their origins apart only along them (to a micrometre). Its value is measured
+/// A joint as it holds its parts where they are placed (`a` and `b`, in the world), when they
+/// already turn or slide on its axis there: its frames' z axes parallel or opposed, and their
+/// origins apart only along them (to a micrometre); for a fixed joint, its frames' origins
+/// and x axes together. Fusion mates a joint's frames opposed or, flipped, aligned, and its
+/// files do not say which, so placements that hold a joint either way keep it. Its value is measured
 /// from the placements (a revolute's within a half turn either way), and B's frame
 /// is taken from where A's meets it, so what else lies between the frames (a revolute's shift
 /// along its axis, a slider's turn about it) is kept as built. A revolute's limits are left
@@ -674,7 +676,12 @@ fn as_built(
     }
     let mut note = None;
     let motion = match joint.motion {
-        Motion::Rigid => return None,
+        Motion::Rigid => {
+            if (r00 - 1.0).abs() > 1e-9 || z.abs() > 1e-3 {
+                return None;
+            }
+            Motion::Rigid
+        }
         Motion::Revolute { limits, .. } => {
             let angle = r10.atan2(r00);
             let limits = match limits {
@@ -2034,6 +2041,43 @@ mod tests {
             notes,
             ["joint 1: its limits are left out: its angle lies outside them"]
         );
+    }
+
+    #[test]
+    fn a_fixed_joint_its_parts_already_meet_either_way_holds_them_as_built() {
+        // Block 2 stored where block 1 is, their joint frames coinciding with z the same way:
+        // Fusion mated them flipped. They stay; the joint is not turned over to mate them.
+        let rows = |turned: f64| {
+            let mut second = placed(2, "block", inside(0), 0.0);
+            second["transform"] = json!(at([0.0, 0.0, 0.0], turned));
+            json!([
+                placed(0, "frame", root(), 100.0),
+                placed(1, "block", inside(0), 0.0),
+                second
+            ])
+        };
+        let joined = |turned: f64| {
+            let model = with_joints(
+                nested(false, Some(rows(turned))),
+                json!([joint(
+                    1,
+                    json!({"kind": "fixed"}),
+                    connector_at(2, &[], IDENTITY),
+                    connector_at(1, &[], IDENTITY)
+                )]),
+            );
+            let (assembly, notes) = local_components(&model).unwrap().unwrap();
+            assert!(notes.is_empty(), "{notes:?}");
+            let world = world_at(&assembly, &[0, 1]).unwrap();
+            let joint = assembly.joints[0].clone();
+            let a = compose(&world, &joint.frame_a);
+            let b = compose(&world_at(&assembly, &[0, 0]).unwrap(), &joint.frame_b);
+            assert!(near(&compose(&a, &joint.meeting()), &b), "{joint:?}");
+            world
+        };
+        assert!(near(&joined(0.0), &at([100.0, 0.0, 0.0], 0.0)));
+        // Turned about the axis, the parts do not meet as the joint says: it places them.
+        assert!(!near(&joined(0.3), &at([100.0, 0.0, 0.0], 0.3)));
     }
 
     #[test]
