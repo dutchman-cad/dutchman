@@ -8,6 +8,9 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+- The desktop app prints `--version` and `--help` without opening a window, shows its version
+  in the title, and has a **Report a problem** link to the **A file didn't convert** form. An
+  unreadable-file error links to that form too.
 - A second issue form, **A file didn't convert**, reports one file: its format, the versions,
   the operating system, what was expected and what happened, and that file's anonymous
   report. Both forms list FreeCAD documents (`.FCStd`), and the agent skill does too.

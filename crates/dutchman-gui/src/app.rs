@@ -339,6 +339,7 @@ impl App {
                 }
             });
         });
+        ui.hyperlink_to("Report a problem", crate::REPORT_PROBLEM_URL);
     }
 
     fn inputs_panel(&mut self, ui: &mut egui::Ui) {

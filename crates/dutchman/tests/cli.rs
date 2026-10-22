@@ -85,7 +85,7 @@ fn an_unreadable_archive_suggests_recovery_in_text_and_json() {
     let stderr = String::from_utf8_lossy(&text.stderr);
     assert!(stderr.contains("download or copy it again"), "{stderr}");
     assert!(stderr.contains("check its extension"), "{stderr}");
-    assert!(stderr.contains("testing-your-library.md"), "{stderr}");
+    assert!(stderr.contains("template=file-did-not-convert.yml"), "{stderr}");
     let json = dutchman(&["convert", "--json", args[0], args[1]]);
     assert_eq!(json.status.code(), Some(1));
     assert!(json.stderr.is_empty());

@@ -1,8 +1,10 @@
 //! `dutchman-gui`: the desktop app. See the crate's library for how it is built.
 
-// No console window behind the app on Windows.
+// No console window behind the app on Windows. `--version` and `--help` still print when the
+// output is redirected; `dutchman --version` is the way to read the version from a terminal.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+use std::ffi::OsString;
 use std::process::ExitCode;
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
 use std::time::Duration;
@@ -12,12 +14,63 @@ const GRAPHICS_HELP: &str =
     (X11 or Wayland with OpenGL on Linux). Run dutchman-gui from a terminal and include its \
     diagnostics when reporting startup trouble. You can still convert files with dutchman convert.";
 
+const HELP: &str = "Convert native CAD designs into SolidCraft designs in a desktop window.
+
+Usage: dutchman-gui [OPTIONS]
+
+Options:
+  -h, --help     Print help and exit
+  -V, --version  Print version and exit
+
+Run without options to open the window, then add designs or folders to convert.";
+
+#[derive(Debug, PartialEq, Eq)]
+enum Startup {
+    Window,
+    Help,
+    Version,
+}
+
+/// Parses arguments after the program name without starting graphics or reading the environment.
+fn parse_args(args: impl IntoIterator<Item = OsString>) -> Result<Startup, String> {
+    let mut startup = Startup::Window;
+    for arg in args {
+        match arg.to_str() {
+            Some("--help" | "-h") => startup = Startup::Help,
+            Some("--version" | "-V") if startup != Startup::Help => startup = Startup::Version,
+            Some("--version" | "-V") => {}
+            _ => {
+                return Err(format!(
+                    "unknown argument '{}'. Run dutchman-gui --help for usage.",
+                    arg.to_string_lossy()
+                ));
+            }
+        }
+    }
+    Ok(startup)
+}
+
 /// Stop a driver that stalls before eframe can return a startup error.
 fn graphics_timed_out(ready: Receiver<()>, timeout: Duration) -> bool {
     matches!(ready.recv_timeout(timeout), Err(RecvTimeoutError::Timeout))
 }
 
 fn main() -> ExitCode {
+    match parse_args(std::env::args_os().skip(1)) {
+        Ok(Startup::Help) => {
+            println!("{HELP}");
+            return ExitCode::SUCCESS;
+        }
+        Ok(Startup::Version) => {
+            println!("dutchman-gui {}", env!("CARGO_PKG_VERSION"));
+            return ExitCode::SUCCESS;
+        }
+        Err(err) => {
+            eprintln!("dutchman-gui: {err}");
+            return ExitCode::from(2);
+        }
+        Ok(Startup::Window) => {}
+    }
     let (ready, receiver) = channel();
     let watchdog = match std::thread::Builder::new()
         .name("graphics-startup".to_owned())
@@ -37,7 +90,7 @@ fn main() -> ExitCode {
     };
     let initialized = ready.clone();
     let result = eframe::run_native(
-        "Dutchman",
+        dutchman_gui::WINDOW_TITLE,
         dutchman_gui::options(),
         Box::new(move |cc| {
             // eframe creates the window and renderer before calling the app creator.
@@ -64,6 +117,27 @@ fn finish(result: eframe::Result) -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_arguments_choose_text_or_a_window() {
+        assert_eq!(parse_args([]), Ok(Startup::Window));
+        for arg in ["--version", "-V"] {
+            assert_eq!(parse_args([OsString::from(arg)]), Ok(Startup::Version));
+        }
+        for arg in ["--help", "-h"] {
+            assert_eq!(parse_args([OsString::from(arg)]), Ok(Startup::Help));
+        }
+        for arg in ["--unknown", "part.f3d"] {
+            let message = parse_args([OsString::from(arg)]).unwrap_err();
+            assert!(message.contains(arg));
+            assert!(message.contains("--help"));
+        }
+        assert_eq!(
+            parse_args(["--version", "--help"].map(OsString::from)),
+            Ok(Startup::Help)
+        );
+        assert!(parse_args(["--help", "--unknown"].map(OsString::from)).is_err());
+    }
 
     #[test]
     fn graphics_startup_has_a_deadline_until_ready_or_cancelled() {

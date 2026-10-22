@@ -15,7 +15,7 @@ use cadmpeg_registry::{
     forced_input, InputCatalog, ResolveSourceError, ResolvedSource, DETECTION_PREFIX_LEN,
 };
 
-use crate::{Error, Format, Model, Report, Severity, Stage, MAX_INPUT_BYTES};
+use crate::{Error, Format, Model, Report, Severity, Stage, FILE_DID_NOT_CONVERT, MAX_INPUT_BYTES};
 
 /// cadmpeg's desktop ceilings in salvage mode: a successful decode keeps going past a loss
 /// and reports it, rather than refusing the whole file. The input cap is Dutchman's own.
@@ -192,8 +192,8 @@ fn decode_failure(format: Format, err: DecodeFailure) -> Error {
     if recovery {
         Error::Decode(format!(
             "{cause}. The file may be incomplete or not a {} file; download or copy it again, \
-             or check its extension. If the original opens in {}, see the anonymous reporting \
-             guide: https://github.com/dutchman-cad/dutchman/blob/main/docs/testing-your-library.md",
+             or check its extension. If the original opens in {}, report it with the file's \
+             anonymous report: {FILE_DID_NOT_CONVERT}",
             format.name(),
             format.family()
         ))

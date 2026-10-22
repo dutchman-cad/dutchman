@@ -96,6 +96,10 @@ impl Error {
 /// Where Dutchman's release builds are.
 pub const RELEASES: &str = "https://github.com/dutchman-cad/dutchman/releases";
 
+/// The issue form for one file that did not convert.
+pub const FILE_DID_NOT_CONVERT: &str =
+    "https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml";
+
 /// What to do with a file of a format this build does not convert.
 fn not_supported(format: Format) -> String {
     match format {

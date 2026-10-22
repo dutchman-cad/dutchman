@@ -64,7 +64,7 @@ A failure carries `"ok": false`, `input` and `error`, and exits 1:
 
 `error.message` is for people; do not parse its wording. Unreadable-container errors retain
 cadmpeg's cause and add recovery advice and a link to the
-anonymous reporting guide. The CLI and MCP return the same message, stage, and upstream.
+**A file didn't convert** issue form. The CLI and MCP return the same message, stage, and upstream.
 Normal JSON reports contain file names and paths. For sharing, request `--report-anon FILE`
 (MCP `report_anon`) and review that file first; keep logs, journals, keys, and salts private.
 

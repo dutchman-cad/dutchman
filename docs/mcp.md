@@ -214,7 +214,8 @@ still converted and each has its own report (shortened here):
   crash of the server.
 
 For an unreadable archive, the error keeps cadmpeg's cause and adds advice
-to download or copy it again, check its extension, and use the
-[anonymous reporting guide](testing-your-library.md) if the original opens in its CAD program.
+to download or copy it again, check its extension, and report it on the
+[A file didn't convert](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
+form with the file's anonymous report if the original opens in its CAD program.
 For failure reports, request `report_anon`, review that file before sharing, and keep normal
 JSON, logs, the journal, the key, and the salt private. Do not attach design files publicly.
