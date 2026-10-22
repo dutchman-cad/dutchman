@@ -382,6 +382,162 @@ fn sweep_options_keep_their_units_and_result_mode() {
 }
 
 #[test]
+fn a_single_curve_whole_sketch_maps_as_a_sweep_path() {
+    let model = sweep_history(|d| d["path"] = json!({"kind": "sketch", "value": PATH}));
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let features = document["features"].as_array().unwrap();
+    let sweep = features.iter().find(|f| f["type"] == "sweep").unwrap();
+    let path = features
+        .iter()
+        .find(|f| f["name"] == "Path sketch")
+        .unwrap();
+    assert_eq!(sweep["path_sketch"], path["id"]);
+    assert_eq!(sweep["path"].as_array().unwrap().len(), 1);
+    assert_eq!(sweep["path"][0], path["sketch"]["curves"][0]["id"]);
+    assert!(history_line(&report).contains("3 of 3 features mapped"));
+}
+
+#[test]
+fn whole_sketch_paths_require_one_non_construction_curve() {
+    for (empty, construction, reason) in [
+        (true, false, Some("its path sketch has no path curves")),
+        (
+            false,
+            false,
+            Some("a whole-sketch path with several curves has no resolved traversal order"),
+        ),
+        (false, true, None),
+    ] {
+        let base = sweep_history(|d| d["path"] = json!({"kind": "sketch", "value": PATH}));
+        let mut wire = serde_json::to_value(&base.ir).unwrap();
+        let entities = wire["model"]["sketch_entities"].as_array_mut().unwrap();
+        if empty {
+            entities.retain(|entity| entity["sketch"] != PATH);
+        } else {
+            let mut extra = line(22, [0.0, 10.0], [0.0, 20.0]);
+            extra["sketch"] = json!(PATH);
+            extra["construction"] = json!(construction);
+            entities.push(extra);
+        }
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..base
+        };
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        if let Some(reason) = reason {
+            assert!(
+                history_line(&report).contains(reason),
+                "{}",
+                history_line(&report)
+            );
+        } else {
+            let sweep = document["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|f| f["type"] == "sweep")
+                .unwrap();
+            assert_eq!(sweep["path"].as_array().unwrap().len(), 1);
+        }
+    }
+}
+
+fn railed_sweep_history(whole_sketch: bool) -> Model {
+    const RAIL: &str = "f3d:model:sketch#4";
+    let base = sweep_history(|d| {
+        d["guide_rail"] = json!({
+            "path": {"kind": "sketch_curves", "value": {
+                "sketch": RAIL, "curves": ["f3d:model:sketch-entity#22"]}},
+            "extent": {"along_fraction": 1.0, "against_fraction": 0.0},
+        });
+        if whole_sketch {
+            d["guide_rail"]["path"] = json!({"kind": "sketch", "value": RAIL});
+        }
+    });
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let model = &mut wire["model"];
+    let mut rail_sketch = model["sketches"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|sketch| sketch["id"] == PATH)
+        .unwrap()
+        .clone();
+    rail_sketch["id"] = json!(RAIL);
+    rail_sketch["name"] = json!("Rail");
+    model["sketches"].as_array_mut().unwrap().push(rail_sketch);
+    let mut rail = line(22, [10.0, 0.0], [10.0, 10.0]);
+    rail["sketch"] = json!(RAIL);
+    model["sketch_entities"].as_array_mut().unwrap().push(rail);
+    let features = model["features"].as_array_mut().unwrap();
+    let sweep = features.last_mut().unwrap();
+    sweep["ordinal"] = json!(3);
+    sweep["dependencies"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!("f3d:model:feature#4"));
+    features.insert(
+        2,
+        json!({
+            "id": "f3d:model:feature#4", "ordinal": 2, "name": "Rail sketch",
+            "suppressed": false,
+            "definition": {"definition": "sketch", "sketch": {"space": "planar", "sketch": RAIL}},
+        }),
+    );
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    }
+}
+
+#[test]
+fn a_sweep_guide_rail_keeps_its_sketch_and_curve_selection() {
+    for whole_sketch in [false, true] {
+        let (document, report) = convert(
+            &railed_sweep_history(whole_sketch),
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        let features = document["features"].as_array().unwrap();
+        let sweep = features.iter().find(|f| f["type"] == "sweep").unwrap();
+        let rail = features
+            .iter()
+            .find(|f| f["name"] == "Rail sketch")
+            .unwrap();
+        assert_eq!(sweep["rails"][0]["sketch"], rail["id"]);
+        assert_eq!(sweep["rails"][0]["curves"].as_array().unwrap().len(), 1);
+        assert_ne!(sweep["rails"][0]["sketch"], sweep["path_sketch"]);
+        assert_eq!(
+            sweep["rails"][0]["curves"][0],
+            rail["sketch"]["curves"][0]["id"]
+        );
+        for key in ["orientation", "twist", "scale"] {
+            assert!(sweep.get(key).is_none());
+        }
+        assert!(history_line(&report).contains("4 of 4 features mapped"));
+    }
+}
+
+#[test]
+fn solidcraft_replays_whole_sketch_paths_and_guide_rails() {
+    let Some(cli) = solidcraft() else { return };
+    for model in [
+        sweep_history(|d| d["path"] = json!({"kind": "sketch", "value": PATH})),
+        railed_sweep_history(false),
+        railed_sweep_history(true),
+    ] {
+        let volume = volumes(&cli, &written(&model).0);
+        assert_eq!(volume.len(), 1);
+        assert!((volume[0] - 1000.0).abs() / 1000.0 < dutchman_solidcraft::VOLUME_TOLERANCE);
+    }
+}
+
+#[test]
 fn guide_rails_cannot_be_combined_with_sweep_options() {
     for change in [
         json!({"scale": 2.0}),
@@ -444,7 +600,7 @@ fn sweeps_solidcraft_would_build_differently_flatten_the_history() {
     for (change, reason) in [
         (
             json!({"shape": {"mode": "surface", "section": {"kind": "unresolved", "value": null}}}),
-            "its profile is not a sketch profile",
+            "its sweep section is not resolved",
         ),
         (
             json!({"path_extent": {"along_fraction": 0.5, "against_fraction": 0.0}}),
@@ -468,12 +624,21 @@ fn sweeps_solidcraft_would_build_differently_flatten_the_history() {
             "sweeps oriented by frenet are not mapped yet",
         ),
         (
+            json!({"orientation": {"kind": "auxiliary", "tangent": false,
+                "curvilinear": true, "path": {"kind": "sketch", "value": PATH}}}),
+            "sweeps oriented by an auxiliary path are not mapped yet",
+        ),
+        (
+            json!({"orientation": {"kind": "guide_surface", "faces": {"kind": "unresolved"}}}),
+            "sweeps oriented by guide faces are not mapped yet",
+        ),
+        (
             json!({"transition": "right_corner"}),
-            "sweeps with corner transitions are not mapped yet",
+            "sweeps with right corner transitions are not mapped yet",
         ),
         (
             json!({"transformation": "linear"}),
-            "sweeps that change their profile along the path are not mapped yet",
+            "sweeps with linear section interpolation are not mapped yet",
         ),
         (
             json!({"shape": {"mode": "solid", "op": "new_body",
@@ -483,11 +648,46 @@ fn sweeps_solidcraft_would_build_differently_flatten_the_history() {
         ),
         (
             json!({"transition": "round_corner"}),
-            "sweeps with corner transitions are not mapped yet",
+            "sweeps with round corner transitions are not mapped yet",
         ),
         (
             json!({"path": {"kind": "native", "value": "n"}}),
-            "its path is not a set of sketch curves",
+            "a path given by a native reference is not mapped yet",
+        ),
+        (
+            json!({"path": {"kind": "unresolved", "value": "n"}}),
+            "its path is not resolved",
+        ),
+        (
+            json!({"guide_rail": {"path": {"kind": "sketch", "value": PATH},
+                "extent": {"along_fraction": 0.5, "against_fraction": 0.0}}}),
+            "sweeps along part of their guide rail are not mapped yet",
+        ),
+        (
+            json!({"path_tangent": true}),
+            "sweeps that extend the path through tangent-connected edges are not mapped yet",
+        ),
+        (
+            json!({"linearize": true}),
+            "sweeps that simplify linear edges and planar faces are not mapped yet",
+        ),
+        (
+            json!({"transformation": "multi_section"}),
+            "sweeps with multiple section interpolation are not mapped yet",
+        ),
+        (
+            json!({"transformation": "s_shape"}),
+            "sweeps with S-shaped section interpolation are not mapped yet",
+        ),
+        (
+            json!({"transformation": "interpolation"}),
+            "sweeps with native smooth section interpolation are not mapped yet",
+        ),
+        (
+            json!({"shape": {"mode": "solid", "op": "new_body",
+                "section": {"kind": "generated", "value": {
+                    "shape": "circular_region", "region": {"outer_radius": 2.0}}}}}),
+            "sweeps with generated circular sections are not mapped yet",
         ),
     ] {
         let model = sweep_history(|definition| {

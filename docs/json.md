@@ -53,6 +53,12 @@ version (`dutchman.convert/2`).
 | `names` | Every name the conversion met, sorted: the paths and folders it read from, and the names the design gives its parts, components, bodies, features, sketches, parameters and properties. For tools that take names out of a report before it is shared (the anonymous report does); absent when there were none. |
 | `losses` | What did not survive intact. `level` is `Info` (no effect on geometry), `Degraded` (carried in a weaker form) or `Dropped` (left out). `code` is cadmpeg's stable loss code when cadmpeg reported it, else `null`; `subject` says what was affected; `message` is for people. `stage` and `upstream` say where it arose (below). |
 
+For a blocked sweep, `history.features[].reason` names the unsupported option, such as
+`sweeps with round corner transitions are not mapped yet` or
+`sweeps with linear section interpolation are not mapped yet`. Tangent-path extension and
+post-sweep simplification also block history. These are messages within the existing schema;
+no report fields change.
+
 A failure carries `"ok": false`, `input` and `error`, and exits 1:
 
 ```json
