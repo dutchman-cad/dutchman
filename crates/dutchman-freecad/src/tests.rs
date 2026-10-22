@@ -3,7 +3,7 @@
 use dutchman_core::{FeatureStatus, Mode, Model, Report, Writer};
 use serde_json::{json, Value};
 
-use super::{generate, FreeCadWriter};
+use super::{generate, readable, FreeCadWriter};
 
 // Synthetic CADIR, following dutchman-solidcraft/tests/history.rs. The B-rep is
 // cadmpeg's generated cube; the history is authored here to test script text only.
@@ -210,4 +210,10 @@ fn assembly_occurrences_keep_nested_placements_and_independent_bodies() {
     assert_eq!(script.matches("body.Label = \"Synthetic\"").count(), 2);
     assert_eq!(script.matches("parents.pop()").count(), 2);
     assert_eq!(report.outcome().unwrap().features.len(), 4);
+}
+
+#[test]
+fn step_freecad_cannot_read_is_refused_before_the_macro_is_written() {
+    assert!(readable("#1 = LINE('',#2,#3);\n").is_ok());
+    assert!(readable("#29 = CURVE_REPLICA('',#24,#28);\n").is_err());
 }

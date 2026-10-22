@@ -3,6 +3,7 @@
 import FreeCAD as App
 import Part
 import Sketcher
+import itertools
 import json
 import math
 import os
@@ -201,11 +202,48 @@ def add_constraint(obj, c, points):
     if c.get('driven') and 'value' in c:
         obj.setDriving(index, False)
 
+def crossing(source, curves):
+    # Solid lines from corner to corner through the region the other curves bound (a centre
+    # rectangle's diagonals when the source does not mark them construction). FreeCAD cannot
+    # pad a sketch they split, and the region taken whole is the same without them.
+    solid = [i for i, c in enumerate(curves) if not c.get('construction')]
+    degree = {}
+    for i in solid:
+        for key in ('a', 'b'):
+            if key in curves[i]:
+                degree[curves[i][key]] = degree.get(curves[i][key], 0) + 1
+    candidates = [i for i in solid if curves[i]['type'] == 'line' and degree.get(curves[i]['a'], 0) >= 3 and degree.get(curves[i]['b'], 0) >= 3]
+    if not candidates or len(candidates) > 10:
+        return set()
+    # The fewest such lines whose removal leaves only closed loops that enclose them all.
+    for size in range(1, len(candidates) + 1):
+        for removed in itertools.combinations(candidates, size):
+            left = dict(degree)
+            for i in removed:
+                left[curves[i]['a']] -= 1
+                left[curves[i]['b']] -= 1
+            if any(n not in (0, 2) for n in left.values()):
+                continue
+            try:
+                rest = [source.Geometry[i].toShape() for i in solid if i not in removed]
+                wires = [Part.Wire(edges) for edges in Part.sortEdges(rest)]
+                if not all(w.isClosed() for w in wires):
+                    continue
+                face = Part.makeFace(wires, 'Part::FaceMakerBullseye')
+                lines = [source.Geometry[i] for i in removed]
+                if all(face.isInside((l.StartPoint + l.EndPoint) * 0.5, 1e-6, False) for l in lines):
+                    return set(removed)
+            except Exception:
+                continue
+    return set()
+
 def profile(row, body, objects):
     source = objects[row['sketch']]
     selection = row.get('profiles', {'type':'all'})
     offset = quantity(row.get('extent', {}).get('start_offset', '0 mm'))
-    if selection['type'] == 'all' and offset == 0:
+    source_data = objects[('data', row['sketch'])]['sketch']['curves']
+    dropped = crossing(source, source_data) if selection['type'] == 'all' else set()
+    if selection['type'] == 'all' and offset == 0 and not dropped:
         return source
     if selection['type'] == 'all':
         ids = None
@@ -215,13 +253,12 @@ def profile(row, body, objects):
         ids = set(curve for region in selection['profiles'] for loop in [region['outer']] + region['holes'] for curve in loop)
     else:
         raise RuntimeError('Profile selection is not supported yet')
-    source_data = objects[('data', row['sketch'])]['sketch']['curves']
     selected = body.newObject('Sketcher::SketchObject', 'SelectedProfile')
     placement = source.Placement
     placement.Base += placement.Rotation.multVec(App.Vector(0,0,offset))
     selected.Placement = placement
     for i, curve in enumerate(source_data):
-        if (ids is None and not curve.get('construction')) or (ids is not None and curve['id'] in ids):
+        if (ids is None and not curve.get('construction') and i not in dropped) or (ids is not None and curve['id'] in ids):
             selected.addGeometry(source.Geometry[i], False)
     doc.recompute()
     visible(selected, False)
@@ -265,16 +302,35 @@ def rebuild(row, body, objects, names, tip):
             obj.Ruled, obj.Closed = False, False
         if kind == 'extrude':
             extent = row['extent']
-            obj.Type = 1 if extent.get('through_all') else (4 if 'distance2' in extent else 0)
-            obj.Length = quantity(extent['distance'])
-            if 'distance2' in extent:
+            cut = op == 'cut'
+            symmetric = extent['direction'] == 'symmetric'
+            two = 'distance2' in extent
+            if extent.get('through_all'):
+                # A Pad has no through-all end; up to the last face is the nearest.
+                obj.Type = 'ThroughAll' if cut else 'UpToLast'
+            else:
+                obj.Type = 'Length'
+                obj.Length = quantity(extent['distance'])
+            if hasattr(obj, 'SideType'):
+                obj.SideType = 'Symmetric' if symmetric else ('Two sides' if two else 'One side')
+                if two:
+                    obj.Type2 = 'Length'
+            elif symmetric:
+                obj.Midplane = True
+            elif two:
+                obj.Type = 'TwoLengths'
+            if two:
                 obj.Length2 = quantity(extent['distance2'])
-            obj.Reversed = extent['direction'] == 'negative'
-            obj.Midplane = extent['direction'] == 'symmetric'
+            # The mapped direction is along the sketch normal; a Pocket cuts against it unless reversed.
+            obj.Reversed = (extent['direction'] == 'negative') != cut
         elif kind == 'revolve':
             obj.ReferenceAxis = reference
             obj.Angle = quantity(row['angle'])
-            obj.Midplane = row.get('symmetric', False)
+            if row.get('symmetric'):
+                if hasattr(obj, 'SideType'):
+                    obj.SideType = 'Symmetric'
+                else:
+                    obj.Midplane = True
         elif kind == 'sweep':
             path = objects[row['path_sketch']]
             curves = objects[('data', row['path_sketch'])]['sketch']['curves']

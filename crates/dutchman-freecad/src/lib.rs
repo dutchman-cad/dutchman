@@ -64,6 +64,7 @@ impl FreeCadWriter {
             return Ok(rebuilt);
         }
         let step = dutchman_solidcraft::restate_step(model, report)?;
+        readable(&step)?;
         let mut mapping_report = Report::default();
         let mapping = dutchman_solidcraft::mapped_history(model, &mut mapping_report);
         let mut features = mapping.outcomes;
@@ -140,6 +141,19 @@ impl FreeCadWriter {
         }
         Ok(rebuilt)
     }
+}
+
+/// Refuses STEP that FreeCAD's reader cannot take. FreeCAD 1.1 crashes the whole application on
+/// trimming curves written as `CURVE_REPLICA`, so a macro embedding them would take the user's
+/// other open documents down with it.
+fn readable(step: &str) -> Result<(), Error> {
+    if step.contains("CURVE_REPLICA(") {
+        return Err(Error::Encode(
+            "the geometry uses replicated trimming curves, which FreeCAD cannot read yet"
+                .to_owned(),
+        ));
+    }
+    Ok(())
 }
 
 impl Writer for FreeCadWriter {

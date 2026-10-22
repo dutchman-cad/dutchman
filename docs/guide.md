@@ -567,7 +567,11 @@ Body. Examples include unresolved source selections, intersect operations, fixed
 guided or twisted sweeps and lofts, two-direction patterns, and histories spanning multiple
 bodies. The report gives one result per source feature, including the reason each feature
 was not rebuilt. `--import-only` keeps every part as STEP. Assemblies retain placements;
-joints are not rebuilt. Pattern counts are limited to 10,000.
+joints are not rebuilt. Pattern counts are limited to 10,000. Solid lines drawn corner to
+corner across a profile taken whole (a centre rectangle's diagonals, when the source does
+not mark them construction) are left out of the padded profile, which is the same region.
+Geometry whose STEP uses replicated trimming curves (`CURVE_REPLICA`) is refused, because
+FreeCAD 1.1's STEP reader crashes on it.
 
 Open the macro in FreeCAD with **Macro > Macros… > Execute**, or run:
 
