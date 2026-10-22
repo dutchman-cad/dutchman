@@ -23,6 +23,7 @@ report's schema name changes when a field does).
   line). Ends at a face, vertex or body and other face makers stop the history with a reason
   that names them.
 - Patterns map named bodies, planar sketch paths, regular explicit offsets and angles, and two linear composite stages; unsupported pattern options receive specific refusals.
+- Sketch history carries bounded conics, rational quadratic Béziers, equal-weight splines, and more geometric relations and dimensions; unsupported constraints retain counted, specific loss messages.
 - A second issue form, **A file didn't convert**, reports one file: its format, the versions,
   the operating system, what was expected and what happened, and that file's anonymous
   report. Both forms list FreeCAD documents (`.FCStd`), and the agent skill does too.

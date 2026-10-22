@@ -169,3 +169,12 @@ SolidCraft can import". `geometry` counts what was read, whether or not it can b
 `inspect` writes nothing and runs no SolidCraft, so a history that would be written reports
 `verification.status` `unverified`. Both reports look at every feature, so every `blocked` one
 is listed; `verification.reason` names the first.
+
+Sketch constraint losses keep the existing report fields and schema. Their `message`
+counts source constraints, for example `2 of 2 constraints not carried (angle difference:
+solver scalar identities have no sketch entity binding, scalar equality: solver scalar
+identities have no sketch entity binding); its geometry is exact`. Repeated reasons are
+counted with `×N`. Unsupported constraints are `Degraded` losses at `map`; they do not
+change a mapped sketch's feature status. Inactive and disabled relations do not create a
+loss. Relations in virtual sketch space are counted separately because SolidCraft has no
+separate virtual solver space.

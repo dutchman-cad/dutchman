@@ -450,6 +450,16 @@ flatten the history with a specific reason. This CADIR version has no solid-patt
 or extent fields, so Dutchman cannot recover those settings independently of the decoded
 spacing and locations.
 
+Sketches retain bounded parabolas and hyperbolas, elliptical arcs up to one turn,
+and rational quadratic Béziers as editable conics. Equal-weight rational splines become
+polynomial control splines. Selected multi-piece elliptical arcs, unbounded conics, other
+weighted or nonuniform splines, and text without solved outlines still prevent history replay.
+Additional coordinate, intersection, tangency, curvature, symmetry, and repeated-dimension
+relations carry across. Static sketch patterns retain point and radius associations;
+driving count or span parameters are not supported yet. Constraints that cannot carry
+across are counted in a `Degraded` sketch loss with a specific reason; they never by
+themselves flatten a sketch whose solved geometry maps.
+
 A converted history is checked by replaying it in `solidcraft-cli` and comparing the bodies
 and their volumes with the original. The result is in the `history:` line of the report, and
 in `verification.status` in `--json`:

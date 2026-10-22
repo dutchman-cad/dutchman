@@ -78,7 +78,8 @@ impl Mapped {
     /// The SolidCraft curve the source entity `entity` became.
     pub(crate) fn curve(&self, entity: &str) -> Option<&Curve> {
         match self.shapes.get(entity)? {
-            Shape::Curve(curve) => Some(curve),
+            Shape::Curve(curve) if curve.kind != "compound_conic" => Some(curve),
+            Shape::Curve(_) => None,
             Shape::Point(_) => None,
         }
     }
@@ -160,7 +161,7 @@ pub(crate) fn map(
         sketch_id,
         &format!("sketch \"{name}\""),
         ctx,
-        &builder,
+        &mut builder,
         report,
     );
 
@@ -267,7 +268,7 @@ pub(crate) struct Curve {
     pub(crate) index: usize,
     /// Its id.
     pub(crate) id: String,
-    /// `line`, `circle` or `arc`.
+    /// The SolidCraft curve family, including ellipses, splines and conics.
     pub(crate) kind: &'static str,
     /// The point indices of its stored start, end and centre, where it has them.
     pub(crate) start: Option<usize>,
@@ -283,7 +284,7 @@ pub(crate) struct Builder {
     /// Source endpoint records already placed, with their point index.
     endpoint_refs: Vec<(String, usize)>,
     curves: Vec<Value>,
-    /// The last number used per id prefix (`p`, `l`, `c`, `a`).
+    /// The last number used per point or curve id prefix (conics use `q` to avoid constraint ids).
     counters: BTreeMap<&'static str, u64>,
     /// What each source entity became, by its id.
     pub(crate) shapes: BTreeMap<String, Shape>,
@@ -347,7 +348,7 @@ impl Builder {
     }
 
     /// A new point at `pos`, never shared with another curve's.
-    fn own_point(&mut self, pos: P2) -> usize {
+    pub(crate) fn own_point(&mut self, pos: P2) -> usize {
         let id = self.fresh("p");
         self.points
             .push(json!({"id": id, "pos": pos, "fixed": false}));
@@ -357,7 +358,7 @@ impl Builder {
 
     /// Adds a curve, recording it as the one the source `entity` became. Its start, end and
     /// centre are the `a`, `b` and `c` points of `kind`.
-    fn curve(
+    pub(crate) fn curve(
         &mut self,
         entity: Option<&str>,
         prefix: &'static str,
@@ -381,6 +382,7 @@ impl Builder {
                     Some("arc") => "arc",
                     Some("ellipse") => "ellipse",
                     Some("spline") => "spline",
+                    Some("conic") => "conic",
                     _ => "",
                 },
                 start: point("a"),
@@ -397,6 +399,20 @@ impl Builder {
             }
         }
         self.curves.push(curve);
+    }
+
+    /// Locks a complete curve, including its independent radius or conic shape.
+    pub(crate) fn fix_curve(&mut self, index: usize) -> Option<()> {
+        self.curves
+            .get_mut(index)?
+            .as_object_mut()?
+            .insert("fixed".to_owned(), json!(true));
+        Some(())
+    }
+
+    /// The index a newly appended helper curve will have.
+    pub(crate) fn curve_count(&self) -> usize {
+        self.curves.len()
     }
 
     /// Adds one CADIR sketch entity.
@@ -496,6 +512,20 @@ impl Builder {
                     &[],
                 );
             }
+            "nurbs" if rational_conic(geometry.get("curve")).is_some() => {
+                let (start, apex, end, rho) = rational_conic(geometry.get("curve"))
+                    .ok_or("its rational quadratic cannot be expressed by a SolidCraft conic")?;
+                let a = self.point(start, refs.first().copied());
+                let b = self.point(end, refs.get(1).copied());
+                let apex = self.own_point(apex);
+                self.curve(
+                    source,
+                    "q",
+                    construction,
+                    json!({"type": "conic", "a": a, "b": b, "apex": apex, "rho": rho}),
+                    &[],
+                );
+            }
             "nurbs" => match spline(geometry.get("curve")) {
                 Ok((degree, poles)) => {
                     // The ends are shared with the curves that meet them; the inner control
@@ -559,6 +589,133 @@ impl Builder {
                     &[],
                 );
             }
+            "ellipse"
+                if geometry
+                    .get("bounds")
+                    .and_then(Value::as_array)
+                    .is_some_and(|bounds| {
+                        number(bounds.first())
+                            .zip(number(bounds.get(1)))
+                            .is_some_and(|(a, b)| (b - a).abs() >= std::f64::consts::PI - PARALLEL)
+                    }) =>
+            {
+                let bounds = geometry
+                    .get("bounds")
+                    .and_then(Value::as_array)
+                    .ok_or_else(bad)?;
+                let first = number(bounds.first()).ok_or_else(bad)?;
+                let last = number(bounds.get(1)).ok_or_else(bad)?;
+                let span = last - first;
+                if span.abs() > std::f64::consts::TAU + PARALLEL {
+                    let why = "an elliptical arc spanning more than one turn is not supported yet";
+                    if construction {
+                        report.push(Severity::Degraded, "sketch", why);
+                        return Ok(());
+                    }
+                    return Err(why.to_owned());
+                }
+                // One source curve can become several exact conics in the whole sketch.
+                // Do not expose just the first piece as a selectable whole source curve.
+                let count = 4usize;
+                let index = self.curves.len();
+                let mut ends = None;
+                let mut id = String::new();
+                for piece in 0..count {
+                    let start = first + span * piece as f64 / count as f64;
+                    let end = first + span * (piece + 1) as f64 / count as f64;
+                    let mut part = geometry.clone();
+                    part.as_object_mut()
+                        .ok_or_else(bad)?
+                        .insert("bounds".to_owned(), json!([start, end]));
+                    let (start, apex, end, rho) = conic(&part)?;
+                    let a = self.point(
+                        start,
+                        if piece == 0 {
+                            refs.first().copied()
+                        } else {
+                            None
+                        },
+                    );
+                    let b = self.point(
+                        end,
+                        if piece + 1 == count {
+                            refs.get(1).copied()
+                        } else {
+                            None
+                        },
+                    );
+                    let apex = self.own_point(apex);
+                    self.curve(
+                        None,
+                        "q",
+                        construction,
+                        json!({"type": "conic", "a": a, "b": b, "apex": apex, "rho": rho}),
+                        &[],
+                    );
+                    if piece == 0 {
+                        id = self
+                            .curves
+                            .get(index)
+                            .and_then(|curve| curve.get("id"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_owned();
+                        ends = Some((a, b));
+                    } else if let Some((_, end)) = &mut ends {
+                        *end = b;
+                    }
+                }
+                let center = self.point(p2(geometry.get("center")).ok_or_else(bad)?, None);
+                if let (Some(source), Some((start, end))) = (source, ends) {
+                    self.shapes.insert(
+                        source.to_owned(),
+                        Shape::Curve(Curve {
+                            index,
+                            id,
+                            kind: "compound_conic",
+                            start: Some(start),
+                            end: Some(end),
+                            center: Some(center),
+                        }),
+                    );
+                }
+            }
+            "ellipse" | "hyperbola" | "parabola" => match conic(geometry) {
+                Ok((start, apex, end, rho)) => {
+                    let a = self.point(start, refs.first().copied());
+                    let b = self.point(end, refs.get(1).copied());
+                    let apex = self.own_point(apex);
+                    self.curve(
+                        source,
+                        "q",
+                        construction,
+                        json!({"type": "conic", "a": a, "b": b, "apex": apex, "rho": rho}),
+                        &[],
+                    );
+                }
+                Err(why) if construction => report.push(
+                    Severity::Degraded,
+                    "sketch",
+                    format!("a construction {kind} is not carried: {why}"),
+                ),
+                Err(why) => return Err(why),
+            },
+            "text" | "external_reference" | "native" => {
+                let why = match kind {
+                    "text" => "sketch text is not supported yet: source font metrics, width scaling and vertical anchoring cannot be preserved as solved outlines",
+                    "external_reference" => "an external sketch reference has no solved sketch-space geometry",
+                    _ => "source-native sketch geometry has no resolved neutral curve",
+                };
+                if construction {
+                    report.push(
+                        Severity::Degraded,
+                        "sketch",
+                        format!("a construction entity is not carried: {why}"),
+                    );
+                } else {
+                    return Err(why.to_owned());
+                }
+            }
             other if construction => report.push(
                 Severity::Degraded,
                 "sketch",
@@ -568,6 +725,144 @@ impl Builder {
         }
         Ok(())
     }
+}
+
+/// A single rational quadratic Bézier has the same locus after normalizing its
+/// endpoint weights to one. Other weighted splines need knots or weights that
+/// SolidCraft's control spline does not store.
+fn rational_conic(curve: Option<&Value>) -> Option<(P2, P2, P2, f64)> {
+    let curve = curve?;
+    if curve.get("degree")?.as_u64()? != 2 || curve.get("periodic")?.as_bool()? {
+        return None;
+    }
+    let knots = curve.get("knots")?.as_array()?;
+    if knots.len() != 6 {
+        return None;
+    }
+    let first = number(knots.first())?;
+    let last = number(knots.last())?;
+    if last <= first
+        || !knots.iter().take(3).all(|k| number(Some(k)) == Some(first))
+        || !knots.iter().skip(3).all(|k| number(Some(k)) == Some(last))
+    {
+        return None;
+    }
+    let poles = curve.get("poles")?;
+    if poles.get("form")?.as_str()? != "rational" {
+        return None;
+    }
+    let points = poles.get("points")?.as_array()?;
+    if points.len() != 3 {
+        return None;
+    }
+    let [a, apex, b] = [points.first()?, points.get(1)?, points.get(2)?];
+    let [w0, w1, w2] = [
+        number(a.get("weight"))?,
+        number(apex.get("weight"))?,
+        number(b.get("weight"))?,
+    ];
+    if w0.signum() != w1.signum() || w0.signum() != w2.signum() {
+        return None;
+    }
+    let weight = (w1.abs() / w0.abs().sqrt()) / w2.abs().sqrt();
+    let rho = weight / (1.0 + weight);
+    if !(1e-6..1.0 - 1e-6).contains(&rho) || rho == 1e-6 {
+        return None;
+    }
+    Some((
+        p2(a.get("point"))?,
+        p2(apex.get("point"))?,
+        p2(b.get("point"))?,
+        rho,
+    ))
+}
+
+/// A bounded analytic conic as a rational quadratic Bézier. The middle pole is
+/// the intersection of the endpoint tangents; its weight determines SolidCraft's rho.
+fn conic(geometry: &Value) -> Result<(P2, P2, P2, f64), String> {
+    let kind = geometry.get("kind").and_then(Value::as_str).unwrap_or("");
+    let bounds = geometry
+        .get("bounds")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            format!("an unbounded {kind} cannot be expressed by SolidCraft's bounded conic")
+        })?;
+    let first = number(bounds.first()).ok_or("its conic has no start parameter")?;
+    let last = number(bounds.get(1)).ok_or("its conic has no end parameter")?;
+    let middle = first * 0.5 + last * 0.5;
+    let half = (last - first) * 0.5;
+    if !half.is_finite() || half.abs() <= PARALLEL {
+        return Err("its conic parameter span is zero or too large".to_owned());
+    }
+    let (origin, angle, start, apex, end, weight) = if kind == "parabola" {
+        let origin = p2(geometry.get("vertex")).ok_or("its parabola has no vertex")?;
+        let angle = number(geometry.get("axis_angle")).ok_or("its parabola has no axis angle")?;
+        let focal = number(geometry.get("focal_length"))
+            .filter(|f| *f > 0.0)
+            .ok_or("its parabola has no positive focal length")?;
+        let at = |y: f64| [y * y / (4.0 * focal), y];
+        (
+            origin,
+            angle,
+            at(first),
+            [first * last / (4.0 * focal), middle],
+            at(last),
+            1.0,
+        )
+    } else {
+        let origin = p2(geometry.get("center")).ok_or("its conic has no center")?;
+        let angle = number(geometry.get("major_angle")).ok_or("its conic has no major angle")?;
+        let major = number(geometry.get("major_radius")).ok_or("its conic has no major radius")?;
+        let minor = number(geometry.get("minor_radius")).ok_or("its conic has no minor radius")?;
+        if kind == "ellipse" {
+            if half.abs() >= std::f64::consts::FRAC_PI_2 - PARALLEL {
+                return Err("an elliptical arc spanning 180 degrees or more is not supported yet: it needs multiple SolidCraft conics".to_owned());
+            }
+            let weight = half.cos();
+            let at = |t: f64| [major * t.cos(), minor * t.sin()];
+            (
+                origin,
+                angle,
+                at(first),
+                [major * middle.cos() / weight, minor * middle.sin() / weight],
+                at(last),
+                weight,
+            )
+        } else {
+            let weight = half.cosh();
+            let at = |t: f64| [major * t.cosh(), minor * t.sinh()];
+            (
+                origin,
+                angle,
+                at(first),
+                [
+                    major * middle.cosh() / weight,
+                    minor * middle.sinh() / weight,
+                ],
+                at(last),
+                weight,
+            )
+        }
+    };
+    let rho = weight / (1.0 + weight);
+    let transform = |[x, y]: P2| {
+        [
+            origin[0] + x * angle.cos() - y * angle.sin(),
+            origin[1] + x * angle.sin() + y * angle.cos(),
+        ]
+    };
+    let points = [transform(start), transform(apex), transform(end)];
+    if !points
+        .iter()
+        .flatten()
+        .all(|v| v.is_finite() && v.abs() < 1e9)
+        || !(1e-6..1.0 - 1e-6).contains(&rho)
+        || rho == 1e-6
+    {
+        return Err("its conic exceeds SolidCraft's finite point or rho range".to_owned());
+    }
+    let [start, apex, end] = points;
+    Ok((start, apex, end, rho))
 }
 
 /// SolidCraft's highest spline degree.
@@ -588,15 +883,27 @@ fn spline(curve: Option<&Value>) -> Result<(u64, Vec<P2>), String> {
         return Err("periodic splines are not mapped yet".to_owned());
     }
     let poles = curve.get("poles").ok_or("its spline is malformed")?;
-    if poles.get("form").and_then(Value::as_str) != Some("polynomial") {
-        return Err("rational splines are not mapped yet".to_owned());
-    }
-    let points: Vec<P2> = poles
+    let rows = poles
         .get("points")
         .and_then(Value::as_array)
-        .ok_or("its spline is malformed")?
+        .ok_or("its spline is malformed")?;
+    if rows.len() > MAX_POLES {
+        return Err("its spline has more than SolidCraft's 500 control points".to_owned());
+    }
+    let rational = poles.get("form").and_then(Value::as_str) == Some("rational");
+    if rational {
+        let first = rows
+            .first()
+            .and_then(|p| number(p.get("weight")))
+            .filter(|w| *w != 0.0)
+            .ok_or("its spline has no nonzero weight")?;
+        if !rows.iter().all(|p| number(p.get("weight")) == Some(first)) {
+            return Err("weighted splines other than a positive-weight quadratic Bézier are not supported yet: SolidCraft control splines have no weights".to_owned());
+        }
+    }
+    let points: Vec<P2> = rows
         .iter()
-        .map(|p| p2(Some(p)))
+        .map(|p| p2(if rational { p.get("point") } else { Some(p) }))
         .collect::<Option<_>>()
         .ok_or("its spline is malformed")?;
     let degree = curve
@@ -871,9 +1178,8 @@ mod tests {
 
     #[test]
     fn unsupported_curves_drop_only_as_construction() {
-        let ellipse = json!({"kind": "ellipse", "center": {"u": 0.0, "v": 0.0},
-            "major_angle": 0.0, "major_radius": 2.0, "minor_radius": 1.0,
-            "bounds": [0.0, 1.0]});
+        let ellipse = json!({"kind": "hyperbola", "center": {"u": 0.0, "v": 0.0},
+            "major_angle": 0.0, "major_radius": 2.0, "minor_radius": 1.0});
         let mut report = Report::default();
         let mut builder = Builder::default();
         let mut construction = entity(ellipse.clone());
@@ -882,7 +1188,7 @@ mod tests {
         assert_eq!(report.losses().len(), 1);
         assert_eq!(
             builder.entity(&entity(ellipse), &mut report).unwrap_err(),
-            "ellipse sketch curves are not mapped yet"
+            "an unbounded hyperbola cannot be expressed by SolidCraft's bounded conic"
         );
     }
 

@@ -116,7 +116,7 @@ cannot be finished with an imported body: the first feature that does not map (o
 with no feature that builds geometry) flattens the design to the import design, and the
 report says why (`history: flattened: …`). Suppressed source features are left out and
 reported. Mapped today: principal datum planes; planar sketches (points, lines, circles, arcs,
-whole ellipses, clamped uniform B-splines, reference lines, at their solved positions) with their constraints and dimensions, each
+whole ellipses, elliptical arcs up to one turn (multi-piece curves require whole-sketch selection), bounded parabolas and hyperbolas, rational quadratic Béziers, clamped uniform B-splines (including equal-weight rational curves), reference lines, at their solved positions) with their constraints and dimensions, each
 dimension linked to its parameter (a constraint that does not map is dropped and reported,
 since the geometry is already exact); extrudes of a whole sketch, of selected sketch
 profiles, of profile regions (whole loops with their holes, or regions bounded by pieces of
