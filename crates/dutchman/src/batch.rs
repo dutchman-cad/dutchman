@@ -22,6 +22,11 @@ pub const SCHEMA: &str = "dutchman.convert-all/1";
 /// This Dutchman's version, which a journal's records must match.
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// The journal's own format. A report recorded in an older one may lack what this version
+/// records (the names an anonymous report takes out, among others), so its file is converted
+/// again, as one recorded by another version of Dutchman is.
+const JOURNAL_FORMAT: u64 = 2;
+
 /// The most files one run converts.
 const MAX_FILES: usize = 10_000;
 
@@ -517,8 +522,11 @@ impl Journal {
                     let Ok(entry) = serde_json::from_str::<Value>(line) else {
                         continue;
                     };
-                    // A file another version of Dutchman converted is converted again.
-                    if entry.get("dutchman").and_then(Value::as_str) != Some(VERSION) {
+                    // A file another version of Dutchman, or another journal format, recorded is
+                    // converted again.
+                    if entry.get("dutchman").and_then(Value::as_str) != Some(VERSION)
+                        || entry.get("journal").and_then(Value::as_u64) != Some(JOURNAL_FORMAT)
+                    {
                         continue;
                     }
                     if let (Some(key), Some(report)) = (
@@ -557,7 +565,12 @@ impl Journal {
         let Some(file) = identity(job) else {
             return Ok(());
         };
-        let line = json!({"dutchman": VERSION, "file": file, "report": report});
+        let line = json!({
+            "dutchman": VERSION,
+            "journal": JOURNAL_FORMAT,
+            "file": file,
+            "report": report,
+        });
         writeln!(self.file, "{line}")
             .and_then(|()| self.file.flush())
             .map_err(|err| format!("cannot record a file in the journal: {err}"))
@@ -601,6 +614,28 @@ fn make_folder(job: &Job) -> Option<Value> {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_file_recorded_by_another_version_or_journal_format_is_converted_again() {
+        // An older report lacks what this version records (the names an anonymous report
+        // takes out, among others), so it is never reused, even under the same version number.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("journal.jsonl");
+        let report = json!({"ok": false, "error": {"message": "x"}});
+        let lines = [
+            json!({"dutchman": "0.0.9", "journal": JOURNAL_FORMAT, "file": "/a|1|1",
+                   "report": report}),
+            json!({"dutchman": VERSION, "file": "/b|1|1", "report": report}),
+            json!({"dutchman": VERSION, "journal": 1, "file": "/c|1|1", "report": report}),
+            json!({"dutchman": VERSION, "journal": JOURNAL_FORMAT, "file": "/d|1|1",
+                   "report": report}),
+        ];
+        let text: String = lines.iter().map(|line| format!("{line}\n")).collect();
+        std::fs::write(&path, text).unwrap();
+        let journal = Journal::open(&path).unwrap();
+        let known: Vec<&str> = journal.known.keys().map(String::as_str).collect();
+        assert_eq!(known, ["/d|1|1"]);
+    }
 
     #[test]
     fn files_in_a_folder_given_are_found_in_that_folder_as_a_project() {

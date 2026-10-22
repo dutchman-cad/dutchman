@@ -19,7 +19,8 @@ report's schema name changes when a field does).
   told of, were left in messages. Each conversion now records every name it meets (the paths
   and folders it reads from, and every name the design gives anything; `names` in the convert
   report), and the anonymous report takes each one out, with any word holding a path
-  separator.
+  separator. A `--journal` written before this records no names, so its files are converted
+  again rather than reported from it, whatever version wrote it.
 - The anonymous report of a large batch is made in one pass over each message: one of about
   7,000 files had not finished after an hour and a half; 8,000 files now take seconds.
 
