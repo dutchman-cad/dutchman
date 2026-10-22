@@ -35,32 +35,50 @@ pub(super) fn profile(profile: Option<&Value>, ctx: &Context) -> Result<(String,
                 .iter()
                 .map(|index| source_loop(ctx, sketch, index, mapped))
                 .collect::<Result<Vec<_>, _>>()?;
-            if loops.iter().any(|curves| crossed(curves)) {
-                // A loop that runs along a curve both ways has that curve inside it, cutting
-                // what it bounds into several profiles. They are all of the sketch's when the
-                // feature takes every loop the sketch has.
-                if !takes_every_loop(ctx, sketch, indices) {
-                    return Err(
-                        "a profile crossed by its own sketch's curves is not mapped yet".to_owned(),
-                    );
+            let mut selected = Vec::new();
+            for (index, ring) in indices.iter().zip(loops) {
+                if needs_split(ctx, sketch, index, &ring) {
+                    match split_loop(ctx, sketch, index, mapped) {
+                        Ok(rings) => selected.extend(rings),
+                        // Preserve the existing whole-sketch mapping when every source
+                        // loop is taken, including arrangements we cannot split yet.
+                        Err(_) if takes_every_loop(ctx, sketch, indices) => {
+                            return Ok((sketch.to_owned(), json!({"type": "all"})));
+                        }
+                        Err(reason) => return Err(reason),
+                    }
+                } else {
+                    selected.push(ring);
                 }
-                json!({"type": "all"})
-            } else {
-                curves(loops)?
             }
+            curves(selected)?
         }
         "sketch_regions" => regions(value.get("regions"), ctx, sketch, mapped)?,
         "sketch_entities" => entities(value.get("entities"), mapped)?,
-        // A selection cadmpeg keeps native: in a sketch of one profile, it can only be that.
-        "sketch_selection" => match profile_count(ctx, sketch) {
-            1 => json!({"type": "all"}),
-            n => {
+        // Native picks carry no neutral point or index. Infer only a single material
+        // region, including a surrounding loop with holes under even-odd nesting.
+        "sketch_selection" => {
+            let count = profile_count(ctx, sketch);
+            let source = ctx
+                .row("sketches", sketch)
+                .ok_or("its sketch has no profiles")?;
+            let entities = sketch_entities(ctx, sketch);
+            if count == 1 {
+                json!({"type": "all"})
+            } else if let Some(outer) = super::crossing::single_region(source, &entities) {
+                let boundary = source_loop(ctx, sketch, &json!(outer), mapped)?;
+                let holes = (0..count)
+                    .filter(|index| *index != outer)
+                    .map(|index| source_loop(ctx, sketch, &json!(index), mapped))
+                    .collect::<Result<Vec<_>, _>>()?;
+                json!({"type": "whole_boundaries", "profiles": [{"outer": boundary, "holes": holes}]})
+            } else {
                 return Err(format!(
-                    "a profile cadmpeg does not resolve, in a sketch of {n} profiles, is not \
+                    "a profile cadmpeg does not resolve, in a sketch of {count} profiles, is not \
                      mapped yet"
-                ))
+                ));
             }
-        },
+        }
         other => return Err(format!("{other} profiles are not mapped yet")),
     };
     Ok((sketch.to_owned(), selection))
@@ -82,14 +100,54 @@ fn profile_count(ctx: &Context, sketch: &str) -> usize {
         .map_or(0, Vec::len)
 }
 
-/// Whether `indices` name every profile loop the source sketch has.
 fn takes_every_loop(ctx: &Context, sketch: &str, indices: &[Value]) -> bool {
-    let count = profile_count(ctx, sketch);
-    (0..count).all(|wanted| {
+    (0..profile_count(ctx, sketch)).all(|wanted| {
         indices
             .iter()
             .any(|index| index.as_u64().and_then(|i| usize::try_from(i).ok()) == Some(wanted))
     })
+}
+
+fn needs_split(ctx: &Context, sketch: &str, index: &Value, ring: &[String]) -> bool {
+    if crossed(ring) {
+        return true;
+    }
+    source_members(ctx, sketch, index)
+        .is_ok_and(|members| super::crossing::crossed_loop(members, &sketch_entities(ctx, sketch)))
+}
+
+/// Source entities belonging to this sketch.
+fn sketch_entities<'a>(ctx: &'a Context, sketch: &str) -> Vec<&'a Value> {
+    ctx.arena("sketch_entities")
+        .iter()
+        .filter(|entity| entity.get("sketch").and_then(Value::as_str) == Some(sketch))
+        .collect()
+}
+
+fn split_loop(
+    ctx: &Context,
+    sketch: &str,
+    index: &Value,
+    mapped: &Mapped,
+) -> Result<Vec<Vec<String>>, String> {
+    let members = source_members(ctx, sketch, index)?;
+    let source = sketch_entities(ctx, sketch);
+    let sketch = ctx
+        .row("sketches", sketch)
+        .ok_or("its sketch has no profiles")?;
+    let construction = super::crossing::crossing(sketch, &source);
+    let entities: Vec<&Value> = source
+        .into_iter()
+        .filter(|entity| {
+            !entity
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| construction.contains(id))
+        })
+        .collect();
+    let rings = super::crossing::split(members, &entities)
+        .ok_or("a profile crossed by its own sketch's curves is not mapped yet")?;
+    mapped.boundaries(rings)
 }
 
 /// Profiles whose outer loops are these curve loops.
@@ -107,20 +165,29 @@ fn source_loop(
     index: &Value,
     mapped: &Mapped,
 ) -> Result<Vec<String>, String> {
+    source_members(ctx, sketch, index)?
+        .iter()
+        .map(|uses| curve_id(uses.get("entity"), mapped))
+        .collect()
+}
+
+fn source_members<'a>(
+    ctx: &'a Context,
+    sketch: &str,
+    index: &Value,
+) -> Result<&'a [Value], String> {
     let loops = ctx
         .row("sketches", sketch)
         .and_then(|row| row.get("profiles"))
         .and_then(Value::as_array)
         .ok_or("its sketch has no profiles")?;
-    let uses = index
+    index
         .as_u64()
         .and_then(|i| usize::try_from(i).ok())
         .and_then(|i| loops.get(i))
         .and_then(Value::as_array)
-        .ok_or("it selects a sketch profile that does not exist")?;
-    uses.iter()
-        .map(|uses| curve_id(uses.get("entity"), mapped))
-        .collect()
+        .map(Vec::as_slice)
+        .ok_or_else(|| "it selects a sketch profile that does not exist".to_owned())
 }
 
 /// The SolidCraft curve id of a source entity.
@@ -169,8 +236,20 @@ fn regions(
                     })
                     .transpose()?
                     .unwrap_or_default();
-                outers.push(outer.clone());
-                whole.push(json!({"outer": outer, "holes": holes}));
+                let index = region.get("outer").unwrap_or(&Value::Null);
+                if needs_split(ctx, sketch, index, &outer) {
+                    if !holes.is_empty() {
+                        return Err(
+                            "a profile crossed by its own sketch's curves is not mapped yet"
+                                .to_owned(),
+                        );
+                    }
+                    trimmed = true;
+                    outers.extend(split_loop(ctx, sketch, index, mapped)?);
+                } else {
+                    outers.push(outer.clone());
+                    whole.push(json!({"outer": outer, "holes": holes}));
+                }
             }
             Some("trimmed") => {
                 trimmed = true;
@@ -352,7 +431,7 @@ mod tests {
     }
 
     #[test]
-    fn a_profile_crossed_by_its_own_curves_takes_every_profile() {
+    fn a_crossed_profile_without_solved_geometry_is_refused() {
         // The first triangle with a curve inside it, which its loop runs along both ways (as a
         // rectangle with its diagonals drawn comes from Fusion), and the circle.
         let model = json!({"sketches": [{"id": "s", "profiles": [

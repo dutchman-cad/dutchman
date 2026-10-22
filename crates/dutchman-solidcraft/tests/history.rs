@@ -1305,11 +1305,224 @@ fn a_converted_angle_drives_the_geometry_in_solidcraft() {
     );
 }
 
+/// A square crossed by both diagonals, whose source loop retraces those diagonals,
+/// beside a second square which the extrude deliberately leaves out.
+fn crossed_profile_history(region: bool) -> Model {
+    let profile = if region {
+        json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
+            "regions": [{"region": "loops", "outer": 0}]}})
+    } else {
+        first_profile()
+    };
+    let mut model = cube_with_history(10.0, profile, None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    let member = |key: u32, reversed: bool| json!({"entity": format!("f3d:model:sketch-entity#{key}"), "reversed": reversed});
+    m["sketches"][0]["profiles"] = json!([
+        [
+            member(1, false),
+            member(5, false),
+            member(5, true),
+            member(2, false),
+            member(3, false),
+            member(4, false),
+            member(6, false),
+            member(6, true)
+        ],
+        [
+            member(7, false),
+            member(8, false),
+            member(9, false),
+            member(10, false)
+        ],
+    ]);
+    m["sketch_entities"].as_array_mut().unwrap().extend([
+        line(5, [10.0, 0.0], [0.0, 10.0]),
+        line(6, [0.0, 0.0], [10.0, 10.0]),
+        line(7, [20.0, 0.0], [30.0, 0.0]),
+        line(8, [30.0, 0.0], [30.0, 10.0]),
+        line(9, [30.0, 10.0], [20.0, 10.0]),
+        line(10, [20.0, 10.0], [20.0, 0.0]),
+    ]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn a_selected_crossed_loop_maps_to_its_atomic_regions() {
+    for region in [false, true] {
+        let model = crossed_profile_history(region);
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+        let selection = &document["features"][1]["profiles"];
+        assert_eq!(selection["type"], "curves");
+        let mut loops: Vec<Vec<String>> =
+            serde_json::from_value(selection["loops"].clone()).unwrap();
+        for ring in &mut loops {
+            ring.sort();
+        }
+        loops.sort();
+        assert_eq!(
+            loops,
+            vec![
+                vec!["l1", "l5", "l6"],
+                vec!["l2", "l5", "l6"],
+                vec!["l3", "l5", "l6"],
+                vec!["l4", "l5", "l6"],
+            ]
+        );
+        // The source curves and their ids survive: constraints and later references
+        // still address the same geometry. SolidCraft splits their pieces on replay.
+        let curves = document["features"][0]["sketch"]["curves"]
+            .as_array()
+            .unwrap();
+        assert_eq!(curves.len(), 10);
+        assert!(curves.iter().all(|curve| curve["construction"] == false));
+        assert!(!document["features"][0]["sketch"]["constraints"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+    }
+}
+
+#[test]
+fn solidcraft_replays_only_the_selected_crossed_region() {
+    let Some(cli) = solidcraft() else { return };
+    for region in [false, true] {
+        let volume = volumes(&cli, &written(&crossed_profile_history(region)).0);
+        assert_eq!(volume.len(), 1);
+        assert!((volume[0] - 1000.0).abs() < 1e-6, "{volume:?}");
+    }
+}
+
+#[test]
+fn overlapping_crossing_curves_keep_the_refusal() {
+    let mut model = crossed_profile_history(false);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["sketch_entities"]
+        .as_array_mut()
+        .unwrap()
+        .push(line(11, [0.0, 0.0], [10.0, 10.0]));
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_eq!(types(&document), [("import".to_owned(), false)]);
+    assert!(history_line(&report).contains("a profile crossed by its own sketch's curves"));
+}
+
+/// A bow tie uses each curve once but intersects itself between curve endpoints.
+fn bow_tie_profile() -> Model {
+    let mut model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["sketch_constraints"] = json!([]);
+    wire["model"]["sketch_entities"] = json!([
+        line(1, [0.0, 0.0], [10.0, 10.0]),
+        line(2, [10.0, 10.0], [0.0, 10.0]),
+        line(3, [0.0, 10.0], [10.0, 0.0]),
+        line(4, [10.0, 0.0], [0.0, 0.0]),
+    ]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn a_self_intersection_between_endpoints_splits_the_profile() {
+    let (document, report) = convert(
+        &bow_tie_profile(),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+    let mut loops: Vec<Vec<String>> =
+        serde_json::from_value(document["features"][1]["profiles"]["loops"].clone()).unwrap();
+    loops.sort();
+    assert_eq!(loops, vec![vec!["l1", "l2", "l3"], vec!["l1", "l3", "l4"]]);
+}
+
+#[test]
+fn solidcraft_replays_both_lobes_of_a_self_intersecting_profile() {
+    let Some(cli) = solidcraft() else { return };
+    let volume: f64 = volumes(&cli, &written(&bow_tie_profile()).0).iter().sum();
+    assert!((volume - 500.0).abs() < 1e-6, "{volume}");
+}
+
+/// A native selection with a known sketch but no decoded region pick. Two nested
+/// circles identify one annulus; a third creates a separate material island.
+fn nested_native_profile(radii: &[f64]) -> Model {
+    let profile = json!({"kind": "sketch_selection", "value": {
+        "sketch": SKETCH, "selections": ["inventor:native:profile-selection#1"],
+    }});
+    let mut model = cube_with_history(10.0, profile, None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    m["sketch_constraints"] = json!([]);
+    let entities: Vec<Value> = radii
+        .iter()
+        .enumerate()
+        .map(|(i, radius)| {
+            entity(
+                u32::try_from(i + 1).unwrap(),
+                json!({"kind": "circle", "center": {"u": 0.0, "v": 0.0}, "radius": radius}),
+            )
+        })
+        .collect();
+    let profiles: Vec<Value> = radii
+        .iter()
+        .enumerate()
+        .map(|(i, _)| json!([{"entity": format!("f3d:model:sketch-entity#{}", i + 1)}]))
+        .collect();
+    m["sketch_entities"] = json!(entities);
+    m["sketches"][0]["profiles"] = json!(profiles);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn native_selections_resolve_one_even_odd_region() {
+    let (document, report) = convert(
+        &nested_native_profile(&[5.0, 3.0]),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+    assert_eq!(
+        document["features"][1]["profiles"],
+        json!({"type": "whole_boundaries", "profiles": [{"outer": ["c1"], "holes": [["c2"]]}]})
+    );
+    let (reversed, _) = convert(
+        &nested_native_profile(&[3.0, 5.0]),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_eq!(
+        reversed["features"][1]["profiles"],
+        json!({"type": "whole_boundaries", "profiles": [{"outer": ["c2"], "holes": [["c1"]]}]})
+    );
+    for radii in [&[5.0, 3.0, 1.0][..], &[5.0, 5.0][..], &[5.0, 4.99][..]] {
+        let (document, report) = convert(
+            &nested_native_profile(radii),
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert_eq!(types(&document), [("import".to_owned(), false)]);
+        assert!(history_line(&report).contains("a profile cadmpeg does not resolve"));
+    }
+}
+
+#[test]
+fn solidcraft_replays_a_native_annulus_with_its_hole() {
+    let Some(cli) = solidcraft() else { return };
+    let volume = volumes(&cli, &written(&nested_native_profile(&[5.0, 3.0])).0);
+    let expected = std::f64::consts::PI * 16.0 * 10.0;
+    assert_eq!(volume.len(), 1);
+    assert!((volume[0] - expected).abs() / expected < dutchman_solidcraft::VOLUME_TOLERANCE);
+}
+
 /// The shape cadmpeg 0.6's Inventor decoder gives an extrude: its profile as native profile
 /// selections of the sketch, an explicit direction, a symmetric or through-next extent. In a
-/// sketch of one profile the selection can only be that profile; in a sketch of more, the
-/// history cannot be replayed until cadmpeg resolves the selection, and the design is written
-/// as geometry with the reason reported.
+/// sketch of one profile the selection can only be that profile; multiple loops must
+/// identify one material region by even-odd nesting, otherwise the history is refused.
 #[test]
 fn an_inventor_shaped_extrude_maps_only_when_its_sketch_has_one_profile() {
     let inventor_profile = json!({"kind": "sketch_selection",

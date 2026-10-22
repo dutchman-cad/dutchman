@@ -1,4 +1,4 @@
-//! Lines drawn across a profile that the sketch's profile table takes whole.
+//! Profile crossings: inferred construction lines, split regions and loop nesting.
 //!
 //! A sketch's profile table lists the closed regions its curves bound. A line from one point of
 //! a region's boundary to another, through its inside, splits that region in two, so a region
@@ -6,6 +6,10 @@
 //! decoder that does not know which curves are construction (cadmpeg's Inventor decoder, for
 //! now) leaves such a line solid; SolidCraft then finds the region split and no profile it can
 //! match. Such lines are construction, and are written so.
+//!
+//! When a source loop itself follows crossing curves, keep those curves solid and split
+//! their straight-line arrangement for region selection. Sampling is used only for
+//! membership and conservative nesting checks, never to replace curved geometry.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -185,6 +189,363 @@ fn inside(p: P2, polygon: &[P2]) -> bool {
         .count()
         % 2
         == 1
+}
+
+/// A line arrangement is deliberately bounded: intersections and directed edges grow
+/// quadratically. Larger arrangements keep the existing refusal.
+const MAX_LINES: usize = 128;
+const MAX_EDGES: usize = 16_384;
+const MAX_POINTS: usize = 2048;
+const EPS: f64 = 1e-8;
+
+struct Segment<'a> {
+    id: &'a str,
+    a: P2,
+    b: P2,
+    cuts: Vec<f64>,
+}
+
+fn determinant(a: P2, b: P2) -> f64 {
+    a[0] * b[1] - a[1] * b[0]
+}
+
+fn subtract(a: P2, b: P2) -> P2 {
+    [a[0] - b[0], a[1] - b[1]]
+}
+
+fn along(a: P2, b: P2, t: f64) -> P2 {
+    [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+}
+
+/// Parameters at an intersection, including endpoints. Collinear overlapping lines
+/// cannot be matched uniquely by source ids and are refused.
+fn intersection(a: P2, b: P2, c: P2, d: P2) -> Result<Option<(f64, f64)>, ()> {
+    let u = subtract(b, a);
+    let v = subtract(d, c);
+    let offset = subtract(c, a);
+    let denominator = determinant(u, v);
+    let length = u[0].hypot(u[1]);
+    let other_length = v[0].hypot(v[1]);
+    if length <= EPS || other_length <= EPS {
+        return Err(());
+    }
+    if denominator.abs() <= EPS * length * other_length {
+        if determinant(offset, u).abs() <= EPS * length {
+            let t = |p: P2| {
+                let delta = subtract(p, a);
+                (delta[0] * u[0] + delta[1] * u[1]) / (length * length)
+            };
+            if t(c).max(t(d)).min(1.0) - t(c).min(t(d)).max(0.0) > EPS {
+                return Err(());
+            }
+        }
+        return Ok(None);
+    }
+    let t = determinant(offset, v) / denominator;
+    let s = determinant(offset, u) / denominator;
+    Ok(
+        ((-EPS..=1.0 + EPS).contains(&t) && (-EPS..=1.0 + EPS).contains(&s))
+            .then(|| (t.clamp(0.0, 1.0), s.clamp(0.0, 1.0))),
+    )
+}
+
+/// Follow one source loop, including retraced curves, for even-odd membership tests.
+fn polygon(members: &[Value], entities: &[&Value]) -> Option<Vec<P2>> {
+    if members.len() > MAX_LINES {
+        return None;
+    }
+    let mut out = Vec::new();
+    for member in members {
+        let id = member.get("entity")?.as_str()?;
+        let entity = entities
+            .iter()
+            .find(|entity| entity.get("id").and_then(Value::as_str) == Some(id))?;
+        let mut points = samples(entity)?;
+        if member.get("reversed").and_then(Value::as_bool) == Some(true) {
+            points.reverse();
+        }
+        if let (Some(&last), Some(&first)) = (out.last(), points.first()) {
+            if super::sketch::distance(last, first) > EPS {
+                return None;
+            }
+        }
+        out.extend(points);
+        if out.len() > MAX_POINTS {
+            return None;
+        }
+    }
+    let (&first, &last) = (out.first()?, out.last()?);
+    if out.len() < 3 || super::sketch::distance(first, last) > EPS {
+        return None;
+    }
+    out.dedup_by(|a, b| super::sketch::distance(*a, *b) <= EPS);
+    out.pop();
+    (out.len() >= 3).then_some(out)
+}
+
+/// Whether a source loop has intersections beyond adjacent endpoints.
+pub(super) fn crossed_loop(members: &[Value], entities: &[&Value]) -> bool {
+    polygon(members, entities).is_some_and(|ring| self_crossing(&ring))
+}
+
+fn self_crossing(ring: &[P2]) -> bool {
+    for (i, (a, b)) in edges(ring).enumerate() {
+        for (j, (c, d)) in edges(ring).enumerate().skip(i + 1) {
+            if j == i + 1 || (i == 0 && j + 1 == ring.len()) {
+                continue;
+            }
+            if !intersection(a, b, c, d).is_ok_and(|hit| hit.is_none()) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Split straight sketch curves at their intersections, then walk the left side of
+/// every directed edge. Each positive-area walk bounds an atomic region. The returned
+/// ids still name the original curves: SolidCraft matches their pieces on recompute.
+/// Curved arrangements and indistinguishable curve sets retain the refusal.
+pub(super) fn split(members: &[Value], entities: &[&Value]) -> Option<Vec<Vec<String>>> {
+    let selected = polygon(members, entities)?;
+    let mut segments = Vec::new();
+    for entity in entities {
+        if entity.get("construction").and_then(Value::as_bool) == Some(true) {
+            continue;
+        }
+        let geometry = entity.get("geometry")?;
+        match geometry.get("kind")?.as_str()? {
+            "point" | "reference_line" => continue,
+            "line" => {
+                if segments.len() >= MAX_LINES {
+                    return None;
+                }
+                segments.push(Segment {
+                    id: entity.get("id")?.as_str()?,
+                    a: super::sketch::p2(geometry.get("start"))?,
+                    b: super::sketch::p2(geometry.get("end"))?,
+                    cuts: vec![0.0, 1.0],
+                });
+            }
+            // A disjoint curved loop is harmless. Use its sampled bounding box with
+            // generous padding; never approximate a curved intersection as a line.
+            _ => {
+                let points = samples(entity)?;
+                if !disjoint(&selected, &points, tolerance(&points) * 10_000.0) {
+                    return None;
+                }
+            }
+        }
+    }
+    for i in 0..segments.len() {
+        for j in i + 1..segments.len() {
+            let a = segments.get(i)?;
+            let b = segments.get(j)?;
+            if let Some((t, s)) = intersection(a.a, a.b, b.a, b.b).ok()? {
+                segments.get_mut(i)?.cuts.push(t);
+                segments.get_mut(j)?.cuts.push(s);
+            }
+        }
+    }
+    let mut points: Vec<P2> = Vec::new();
+    let mut links: Vec<(usize, usize, &str)> = Vec::new();
+    for segment in &mut segments {
+        segment.cuts.sort_by(f64::total_cmp);
+        segment.cuts.dedup_by(|a, b| (*a - *b).abs() <= EPS);
+        for pair in segment.cuts.windows(2) {
+            let mut vertex = |t: f64| {
+                let p = along(segment.a, segment.b, t);
+                if let Some(index) = points
+                    .iter()
+                    .position(|q| super::sketch::distance(p, *q) <= EPS)
+                {
+                    index
+                } else {
+                    points.push(p);
+                    points.len() - 1
+                }
+            };
+            let a = vertex(*pair.first()?);
+            let b = vertex(*pair.get(1)?);
+            if a == b || links.len() >= MAX_EDGES {
+                return None;
+            }
+            links.push((a, b, segment.id));
+            links.push((b, a, segment.id));
+        }
+    }
+    let mut outgoing = vec![Vec::new(); points.len()];
+    for (index, &(a, _, _)) in links.iter().enumerate() {
+        outgoing.get_mut(a)?.push(index);
+    }
+    for (vertex, edges) in outgoing.iter_mut().enumerate() {
+        let a = *points.get(vertex)?;
+        let angle = |index: &usize| {
+            let b = links
+                .get(*index)
+                .and_then(|(_, b, _)| points.get(*b))
+                .copied()
+                .unwrap_or(a);
+            (b[1] - a[1]).atan2(b[0] - a[0])
+        };
+        edges.sort_by(|a, b| angle(a).total_cmp(&angle(b)));
+    }
+    // Only components connected to the source boundary belong to its arrangement.
+    // Disconnected nested loops remain holes, which SolidCraft finds from the sketch.
+    let source_ids: BTreeSet<&str> = members
+        .iter()
+        .filter_map(|member| member.get("entity")?.as_str())
+        .collect();
+    let mut connected = BTreeSet::new();
+    let mut pending: Vec<usize> = links
+        .iter()
+        .filter(|(_, _, id)| source_ids.contains(id))
+        .map(|(a, _, _)| *a)
+        .collect();
+    while let Some(vertex) = pending.pop() {
+        if connected.insert(vertex) {
+            for &edge in outgoing.get(vertex)? {
+                pending.push(links.get(edge)?.1);
+            }
+        }
+    }
+    let mut visited = vec![false; links.len()];
+    let mut faces = Vec::new();
+    for start in 0..links.len() {
+        if *visited.get(start)? {
+            continue;
+        }
+        let mut edge = start;
+        let mut ring = Vec::new();
+        let mut ids = BTreeSet::new();
+        loop {
+            if *visited.get(edge)? {
+                if edge != start {
+                    return None;
+                }
+                break;
+            }
+            *visited.get_mut(edge)? = true;
+            let &(a, b, id) = links.get(edge)?;
+            ring.push(*points.get(a)?);
+            ids.insert(id.to_owned());
+            let exits = outgoing.get(b)?;
+            let reverse = edge ^ 1;
+            let index = exits.iter().position(|candidate| *candidate == reverse)?;
+            edge = *exits.get((index + exits.len() - 1) % exits.len())?;
+        }
+        let area = edges(&ring).map(|(a, b)| determinant(a, b)).sum::<f64>();
+        if area > EPS && connected.contains(&links.get(start)?.0) {
+            let a = *ring.first()?;
+            let b = *ring.get(1)?;
+            let delta = subtract(b, a);
+            let size = delta[0].hypot(delta[1]);
+            let middle = along(a, b, 0.5);
+            let pick = [
+                middle[0] - delta[1] / size * EPS,
+                middle[1] + delta[0] / size * EPS,
+            ];
+            faces.push((ids.into_iter().collect::<Vec<_>>(), inside(pick, &selected)));
+        }
+    }
+    // Curve-based selections must match exactly one atomic region, including regions
+    // outside the chosen source loop. Two halves sharing the same ids are ambiguous.
+    let mut out = Vec::new();
+    for (ids, selected) in &faces {
+        if *selected {
+            if faces.iter().filter(|(other, _)| other == ids).count() != 1 {
+                return None;
+            }
+            out.push(ids.clone());
+        }
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+fn disjoint(a: &[P2], b: &[P2], padding: f64) -> bool {
+    (0..2).any(|axis| {
+        let bounds = |points: &[P2]| {
+            points
+                .iter()
+                .filter_map(|p| p.get(axis))
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), &p| {
+                    (low.min(p), high.max(p))
+                })
+        };
+        let (a_low, a_high) = bounds(a);
+        let (b_low, b_high) = bounds(b);
+        a_high + padding < b_low || b_high + padding < a_low
+    })
+}
+
+/// An opaque native pick is unambiguous only when even-odd nesting leaves one
+/// material region: one outer loop and its immediate holes, with no islands.
+pub(super) fn single_region(sketch: &Value, entities: &[&Value]) -> Option<usize> {
+    if sketch.get("profiles")?.as_array()?.len() > MAX_LINES {
+        return None;
+    }
+    let loops = loops(sketch);
+    if loops.is_empty() || loops.len() > MAX_LINES {
+        return None;
+    }
+    let boundary: BTreeSet<&str> = loops
+        .iter()
+        .flat_map(|members| members.iter())
+        .filter_map(|member| member.get("entity")?.as_str())
+        .collect();
+    let construction = crossing(sketch, entities);
+    for entity in entities {
+        let id = entity.get("id")?.as_str()?;
+        let kind = entity.get("geometry")?.get("kind")?.as_str()?;
+        if !boundary.contains(id)
+            && !construction.contains(id)
+            && entity.get("construction").and_then(Value::as_bool) != Some(true)
+            && !matches!(kind, "point" | "reference_line")
+        {
+            return None;
+        }
+    }
+    let polygons = loops
+        .iter()
+        .map(|members| polygon(members, entities))
+        .collect::<Option<Vec<_>>>()?;
+    if polygons.iter().map(Vec::len).sum::<usize>() > MAX_POINTS
+        || polygons.iter().any(|ring| self_crossing(ring))
+    {
+        return None;
+    }
+    // Conservative clearance covers the chord error of the sampled circular curves.
+    // Touching, crossing and coincident loops cannot supply a unique nesting tree.
+    for (i, a) in polygons.iter().enumerate() {
+        for b in polygons.iter().skip(i + 1) {
+            let clearance = tolerance(a).max(tolerance(b)) * 10_000.0;
+            if edges(a).any(|(p, q)| {
+                on_boundary(p, b, clearance)
+                    || edges(b)
+                        .any(|(r, s)| !intersection(p, q, r, s).is_ok_and(|hit| hit.is_none()))
+            }) || b.iter().any(|&p| on_boundary(p, a, clearance))
+            {
+                return None;
+            }
+        }
+    }
+    let mut outer = None;
+    let mut regions = 0;
+    for (i, ring) in polygons.iter().enumerate() {
+        let p = *ring.first()?;
+        let depth = polygons
+            .iter()
+            .enumerate()
+            .filter(|(j, other)| *j != i && inside(p, other))
+            .count();
+        if depth % 2 == 0 {
+            regions += 1;
+        }
+        if depth == 0 {
+            outer = Some(i);
+        }
+    }
+    (regions == 1).then_some(outer).flatten()
 }
 
 #[cfg(test)]

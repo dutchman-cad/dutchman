@@ -20,6 +20,8 @@ report's schema name changes when a field does).
 
 ### Feature history
 
+- Selected self-crossed straight sketch profiles map through their split regions; native sketch selections resolve when even-odd nesting identifies one region with its holes.
+
 - Lofts map resolved point and vertex ends and retain separate profile selections for sections
   that share a sketch.
 
