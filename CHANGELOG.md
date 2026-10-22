@@ -39,6 +39,9 @@ report's schema name changes when a field does).
 
 ### Feature history
 
+- The report says why a tapered coil, a flat spiral or a coil of triangular section is not
+  mapped: SolidCraft's coil has no such option.
+
 - Extrudes that start or end at a planar face of an earlier body, one-sided extrudes with a
   taper, start offsets against the sketch normal, and two-sided revolves with equal angles
   map to SolidCraft.
