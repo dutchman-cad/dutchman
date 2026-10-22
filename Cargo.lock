@@ -1166,6 +1166,7 @@ dependencies = [
  "cadmpeg-core",
  "cadmpeg-ir",
  "cadmpeg-registry",
+ "roxmltree 0.21.1",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",

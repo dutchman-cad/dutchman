@@ -12,6 +12,7 @@ publish = false
 cadmpeg-core.workspace = true
 cadmpeg-ir.workspace = true
 cadmpeg-registry.workspace = true
+roxmltree.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
