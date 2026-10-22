@@ -1125,27 +1125,39 @@ fn a_converted_angle_drives_the_geometry_in_solidcraft() {
 }
 
 /// The shape cadmpeg 0.6's Inventor decoder gives an extrude: its profile as native profile
-/// selections of the sketch, an explicit direction, a symmetric or through-next extent. Until
-/// cadmpeg resolves those selections into sketch profiles the history cannot be replayed, and
-/// the design is written as geometry with the reason reported.
+/// selections of the sketch, an explicit direction, a symmetric or through-next extent. In a
+/// sketch of one profile the selection can only be that profile; in a sketch of more, the
+/// history cannot be replayed until cadmpeg resolves the selection, and the design is written
+/// as geometry with the reason reported.
 #[test]
-fn an_inventor_shaped_extrude_flattens_with_its_reason() {
+fn an_inventor_shaped_extrude_maps_only_when_its_sketch_has_one_profile() {
     let inventor_profile = json!({"kind": "sketch_selection",
         "value": {"sketch": SKETCH, "selections": ["inventor:native:profile-selection#1"]}});
-    let model = cube_with_history(
-        10.0,
-        inventor_profile,
-        Some(json!({"kind": "symmetric",
-            "side": {"termination": {"kind": "blind", "length": 10.0}}})),
+    let extent = json!({"kind": "symmetric",
+        "side": {"termination": {"kind": "blind", "length": 10.0}}});
+    let model = cube_with_history(10.0, inventor_profile.clone(), Some(extent.clone()));
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    let (document, _) = convert(&model, &writer);
+    assert_eq!(
+        types(&document),
+        [
+            ("sketch".to_owned(), false),
+            ("extrude".to_owned(), false),
+            ("import".to_owned(), true)
+        ]
     );
-    let (document, report) = convert(
-        &model,
-        &SolidCraftWriter::new().verification(Verification::Off),
-    );
+    // The same sketch with its loop listed twice, as two profiles.
+    let mut model = cube_with_history(10.0, inventor_profile, Some(extent));
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let profiles = wire["model"]["sketches"][0]["profiles"].clone();
+    wire["model"]["sketches"][0]["profiles"] = json!([profiles[0], profiles[0]]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(&model, &writer);
     assert_eq!(types(&document), [("import".to_owned(), false)]);
     assert_eq!(
         history_line(&report),
-        "flattened: feature \"Block\": sketch_selection profiles are not mapped yet"
+        "flattened: feature \"Block\": a profile cadmpeg does not resolve, in a sketch of 2 \
+         profiles, is not mapped yet"
     );
     let outcome = report.outcome().unwrap();
     let statuses: Vec<_> = outcome

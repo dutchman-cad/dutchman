@@ -51,6 +51,16 @@ pub(super) fn profile(profile: Option<&Value>, ctx: &Context) -> Result<(String,
         }
         "sketch_regions" => regions(value.get("regions"), ctx, sketch, mapped)?,
         "sketch_entities" => entities(value.get("entities"), mapped)?,
+        // A selection cadmpeg keeps native: in a sketch of one profile, it can only be that.
+        "sketch_selection" => match profile_count(ctx, sketch) {
+            1 => json!({"type": "all"}),
+            n => {
+                return Err(format!(
+                    "a profile cadmpeg does not resolve, in a sketch of {n} profiles, is not \
+                     mapped yet"
+                ))
+            }
+        },
         other => return Err(format!("{other} profiles are not mapped yet")),
     };
     Ok((sketch.to_owned(), selection))
@@ -64,13 +74,17 @@ fn crossed(curves: &[String]) -> bool {
         .any(|(index, curve)| curves.iter().skip(index + 1).any(|other| other == curve))
 }
 
-/// Whether `indices` name every profile loop the source sketch has.
-fn takes_every_loop(ctx: &Context, sketch: &str, indices: &[Value]) -> bool {
-    let count = ctx
-        .row("sketches", sketch)
+/// How many profile loops the source sketch has.
+fn profile_count(ctx: &Context, sketch: &str) -> usize {
+    ctx.row("sketches", sketch)
         .and_then(|row| row.get("profiles"))
         .and_then(Value::as_array)
-        .map_or(0, Vec::len);
+        .map_or(0, Vec::len)
+}
+
+/// Whether `indices` name every profile loop the source sketch has.
+fn takes_every_loop(ctx: &Context, sketch: &str, indices: &[Value]) -> bool {
+    let count = profile_count(ctx, sketch);
     (0..count).all(|wanted| {
         indices
             .iter()
@@ -365,6 +379,23 @@ mod tests {
             json!({"kind": "sketch_profiles", "value": {"sketch": "s", "profiles": [1]}}),
         );
         assert_eq!(plain.unwrap(), json!({"type": "curves", "loops": [["c1"]]}));
+    }
+
+    #[test]
+    fn a_selection_cadmpeg_keeps_native_is_the_profile_of_a_one_profile_sketch() {
+        let one = json!({"sketches": [{"id": "s", "profiles": [
+            [{"entity": "e0"}, {"entity": "e1"}, {"entity": "e2"}],
+        ]}]});
+        let native = json!({"kind": "sketch_selection",
+            "value": {"sketch": "s", "selections": ["native#1"]}});
+        assert_eq!(
+            select(&one, native.clone()).unwrap(),
+            json!({"type": "all"})
+        );
+        assert_eq!(
+            select(&model(), native).unwrap_err(),
+            "a profile cadmpeg does not resolve, in a sketch of 2 profiles, is not mapped yet"
+        );
     }
 
     #[test]
