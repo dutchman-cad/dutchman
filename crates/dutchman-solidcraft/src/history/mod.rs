@@ -257,13 +257,18 @@ impl<'a> Context<'a> {
 
     /// The timeline name `feature` keeps: its own, numbered when an earlier feature has it,
     /// since SolidCraft refers to features by name.
-    fn unique_name(&self, feature: &Value) -> String {
+    fn unique_name(&self, feature: &Value, preceding: &[Value]) -> String {
         let base = feature
             .get("name")
             .and_then(Value::as_str)
             .unwrap_or("Feature")
             .to_owned();
-        let taken = |name: &str| self.feature_names.values().any(|known| known == name);
+        let taken = |name: &str| {
+            self.feature_names.values().any(|known| known == name)
+                || preceding
+                    .iter()
+                    .any(|feature| feature.get("name").and_then(Value::as_str) == Some(name))
+        };
         let mut name = base.clone();
         let mut n = 2;
         while taken(&name) {
@@ -369,14 +374,14 @@ fn map_into(
             continue;
         }
         history.total += 1;
-        match map_feature(feature, &mut ctx, report) {
+        match map_feature(feature, &mut ctx, report, &mut history.features) {
             Ok(Mapped::Nothing) => {
                 history.mapped += 1;
                 out.push(outcome(FeatureStatus::NotNeeded, None));
             }
             Ok(Mapped::Feature(mut mapped)) => {
                 history.mapped += 1;
-                let name = ctx.unique_name(&mapped);
+                let name = ctx.unique_name(&mapped, &history.features);
                 if let Some(fields) = mapped.as_object_mut() {
                     fields.insert("name".to_owned(), Value::String(name.clone()));
                 }
@@ -435,7 +440,12 @@ fn check_version(document: &Value) -> Result<(), String> {
 }
 
 /// One source feature as a SolidCraft feature, or why it cannot be.
-fn map_feature(feature: &Value, ctx: &mut Context, report: &mut Report) -> Result<Mapped, String> {
+fn map_feature(
+    feature: &Value,
+    ctx: &mut Context,
+    report: &mut Report,
+    preceding: &mut Vec<Value>,
+) -> Result<Mapped, String> {
     let definition = operation(feature);
     match definition.get("definition").and_then(Value::as_str) {
         // A folder, a PartDesign Body or another node that orders the tree and builds nothing.
@@ -445,7 +455,7 @@ fn map_feature(feature: &Value, ctx: &mut Context, report: &mut Report) -> Resul
         Some("sketch") => sketch::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some("extrude") => extrude::map(feature, definition, ctx).map(Mapped::Feature),
         Some("revolve") => revolve::map(feature, definition, ctx).map(Mapped::Feature),
-        Some("loft") => loft::map(feature, definition, ctx).map(Mapped::Feature),
+        Some("loft") => loft::map(feature, definition, ctx, preceding).map(Mapped::Feature),
         Some("sweep") => sweep::map(feature, definition, ctx).map(Mapped::Feature),
         Some("sphere") => primitive::sphere(feature, definition, ctx).map(Mapped::Feature),
         Some("torus") => primitive::torus(feature, definition, ctx).map(Mapped::Feature),

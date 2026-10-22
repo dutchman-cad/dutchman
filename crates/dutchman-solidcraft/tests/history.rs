@@ -468,13 +468,20 @@ fn lofts_solidcraft_would_build_differently_flatten_the_history() {
             "lofts along a centreline are not mapped yet",
         ),
         (
-            json!({"sections": [first_profile(), {"kind": "point", "value": {"x": 5.0, "y": 5.0, "z": 10.0}}]}),
-            "lofts that close to a point are not mapped yet",
+            json!({"sections": [first_profile(), {"kind": "native_point", "value": "native:apex"}]}),
+            "lofts that close to an unresolved point are not mapped yet",
         ),
         (
-            json!({"sections": [first_profile(), first_profile()]}),
-            "loft sections that share a sketch are not mapped yet",
+            json!({"sections": [first_profile(),
+                {"kind": "point", "value": {"x": 5.0, "y": 5.0, "z": 10.0}},
+                {"kind": "sketch", "value": TOP}]}),
+            "lofts with an interior point section are not mapped yet",
         ),
+        (
+            json!({"sections": vec![first_profile(); 51]}),
+            "a loft needs between two and fifty sections",
+        ),
+        (json!({"solid": false}), "surface lofts are not mapped yet"),
     ] {
         let model = loft_history(10.0, |definition| {
             for (key, value) in change.as_object().unwrap() {
@@ -501,28 +508,202 @@ fn lofts_solidcraft_would_build_differently_flatten_the_history() {
     }
 }
 
-#[test]
-fn a_loft_inside_an_assembly_keeps_its_own_sketches() {
-    let mut model = assembly_of_histories();
-    let assembly = model.assembly.as_mut().unwrap();
-    for part in &mut assembly.parts {
-        part.ir = loft_history(10.0, |_| {}).ir;
+/// A square pyramid, with a solved position or a B-rep vertex as its apex.
+fn pointed_loft(vertex: bool, first: bool) -> Model {
+    let model = loft_history(10.0, |definition| {
+        let apex = json!({"kind": "point", "value": {"x": 5.0, "y": 5.0, "z": 10.0}});
+        definition["sections"] = if first {
+            json!([apex, first_profile()])
+        } else {
+            json!([first_profile(), apex])
+        };
+    });
+    if !vertex {
+        return model;
     }
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["points"].as_array_mut().unwrap().push(json!({
+        "id": "synthetic:apex:point#0",
+        "position": {"x": 5.0, "y": 5.0, "z": 10.0},
+    }));
+    wire["model"]["vertices"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "id": "synthetic:apex:vertex#0", "point": "synthetic:apex:point#0",
+        }));
+    let index = if first { 0 } else { 1 };
+    wire["model"]["features"][2]["definition"]["sections"][index] =
+        json!({"kind": "vertex", "value": "synthetic:apex:vertex#0"});
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    }
+}
+
+#[test]
+fn resolved_loft_point_ends_become_sketch_points() {
+    for vertex in [false, true] {
+        for first in [false, true] {
+            let (document, report) = convert(
+                &pointed_loft(vertex, first),
+                &SolidCraftWriter::new().verification(Verification::Off),
+            );
+            let features = document["features"].as_array().unwrap();
+            let loft = features.iter().find(|f| f["type"] == "loft").unwrap();
+            let index = if first { 0 } else { 1 };
+            let section = &loft["sections"][index];
+            assert_eq!(section["point"], "origin");
+            assert!(section.get("profiles").is_none());
+            let sketch = features
+                .iter()
+                .find(|f| f["id"] == section["sketch"])
+                .unwrap();
+            assert_eq!(sketch["plane"]["plane"]["origin"], json!([5.0, 5.0, 10.0]));
+            assert_eq!(sketch["sketch"]["points"][0]["id"], "origin");
+            assert!(sketch["id"].as_u64().unwrap() < loft["id"].as_u64().unwrap());
+            assert!(history_line(&report).contains("3 of 3 features mapped"));
+        }
+    }
+}
+
+#[test]
+fn generated_loft_apex_names_do_not_shadow_source_features() {
+    let model = pointed_loft(false, false);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"][1]["name"] = json!("Loft apex 3");
+    wire["model"]["features"][2]["name"] = json!("Loft apex 3 (2)");
+    let model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    };
     let (document, _) = convert(
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
     );
     let features = document["features"].as_array().unwrap();
-    let lofts: Vec<&Value> = features.iter().filter(|f| f["type"] == "loft").collect();
-    assert_eq!(lofts.len(), 2);
-    for loft in lofts {
-        for section in loft["sections"].as_array().unwrap() {
-            let sketch = features
-                .iter()
-                .find(|f| f["id"] == section["sketch"])
-                .unwrap();
-            assert_eq!(sketch["type"], "sketch");
-            assert_eq!(sketch["component"], loft["component"]);
+    let names: Vec<&str> = features.iter().filter_map(|f| f["name"].as_str()).collect();
+    let unique: std::collections::BTreeSet<&str> = names.iter().copied().collect();
+    assert_eq!(names.len(), unique.len());
+    assert!(names.contains(&"Loft apex 3 (2)"));
+}
+
+/// Two separate square regions in one sketch form the feet of an arch; a third
+/// square, halfway across and 10 mm above them, forms its middle section.
+fn shared_sketch_loft() -> Model {
+    let model = loft_history(10.0, |definition| {
+        definition["sections"].as_array_mut().unwrap().push(json!({
+            "kind": "sketch_regions", "value": {"sketch": SKETCH,
+            "regions": [{"region": "loops", "outer": 1, "holes": []}]},
+        }));
+    });
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    m["sketches"][0]["profiles"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!([
+            {"entity": "f3d:model:sketch-entity#41"},
+            {"entity": "f3d:model:sketch-entity#42"},
+            {"entity": "f3d:model:sketch-entity#43"},
+            {"entity": "f3d:model:sketch-entity#44"},
+        ]));
+    m["sketch_entities"].as_array_mut().unwrap().extend([
+        line(41, [20.0, 0.0], [30.0, 0.0]),
+        line(42, [30.0, 0.0], [30.0, 10.0]),
+        line(43, [30.0, 10.0], [20.0, 10.0]),
+        line(44, [20.0, 10.0], [20.0, 0.0]),
+    ]);
+    m["sketches"][1]["placement"]["frame"] = json!({
+        "origin": {"x": 15.0, "y": 0.0, "z": 5.0},
+        "normal": {"x": 1.0, "y": 0.0, "z": 0.0},
+        "u_axis": {"x": 0.0, "y": 1.0, "z": 0.0},
+    });
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    }
+}
+
+#[test]
+fn loft_sections_in_one_sketch_keep_their_selected_regions() {
+    let (document, report) = convert(
+        &shared_sketch_loft(),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let loft = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["type"] == "loft")
+        .unwrap();
+    assert_eq!(loft["sections"][0]["sketch"], loft["sections"][2]["sketch"]);
+    assert_eq!(loft["sections"][0]["profiles"]["type"], "curves");
+    assert_eq!(loft["sections"][2]["profiles"]["type"], "whole_boundaries");
+    let first = &loft["sections"][0]["profiles"]["loops"][0];
+    let last = &loft["sections"][2]["profiles"]["profiles"][0]["outer"];
+    assert_eq!(first.as_array().unwrap().len(), 4);
+    assert_eq!(last.as_array().unwrap().len(), 4);
+    assert!(first
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|id| !last.as_array().unwrap().contains(id)));
+    assert!(history_line(&report).contains("3 of 3 features mapped"));
+}
+
+#[test]
+fn solidcraft_lofts_to_resolved_point_ends() {
+    let Some(cli) = solidcraft() else { return };
+    for vertex in [false, true] {
+        for first in [false, true] {
+            let volume = volumes(&cli, &written(&pointed_loft(vertex, first)).0);
+            assert_eq!(volume.len(), 1);
+            let expected = 1000.0 / 3.0;
+            assert!(
+                (volume[0] - expected).abs() / expected < dutchman_solidcraft::VOLUME_TOLERANCE,
+                "{volume:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn solidcraft_lofts_through_regions_of_a_shared_sketch() {
+    let Some(cli) = solidcraft() else { return };
+    let volume = volumes(&cli, &written(&shared_sketch_loft()).0);
+    assert_eq!(volume.len(), 1);
+    assert!(volume[0].is_finite() && volume[0] > 0.0, "{volume:?}");
+}
+
+#[test]
+fn a_loft_inside_an_assembly_keeps_its_own_sketches() {
+    for pointed in [false, true] {
+        let mut model = assembly_of_histories();
+        let assembly = model.assembly.as_mut().unwrap();
+        for part in &mut assembly.parts {
+            part.ir = if pointed {
+                pointed_loft(false, false).ir
+            } else {
+                loft_history(10.0, |_| {}).ir
+            };
+        }
+        let (document, _) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        let features = document["features"].as_array().unwrap();
+        let lofts: Vec<&Value> = features.iter().filter(|f| f["type"] == "loft").collect();
+        assert_eq!(lofts.len(), 2);
+        for loft in lofts {
+            for section in loft["sections"].as_array().unwrap() {
+                let sketch = features
+                    .iter()
+                    .find(|f| f["id"] == section["sketch"])
+                    .unwrap();
+                assert_eq!(sketch["type"], "sketch");
+                assert_eq!(sketch["component"], loft["component"]);
+            }
         }
     }
 }

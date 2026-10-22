@@ -122,8 +122,9 @@ profiles, of profile regions (whole loops with their holes, or regions bounded b
 curves) or of selected curves, one-sided, symmetric or two-sided, blind or through all, from the sketch plane or an
 offset, as new body, join, cut or intersect (a new body keeps its source name and colour); revolves about a line in the sketch plane that
 are symmetric or a full turn (CADIR does not state which way a revolve turns, so a partial
-one-sided or two-sided revolve is not mapped); lofts through profiles of two or more
-sketches, open, smooth and solid, guided by up to two rails of sketch curves; sweeps of one sketch profile along
+one-sided or two-sided revolve is not mapped); lofts through two to fifty profile or terminal point sections,
+open, smooth and solid, guided by up to two rails of sketch curves (sections can select
+separate regions of one sketch; resolved point and vertex ends become sketch points); sweeps of one sketch profile along
 sketch curves (whole path, square to it or held as drawn, optionally twisted or guided by one
 rail); spheres, and tori about the Z axis (boxes and cylinder primitives wait on cadmpeg
 placing them); coils along any axis, travelling up or down it, of round or square section,
