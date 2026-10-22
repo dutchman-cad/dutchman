@@ -333,9 +333,9 @@ dutchman formats
 ```
 
 ```text
-Fusion archive (.f3d)            converts  geometry; feature history (sketches, constraints, dimensions, extrudes, revolves, lofts, sweeps, spheres, tori) when every feature maps; components when the file says which bodies they own
+Fusion archive (.f3d)            converts  geometry; feature history (sketches, constraints, dimensions, extrudes, revolves, lofts, sweeps, spheres, tori, coils) when every feature maps; components when the file says which bodies they own
 Fusion multi-document archive (.f3z) converts  as a Fusion archive, with the designs it references merged in by cadmpeg
-Inventor part (.ipt)             converts  geometry; feature history waits on cadmpeg resolving extrude profiles
+Inventor part (.ipt)             converts  geometry; feature history (sketches, constraints, extrudes) when every feature maps
 Inventor assembly (.iam)         converts  placed parts and sub-assemblies, read from their files in the project
 SolidWorks part (.sldprt)        converts  geometry; feature history waits on cadmpeg binding sketches and extrude profiles
 SolidWorks assembly (.sldasm)    not yet   nothing yet
