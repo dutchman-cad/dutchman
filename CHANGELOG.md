@@ -8,6 +8,19 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Checks
+
+- Sheet bodies (surfaces, open by design) are no longer reported as bodies inside out or
+  open in SolidCraft's check: SolidCraft gives an open sheet a volume, of either sign, and
+  warns that its shell is not closed. As many such findings as the design has sheets are put
+  down to them, with an `Info` line saying how many surface bodies were not checked; solids
+  inside out or open beyond that are still `Degraded`.
+
+- A `solidcraft-cli` older than SolidCraft 0.18.2, the oldest that opens and checks Dutchman's
+  designs, is not used: the history is written unverified, saying so and naming the version
+  found, and the desktop app says it too. CI opens converted designs in SolidCraft 0.18.2 and
+  0.19.0, and the nightly checks with 0.19.0. The guide says which versions are supported.
+
 ### Desktop app
 
 - The macOS app icon is a white rounded square with the mark, as macOS icons are, and the Dock
@@ -28,13 +41,6 @@ report's schema name changes when a field does).
 - An assembly says what it brought across: the JSON reports give the joints written by kind
   (`joints`), and the desktop app's card reads `41 components, 6 joints (5 revolute, 1 rigid)`,
   or `18 of 20 components placed, …` when some were left out.
-
-### Checks
-
-- A `solidcraft-cli` older than SolidCraft 0.18.2, the oldest that opens and checks Dutchman's
-  designs, is not used: the history is written unverified, saying so and naming the version
-  found, and the desktop app says it too. CI opens converted designs in SolidCraft 0.18.2 and
-  0.19.0, and the nightly checks with 0.19.0. The guide says which versions are supported.
 
 ### Feature history
 

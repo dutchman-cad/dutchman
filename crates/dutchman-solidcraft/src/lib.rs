@@ -188,9 +188,45 @@ impl SolidCraftWriter {
             self.timeout,
             written,
             &original,
-            solid_bodies(model),
+            verify::Expected {
+                faces: 0,
+                solids: solid_bodies(model),
+                sheets: sheet_bodies(model),
+            },
         ))
     }
+}
+
+/// How many sheet bodies an assembly places, through its sub-assemblies, each as often as it
+/// is placed.
+fn placed_sheets(assembly: &dutchman_core::Assembly, depth: usize) -> usize {
+    if depth > 64 {
+        return 0;
+    }
+    assembly
+        .placements
+        .iter()
+        .filter_map(|placement| assembly.parts.get(placement.part))
+        .map(|part| {
+            sheet_bodies(part).saturating_add(
+                part.assembly
+                    .as_ref()
+                    .map_or(0, |inner| placed_sheets(inner, depth + 1)),
+            )
+        })
+        .fold(0, usize::saturating_add)
+}
+
+/// How many of the model's bodies are sheets: surfaces, open by design.
+fn sheet_bodies(model: &Model) -> usize {
+    use cadmpeg_ir::topology::BodyKind;
+    model
+        .ir
+        .model
+        .bodies
+        .iter()
+        .filter(|body| matches!(body.kind, BodyKind::Sheet | BodyKind::General))
+        .count()
 }
 
 /// How many of the model's bodies are solids, each of which should have a volume.
@@ -212,6 +248,7 @@ impl SolidCraftWriter {
         let expected = verify::Expected {
             faces: model.ir.model.faces.len(),
             solids: solid_bodies(model),
+            sheets: sheet_bodies(model),
         };
         self.check_geometry(design, expected, report);
     }
@@ -231,7 +268,21 @@ impl SolidCraftWriter {
             }
             Err(verify::NoCli::NotFound(_)) => return,
         };
-        match verify::check_import(&cli, self.timeout, design, expected) {
+        let shown = verify::check_import(&cli, self.timeout, design, expected);
+        if expected.sheets > 0 && !matches!(shown, verify::Shown::Unchecked(_)) {
+            report.push_at(
+                Stage::SolidCraft,
+                Severity::Info,
+                GEOMETRY,
+                format!(
+                    "{} surface bod{} (sheets, open by design) not checked for a volume or a \
+                     closed shell",
+                    expected.sheets,
+                    if expected.sheets == 1 { "y" } else { "ies" }
+                ),
+            );
+        }
+        match shown {
             verify::Shown::Whole => {}
             verify::Shown::Short(what) => {
                 report.push_at(Stage::SolidCraft, Severity::Degraded, GEOMETRY, what);
@@ -262,7 +313,11 @@ impl Writer for SolidCraftWriter {
         if let Some(assembly) = &model.assembly {
             let bytes = assembly::write(self, model, assembly, report)?;
             // Each part is placed any number of times, so only SolidCraft's own warnings count.
-            self.check_geometry(&bytes, verify::Expected::default(), report);
+            let expected = verify::Expected {
+                sheets: placed_sheets(assembly, 0),
+                ..verify::Expected::default()
+            };
+            self.check_geometry(&bytes, expected, report);
             return out
                 .write_all(&bytes)
                 .map_err(|err| Error::Encode(format!("cannot write the design: {err}")));

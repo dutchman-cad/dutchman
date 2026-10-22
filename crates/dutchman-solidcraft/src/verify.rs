@@ -251,7 +251,7 @@ pub(crate) fn compare(
     timeout: Duration,
     history: &[u8],
     original: &[u8],
-    solids: usize,
+    bodies: Expected,
 ) -> Outcome {
     let dir = match tempfile::tempdir() {
         Ok(dir) => dir,
@@ -273,7 +273,7 @@ pub(crate) fn compare(
     if let Some(error) = replayed.errors.first() {
         return Outcome::Differs(error.clone());
     }
-    let unsound = volume_problems(&expected.volumes, solids);
+    let unsound = volume_problems(&expected.volumes, bodies);
     if !unsound.is_empty() {
         return Outcome::Unverified(format!(
             "the original geometry cannot be compared with: {}",
@@ -283,11 +283,20 @@ pub(crate) fn compare(
     match_volumes(&replayed.volumes, &expected.volumes)
 }
 
-/// What is wrong with a design's body `volumes` in SolidCraft, for a design with `solids`
-/// solid bodies (0: not counted): bodies inside out, and solids without a volume.
-fn volume_problems(volumes: &[f64], solids: usize) -> Vec<String> {
+/// What is wrong with a design's body `volumes` in SolidCraft, for a design with
+/// `bodies.solids` solid bodies (0: not counted): bodies inside out, and solids without a volume.
+///
+/// A sheet body bounds no volume, but SolidCraft gives it one, of either sign, and does not
+/// say which of its bodies are sheets. So as many bodies inside out as the design has sheets
+/// are taken for them, and only the rest are reported.
+fn volume_problems(volumes: &[f64], bodies: Expected) -> Vec<String> {
+    let solids = bodies.solids;
     let mut problems = Vec::new();
-    let inside_out = volumes.iter().filter(|v| **v < -NO_VOLUME).count();
+    let inside_out = volumes
+        .iter()
+        .filter(|v| **v < -NO_VOLUME)
+        .count()
+        .saturating_sub(bodies.sheets);
     if inside_out > 0 {
         problems.push(format!(
             "SolidCraft reads {inside_out} bod{} inside out, with a negative volume",
@@ -303,6 +312,9 @@ fn volume_problems(volumes: &[f64], solids: usize) -> Vec<String> {
     }
     problems
 }
+
+/// How SolidCraft says a body it imports has a shell that is not closed.
+const OPEN_BODY: &str = "imported as an open body";
 
 /// What SolidCraft shows of geometry written as an import.
 #[derive(Debug, PartialEq)]
@@ -324,6 +336,8 @@ pub(crate) struct Expected {
     pub faces: usize,
     /// Its solid bodies, each of which should have a volume; 0 when not counted.
     pub solids: usize,
+    /// Its sheet bodies: open by design, so neither a volume nor an open shell is a fault.
+    pub sheets: usize,
 }
 
 /// A body volume, in cubic millimetres, below which SolidCraft gives the body none.
@@ -370,8 +384,17 @@ fn shown(eval: &Eval, expected: Expected) -> Shown {
         }
         _ => {}
     }
-    problems.extend(volume_problems(&eval.volumes, expected.solids));
-    problems.extend(eval.warnings.iter().cloned());
+    problems.extend(volume_problems(&eval.volumes, expected));
+    // SolidCraft warns of every open shell; the design's sheets are open by design.
+    let mut sheets = expected.sheets;
+    problems.extend(eval.warnings.iter().filter_map(|warning| {
+        if sheets > 0 && warning.contains(OPEN_BODY) {
+            sheets -= 1;
+            None
+        } else {
+            Some(warning.clone())
+        }
+    }));
     if problems.is_empty() {
         Shown::Whole
     } else {
@@ -560,6 +583,7 @@ mod tests {
         let six = Expected {
             faces: 6,
             solids: 1,
+            sheets: 0,
         };
         assert_eq!(shown(&eval(6, None), six), Shown::Whole);
         assert_eq!(
@@ -586,6 +610,7 @@ mod tests {
         let two = Expected {
             faces: 0,
             solids: 2,
+            sheets: 0,
         };
         assert_eq!(shown(&eval(&[1000.0, 8.0]), two), Shown::Whole);
         assert_eq!(
@@ -678,7 +703,16 @@ mod cli_tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let dir = tempfile::tempdir().unwrap();
         let cli = fake_cli(dir.path(), script);
-        compare(&cli, timeout, b"history", b"original", 1)
+        compare(
+            &cli,
+            timeout,
+            b"history",
+            b"original",
+            Expected {
+                solids: 1,
+                ..Expected::default()
+            },
+        )
     }
 
     #[test]
@@ -764,6 +798,7 @@ mod cli_tests {
             Expected {
                 faces: 6,
                 solids: 0,
+                sheets: 0,
             },
         )
     }
@@ -791,7 +826,10 @@ mod cli_tests {
             DEFAULT_TIMEOUT,
             b"h",
             b"o",
-            1,
+            Expected {
+                solids: 1,
+                ..Expected::default()
+            },
         );
         assert!(matches!(outcome, Outcome::Unverified(_)));
     }
@@ -835,6 +873,40 @@ mod cli_tests {
         assert!(matches!(
             usable_cli(&Verification::Off),
             Err(NoCli::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn sheets_are_not_reported_as_inside_out_or_open() {
+        let eval = |volumes: &[f64], warnings: &[&str]| Eval {
+            volumes: volumes.to_vec(),
+            errors: Vec::new(),
+            faces: None,
+            warnings: warnings.iter().map(|w| (*w).to_owned()).collect(),
+        };
+        let open = "solid #6704: imported as an open body (the shell is not closed)";
+        // A solid and a sheet disk, which SolidCraft gives a negative volume and calls open.
+        let one_sheet = Expected {
+            faces: 0,
+            solids: 1,
+            sheets: 1,
+        };
+        assert_eq!(
+            shown(&eval(&[1000.0, -2629.0], &[open]), one_sheet),
+            Shown::Whole
+        );
+        // A solid inside out, or a second open shell, is still reported.
+        assert_eq!(
+            shown(&eval(&[-1000.0, -2629.0], &[open, open]), one_sheet),
+            Shown::Short(format!(
+                "SolidCraft reads 1 body inside out, with a negative volume; SolidCraft gives 0 \
+                 of its 1 solids a volume; the others open as empty shells; {open}"
+            ))
+        );
+        // Without sheets, both are faults.
+        assert!(matches!(
+            shown(&eval(&[1000.0, -2629.0], &[open]), Expected::default()),
+            Shown::Short(_)
         ));
     }
 }
