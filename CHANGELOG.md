@@ -17,6 +17,12 @@ report's schema name changes when a field does).
 
 ### Feature history
 
+- Coils map to SolidCraft coils: up the Z axis, of round or square section, inside, centred on
+  or outside their path, turning either way, by turns and pitch, turns and height, or height and
+  pitch. Tapered coils, flat spirals and triangular sections are not mapped yet.
+- When cadmpeg's STEP writer leaves out a helix surface (the swept face of a coil or thread),
+  the report says so in plain words (`Degraded`, `geometry`): the solid it bounds opens without
+  it, with no volume.
 - A solid line drawn across a sketch profile from one point of its boundary to another, such
   as the diagonals of an Inventor centre-point rectangle, is written as construction when the
   sketch's profile table takes that profile whole: solid, it would split the profile, and

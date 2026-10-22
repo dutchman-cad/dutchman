@@ -449,6 +449,7 @@ fn map_feature(feature: &Value, ctx: &mut Context, report: &mut Report) -> Resul
         Some("sweep") => sweep::map(feature, definition, ctx).map(Mapped::Feature),
         Some("sphere") => primitive::sphere(feature, definition, ctx).map(Mapped::Feature),
         Some("torus") => primitive::torus(feature, definition, ctx).map(Mapped::Feature),
+        Some("coil") => primitive::coil(feature, definition, ctx).map(Mapped::Feature),
         Some(kind @ ("block" | "primitive")) => Err(primitive::unplaced(kind)),
         Some("pattern") => pattern::map(feature, definition, ctx).map(Mapped::Feature),
         Some("hole") => hole::map(feature, definition, ctx).map(Mapped::Feature),
