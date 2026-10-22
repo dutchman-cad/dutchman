@@ -8,6 +8,13 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### FreeCAD
+
+- Leaving out a FreeCAD document's hidden bodies no longer takes their sketches with them: a
+  sketch's own wire body is hidden, and only the hidden bodies' own B-rep is left out now.
+  Every FreeCAD history had stopped at its first sketch ("the sketch it binds is missing")
+  once cadmpeg marks those bodies hidden.
+
 ### Feature history
 
 - A solid line drawn across a sketch profile from one point of its boundary to another, such

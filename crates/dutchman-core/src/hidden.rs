@@ -7,8 +7,31 @@ use std::collections::BTreeSet;
 
 use serde_json::Value;
 
-use crate::assembly::{strings, NOT_GEOMETRY};
+use crate::assembly::strings;
+#[cfg(test)]
+use crate::assembly::NOT_GEOMETRY;
 use crate::Model;
+
+/// The arenas a body's B-rep is made of. Only rows of these that hidden bodies alone reach are
+/// left out: a sketch, a feature or anything else a hidden body names (a sketch's own wire
+/// body is hidden, and its sketch is still the history's) is kept.
+const BREP: [&str; 15] = [
+    "regions",
+    "shells",
+    "faces",
+    "loops",
+    "coedges",
+    "edges",
+    "vertices",
+    "points",
+    "surfaces",
+    "curves",
+    "pcurves",
+    "procedural_surfaces",
+    "procedural_curves",
+    "subds",
+    "tessellations",
+];
 
 /// `model` without its hidden bodies and the geometry only they reach, with how many were
 /// left out; `None` when it hides none, or nothing but hidden bodies (then what it hides is
@@ -30,7 +53,7 @@ pub(crate) fn shown(model: &Model) -> Result<Option<(Model, usize)>, String> {
         .collect();
     let geometry: BTreeSet<&str> = wire
         .iter()
-        .filter(|(arena, _)| !NOT_GEOMETRY.contains(&arena.as_str()))
+        .filter(|(arena, _)| BREP.contains(&arena.as_str()))
         .flat_map(|(_, rows)| listed(Some(rows)))
         .filter_map(|row| row.get("id").and_then(Value::as_str))
         .collect();
@@ -190,6 +213,28 @@ mod tests {
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let (shown, _) = shown(&model).unwrap().unwrap();
         assert_eq!(shown.ir.model.bodies.len(), 1);
+    }
+
+    #[test]
+    fn sketches_and_their_curves_are_kept_with_the_history() {
+        // A FreeCAD sketch's own wire body is hidden; the sketch is still the history's.
+        let mut model = two_cubes(Some(false));
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let sketch = "fcstd:model:sketch#Sketch";
+        wire["model"]["sketches"] = json!([{"id": sketch, "name": "Sketch",
+            "placement": {"kind": "resolved", "frame": {
+                "origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+                "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
+                "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0}}}}]);
+        wire["model"]["sketch_entities"] = json!([{"id": "fcstd:model:sketch-entity#1",
+            "sketch": sketch, "geometry": {"kind": "line",
+            "start": {"u": 0.0, "v": 0.0}, "end": {"u": 10.0, "v": 0.0}}}]);
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (shown, _) = shown(&model).unwrap().unwrap();
+        assert_eq!(shown.ir.model.bodies.len(), 1);
+        assert_eq!(shown.ir.model.faces.len(), 6);
+        assert_eq!(shown.ir.model.sketches.len(), 1);
+        assert_eq!(shown.ir.model.sketch_entities.len(), 1);
     }
 
     #[test]
