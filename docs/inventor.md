@@ -5,7 +5,9 @@ Dutchman reads Inventor through cadmpeg's published Inventor codec (cadmpeg-regi
 when the pin is bumped. This page says what Dutchman makes of what that codec gives, and which
 upstream gaps keep Inventor history from replaying. It drives what is asked of cadmpeg next.
 
-State as of cadmpeg 0.6.2 (docs/format-support.md upstream rates Inventor L1 with extras).
+State as of cadmpeg's `main` (in the [nightly builds](https://github.com/dutchman-cad/dutchman/releases/tag/nightly)
+until its next release; cadmpeg 0.6.3 resolves no extrude profile, so stable builds convert
+Inventor parts as geometry).
 
 ## Parts (`.ipt`)
 
@@ -15,27 +17,26 @@ State as of cadmpeg 0.6.2 (docs/format-support.md upstream rates Inventor L1 wit
 | No geometry (empty or invalid carrier: blocking `geometry_not_transferred`). | Stops: "no geometry could be read". |
 | Parameters (closed scalar graphs). | Mapped to SolidCraft parameters. |
 | Planar sketches: points, lines, circles, ellipses, with typed and native constraints. | Mapped, ellipses as whole ellipses; typed constraints mapped, native ones reported as not carried. |
-| Extrude, hole, constant-radius fillet, equal-distance chamfer, when every property, dimension and selection resolves. | Extrude: blocked by its profile reference (below). Hole, fillet, chamfer: not mapped yet. |
+| Extrude, hole, constant-radius fillet, equal-distance chamfer, when every property, dimension and selection resolves. | Extrude: mapped when cadmpeg resolves its profile to sketch profiles or regions, blind or through all; an extrude to a face or to the next face is not mapped yet. Hole, fillet, chamfer: not mapped yet. |
+| Features the codec keeps in native form (`native`). | Not mapped; a part whose every feature is native has no history Dutchman can write. |
 | Suppression and dependency state: unresolved (`suppressed` absent). | Features are treated as active; a replay that differs is caught by verification and flattened. |
 | Product name: none for the root product definition. | cadmpeg's STEP writer then names the product by its id (`inventor:document:product#root`), which SolidCraft shows as the body name. |
 
 ## Upstream gaps, in the order they block history
 
-1. **Extrude profiles are native selections.** The codec gives an extrude's profile as
-   `sketch_selection`: the sketch plus Inventor profile-selection property ids. Nothing in
-   CADIR ties those ids to the sketch's loops, so Dutchman cannot say which profiles they are,
-   and every Inventor extrude stops the history ("sketch_selection profiles are not mapped
-   yet"). Needed: the selections resolved into `sketch_profiles` (loops of the sketch) or
-   `sketch_regions`.
-2. **Edge and face selections are native.** Fillet, chamfer and hole carry `Native` edge or
-   face selections. SolidCraft finds edges by points on them and faces by persistent names, so
-   these need typed historical or generated references (cadmpeg's `Historical`/`Generated`
-   selections) before Dutchman can place them. The same gap holds for Fusion.
-3. **No revolve.** The codec has no revolve projection yet.
-4. **Suppression and dependencies unresolved.** Suppressed Inventor features currently look
+1. **Native features.** Most Inventor features still come from the codec in native form, so
+   most part histories stop at their first such feature.
+2. **Unresolved sketches and profiles.** Some sketches are not bound to their stored geometry
+   ("the sketch it binds is not resolved"), and some extrude profiles do not resolve to the
+   sketch's loops (profiles built from parts of sketch curves, among them).
+3. **Edge and face selections are native.** Fillet, chamfer and hole carry `Native` edge or
+   face selections, and an extrude to a face names its face natively. SolidCraft finds edges
+   by points on them and faces by points or persistent names, so these need typed historical
+   or generated references (cadmpeg's `Historical`/`Generated` selections) before Dutchman can
+   place them. The same gap holds for Fusion.
+4. **No revolve.** The codec has no revolve projection yet.
+5. **Suppression and dependencies unresolved.** Suppressed Inventor features currently look
    active.
-5. **Through-next ends.** An extrude ending at the next face is not mapped by Dutchman yet; it
-   needs the face it stops at, which also depends on (2).
 6. **STEP product name.** cadmpeg's STEP writer names a product with no name by its
    product-definition id.
 
