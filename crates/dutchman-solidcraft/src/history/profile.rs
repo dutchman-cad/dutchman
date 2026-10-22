@@ -35,13 +35,47 @@ pub(super) fn profile(profile: Option<&Value>, ctx: &Context) -> Result<(String,
                 .iter()
                 .map(|index| source_loop(ctx, sketch, index, mapped))
                 .collect::<Result<Vec<_>, _>>()?;
-            curves(loops)?
+            if loops.iter().any(|curves| crossed(curves)) {
+                // A loop that runs along a curve both ways has that curve inside it, cutting
+                // what it bounds into several profiles. They are all of the sketch's when the
+                // feature takes every loop the sketch has.
+                if !takes_every_loop(ctx, sketch, indices) {
+                    return Err(
+                        "a profile crossed by its own sketch's curves is not mapped yet".to_owned(),
+                    );
+                }
+                json!({"type": "all"})
+            } else {
+                curves(loops)?
+            }
         }
         "sketch_regions" => regions(value.get("regions"), ctx, sketch, mapped)?,
         "sketch_entities" => entities(value.get("entities"), mapped)?,
         other => return Err(format!("{other} profiles are not mapped yet")),
     };
     Ok((sketch.to_owned(), selection))
+}
+
+/// Whether a loop runs along one of its curves more than once.
+fn crossed(curves: &[String]) -> bool {
+    curves
+        .iter()
+        .enumerate()
+        .any(|(index, curve)| curves.iter().skip(index + 1).any(|other| other == curve))
+}
+
+/// Whether `indices` name every profile loop the source sketch has.
+fn takes_every_loop(ctx: &Context, sketch: &str, indices: &[Value]) -> bool {
+    let count = ctx
+        .row("sketches", sketch)
+        .and_then(|row| row.get("profiles"))
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    (0..count).all(|wanted| {
+        indices
+            .iter()
+            .any(|index| index.as_u64().and_then(|i| usize::try_from(i).ok()) == Some(wanted))
+    })
 }
 
 /// Profiles whose outer loops are these curve loops.
@@ -301,6 +335,36 @@ mod tests {
             selection,
             json!({"type": "curves", "loops": [["l1", "l2", "l3"], ["l4", "l5", "l6"], ["c1"]]})
         );
+    }
+
+    #[test]
+    fn a_profile_crossed_by_its_own_curves_takes_every_profile() {
+        // The first triangle with a curve inside it, which its loop runs along both ways (as a
+        // rectangle with its diagonals drawn comes from Fusion), and the circle.
+        let model = json!({"sketches": [{"id": "s", "profiles": [
+            [{"entity": "e0"}, {"entity": "e3"}, {"entity": "e1"},
+             {"entity": "e3", "reversed": true}, {"entity": "e2"}],
+            [{"entity": "circle"}],
+        ]}]});
+        let every = select(
+            &model,
+            json!({"kind": "sketch_profiles", "value": {"sketch": "s", "profiles": [1, 0]}}),
+        );
+        assert_eq!(every.unwrap(), json!({"type": "all"}));
+        let some = select(
+            &model,
+            json!({"kind": "sketch_profiles", "value": {"sketch": "s", "profiles": [0]}}),
+        );
+        assert_eq!(
+            some.unwrap_err(),
+            "a profile crossed by its own sketch's curves is not mapped yet"
+        );
+        // A loop that uses each curve once is selected by its curves, as before.
+        let plain = select(
+            &model,
+            json!({"kind": "sketch_profiles", "value": {"sketch": "s", "profiles": [1]}}),
+        );
+        assert_eq!(plain.unwrap(), json!({"type": "curves", "loops": [["c1"]]}));
     }
 
     #[test]
