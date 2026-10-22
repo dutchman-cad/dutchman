@@ -1803,3 +1803,71 @@ fn a_base_feature_alone_is_verified_against_the_original() {
         "1 of 1 features mapped; verified against the original in SolidCraft"
     );
 }
+
+/// The example cube's history with its extrude replaced by a sheet-metal base flange of the
+/// same square, `thickness` thick on `side` of the sketch.
+fn flanged_cube(thickness: f64, side: &str) -> Model {
+    let mut model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    for feature in wire["model"]["features"].as_array_mut().unwrap() {
+        if feature["definition"]["definition"] == "extrude" {
+            feature["name"] = json!("BaseFlange 1");
+            feature["definition"] = json!({
+                "definition": "sheet_metal_base_flange",
+                "profile": whole_sketch(),
+                "thickness": thickness,
+                "side": side,
+            });
+        }
+    }
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn a_base_flange_becomes_a_solidcraft_sheet_under_a_rule_of_its_thickness() {
+    let (document, report) = convert(
+        &flanged_cube(10.0, "forward"),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("2 of 2 features mapped"),
+        "{}",
+        history_line(&report)
+    );
+    let flange = &document["features"][1];
+    assert_eq!(flange["type"], "sheet_base");
+    assert_eq!(flange["rule"], "Sheet 10 mm");
+    assert_eq!(flange["profiles"], json!({"type": "all"}));
+    assert!(flange.get("flip").is_none());
+    assert_eq!(document["sheet"]["active"], "Sheet 10 mm");
+    assert_eq!(document["sheet"]["rules"][0]["thickness"], "10 mm");
+    // The other side of the sketch flips it; both sides at once is not mapped yet.
+    let (document, _) = convert(
+        &flanged_cube(10.0, "reverse"),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_eq!(document["features"][1]["flip"], true);
+    let (_, report) = convert(
+        &flanged_cube(10.0, "symmetric"),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("thick on both sides of its sketch is not mapped yet"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn solidcraft_builds_the_base_flange_as_the_original() {
+    let Some(cli) = solidcraft() else { return };
+    let (_, report) = convert(
+        &flanged_cube(10.0, "forward"),
+        &SolidCraftWriter::new().verification(Verification::With(cli)),
+    );
+    assert_eq!(
+        history_line(&report),
+        "2 of 2 features mapped; verified against the original in SolidCraft"
+    );
+}
