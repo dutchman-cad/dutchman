@@ -25,7 +25,8 @@ use dutchman_core::{Check, Error, Mode, Model, Outcome, Report, Severity, Stage,
 use serde_json::Value;
 
 pub use verify::{
-    find_cli, solidcraft_version, Verification, CLI_ENV, DEFAULT_TIMEOUT, VOLUME_TOLERANCE,
+    find_cli, solidcraft_version, usable_cli, NoCli, Verification, CLI_ENV, DEFAULT_TIMEOUT,
+    OLDEST_SOLIDCRAFT, VOLUME_TOLERANCE,
 };
 
 use document::Live;
@@ -177,9 +178,9 @@ impl SolidCraftWriter {
         step: &str,
         written: &[u8],
     ) -> Result<verify::Outcome, Error> {
-        let cli: PathBuf = match verify::find_cli(&self.verification) {
+        let cli: PathBuf = match verify::usable_cli(&self.verification) {
             Ok(cli) => cli,
-            Err(why) => return Ok(verify::Outcome::Unverified(why)),
+            Err(why) => return Ok(verify::Outcome::Unverified(why.to_string())),
         };
         let original = self.history_design(model, history, step, Live::Original)?;
         Ok(verify::compare(
@@ -216,8 +217,19 @@ impl SolidCraftWriter {
     }
 
     fn check_geometry(&self, design: &[u8], expected: verify::Expected, report: &mut Report) {
-        let Ok(cli) = verify::find_cli(&self.verification) else {
-            return;
+        let cli = match verify::usable_cli(&self.verification) {
+            Ok(cli) => cli,
+            // No SolidCraft is not worth a note on every file; one too old to check with is.
+            Err(verify::NoCli::TooOld(why)) => {
+                report.push_at(
+                    Stage::SolidCraft,
+                    Severity::Info,
+                    GEOMETRY,
+                    format!("not checked: {why}"),
+                );
+                return;
+            }
+            Err(verify::NoCli::NotFound(_)) => return,
         };
         match verify::check_import(&cli, self.timeout, design, expected) {
             verify::Shown::Whole => {}
