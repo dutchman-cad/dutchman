@@ -3,13 +3,16 @@
 use cadmpeg_ir::codec::write::target::TargetRequest;
 use cadmpeg_ir::codec::write::EncodeInput;
 use cadmpeg_registry::{build_encoder, Format};
-use dutchman_core::{Error, Model, Report};
+use dutchman_core::{Error, Model, Report, Severity};
 
 /// The STEP schema written: AP214, which SolidCraft writes and reads natively.
 const SCHEMA: &str = "ap214";
 
 /// The name cadmpeg's STEP writer gives a product it has no name for.
 const PLACEHOLDER: &str = "'cadmpeg_model'";
+
+/// cadmpeg's code for procedural surfaces its STEP writer had no form for.
+const PROCEDURAL_NOT_WRITTEN: &str = "step/geometry.procedural-definition-not-written";
 
 /// The largest STEP text SolidCraft's reader accepts.
 const MAX_STEP_BYTES: usize = 512 << 20;
@@ -68,6 +71,16 @@ fn no_geometry() -> Error {
 fn restate_unguarded(model: &Model, report: &mut Report) -> Result<String, Error> {
     let plan = plan(model)?;
     report.extend_from_cadmpeg_export(&plan.report().losses);
+    if plan
+        .report()
+        .losses
+        .iter()
+        .any(|loss| loss.code.to_string() == PROCEDURAL_NOT_WRITTEN)
+    {
+        if let Some(detail) = unwritten_surfaces(model) {
+            report.push(Severity::Degraded, "geometry", detail);
+        }
+    }
 
     let mut bytes = Vec::new();
     plan.write_to(&mut bytes)
@@ -82,6 +95,36 @@ fn restate_unguarded(model: &Model, report: &mut Report) -> Result<String, Error
     let text = String::from_utf8(bytes)
         .map_err(|_| Error::Restate("cadmpeg wrote STEP that is not UTF-8".to_owned()))?;
     Ok(name_unnamed_product(text, &model.name))
+}
+
+/// What the procedural surfaces cadmpeg could not restate are, said plainly: a coil's helix
+/// surface is left out of the STEP, so the solid it bounds opens with no volume.
+fn unwritten_surfaces(model: &Model) -> Option<String> {
+    let wire = serde_json::to_value(&model.ir).ok()?;
+    let surfaces = wire.get("model")?.get("procedural_surfaces")?.as_array()?;
+    let helices = surfaces
+        .iter()
+        .filter(|surface| {
+            surface
+                .get("definition")
+                .and_then(|definition| definition.get("kind"))
+                .and_then(serde_json::Value::as_str)
+                == Some("helix")
+        })
+        .count();
+    match helices {
+        0 => None,
+        1 => Some(
+            "a helix surface (the swept face of a coil or thread) has no form cadmpeg writes \
+             to STEP and is left out: the solid it bounds opens without it, with no volume"
+                .to_owned(),
+        ),
+        n => Some(format!(
+            "{n} helix surfaces (the swept faces of coils or threads) have no form cadmpeg \
+             writes to STEP and are left out: the solids they bound open without them, with \
+             no volume"
+        )),
+    }
 }
 
 /// Names the product cadmpeg left unnamed after the design, as SolidCraft does for files it

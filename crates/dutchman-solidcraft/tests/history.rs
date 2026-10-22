@@ -11,7 +11,7 @@
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 
-use dutchman_core::{Check, Mode, Model, Report, Writer};
+use dutchman_core::{Check, Mode, Model, Report, Severity, Writer};
 use dutchman_solidcraft::{SolidCraftWriter, Verification, CLI_ENV};
 use serde_json::{json, Value};
 use zip::ZipArchive;
@@ -1734,6 +1734,210 @@ fn solidcraft_builds_the_primitives() {
             "{volume:?} vs {expected}"
         );
     }
+}
+
+/// A coil up Z from the origin, starting along `radial`: 20 mm across, of a 2 mm round
+/// section, `extent` long, turning clockwise as CADIR sees it (from its base, along its axis)
+/// when `clockwise`.
+fn coil(extent: Value, radial: [f64; 3], clockwise: bool) -> Value {
+    json!({"definition": "coil",
+           "construction": {
+               "placement": {"kind": "explicit",
+                   "origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+                   "axis": {"x": 0.0, "y": 0.0, "z": 1.0},
+                   "radial": {"x": radial[0], "y": radial[1], "z": radial[2]}},
+               "diameter": 20.0,
+               "extent": extent,
+               "section": {"kind": "circular", "diameter": 2.0},
+               "section_placement": "center",
+               "clockwise": clockwise,
+               "taper": 0.0},
+           "result": {"kind": "new_body"}})
+}
+
+fn turns_and_pitch(revolutions: f64, pitch: f64) -> Value {
+    json!({"kind": "revolutions_pitch", "revolutions": revolutions, "pitch": pitch})
+}
+
+#[test]
+fn coils_become_solidcraft_coils() {
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    let (document, report) = convert(
+        &primitive_history(coil(turns_and_pitch(4.0, 5.0), [1.0, 0.0, 0.0], true)),
+        &writer,
+    );
+    let spring = &document["features"][0];
+    assert_eq!(spring["type"], "coil");
+    assert_eq!(spring["base"], json!([0.0, 0.0, 0.0]));
+    assert_eq!(spring["axis"], json!([0.0, 0.0, 1.0]));
+    assert_eq!(
+        [&spring["diameter"], &spring["turns"], &spring["pitch"]],
+        [&json!("20 mm"), &json!("4"), &json!("5 mm")]
+    );
+    assert_eq!(
+        (&spring["section"], &spring["section_size"]),
+        (&json!("circular"), &json!("2 mm"))
+    );
+    // Clockwise seen from the base is anticlockwise seen from above: SolidCraft's default.
+    assert_eq!(spring.get("clockwise"), None);
+    assert_eq!(spring.get("start_angle"), None);
+    assert_eq!(spring.get("position"), None);
+    assert!(
+        history_line(&report).contains("1 of 1 features mapped"),
+        "{}",
+        history_line(&report)
+    );
+
+    let mut other = coil(
+        json!({"kind": "revolutions_height", "revolutions": 2.0, "height": 8.0}),
+        [0.0, 1.0, 0.0],
+        false,
+    );
+    other["construction"]["section"] = json!({"kind": "square", "size": 1.5});
+    other["construction"]["section_placement"] = json!("inside");
+    other["result"] = json!({"kind": "boolean", "operation": "join", "targets": {"kind": "bodies", "value": ["synthetic:cube:body#0"]}});
+    let (document, _) = convert(&primitive_history(other), &writer);
+    let spring = &document["features"][0];
+    assert_eq!(spring["clockwise"], true);
+    assert_eq!(spring["start_angle"], "90 deg");
+    assert_eq!(spring["position"], -1);
+    assert_eq!(spring["pitch"], "(8 mm) / (2)");
+    assert_eq!(spring["section"], "square");
+    assert_eq!(spring["operation"], "join");
+}
+
+#[test]
+fn coils_solidcraft_cannot_build_flatten_the_history() {
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    let plain = || coil(turns_and_pitch(4.0, 5.0), [1.0, 0.0, 0.0], true);
+    let with = |path: &[&str], value: Value| {
+        let mut definition = plain();
+        let mut at = &mut definition;
+        for key in path {
+            at = &mut at[*key];
+        }
+        *at = value;
+        definition
+    };
+    for (definition, reason) in [
+        (
+            with(
+                &["construction", "placement", "axis"],
+                json!({"x": 0.0, "y": 1.0, "z": 0.0}),
+            ),
+            "a coil about an axis other than +Z is not mapped yet",
+        ),
+        (
+            with(&["construction", "taper"], json!(0.1)),
+            "a tapered coil is not mapped yet",
+        ),
+        (
+            with(
+                &["construction", "extent"],
+                json!({"kind": "spiral", "revolutions": 3.0, "radial_pitch": 2.0}),
+            ),
+            "a flat spiral coil is not mapped yet",
+        ),
+        (
+            with(&["construction", "extent"], turns_and_pitch(4.0, -5.0)),
+            "a coil running down its axis is not mapped yet",
+        ),
+        (
+            with(
+                &["construction", "section"],
+                json!({"kind": "external_triangle", "size": 2.0}),
+            ),
+            "a coil of triangular section is not mapped yet",
+        ),
+    ] {
+        let (_, report) = convert(&primitive_history(definition), &writer);
+        assert!(
+            history_line(&report).contains(reason),
+            "{}",
+            history_line(&report)
+        );
+    }
+}
+
+#[test]
+fn solidcraft_turns_the_coil_the_way_cadir_says() {
+    let Some(cli) = solidcraft() else { return };
+    // A quarter turn from +X: a right-hand coil (clockwise seen from its base) rises towards
+    // +Y, a left-hand one towards -Y.
+    for (clockwise, towards) in [(true, 1.0), (false, -1.0)] {
+        let design = written(&primitive_history(coil(
+            turns_and_pitch(0.25, 4.0),
+            [1.0, 0.0, 0.0],
+            clockwise,
+        )))
+        .0;
+        let boxes = bounds(&cli, &design);
+        assert_eq!(boxes.len(), 1, "{boxes:?}");
+        let (min, max) = boxes[0];
+        let (near, far) = if towards > 0.0 {
+            (-min[1], max[1])
+        } else {
+            (max[1], -min[1])
+        };
+        assert!(far > 10.5 && near < 1.5, "{clockwise}: {boxes:?}");
+        let volume = volumes(&cli, &design);
+        // The section's area along the helix: π × 1² × √((π × 20 / 4)² + 1²).
+        let pi = std::f64::consts::PI;
+        let expected = pi * ((pi * 5.0).powi(2) + 1.0).sqrt();
+        assert!(
+            (volume[0] - expected).abs() / expected < 1e-2,
+            "{volume:?} vs {expected}"
+        );
+    }
+}
+
+#[test]
+fn a_helix_surface_left_out_of_the_step_is_named_in_the_report() {
+    let base = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let model = &mut wire["model"];
+    // One of the cube's faces on a coil's swept surface, as Fusion stores a coil's.
+    let surface = model["faces"][0]["surface"].clone();
+    for row in model["surfaces"].as_array_mut().unwrap() {
+        if row["id"] == surface {
+            row["geometry"] = json!({"kind": "procedural", "construction": "synthetic:cube:procedural_surface#0"});
+        }
+    }
+    model["procedural_surfaces"] = json!([{
+        "id": "synthetic:cube:procedural_surface#0",
+        "surface": surface,
+        "definition": {"kind": "helix", "construction": {
+            "angle_range": [-std::f64::consts::PI, std::f64::consts::PI],
+            "dimension_range": [0.0, 250.0],
+            "path": {"angle_range": [0.0, 25.0],
+                     "center": {"x": 0.0, "y": 0.0, "z": 0.0},
+                     "major": {"x": 10.0, "y": 0.0, "z": 0.0},
+                     "minor": {"x": 0.0, "y": 10.0, "z": 0.0},
+                     "pitch": {"x": 0.0, "y": 0.0, "z": 5.0},
+                     "apex_factor": 0.0,
+                     "axis": {"x": 0.0, "y": 0.0, "z": 1.0}},
+            "profile": {"kind": "circle", "length": 0.0, "radius": 1.0}}},
+        "record_bounds": [null, null, null, null],
+    }]);
+    let model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    };
+    let (_, report) = convert(&model, &SolidCraftWriter::new().import_only(true));
+    let named = report
+        .losses()
+        .iter()
+        .find(|loss| loss.subject == "geometry" && loss.detail.contains("helix surface"))
+        .map(|loss| (loss.severity, loss.detail.clone()));
+    assert_eq!(
+        named,
+        Some((
+            Severity::Degraded,
+            "a helix surface (the swept face of a coil or thread) has no form cadmpeg writes to \
+             STEP and is left out: the solid it bounds opens without it, with no volume"
+                .to_owned()
+        ))
+    );
 }
 
 /// The holed cube's history with its sketch and extrude replaced by a base feature holding

@@ -1,4 +1,5 @@
-//! Solid primitives, as SolidCraft primitive features: spheres, and tori about the Z axis.
+//! Solid primitives, as SolidCraft primitive features: spheres, tori about the Z axis, and
+//! coils up the Z axis.
 //!
 //! Boxes and cylinders are not mapped. cadmpeg gives a box as dimensions and a placement
 //! without saying whether the placement is the box's corner or its centre, and a cylinder
@@ -59,6 +60,127 @@ pub(crate) fn torus(
     ))
 }
 
+/// Maps a coil feature whose operation is `definition`: a section swept along a helix.
+///
+/// CADIR says which way a coil turns as seen from its base looking along its axis; SolidCraft
+/// as seen looking back down the axis at its base. A coil CADIR calls clockwise is therefore
+/// one SolidCraft calls anticlockwise: a right-hand coil.
+pub(crate) fn coil(
+    feature: &Value,
+    definition: &Value,
+    ctx: &mut Context,
+) -> Result<Value, String> {
+    let construction = definition
+        .get("construction")
+        .ok_or("its construction is malformed")?;
+    let placement = construction
+        .get("placement")
+        .ok_or("its placement is malformed")?;
+    if placement.get("kind").and_then(Value::as_str) != Some("explicit") {
+        return Err(
+            "a coil whose placement cadmpeg keeps in native form is not mapped yet".to_owned(),
+        );
+    }
+    let base = v3(placement.get("origin")).ok_or("its base is malformed")?;
+    let axis = v3(placement.get("axis"))
+        .and_then(unit)
+        .ok_or("its axis is malformed")?;
+    let radial = v3(placement.get("radial"))
+        .and_then(unit)
+        .ok_or("its start direction is malformed")?;
+    // SolidCraft measures a coil's start angle from X about Z; its frame about another axis
+    // is its own, so only coils up Z are placed.
+    if axis[2] < ALONG_Z {
+        return Err("a coil about an axis other than +Z is not mapped yet".to_owned());
+    }
+    if number(construction.get("taper")).ok_or("its taper is malformed")? != 0.0 {
+        return Err("a tapered coil is not mapped yet".to_owned());
+    }
+    let diameter = length(construction.get("diameter"), "diameter")?;
+    let extent = construction
+        .get("extent")
+        .ok_or("its extent is malformed")?;
+    let positive = |key: &str| match number(extent.get(key)) {
+        Some(value) if value < 0.0 => {
+            Err("a coil running down its axis is not mapped yet".to_owned())
+        }
+        _ => length(extent.get(key), key),
+    };
+    let (turns, pitch) = match extent.get("kind").and_then(Value::as_str) {
+        Some("revolutions_pitch") => {
+            let turns = positive("revolutions")?;
+            (number_text(turns), mm(positive("pitch")?))
+        }
+        Some("revolutions_height") => {
+            let turns = positive("revolutions")?;
+            let height = positive("height")?;
+            (number_text(turns), format!("({height} mm) / ({turns})"))
+        }
+        Some("height_pitch") => {
+            let height = positive("height")?;
+            let pitch = positive("pitch")?;
+            (format!("({height} mm) / ({pitch} mm)"), mm(pitch))
+        }
+        Some("spiral") => return Err("a flat spiral coil is not mapped yet".to_owned()),
+        _ => return Err("its extent is malformed".to_owned()),
+    };
+    let section = construction
+        .get("section")
+        .ok_or("its section is malformed")?;
+    let (shape, size) = match section.get("kind").and_then(Value::as_str) {
+        Some("circular") => (
+            "circular",
+            length(section.get("diameter"), "section diameter")?,
+        ),
+        Some("square") => ("square", length(section.get("size"), "section size")?),
+        Some("external_triangle" | "internal_triangle") => {
+            return Err("a coil of triangular section is not mapped yet".to_owned())
+        }
+        _ => return Err("its section is malformed".to_owned()),
+    };
+    let position = match construction
+        .get("section_placement")
+        .and_then(Value::as_str)
+    {
+        Some("inside") => Some(-1),
+        Some("center") => None,
+        Some("outside") => Some(1),
+        _ => return Err("its section placement is malformed".to_owned()),
+    };
+    let clockwise = construction
+        .get("clockwise")
+        .and_then(Value::as_bool)
+        .ok_or("its turning direction is malformed")?;
+    let result = definition.get("result").ok_or("its result is malformed")?;
+    let operation = match result.get("kind").and_then(Value::as_str) {
+        Some("new_body") => "new_body",
+        Some("boolean") => operation(result.get("operation"))?,
+        _ => return Err("its result is malformed".to_owned()),
+    };
+    let mut fields = json!({
+        "base": base,
+        "axis": [0.0, 0.0, 1.0],
+        "diameter": mm(diameter),
+        "turns": turns,
+        "pitch": pitch,
+        "section": shape,
+        "section_size": mm(size),
+    });
+    if let Value::Object(fields) = &mut fields {
+        let start = radial[1].atan2(radial[0]).to_degrees();
+        if start.abs() > 1e-9 {
+            fields.insert("start_angle".to_owned(), json!(format!("{start} deg")));
+        }
+        if let Some(position) = position {
+            fields.insert("position".to_owned(), json!(position));
+        }
+        if !clockwise {
+            fields.insert("clockwise".to_owned(), json!(true));
+        }
+    }
+    Ok(primitive(feature, ctx, operation, "coil", "Coil", fields))
+}
+
 /// Why a box or cylinder primitive is not mapped.
 pub(crate) fn unplaced(kind: &str) -> String {
     match kind {
@@ -101,6 +223,10 @@ fn length(value: Option<&Value>, what: &str) -> Result<f64, String> {
     number(value)
         .filter(|length| *length > 0.0)
         .ok_or_else(|| format!("its {what} is malformed"))
+}
+
+fn number_text(value: f64) -> String {
+    format!("{value}")
 }
 
 fn mm(length: f64) -> String {

@@ -34,7 +34,7 @@ fn rows() -> [(Format, Status, String); 7] {
         (
             Format::FusionArchive,
             Status::Converts,
-            "geometry; feature history (sketches, constraints, dimensions, extrudes, revolves, lofts, sweeps, spheres, tori) \
+            "geometry; feature history (sketches, constraints, dimensions, extrudes, revolves, lofts, sweeps, spheres, tori, coils) \
              when every feature maps; components when the file says which bodies they own",
         ),
         (
