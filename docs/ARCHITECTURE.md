@@ -129,9 +129,10 @@ sketch curves (whole path, square to it or held as drawn, optionally twisted or 
 rail); spheres, and tori about the Z axis (boxes and cylinder primitives wait on cadmpeg
 placing them); coils along any axis, travelling up or down it, of round or square section,
 turning either way (tapered coils, flat spirals and triangular sections are not mapped);
-simple holes drilled at the circle centres, arc centres or points of a sketch,
-through all or to a depth, flat or with a drill point (counterbores, countersinks and holes
-placed on faces are not mapped); patterns of earlier features, linear in one or
+simple, counterbore and countersink
+holes drilled at the circle centres, arc centres or points of a sketch, through all or to a
+depth, flat or, for simple holes, with a drill point (entry recesses combined with drill points,
+and holes placed on faces, are not mapped); patterns of earlier features, linear in one or
 two directions, or circular over a partial span or all the way round, and mirrors of earlier
 features across a plane (features are named uniquely on the timeline,
 since SolidCraft patterns refer to them by name). Parameters keep their expressions where SolidCraft reads them the same way, else
