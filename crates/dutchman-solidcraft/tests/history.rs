@@ -5315,3 +5315,216 @@ fn virtual_relations_are_counted_and_inactive_or_disabled_relations_are_quiet() 
     assert!(loss.detail.starts_with("1 of 2 constraints not carried"));
     assert!(loss.detail.contains("virtual sketch space"));
 }
+
+// Body features use only synthetic CADIR and the example cube's topology.
+fn modifying(definition: Value) -> Model {
+    let base = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "id": "f3d:model:feature#3", "ordinal": 2, "name": "Modify",
+            "suppressed": false, "definition": definition,
+        }));
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    }
+}
+
+fn cube_faces(names: &[&str]) -> Value {
+    json!({"kind": "faces", "value": names.iter()
+        .map(|name| format!("synthetic:cube:face#{name}")).collect::<Vec<_>>()})
+}
+
+fn cube_body() -> Value {
+    json!({"kind": "bodies", "value": ["synthetic:cube:body#0"]})
+}
+
+fn body_mirror_definition() -> Value {
+    json!({"definition": "pattern", "seeds": [{"kind": "bodies", "value": cube_body()}],
+        "pattern": {"kind": "mirror", "plane_origin": {"x": 20.0, "y": 0.0, "z": 0.0},
+            "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}})
+}
+
+#[test]
+fn body_mirrors_select_named_bodies_and_keep_the_plane() {
+    let (document, report) = convert(
+        &modifying(body_mirror_definition()),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let mirror = &document["features"][2];
+    assert_eq!(mirror["type"], "mirror", "{}", history_line(&report));
+    assert_eq!(mirror["bodies"], document["features"][1]["body_names"]);
+    assert_eq!(mirror["features"], json!([]));
+    assert_eq!(mirror["combine"], false);
+    assert_eq!(mirror["plane"]["plane"]["origin"], json!([20.0, 0.0, 0.0]));
+}
+
+fn combined_spheres(operation: &str, keep_tools: bool) -> Model {
+    let base = primitive_history(sphere());
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let model = &mut wire["model"];
+    // A second, independent synthetic topology, with its own arena identities.
+    for arena in [
+        "points", "vertices", "curves", "edges", "coedges", "loops", "surfaces", "faces", "shells",
+        "regions", "bodies",
+    ] {
+        let text = serde_json::to_string(&model[arena]).unwrap();
+        let mut rows: Vec<Value> =
+            serde_json::from_str(&text.replace("synthetic:cube:", "synthetic:tool:")).unwrap();
+        if arena == "bodies" {
+            rows[0]["name"] = json!("Tool");
+        }
+        model[arena].as_array_mut().unwrap().extend(rows);
+    }
+    let mut sphere = sphere();
+    sphere["center"]["x"] = json!(10.0);
+    model["features"].as_array_mut().unwrap().extend([
+        json!({"id": "f3d:model:feature#3", "ordinal": 1, "name": "Tool ball",
+            "suppressed": false, "outputs": ["synthetic:tool:body#0"], "definition": sphere}),
+        json!({"id": "f3d:model:feature#4", "ordinal": 2, "name": "Boolean",
+            "suppressed": false, "definition": {"definition": "combine",
+                "operands": {"target": cube_body(), "tools": {"kind": "bodies", "value": ["synthetic:tool:body#0"]}},
+                "op": operation, "keep_tools": keep_tools}}),
+    ]);
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    }
+}
+
+#[test]
+fn booleans_map_target_tools_operation_and_retention() {
+    for operation in ["join", "cut", "intersect"] {
+        for keep_tools in [false, true] {
+            let (document, report) = convert(
+                &combined_spheres(operation, keep_tools),
+                &SolidCraftWriter::new().verification(Verification::Off),
+            );
+            let combine = &document["features"][2];
+            assert_eq!(combine["type"], "combine", "{}", history_line(&report));
+            assert_eq!(combine["target"], document["features"][0]["body_names"][0]);
+            assert_eq!(combine["tools"], json!(["Tool"]));
+            assert_eq!(combine["operation"], operation);
+            assert_eq!(combine["keep_tools"], keep_tools);
+        }
+    }
+}
+
+#[test]
+fn unsupported_modify_options_explain_what_stops_history() {
+    let mut cases = Vec::new();
+    // Shell and draft faces exist only on the final body, which the feature has changed.
+    cases.push((
+        json!({"definition": "shell", "bodies": cube_body(),
+        "removed_faces": cube_faces(&["top"]), "thickness": 1.0, "outward": false}),
+        "shell waits on input face geometry",
+    ));
+    cases.push((
+        json!({"definition": "draft", "faces": cube_faces(&["right"]),
+        "anchor": {"kind": "neutral_plane", "plane": cube_faces(&["bottom"]),
+            "pull": {"direction": {"x": 0.0, "y": 0.0, "z": 1.0}}},
+        "angle": 0.1, "outward": false}),
+        "draft waits on input face geometry",
+    ));
+    cases.push((
+        json!({"definition": "mirror_shape", "source": cube_body(),
+        "plane_origin": {"x": 20.0, "y": 0.0, "z": 0.0},
+        "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}),
+        "SolidCraft mirrors keep the original body",
+    ));
+    cases.push((
+        json!({"definition": "cosmetic_thread", "face": cube_faces(&["right"]),
+        "diameter": 8.0, "extent": {"kind": "through"}}),
+        "cosmetic threads without a resolved standard and pitch are not supported yet",
+    ));
+    for family in ["thread", "detailed_thread"] {
+        cases.push((
+            json!({"definition": "unresolved", "family": family}),
+            "threads whose construction is unresolved are not supported yet",
+        ));
+    }
+    cases.push((
+        json!({"definition": "combine", "operands": {
+        "target": {"kind": "native", "value": "Body1"},
+        "tools": {"kind": "native", "value": "Body2"}}, "op": "cut"}),
+        "bodies are not resolved",
+    ));
+    for (definition, reason) in cases {
+        let (_, report) = convert(
+            &modifying(definition),
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).contains(reason),
+            "{}",
+            history_line(&report)
+        );
+    }
+}
+
+#[test]
+fn solidcraft_replays_body_mirror_and_booleans() {
+    let Some(cli) = solidcraft() else { return };
+    let mirror = volumes(&cli, &written(&modifying(body_mirror_definition())).0);
+    assert_eq!(mirror.len(), 2);
+    assert!(
+        mirror.iter().all(|v| (v - 1000.0).abs() < 1e-6),
+        "{mirror:?}"
+    );
+    // Two radius-5 spheres with centres 5 mm apart; overlap = 625π/12 mm³. SolidCraft measures
+    // curved booleans to about one part in ten thousand, so the check is relative, as for spheres.
+    let sphere = 500.0 * std::f64::consts::PI / 3.0;
+    let overlap = 625.0 * std::f64::consts::PI / 12.0;
+    for (operation, expected) in [
+        ("join", 2.0 * sphere - overlap),
+        ("cut", sphere - overlap),
+        ("intersect", overlap),
+    ] {
+        let volume = volumes(&cli, &written(&combined_spheres(operation, false)).0);
+        assert_eq!(volume.len(), 1);
+        assert!(
+            (volume[0] - expected).abs() / expected < 1e-3,
+            "{operation}: {volume:?} vs {expected}"
+        );
+    }
+}
+
+#[test]
+fn later_body_mirrors_require_boolean_tools_to_be_retained() {
+    for keep_tools in [false, true] {
+        let base = combined_spheres("join", keep_tools);
+        let mut wire = serde_json::to_value(&base.ir).unwrap();
+        let mut mirror = body_mirror_definition();
+        mirror["seeds"][0]["value"] = json!({"kind": "resolved", "value": {
+            "bodies": ["synthetic:tool:body#0"], "native": "Tool"}});
+        wire["model"]["features"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "id": "f3d:model:feature#5", "ordinal": 3, "name": "Mirror tool",
+                "suppressed": false, "definition": mirror,
+            }));
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..base
+        };
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        if keep_tools {
+            assert_eq!(
+                document["features"][3]["type"],
+                "mirror",
+                "{}",
+                history_line(&report)
+            );
+            assert_eq!(document["features"][3]["bodies"], json!(["Tool"]));
+        } else {
+            assert!(history_line(&report).contains("earlier feature has not named"));
+        }
+    }
+}

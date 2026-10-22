@@ -179,6 +179,14 @@ change a mapped sketch's feature status. Inactive and disabled relations do not 
 loss. Relations in virtual sketch space are counted separately because SolidCraft has no
 separate virtual solver space.
 
+Body mirror patterns and join/cut/intersect body combines (optionally keeping the tool
+bodies) can keep editable history; their bodies must be named by earlier mapped features.
+Shells and drafts are refused, since their faces are known only on the final body, where
+the feature has already removed or tilted them; they wait on input face geometry.
+Replacing a source shape with its mirror is not supported yet: SolidCraft's mirror keeps
+the original. Cosmetic threads lack a resolved standard and pitch in CADIR, so assigning
+SolidCraft's ISO metric designation would invent thread data; these remain flattened.
+
 ### FreeCAD macro output (experimental)
 
 For `convert --to freecad` (MCP `to: "freecad"`), `output.format` is

@@ -424,10 +424,11 @@ metric thread label such as `M6x1`. A thread's hand, tolerance class, and length
 across; the report lists them as Degraded. Taper, exit treatments, modeled threads, and entry
 recesses combined with drill points are not supported yet, and the report names the option.
 
-When every feature in a design's history maps onto SolidCraft (sketches, extrudes, revolves
-and patterns so far), the design keeps that history, editable, with the original geometry
-kept beside it as a suppressed import named "Original geometry (imported)". Otherwise the
-design is the geometry alone, and the report says which feature stopped the history.
+When every feature in a design's history maps onto SolidCraft (sketches, extrudes, revolves,
+patterns, body mirrors, and body booleans so far), the design keeps that history, editable, with
+the original geometry kept beside it as a suppressed import named "Original geometry
+(imported)". Otherwise the design is the geometry alone, and the report says which feature
+stopped the history.
 
 Sweeps accept ordered sketch curves, or a whole sketch containing a single non-construction
 curve, for their path and optional guide rail. Taper, explicit right or round corners,

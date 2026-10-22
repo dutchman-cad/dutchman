@@ -237,6 +237,14 @@ message with its reason, while the solved sketch remains mapped. Static sketch p
 retain point and radius associations; driving count and span parameters still produce a
 constraint loss.
 
+Body mirror patterns and join/cut/intersect body combines (optionally keeping the tool
+bodies) can keep editable history; their bodies must be named by earlier mapped features.
+Shells and drafts are refused, since their faces are known only on the final body, where
+the feature has already removed or tilted them; they wait on input face geometry.
+Replacing a source shape with its mirror is not supported yet: SolidCraft's mirror keeps
+the original. Cosmetic threads lack a resolved standard and pitch in CADIR, so assigning
+SolidCraft's ISO metric designation would invent thread data; these remain flattened.
+
 ### FreeCAD output (experimental)
 
 `convert` and `convert_all` accept `to: "freecad"` (default: `"solidcraft"`). For example:

@@ -15,6 +15,7 @@ mod extrude;
 mod faces;
 mod hole;
 mod loft;
+mod modify;
 pub(crate) mod params;
 mod pattern;
 mod primitive;
@@ -196,11 +197,18 @@ impl History {
                 .unwrap_or_else(|| name.to_owned())
         };
         for feature in &mut self.features {
-            if let Some(names) = feature.get_mut("body_names").and_then(Value::as_array_mut) {
-                for name in names {
-                    if let Some(old) = name.as_str() {
-                        *name = Value::String(rename(old));
+            for key in ["body_names", "bodies", "tools"] {
+                if let Some(names) = feature.get_mut(key).and_then(Value::as_array_mut) {
+                    for name in names {
+                        if let Some(old) = name.as_str() {
+                            *name = Value::String(rename(old));
+                        }
                     }
+                }
+            }
+            if let Some(value) = feature.get_mut("target") {
+                if let Some(old) = value.as_str() {
+                    *value = Value::String(rename(old));
                 }
             }
         }
@@ -461,6 +469,38 @@ fn map_feature(
         Some("torus") => primitive::torus(feature, definition, ctx).map(Mapped::Feature),
         Some("coil") => primitive::coil(feature, definition, ctx).map(Mapped::Feature),
         Some(kind @ ("block" | "primitive")) => Err(primitive::unplaced(kind)),
+        // Their faces are picked on the final body, where the feature itself has already
+        // removed or tilted them; mapping waits until CADIR carries the input faces.
+        Some("shell") => Err("shell waits on input face geometry".to_owned()),
+        Some("draft") => Err("draft waits on input face geometry".to_owned()),
+        Some("combine") => modify::combine(feature, definition, ctx).map(Mapped::Feature),
+        Some("mirror_shape") => Err(
+            "replacing a source shape with its mirror is not supported yet; SolidCraft mirrors keep the original body".to_owned(),
+        ),
+        Some("unresolved")
+            if matches!(
+                definition.get("family").and_then(Value::as_str),
+                Some("thread" | "detailed_thread")
+            ) =>
+        {
+            Err("threads whose construction is unresolved are not supported yet".to_owned())
+        }
+        Some("cosmetic_thread") => Err(
+            "cosmetic threads without a resolved standard and pitch are not supported yet".to_owned(),
+        ),
+        Some("pattern")
+            if definition.pointer("/pattern/kind").and_then(Value::as_str) == Some("mirror")
+                && definition
+                    .get("seeds")
+                    .and_then(Value::as_array)
+                    .is_some_and(|seeds| {
+                        seeds.iter().any(|seed| {
+                            seed.get("kind").and_then(Value::as_str) == Some("bodies")
+                        })
+                    }) =>
+        {
+            modify::mirror(feature, definition, ctx).map(Mapped::Feature)
+        }
         Some("pattern") => pattern::map(feature, definition, ctx).map(Mapped::Feature),
         Some("hole") => hole::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some("sheet_metal_base_flange") => {
@@ -532,6 +572,24 @@ mod tests {
             name,
             json!({"definition": "native", "kind": "Mystery", "parameters": {}}),
         )
+    }
+
+    #[test]
+    fn body_renaming_updates_modify_operands() {
+        let mut history = History {
+            features: vec![
+                json!({"body_names": ["Part"]}),
+                json!({"target": "Part", "tools": ["Part"]}),
+                json!({"bodies": ["Part"]}),
+            ],
+            ..History::default()
+        };
+        let mut taken = std::collections::BTreeSet::from(["Part".to_owned()]);
+        history.rename_bodies("Second", &mut taken);
+        assert_eq!(history.features[0]["body_names"], json!(["Part (Second)"]));
+        assert_eq!(history.features[1]["target"], "Part (Second)");
+        assert_eq!(history.features[1]["tools"], json!(["Part (Second)"]));
+        assert_eq!(history.features[2]["bodies"], json!(["Part (Second)"]));
     }
 
     #[test]
