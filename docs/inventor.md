@@ -75,8 +75,18 @@ as Inventor does, so a project can be converted where it lies:
    assembly; the report says which it used. Inventor's `OldVersions` backups, hidden folders
    and symbolic links are not searched, and the search stops after 200,000 files and folders.
 
-If the file is not under the project folder, the folders given with `--search DIR` (the MCP
-tools' `search`) are searched the same way, in order: a shared library of standard parts, say.
+If the file is not under the project folder, the folders its Inventor project file names are
+searched the same way, in order: the workspace, workgroup and library folders in the `.ipj`,
+then its imported-components folder in each workspace. The project file is the nearest `.ipj`
+in or above the project folder, else above the assembly, so a project folder given inside a
+larger project still reaches the rest of it. Its paths are taken from its own folder; a path
+from another machine is found by its longest tail below that folder, and one that is not on
+this machine is skipped. After those come the folders given with `--search DIR` (the MCP tools'
+`search`), in order: a shared library of standard parts, say. The report says which folders
+were searched (`parts search`).
+
+A folder below the project folder that holds a project file of its own, such as a Pack and Go
+copy, is another project, and its copies of the files are not searched.
 
 The project folder is, first found:
 
@@ -85,7 +95,8 @@ The project folder is, first found:
 - the nearest folder above the assembly holding an Inventor project file (`.ipj`);
 - two folders above the assembly's, but never your home folder or a whole drive.
 
-A part found nowhere is left out and reported, `Dropped`, naming the project folder searched.
+A part found nowhere is left out and reported, `Dropped`, naming the project folder searched
+and how many other folders were.
 In the desktop app, the file's card names the parts not found: **Search a folder…** or **Find a
 file…** (whose folder is then searched) converts it again with that folder searched too. The
 app's **Inventor project folder** setting sets `--project` for a whole run.

@@ -18,6 +18,13 @@ report's schema name changes when a field does).
 
 ### Assemblies
 
+- An Inventor assembly's part files are also searched for in the folders its Inventor project
+  file (`.ipj`) names: the workspace, workgroup and library folders, and the
+  imported-components folder. The project file is the nearest one in or above the project
+  folder, so `--project` given a folder inside a larger project still finds the files
+  elsewhere in it. The report lists the folders searched, and a part not found says how many
+  were. Folders below the project folder that hold a project file of their own (Pack and Go
+  copies) are no longer searched.
 - A design inserted into a Fusion archive (`.f3z`) is placed as a sub-assembly, named as the
   archive names it, and a joint to a component inside it joins that design as a whole (its own
   joints are not carried yet). Such an archive converted as geometry alone before, without its

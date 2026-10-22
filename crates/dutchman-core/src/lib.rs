@@ -86,6 +86,9 @@ pub fn read_in(
         &finder,
         &mut Vec::new(),
     )?;
+    if let Some(searched) = finder.searched_note() {
+        report.push_at(Stage::Input, Severity::Info, "parts search", searched);
+    }
     if model.assembly.is_none() {
         match assembly::local(&model) {
             assembly::Components::None => {}
