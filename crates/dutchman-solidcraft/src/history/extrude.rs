@@ -18,12 +18,66 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         .ok_or("its sketch is not an earlier mapped sketch")?;
     let sketch_feature = sketch.feature;
     let forward = forward(definition.get("direction"), sketch.normal)?;
-    let mut extent = extent(definition.get("extent"), forward)?;
+    let mut extent = extent(definition.get("extent"), forward, ctx, sketch.normal)?;
+    let mut start_height = 0.0;
     if let Some(offset) = start_offset(definition.get("start"))? {
-        if !forward {
-            return Err("a start offset against the sketch normal is not mapped yet".to_owned());
-        }
+        start_height = offset;
+        // Both offsets are measured along the profile normal, regardless of travel.
         extent.insert("start_offset".to_owned(), json!(mm(offset)));
+    }
+    if definition.pointer("/start/kind").and_then(Value::as_str) == Some("from_face") {
+        let start = definition.get("start").ok_or("its start is malformed")?;
+        let point = super::faces::pick(ctx, start.get("face"), sketch.normal)?;
+        start_height = point
+            .iter()
+            .zip(sketch.origin)
+            .zip(sketch.normal)
+            .map(|((coordinate, origin), normal)| (coordinate - origin) * normal)
+            .sum();
+        extent.insert("from".to_owned(), json!(point));
+        if let Some(offset) = number(start.get("offset")) {
+            let offset = if forward { offset } else { -offset };
+            start_height += offset;
+            extent.insert("start_offset".to_owned(), json!(mm(offset)));
+        }
+    }
+    if let Some(target) = extent.get("to") {
+        // SolidCraft's To Object chooses a side from the point, whereas CADIR's
+        // side is explicit. Do not silently reverse travel to reach the target.
+        let height = |pick: &Value| -> Option<f64> {
+            let coordinates = pick.as_array()?;
+            if coordinates.len() != 3 {
+                return None;
+            }
+            coordinates
+                .iter()
+                .zip(sketch.origin)
+                .zip(sketch.normal)
+                .try_fold(0.0, |sum, ((coordinate, origin), normal)| {
+                    Some(sum + (coordinate.as_f64()? - origin) * normal)
+                })
+        };
+        let travel =
+            height(target).ok_or("its terminating face point is malformed")? - start_height;
+        let sign = if extent.get("direction").and_then(Value::as_str) == Some("negative") {
+            -1.0
+        } else {
+            1.0
+        };
+        if travel * sign <= 0.0 {
+            return Err("its terminating face is not along the selected extrude side".to_owned());
+        }
+    }
+    if extent.contains_key("taper")
+        && definition.get("inner_wire_taper").and_then(Value::as_str) == Some("same_as_outer")
+    {
+        return Err(
+            "extrude draft with inner wires tapering as the outer wire is not supported yet"
+                .to_owned(),
+        );
+    }
+    if definition.get("solid").and_then(Value::as_bool) == Some(false) {
+        return Err("sheet extrudes are not mapped yet".to_owned());
     }
     let operation = operation(definition.get("op"))?;
     let body_names = body_names(feature, ctx, operation);
@@ -70,37 +124,70 @@ fn forward(direction: Option<&Value>, normal: [f64; 3]) -> Result<bool, String> 
 }
 
 /// The SolidCraft extent, with `forward` saying which way the first side runs.
-fn extent(extent: Option<&Value>, forward: bool) -> Result<Map<String, Value>, String> {
+fn extent(
+    extent: Option<&Value>,
+    forward: bool,
+    ctx: &Context,
+    normal: [f64; 3],
+) -> Result<Map<String, Value>, String> {
     let extent = extent.ok_or("it has no extent")?;
     let way = if forward { "positive" } else { "negative" };
     let mut out = Map::new();
     match extent.get("kind").and_then(Value::as_str) {
         Some("one_sided") => {
-            let side = side(extent.get("side"))?;
+            let side = side(extent.get("side"), ctx, normal)?;
             out.insert("direction".to_owned(), json!(way));
             put(&mut out, side, "distance");
         }
         Some("symmetric") => {
-            let side = side(extent.get("side"))?;
+            let side = side(extent.get("side"), ctx, normal)?;
+            if matches!(side, Side::ToFace(..)) {
+                return Err("a symmetric extrude to a face is not supported yet".to_owned());
+            }
             out.insert("direction".to_owned(), json!("symmetric"));
             out.insert("convention".to_owned(), json!("total_distance"));
             put(&mut out, side, "distance");
         }
         Some("two_sided") => {
-            let first = side(extent.get("first"))?;
-            let second = side(extent.get("second"))?;
-            let (Side::Blind(_), Side::Blind(length)) = (first, second) else {
+            let first = side(extent.get("first"), ctx, normal)?;
+            let second = side(extent.get("second"), ctx, normal)?;
+            // SolidCraft stores distance2 against the normal, regardless of direction.
+            let (positive, negative) = if forward {
+                (first, second)
+            } else {
+                (second, first)
+            };
+            let Side::Blind(negative) = negative else {
                 return Err(
-                    "a two-sided extrude that is not blind on both sides is not mapped yet"
+                    "a non-blind extrude end against the sketch normal on a two-sided extent \
+                     is not supported yet"
                         .to_owned(),
                 );
             };
-            out.insert("direction".to_owned(), json!(way));
-            put(&mut out, first, "distance");
-            out.insert("distance2".to_owned(), json!(mm(length)));
+            out.insert("direction".to_owned(), json!("positive"));
+            put(&mut out, positive, "distance");
+            out.insert("distance2".to_owned(), json!(mm(negative)));
         }
         Some(other) => return Err(format!("its extent is {other}")),
         None => return Err("its extent is malformed".to_owned()),
+    }
+    for side in ["side", "first", "second"]
+        .iter()
+        .filter_map(|key| extent.get(*key))
+    {
+        if let Some(draft) = number(side.get("draft")).filter(|draft| *draft != 0.0) {
+            if extent.get("kind").and_then(Value::as_str) != Some("one_sided") {
+                return Err(
+                    "draft on a symmetric or two-sided extrude is not supported yet".to_owned(),
+                );
+            }
+            // Both angles are measured outward along travel. SolidCraft's positive
+            // taper grows the section, including when travel opposes the normal.
+            out.insert(
+                "taper".to_owned(),
+                json!(format!("{} deg", draft.to_degrees())),
+            );
+        }
     }
     Ok(out)
 }
@@ -110,13 +197,11 @@ fn extent(extent: Option<&Value>, forward: bool) -> Result<Map<String, Value>, S
 enum Side {
     Blind(f64),
     ThroughAll,
+    ToFace([f64; 3], Option<f64>),
 }
 
-fn side(side: Option<&Value>) -> Result<Side, String> {
+fn side(side: Option<&Value>, ctx: &Context, normal: [f64; 3]) -> Result<Side, String> {
     let side = side.ok_or("its extent has no side")?;
-    if number(side.get("draft")).is_some_and(|draft| draft != 0.0) {
-        return Err("drafted extrudes are not mapped yet".to_owned());
-    }
     let termination = side.get("termination").unwrap_or(&Value::Null);
     match termination.get("kind").and_then(Value::as_str) {
         Some("blind") => number(termination.get("length"))
@@ -124,6 +209,10 @@ fn side(side: Option<&Value>) -> Result<Side, String> {
             .map(Side::Blind)
             .ok_or_else(|| "its blind length is malformed".to_owned()),
         Some("through_all") => Ok(Side::ThroughAll),
+        Some("to_face") => Ok(Side::ToFace(
+            super::faces::pick(ctx, termination.get("face"), normal)?,
+            number(termination.get("offset")),
+        )),
         Some(other) => Err(format!("{other} extrude ends are not mapped yet")),
         None => Err("its extent is malformed".to_owned()),
     }
@@ -133,6 +222,13 @@ fn put(out: &mut Map<String, Value>, side: Side, key: &str) {
     match side {
         Side::Blind(length) => {
             out.insert(key.to_owned(), json!(mm(length)));
+        }
+        Side::ToFace(point, offset) => {
+            out.insert(key.to_owned(), json!("0 mm"));
+            out.insert("to".to_owned(), json!(point));
+            if let Some(offset) = offset {
+                out.insert("to_offset".to_owned(), json!(mm(offset)));
+            }
         }
         Side::ThroughAll => {
             out.insert(key.to_owned(), json!("0 mm"));
@@ -145,7 +241,7 @@ fn put(out: &mut Map<String, Value>, side: Side, key: &str) {
 fn start_offset(start: Option<&Value>) -> Result<Option<f64>, String> {
     let start = start.unwrap_or(&Value::Null);
     match start.get("kind").and_then(Value::as_str) {
-        None | Some("profile_plane") => Ok(None),
+        None | Some("profile_plane") | Some("from_face") => Ok(None),
         Some("offset_profile_plane") => number(start.get("offset"))
             .map(|offset| (offset != 0.0).then_some(offset))
             .ok_or_else(|| "its start offset is malformed".to_owned()),
@@ -226,6 +322,15 @@ fn mm(length: f64) -> String {
 mod tests {
     use super::*;
 
+    fn extent(extent: Option<&Value>, forward: bool) -> Result<Map<String, Value>, String> {
+        super::extent(
+            extent,
+            forward,
+            &Context::new(&Value::Null),
+            [0.0, 0.0, 1.0],
+        )
+    }
+
     fn blind(length: f64) -> Value {
         json!({"termination": {"kind": "blind", "length": length}})
     }
@@ -272,15 +377,9 @@ mod tests {
     fn unsupported_extents_stop_the_history() {
         let drafted = json!({"kind": "one_sided",
             "side": {"termination": {"kind": "blind", "length": 5.0}, "draft": 0.1}});
-        assert_eq!(
-            extent(Some(&drafted), true).unwrap_err(),
-            "drafted extrudes are not mapped yet"
-        );
+        assert!(extent(Some(&drafted), true).unwrap().contains_key("taper"));
         let to_face = json!({"kind": "one_sided", "side": {"termination": {"kind": "to_face"}}});
-        assert_eq!(
-            extent(Some(&to_face), true).unwrap_err(),
-            "to_face extrude ends are not mapped yet"
-        );
+        assert!(extent(Some(&to_face), true).is_err());
         let mixed = json!({"kind": "two_sided", "first": blind(3.0),
             "second": {"termination": {"kind": "through_all"}}});
         assert!(extent(Some(&mixed), true).is_err());
@@ -308,7 +407,7 @@ mod tests {
             )),
             Ok(Some(2.5))
         );
-        assert!(start_offset(Some(&json!({"kind": "from_face"}))).is_err());
+        assert_eq!(start_offset(Some(&json!({"kind": "from_face"}))), Ok(None));
         for op in ["new_body", "join", "cut", "intersect"] {
             assert_eq!(operation(Some(&json!(op))), Ok(op));
         }

@@ -1,7 +1,7 @@
 //! Revolves, as SolidCraft revolve features.
 //!
 //! CADIR does not state which way a revolve turns, so only revolves whose result does not
-//! depend on it are mapped: symmetric ones, and one-sided full turns.
+//! depend on it are mapped: symmetric ones, equal two-sided ones, and one-sided full turns.
 
 use std::f64::consts::TAU;
 
@@ -88,6 +88,11 @@ fn sweep(extent: Option<&Value>) -> Result<(f64, bool), String> {
                 .filter(|angle| *angle > 0.0 && *angle <= TAU + FULL_TURN)
                 .map(|angle| angle.min(TAU))
                 .ok_or_else(|| "its angle is malformed".to_owned()),
+            Some("to_face") => Err(
+                "to-face revolves are not supported yet (CADIR does not state which way it turns; \
+                 SolidCraft's to option turns on one side only)"
+                    .to_owned(),
+            ),
             Some(other) => Err(format!("{other} revolve ends are not mapped yet")),
             None => Err("its extent is malformed".to_owned()),
         }
@@ -106,11 +111,24 @@ fn sweep(extent: Option<&Value>) -> Result<(f64, bool), String> {
                 )
             }
         }
-        Some("two_sided") => Err(
-            "two-sided revolves are not mapped yet (CADIR does not state \
-                                  which way each side turns)"
-                .to_owned(),
-        ),
+        Some("two_sided") => {
+            let first = angle(extent.get("first"))?;
+            let second = angle(extent.get("second"))?;
+            if first + second > TAU + FULL_TURN {
+                return Err(
+                    "a two-sided revolve beyond a full turn is not supported yet".to_owned(),
+                );
+            }
+            if first == second {
+                Ok(((first + second).min(TAU), true))
+            } else {
+                Err(
+                    "unequal two-sided revolves are not mapped yet (CADIR does not state \
+                     which way each side turns)"
+                        .to_owned(),
+                )
+            }
+        }
         Some(other) => Err(format!("its extent is {other}")),
         None => Err("its extent is malformed".to_owned()),
     }
@@ -140,13 +158,12 @@ mod tests {
         assert!(sweep(Some(&partial))
             .unwrap_err()
             .contains("which way it turns"));
-        let two = json!({"kind": "two_sided", "first": angle(1.0), "second": angle(1.0)});
+        let two = json!({"kind": "two_sided", "first": angle(1.0), "second": angle(2.0)});
         assert!(sweep(Some(&two)).is_err());
         let to_face = json!({"kind": "symmetric", "termination": {"kind": "to_face"}});
-        assert_eq!(
-            sweep(Some(&to_face)).unwrap_err(),
-            "to_face revolve ends are not mapped yet"
-        );
+        assert!(sweep(Some(&to_face))
+            .unwrap_err()
+            .contains("to-face revolves"));
     }
 
     #[test]

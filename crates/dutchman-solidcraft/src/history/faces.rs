@@ -10,6 +10,84 @@ use serde_json::{json, Value};
 use super::sketch::{dot, v3, V3};
 use super::Context;
 
+/// A single resolved planar face on an earlier named body, as a SolidCraft pick.
+/// Native, generated and historical selections need their own topology resolver.
+pub(super) fn pick(ctx: &Context, selection: Option<&Value>, normal: V3) -> Result<V3, String> {
+    let selection = selection.ok_or("its face selection is missing")?;
+    let ids = match selection.get("kind").and_then(Value::as_str) {
+        Some("faces") => selection.get("value"),
+        Some("resolved") => selection.pointer("/value/faces"),
+        _ => return Err("its face selection is not resolved to model faces".to_owned()),
+    }
+    .and_then(Value::as_array)
+    .ok_or("its face selection is malformed")?;
+    if ids.len() != 1 {
+        return Err("a selection without exactly one face is not supported yet".to_owned());
+    }
+    let id = ids
+        .first()
+        .and_then(Value::as_str)
+        .ok_or("its face is missing")?;
+    let face = ctx.row("faces", id).ok_or("its selected face is missing")?;
+    let surface = face
+        .get("surface")
+        .and_then(Value::as_str)
+        .and_then(|id| ctx.row("surfaces", id))
+        .ok_or("its face surface is missing")?;
+    let face_normal = v3(surface.pointer("/geometry/normal"))
+        .and_then(super::sketch::unit)
+        .ok_or("its face normal is missing")?;
+    if surface.pointer("/geometry/kind").and_then(Value::as_str) != Some("plane")
+        || dot(face_normal, normal).abs() < 1.0 - 1e-9
+    {
+        return Err("an extrude face not parallel to its sketch is not supported yet".to_owned());
+    }
+    let earlier = ctx.named_bodies.iter().any(|(body, _)| {
+        ctx.row("bodies", body).is_some_and(|body| {
+            faces(ctx, body)
+                .iter()
+                .any(|face| face.get("id").and_then(Value::as_str) == Some(id))
+        })
+    });
+    if !earlier {
+        return Err("its selected face is not on an earlier named body".to_owned());
+    }
+    // The colour picker approximates loops by their vertices. For a feature end,
+    // require a straight polygon without holes so the pick is proven inside it.
+    let loops = face
+        .pointer("/loops/loops")
+        .and_then(Value::as_array)
+        .filter(|loops| loops.len() == 1)
+        .ok_or("a terminating face with holes is not supported yet")?;
+    let lp = loops
+        .first()
+        .and_then(Value::as_str)
+        .and_then(|id| ctx.row("loops", id))
+        .ok_or("its face loop is missing")?;
+    for coedge in lp
+        .pointer("/boundary/coedges")
+        .and_then(Value::as_array)
+        .ok_or("its face boundary is missing")?
+    {
+        let edge = coedge
+            .as_str()
+            .and_then(|id| ctx.row("coedges", id))
+            .and_then(|row| row.get("edge"))
+            .and_then(Value::as_str)
+            .and_then(|id| ctx.row("edges", id))
+            .ok_or("its face edge is missing")?;
+        let curve = edge
+            .pointer("/carrier/curve")
+            .and_then(Value::as_str)
+            .and_then(|id| ctx.row("curves", id))
+            .ok_or("its face curve is missing")?;
+        if curve.pointer("/geometry/kind").and_then(Value::as_str) != Some("line") {
+            return Err("a terminating face with curved edges is not supported yet".to_owned());
+        }
+    }
+    point_on(ctx, face).ok_or_else(|| "its face has no resolved planar interior point".to_owned())
+}
+
 /// A colour of `face` that differs from its body's, as SolidCraft face looks; and how many
 /// coloured faces could not be placed.
 pub(crate) fn looks(ctx: &Context) -> (Vec<Value>, usize) {
