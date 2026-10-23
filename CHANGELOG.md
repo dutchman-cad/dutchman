@@ -8,6 +8,8 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+- Sheet-metal edge flanges map supported dimensions on unchanged rectangular base sheets using proven input-edge midpoint picks.
+
 ### cadmpeg
 
 - The cadmpeg pin moves to a2407a3 (CADIR 9): the geometry of a feature's historical input

@@ -10,9 +10,10 @@ It speaks JSON-RPC over stdio, one message per line, and takes no arguments: the
 it and talks to it.
 
 Sheet-metal history follows the same mapping limits in the [guide](guide.md) as the CLI:
-base flanges map; edge flanges and hems appear as the first blocked feature's reason, and
-the conversion keeps the geometry. K-factor and relief use the target rule defaults because
-CADIR does not supply them.
+base flanges and full-edge flanges on unchanged rectangular base sheets map when their own
+input-edge geometry proves each pick. Unsupported flange dimensions or selections, and hems,
+appear as the first blocked feature's reason; the conversion keeps the geometry. K-factor and
+relief use the target rule defaults because CADIR does not supply them.
 
 ## Set up a client
 
