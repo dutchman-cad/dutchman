@@ -114,7 +114,10 @@ to fall back on, so a history design is never worse than an import design.
 History is all or nothing. CADIR keeps only the final B-rep, so a history that stops part way
 cannot be finished with an imported body: the first feature that does not map (or a history
 with no feature that builds geometry) flattens the design to the import design, and the
-report says why (`history: flattened: …`). Suppressed source features are left out and
+report says why (`history: flattened: …`). Mapped sketches with resolved planes follow the
+import as hidden reference sketches, in source order, with no body-building features. Their
+dimension parameters remain available. The same applies when replay verification flattens
+a design; body comparison is unchanged. Suppressed source features are left out and
 reported. Mapped today: principal datum planes; planar sketches (points, lines, circles, arcs,
 whole ellipses, elliptical arcs up to one turn (multi-piece curves require whole-sketch selection), bounded parabolas and hyperbolas, rational quadratic Béziers, clamped uniform B-splines (including equal-weight rational curves), reference lines, at their solved positions) with their constraints and dimensions, each
 dimension linked to its parameter (a constraint that does not map is dropped and reported,

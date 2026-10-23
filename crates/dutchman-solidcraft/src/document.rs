@@ -56,6 +56,29 @@ pub(crate) fn import_design(model: &Model, step_blob: &str) -> Value {
     })
 }
 
+/// Appends mapped sketches to the import's component, hidden but editable. Parameters stay
+/// available to their dimensions; none of the body-building history is retained.
+pub(crate) fn keep_sketches(doc: &mut Value, references: &History) {
+    if references.features.is_empty() {
+        return;
+    }
+    let mut references = references.clone();
+    references.relocate(FEATURE, COMPONENT, "", &mut Default::default());
+    let hidden: Vec<Value> = references
+        .features
+        .iter()
+        .filter_map(|feature| feature.get("id").cloned())
+        .collect();
+    if let Some(features) = doc.get_mut("features").and_then(Value::as_array_mut) {
+        features.extend(references.features);
+    }
+    if let Some(fields) = doc.as_object_mut() {
+        fields.insert("params".to_owned(), json!(references.params));
+        fields.insert("next_id".to_owned(), json!(references.next_id));
+        fields.insert("visibility".to_owned(), json!({"hidden_sketches": hidden}));
+    }
+}
+
 /// A row-major 3 × 4 rigid transform as SolidCraft's column-major 4 × 4.
 pub(crate) fn column_major(rows: &[[f64; 4]; 3]) -> [[f64; 4]; 4] {
     let mut out = IDENTITY;
@@ -169,12 +192,22 @@ pub(crate) fn import_feature(
 }
 
 /// Records what an import design does not carry over from the model.
-pub(crate) fn report_unmapped(model: &Model, report: &mut Report) {
+pub(crate) fn report_unmapped(model: &Model, references: Option<&History>, report: &mut Report) {
     let m = &model.ir.model;
+    let sketches = if references.is_none() {
+        m.sketches.len()
+    } else {
+        0
+    };
+    let parameters = if references.is_some_and(|history| !history.features.is_empty()) {
+        0
+    } else {
+        m.parameters.len()
+    };
     let flattened = [
         (m.features.len(), "feature history"),
-        (m.sketches.len(), "sketches"),
-        (m.parameters.len(), "parameters"),
+        (sketches, "sketches"),
+        (parameters, "parameters"),
     ];
     for (count, what) in flattened {
         if count > 0 {

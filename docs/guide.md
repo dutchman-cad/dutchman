@@ -480,8 +480,12 @@ in `verification.status` in `--json`:
 |---|---|
 | `verified` | The history replays in SolidCraft and matches the original. |
 | `unverified` | The history was written without the check: no `solidcraft-cli` was found, it timed out, or `--no-verify`. The reason is given. |
-| `flattened` | The design has a history, but it was not written: a feature does not map, or the replay differs from the original. The design is the geometry alone. |
+| `flattened` | The design has a history, but it was not written: a feature does not map, or the replay differs from the original. The design keeps the imported geometry and any mapped sketches with resolved planes, hidden for reference, with no features built on them. |
 | `not_applicable` | There was no history to write, or `--import-only`. |
+
+For a flattened design, one Info line reports `sketches: kept N sketches for reference`,
+with `; M left out` when any sketches did not map or their planes did not resolve.
+`--import-only` continues to omit sketches.
 
 When the design is written as geometry, the same `solidcraft-cli` opens it too. If SolidCraft
 shows fewer faces than the source model has, or warns about it (for example faces it cannot

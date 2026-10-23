@@ -111,7 +111,9 @@ Never report success on the reply alone.
 - `verification.status` `verified`: SolidCraft replayed the history and it matches the
   original. `unverified`: written without that check (the reason says why, usually no
   `solidcraft-cli` was found); mention that the history has not been checked. `flattened`:
-  the history did not map or did not match, so the design is the shape alone.
+  the history did not map or did not match, so the design keeps the imported shape and any
+  mapped sketches with resolved planes, hidden for reference with no features built on them.
+  An Info `sketches` line counts sketches kept and, when applicable, left out.
 - Open the design and look at it: `solidcraft-cli eval /abs/path/design.solidcraft`, or with
   SolidCraft's MCP server, start it on the design (`solidcraft-cli mcp --in
   /abs/path/design.solidcraft`) and call `measure`.

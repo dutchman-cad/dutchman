@@ -1438,6 +1438,140 @@ fn a_symmetric_through_all_extent_is_mapped() {
     );
 }
 
+/// The final cube with a blocked feature between two otherwise mapped sketch features.
+fn reference_sketch_history() -> Model {
+    let mut model = loft_history(10.0, |definition| {
+        *definition = json!({"definition": "native", "kind": "Reference blocker"});
+    });
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"][1]["ordinal"] = json!(2);
+    wire["model"]["features"][2]["ordinal"] = json!(1);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+fn assert_reference_sketches(document: &Value, count: usize) {
+    let mut expected = vec![("import".to_owned(), false)];
+    expected.extend((0..count).map(|_| ("sketch".to_owned(), false)));
+    assert_eq!(types(document), expected);
+    let features = document["features"].as_array().unwrap();
+    let ids: Vec<_> = features.iter().skip(1).map(|f| f["id"].clone()).collect();
+    assert_eq!(document["visibility"]["hidden_sketches"], json!(ids));
+    for feature in features.iter().skip(1) {
+        assert_eq!(feature["component"], document["features"][0]["component"]);
+        assert!(feature["id"].as_u64().unwrap() > 3);
+        assert!(feature["id"].as_u64().unwrap() < document["next_id"].as_u64().unwrap());
+    }
+    let unique: std::collections::BTreeSet<_> =
+        features.iter().map(|f| f["id"].as_u64().unwrap()).collect();
+    assert_eq!(unique.len(), features.len());
+}
+
+#[test]
+fn flattened_history_keeps_mapped_sketches_hidden_in_source_order() {
+    let model = reference_sketch_history();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_reference_sketches(&document, 2);
+    assert_eq!(document["features"][1]["name"], "Base sketch");
+    assert_eq!(document["features"][2]["name"], "Top sketch");
+    assert_eq!(document["features"][2]["plane"]["type"], "custom");
+    // The first sketch's dimension still has its parameter.
+    assert!(document["params"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["name"] == "side"));
+    let losses: Vec<_> = report
+        .losses()
+        .iter()
+        .filter(|loss| loss.subject == "sketches")
+        .collect();
+    assert_eq!(losses.len(), 1);
+    assert_eq!(losses[0].severity, Severity::Info);
+    assert_eq!(losses[0].detail, "kept 2 sketches for reference");
+    assert!(matches!(
+        report.outcome().unwrap().check,
+        Check::Flattened(_)
+    ));
+}
+
+#[test]
+fn flattened_history_leaves_out_a_sketch_with_an_unresolved_plane() {
+    let mut model = reference_sketch_history();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["sketches"][0]["placement"] = json!({"kind": "unresolved"});
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_reference_sketches(&document, 1);
+    assert_eq!(document["features"][1]["name"], "Top sketch");
+    let losses: Vec<_> = report
+        .losses()
+        .iter()
+        .filter(|loss| loss.subject == "sketches")
+        .collect();
+    assert_eq!(losses.len(), 1);
+    assert_eq!(losses[0].severity, Severity::Info);
+    assert_eq!(losses[0].detail, "kept 1 sketch for reference; 1 left out");
+}
+
+#[test]
+fn flattened_history_leaves_out_a_sketch_that_does_not_map() {
+    let mut model = reference_sketch_history();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["sketch_entities"][0]["geometry"] =
+        json!({"kind": "native", "native_kind": "Reference curve"});
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_reference_sketches(&document, 1);
+    assert_eq!(document["features"][1]["name"], "Top sketch");
+    assert!(report.losses().iter().any(|loss| {
+        loss.subject == "sketches"
+            && loss.severity == Severity::Info
+            && loss.detail == "kept 1 sketch for reference; 1 left out"
+    }));
+}
+
+#[test]
+fn reference_sketches_preserve_duplicate_source_names() {
+    let mut model = reference_sketch_history();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"][1]["name"] = json!("Base sketch");
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, _) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_reference_sketches(&document, 2);
+    assert_eq!(document["features"][1]["name"], "Base sketch");
+    assert_eq!(document["features"][2]["name"], "Base sketch");
+}
+
+#[test]
+fn hidden_reference_sketches_leave_the_imported_body_unchanged_in_solidcraft() {
+    let Some(cli) = solidcraft() else { return };
+    let model = reference_sketch_history();
+    let (bytes, _) = written(&model);
+    let mut original = Vec::new();
+    SolidCraftWriter::new()
+        .import_only(true)
+        .verification(Verification::Off)
+        .write(&model, &mut original, &mut Report::default())
+        .unwrap();
+    let actual = volumes(&cli, &bytes);
+    assert_eq!(actual, volumes(&cli, &original));
+    assert_eq!(actual.len(), 1);
+    assert!((actual[0] - 1000.0).abs() < 1e-6);
+}
+
 #[test]
 fn import_only_never_writes_history() {
     let model = cube_with_history(10.0, first_profile(), None);
@@ -1481,7 +1615,12 @@ fn a_history_that_replays_differently_is_flattened() {
     );
     let line = history_line(&report);
     assert!(line.starts_with("flattened: replay differs"), "{line}");
-    assert_eq!(types(&document), [("import".to_owned(), false)]);
+    assert_reference_sketches(&document, 1);
+    assert!(report.losses().iter().any(|loss| {
+        loss.subject == "sketches"
+            && loss.severity == Severity::Info
+            && loss.detail == "kept 1 sketch for reference"
+    }));
 }
 
 /// The design's container with parameter `name`'s expression changed, every other entry kept.
@@ -2808,7 +2947,7 @@ fn overlapping_crossing_curves_keep_the_refusal() {
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
     );
-    assert_eq!(types(&document), [("import".to_owned(), false)]);
+    assert_reference_sketches(&document, 1);
     assert!(history_line(&report).contains("a profile crossed by its own sketch's curves"));
 }
 
@@ -2902,7 +3041,7 @@ fn native_selections_resolve_one_even_odd_region() {
             &nested_native_profile(radii),
             &SolidCraftWriter::new().verification(Verification::Off),
         );
-        assert_eq!(types(&document), [("import".to_owned(), false)]);
+        assert_reference_sketches(&document, 1);
         assert!(history_line(&report).contains("a profile cadmpeg does not resolve"));
     }
 }
@@ -2944,7 +3083,7 @@ fn an_inventor_shaped_extrude_maps_only_when_its_sketch_has_one_profile() {
     wire["model"]["sketches"][0]["profiles"] = json!([profiles[0], profiles[0]]);
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     let (document, report) = convert(&model, &writer);
-    assert_eq!(types(&document), [("import".to_owned(), false)]);
+    assert_reference_sketches(&document, 1);
     assert_eq!(
         history_line(&report),
         "flattened: feature \"Block\": a profile cadmpeg does not resolve, in a sketch of 2 \
@@ -4799,7 +4938,7 @@ fn face_selections_that_cannot_be_placed_stop_the_history() {
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
         );
-        assert_eq!(types(&document), [("import".to_owned(), false)]);
+        assert_reference_sketches(&document, 1);
         assert!(
             history_line(&report).contains(reason),
             "{}",

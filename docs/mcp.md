@@ -250,6 +250,11 @@ Replacing a source shape with its mirror is not supported yet: SolidCraft's mirr
 the original. Cosmetic threads lack a resolved standard and pitch in CADIR, so assigning
 SolidCraft's ISO metric designation would invent thread data; these remain flattened.
 
+A flattened conversion keeps mapped sketches with resolved planes hidden after the imported
+geometry for reference, with no features built on them. Its losses include one Info line,
+`sketches: kept N sketches for reference`, with `; M left out` if any were omitted. Body
+verification is unchanged. `import_only` continues to write geometry alone.
+
 ### FreeCAD output (experimental)
 
 `convert` and `convert_all` accept `to: "freecad"` (default: `"solidcraft"`). For example:
