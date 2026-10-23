@@ -354,6 +354,117 @@ fn a_design_with_components_becomes_components_and_occurrences() {
     assert_eq!(document["occurrences"].as_array().unwrap().len(), 2);
 }
 
+/// [`with_components`], with two sketches of the design's own: a 20 mm line on XY dimensioned
+/// by parameter `span`, and one whose plane is not resolved; and parameter `spare`, which no
+/// sketch uses.
+fn with_sketches() -> Model {
+    let model = with_components(false);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let sketch = |key: u32, placement: Value| {
+        serde_json::json!({"id": format!("f3d:model:sketch#{key}"), "name": format!("Layout {key}"),
+                           "visible": false, "placement": placement})
+    };
+    wire["model"]["sketches"] = serde_json::json!([
+        sketch(
+            1,
+            serde_json::json!({"kind": "resolved", "frame": {
+                "origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+                "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
+                "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0},
+            }})
+        ),
+        sketch(2, serde_json::json!({"kind": "unresolved"})),
+    ]);
+    wire["model"]["sketch_entities"] = serde_json::json!([{
+        "id": "f3d:model:sketch-entity#1",
+        "sketch": "f3d:model:sketch#1",
+        "construction": false,
+        "geometry": {"kind": "line", "start": {"u": 0.0, "v": 0.0}, "end": {"u": 20.0, "v": 0.0}},
+    }]);
+    wire["model"]["sketch_constraints"] = serde_json::json!([{
+        "id": "f3d:model:sketch-constraint#1",
+        "sketch": "f3d:model:sketch#1",
+        "definition": {"kind": "distance", "entities": ["f3d:model:sketch-entity#1"],
+                       "parameter": "f3d:model:parameter#1"},
+    }]);
+    let parameter = |key: u32, name: &str, value: f64| {
+        serde_json::json!({"id": format!("f3d:model:parameter#{key}"), "name": name,
+                           "expression": format!("{value} mm"),
+                           "value": {"kind": "length", "value": value}})
+    };
+    wire["model"]["parameters"] =
+        serde_json::json!([parameter(1, "span", 20.0), parameter(2, "spare", 5.0)]);
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    }
+}
+
+#[test]
+fn an_assemblys_own_sketches_are_kept_hidden_in_the_design() {
+    let (bytes, report) = written(&with_sketches());
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut text = String::new();
+    archive
+        .by_name("document.json")
+        .unwrap()
+        .read_to_string(&mut text)
+        .unwrap();
+    let document: Value = serde_json::from_str(&text).unwrap();
+    let sketches: Vec<&Value> = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|feature| feature["type"] == "sketch")
+        .collect();
+    assert_eq!(sketches.len(), 1, "the unresolved one is left out");
+    let sketch = sketches[0];
+    assert_eq!(sketch["name"], "Layout 1");
+    assert_eq!(sketch["component"], 0, "the design's own, not a part's");
+    assert_eq!(sketch["sketch"]["curves"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        document["visibility"]["hidden_sketches"],
+        serde_json::json!([sketch["id"]])
+    );
+    assert!(sketch["id"].as_u64() < document["next_id"].as_u64());
+    let params: Vec<&str> = document["params"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|param| param["name"].as_str())
+        .collect();
+    assert_eq!(params, ["span"], "only the parameter the sketch uses");
+    assert!(report.losses().iter().any(|loss| loss.subject == "sketches"
+        && loss.detail == "kept 1 sketch in the design itself, for reference; 1 left out"));
+}
+
+#[test]
+fn solidcraft_solves_an_assemblys_own_sketch_and_keeps_it_hidden() {
+    let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) else {
+        eprintln!("skipped: set {CLI_ENV} to check the sketch in SolidCraft");
+        return;
+    };
+    let (bytes, _) = written(&with_sketches());
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("design.solidcraft");
+    let output = dir.path().join("eval.json");
+    std::fs::write(&input, bytes).unwrap();
+    let status = std::process::Command::new(cli)
+        .arg("eval")
+        .arg(&input)
+        .arg("--json-out")
+        .arg(&output)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let result: Value = serde_json::from_str(&std::fs::read_to_string(output).unwrap()).unwrap();
+    let sketch = &result["sketches"][0];
+    assert_eq!(sketch["name"], "Layout 1");
+    assert_eq!(sketch["status"], "solved");
+    assert_eq!(sketch["visible"], false);
+    assert_eq!(result["bodies"].as_array().unwrap().len(), 2);
+}
+
 #[test]
 fn solidcraft_places_each_component_occurrence() {
     let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) else {

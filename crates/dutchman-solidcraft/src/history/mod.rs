@@ -444,6 +444,73 @@ fn map_into(
     Ok(history)
 }
 
+/// The design's own sketches, each mapped as a SolidCraft sketch, for a design whose sketches
+/// no feature history carries (an assembly's): every planar sketch that maps, with the
+/// parameters their dimensions use, and how many sketches did not map.
+pub(crate) fn sketches(model: &Model, report: &mut Report) -> (History, usize) {
+    let mut kept = History::default();
+    let count = model.ir.model.sketches.len();
+    if count == 0 {
+        return (kept, 0);
+    }
+    let document = match serde_json::to_value(&model.ir) {
+        Ok(document) if check_version(&document).is_ok() => document,
+        _ => return (kept, count),
+    };
+    let wire = document.get("model").cloned().unwrap_or(Value::Null);
+    let mut param_notes = Report::default();
+    let (params, param_names) = params::map(&model.ir.model.parameters, &mut param_notes);
+    let mut ctx = Context::new(&wire);
+    ctx.params = param_names;
+    let mut left_out = 0;
+    for sketch in ctx.arena("sketches") {
+        let feature = serde_json::json!({ "name": sketch.get("name") });
+        let definition = serde_json::json!({
+            "sketch": { "space": "planar", "sketch": sketch.get("id") },
+        });
+        // A sketch that does not map is counted, and leaves no notes of its own behind.
+        let mut notes = Report::default();
+        match sketch::map(&feature, &definition, &mut ctx, &mut notes) {
+            Ok(mut mapped) => {
+                report.append(notes);
+                let name = ctx.unique_name(&mapped, &kept.features);
+                if let Some(fields) = mapped.as_object_mut() {
+                    fields.insert("name".to_owned(), Value::String(name));
+                }
+                kept.features.push(mapped);
+            }
+            Err(_) => left_out += 1,
+        }
+    }
+    let used = kept
+        .features
+        .iter()
+        .filter_map(|feature| feature.pointer("/sketch/constraints"))
+        .filter_map(Value::as_array)
+        .flatten()
+        .filter_map(|constraint| constraint.get("param").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect();
+    kept.params = params::needed(params, used);
+    // Only the notes about parameters the sketches keep.
+    let names: Vec<&str> = kept
+        .params
+        .iter()
+        .filter_map(|param| param.get("name").and_then(Value::as_str))
+        .collect();
+    for loss in param_notes.losses() {
+        let about = |name: &&str| {
+            loss.subject == format!("parameter {name}")
+                || loss.detail.starts_with(&format!("renamed to {name}:"))
+        };
+        if names.iter().any(about) {
+            report.push_at(loss.stage, loss.severity, &loss.subject, &loss.detail);
+        }
+    }
+    kept.next_id = ctx.next_id;
+    (kept, left_out)
+}
+
 /// Refuses a CADIR wire version the mapping does not know.
 fn check_version(document: &Value) -> Result<(), String> {
     let version = document

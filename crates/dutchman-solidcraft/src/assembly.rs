@@ -56,6 +56,7 @@ pub(crate) fn write(
             "none of the assembly's parts has geometry SolidCraft can import".to_owned(),
         ));
     }
+    let hidden = builder.sketches(model);
     history::base::store(&mut builder.features, &mut builder.container)?;
     let mut doc = json!({
         "format": FORMAT,
@@ -85,6 +86,9 @@ pub(crate) fn write(
     }
     if let (false, Some(fields)) = (joints.is_empty(), doc.as_object_mut()) {
         fields.insert("assembly".to_owned(), json!({"joints": joints}));
+    }
+    if let (false, Some(fields)) = (hidden.is_empty(), doc.as_object_mut()) {
+        fields.insert("visibility".to_owned(), json!({"hidden_sketches": hidden}));
     }
     builder
         .report
@@ -564,6 +568,40 @@ impl Builder<'_> {
         self.face_looks.append(&mut history.face_looks);
         self.histories.push(check);
         Ok(true)
+    }
+
+    /// Adds the sketches of the assembly's own file, those that map, to the design itself
+    /// (SolidCraft's root component), hidden for reference as a flattened part's are; returns
+    /// their ids. CADIR places a sketch in model space without saying which component it
+    /// belongs to, so a component's sketch is kept where it was drawn, not moved with it.
+    fn sketches(&mut self, model: &Model) -> Vec<Value> {
+        let (mut kept, left_out) = history::sketches(model, self.report);
+        let count = kept.features.len();
+        if count > 0 || left_out > 0 {
+            let noun = if count == 1 { "sketch" } else { "sketches" };
+            let detail = if left_out > 0 {
+                format!(
+                    "kept {count} {noun} in the design itself, for reference; {left_out} left out"
+                )
+            } else {
+                format!("kept {count} {noun} in the design itself, for reference")
+            };
+            self.report.push(Severity::Info, "sketches", detail);
+        }
+        if count == 0 {
+            return Vec::new();
+        }
+        let offset = self.next_id.saturating_sub(1);
+        kept.relocate(offset, 0, &prefix(&model.name), &mut self.taken);
+        self.next_id = kept.next_id;
+        let hidden = kept
+            .features
+            .iter()
+            .filter_map(|feature| feature.get("id").cloned())
+            .collect();
+        self.features.append(&mut kept.features);
+        self.params.append(&mut kept.params);
+        hidden
     }
 
     fn unique(&mut self, base: String) -> String {
