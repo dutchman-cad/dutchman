@@ -44,6 +44,10 @@ report's schema name changes when a field does).
 
 ### Desktop app
 
+- The macOS disk image opens on an installation window: Dutchman and Applications side by
+  side with an arrow between them on Dutchman's own background, and the read-me below. If
+  the window cannot be laid out while packaging, the image is built plain as before.
+
 - The line naming the SolidCraft that checks history stays on one line (the whole of it on
   hover): a long path to `solidcraft-cli` wrapped onto several lines and pushed the Convert
   button out of view at the window's default size.

@@ -98,7 +98,8 @@ problem** link opens the **A file didn't convert** form.
   <img alt="The Dutchman app after converting three files: two converted, one failed with its reason" src="docs/images/dutchman-gui-day.png" width="480">
 </picture>
 
-On macOS it comes as **Dutchman.app** in a disk image (from 0.1.3 on; see
+On macOS it comes as **Dutchman.app** in a disk image (from 0.1.3 on): open it and drag
+Dutchman onto Applications in the window that appears (see
 [opening it the first time](docs/guide.md#opening-the-app-the-first-time): approve it once
 and the commands inside it run too). It ships in the
 release archives beside `dutchman` (from 0.1.1 on), or build it from source

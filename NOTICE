@@ -3,6 +3,9 @@ Copyright 2026 Dutchman contributors
 
 Licensed under the Apache License, Version 2.0 (see LICENSE).
 
+The disk image background in assets/dmg/ is original Dutchman artwork, provided
+under the same licence; its SVG source and rendering instructions are included there.
+
 dutchman-gui bundles these fonts, each under the SIL Open Font License 1.1 (texts in
 crates/dutchman-gui/assets/fonts/, and in licences/ in the release archives):
 - Spectral, Copyright 2017 The Spectral Project Authors.
