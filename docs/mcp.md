@@ -279,3 +279,10 @@ resolved connector frames, limits, and grounding. Unsupported operands or joint 
 produce specific `joints` losses. An inferred grounded part is reported as `Info`. The macro
 checks that solving preserves stored placements; failure removes the joints, restores those
 placements, and warns in FreeCAD. `import_only` leaves joints out.
+
+The CLI additionally supports experimental `--to fcstd` to run FreeCAD headlessly, save
+and verify a native document, and `--to freecad --verify` to check a macro without saving
+a document. These options are currently CLI-only; the MCP FreeCAD macro output above
+remains unverified. `FREECAD_CMD` selects the headless executable and
+`--freecad-timeout SECONDS` sets its 300-second default limit. See the guide for discovery,
+measurement tolerances, fallback reporting and the `differs` verification status.

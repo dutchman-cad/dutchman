@@ -175,6 +175,8 @@ doc = App.newDocument('Dutchman')
 parents = []
 
 def visible(obj, shown):
+    # The document property is saved and read without the GUI; the view follows it.
+    obj.Visibility = shown
     if App.GuiUp:
         obj.ViewObject.Visibility = shown
 

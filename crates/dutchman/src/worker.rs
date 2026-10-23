@@ -109,9 +109,23 @@ impl ConvertOptions {
         let mut args: Vec<OsString> = Vec::new();
         // Only a choice other than the default is passed, so the arguments of a SolidCraft run
         // stay those every `dutchman` takes.
-        if self.to == crate::OutputFormat::Freecad {
+        if self.to != crate::OutputFormat::Solidcraft {
             args.push("--to".into());
-            args.push("freecad".into());
+            args.push(
+                if self.to == crate::OutputFormat::Fcstd {
+                    "fcstd"
+                } else {
+                    "freecad"
+                }
+                .into(),
+            );
+        }
+        if self.verify {
+            args.push("--verify".into());
+        }
+        if self.freecad_timeout != crate::ConvertOptions::default().freecad_timeout {
+            args.push("--freecad-timeout".into());
+            args.push(self.freecad_timeout.to_string().into());
         }
         if self.import_only {
             args.push("--import-only".into());

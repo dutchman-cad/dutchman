@@ -195,3 +195,11 @@ limits, and grounding. Explain `joints` losses: unsupported operands/options ret
 placements, and an ungrounded joint chain gets an inferred grounded part (`Info`). A failed
 Assembly solve removes the joints, restores stored placements, and warns in FreeCAD.
 `import_only` leaves joints out.
+
+For CLI conversions, `--to fcstd -o OUTPUT.FCStd` runs FreeCAD headlessly, saves the native
+document and verifies every part against embedded STEP. `--to freecad --verify` checks a
+macro without saving a native document. Set `FREECAD_CMD` to one headless executable path (or the Flatpak form)
+when discovery cannot find it; `--freecad-timeout SECONDS` defaults to 300 and kills a slow
+process. Explain `differs` using the named part and reason; a runtime fallback restores
+STEP and adds a specific loss. A macro may be written with `not checked: FreeCAD not found`;
+native output requires working FreeCAD. These extra flags are CLI-only and experimental.

@@ -1179,6 +1179,7 @@ dependencies = [
  "dutchman-core",
  "dutchman-solidcraft",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

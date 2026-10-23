@@ -148,7 +148,7 @@ impl Prefix {
         );
         report.push(Severity::Degraded, name, &note);
         script.push_str(PRELUDE);
-        script.push_str("partial_history(");
+        script.push_str("selected = partial_history(");
         script.push_str(&generate::data(&Value::Array(self.rows))?);
         script.push_str(", ");
         script.push_str(&generate::data(&Value::Array(self.sketches))?);
@@ -187,25 +187,22 @@ def partial_history(rows, sketches, label, original):
         body.Tip = tip
     doc.recompute()
     for obj in body.Group:
-        shown(obj, False)
-    shown(body, False)
-    shown(group, False)
-    shown(original, True)
+        visible(obj, False)
+    visible(body, False)
+    visible(group, False)
+    visible(original, True)
     # Compare only the last successfully rebuilt tip with the final STEP shape. Reference
     # sketches and intermediate features never participate in the final body's measures.
     if tip and completed == len(rows):
         try:
             compare_original(tip.Shape, original.Shape)
-            shown(group, True)
-            shown(body, True)
-            shown(tip, True)
-            shown(original, False)
+            visible(group, True)
+            visible(body, True)
+            visible(tip, True)
+            visible(original, False)
+            return tip
         except Exception:
             pass
-
-def shown(obj, flag):
-    # The document property is saved and read without the GUI; the view follows it.
-    visible(obj, flag)
-    obj.Visibility = flag
+    return original
 
 "#;

@@ -24,11 +24,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Convert a native CAD file into a SolidCraft design or FreeCAD macro.
+    /// Convert a native CAD file into a SolidCraft design, FreeCAD macro or document.
     Convert {
         /// The native design file to read (for example a `.f3d`, `.ipt` or `.sldprt`).
         input: PathBuf,
-        /// The `.solidcraft` or `.FCMacro` file to write, matching --to.
+        /// The `.solidcraft`, `.FCMacro` or `.FCStd` file to write, matching --to.
         /// An existing file is replaced, unless --no-clobber.
         #[arg(
             required_unless_present = "output_flag",
@@ -451,5 +451,50 @@ mod output_tests {
             "unknown",
         ])
         .is_err());
+    }
+
+    #[test]
+    fn freecad_native_and_verified_macro_flags_reach_batch_workers() {
+        for (format, extension, verify) in [("fcstd", "FCStd", false), ("freecad", "FCMacro", true)]
+        {
+            let mut args = vec![
+                "dutchman",
+                "convert",
+                "in.f3d",
+                "-o",
+                "out",
+                "--to",
+                format,
+                "--freecad-timeout",
+                "17",
+            ];
+            if verify {
+                args.push("--verify");
+            }
+            let cli = Cli::try_parse_from(args).unwrap();
+            let Command::Convert { options, .. } = cli.command else {
+                panic!("expected convert");
+            };
+            assert_eq!(options.to.extension(), extension);
+            assert_eq!(options.verify, verify);
+            assert_eq!(options.freecad_timeout, 17);
+            let mut worker_args = vec![
+                std::ffi::OsString::from("dutchman"),
+                "convert".into(),
+                "in.f3d".into(),
+                "out".into(),
+            ];
+            worker_args.extend(options.to_args());
+            let worker = Cli::try_parse_from(worker_args).unwrap();
+            let Command::Convert {
+                options: forwarded, ..
+            } = worker.command
+            else {
+                panic!("expected convert");
+            };
+            assert_eq!(forwarded.to, options.to);
+            assert_eq!(forwarded.verify, options.verify);
+            assert_eq!(forwarded.freecad_timeout, options.freecad_timeout);
+        }
     }
 }

@@ -39,7 +39,9 @@ documents, authored in FreeCAD 1.1.1 by the cadmpeg project and dedicated to the
 
 ## Writing rebuild macros
 
-`--to freecad` writes a `.FCMacro` independently of `.FCStd` input support. See
+`--to freecad` writes a `.FCMacro` independently of `.FCStd` input support.
+`--to fcstd` runs FreeCAD to save and verify a native document; `--to freecad --verify`
+checks a macro without saving a native document. See
 [FreeCAD output](guide.md#freecad-output-experimental) for coverage, fallback and execution.
 
 The writer is Rust and emits calls to FreeCAD as an outside Python program. It does not
@@ -57,7 +59,8 @@ Partial rebuilds retain the longest mapped prefix and every mapped sketch in a h
 **Rebuilt history (partial)** group. When that prefix differs from the final body, the
 embedded STEP is the visible result and the report says `rebuilt N of M features; kept
 as reference`. Only the final shape participates in verification; reference features do
-not add bodies or volumes. This output remains experimental and unverified.
+not add bodies or volumes. This output remains experimental; it is verified only when FreeCAD runs it headlessly
+(`--to fcstd` or `--verify`).
 
 The synthetic macro regression tests can also run in a prebuilt FreeCAD command-line
 binary when `FREECAD_CMD` names that executable, including a final-volume check beside a
@@ -74,3 +77,7 @@ FreeCAD command-line executable (or a wrapper accepting `-c CODE`) to run the sy
 macro checks for every mapped joint family, including hinge and slider motion about their
 own axes, a sub-assembly solved inside its assembly, grounding, limit clamping, and volume
 preservation. Joint coverage and specific fallback cases are listed in the guide.
+
+Headless measurement and saving use the public [topological data scripting](https://wiki.freecad.org/Topological_data_scripting)
+and [FreeCAD scripting basics](https://wiki.freecad.org/FreeCAD_Scripting_Basics) APIs:
+`Shape.Solids`, `Volume`, `BoundBox`, document `recompute()` and `saveAs()`.

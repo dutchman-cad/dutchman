@@ -2,6 +2,7 @@
 mod assembly;
 mod generate;
 mod prefix;
+pub mod run;
 
 use dutchman_core::{
     Check, Error, FeatureOutcome, FeatureStatus, Mode, Model, Outcome, Report, Severity, Writer,
@@ -124,7 +125,7 @@ impl FreeCadWriter {
         script.push_str(&generate::quoted(&model.name)?);
         script.push_str(", ");
         script.push_str(&generate::quoted(&step)?);
-        script.push_str(")\n");
+        script.push_str(")\nselected = original\nfallback = None\n");
         match generated {
             Ok(code) => {
                 script.push_str("body = doc.addObject('PartDesign::Body', 'Body')\nbody.Label = ");
@@ -135,7 +136,7 @@ impl FreeCadWriter {
                     script.push_str(line);
                     script.push('\n');
                 }
-                script.push_str("    doc.recompute()\n    if body.Shape.isNull() or not body.Shape.isValid():\n        raise RuntimeError('Rebuilt body has no valid shape')\n    compare_original(body.Shape, original.Shape)\n    visible(original, False)\nexcept Exception as error:\n    visible(body, False)\n    visible(original, True)\n    App.Console.PrintWarning('Rebuild failed; original STEP restored: ' + str(error) + '\\n')\n");
+                script.push_str("    doc.recompute()\n    if body.Shape.isNull() or not body.Shape.isValid():\n        raise RuntimeError('Rebuilt body has no valid shape')\n    compare_original(body.Shape, original.Shape)\n    visible(original, False)\n    selected = body\nexcept Exception as error:\n    fallback = str(error)\n    visible(body, False)\n    visible(original, True)\n    App.Console.PrintWarning('Rebuild failed; original STEP restored: ' + str(error) + '\\n')\n");
             }
             Err(reason) if partial.is_some() => {
                 if let Some(partial) = partial {
@@ -152,6 +153,7 @@ impl FreeCadWriter {
                 );
             }
         }
+        script.push_str(&run::record(&model.name)?);
         Ok(rebuilt)
     }
 }
@@ -184,6 +186,7 @@ impl Writer for FreeCadWriter {
         if model.assembly.is_some() {
             script.push_str(assembly::PRELUDE);
         }
+        script.push_str(run::INIT);
         let mut features = Vec::new();
         let rebuilt = self.part(model, &mut script, report, &mut features, 0)?;
         script.push_str("doc.recompute()\nif App.GuiUp:\n    Gui.activeDocument().activeView().viewAxonometric()\n    Gui.activeDocument().activeView().fitAll()\n");

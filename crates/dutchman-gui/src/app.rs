@@ -440,6 +440,7 @@ impl App {
                         .selected_text(match self.options.to {
                             dutchman::OutputFormat::Solidcraft => "SolidCraft",
                             dutchman::OutputFormat::Freecad => "FreeCAD macro (experimental)",
+                            dutchman::OutputFormat::Fcstd => "FreeCAD document (experimental)",
                         })
                         .show_ui(ui, |ui| {
                             ui.selectable_value(
@@ -451,6 +452,11 @@ impl App {
                                 &mut self.options.to,
                                 dutchman::OutputFormat::Freecad,
                                 "FreeCAD macro (experimental)",
+                            );
+                            ui.selectable_value(
+                                &mut self.options.to,
+                                dutchman::OutputFormat::Fcstd,
+                                "FreeCAD document (experimental)",
                             );
                         });
                 });
@@ -866,7 +872,15 @@ fn outcome(report: &Value) -> String {
     match field("/mode") {
         Some("history") => {
             let check = match (field("/verification/status"), field("/verification/reason")) {
-                (Some("verified"), _) => "verified in SolidCraft".to_owned(),
+                (Some("verified"), _) => {
+                    if field("/output/format").is_some_and(|format| format.starts_with("freecad-"))
+                    {
+                        "verified in FreeCAD".to_owned()
+                    } else {
+                        "verified in SolidCraft".to_owned()
+                    }
+                }
+                (Some("differs"), Some(reason)) => format!("rebuild differs: {reason}"),
                 (_, Some(reason)) => format!("unverified: {reason}"),
                 _ => "unverified".to_owned(),
             };

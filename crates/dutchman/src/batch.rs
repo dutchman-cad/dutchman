@@ -307,6 +307,28 @@ pub fn line(result: &Value) -> String {
             (Some("history"), _) => "editable history, unverified",
             _ => "geometry without history",
         };
+        let freecad = result
+            .pointer("/output/format")
+            .and_then(Value::as_str)
+            .is_some_and(|format| format.starts_with("freecad-"));
+        let written = if freecad {
+            match result
+                .pointer("/verification/status")
+                .and_then(Value::as_str)
+            {
+                Some("verified") => "geometry verified in FreeCAD".to_owned(),
+                Some("differs" | "unverified") => {
+                    let reason = result
+                        .pointer("/verification/reason")
+                        .and_then(Value::as_str)
+                        .unwrap_or("not checked");
+                    format!("FreeCAD rebuild: {reason}")
+                }
+                _ => written.to_owned(),
+            }
+        } else {
+            written.to_owned()
+        };
         format!("converted  {input} -> {output} ({written})")
     } else {
         let message = result

@@ -14,6 +14,8 @@ doc = App.newDocument('Dutchman')
 parents = []
 
 def visible(obj, shown):
+    # The document property is saved and read without the GUI; the view follows it.
+    obj.Visibility = shown
     if App.GuiUp:
         obj.ViewObject.Visibility = shown
 
@@ -438,7 +440,10 @@ def rebuild(row, body, objects, names, tip):
     names[row['name']] = obj
     return obj
 
+dutchman_parts = []
 original = original_step("Synthetic", "STEP payload")
+selected = original
+fallback = None
 body = doc.addObject('PartDesign::Body', 'Body')
 body.Label = "Synthetic"
 attach(body)
@@ -453,10 +458,13 @@ try:
         raise RuntimeError('Rebuilt body has no valid shape')
     compare_original(body.Shape, original.Shape)
     visible(original, False)
+    selected = body
 except Exception as error:
+    fallback = str(error)
     visible(body, False)
     visible(original, True)
     App.Console.PrintWarning('Rebuild failed; original STEP restored: ' + str(error) + '\n')
+dutchman_parts.append(("Synthetic", original, selected, fallback))
 doc.recompute()
 if App.GuiUp:
     Gui.activeDocument().activeView().viewAxonometric()
