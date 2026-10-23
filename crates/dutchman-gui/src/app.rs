@@ -37,7 +37,7 @@ pub struct Row {
     pub job: Option<Job>,
 }
 
-/// Dutchman's window.
+/// Dutchman Convert's window.
 pub struct App {
     inputs: Vec<PathBuf>,
     out_dir: Option<PathBuf>,
@@ -346,7 +346,7 @@ impl App {
             ui.add_space(theme::SPACE_2);
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
-                ui.label(RichText::new("Dutchman").text_style(theme::title()));
+                ui.label(RichText::new(crate::APP_NAME).text_style(theme::title()));
                 ui.label(
                     RichText::new("Converts native CAD designs into SolidCraft designs.")
                         .small()

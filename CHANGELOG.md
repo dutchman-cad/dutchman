@@ -52,6 +52,11 @@ report's schema name changes when a field does).
 
 ### Desktop app
 
+- The desktop app is named **Dutchman Convert**, part of Dutchman CAD: its window title and
+  heading, and on macOS **Dutchman Convert.app** with a "Dutchman Convert" disk image volume.
+  The commands (`dutchman`, `dutchman-gui`, `dutchman-mcp`), their subcommands, the settings
+  and the download file names are unchanged. A Mac with 0.1.5 or earlier keeps
+  `/Applications/Dutchman.app` until it is replaced.
 - The macOS disk image opens on an installation window: Dutchman and Applications side by
   side with an arrow between them on Dutchman's own background, and the read-me below. If
   the window cannot be laid out while packaging, the image is built plain as before.

@@ -18,35 +18,36 @@ reading what the conversion reports, and opening the result in SolidCraft.
 
 ### macOS: the app
 
-From 0.1.3 on, each release has `dutchman-VERSION-macos-universal.dmg`: **Dutchman.app**, for
-Apple silicon and Intel Macs alike, with the `dutchman` and `dutchman-mcp` commands inside it.
+From 0.1.3 on, each release has `dutchman-VERSION-macos-universal.dmg`: **Dutchman
+Convert.app** (named **Dutchman.app** in 0.1.5 and earlier), for Apple silicon and Intel Macs
+alike, with the `dutchman` and `dutchman-mcp` commands inside it.
 
-1. Open the disk image and drag **Dutchman** onto **Applications**.
-2. Open Dutchman from Applications.
+1. Open the disk image and drag **Dutchman Convert** onto **Applications**.
+2. Open Dutchman Convert from Applications.
 
 #### Opening the app the first time
 
-Dutchman is not signed with an Apple Developer ID, so the first time you open it macOS stops
-it with this box:
+Dutchman Convert is not signed with an Apple Developer ID, so the first time you open it macOS
+stops it with this box (shown here for a release that named the app Dutchman):
 
 <img alt="The macOS box: “Dutchman” Not Opened. Apple could not verify “Dutchman” is free of malware that may harm your Mac or compromise your privacy. Buttons: Move to Trash, Done." src="images/macos-not-opened.png" width="260">
 
 Click **Done**, not Move to Trash, then:
 
 1. Open **System Settings** › **Privacy & Security**.
-2. Scroll down to **Security**. It says “Dutchman” was blocked to protect your Mac.
+2. Scroll down to **Security**. It says “Dutchman Convert” was blocked to protect your Mac.
 3. Click **Open Anyway**, enter your password, then click **Open Anyway** in the box that
    follows.
 
 <img alt="System Settings, Privacy & Security, Security: “Dutchman” was blocked to protect your Mac, with an Open Anyway button." src="images/macos-open-anyway.png" width="450">
 
-macOS remembers the choice; from then on Dutchman opens like any other app. Right-click ›
+macOS remembers the choice; from then on Dutchman Convert opens like any other app. Right-click ›
 Open, which older macOS versions offered, no longer gets past the box.
 
 Or clear the download's quarantine flag once, in Terminal:
 
 ```sh
-xattr -dr com.apple.quarantine /Applications/Dutchman.app
+xattr -dr com.apple.quarantine "/Applications/Dutchman Convert.app"
 ```
 
 The app is signed ad hoc, so macOS never calls it “damaged”. If it does, the download was
@@ -60,9 +61,11 @@ run too.
 To use the commands from Terminal, link them onto your `PATH`:
 
 ```sh
-sudo ln -sf /Applications/Dutchman.app/Contents/Helpers/dutchman /usr/local/bin/dutchman
-sudo ln -sf /Applications/Dutchman.app/Contents/Helpers/dutchman-mcp /usr/local/bin/dutchman-mcp
+sudo ln -sf "/Applications/Dutchman Convert.app/Contents/Helpers/dutchman" /usr/local/bin/dutchman
+sudo ln -sf "/Applications/Dutchman Convert.app/Contents/Helpers/dutchman-mcp" /usr/local/bin/dutchman-mcp
 ```
+
+With 0.1.5 or earlier, write `/Applications/Dutchman.app` in these commands instead.
 
 ### From a release archive
 

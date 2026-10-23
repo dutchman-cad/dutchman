@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Packages Dutchman for macOS as one disk image: Dutchman.app (the desktop app, with the
+# Packages Dutchman Convert for macOS as one disk image: Dutchman Convert.app (the desktop app, with the
 # `dutchman` and `dutchman-mcp` commands inside it) for Apple silicon and Intel alike, a link to
 # Applications, and a note on opening it the first time.
 #
@@ -28,12 +28,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
-stage="$work/Dutchman"
-app="$stage/Dutchman.app"
+stage="$work/Dutchman Convert"
+app="$stage/Dutchman Convert.app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Helpers" "$app/Contents/Resources/licences"
 
 # One binary for both processors. The app alone is in MacOS; the commands are helpers, as
-# macOS's file system ignores case and `dutchman` there would be the app's `Dutchman`.
+# macOS's file system ignores case and `dutchman` there would be the app's executable,
+# `Dutchman`.
 lipo -create -output "$app/Contents/MacOS/Dutchman" "$arm/dutchman-gui" "$intel/dutchman-gui"
 for program in dutchman dutchman-mcp; do
   lipo -create -output "$app/Contents/Helpers/$program" "$arm/$program" "$intel/$program"
@@ -49,8 +50,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>Dutchman</string>
-  <key>CFBundleDisplayName</key><string>Dutchman</string>
+  <key>CFBundleName</key><string>Dutchman Convert</string>
+  <key>CFBundleDisplayName</key><string>Dutchman Convert</string>
   <key>CFBundleIdentifier</key><string>io.github.dutchman-cad.dutchman</string>
   <key>CFBundleExecutable</key><string>Dutchman</string>
   <key>CFBundleIconFile</key><string>Dutchman</string>
@@ -77,32 +78,32 @@ codesign --verify --strict --verbose=2 "$app"
 
 ln -s /Applications "$stage/Applications"
 cat > "$stage/Read me first.txt" <<'NOTE'
-Dutchman converts native CAD designs into SolidCraft designs.
+Dutchman Convert, part of Dutchman CAD, converts native CAD designs into SolidCraft designs.
 
-Install: drag Dutchman.app onto Applications.
+Install: drag Dutchman Convert.app onto Applications.
 
 Opening it the first time
 -------------------------
-Dutchman is not signed with an Apple Developer ID, so the first time you open it macOS shows
-"Dutchman" Not Opened ("Apple could not verify ... is free of malware"). Click Done, then:
+Dutchman Convert is not signed with an Apple Developer ID, so the first time you open it macOS
+shows "Dutchman Convert" Not Opened ("Apple could not verify ... is free of malware"). Click Done, then:
 
 1. Open System Settings > Privacy & Security.
-2. Scroll down to Security, where it says "Dutchman" was blocked to protect your Mac.
+2. Scroll down to Security, where it says "Dutchman Convert" was blocked to protect your Mac.
 3. Click Open Anyway, enter your password, and click Open Anyway once more.
 
-macOS remembers this; Dutchman opens normally from then on.
+macOS remembers this; Dutchman Convert opens normally from then on.
 
 Or, in Terminal, once:
 
-    xattr -dr com.apple.quarantine /Applications/Dutchman.app
+    xattr -dr com.apple.quarantine "/Applications/Dutchman Convert.app"
 
 Command line
 ------------
 The dutchman and dutchman-mcp commands are inside the app, in Contents/Helpers. To use them
 from Terminal:
 
-    sudo ln -sf /Applications/Dutchman.app/Contents/Helpers/dutchman /usr/local/bin/dutchman
-    sudo ln -sf /Applications/Dutchman.app/Contents/Helpers/dutchman-mcp /usr/local/bin/dutchman-mcp
+    sudo ln -sf "/Applications/Dutchman Convert.app/Contents/Helpers/dutchman" /usr/local/bin/dutchman
+    sudo ln -sf "/Applications/Dutchman Convert.app/Contents/Helpers/dutchman-mcp" /usr/local/bin/dutchman-mcp
 NOTE
 ref=main
 [[ $label != nightly ]] && ref="v$label"
@@ -131,7 +132,7 @@ on run arguments
       set icon size of viewOptions to 96
       set text size of viewOptions to 13
       set background picture of viewOptions to (POSIX file (mountPath & "/.background/background.tiff")) as alias
-      set position of item "Dutchman.app" of imageFolder to {180, 190}
+      set position of item "Dutchman Convert.app" of imageFolder to {180, 190}
       set position of item "Applications" of imageFolder to {460, 190}
       set position of item "Read me first.txt" of imageFolder to {320, 320}
       close imageWindow
@@ -159,7 +160,7 @@ style_window() {
 }
 
 prepare_window() {
-  hdiutil create -volname "Dutchman $label" -srcfolder "$stage" -fs HFS+ \
+  hdiutil create -volname "Dutchman Convert $label" -srcfolder "$stage" -fs HFS+ \
     -format UDRW -ov "$work/window.dmg" || return 1
   # Finder only shows (and so only lays out) a volume mounted where it browses volumes.
   local attached attempt
@@ -196,6 +197,6 @@ else
     hdiutil detach "$device" || hdiutil detach -force "$device"
     device=""
   fi
-  hdiutil create -volname "Dutchman $label" -srcfolder "$stage" -fs HFS+ -format UDZO -ov "$out"
+  hdiutil create -volname "Dutchman Convert $label" -srcfolder "$stage" -fs HFS+ -format UDZO -ov "$out"
 fi
 hdiutil verify "$out"

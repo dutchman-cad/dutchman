@@ -1,4 +1,4 @@
-//! `dutchman-gui`: Dutchman as a small desktop app. Drop designs in, choose an output folder,
+//! `dutchman-gui`: Dutchman Convert, Dutchman as a small desktop app. Drop designs in, choose an output folder,
 //! convert, and read what became of each file. Conversions use the same shared code as the
 //! `dutchman` command, on background threads, so the window never waits on them.
 
@@ -9,8 +9,11 @@ pub mod worker;
 
 pub use app::App;
 
+/// The app's name, as its window and the macOS app bundle show it.
+pub const APP_NAME: &str = "Dutchman Convert";
+
 /// The desktop window's title, including the version of this build.
-pub const WINDOW_TITLE: &str = concat!("Dutchman ", env!("CARGO_PKG_VERSION"));
+pub const WINDOW_TITLE: &str = concat!("Dutchman Convert ", env!("CARGO_PKG_VERSION"));
 
 /// The issue form for a file that did not convert.
 pub const REPORT_PROBLEM_URL: &str = dutchman::issue::NEW_ISSUE;

@@ -1,6 +1,6 @@
 [package]
 name = "dutchman-gui"
-description = "Dutchman's desktop app: drop CAD designs in, get SolidCraft designs out"
+description = "Dutchman Convert, Dutchman's desktop app: drop CAD designs in, get SolidCraft designs out"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
