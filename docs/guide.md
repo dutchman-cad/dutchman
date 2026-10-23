@@ -53,6 +53,10 @@ The app is signed ad hoc, so macOS never calls it “damaged”. If it does, the
 cut short or changed: download it again and check it against its `.sha256`
 (`shasum -a 256 -c dutchman-VERSION-macos-universal.dmg.sha256`).
 
+The commands inside the app (`dutchman`, `dutchman-mcp`) are covered by the same approval.
+Run before it, from Terminal, they meet the same box: approve the app once, as above, and they
+run too.
+
 To use the commands from Terminal, link them onto your `PATH`:
 
 ```sh
