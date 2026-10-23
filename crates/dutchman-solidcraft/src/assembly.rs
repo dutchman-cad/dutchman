@@ -26,6 +26,7 @@ pub(crate) fn write(
     assembly: &Assembly,
     report: &mut Report,
 ) -> Result<Vec<u8>, Error> {
+    joint_notes(assembly, report);
     let mut builder = Builder {
         writer,
         container: Container::empty(),
@@ -93,7 +94,16 @@ pub(crate) fn write(
 
 /// What writing an assembly would do with its parts' histories, without restating geometry,
 /// writing anything or running SolidCraft.
+/// Reports each joint the assembly leaves out or changes: SolidCraft gets the joints Dutchman
+/// converted and no other.
+fn joint_notes(assembly: &Assembly, report: &mut Report) {
+    for note in &assembly.joint_notes {
+        report.push(Severity::Dropped, "joints", note.text.clone());
+    }
+}
+
 pub(crate) fn plan(writer: &SolidCraftWriter, assembly: &Assembly, report: &mut Report) -> Outcome {
+    joint_notes(assembly, report);
     let mut checks = Vec::new();
     let mut features = Vec::new();
     plan_parts(writer, assembly, report, &mut checks, &mut features);

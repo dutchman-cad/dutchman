@@ -45,6 +45,19 @@ pub struct Assembly {
     /// design's own root component, which Fusion holds to its document, or to the occurrence
     /// that inserts the design.
     pub held: Vec<Vec<usize>>,
+    /// Why each joint the file records was left out or changed, for the writer to report: a
+    /// writer that builds that joint some other way leaves its note out.
+    pub joint_notes: Vec<JointNote>,
+}
+
+/// Why a joint was left out or changed in [`Assembly::joints`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct JointNote {
+    /// What the report says (`joint 3: cylindrical joints are not converted yet`).
+    pub text: String,
+    /// The joint's kind in the file (`fixed`, `revolute`, `cylindrical`, `grounded`…), when
+    /// the note is about one joint's kind.
+    pub family: Option<String>,
 }
 
 /// A placement an assembly's file records that is not placed.
@@ -437,6 +450,7 @@ pub(crate) fn resolve(
         joints: Vec::new(),
         left_out,
         held: Vec::new(),
+        joint_notes: Vec::new(),
     })
 }
 
@@ -473,8 +487,8 @@ pub(crate) const NOT_GEOMETRY: [&str; 6] = [
 pub(crate) enum Components {
     /// The design places no components of its own.
     None,
-    /// They can be written as an assembly; with why each joint left out was.
-    Assembly(Assembly, Vec<String>),
+    /// They can be written as an assembly, which carries why each joint was left out.
+    Assembly(Assembly),
     /// They cannot, for this reason; the design converts as stored.
     Unplaceable(String),
 }
@@ -483,7 +497,7 @@ pub(crate) enum Components {
 /// of part models each holding only its component's bodies, plus the design's loose bodies.
 pub(crate) fn local(model: &Model) -> Components {
     match local_components(model) {
-        Ok(Some((assembly, left_out))) => Components::Assembly(assembly, left_out),
+        Ok(Some((assembly, _))) => Components::Assembly(assembly),
         Ok(None) => Components::None,
         Err(reason) => Components::Unplaceable(reason),
     }
@@ -610,9 +624,16 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
         joints,
         left_out: Vec::new(),
         held,
+        joint_notes: Vec::new(),
     };
-    left_out.extend(place_by_joints(&mut assembly));
-    Ok(Some((assembly, left_out)))
+    left_out.extend(
+        place_by_joints(&mut assembly)
+            .into_iter()
+            .map(|text| JointNote { text, family: None }),
+    );
+    let texts = left_out.iter().map(|note| note.text.clone()).collect();
+    assembly.joint_notes = left_out;
+    Ok(Some((assembly, texts)))
 }
 
 /// Places the parts the joints join where the joints put them, as cadmpeg's own placements
@@ -830,21 +851,40 @@ fn joints(
     paths: &BTreeMap<&str, (Vec<usize>, bool)>,
     worlds: &BTreeMap<&str, Placement3x4>,
     inserted: &BTreeMap<&str, &str>,
-) -> (Vec<Joint>, Vec<String>) {
+) -> (Vec<Joint>, Vec<JointNote>) {
     let mut joints = Vec::new();
     let mut notes = Vec::new();
     for (index, row) in rows.iter().enumerate() {
+        let family = family(row);
+        let mut note = |text: String| {
+            notes.push(JointNote {
+                text: format!("joint {}: {text}", index + 1),
+                family: family.clone(),
+            });
+        };
         match joint(row, paths, worlds, inserted) {
-            Ok((joint, note)) => {
-                if let Some(note) = note {
-                    notes.push(format!("joint {}: {note}", index + 1));
+            Ok((joint, changed)) => {
+                if let Some(changed) = changed {
+                    note(changed);
                 }
                 joints.push(joint);
             }
-            Err(reason) => notes.push(format!("joint {}: {reason}", index + 1)),
+            Err(reason) => note(reason),
         }
     }
     (joints, notes)
+}
+
+/// A joint row's kind: `grounded` for a joint to the ground, else its pair kind.
+fn family(row: &Value) -> Option<String> {
+    let operands = row.get("operands")?;
+    match operands.get("arity").and_then(Value::as_str) {
+        Some("grounded") => Some("grounded".to_owned()),
+        _ => operands
+            .pointer("/kind/kind")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    }
 }
 
 fn joint(
@@ -1240,6 +1280,7 @@ impl<'a> Tree<'a> {
                 joints: Vec::new(),
                 left_out: Vec::new(),
                 held: Vec::new(),
+                joint_notes: Vec::new(),
             });
             holder
         };
@@ -1591,6 +1632,7 @@ mod tests {
             joints: Vec::new(),
             left_out: assembly.left_out.clone(),
             held: Vec::new(),
+            joint_notes: Vec::new(),
         });
         assert_eq!((completeness.placed, completeness.placements()), (5, 6));
         assert_eq!(
@@ -1982,6 +2024,27 @@ mod tests {
             &placed_with(false),
             &compose(&at([110.0, 0.0, 0.0], 0.0), &FACING)
         ));
+    }
+
+    #[test]
+    fn a_joint_left_out_is_noted_with_its_kind_for_the_writer() {
+        let row = joint(
+            1,
+            json!({"kind": "cylindrical"}),
+            connector_at(2, &[], IDENTITY),
+            connector_at(1, &[], IDENTITY),
+        );
+        let model = with_joints(nested(false, None), json!([row]));
+        let (assembly, notes) = local_components(&model).unwrap().unwrap();
+        assert!(assembly.joints.is_empty());
+        assert_eq!(
+            assembly.joint_notes,
+            [JointNote {
+                text: "joint 1: cylindrical joints are not converted yet".to_owned(),
+                family: Some("cylindrical".to_owned()),
+            }]
+        );
+        assert_eq!(notes, ["joint 1: cylindrical joints are not converted yet"]);
     }
 
     #[test]

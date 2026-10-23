@@ -43,6 +43,18 @@ pub(crate) fn finish(
             "assembly size exceeds the macro limit".to_owned(),
         ));
     }
+    // The joints core left out: those of kinds the macro builds from the converted joints
+    // (and notes about placing, which have no kind) are left out here too. The other kinds are
+    // read again below, and say there when they cannot be built.
+    for note in &assembly.joint_notes {
+        if note
+            .family
+            .as_deref()
+            .is_none_or(|family| matches!(family, "fixed" | "revolute" | "slider" | "grounded"))
+        {
+            report.push(Severity::Dropped, "joints", note.text.clone());
+        }
+    }
     let mut rows = Vec::new();
     let mut held = assembly.held.clone();
     if import_only {
