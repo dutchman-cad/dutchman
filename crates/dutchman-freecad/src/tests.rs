@@ -202,6 +202,7 @@ fn assembly_occurrences_keep_nested_placements_and_independent_bodies() {
             placements: vec![placement.clone(), placement],
             joints: Vec::new(),
             left_out: Vec::new(),
+            held: Vec::new(),
         }),
         ..part
     };

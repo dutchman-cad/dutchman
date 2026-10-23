@@ -2991,6 +2991,7 @@ fn assembly_of_histories() -> Model {
         assembly: Some(dutchman_core::Assembly {
             joints: Vec::new(),
             left_out: Vec::new(),
+            held: Vec::new(),
             parts: vec![part("First"), part("Second")],
             placements: vec![placed(0, 0.0), placed(1, 30.0), placed(1, 60.0)],
         }),

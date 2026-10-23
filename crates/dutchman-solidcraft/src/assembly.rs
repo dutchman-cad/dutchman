@@ -48,6 +48,7 @@ pub(crate) fn write(
         placements: BTreeMap::new(),
     };
     let top = builder.assembly(assembly, 0)?;
+    builder.hold(&assembly.held, &top);
     let joints = builder.joints(&assembly.joints, &top);
     if builder.features.is_empty() {
         return Err(Error::Encode(
@@ -284,7 +285,7 @@ impl Builder<'_> {
                 "b": {"occurrence": b, "snap": snap(&b_frame)},
                 "values": values,
                 "limits": limits,
-                "flip": false,
+                "flip": joint.flip,
                 "offset": 0.0,
                 "angle": 0.0,
             });
@@ -299,6 +300,7 @@ impl Builder<'_> {
                 .map(|(kind, n)| ((*kind).to_owned(), u64::try_from(*n).unwrap_or(u64::MAX)))
                 .collect(),
         );
+        self.ground(&out);
         if !out.is_empty() {
             let kinds: Vec<String> = counts
                 .iter()
@@ -315,6 +317,88 @@ impl Builder<'_> {
             );
         }
         out
+    }
+
+    /// Grounds each held placement: held where it is in what holds it, as a design's root
+    /// component is held by the document, or by the occurrence that inserts the design.
+    fn hold(&mut self, held: &[Vec<usize>], top: &[Option<u64>]) {
+        for path in held {
+            let Some((id, _)) = self.resolve(path, top) else {
+                continue;
+            };
+            if let Some(occurrence) = self
+                .occurrences
+                .iter_mut()
+                .find(|occurrence| occurrence.get("id").and_then(Value::as_u64) == Some(id))
+            {
+                occurrence["grounded"] = json!(true);
+            }
+        }
+    }
+
+    /// Grounds one occurrence in each set of occurrences the joints tie together but none
+    /// ties to the design: the second side of the set's first joint, the side a joint moves
+    /// the other towards. A source that grounds nothing leaves SolidCraft's solver free to
+    /// move the whole set; holding that side keeps every part where the source places it.
+    fn ground(&mut self, joints: &[Value]) {
+        let side = |row: &Value, key: &str| row.pointer(&format!("/{key}/occurrence"))?.as_u64();
+        // Union-find over the occurrences the joints name, 0 being the design.
+        let mut parent: BTreeMap<u64, u64> = BTreeMap::new();
+        fn root(parent: &BTreeMap<u64, u64>, mut at: u64) -> u64 {
+            let mut steps = 0;
+            while let Some(&up) = parent.get(&at) {
+                if up == at || steps > parent.len() {
+                    break;
+                }
+                at = up;
+                steps += 1;
+            }
+            at
+        }
+        for row in joints {
+            let (Some(a), Some(b)) = (side(row, "a"), side(row, "b")) else {
+                continue;
+            };
+            parent.entry(a).or_insert(a);
+            parent.entry(b).or_insert(b);
+            let (ra, rb) = (root(&parent, a), root(&parent, b));
+            if ra != rb {
+                // The design's own set keeps 0 as its root, so it is never grounded again.
+                let (keep, join) = if rb == 0 { (rb, ra) } else { (ra, rb) };
+                parent.insert(join, keep);
+            }
+        }
+        let mut grounded = BTreeSet::new();
+        for row in joints {
+            let (Some(a), Some(b)) = (side(row, "a"), side(row, "b")) else {
+                continue;
+            };
+            let set = root(&parent, a);
+            if set == 0 || root(&parent, 0) == set || !grounded.insert(set) {
+                continue;
+            }
+            let joint = row.get("name").and_then(Value::as_str).unwrap_or("a joint");
+            if let Some(occurrence) = self
+                .occurrences
+                .iter_mut()
+                .find(|occurrence| occurrence.get("id").and_then(Value::as_u64) == Some(b))
+            {
+                occurrence["grounded"] = json!(true);
+                let name = occurrence
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("an occurrence")
+                    .to_owned();
+                self.report.push(
+                    Severity::Info,
+                    "joints",
+                    format!(
+                        "\"{name}\" is grounded, inferred: the source grounds none of the parts \
+                         its joints tie together, so the fixed side of \"{joint}\" holds them"
+                    ),
+                );
+            }
+        }
     }
 
     /// The occurrence a placement path leads to (0, the design itself, for an empty path) and
