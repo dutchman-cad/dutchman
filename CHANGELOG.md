@@ -25,6 +25,10 @@ report's schema name changes when a field does).
 
 ### cadmpeg
 
+- The cadmpeg pin moves to 0872c6d: Inventor parts saved by Inventor 2019 and later carry
+  their feature history, and newer Inventor assemblies place their parts; FreeCAD compounds
+  of closed solids read as solid bodies; Fusion reads every context binding of a component,
+  more parameter expressions, and a base flange's thickness from its sheet-metal rule.
 - The cadmpeg pin moves to 525b961: Fusion rigid groups of any size (each member held to the
   first as built), and more Inventor sketches closed (solver hints on more relations, equal
   length).
