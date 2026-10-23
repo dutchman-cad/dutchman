@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
-use dutchman_core::{FeatureStatus, Mode, Model, Report, Writer};
+use dutchman_core::{FeatureStatus, Mode, Model, Report, Severity, Writer};
 use serde_json::{json, Value};
 
 use super::{generate, readable, FreeCadWriter};
@@ -398,6 +398,7 @@ fn assembly_occurrences_keep_nested_placements_and_independent_bodies() {
             joints: Vec::new(),
             left_out: Vec::new(),
             held: Vec::new(),
+            joint_notes: Vec::new(),
         }),
         ..part
     };
@@ -488,6 +489,7 @@ fn joint_model() -> Model {
                 flip: false,
             }],
             held: Vec::new(),
+            joint_notes: Vec::new(),
             left_out: Vec::new(),
         }),
         ..part
@@ -677,6 +679,34 @@ fn cadir_joint_families_and_independent_bounds_are_mapped() {
     assert_eq!(row["linear"], json!({"maximum": 8.0}));
     assert_eq!(row["distance"], 2.0);
     assert!((row["frame_a"][0][0].as_f64().unwrap() - 0.4_f64.cos()).abs() < 1e-12);
+}
+
+#[test]
+fn joints_core_left_out_are_reported_only_when_the_macro_cannot_build_them() {
+    // Core leaves out a cylindrical joint, which the macro builds from CADIR, and a revolute
+    // one it could not place, which the macro builds only from core's converted joints.
+    let mut model = raw_joint_model(json!({"kind": "cylindrical"}));
+    if let Some(assembly) = &mut model.assembly {
+        assembly.joint_notes = vec![
+            dutchman_core::JointNote {
+                text: "joint 1: cylindrical joints are not converted yet".to_owned(),
+                family: Some("cylindrical".to_owned()),
+            },
+            dutchman_core::JointNote {
+                text: "joint 2: it joins a component to itself".to_owned(),
+                family: Some("revolute".to_owned()),
+            },
+        ];
+    }
+    let (script, report) = written(&model, FreeCadWriter::new());
+    assert_eq!(assembly_data(&script)["joints"][0]["kind"], "Cylindrical");
+    let dropped: Vec<&str> = report
+        .losses()
+        .iter()
+        .filter(|loss| loss.subject == "joints" && loss.severity == Severity::Dropped)
+        .map(|loss| loss.detail.as_str())
+        .collect();
+    assert_eq!(dropped, ["joint 2: it joins a component to itself"]);
 }
 
 #[test]
@@ -1051,6 +1081,7 @@ fn nested_model() -> Model {
             ],
             joints: Vec::new(),
             held: Vec::new(),
+            joint_notes: Vec::new(),
             left_out: Vec::new(),
         }),
         ..part.clone()
@@ -1076,6 +1107,7 @@ fn nested_model() -> Model {
                 joint(vec![0], vec![1, 0], at(10.0), dutchman_core::Motion::Rigid),
             ],
             held: Vec::new(),
+            joint_notes: Vec::new(),
             left_out: Vec::new(),
         }),
         ..part

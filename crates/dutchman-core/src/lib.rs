@@ -18,7 +18,7 @@ mod report;
 use std::path::Path;
 
 pub use assembly::{
-    local_assembly, Assembly, Joint, LeftOut, Motion, Placement, MAX_DEPTH, MAX_PARTS,
+    local_assembly, Assembly, Joint, JointNote, LeftOut, Motion, Placement, MAX_DEPTH, MAX_PARTS,
     MAX_PLACEMENTS,
 };
 pub use error::{Error, FILE_DID_NOT_CONVERT, RELEASES};
@@ -97,10 +97,9 @@ pub fn read_in(
     if model.assembly.is_none() {
         match assembly::local(&model) {
             assembly::Components::None => {}
-            assembly::Components::Assembly(components, left_out) => {
-                for reason in left_out {
-                    report.push(Severity::Dropped, "joints", reason);
-                }
+            // The writer reports the assembly's joint notes: what it leaves out depends on
+            // what it can build.
+            assembly::Components::Assembly(components) => {
                 model.assembly = Some(components);
             }
             assembly::Components::Unplaceable(reason) => report.push(

@@ -62,8 +62,8 @@ thread's hand, class, and length are listed as losses). Taper, exit treatments, 
 threads, and entry recesses with drill points block history: explain the reported reason.
 
 Tell the user what to expect in one or two sentences before converting, for example: "This
-part has one body. Its history won't carry across (the fillet isn't supported yet), so you'll
-get the solid shape without the feature history."
+part has one body. Its history won't carry across (the fillet's input edges can't be proven),
+so you'll get the solid shape without the feature history."
 
 Sheet-metal histories map base flanges and full-edge flanges on unchanged rectangular base
 sheets when their own input-edge midpoint, tangent, and vertices prove the pick. Fixed
@@ -163,6 +163,10 @@ or span parameters still need a loss. Bounded parabolas and hyperbolas, elliptic
 up to one turn, rational quadratic Béziers, and equal-weight rational splines map; selected
 multi-piece elliptical arcs, unbounded conics, other weighted/nonuniform splines, and text without
 solved outlines still prevent the sketch's history from mapping.
+
+Constant-radius fillets and equal-setback chamfers map when the feature's own input edge
+geometry proves which edge each one acts on (currently after one extrusion of a convex
+polygon); otherwise the report names why the blend was refused.
 
 Body mirror patterns and join/cut/intersect body combines (optionally keeping the tool
 bodies) can keep editable history; their bodies must be named by earlier mapped features.

@@ -162,7 +162,7 @@ The same fields as `convert` except `output` (with `completeness` for an assembl
   "geometry": {"bodies": 1, "faces": 6},
   "conversion": {"possible": true, "reason": null},
   "mode": "import",
-  "verification": {"status": "flattened", "reason": "feature \"Fillet1\": fillet is not mapped yet"},
+  "verification": {"status": "flattened", "reason": "feature \"Shell1\": shell waits on input face geometry"},
   "history": {"mapped": 2, "total": 3, "features": [ … ]},
   "losses": [ … ]
 }

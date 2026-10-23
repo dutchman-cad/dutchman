@@ -8,10 +8,23 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Reports
+
+- A joint Dutchman does not convert is reported by the output that leaves it out. A FreeCAD
+  macro (`--to freecad`, experimental) builds cylindrical, ball, distance and other joints
+  SolidCraft output leaves out, and no longer reports them as dropped.
+
 - Sheet-metal edge flanges map supported dimensions on unchanged rectangular base sheets using proven input-edge midpoint picks.
 - Experimental FreeCAD macros keep a mapped history prefix and hidden reference sketches when a later feature cannot be rebuilt, retaining the final STEP shape.
 - Experimental FreeCAD macros rebuild assembly joints in the Assembly workbench (the fixed, revolute, and slider joints SolidCraft gets, through sub-assemblies, plus cylindrical, ball, distance, parallel, perpendicular, and angle joints between directly placed parts), with connector frames, limits, and grounding; if solving fails, the parts keep their stored placements.
 - Write experimental native FreeCAD documents with `--to fcstd`, or check macros with `--to freecad --verify`, using bounded headless execution and per-part volume and bounding-box verification.
+- Map constant-radius fillets and equal-setback chamfers from proven feature input edges.
+
+### cadmpeg
+
+- The cadmpeg pin moves to 525b961: Fusion rigid groups of any size (each member held to the
+  first as built), and more Inventor sketches closed (solver hints on more relations, equal
+  length).
 
 ### cadmpeg
 

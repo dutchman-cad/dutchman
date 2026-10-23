@@ -36,6 +36,7 @@ fn placed_twice() -> Model {
             joints: Vec::new(),
             left_out: Vec::new(),
             held: Vec::new(),
+            joint_notes: Vec::new(),
             parts: vec![part.clone()],
             placements: vec![
                 Placement {
@@ -180,6 +181,7 @@ fn nested() -> Model {
             joints: Vec::new(),
             left_out: Vec::new(),
             held: Vec::new(),
+            joint_notes: Vec::new(),
             parts: vec![pair, cube.clone()],
             placements: vec![
                 Placement {
