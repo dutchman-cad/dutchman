@@ -8,8 +8,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
-use dutchman_core::Format;
-use dutchman_solidcraft::SolidCraftWriter;
+use dutchman_core::{Format, Writer};
 use serde_json::{json, Value};
 
 use crate::json as report;
@@ -89,6 +88,7 @@ impl Settings {
 /// then in the options' other folders.
 pub fn prepare(jobs: &mut [Job], options: &ConvertOptions) {
     for job in jobs {
+        let _ = job.output.set_extension(options.to.extension());
         job.replace = !options.no_clobber;
         if options.project.is_some() {
             job.search.project.clone_from(&options.project);
@@ -457,7 +457,7 @@ fn unique(path: PathBuf, taken: &mut BTreeSet<PathBuf>) -> PathBuf {
 /// Once `stop` is set, no further job starts; those already converting finish.
 pub fn run_each(
     work: &[Job],
-    writer: &SolidCraftWriter,
+    writer: &(dyn Writer + Sync),
     workers: usize,
     stop: &AtomicBool,
     on_event: impl Fn(Event) + Sync,
@@ -591,7 +591,7 @@ fn identity(job: &Job) -> Option<String> {
 }
 
 /// One file converted, its output folder made first, as its convert report.
-pub fn convert_job(job: &Job, writer: &SolidCraftWriter) -> Value {
+pub fn convert_job(job: &Job, writer: &(dyn Writer + Sync)) -> Value {
     match make_folder(job) {
         Some(failure) => failure,
         None => crate::convert(&job.input, &job.output, writer, job.replace, &job.search),

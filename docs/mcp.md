@@ -236,3 +236,19 @@ geometry. An unsupported relation appears in `losses` as a counted `Degraded` sk
 message with its reason, while the solved sketch remains mapped. Static sketch patterns
 retain point and radius associations; driving count and span parameters still produce a
 constraint loss.
+
+### FreeCAD output (experimental)
+
+`convert` and `convert_all` accept `to: "freecad"` (default: `"solidcraft"`). For example:
+
+```json
+{"input":"/designs/part.f3d","output":"/designs/part.FCMacro","to":"freecad"}
+```
+
+Use a `.FCMacro` output path for `convert`; `convert_all` chooses that extension for its
+jobs. The GUI uses the same output setting. The result uses `output.format:
+"freecad-macro/1"` and the existing history and loss fields. Each macro embeds original STEP
+geometry and rebuilds supported features through FreeCAD's public scripting API; parts
+whose histories cannot be rebuilt remain STEP geometry. FreeCAD output is unverified and
+does not invoke SolidCraft or FreeCAD. `import_only` writes STEP geometry alone. See
+[FreeCAD output](guide.md#freecad-output) for feature coverage and running the macro.

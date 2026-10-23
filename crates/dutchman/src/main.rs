@@ -24,12 +24,20 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Convert a native CAD file into a SolidCraft design.
+    /// Convert a native CAD file into a SolidCraft design or FreeCAD macro.
     Convert {
         /// The native design file to read (for example a `.f3d`, `.ipt` or `.sldprt`).
         input: PathBuf,
-        /// The `.solidcraft` file to write. An existing file is replaced, unless --no-clobber.
-        output: PathBuf,
+        /// The `.solidcraft` or `.FCMacro` file to write, matching --to.
+        /// An existing file is replaced, unless --no-clobber.
+        #[arg(
+            required_unless_present = "output_flag",
+            conflicts_with = "output_flag"
+        )]
+        output: Option<PathBuf>,
+        /// Output path (an alternative to the positional output).
+        #[arg(short = 'o', long = "output", value_name = "FILE")]
+        output_flag: Option<PathBuf>,
         #[command(flatten)]
         options: ConvertOptions,
         /// Also write the whole text report, every loss in full, to FILE.
@@ -119,10 +127,16 @@ fn main() -> ExitCode {
         Command::Convert {
             input,
             output,
+            output_flag,
             options,
             log,
             json,
-        } => convert(&input, &output, &options, log.as_deref(), json, verbose),
+        } => {
+            let Some(output) = output.or(output_flag) else {
+                return ExitCode::from(2);
+            };
+            convert(&input, &output, &options, log.as_deref(), json, verbose)
+        }
         Command::ConvertAll {
             inputs,
             out_dir,
@@ -372,5 +386,70 @@ fn print_losses(losses: &[Value], verbose: bool) {
     }
     if cut {
         eprintln!("dutchman: ({})", json::CUT_NOTE);
+    }
+}
+
+#[cfg(test)]
+mod output_tests {
+    use super::*;
+
+    #[test]
+    fn freecad_output_accepts_short_output_flag_and_positional_output() {
+        for args in [
+            vec![
+                "dutchman",
+                "convert",
+                "in.f3d",
+                "--to",
+                "freecad",
+                "-o",
+                "out.FCMacro",
+            ],
+            vec![
+                "dutchman",
+                "convert",
+                "in.f3d",
+                "out.FCMacro",
+                "--to",
+                "freecad",
+            ],
+        ] {
+            let cli = Cli::try_parse_from(args).unwrap();
+            let Command::Convert {
+                options,
+                output,
+                output_flag,
+                ..
+            } = cli.command
+            else {
+                panic!("expected convert");
+            };
+            assert_eq!(options.to, dutchman::OutputFormat::Freecad);
+            assert_eq!(output.or(output_flag), Some(PathBuf::from("out.FCMacro")));
+        }
+    }
+
+    #[test]
+    fn output_path_is_required_and_cannot_be_given_twice() {
+        assert!(Cli::try_parse_from(["dutchman", "convert", "in.f3d", "--to", "freecad"]).is_err());
+        assert!(Cli::try_parse_from([
+            "dutchman",
+            "convert",
+            "in.f3d",
+            "a.FCMacro",
+            "-o",
+            "b.FCMacro",
+        ])
+        .is_err());
+        assert!(Cli::try_parse_from([
+            "dutchman",
+            "convert",
+            "in.f3d",
+            "-o",
+            "a.FCMacro",
+            "--to",
+            "unknown",
+        ])
+        .is_err());
     }
 }

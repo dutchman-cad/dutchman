@@ -188,6 +188,7 @@ fn result(report: &Value) -> Value {
 /// The options every converting tool takes, as JSON Schema properties.
 fn option_properties() -> Map<String, Value> {
     let properties = json!({
+        "to": {"type": "string", "enum": ["solidcraft", "freecad"], "default": "solidcraft", "description": "Output format: SolidCraft design or self-contained FreeCAD rebuild macro."},
         "import_only": {
             "type": "boolean",
             "description": "Write the geometry as one non-parametric import, never the feature history.",
@@ -244,7 +245,7 @@ fn tools() -> Value {
     convert.insert("input".to_owned(), input.clone());
     convert.insert(
         "output".to_owned(),
-        json!({"type": "string", "description": "Absolute path of the .solidcraft file to write. An existing file there is replaced, unless overwrite is false. Nothing else is written."}),
+        json!({"type": "string", "description": "Absolute path of the .solidcraft or .FCMacro file to write, matching to. An existing file there is replaced, unless overwrite is false. Nothing else is written."}),
     );
     let mut all = option_properties();
     all.insert(
@@ -292,7 +293,7 @@ fn tools() -> Value {
         {
             "name": "convert",
             "title": "Convert a CAD file",
-            "description": "Convert one native CAD file into a SolidCraft design, with its feature history when every feature maps, else its geometry. Returns the dutchman.convert/1 report: the mode written, the history check, each feature's status and every loss.",
+            "description": "Convert one native CAD file into a SolidCraft design or FreeCAD macro (to: freecad), with its feature history when every feature maps, else its geometry. Returns the dutchman.convert/1 report: the mode written, the history check, each feature's status and every loss.",
             "inputSchema": {"type": "object", "properties": convert, "required": ["input", "output"], "additionalProperties": false},
         },
         {
@@ -356,7 +357,8 @@ fn count(arguments: &Arguments, key: &str) -> Result<Option<NonZeroUsize>, Strin
     }
 }
 
-const OPTIONS: [&str; 7] = [
+const OPTIONS: [&str; 8] = [
+    "to",
     "import_only",
     "verify",
     "solidcraft",
@@ -393,7 +395,14 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
         Some(_) => Some(path(arguments, "solidcraft")?),
     };
     let search = part_search(arguments)?;
+    let to = match arguments.get("to").and_then(Value::as_str) {
+        None if !arguments.contains_key("to") => crate::OutputFormat::Solidcraft,
+        Some("solidcraft") => crate::OutputFormat::Solidcraft,
+        Some("freecad") => crate::OutputFormat::Freecad,
+        _ => return Err("to must be solidcraft or freecad".to_owned()),
+    };
     Ok(ConvertOptions {
+        to,
         import_only: flag(arguments, "import_only", false)?,
         no_verify: !flag(arguments, "verify", true)?,
         no_clobber: !flag(arguments, "overwrite", true)?,
@@ -677,5 +686,23 @@ mod tests {
         assert_eq!(replies[0]["error"]["code"], INVALID_REQUEST);
         assert_eq!(replies[1]["id"], 2);
         assert_eq!(replies[1]["result"], json!({}));
+    }
+}
+
+#[cfg(test)]
+mod freecad_output_tests {
+    use super::*;
+
+    #[test]
+    fn output_selection_is_validated_and_forwarded_to_workers() {
+        let arguments = json!({"to": "freecad"});
+        let options = options(arguments.as_object().unwrap()).unwrap();
+        assert_eq!(options.to, crate::OutputFormat::Freecad);
+        assert!(options.to_args().windows(2).any(|pair| {
+            pair.first().is_some_and(|arg| arg == "--to")
+                && pair.get(1).is_some_and(|arg| arg == "freecad")
+        }));
+        let bad = json!({"to": "python"});
+        assert!(super::options(bad.as_object().unwrap()).is_err());
     }
 }

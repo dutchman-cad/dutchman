@@ -527,3 +527,27 @@ impl Writer for SolidCraftWriter {
             .map_err(|err| Error::Encode(format!("cannot write the design: {err}")))
     }
 }
+
+/// Mapped feature data shared with other output adapters. This is an internal workspace
+/// interface, not the SolidCraft document format or a stable public API.
+pub struct MappedHistory {
+    /// Features in timeline order, or the first reason the history cannot be rebuilt.
+    pub features: Result<Vec<Value>, String>,
+    /// One mapping result per source feature.
+    pub outcomes: Vec<FeatureOutcome>,
+}
+
+/// Maps history without writing a container or running SolidCraft.
+pub fn mapped_history(model: &Model, report: &mut Report) -> MappedHistory {
+    let mapping = history::map(model, report);
+    MappedHistory {
+        features: mapping.result.map(|history| history.features),
+        outcomes: mapping.features,
+    }
+}
+
+/// Restates geometry with the existing guarded STEP encoder, for output adapters that
+/// preserve the original beside rebuilt features.
+pub fn restate_step(model: &Model, report: &mut Report) -> Result<String, Error> {
+    step::restate(model, report)
+}

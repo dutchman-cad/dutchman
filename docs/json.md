@@ -178,3 +178,18 @@ counted with `×N`. Unsupported constraints are `Degraded` losses at `map`; they
 change a mapped sketch's feature status. Inactive and disabled relations do not create a
 loss. Relations in virtual sketch space are counted separately because SolidCraft has no
 separate virtual solver space.
+
+### FreeCAD macro output (experimental)
+
+For `convert --to freecad` (MCP `to: "freecad"`), `output.format` is
+`"freecad-macro/1"` and `output.path` ends in `.FCMacro`. The schema remains
+`dutchman.convert/1`; no fields are removed or renamed. Batch results use the same per-file
+report. A macro with at least one rebuilt part has `mode: "history"` and
+`verification.status: "unverified"`, because FreeCAD is run by the recipient afterwards.
+An entirely imported macro has `mode: "import"` and `verification.status:
+"not_applicable"`. In a mixed assembly the `history.features` and losses identify the parts
+kept as STEP. Every source feature in a part kept as STEP is `blocked` with a reason, except
+suppressed features (`left_out`) and organizational features (`not_needed`). Runtime rebuild
+failures restore embedded geometry and warn inside FreeCAD; they cannot update the earlier
+conversion report. Scalar parameter values are retained; their expressions are stored as
+inert text and are not evaluated by the macro.

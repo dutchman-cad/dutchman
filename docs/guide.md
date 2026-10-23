@@ -345,6 +345,8 @@ Inventor assembly (.iam)         converts  placed parts and sub-assemblies, read
 SolidWorks part (.sldprt)        converts  geometry; feature history waits on cadmpeg binding sketches and extrude profiles
 SolidWorks assembly (.sldasm)    not yet   nothing yet
 FreeCAD document (.FCStd)        converts  geometry and components; feature history (sketches, pads, simple holes) when every feature maps
+
+Written as a SolidCraft design (.solidcraft), or, experimental, as a FreeCAD rebuild macro (.FCMacro, --to freecad)
 ```
 
 The state of each format, and what is still missing upstream, is in [fusion.md](fusion.md),
@@ -540,3 +542,53 @@ and requested reports.
 | `part.f3d: the file is … bytes, over Dutchman's 1073741824-byte limit` | Dutchman opens files up to 1 GiB. |
 | `history: …; unverified: …` | Not an error: the history was written without the SolidCraft check. Install `solidcraft-cli`, or point `--solidcraft` or `SOLIDCRAFT_CLI` at it, and convert again. |
 | `history: flattened: replay differs (…)` | Not an error: the history did not rebuild the same shape in SolidCraft, so the geometry was written instead. `--no-verify` keeps the history, unchecked. |
+
+## FreeCAD output (experimental)
+
+**Experimental.** The macro, its options and what it rebuilds may change between releases,
+and Dutchman cannot check the rebuilt part itself: open it in FreeCAD and compare.
+
+Write a self-contained FreeCAD rebuild macro instead of a SolidCraft design:
+
+```sh
+dutchman convert in.f3d --to freecad -o out.FCMacro
+```
+
+The positional output path still works. `convert-all --to freecad --out-dir DIR` writes
+`.FCMacro` files; the desktop app's **Output format** choice offers **FreeCAD macro** too.
+This output works independently of the `freecad` feature used to read `.FCStd` inputs.
+
+The macro makes a Body for each placed part, preserving nested assembly placements. It
+uses Dutchman's existing history mapping and timeline order to rebuild planar sketches
+(lines, circles, arcs, ellipses and supported B-splines), constraints, pads and pockets,
+full-turn or symmetric revolves, unguided lofts, sweeps, simple holes, linear and circular
+feature patterns, spheres, tori and coils. Numeric feature values are retained. A parameter
+object keeps evaluated scalar values and source expressions as text; source expressions
+are never executed. Coils are rebuilt with Part geometry and stored as a feature, with
+numeric properties; editing those properties does not recompute the coil.
+
+A part whose history cannot be rebuilt is kept as an embedded STEP solid or surface in a
+Body. Examples include unresolved source selections, intersect operations, fixed-orientation,
+guided, twisted, scaled or binormal sweeps and lofts, lofts ending at a point, extrudes from
+or to a point or face or with taper, counterbored, countersunk or face-ended holes, coils
+about an axis other than Z, two-direction patterns, and histories spanning multiple bodies. The report gives one result per source feature, including the reason each feature
+was not rebuilt. `--import-only` keeps every part as STEP. Assemblies retain placements;
+joints are not rebuilt. Pattern counts are limited to 10,000. Solid lines drawn corner to
+corner across a profile taken whole (a centre rectangle's diagonals, when the source does
+not mark them construction) are left out of the padded profile, which is the same region.
+Geometry whose STEP uses replicated trimming curves (`CURVE_REPLICA`) is refused, because
+FreeCAD 1.1's STEP reader crashes on it.
+
+Open the macro in FreeCAD with **Macro > Macros… > Execute**, or run:
+
+```sh
+freecadcmd out.FCMacro
+```
+
+The macro creates a new document; save it as `.FCStd` from FreeCAD. The command-line form
+creates the document in memory and does not save it automatically. No FreeCAD installation
+is needed to generate a macro. Dutchman does not run FreeCAD during conversion, so these
+histories are reported as unverified. The original STEP geometry remains in the document,
+hidden after a successful rebuild. The macro compares rebuilt geometry with STEP; a rebuild failure or difference restores
+the original and prints a warning in
+FreeCAD's report view. Temporary STEP files are removed after reading.

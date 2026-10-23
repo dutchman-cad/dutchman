@@ -849,3 +849,30 @@ fn a_build_without_freecad_says_where_freecad_files_convert() {
         "{line}"
     );
 }
+
+#[test]
+fn freecad_macro_output_is_available_without_freecad_input_support() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../dutchman-core/tests/fixtures/generated_unit_cube.f3d");
+    let output = dir.path().join("out.FCMacro");
+    let result = dutchman(&[
+        "convert",
+        input.to_str().unwrap(),
+        "--to",
+        "freecad",
+        "-o",
+        output.to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["output"]["format"], "freecad-macro/1");
+    let script = std::fs::read_to_string(output).unwrap();
+    assert!(script.contains("original_step("));
+    assert!(script.contains("ISO-10303-21"));
+}

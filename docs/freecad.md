@@ -36,3 +36,18 @@ cargo build --release -p dutchman -p dutchman-gui --no-default-features
 The FreeCAD fixtures in `crates/dutchman-core/tests/fixtures/` are cadmpeg's corpus
 documents, authored in FreeCAD 1.1.1 by the cadmpeg project and dedicated to the public domain
 (CC0-1.0). See that folder's README for where each came from.
+
+## Writing rebuild macros
+
+`--to freecad` writes a `.FCMacro` independently of `.FCStd` input support. See
+[FreeCAD output](guide.md#freecad-output) for coverage, fallback and execution.
+
+The writer is Rust and emits calls to FreeCAD as an outside Python program. It does not
+link or vendor FreeCAD. Its interface references are the public
+[Sketcher scripting](https://wiki.freecad.org/Sketcher_scripting),
+[Part scripting](https://wiki.freecad.org/Part_scripting),
+[Pad](https://wiki.freecad.org/PartDesign_Pad),
+[Revolution](https://wiki.freecad.org/PartDesign_Revolution), and
+[Linear pattern](https://wiki.freecad.org/PartDesign_LinearPattern) documentation, and the
+[public API reference](https://freecad.github.io/API/). No FreeCAD implementation source is
+needed to generate or test the macro text.
