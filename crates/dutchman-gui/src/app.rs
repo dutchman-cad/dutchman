@@ -479,7 +479,10 @@ impl App {
                         dutchman_solidcraft::CLI_ENV
                     ),
                 };
-                ui.add(egui::Label::new(RichText::new(checker).small().color(p.tide)).wrap());
+                // One line whatever the path, so the window keeps its height and Convert stays
+                // in view; the whole line is on hover.
+                ui.add(egui::Label::new(RichText::new(&checker).small().color(p.tide)).truncate())
+                    .on_hover_text(checker);
                 ui.add_space(theme::SPACE_2);
                 let chosen = self.options.project.clone();
                 let mut find = false;

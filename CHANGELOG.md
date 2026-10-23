@@ -8,6 +8,12 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Desktop app
+
+- The line naming the SolidCraft that checks history stays on one line (the whole of it on
+  hover): a long path to `solidcraft-cli` wrapped onto several lines and pushed the Convert
+  button out of view at the window's default size.
+
 ### Assemblies
 
 - A joint whose connector frames point the same way (CADIR `frame_sense: "aligned"`) is
