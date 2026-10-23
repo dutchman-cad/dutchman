@@ -3131,6 +3131,7 @@ fn assembly_of_histories() -> Model {
             joints: Vec::new(),
             left_out: Vec::new(),
             held: Vec::new(),
+            joint_notes: Vec::new(),
             parts: vec![part("First"), part("Second")],
             placements: vec![placed(0, 0.0), placed(1, 30.0), placed(1, 60.0)],
         }),
