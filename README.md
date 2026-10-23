@@ -91,8 +91,10 @@ files. When an Inventor assembly's part files are not found, its card names them
 folder…** or **Find a file…** converts it again, searching there too. The app follows the
 system's light or dark setting, or can be set to Day or Night. On main, in the next release:
 its **Output format** choice offers a FreeCAD macro, the window title shows its version,
-`dutchman-gui --version` and `--help` print without opening a window, and a **Report a
-problem** link opens the **A file didn't convert** form.
+`dutchman-gui --version` and `--help` print without opening a window, a **Report a
+problem** link opens the **A file didn't convert** form, and a failed file's **Report this
+on GitHub** opens that form filled in with the version, system, error and an anonymous
+report.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/dutchman-gui-night.png">

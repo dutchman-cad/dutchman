@@ -13,8 +13,7 @@ pub use app::App;
 pub const WINDOW_TITLE: &str = concat!("Dutchman ", env!("CARGO_PKG_VERSION"));
 
 /// The issue form for a file that did not convert.
-pub const REPORT_PROBLEM_URL: &str =
-    "https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml";
+pub const REPORT_PROBLEM_URL: &str = dutchman::issue::NEW_ISSUE;
 
 /// The window's options: its size, title and icon.
 pub fn options() -> eframe::NativeOptions {

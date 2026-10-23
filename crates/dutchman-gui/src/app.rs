@@ -148,6 +148,33 @@ impl App {
         ));
     }
 
+    /// Opens the GitHub issue form about the file of the row at `index`, filled in from its
+    /// report. When its anonymous report is too long for the link, it is copied for the
+    /// reporter to paste, and the notice says so.
+    pub fn report_on_github(&mut self, index: usize, ctx: &egui::Context) -> Result<(), String> {
+        let Some(report) = self.rows.get(index).and_then(|row| row.report.as_ref()) else {
+            return Ok(());
+        };
+        let out_dir = self.out_dir.clone().unwrap_or_default();
+        let run = dutchman::anon::Run {
+            verify: !self.options.no_verify,
+            import_only: self.options.import_only,
+            jobs: 1,
+            ..dutchman::anon::Run::default()
+        };
+        let issue = dutchman::issue::issue(report, &out_dir, &run)?;
+        if !issue.report_in_url {
+            ctx.copy_text(issue.anonymous_report.clone());
+            self.notice = Some(
+                "The anonymous report is too long for the link, so it is copied: paste it into \
+                 the form's \"Anonymous report for this file\" box."
+                    .to_owned(),
+            );
+        }
+        ctx.open_url(egui::OpenUrl::new_tab(issue.url));
+        Ok(())
+    }
+
     /// Whether a run is in progress.
     pub fn running(&self) -> bool {
         self.run.is_some()
@@ -626,6 +653,7 @@ impl App {
                 worker::pick(pick, self.sender.clone(), ui.ctx().clone());
                 Ok(())
             }
+            Some(Action::Report(index)) => self.report_on_github(index, ui.ctx()),
             None => Ok(()),
         };
         if let Err(err) = result {
@@ -644,6 +672,8 @@ enum Action {
     Open(PathBuf),
     Reveal(PathBuf),
     Pick(Pick),
+    /// Open the GitHub issue form about the row's file, filled in.
+    Report(usize),
 }
 
 /// One file's result: its status, what was written, and its losses.
@@ -725,6 +755,21 @@ fn row_ui(
         .and_then(Value::as_str)
     {
         ui.label(RichText::new(message).color(p.danger));
+        if report.and_then(missing_parts).is_none() {
+            ui.label(
+                RichText::new(
+                    "If the file opens in the app that made it, this is a bug in Dutchman: \
+                     report it on GitHub. The form opens filled in with the error and an \
+                     anonymous report that names no file; read it before you submit, and \
+                     never attach the design.",
+                )
+                .small()
+                .color(p.tide),
+            );
+            if ui.button("Report this on GitHub").clicked() {
+                action = Some(Action::Report(index));
+            }
+        }
         return action;
     }
     if let (Status::Converted, Some(report)) = (&row.status, report) {

@@ -95,5 +95,5 @@ body:
     attributes:
       label: Privacy
       options:
-        - label: I read what I am posting, and it holds no file names, paths, part or company names, and no design files.
+        - label: I read what I am posting. It holds no private file, and no names or paths from my own computer, files or company; links to files that are already public are fine.
           required: true
