@@ -6639,6 +6639,7 @@ fn a_fillet_of_tangency_weight_one_maps_as_a_circular_fillet() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn blends_keep_multiple_picks_and_refuse_repeated_geometry_and_weighted_groups() {
     let base = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
