@@ -9,6 +9,7 @@
 //! versions in [`IR_VERSIONS`] and refuses others rather than misread them.
 
 pub(crate) mod base;
+mod blend;
 mod constraints;
 mod crossing;
 mod extrude;
@@ -206,9 +207,11 @@ impl History {
                     }
                 }
             }
-            if let Some(value) = feature.get_mut("target") {
-                if let Some(old) = value.as_str() {
-                    *value = Value::String(rename(old));
+            for key in ["target", "body"] {
+                if let Some(value) = feature.get_mut(key) {
+                    if let Some(old) = value.as_str() {
+                        *value = Value::String(rename(old));
+                    }
                 }
             }
         }
@@ -512,6 +515,9 @@ fn map_feature(
             modify::mirror(feature, definition, ctx).map(Mapped::Feature)
         }
         Some("pattern") => pattern::map(feature, definition, ctx).map(Mapped::Feature),
+        Some("fillet" | "chamfer") => {
+            blend::map(feature, definition, ctx, preceding).map(Mapped::Feature)
+        }
         Some("hole") => hole::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some("sheet_metal_base_flange") => {
             sheet::base_flange(feature, definition, ctx).map(Mapped::Feature)
@@ -595,6 +601,7 @@ mod tests {
                 json!({"body_names": ["Part"]}),
                 json!({"target": "Part", "tools": ["Part"]}),
                 json!({"bodies": ["Part"]}),
+                json!({"body": "Part"}),
             ],
             ..History::default()
         };
@@ -604,6 +611,7 @@ mod tests {
         assert_eq!(history.features[1]["target"], "Part (Second)");
         assert_eq!(history.features[1]["tools"], json!(["Part (Second)"]));
         assert_eq!(history.features[2]["bodies"], json!(["Part (Second)"]));
+        assert_eq!(history.features[3]["body"], "Part (Second)");
     }
 
     #[test]

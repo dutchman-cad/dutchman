@@ -394,7 +394,7 @@ the parts with the most that matters:
 losses: 182 in 14 components
   the design: 1 Degraded, 3 Info
   pin.ipt: 1 Dropped
-  base.ipt: history flattened (feature "Fillet1": fillet is not mapped yet); 2 Degraded, 9 Info
+  base.ipt: history flattened (feature "Shell1": shell waits on input face geometry); 2 Degraded, 9 Info
   …
 ```
 
@@ -431,6 +431,15 @@ The first part of a subject such as `f3d/material.not-transferred` is a stable c
 cadmpeg; in `--json` it is the `code` field, which scripts can match on.
 
 ## Feature history and the SolidCraft check
+
+Constant-radius fillets and equal-setback chamfers keep editable history when their own
+feature input topology supplies edge midpoints, tangents and endpoints, and each midpoint
+can be proven to pick exactly one edge of the replayed pre-feature body. This currently
+requires one blind, untapered extrusion of a single convex polygon and no earlier body
+modifications. Equal two-distance chamfers also map; distance-and-angle chamfers map at
+45 degrees on perpendicular faces. Unequal distances and other angles lack a source
+reference-face ordering and are refused specifically. Variable fillets lack a proven
+chain direction. Final-body edge selections never stand in for input geometry.
 
 Hole history includes chamfered entries and tapped holes: the hole keeps its bore and an ISO
 metric thread label such as `M6x1`. A thread's hand, tolerance class, and length don't carry
