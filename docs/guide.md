@@ -108,6 +108,13 @@ The window's title shows its version, and its **Report a problem** link opens th
 form. `dutchman-gui --version` and `dutchman-gui --help` print and exit without opening a
 window (on Windows, read the version with `dutchman --version`).
 
+When a file fails, its card says so and offers **Report this on GitHub**. It opens the same
+form in your browser, filled in: Dutchman's version, your system, the error with its stage
+and upstream, and the file's anonymous report, which names no file and no folder. Read it
+before you submit, and never attach the design; a link to a file that is already public is
+welcome. If the anonymous report is too long for the link, the app copies it for you to
+paste into the form's **Anonymous report for this file** box.
+
 On macOS, `shasum -a 256 -c` takes the place of `sha256sum -c`. The programs are not signed
 with a Developer ID, so macOS blocks each the first time, as it does
 [the app](#opening-the-app-the-first-time); allow it in System Settings › Privacy & Security,
@@ -554,7 +561,8 @@ report (replace `part.f3d` with your file or folder):
 dutchman convert-all --out-dir converted --report-anon report-anon.json part.f3d
 ```
 
-Review `report-anon.json`, then paste it into the
+In the desktop app, **Report this on GitHub** on the failed file does this for you. Review
+`report-anon.json`, then paste it into the
 [**A file didn't convert**](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
 form on Dutchman's issues (for a whole library, the **Library test report** form). Keep
 ordinary logs, JSON output, the journal, the report key, and the salt private: they contain

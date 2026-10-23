@@ -55,7 +55,13 @@ report's schema name changes when a field does).
 - The macOS disk image opens on an installation window: Dutchman and Applications side by
   side with an arrow between them on Dutchman's own background, and the read-me below. If
   the window cannot be laid out while packaging, the image is built plain as before.
-
+- A file that fails says what to do next: **Report this on GitHub** opens the **A file
+  didn't convert** form filled in with Dutchman's version, the system, the error with its
+  stage and upstream, and the file's anonymous report (copied to paste when it is too long
+  for the link). The form had come back with its report and stage boxes empty.
+- The issue forms' privacy box says that links to files that are already public are welcome;
+  it asked for no file names at all, which kept a reporter from linking the public file that
+  failed.
 - The line naming the SolidCraft that checks history stays on one line (the whole of it on
   hover): a long path to `solidcraft-cli` wrapped onto several lines and pushed the Convert
   button out of view at the window's default size.

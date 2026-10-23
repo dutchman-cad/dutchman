@@ -7,6 +7,7 @@
 pub mod anon;
 pub mod batch;
 pub mod formats;
+pub mod issue;
 pub mod json;
 pub mod mcp;
 pub mod worker;

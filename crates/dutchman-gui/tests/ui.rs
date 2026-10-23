@@ -96,6 +96,29 @@ fn a_file_that_cannot_convert_says_why() {
     assert!(harness.query_by_label("Failed").is_some());
     assert!(harness.query_by_label("0 converted, 1 failed").is_some());
     assert!(!dir.path().join("out/broken.solidcraft").exists());
+
+    // The failed row says to report it, and its button opens the form filled in, without
+    // the file's name.
+    harness.get_by_label("Report this on GitHub").click();
+    harness.step();
+    let opened = harness
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            egui::OutputCommand::OpenUrl(open) => Some(open.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert!(
+        opened.url.starts_with(dutchman_gui::REPORT_PROBLEM_URL),
+        "{}",
+        opened.url
+    );
+    assert!(opened.url.contains("&stage=stage%3A%20"), "{}", opened.url);
+    assert!(opened.url.contains("&report-anon="), "{}", opened.url);
+    assert!(!opened.url.contains("broken"), "{}", opened.url);
 }
 
 #[test]
