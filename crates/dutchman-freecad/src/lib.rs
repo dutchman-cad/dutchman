@@ -1,4 +1,5 @@
 //! Rebuild scripts using FreeCAD's public Python scripting API. No FreeCAD code is linked.
+mod assembly;
 mod generate;
 mod prefix;
 
@@ -39,6 +40,7 @@ impl FreeCadWriter {
             ));
         }
         if let Some(assembly) = &model.assembly {
+            script.push_str("assembly_scopes.append([])\n");
             let mut rebuilt = false;
             for placement in &assembly.placements {
                 let part = assembly
@@ -52,16 +54,11 @@ impl FreeCadWriter {
                 script.push_str(", ");
                 script.push_str(&generate::data(&serde_json::json!(placement.transform))?);
                 script.push_str("))\n");
+                script.push_str("assembly_scopes[-1].append(parents[-1])\n");
                 rebuilt |= self.part(part, script, report, outcomes, depth + 1)?;
                 script.push_str("parents.pop()\n");
             }
-            if !assembly.joints.is_empty() {
-                report.push(
-                    Severity::Degraded,
-                    "joints",
-                    "FreeCAD output keeps assembly placements; joints are not supported yet",
-                );
-            }
+            assembly::finish(model, assembly, script, report, self.import_only)?;
             return Ok(rebuilt);
         }
         let step = dutchman_solidcraft::restate_step(model, report)?;
@@ -184,6 +181,9 @@ impl Writer for FreeCadWriter {
         report: &mut Report,
     ) -> Result<(), Error> {
         let mut script = generate::PRELUDE.to_owned();
+        if model.assembly.is_some() {
+            script.push_str(assembly::PRELUDE);
+        }
         let mut features = Vec::new();
         let rebuilt = self.part(model, &mut script, report, &mut features, 0)?;
         script.push_str("doc.recompute()\nif App.GuiUp:\n    Gui.activeDocument().activeView().viewAxonometric()\n    Gui.activeDocument().activeView().fitAll()\n");

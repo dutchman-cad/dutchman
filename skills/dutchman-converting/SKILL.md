@@ -186,3 +186,8 @@ imported geometry, with the mapped prefix and mapped sketches hidden in **Rebuil
 runs. The original remains available for comparison; a runtime
 failure restores it and warns in FreeCAD. Parameter values are kept; source expressions
 remain inert text. See `docs/guide.md#freecad-output-experimental` for the supported cases and limits.
+Assembly macros also write supported joints (through sub-assemblies too) with frames,
+limits, and grounding. Explain `joints` losses: unsupported operands/options retain stored
+placements, and an ungrounded joint chain gets an inferred grounded part (`Info`). A failed
+Assembly solve removes the joints, restores stored placements, and warns in FreeCAD.
+`import_only` leaves joints out.

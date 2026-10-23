@@ -442,3 +442,682 @@ fn options_the_script_would_ignore_are_refused_with_a_reason() {
     let scaled = json!({"id": 5, "name": "S", "type": "sweep", "scale": "2"});
     assert!(generate::history(&[scaled]).is_err());
 }
+
+fn joint_model() -> Model {
+    use dutchman_core::placement::IDENTITY;
+    let part = model("pad");
+    let mut placed = IDENTITY;
+    placed[2][3] = 10.0;
+    Model {
+        name: "Hinge".to_owned(),
+        assembly: Some(dutchman_core::Assembly {
+            parts: vec![part.clone()],
+            placements: vec![
+                dutchman_core::Placement {
+                    name: Some("Base".to_owned()),
+                    part: 0,
+                    transform: IDENTITY,
+                },
+                dutchman_core::Placement {
+                    name: Some("Arm".to_owned()),
+                    part: 0,
+                    transform: placed,
+                },
+            ],
+            joints: vec![dutchman_core::Joint {
+                a: vec![0],
+                b: vec![1],
+                frame_a: placed,
+                frame_b: [
+                    [1.0, 0.0, 0.0, 0.0],
+                    [0.0, -1.0, 0.0, 0.0],
+                    [0.0, 0.0, -1.0, 0.0],
+                ],
+                suppressed: false,
+                motion: dutchman_core::Motion::Revolute {
+                    angle: 0.0,
+                    limits: None,
+                },
+                flip: false,
+            }],
+            held: Vec::new(),
+            left_out: Vec::new(),
+        }),
+        ..part
+    }
+}
+
+fn raw_joint_model(definition: Value) -> Model {
+    let family = definition["kind"].as_str().unwrap_or_default().to_owned();
+    let mut model = joint_model();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let identity = dutchman_core::placement::IDENTITY;
+    wire["model"]["product_definitions"] = json!([{
+        "id": "synthetic:test:product#part", "kind": "part"
+    }]);
+    wire["model"]["occurrences"] = json!([
+        {"id": "synthetic:test:occurrence#base", "ordinal": 0, "name": "Base",
+         "prototype": {"scope": "local", "definition": "synthetic:test:product#part"},
+         "parent": {"kind": "root"}, "transform": identity, "scale": [1.0, 1.0, 1.0]},
+        {"id": "synthetic:test:occurrence#arm", "ordinal": 1, "name": "Arm",
+         "prototype": {"scope": "local", "definition": "synthetic:test:product#part"},
+         "parent": {"kind": "root"}, "transform": identity, "scale": [1.0, 1.0, 1.0]}
+    ]);
+    let joint = &model.assembly.as_ref().unwrap().joints[0];
+    let connector = |name: &str, frame| {
+        json!({
+            "operand": {"container": {"container": "occurrence", "occurrence": name}, "object": "Body"},
+            "frame": frame, "detached": false
+        })
+    };
+    let mut frame_a = joint.frame_a;
+    if family == "perpendicular" {
+        frame_a = [
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [-1.0, 0.0, 0.0, 10.0],
+        ];
+    }
+    wire["model"]["assembly_joints"] = json!([{
+        "id": "synthetic:test:joint#hinge", "suppressed": false,
+        "operands": {"arity": "pair", "kind": definition, "connectors": [
+            connector("synthetic:test:occurrence#base", frame_a),
+            connector("synthetic:test:occurrence#arm", joint.frame_b)
+        ]}
+    }]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    // The core converts only these families; the others reach the writer through CADIR.
+    let motion = match family.as_str() {
+        "fixed" => Some(dutchman_core::Motion::Rigid),
+        "revolute" => Some(dutchman_core::Motion::Revolute {
+            angle: 0.0,
+            limits: None,
+        }),
+        "slider" => Some(dutchman_core::Motion::Slider { distance: 0.0 }),
+        _ => None,
+    };
+    let assembly = model.assembly.as_mut().unwrap();
+    match motion {
+        Some(motion) => assembly.joints[0].motion = motion,
+        None => assembly.joints.clear(),
+    }
+    model
+}
+
+/// The top assembly's joints and grounds, as the macro passes them to FreeCAD.
+fn assembly_data(script: &str) -> Value {
+    let data = macro_data(script);
+    data["scopes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|scope| scope["path"] == json!([]))
+        .map(|scope| json!({"joints": scope["joints"], "held": scope["held"]}))
+        .unwrap_or_else(|| json!({"joints": [], "held": []}))
+}
+
+fn macro_data(script: &str) -> Value {
+    let line = script
+        .lines()
+        .rev()
+        .find(|line| line.starts_with("finish_assembly("))
+        .unwrap();
+    let outer = line
+        .split_once("json.loads(")
+        .unwrap()
+        .1
+        .strip_suffix("))")
+        .unwrap();
+    let inner: String = serde_json::from_str(outer).unwrap();
+    serde_json::from_str(&inner).unwrap()
+}
+
+#[test]
+fn hinge_macro_matches_joint_golden_and_infers_one_anchor() {
+    let (script, report) = written(&joint_model(), FreeCadWriter::new());
+    let data = assembly_data(&script);
+    let normalized = format!("{}\n", serde_json::to_string_pretty(&data).unwrap());
+    assert_eq!(
+        normalized,
+        include_str!("../tests/golden/hinge.joints.json")
+    );
+    assert!(script.contains("JointObject.GroundedJoint(ground, children[path[0]])"));
+    assert!(script.contains("joint.Reference1 = joint_reference(children, row['a'])"));
+    assert!(script.contains("joint.Detach1 = True"));
+    assert!(script.contains("Assembly solve changed the stored part placements"));
+    assert!(report
+        .losses()
+        .iter()
+        .any(|loss| loss.detail.contains("grounded, inferred")));
+    assert!(!report
+        .losses()
+        .iter()
+        .any(|loss| loss.detail.contains("joints are not supported")));
+}
+
+#[test]
+fn converted_joint_families_flip_limits_ground_and_suppression_are_kept() {
+    use dutchman_core::{placement::IDENTITY, Motion};
+    for (motion, kind) in [
+        (Motion::Rigid, "Fixed"),
+        (Motion::Slider { distance: 3.0 }, "Slider"),
+        (
+            Motion::Revolute {
+                angle: 0.3,
+                limits: Some((-0.5, 1.0)),
+            },
+            "Revolute",
+        ),
+    ] {
+        let mut model = joint_model();
+        let assembly = model.assembly.as_mut().unwrap();
+        assembly.joints[0].motion = motion;
+        assembly.joints[0].flip = true;
+        assembly.joints[0].frame_b = IDENTITY;
+        assembly.held = vec![vec![0]];
+        let (script, report) = written(&model, FreeCadWriter::new());
+        let data = assembly_data(&script);
+        assert_eq!(data["joints"][0]["kind"], kind);
+        assert_eq!(data["joints"][0]["frame_b"], json!(IDENTITY));
+        assert_eq!(data["held"], json!([[0]]));
+        assert!(!report
+            .losses()
+            .iter()
+            .any(|loss| loss.detail.contains("inferred")));
+        if kind == "Revolute" {
+            assert_eq!(
+                data["joints"][0]["angular"]["minimum"],
+                (-0.5_f64).to_degrees()
+            );
+        }
+        model.assembly.as_mut().unwrap().joints[0].suppressed = true;
+        model.assembly.as_mut().unwrap().held.clear();
+        let (script, _) = written(&model, FreeCadWriter::new());
+        assert_eq!(assembly_data(&script)["joints"][0]["suppressed"], true);
+        assert_eq!(assembly_data(&script)["held"], json!([]));
+    }
+    let (script, _) = written(&joint_model(), FreeCadWriter::new().import_only(true));
+    assert_eq!(assembly_data(&script), json!({"joints": [], "held": []}));
+}
+
+#[test]
+fn cadir_joint_families_and_independent_bounds_are_mapped() {
+    for (family, kind) in [
+        ("fixed", "Fixed"),
+        ("revolute", "Revolute"),
+        ("slider", "Slider"),
+        ("cylindrical", "Cylindrical"),
+        ("ball", "Ball"),
+        ("distance", "Distance"),
+        ("parallel", "Parallel"),
+        ("perpendicular", "Perpendicular"),
+        ("angle", "Angle"),
+        ("axis_coincidence", "Cylindrical"),
+    ] {
+        let (script, _) = written(
+            &raw_joint_model(json!({"kind": family})),
+            FreeCadWriter::new(),
+        );
+        assert_eq!(assembly_data(&script)["joints"][0]["kind"], kind);
+    }
+    let model = raw_joint_model(json!({"kind": "cylindrical", "angle": 0.4, "distance": 2.0,
+        "angular_limits": {"bounds": "minimum", "minimum": -0.5},
+        "linear_limits": {"bounds": "maximum", "maximum": 8.0}}));
+    let (script, _) = written(&model, FreeCadWriter::new());
+    let data = assembly_data(&script);
+    let row = &data["joints"][0];
+    assert_eq!(row["angular"], json!({"minimum": (-0.5_f64).to_degrees()}));
+    assert_eq!(row["linear"], json!({"maximum": 8.0}));
+    assert_eq!(row["distance"], 2.0);
+    assert!((row["frame_a"][0][0].as_f64().unwrap() - 0.4_f64.cos()).abs() < 1e-12);
+}
+
+#[test]
+fn unsupported_joint_families_and_fixed_limits_have_specific_notes() {
+    for definition in [
+        json!({"kind": "rack_pinion"}),
+        json!({"kind": "screw"}),
+        json!({"kind": "gears"}),
+        json!({"kind": "belt"}),
+        json!({"kind": "plane_coincidence", "sense": "opposed"}),
+        json!({"kind": "point_on_axis"}),
+        json!({"kind": "tangent", "contact": "outside"}),
+        json!({"kind": "native", "name": "Special linkage"}),
+        json!({"kind": "fixed", "angular_limits": {"bounds": "minimum", "minimum": 0.0}}),
+    ] {
+        let family = definition["kind"].as_str().unwrap().to_owned();
+        let (script, report) = written(&raw_joint_model(definition), FreeCadWriter::new());
+        // A fixed joint is still written, from the converted joint, without its limits.
+        let kept = usize::from(family == "fixed");
+        assert_eq!(
+            assembly_data(&script)["joints"].as_array().unwrap().len(),
+            kept
+        );
+        assert!(
+            report
+                .losses()
+                .iter()
+                .any(|loss| loss.detail.contains(&family)),
+            "{family}: {:?}",
+            report.losses()
+        );
+    }
+}
+
+#[test]
+fn freecad_solves_synthetic_joints_and_moves_only_the_hinge_arm() {
+    let Some(command) = std::env::var_os("FREECAD_CMD") else {
+        return;
+    };
+    let folder =
+        std::env::temp_dir().join(format!("dutchman-freecad-joints-{}", std::process::id()));
+    std::fs::create_dir_all(&folder).unwrap();
+    for (family, kind) in [
+        ("revolute", "Revolute"),
+        ("slider", "Slider"),
+        ("fixed", "Fixed"),
+        ("cylindrical", "Cylindrical"),
+        ("ball", "Ball"),
+        ("distance", "Distance"),
+        ("parallel", "Parallel"),
+        ("perpendicular", "Perpendicular"),
+        ("angle", "Angle"),
+        ("axis_coincidence", "Cylindrical"),
+        ("insert", "Revolute"),
+    ] {
+        let definition = if family == "insert" {
+            json!({"kind": family, "sense": "opposed"})
+        } else {
+            json!({"kind": family})
+        };
+        let mut model = raw_joint_model(definition);
+        model.assembly.as_mut().unwrap().held = vec![vec![0]];
+        let (mut script, _) = written(&model, FreeCadWriter::new());
+        script.push_str(&format!(
+            r#"
+assemblies = [obj for obj in doc.Objects if obj.TypeId == 'Assembly::AssemblyObject']
+assert len(assemblies) == 1, 'Joint reconstruction fell back'
+assembly = assemblies[0]
+joint = assembly.Joints[0]
+assert joint.JointType == '{kind}'
+base = joint.Reference1[0]
+arm = joint.Reference2[0]
+assert assembly.isPartGrounded(base)
+assert same_pose(base.Placement, App.Placement())
+assert same_pose(arm.Placement, App.Placement(App.Vector(0, 0, 10), App.Rotation()))
+assert assembly.solve() == 0
+assert abs(base.Group[0].Shape.Volume - 1000) < 1e-7
+if joint.JointType == 'Revolute':
+    drive_joint_angle(assembly, joint, 35)
+    assert assembly.solve() == 0
+    assert abs(arm.Placement.Rotation.Angle - math.radians(35)) < 1e-7
+    assert same_pose(base.Placement, App.Placement())
+    joint.EnableAngleMin = True
+    joint.EnableAngleMax = True
+    joint.AngleMin = -10
+    joint.AngleMax = 20
+    drive_joint_angle(assembly, joint, 50)
+    assert abs(arm.Placement.Rotation.Angle - math.radians(20)) < 1e-7
+    assert same_pose(base.Placement, App.Placement())
+App.Console.PrintMessage('DUTCHMAN_JOINT_OK\n')
+"#
+        ));
+        run_freecad(&command, &folder, family, script);
+    }
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
+fn joint_attachment_offsets_grounding_and_operand_refusals_are_explicit() {
+    use dutchman_core::placement::IDENTITY;
+    let mut model = raw_joint_model(json!({"kind": "cylindrical"}));
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut offset = IDENTITY;
+    offset[0][3] = 5.0;
+    wire["model"]["assembly_joints"][0]["operands"]["offset_frames"] = json!([offset, IDENTITY]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (script, _) = written(&model, FreeCadWriter::new());
+    assert_eq!(assembly_data(&script)["joints"][0]["frame_a"][0][3], 5.0);
+    assert_eq!(assembly_data(&script)["joints"][0]["frame_a"][2][3], 10.0);
+
+    for (sense, expected_z) in [("aligned", -1.0), ("opposed", 1.0)] {
+        let (script, _) = written(
+            &raw_joint_model(json!({"kind": "insert", "sense": sense, "offset": 2.0})),
+            FreeCadWriter::new(),
+        );
+        let data = assembly_data(&script);
+        assert_eq!(data["joints"][0]["kind"], "Revolute");
+        assert_eq!(data["joints"][0]["frame_a"][2][3], 8.0);
+        assert_eq!(data["joints"][0]["frame_b"][2][2], expected_z);
+    }
+    // Grounding reaches the writer as the core's rigid joint to the assembly itself.
+    let mut model = joint_model();
+    let assembly = model.assembly.as_mut().unwrap();
+    let mut ground = assembly.joints[0].clone();
+    ground.a = Vec::new();
+    ground.b = vec![0];
+    ground.motion = dutchman_core::Motion::Rigid;
+    assembly.joints.push(ground);
+    let (script, report) = written(&model, FreeCadWriter::new());
+    assert_eq!(assembly_data(&script)["held"], json!([[0]]));
+    assert!(!report
+        .losses()
+        .iter()
+        .any(|loss| loss.detail.contains("inferred")));
+    model.assembly.as_mut().unwrap().joints[1].suppressed = true;
+    let (_, report) = written(&model, FreeCadWriter::new());
+    assert!(report
+        .losses()
+        .iter()
+        .any(|loss| loss.detail.contains("suppressed grounding")));
+
+    let mut model = raw_joint_model(json!({"kind": "ball"}));
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["assembly_joints"][0]["operands"]["connectors"][0]["operand"]["container"]
+        ["occurrence_path"] = json!(["NestedPart"]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (script, report) = written(&model, FreeCadWriter::new());
+    assert!(assembly_data(&script)["joints"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(report
+        .losses()
+        .iter()
+        .any(|loss| loss.detail.contains("nested or subelement")));
+}
+
+#[test]
+fn cadir_supplements_keep_the_converted_frame_sense() {
+    let mut model = raw_joint_model(json!({"kind": "revolute"}));
+    model.assembly.as_mut().unwrap().joints[0].flip = true;
+    let (script, _) = written(&model, FreeCadWriter::new());
+    let frame = model.assembly.as_ref().unwrap().joints[0].frame_b;
+    assert_eq!(assembly_data(&script)["joints"][0]["frame_b"], json!(frame));
+}
+
+/// Run a synthetic macro through `FREECAD_CMD` (a FreeCAD command-line executable, or a
+/// wrapper accepting `-c CODE`) and require its success marker.
+fn run_freecad(command: &std::ffi::OsStr, folder: &std::path::Path, name: &str, script: String) {
+    let path = folder.join(format!("{name}.FCMacro"));
+    std::fs::write(&path, script).unwrap();
+    let expression = format!(
+        "exec(open({}).read())",
+        generate::quoted(&path.to_string_lossy()).unwrap()
+    );
+    let output = std::process::Command::new(command)
+        .arg("-c")
+        .arg(expression)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{name}: {stderr}");
+    assert!(
+        stdout.contains("DUTCHMAN_JOINT_OK"),
+        "{name}: {stdout}\n{stderr}"
+    );
+    assert!(
+        !stdout.contains("Assembly joints failed") && !stderr.contains("Assembly joints failed"),
+        "{name}: {stdout}\n{stderr}"
+    );
+}
+
+/// A two-part assembly whose joint axis is the world X axis through (5, 3, 10): the base
+/// at the origin, the arm 10 mm up. `ground` names the explicitly grounded part, if any.
+fn off_axis_model(definition: Value, ground: Option<usize>) -> Model {
+    use dutchman_core::placement::{compose, inverse, IDENTITY};
+    let mut model = raw_joint_model(definition);
+    let axis = [
+        [0.0, 0.0, 1.0, 5.0],
+        [0.0, 1.0, 0.0, 3.0],
+        [-1.0, 0.0, 0.0, 10.0],
+    ];
+    let facing = [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, -1.0, 0.0, 0.0],
+        [0.0, 0.0, -1.0, 0.0],
+    ];
+    let mut arm = IDENTITY;
+    arm[2][3] = 10.0;
+    // CADIR connectors face each other where the parts are placed.
+    let frame_b = compose(&compose(&inverse(&arm), &axis), &facing);
+    let assembly = model.assembly.as_mut().unwrap();
+    assembly.joints[0].frame_a = axis;
+    assembly.joints[0].frame_b = frame_b;
+    assembly.held = ground.map(|part| vec![vec![part]]).unwrap_or_default();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let connectors = &mut wire["model"]["assembly_joints"][0]["operands"]["connectors"];
+    connectors[0]["frame"] = json!(axis);
+    connectors[1]["frame"] = json!(frame_b);
+    if let Some(part) = ground {
+        let name = ["base", "arm"][part];
+        wire["model"]["assembly_joints"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "id": "synthetic:test:joint#ground", "suppressed": false,
+                "operands": {"arity": "grounded", "connector": {
+                    "operand": {"container": {"container": "occurrence",
+                        "occurrence": format!("synthetic:test:occurrence#{name}")}, "object": "Body"},
+                    "frame": IDENTITY, "detached": false}}
+            }));
+    }
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn freecad_moves_hinges_and_sliders_about_their_own_axes() {
+    let Some(command) = std::env::var_os("FREECAD_CMD") else {
+        return;
+    };
+    let folder = std::env::temp_dir().join(format!("dutchman-freecad-axes-{}", std::process::id()));
+    std::fs::create_dir_all(&folder).unwrap();
+    // `still` is the part that must never move (grounded), `moving` the other one.
+    for (name, family, ground, inferred) in [
+        ("hinge", "revolute", Some(0), false),
+        ("hinge-inferred", "revolute", None, true),
+        ("hinge-arm-grounded", "revolute", Some(1), false),
+        ("slider", "slider", Some(0), false),
+        ("fixed", "fixed", Some(0), false),
+    ] {
+        let (mut script, report) = written(
+            &off_axis_model(json!({"kind": family}), ground),
+            FreeCadWriter::new(),
+        );
+        assert_eq!(
+            report
+                .losses()
+                .iter()
+                .any(|loss| loss.detail.contains("grounded, inferred")),
+            inferred,
+            "{name}: {:?}",
+            report.losses()
+        );
+        // An inferred ground holds the second side, as in the SolidCraft output.
+        let still = ground.unwrap_or(1);
+        script.push_str(&format!(
+            r#"
+assemblies = [obj for obj in doc.Objects if obj.TypeId == 'Assembly::AssemblyObject']
+assert len(assemblies) == 1, 'Joint reconstruction fell back'
+assembly = assemblies[0]
+assert len(assembly.Joints) == 1
+joint = assembly.Joints[0]
+parts = [joint.Reference1[0], joint.Reference2[0]]
+still, moving = parts[{still}], parts[1 - {still}]
+assert assembly.isPartGrounded(still) and not assembly.isPartGrounded(moving)
+placed = [App.Placement(), App.Placement(App.Vector(0, 0, 10), App.Rotation())]
+for part, pose in zip(parts, placed):
+    assert same_pose(part.Placement, pose), (part.Label, part.Placement)
+assert assembly.solve() == 0
+for part, pose in zip(parts, placed):
+    assert same_pose(part.Placement, pose), ('moved by the solve', part.Label, part.Placement)
+start = App.Placement(moving.Placement)
+def about_axis(degrees):
+    return App.Placement(App.Vector(), App.Rotation(App.Vector(1, 0, 0), degrees), App.Vector(5, 3, 10)).multiply(start)
+def solved(pose):
+    moving.Placement = pose
+    assert assembly.solve() == 0, 'solver error'
+    assert same_pose(still.Placement, placed[{still}]), 'the grounded part moved'
+    return App.Placement(moving.Placement)
+kind = '{family}'
+if kind == 'revolute':
+    # A turn about the joint axis is free; a turn about another axis is pulled back.
+    assert same_pose(solved(about_axis(35)), about_axis(35))
+    tilted = App.Placement(App.Vector(), App.Rotation(App.Vector(0, 1, 0), 20), App.Vector(5, 3, 10)).multiply(start)
+    back = solved(tilted)
+    assert not same_pose(back, tilted)
+    axis_point = back.multVec(start.inverse().multVec(App.Vector(5, 3, 10)))
+    assert (axis_point - App.Vector(5, 3, 10)).Length < 1e-6, axis_point
+    turned = back.Rotation.multiply(start.Rotation.inverted())
+    assert abs(abs(turned.Axis.x) - 1) < 1e-6 or turned.Angle < 1e-9, turned
+    # Driving turns whichever side is not grounded, the second side positively.
+    moving.Placement = start
+    drive_joint_angle(assembly, joint, 35)
+    assert same_pose(moving.Placement, about_axis(35 if {still} == 0 else -35)), moving.Placement
+    assert same_pose(still.Placement, placed[{still}])
+elif kind == 'slider':
+    along = App.Placement(App.Vector(7, 0, 0), App.Rotation()).multiply(start)
+    assert same_pose(solved(along), along)
+    back = solved(App.Placement(App.Vector(0, 4, -2), App.Rotation()).multiply(start))
+    assert abs(back.Base.y) < 1e-6 and abs(back.Base.z - 10) < 1e-6, back
+    assert solved(about_axis(30)).Rotation.isSame(start.Rotation, 1e-6)
+else:
+    assert same_pose(solved(App.Placement(App.Vector(1, 2, 3), App.Rotation()).multiply(start)), start)
+App.Console.PrintMessage('DUTCHMAN_JOINT_OK\n')
+"#
+        ));
+        run_freecad(&command, &folder, &format!("axes-{name}"), script);
+    }
+    std::fs::remove_dir_all(folder).unwrap();
+}
+
+/// A base part, and a sub-assembly of two parts stacked above it: the sub-assembly's
+/// parts turn on a hinge between them, and its lower part is fixed to the base.
+fn nested_model() -> Model {
+    use dutchman_core::placement::IDENTITY;
+    let part = model("pad");
+    let at = |z: f64| {
+        let mut placed = IDENTITY;
+        placed[2][3] = z;
+        placed
+    };
+    let facing = [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, -1.0, 0.0, 0.0],
+        [0.0, 0.0, -1.0, 0.0],
+    ];
+    let placement = |name: &str, part: usize, transform| dutchman_core::Placement {
+        name: Some(name.to_owned()),
+        part,
+        transform,
+    };
+    let joint = |a: Vec<usize>, b: Vec<usize>, frame_a, motion| dutchman_core::Joint {
+        a,
+        b,
+        frame_a,
+        frame_b: facing,
+        suppressed: false,
+        motion,
+        flip: false,
+    };
+    let sub = Model {
+        name: "Arm".to_owned(),
+        assembly: Some(dutchman_core::Assembly {
+            parts: vec![part.clone()],
+            placements: vec![
+                placement("Lower", 0, at(10.0)),
+                placement("Upper", 0, at(20.0)),
+            ],
+            joints: Vec::new(),
+            held: Vec::new(),
+            left_out: Vec::new(),
+        }),
+        ..part.clone()
+    };
+    Model {
+        name: "Nested".to_owned(),
+        assembly: Some(dutchman_core::Assembly {
+            parts: vec![part.clone(), sub],
+            placements: vec![
+                placement("Base", 0, IDENTITY),
+                placement("Arm", 1, IDENTITY),
+            ],
+            joints: vec![
+                joint(
+                    vec![1, 0],
+                    vec![1, 1],
+                    at(10.0),
+                    dutchman_core::Motion::Revolute {
+                        angle: 0.0,
+                        limits: None,
+                    },
+                ),
+                joint(vec![0], vec![1, 0], at(10.0), dutchman_core::Motion::Rigid),
+            ],
+            held: Vec::new(),
+            left_out: Vec::new(),
+        }),
+        ..part
+    }
+}
+
+#[test]
+fn joints_inside_a_sub_assembly_are_solved_there() {
+    let (script, report) = written(&nested_model(), FreeCadWriter::new());
+    let scopes = macro_data(&script)["scopes"].clone();
+    // Deepest first: the sub-assembly's hinge, then the top's joint into the sub-assembly.
+    assert_eq!(scopes[0]["path"], json!([1]));
+    assert_eq!(scopes[0]["joints"][0]["kind"], "Revolute");
+    assert_eq!(scopes[0]["joints"][0]["a"], json!([0]));
+    assert_eq!(scopes[0]["joints"][0]["b"], json!([1]));
+    assert_eq!(scopes[0]["held"], json!([[1]]));
+    assert_eq!(scopes[1]["path"], json!([]));
+    assert_eq!(scopes[1]["joints"][0]["a"], json!([0]));
+    assert_eq!(scopes[1]["joints"][0]["b"], json!([1, 0]));
+    assert_eq!(scopes[1]["held"], json!([[1]]));
+    let details: Vec<_> = report.losses().iter().map(|loss| &loss.detail).collect();
+    assert!(details
+        .iter()
+        .any(|detail| detail.contains("occurrence 2.2 is grounded, inferred")));
+    assert!(!details.iter().any(|detail| detail.contains("nested")));
+}
+
+#[test]
+fn freecad_solves_a_sub_assembly_inside_its_assembly() {
+    let Some(command) = std::env::var_os("FREECAD_CMD") else {
+        return;
+    };
+    let folder =
+        std::env::temp_dir().join(format!("dutchman-freecad-nested-{}", std::process::id()));
+    std::fs::create_dir_all(&folder).unwrap();
+    let (mut script, _) = written(&nested_model(), FreeCadWriter::new());
+    script.push_str(
+        r#"
+assemblies = [obj for obj in doc.Objects if obj.TypeId == 'Assembly::AssemblyObject']
+assert len(assemblies) == 2, 'Joint reconstruction fell back'
+inner = [a for a in assemblies if a.getParentGeoFeatureGroup() is not None and a.getParentGeoFeatureGroup().TypeId == 'App::Part'][0]
+top = [a for a in assemblies if a is not inner][0]
+hinge = inner.Joints[0]
+lower, upper = hinge.Reference1[0], hinge.Reference2[0]
+assert inner.isPartGrounded(upper) and not inner.isPartGrounded(lower)
+arm = [obj for obj in top.Group if obj.TypeId == 'App::Part' and obj.Label == 'Arm'][0]
+assert top.isPartGrounded(arm)
+assert same_pose(lower.Placement, App.Placement(App.Vector(0, 0, 10), App.Rotation()))
+assert same_pose(upper.Placement, App.Placement(App.Vector(0, 0, 20), App.Rotation()))
+# The hinge turns the lower part about the vertical axis through the upper part.
+turned = App.Placement(App.Vector(0, 0, 10), App.Rotation(App.Vector(0, 0, 1), 30))
+lower.Placement = turned
+assert inner.solve() == 0
+assert same_pose(lower.Placement, turned), lower.Placement
+assert same_pose(upper.Placement, App.Placement(App.Vector(0, 0, 20), App.Rotation()))
+lower.Placement = App.Placement(App.Vector(0, 0, 10), App.Rotation(App.Vector(1, 0, 0), 20))
+assert inner.solve() == 0
+assert abs(lower.Placement.Rotation.multVec(App.Vector(0, 0, 1)).z - 1) < 1e-6, lower.Placement
+App.Console.PrintMessage('DUTCHMAN_JOINT_OK\n')
+"#,
+    );
+    run_freecad(&command, &folder, "nested", script);
+    std::fs::remove_dir_all(folder).unwrap();
+}
