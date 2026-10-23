@@ -585,6 +585,14 @@ object keeps evaluated scalar values and source expressions as text; source expr
 are never executed. Coils are rebuilt with Part geometry and stored as a feature, with
 numeric properties; editing those properties does not recompute the coil.
 
+When a later feature cannot be rebuilt, the macro keeps the longest mapped prefix and
+all mapped sketches in a hidden group named **Rebuilt history (partial)**. The embedded
+STEP remains the visible final shape when the prefix differs; reference features are not
+included in the final shape's measurements. The report says `rebuilt N of M features;
+kept as reference` (sketches count as features; suppressed and organizational features do
+not). Later body-building features are blocked, with their reasons; later mapped sketches
+remain hidden references. Partial histories are still experimental and unverified.
+
 A part whose history cannot be rebuilt is kept as an embedded STEP solid or surface in a
 Body. Examples include unresolved source selections, intersect operations, fixed-orientation,
 guided, twisted, scaled or binormal sweeps and lofts, lofts ending at a point, extrudes from

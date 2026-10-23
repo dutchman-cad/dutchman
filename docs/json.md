@@ -208,8 +208,12 @@ report. A macro with at least one rebuilt part has `mode: "history"` and
 `verification.status: "unverified"`, because FreeCAD is run by the recipient afterwards.
 An entirely imported macro has `mode: "import"` and `verification.status:
 "not_applicable"`. In a mixed assembly the `history.features` and losses identify the parts
-kept as STEP. Every source feature in a part kept as STEP is `blocked` with a reason, except
-suppressed features (`left_out`) and organizational features (`not_needed`). Runtime rebuild
-failures restore embedded geometry and warn inside FreeCAD; they cannot update the earlier
+kept as STEP. A partial history keeps prefix features and all mapped sketches as `mapped`,
+with reference reasons; later body-building features are `blocked`. A `Degraded` loss says
+`rebuilt N of M features; kept as reference`, counting sketches but excluding suppressed
+features (`left_out`) and organizational features (`not_needed`). These macros also use
+`mode: "history"` and `verification.status: "unverified"`; the visible final result remains
+STEP when it differs from the prefix. `import_only` blocks all mapped features and retains
+no prefix. Runtime rebuild failures restore embedded geometry and warn inside FreeCAD; they cannot update the earlier
 conversion report. Scalar parameter values are retained; their expressions are stored as
 inert text and are not evaluated by the macro.

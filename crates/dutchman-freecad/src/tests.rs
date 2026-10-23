@@ -52,12 +52,17 @@ fn model(kind: &str) -> Model {
                 "pattern": {"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 20.0, "count": 3}}
         }));
     }
-    Model {
+    let model = Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         fidelity: None,
         name: "Synthetic".to_owned(),
         source_file: None,
         assembly: None,
+    };
+    if kind == "partial" {
+        with_unmapped_suffix(model)
+    } else {
+        model
     }
 }
 
@@ -74,6 +79,7 @@ fn synthetic_histories_match_macro_goldens() {
         ("pad", include_str!("../tests/golden/pad.FCMacro")),
         ("revolve", include_str!("../tests/golden/revolve.FCMacro")),
         ("pattern", include_str!("../tests/golden/pattern.FCMacro")),
+        ("partial", include_str!("../tests/golden/partial.FCMacro")),
     ] {
         let (script, report) = written(&model(kind), FreeCadWriter::new());
         assert_eq!(report.outcome().unwrap().mode, Mode::History);
@@ -91,6 +97,188 @@ fn synthetic_histories_match_macro_goldens() {
             .collect();
         assert_eq!(normalized, golden, "{kind}");
     }
+}
+
+fn with_unmapped_suffix(mut model: Model) -> Model {
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "id": "synthetic:test:feature#3", "ordinal": 2, "name": "Unmapped",
+            "suppressed": false,
+            "definition": {"definition": "native", "kind": "Synthetic unsupported feature"}
+        }));
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn partial_history_keeps_pad_and_sketch_beside_the_final_step() {
+    let model = with_unmapped_suffix(model("pad"));
+    let (script, report) = written(&model, FreeCadWriter::new());
+    let outcome = report.outcome().unwrap();
+    assert_eq!(outcome.mode, Mode::History);
+    assert_eq!(outcome.features[0].status, FeatureStatus::Mapped);
+    assert_eq!(outcome.features[1].status, FeatureStatus::Mapped);
+    assert_eq!(outcome.features[2].status, FeatureStatus::Blocked);
+    assert!(outcome.features[1]
+        .reason
+        .as_ref()
+        .unwrap()
+        .contains("reference"));
+    assert!(outcome.features[2]
+        .reason
+        .as_ref()
+        .unwrap()
+        .contains("not mapped"));
+    assert!(report
+        .losses()
+        .iter()
+        .any(|loss| { loss.detail == "rebuilt 2 of 3 features; kept as reference" }));
+    assert!(script.contains("group.Label = 'Rebuilt history (partial)'"));
+    assert!(script.contains("shown(group, False)\n    shown(original, True)"));
+    assert!(script.contains("compare_original(tip.Shape, original.Shape)"));
+    let data = script
+        .lines()
+        .find_map(|line| line.strip_prefix("partial_history(json.loads("))
+        .unwrap();
+    let literal = serde_json::Deserializer::from_str(data)
+        .into_iter::<String>()
+        .next()
+        .unwrap()
+        .unwrap();
+    let rows: Value = serde_json::from_str(&literal).unwrap();
+    assert_eq!(rows[0]["type"], "sketch");
+    assert_eq!(rows[1]["type"], "extrude");
+    assert_eq!(rows[1]["extent"]["distance"], "10 mm");
+    assert_eq!(rows.as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn freecad_refusals_stop_the_prefix_and_keep_later_sketches() {
+    let mut model = model("pad");
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut sketch = wire["model"]["features"][0].clone();
+    sketch["id"] = json!("synthetic:test:feature#4");
+    sketch["ordinal"] = json!(3);
+    sketch["name"] = json!("Later sketch");
+    // A second pad with taper maps in SolidCraft but is refused by FreeCAD output.
+    let mut tapered = wire["model"]["features"][1].clone();
+    tapered["id"] = json!("synthetic:test:feature#3");
+    tapered["ordinal"] = json!(2);
+    tapered["name"] = json!("Tapered pad");
+    tapered["definition"]["op"] = json!("join");
+    tapered["definition"]["extent"]["side"]["draft"] = json!(0.1);
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .extend([tapered, sketch]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (script, report) = written(&model, FreeCadWriter::new());
+    let features = &report.outcome().unwrap().features;
+    assert_eq!(features[1].status, FeatureStatus::Mapped);
+    assert_eq!(features[2].status, FeatureStatus::Blocked);
+    assert!(features[2].reason.as_ref().unwrap().contains("taper"));
+    assert_eq!(features[3].status, FeatureStatus::Mapped);
+    assert!(features[3]
+        .reason
+        .as_ref()
+        .unwrap()
+        .contains("reference sketch"));
+    assert!(script.contains("Later sketch"));
+    assert!(report
+        .losses()
+        .iter()
+        .any(|loss| { loss.detail == "rebuilt 2 of 4 features; kept as reference" }));
+}
+
+#[test]
+fn import_only_does_not_keep_a_partial_prefix() {
+    let (script, report) = written(
+        &with_unmapped_suffix(model("pad")),
+        FreeCadWriter::new().import_only(true),
+    );
+    assert_eq!(report.outcome().unwrap().mode, Mode::Import);
+    assert!(!script.contains("def partial_history("));
+}
+
+#[test]
+fn shared_mapping_failure_keeps_later_sketches_but_no_later_solids() {
+    let mut model = model("partial");
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut sketch = wire["model"]["features"][0].clone();
+    sketch["id"] = json!("synthetic:test:feature#4");
+    sketch["ordinal"] = json!(3);
+    sketch["name"] = json!("Later sketch");
+    let mut pad = wire["model"]["features"][1].clone();
+    pad["id"] = json!("synthetic:test:feature#5");
+    pad["ordinal"] = json!(4);
+    pad["name"] = json!("Later pad");
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .extend([sketch, pad]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (script, report) = written(&model, FreeCadWriter::new());
+    let features = &report.outcome().unwrap().features;
+    assert_eq!(features[1].status, FeatureStatus::Mapped);
+    assert_eq!(features[2].status, FeatureStatus::Blocked);
+    assert_eq!(features[3].status, FeatureStatus::Mapped);
+    assert_eq!(features[4].status, FeatureStatus::Blocked);
+    assert!(script.contains("Later sketch"));
+    assert!(!script.contains("Later pad"));
+}
+
+#[test]
+fn partial_prefix_uses_timeline_order_and_excludes_suppressed_features() {
+    let mut model = model("partial");
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut suppressed = wire["model"]["features"][2].clone();
+    suppressed["id"] = json!("synthetic:test:feature#4");
+    suppressed["ordinal"] = json!(0);
+    suppressed["suppressed"] = json!(true);
+    let rows = wire["model"]["features"].as_array_mut().unwrap();
+    rows[0]["ordinal"] = json!(1);
+    rows[1]["ordinal"] = json!(2);
+    rows[2]["ordinal"] = json!(3);
+    rows.push(suppressed);
+    rows.reverse();
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (_, report) = written(&model, FreeCadWriter::new());
+    assert_eq!(
+        report.outcome().unwrap().features[0].status,
+        FeatureStatus::LeftOut
+    );
+    assert!(report
+        .losses()
+        .iter()
+        .any(|loss| { loss.detail == "rebuilt 2 of 3 features; kept as reference" }));
+}
+
+#[test]
+fn partial_history_checks_final_volume_in_freecad_when_available() {
+    let Some(cli) = std::env::var_os("FREECAD_CMD") else {
+        return;
+    };
+    let (mut script, _) = written(&model("partial"), FreeCadWriter::new());
+    script.push_str(
+        "assert doc.getObject('PartialHistory').Label == 'Rebuilt history (partial)'\n\
+         assert abs(original.Shape.Volume - 1000.0) < 1e-6\n\
+         assert abs(doc.getObject('Body').Tip.Shape.Volume - 40*math.pi) < 1e-6\n\
+         print('DUTCHMAN_PARTIAL_OK')\n",
+    );
+    let output = std::process::Command::new(cli)
+        .arg("-c")
+        .arg(format!("exec({})", generate::quoted(&script).unwrap()))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("DUTCHMAN_PARTIAL_OK"));
 }
 
 #[test]

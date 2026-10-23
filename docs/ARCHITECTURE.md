@@ -286,3 +286,8 @@ CADIR mapping and refusals without changing those history modules. It emits esca
 and fixed Python API calls, with guarded STEP restatement reused for the original geometry.
 Each placed part is rebuilt independently or kept as STEP. The macro keeps original geometry
 for runtime recovery. CLI, batch, MCP and the GUI share the output adapter selector.
+
+The experimental FreeCAD writer also retains the longest mapped history prefix and all
+mapped sketches when a later feature cannot be rebuilt. They remain hidden references in
+**Rebuilt history (partial)** beside the final embedded STEP body; only an exact prefix
+match can replace that final shape. The SolidCraft writer still requires complete history.

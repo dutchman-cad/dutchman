@@ -180,7 +180,9 @@ form is `dutchman convert INPUT --to freecad -o OUTPUT.FCMacro`. This does not r
 FreeCAD input feature. Tell the user to run the result in FreeCAD with **Macro > Macros… >
 Execute**, or `freecadcmd OUTPUT.FCMacro`, then save the document as `.FCStd` if needed.
 The macro embeds original STEP geometry; parts whose features cannot be rebuilt remain
-imported geometry. Explain `history.features` and their reasons, and that the history is
-unverified until the macro runs. The original remains available for comparison; a runtime
+imported geometry, with the mapped prefix and mapped sketches hidden in **Rebuilt history
+(partial)** when available. Explain `rebuilt N of M features; kept as reference`,
+`history.features` and their reasons, and that the history is unverified until the macro
+runs. The original remains available for comparison; a runtime
 failure restores it and warns in FreeCAD. Parameter values are kept; source expressions
-remain inert text. See `docs/guide.md#freecad-output` for the supported cases and limits.
+remain inert text. See `docs/guide.md#freecad-output-experimental` for the supported cases and limits.
