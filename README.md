@@ -34,15 +34,35 @@ minute. Every release is on the [releases page](https://github.com/dutchman-cad/
 ## What converts
 
 Early development. Fusion (`.f3d`, `.f3z`) designs, Inventor parts (`.ipt`), Inventor
-assemblies (`.iam`, with their parts found anywhere in the project) and SolidWorks parts
-(`.sldprt`) and FreeCAD documents (`.FCStd`) convert today:
+assemblies (`.iam`, with their parts found anywhere in the project), SolidWorks parts
+(`.sldprt`), and FreeCAD documents (`.FCStd`) convert today:
 
-- When every feature in a design's history maps onto SolidCraft (sketches and extrudes so
-  far), the SolidCraft design keeps that history, editable, with the original geometry kept
-  beside it. If `solidcraft-cli` is installed, Dutchman replays the history in it and checks
-  it against the original before keeping it.
-- Otherwise the design converts as solid geometry without history.
+- When every feature in a design's history maps onto SolidCraft, the SolidCraft design keeps
+  that history, editable, with the original geometry kept beside it. If `solidcraft-cli` is
+  installed, Dutchman replays the history in it and checks it against the original before
+  keeping it. What maps, most of it from Fusion (body patterns, mirrors, booleans, and
+  more of the rest on main, in the next release):
+  - sketches: lines, arcs, circles, conics, splines, and many constraints and dimensions;
+  - extrudes and revolves, with their end forms;
+  - holes: counterbores, countersinks, chamfered entries, and thread labels on tapped holes;
+  - sweeps, lofts, and coils;
+  - linear, circular, and path patterns of features or bodies, body mirrors, and body
+    booleans;
+  - sheet-metal base flanges.
+
+  [Feature history](docs/guide.md#feature-history-and-the-solidcraft-check) in the guide has
+  the detail, and what stops a history.
+- Otherwise the design converts as solid geometry without history. Sketches that map, on
+  planes that resolve, are kept with it, hidden, for reference (on main, in the next release).
+- Assemblies keep their components and placements. Fusion and FreeCAD assemblies keep their
+  joints too (revolute, slider, and rigid), with their grounded parts held where they are;
+  Inventor assemblies place their parts, without joints.
 - Every conversion lists what it could not carry across, as Info, Degraded or Dropped.
+
+The output is a SolidCraft design. `--to freecad` writes a FreeCAD rebuild macro (`.FCMacro`)
+instead, which rebuilds the mapped history in FreeCAD and keeps the original geometry
+(experimental, on main, in the next release; see
+[FreeCAD output](docs/guide.md#freecad-output-experimental)).
 
 `dutchman formats` lists what converts from each format; `dutchman convert --help` lists the
 options.
@@ -58,7 +78,10 @@ Info, Degraded or Dropped. A converted design opens in SolidCraft from its card:
 `SOLIDCRAFT_APP` names, else `solidcraft` on `PATH`, else the system's app for `.solidcraft`
 files. When an Inventor assembly's part files are not found, its card names them: **Search a
 folder…** or **Find a file…** converts it again, searching there too. The app follows the
-system's light or dark setting, or can be set to Day or Night.
+system's light or dark setting, or can be set to Day or Night. On main, in the next release:
+its **Output format** choice offers a FreeCAD macro, the window title shows its version,
+`dutchman-gui --version` and `--help` print without opening a window, and a **Report a
+problem** link opens the **A file didn't convert** form.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/dutchman-gui-night.png">
