@@ -131,7 +131,8 @@ fn plan_parts(
         }
         let file = part.source_file.as_deref().unwrap_or(&part.name);
         let mut part_report = Report::default();
-        let mapping = history::map(part, &mut part_report);
+        let mut mapping = history::map(part, &mut part_report);
+        writer.plan_blends(&mut mapping);
         features.extend(mapping.features.iter().cloned().map(|mut feature| {
             feature.name = Some(format!("{file}: {}", feature.name.unwrap_or_default()));
             feature
@@ -493,16 +494,19 @@ impl Builder<'_> {
             return Ok(false);
         }
         let mut part_report = Report::default();
-        let mapping = history::map(part, &mut part_report);
+        let mut mapping = history::map(part, &mut part_report);
+        if let Ok(history) = &mut mapping.result {
+            if let Err(why) = history::base::restate(history, part) {
+                mapping.result = Err(why);
+            }
+        }
+        self.writer.prove_blends(part, &mut mapping, step)?;
         self.outcomes
             .extend(mapping.features.iter().cloned().map(|mut feature| {
                 feature.name = Some(format!("{file}: {}", feature.name.unwrap_or_default()));
                 feature
             }));
-        let restated = mapping
-            .result
-            .and_then(|mut history| history::base::restate(&mut history, part).map(|()| history));
-        let mut history = match restated {
+        let mut history = match mapping.result {
             Ok(history) => history,
             Err(reason) => {
                 if !mapping.features.is_empty() {

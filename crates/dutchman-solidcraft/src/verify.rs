@@ -510,6 +510,238 @@ fn evaluate(
     parse(&value).map(Evaluation::Done)
 }
 
+/// One edge of a body SolidCraft replayed, as `model.edges` gives it: its end vertices, the
+/// point halfway along it and its length, in millimetres. It gives no carrier or tangent.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ReplayedEdge {
+    pub start: [f64; 3],
+    pub end: [f64; 3],
+    pub mid: [f64; 3],
+    pub length: f64,
+}
+
+/// The bodies at one point of a replayed timeline, each by name with its edges.
+pub(crate) type ReplayedBodies = Vec<(String, Vec<ReplayedEdge>)>;
+
+/// How many bodies, and edges in all, one replayed step may report before it is refused.
+const REPLAY_BODIES: usize = 1_000;
+const REPLAY_EDGES: usize = 200_000;
+
+/// Replays `design` in SolidCraft and reports the bodies and their edges with the timeline
+/// rolled to just after each feature id in `after` (in that order): the bodies each later
+/// feature starts from. Two runs of the CLI in all, however many steps, within `timeout`
+/// together: one finds the bodies at every step, the next their edges. Each step is `Err`
+/// when a feature before it fails there; the whole is `Err` when SolidCraft gives no answer.
+pub(crate) fn replay_edges(
+    cli: &Path,
+    timeout: Duration,
+    design: &[u8],
+    after: &[u64],
+) -> Result<Vec<Result<ReplayedBodies, String>>, String> {
+    let deadline = Instant::now() + timeout;
+    let dir = tempfile::tempdir().map_err(|err| format!("no scratch folder: {err}"))?;
+    let input = dir.path().join("history.solidcraft");
+    std::fs::write(&input, design).map_err(|err| format!("cannot stage the design: {err}"))?;
+    let roll =
+        |id: u64| serde_json::json!({"command": "timeline.roll_to", "params": {"feature": id}});
+    let mut script = Vec::new();
+    for id in after {
+        script.push(roll(*id));
+        script.push(serde_json::json!({"command": "document.inspect", "params": {}}));
+    }
+    let results = run_script(cli, deadline, dir.path(), "bodies", &input, &script)?;
+    let mut steps = Vec::new();
+    for (k, _) in after.iter().enumerate() {
+        let inspect = results
+            .get(k.saturating_mul(2).saturating_add(1))
+            .ok_or_else(|| format!("{CLI_NAME} result is missing a step"))?;
+        steps.push(step_bodies(inspect));
+    }
+    let mut script = Vec::new();
+    for (id, step) in after.iter().zip(&steps) {
+        script.push(roll(*id));
+        if let Ok(bodies) = step {
+            for (name, _) in bodies {
+                script
+                    .push(serde_json::json!({"command": "model.edges", "params": {"body": name}}));
+            }
+        }
+    }
+    let results = run_script(cli, deadline, dir.path(), "edges", &input, &script)?;
+    let mut at = 0usize;
+    for step in &mut steps {
+        at = at.saturating_add(1);
+        let Ok(bodies) = step else { continue };
+        let mut total = 0usize;
+        for (name, edges) in bodies.iter_mut() {
+            let result = results
+                .get(at)
+                .ok_or_else(|| format!("{CLI_NAME} result is missing a step"))?;
+            at = at.saturating_add(1);
+            if result.get("body").and_then(Value::as_str) != Some(name.as_str()) {
+                return Err(format!(
+                    "{CLI_NAME} reported the edges of another body than {name:?}"
+                ));
+            }
+            let rows = result
+                .get("edges")
+                .and_then(Value::as_array)
+                .ok_or_else(|| format!("{CLI_NAME} result has no edges for {name:?}"))?;
+            total = total.saturating_add(rows.len());
+            if total > REPLAY_EDGES {
+                return Err(format!(
+                    "the replayed bodies have more than {REPLAY_EDGES} edges"
+                ));
+            }
+            *edges = rows.iter().map(replayed_edge).collect::<Result<_, _>>()?;
+        }
+    }
+    Ok(steps)
+}
+
+/// The bodies a `document.inspect` result holds, or the first feature still active that
+/// failed.
+fn step_bodies(inspect: &Value) -> Result<ReplayedBodies, String> {
+    let timeline = inspect
+        .get("timeline")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    for entry in timeline {
+        let active = entry.get("rolled_back").and_then(Value::as_bool) != Some(true)
+            && entry.get("suppressed").and_then(Value::as_bool) != Some(true);
+        if let (true, Some(error)) = (active, entry.get("error").and_then(Value::as_str)) {
+            let name = entry.get("name").and_then(Value::as_str).unwrap_or("?");
+            return Err(format!("feature \"{name}\" failed there: {error}"));
+        }
+    }
+    let bodies = inspect
+        .get("bodies")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("{CLI_NAME} result has no bodies"))?;
+    if bodies.len() > REPLAY_BODIES {
+        return Err(format!("more than {REPLAY_BODIES} bodies"));
+    }
+    bodies
+        .iter()
+        .map(|body| {
+            body.get("name")
+                .and_then(Value::as_str)
+                .map(|name| (name.to_owned(), Vec::new()))
+                .ok_or_else(|| format!("{CLI_NAME} result has a body without a name"))
+        })
+        .collect()
+}
+
+fn replayed_edge(row: &Value) -> Result<ReplayedEdge, String> {
+    edge_fields(row).ok_or_else(|| {
+        format!("{CLI_NAME} result has an edge without its ends, midpoint or length")
+    })
+}
+
+fn edge_fields(row: &Value) -> Option<ReplayedEdge> {
+    let point = |key: &str| -> Option<[f64; 3]> {
+        let values = row.get(key)?.as_array()?;
+        if values.len() != 3 {
+            return None;
+        }
+        let mut out = [0.0; 3];
+        for (slot, value) in out.iter_mut().zip(values) {
+            *slot = value.as_f64().filter(|v| v.is_finite())?;
+        }
+        Some(out)
+    };
+    Some(ReplayedEdge {
+        start: point("start")?,
+        end: point("end")?,
+        mid: point("mid")?,
+        length: row
+            .get("length")
+            .and_then(Value::as_f64)
+            .filter(|v| v.is_finite() && *v >= 0.0)?,
+    })
+}
+
+/// Runs `script` on `design` with the CLI and returns its per-command results.
+fn run_script(
+    cli: &Path,
+    deadline: Instant,
+    dir: &Path,
+    name: &str,
+    design: &Path,
+    script: &[Value],
+) -> Result<Vec<Value>, String> {
+    let path = dir.join(format!("{name}.json"));
+    let output = dir.join(format!("{name}-out.json"));
+    let text =
+        serde_json::to_string(script).map_err(|err| format!("cannot write the script: {err}"))?;
+    std::fs::write(&path, text).map_err(|err| format!("cannot stage the script: {err}"))?;
+    let mut child = spawn(cli, |command| {
+        command
+            .arg("run")
+            .arg(&path)
+            .arg("--in")
+            .arg(design)
+            .arg("--results")
+            .arg("--allow-errors")
+            .arg("--json-out")
+            .arg(&output)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+    })
+    .map_err(|err| format!("cannot run {}: {err}", cli.display()))?;
+    let status = wait(&mut child, cli, deadline)?;
+    if !status.success() {
+        return Err(format!("{CLI_NAME} exited with {status}"));
+    }
+    let text = std::fs::read_to_string(&output)
+        .map_err(|err| format!("{CLI_NAME} wrote no result: {err}"))?;
+    let value: Value =
+        serde_json::from_str(&text).map_err(|err| format!("{CLI_NAME} result: {err}"))?;
+    match value {
+        Value::Array(results) => Ok(results),
+        _ => Err(format!("{CLI_NAME} result is not a list of results")),
+    }
+}
+
+/// Starts the CLI, retrying while the system says it is busy being written.
+fn spawn(cli: &Path, configure: impl Fn(&mut Command)) -> std::io::Result<std::process::Child> {
+    let mut tries = 0;
+    loop {
+        let mut command = Command::new(cli);
+        configure(&mut command);
+        match command.spawn() {
+            Err(err)
+                if err.kind() == std::io::ErrorKind::ExecutableFileBusy && tries < BUSY_TRIES =>
+            {
+                tries += 1;
+                std::thread::sleep(POLL);
+            }
+            spawned => return spawned,
+        }
+    }
+}
+
+/// Waits for `child` until `deadline`, killing it then.
+fn wait(
+    child: &mut std::process::Child,
+    cli: &Path,
+    deadline: Instant,
+) -> Result<std::process::ExitStatus, String> {
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("{} timed out", cli.display()));
+            }
+            Ok(None) => std::thread::sleep(POLL),
+            Err(err) => return Err(format!("cannot wait for {}: {err}", cli.display())),
+        }
+    }
+}
+
 /// The body volumes, face count and timeline errors and warnings in a SolidCraft `eval` result.
 fn parse(value: &Value) -> Result<Eval, String> {
     let bodies = value
