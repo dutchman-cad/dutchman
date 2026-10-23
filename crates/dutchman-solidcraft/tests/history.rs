@@ -4268,7 +4268,7 @@ fn solidcraft_turns_the_coil_the_way_cadir_says() {
 }
 
 #[test]
-fn a_helix_surface_left_out_of_the_step_is_named_in_the_report() {
+fn a_helix_surface_is_written_to_the_step_and_needs_no_note() {
     let base = cube_with_history(10.0, first_profile(), None);
     let mut wire = serde_json::to_value(&base.ir).unwrap();
     let model = &mut wire["model"];
@@ -4292,7 +4292,7 @@ fn a_helix_surface_left_out_of_the_step_is_named_in_the_report() {
                      "pitch": {"x": 0.0, "y": 0.0, "z": 5.0},
                      "apex_factor": 0.0,
                      "axis": {"x": 0.0, "y": 0.0, "z": 1.0}},
-            "profile": {"kind": "circle", "length": 0.0, "radius": 1.0}}},
+            "profile": {"kind": "circle", "angle": 0.0, "radius": 1.0}}},
         "record_bounds": [null, null, null, null],
     }]);
     let model = Model {
@@ -4300,19 +4300,20 @@ fn a_helix_surface_left_out_of_the_step_is_named_in_the_report() {
         ..base
     };
     let (_, report) = convert(&model, &SolidCraftWriter::new().import_only(true));
-    let named = report
-        .losses()
-        .iter()
-        .find(|loss| loss.subject == "geometry" && loss.detail.contains("helix surface"))
-        .map(|loss| (loss.severity, loss.detail.clone()));
-    assert_eq!(
-        named,
-        Some((
-            Severity::Degraded,
-            "a helix surface (the swept face of a coil or thread) has no form cadmpeg writes to \
-             STEP and is left out: the solid it bounds opens without it, with no volume"
-                .to_owned()
-        ))
+    // cadmpeg writes an evaluable helix surface as a sampled B-spline surface, so nothing is
+    // left out and the report names nothing.
+    assert!(
+        report.losses().iter().all(|loss| loss.subject
+            != "step/geometry.procedural-definition-not-written"
+            && !loss.detail.contains("has no form cadmpeg writes")),
+        "{report:?}"
+    );
+    assert!(
+        report
+            .losses()
+            .iter()
+            .any(|loss| loss.subject == "step/geometry.helix-fitted-to-bspline"),
+        "{report:?}"
     );
 }
 

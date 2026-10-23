@@ -8,6 +8,13 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### cadmpeg
+
+- The cadmpeg pin moves to a2407a3 (CADIR 9): the geometry of a feature's historical input
+  edges, rigid as-built joints in Fusion, evaluable procedural faces (a coil's swept face
+  among them) written to STEP as sampled B-spline surfaces, and fixes to ASM intcurve
+  pcurves and FreeCAD restoration.
+
 ### Desktop app
 
 - The line naming the SolidCraft that checks history stays on one line (the whole of it on
