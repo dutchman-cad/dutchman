@@ -191,6 +191,12 @@ Replacing a source shape with its mirror is not supported yet: SolidCraft's mirr
 the original. Cosmetic threads lack a resolved standard and pitch in CADIR, so assigning
 SolidCraft's ISO metric designation would invent thread data; these remain flattened.
 
+When a design falls back to imported geometry, a single Info loss with subject `sketches`
+reports `kept N sketches for reference`, followed by `; M left out` when any sketches were
+omitted. Only mapped sketches with resolved planes are retained, hidden after the import;
+they do not change the body comparison or the report's `mode` and verification status.
+`--import-only` continues to omit sketches.
+
 ### FreeCAD macro output (experimental)
 
 For `convert --to freecad` (MCP `to: "freecad"`), `output.format` is

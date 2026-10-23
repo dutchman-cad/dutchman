@@ -2,7 +2,7 @@
 //!
 //! History is all or nothing: CADIR keeps only the final B-rep, so a history that stops part
 //! way cannot be finished with an imported body. Either every active feature maps, or the
-//! design is written as one import.
+//! design is written as one import with mapped sketches hidden for reference.
 //!
 //! The mapping reads the model in CADIR's documented JSON form (`docs/cad-ir.md` in cadmpeg),
 //! the stable contract cadmpeg publishes, rather than its Rust accessors. It knows the wire
@@ -329,16 +329,20 @@ pub(crate) struct Mapping {
     /// Each source feature's status, in timeline order. Every feature is looked at, also after
     /// one that does not map, so a caller can show everything that stands in the way.
     pub(crate) features: Vec<FeatureOutcome>,
+    /// Mapped, resolved sketches retained even when the history cannot replay.
+    pub(crate) references: History,
 }
 
 /// Maps the model's history, or says why it cannot be replayed. Losses of a history that is
 /// written go to `report`.
 pub(crate) fn map(model: &Model, report: &mut Report) -> Mapping {
     let mut features_out = Vec::new();
-    let result = map_into(model, report, &mut features_out);
+    let mut references = History::default();
+    let result = map_into(model, report, &mut features_out, &mut references);
     Mapping {
         result,
         features: features_out,
+        references,
     }
 }
 
@@ -346,12 +350,14 @@ fn map_into(
     model: &Model,
     report: &mut Report,
     out: &mut Vec<FeatureOutcome>,
+    references: &mut History,
 ) -> Result<History, String> {
     let document =
         serde_json::to_value(&model.ir).map_err(|err| format!("cannot read the model: {err}"))?;
     check_version(&document)?;
     let wire = document.get("model").cloned().unwrap_or(Value::Null);
     let (params, param_names) = params::map(&model.ir.model.parameters, report);
+    references.params = params.clone();
     let mut ctx = Context::new(&wire);
     ctx.params = param_names;
     let mut features: Vec<&Value> = ctx.arena("features").iter().collect();
@@ -389,6 +395,9 @@ fn map_into(
             }
             Ok(Mapped::Feature(mut mapped)) => {
                 history.mapped += 1;
+                if mapped.get("type").and_then(Value::as_str) == Some("sketch") {
+                    references.features.push(mapped.clone());
+                }
                 let name = ctx.unique_name(&mapped, &history.features);
                 if let Some(fields) = mapped.as_object_mut() {
                     fields.insert("name".to_owned(), Value::String(name.clone()));
@@ -405,6 +414,7 @@ fn map_into(
             }
         }
     }
+    references.next_id = ctx.next_id;
     if let Some(reason) = blocked {
         return Err(reason);
     }

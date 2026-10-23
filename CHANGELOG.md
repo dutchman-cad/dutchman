@@ -47,6 +47,8 @@ report's schema name changes when a field does).
 - Sheet-metal edge flanges and hems say why they are not mapped: an edge flange's edge is
   known only after the flange has bent it, and a hem's developed length or its rolled,
   teardrop, or unresolved form has no SolidCraft equivalent.
+- Flattened designs keep mapped sketches with resolved planes, hidden for reference after the
+  imported geometry, and report how many were kept or left out.
 
 ### FreeCAD output (experimental)
 

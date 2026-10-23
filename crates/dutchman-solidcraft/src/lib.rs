@@ -165,11 +165,26 @@ impl SolidCraftWriter {
         &self,
         model: &Model,
         step: &str,
+        references: Option<&history::History>,
         report: &mut Report,
     ) -> Result<Vec<u8>, Error> {
-        document::report_unmapped(model, report);
+        document::report_unmapped(model, references, report);
         let design = container::Container::new(step.as_bytes())?;
-        let doc = document::import_design(model, design.step_blob());
+        let mut doc = document::import_design(model, design.step_blob());
+        if let Some(references) = references {
+            document::keep_sketches(&mut doc, references);
+            let kept = references.features.len();
+            let left_out = model.ir.model.sketches.len().saturating_sub(kept);
+            if kept > 0 || left_out > 0 {
+                let noun = if kept == 1 { "sketch" } else { "sketches" };
+                let detail = if left_out > 0 {
+                    format!("kept {kept} {noun} for reference; {left_out} left out")
+                } else {
+                    format!("kept {kept} {noun} for reference")
+                };
+                report.push(Severity::Info, "sketches", detail);
+            }
+        }
         design.finish(&doc)
     }
 
@@ -444,7 +459,7 @@ impl Writer for SolidCraftWriter {
                 check: Check::NotApplicable("--import-only".to_owned()),
                 features: Vec::new(),
             };
-            (self.import_design(model, &step, report)?, outcome)
+            (self.import_design(model, &step, None, report)?, outcome)
         } else {
             let mut history_report = Report::default();
             let mut mapping = history::map(model, &mut history_report);
@@ -466,7 +481,10 @@ impl Writer for SolidCraftWriter {
                         check: Check::NotApplicable(why),
                         features: mapping.features.clone(),
                     };
-                    (self.import_design(model, &step, report)?, outcome)
+                    (
+                        self.import_design(model, &step, Some(&mapping.references), report)?,
+                        outcome,
+                    )
                 }
                 (Err(reason), None) => {
                     report.push(Severity::Info, HISTORY, format!("flattened: {reason}"));
@@ -479,7 +497,10 @@ impl Writer for SolidCraftWriter {
                     } else {
                         flat(reason.clone())
                     };
-                    (self.import_design(model, &step, report)?, outcome)
+                    (
+                        self.import_design(model, &step, Some(&mapping.references), report)?,
+                        outcome,
+                    )
                 }
                 (Ok(history), _) => {
                     let written = self.history_design(model, history, &step, Live::History)?;
@@ -513,7 +534,15 @@ impl Writer for SolidCraftWriter {
                         verify::Outcome::Differs(why) => {
                             let reason = format!("replay differs ({why})");
                             report.push(Severity::Info, HISTORY, format!("flattened: {reason}"));
-                            (self.import_design(model, &step, report)?, flat(reason))
+                            (
+                                self.import_design(
+                                    model,
+                                    &step,
+                                    Some(&mapping.references),
+                                    report,
+                                )?,
+                                flat(reason),
+                            )
                         }
                     }
                 }
