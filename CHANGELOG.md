@@ -10,6 +10,12 @@ report's schema name changes when a field does).
 
 ### cadmpeg
 
+- The cadmpeg pin moves to 525b961: Fusion rigid groups of any size (each member held to the
+  first as built), and more Inventor sketches closed (solver hints on more relations, equal
+  length).
+
+### cadmpeg
+
 - The cadmpeg pin moves to a2407a3 (CADIR 9): the geometry of a feature's historical input
   edges, rigid as-built joints in Fusion, evaluable procedural faces (a coil's swept face
   among them) written to STEP as sampled B-spline surfaces, and fixes to ASM intcurve

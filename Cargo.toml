@@ -20,9 +20,9 @@ clap = { version = "4.5", default-features = false, features = ["std", "derive",
 aho-corasick = "1.1"
 # cadmpeg at one tested commit of its main branch, the same for every cadmpeg crate. Move it
 # after a batch of cadmpeg merges (docs/releasing.md); the nightly build takes cadmpeg's main.
-cadmpeg-core = { git = "https://github.com/cadmpeg/cadmpeg", rev = "a2407a34a3ea31a3a4080e023eb1cf30526f75e3" }
-cadmpeg-ir = { git = "https://github.com/cadmpeg/cadmpeg", rev = "a2407a34a3ea31a3a4080e023eb1cf30526f75e3" }
-cadmpeg-registry = { git = "https://github.com/cadmpeg/cadmpeg", rev = "a2407a34a3ea31a3a4080e023eb1cf30526f75e3", default-features = false, features = ["f3d", "inventor", "sldprt", "step"] }
+cadmpeg-core = { git = "https://github.com/cadmpeg/cadmpeg", rev = "525b961b074d338d64723875ac2345c3a1d3c257" }
+cadmpeg-ir = { git = "https://github.com/cadmpeg/cadmpeg", rev = "525b961b074d338d64723875ac2345c3a1d3c257" }
+cadmpeg-registry = { git = "https://github.com/cadmpeg/cadmpeg", rev = "525b961b074d338d64723875ac2345c3a1d3c257", default-features = false, features = ["f3d", "inventor", "sldprt", "step"] }
 getrandom = "0.3"
 serde_json = "1"
 sha2 = "0.11"
