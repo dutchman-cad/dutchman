@@ -155,10 +155,13 @@ entry recesses combined with drill points, exit treatments, taper, and modeled t
 patterns of earlier features or named bodies, linear in one or
 two directions, circular over a partial span or all the way round, or at fixed spacing along
 planar sketch curves; regular explicit offsets and angles, and pairs of linear composite
-stages, with at most 10,000 instances per pattern; and mirrors of earlier
-features across a plane (features are named uniquely on the timeline,
-since SolidCraft patterns refer to them by name). Parameters keep their expressions where SolidCraft reads them the same way, else
-their evaluated values.
+stages, with at most 10,000 instances per pattern; mirrors of earlier features across a
+plane; and body mirror patterns and body combines (join, cut or intersect, optionally keeping
+the tools) of bodies named by earlier features. Shells and drafts wait on input face geometry
+(their faces are known only on the final body, which the feature has changed); cosmetic
+thread standards and pitches and shape-replacing mirrors are not supported yet. Features are
+named uniquely on the timeline, since SolidCraft patterns refer to them by name. Parameters
+keep their expressions where SolidCraft reads them the same way, else their evaluated values.
 
 Selected straight profile loops that cross or retrace their own curves are split at
 intersections into bounded regions for selection. The sketch keeps its original curves and
