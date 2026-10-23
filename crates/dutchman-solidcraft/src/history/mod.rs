@@ -537,10 +537,12 @@ mod tests {
     #[test]
     fn known_cadir_versions_are_read_and_others_refused() {
         assert!(check_version(&json!({"ir_version": "6"})).is_ok());
-        assert!(check_version(&json!({"ir_version": "7"})).is_ok());
+        for version in ["7", "8", "9", "10"] {
+            assert!(check_version(&json!({"ir_version": version})).is_ok());
+        }
         assert_eq!(
-            check_version(&json!({"ir_version": "8"})).unwrap_err(),
-            "unsupported CADIR version \"8\" (Dutchman reads 6, 7)"
+            check_version(&json!({"ir_version": "11"})).unwrap_err(),
+            "unsupported CADIR version \"11\" (Dutchman reads 6, 7, 8, 9, 10)"
         );
         assert!(check_version(&json!({})).is_err());
     }

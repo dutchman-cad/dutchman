@@ -168,6 +168,12 @@ impl Motion {
     }
 }
 
+/// Whether a joint row's connector frames point the same way (`frame_sense: "aligned"`);
+/// absent or `opposed`, they meet face to face.
+fn aligned(row: &Value) -> bool {
+    row.get("frame_sense").and_then(Value::as_str) == Some("aligned")
+}
+
 /// Half a turn about x: how the second frame of a joint meets the first.
 const FACING: Placement3x4 = [
     [1.0, 0.0, 0.0, 0.0],
@@ -964,8 +970,7 @@ fn joint(
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
             motion,
-            // Absent or `opposed`: the frames meet face to face.
-            flip: row.get("frame_sense").and_then(Value::as_str) == Some("aligned"),
+            flip: aligned(row),
         },
         note,
     ))
@@ -1953,37 +1958,37 @@ mod tests {
 
     #[test]
     fn an_aligned_joint_meets_its_frames_z_to_z() {
-        // The same rigid joint with both frames pointing up: face to face (no sense, or
-        // `opposed`), block 2 is turned over to meet block 1; `aligned`, it is not turned.
-        let placed_with = |sense: Option<&str>| {
-            let mut row = joint(
+        // The same rigid joint with both frames pointing up: face to face, block 2 is turned
+        // over to meet block 1; aligned, it is not turned.
+        let placed_with = |flip: bool| {
+            let row = joint(
                 1,
                 json!({"kind": "fixed"}),
                 connector_at(2, &[], at([0.0, 0.0, 0.0], 0.0)),
                 connector_at(1, &[], at([10.0, 0.0, 0.0], 0.0)),
             );
-            if let Some(sense) = sense {
-                row["frame_sense"] = json!(sense);
-            }
+            // The joint as the file gives it, then the parts placed by it with each sense.
             let model = with_joints(nested(false, None), json!([row]));
-            let (assembly, notes) = local_components(&model).unwrap().unwrap();
+            let mut joint = local_components(&model).unwrap().unwrap().0.joints[0].clone();
+            joint.flip = flip;
+            let mut fresh = local_components(&nested(false, None)).unwrap().unwrap().0;
+            fresh.joints = vec![joint];
+            let notes = place_by_joints(&mut fresh);
             assert!(notes.is_empty(), "{notes:?}");
-            (
-                world_at(&assembly, &[0, 1]).unwrap(),
-                assembly.joints[0].flip,
-            )
+            world_at(&fresh, &[0, 1]).unwrap()
         };
-        let (aligned, flip) = placed_with(Some("aligned"));
-        assert!(flip);
-        assert!(near(&aligned, &at([110.0, 0.0, 0.0], 0.0)), "{aligned:?}");
-        for sense in [None, Some("opposed")] {
-            let (facing, flip) = placed_with(sense);
-            assert!(!flip);
-            assert!(
-                near(&facing, &compose(&at([110.0, 0.0, 0.0], 0.0), &FACING)),
-                "{sense:?}: {facing:?}"
-            );
-        }
+        assert!(near(&placed_with(true), &at([110.0, 0.0, 0.0], 0.0)));
+        assert!(near(
+            &placed_with(false),
+            &compose(&at([110.0, 0.0, 0.0], 0.0), &FACING)
+        ));
+    }
+
+    #[test]
+    fn a_joint_is_aligned_only_when_its_source_says_so() {
+        assert!(aligned(&json!({"frame_sense": "aligned"})));
+        assert!(!aligned(&json!({"frame_sense": "opposed"})));
+        assert!(!aligned(&json!({})));
     }
 
     #[test]
@@ -2484,7 +2489,8 @@ mod tests {
         // design inserted inside it: both are held; the second block is not.
         let mut frame = placed(0, "frame", root(), 100.0);
         frame["id"] = json!("f3d:model:occurrence#root-0");
-        let inside_root = json!({"kind": "occurrence", "occurrence": "f3d:model:occurrence#root-0"});
+        let inside_root =
+            json!({"kind": "occurrence", "occurrence": "f3d:model:occurrence#root-0"});
         let mut first = placed(1, "block", inside_root.clone(), 0.0);
         first["id"] = json!("f3d:model:occurrence#root-1");
         let second = placed(2, "block", inside_root, 30.0);
