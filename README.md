@@ -60,8 +60,10 @@ assemblies (`.iam`, with their parts found anywhere in the project), SolidWorks 
 - Every conversion lists what it could not carry across, as Info, Degraded or Dropped.
 
 The output is a SolidCraft design. `--to freecad` writes a FreeCAD rebuild macro (`.FCMacro`)
-instead, which rebuilds the mapped history in FreeCAD and keeps the original geometry
-(experimental, on main, in the next release; see
+instead, which rebuilds the mapped history in FreeCAD and keeps the original geometry. When a
+later feature can't be rebuilt, the mapped features before it and the mapped sketches are kept,
+hidden, in a "Rebuilt history (partial)" group beside the original geometry (experimental, on
+main, in the next release; see
 [FreeCAD output](docs/guide.md#freecad-output-experimental)).
 
 `dutchman formats` lists what converts from each format; `dutchman convert --help` lists the

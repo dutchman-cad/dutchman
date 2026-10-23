@@ -40,14 +40,25 @@ documents, authored in FreeCAD 1.1.1 by the cadmpeg project and dedicated to the
 ## Writing rebuild macros
 
 `--to freecad` writes a `.FCMacro` independently of `.FCStd` input support. See
-[FreeCAD output](guide.md#freecad-output) for coverage, fallback and execution.
+[FreeCAD output](guide.md#freecad-output-experimental) for coverage, fallback and execution.
 
 The writer is Rust and emits calls to FreeCAD as an outside Python program. It does not
 link or vendor FreeCAD. Its interface references are the public
 [Sketcher scripting](https://wiki.freecad.org/Sketcher_scripting),
 [Part scripting](https://wiki.freecad.org/Part_scripting),
 [Pad](https://wiki.freecad.org/PartDesign_Pad),
-[Revolution](https://wiki.freecad.org/PartDesign_Revolution), and
-[Linear pattern](https://wiki.freecad.org/PartDesign_LinearPattern) documentation, and the
+[Revolution](https://wiki.freecad.org/PartDesign_Revolution),
+[Linear pattern](https://wiki.freecad.org/PartDesign_LinearPattern),
+[Group](https://wiki.freecad.org/Std_Group) documentation, and the
 [public API reference](https://freecad.github.io/API/). No FreeCAD implementation source is
 needed to generate or test the macro text.
+
+Partial rebuilds retain the longest mapped prefix and every mapped sketch in a hidden
+**Rebuilt history (partial)** group. When that prefix differs from the final body, the
+embedded STEP is the visible result and the report says `rebuilt N of M features; kept
+as reference`. Only the final shape participates in verification; reference features do
+not add bodies or volumes. This output remains experimental and unverified.
+
+The synthetic macro regression tests can also run in a prebuilt FreeCAD command-line
+binary when `FREECAD_CMD` names that executable, including a final-volume check beside a
+hidden partial rebuild.

@@ -562,6 +562,8 @@ impl Writer for SolidCraftWriter {
 pub struct MappedHistory {
     /// Features in timeline order, or the first reason the history cannot be rebuilt.
     pub features: Result<Vec<Value>, String>,
+    /// Resolved sketch rows, also when a later feature blocks the history.
+    pub sketches: Vec<Value>,
     /// One mapping result per source feature.
     pub outcomes: Vec<FeatureOutcome>,
 }
@@ -571,6 +573,7 @@ pub fn mapped_history(model: &Model, report: &mut Report) -> MappedHistory {
     let mapping = history::map(model, report);
     MappedHistory {
         features: mapping.result.map(|history| history.features),
+        sketches: mapping.references.features,
         outcomes: mapping.features,
     }
 }

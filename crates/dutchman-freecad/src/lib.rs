@@ -1,5 +1,6 @@
 //! Rebuild scripts using FreeCAD's public Python scripting API. No FreeCAD code is linked.
 mod generate;
+mod prefix;
 
 use dutchman_core::{
     Check, Error, FeatureOutcome, FeatureStatus, Mode, Model, Outcome, Report, Severity, Writer,
@@ -68,14 +69,23 @@ impl FreeCadWriter {
         let mut mapping_report = Report::default();
         let mapping = dutchman_solidcraft::mapped_history(model, &mut mapping_report);
         let mut features = mapping.outcomes;
+        let rows = mapping.features;
         let generated = if self.import_only {
             Err("geometry only was requested".to_owned())
         } else if model.ir.model.bodies.len() != 1 {
             Err("feature ownership across multiple bodies is not supported yet".to_owned())
         } else {
-            mapping.features.and_then(|rows| generate::history(&rows))
+            rows.as_ref()
+                .map_err(Clone::clone)
+                .and_then(|rows| generate::history(rows))
         };
-        let rebuilt = generated.is_ok();
+        let partial = if generated.is_err() && !self.import_only && model.ir.model.bodies.len() == 1
+        {
+            prefix::recover(model, rows.ok(), mapping.sketches, &mut features)
+        } else {
+            None
+        };
+        let rebuilt = generated.is_ok() || partial.is_some();
         if rebuilt {
             report.append(mapping_report);
         } else {
@@ -129,6 +139,12 @@ impl FreeCadWriter {
                     script.push('\n');
                 }
                 script.push_str("    doc.recompute()\n    if body.Shape.isNull() or not body.Shape.isValid():\n        raise RuntimeError('Rebuilt body has no valid shape')\n    compare_original(body.Shape, original.Shape)\n    visible(original, False)\nexcept Exception as error:\n    visible(body, False)\n    visible(original, True)\n    App.Console.PrintWarning('Rebuild failed; original STEP restored: ' + str(error) + '\\n')\n");
+            }
+            Err(reason) if partial.is_some() => {
+                if let Some(partial) = partial {
+                    partial.write(script, &model.name, report)?;
+                }
+                report.push(Severity::Info, &model.name, reason);
             }
             Err(reason) => {
                 script.push_str("# Part kept as original STEP.\n");

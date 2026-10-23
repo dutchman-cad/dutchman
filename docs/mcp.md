@@ -268,6 +268,8 @@ Use a `.FCMacro` output path for `convert`; `convert_all` chooses that extension
 jobs. The GUI uses the same output setting. The result uses `output.format:
 "freecad-macro/1"` and the existing history and loss fields. Each macro embeds original STEP
 geometry and rebuilds supported features through FreeCAD's public scripting API; parts
-whose histories cannot be rebuilt remain STEP geometry. FreeCAD output is unverified and
-does not invoke SolidCraft or FreeCAD. `import_only` writes STEP geometry alone. See
-[FreeCAD output](guide.md#freecad-output) for feature coverage and running the macro.
+whose histories cannot be fully rebuilt retain their mapped prefix and mapped sketches
+in a hidden **Rebuilt history (partial)** group, with STEP as the visible final shape when
+the prefix differs. The report says `rebuilt N of M features; kept as reference`.
+FreeCAD output is unverified and does not invoke SolidCraft or FreeCAD. `import_only` writes STEP geometry alone. See
+[FreeCAD output](guide.md#freecad-output-experimental) for feature coverage and running the macro.
