@@ -4482,7 +4482,7 @@ fn sheet_operation(mut definition: Value) -> Model {
 }
 
 #[test]
-fn edge_flanges_wait_on_input_edge_geometry() {
+fn edge_flanges_refuse_final_body_edge_selections() {
     // The selected edge exists only on the final body, where it has become the bend.
     let model = sheet_operation(json!({
         "definition": "sheet_metal_edge_flange",
@@ -4498,10 +4498,296 @@ fn edge_flanges_wait_on_input_edge_geometry() {
         &SolidCraftWriter::new().verification(Verification::Off),
     );
     assert!(
-        history_line(&report).contains("edge flanges wait on input edge geometry"),
+        history_line(&report).contains("needs this feature's input edge geometry"),
         "{}",
         history_line(&report)
     );
+}
+
+/// The final body is deliberately still the original cube. The two symmetric input edges
+/// have their own geometry, unrelated to final-body edge numbering.
+fn input_edge_flange(back: bool, position: &str, angle: f64, radius: f64) -> Model {
+    let mut model = flanged_cube(1.0, "forward");
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let state = "test:sheet:feature-input#wall";
+    let edges = [
+        "test:sheet:historical-edge#front",
+        "test:sheet:historical-edge#back",
+    ];
+    let faces = [
+        "test:sheet:historical-face#top",
+        "test:sheet:historical-face#rim",
+    ];
+    let point = |x, y, z| json!({"x": x, "y": y, "z": z});
+    let geometry = [0, 1].map(|i| {
+        json!({
+            "edge": edges[i], "interior": point(5.0, 10.0 * i as f64, 1.0),
+            "start": point(0.0, 10.0 * i as f64, 1.0),
+            "end": point(10.0, 10.0 * i as f64, 1.0),
+            "tangent": point(1.0, 0.0, 0.0), "faces": faces,
+        })
+    });
+    wire["model"]["feature_input_topologies"] = json!([{
+        "id": state, "input_of": "f3d:model:feature#3", "edges": edges, "faces": faces,
+        "edge_geometry": geometry,
+    }]);
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "id": "f3d:model:feature#3", "ordinal": 2, "name": "Sheet wall",
+            "suppressed": false, "definition": {
+                "definition": "sheet_metal_edge_flange",
+                "edges": {"kind": "historical", "value": {
+                    "state": state, "edges": [edges[usize::from(back)]], "native": "synthetic edge",
+                }},
+                "height": {"kind": "distance", "value": 30.0},
+                "angle": angle, "height_datum": "outer_faces", "bend_position": position,
+                "width": {"kind": "full_edge"}, "bend_radius": radius,
+            },
+        }));
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn edge_flanges_pick_their_own_input_edges_and_keep_dimensions() {
+    for back in [false, true] {
+        for position in ["inside", "outside"] {
+            let (document, report) = convert(
+                &input_edge_flange(back, position, std::f64::consts::FRAC_PI_2, 2.0),
+                &SolidCraftWriter::new().verification(Verification::Off),
+            );
+            assert!(
+                history_line(&report).starts_with("3 of 3 features mapped"),
+                "{}",
+                history_line(&report)
+            );
+            let flange = &document["features"][2];
+            assert_eq!(flange["type"], "sheet_flange");
+            assert_eq!(
+                flange["edges"],
+                json!([[5.0, if back { 10.0 } else { 0.0 }, 1.0]])
+            );
+            assert_eq!(flange["height"], "30 mm");
+            assert_eq!(flange["angle"], "90 deg");
+            assert_eq!(flange["radius"], "2 mm");
+            assert_eq!(flange["position"], position);
+            assert_eq!(
+                document["sheet"]["rules"][0]["corner_relief_shape"],
+                "notch"
+            );
+            assert_eq!(document["sheet"]["rules"][0]["relief_width"], "Thickness");
+        }
+    }
+}
+
+#[test]
+fn edge_flanges_refuse_unproven_picks_and_unexpressible_options() {
+    let mutations = [
+        (
+            "/model/feature_input_topologies/0/input_of",
+            json!("f3d:model:feature#2"),
+            "does not belong",
+        ),
+        (
+            "/model/feature_input_topologies/0/edge_geometry",
+            json!([]),
+            "input topology has no edge geometry",
+        ),
+        (
+            "/model/feature_input_topologies/0/edges",
+            json!([]),
+            "input topology has no edges",
+        ),
+        (
+            "/model/feature_input_topologies/0/edge_geometry/0/interior",
+            json!({"x": 5.0, "y": 5.0, "z": 1.0}),
+            "exactly one rebuilt edge",
+        ),
+        (
+            "/model/feature_input_topologies/0/edge_geometry/0/interior",
+            json!({"x": 0.0, "y": 0.0, "z": 1.0}),
+            "exactly one rebuilt edge",
+        ),
+        (
+            "/model/feature_input_topologies/0/edge_geometry/0/end",
+            json!({"x": 9.0, "y": 0.0, "z": 1.0}),
+            "vertices or tangent",
+        ),
+        (
+            "/model/feature_input_topologies/0/edge_geometry/0/tangent",
+            json!({"x": 0.0, "y": 1.0, "z": 0.0}),
+            "vertices or tangent",
+        ),
+        (
+            "/model/features/2/definition/height_datum",
+            json!("inner_faces"),
+            "inner faces",
+        ),
+        (
+            "/model/features/2/definition/bend_position",
+            json!("adjacent"),
+            "bend position",
+        ),
+        (
+            "/model/features/2/definition/bend_position",
+            json!("tangent_to_side"),
+            "bend position",
+        ),
+        (
+            "/model/features/2/definition/width",
+            json!({"kind": "symmetric", "value": {"width": 5.0}}),
+            "part of its edge",
+        ),
+        (
+            "/model/features/2/definition/height",
+            json!({"kind": "to_object", "value": {
+                "target": {"kind": "native", "value": "synthetic"}, "offset": 0.0,
+            }}),
+            "ending at an object",
+        ),
+    ];
+    for (path, value, reason) in mutations {
+        let mut model = input_edge_flange(false, "outside", std::f64::consts::FRAC_PI_2, 2.0);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        *wire.pointer_mut(path).unwrap() = value;
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (_, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).contains(reason),
+            "{path}: {}",
+            history_line(&report)
+        );
+    }
+}
+
+#[test]
+fn edge_flanges_refuse_bases_without_a_proven_rectangular_body() {
+    for extra_body in [false, true] {
+        let mut model = input_edge_flange(false, "outside", std::f64::consts::FRAC_PI_2, 2.0);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        if extra_body {
+            let mut other = wire["model"]["features"][1].clone();
+            other["id"] = json!("f3d:model:feature#4");
+            other["ordinal"] = json!(2);
+            other["name"] = json!("Another sheet");
+            wire["model"]["features"][2]["ordinal"] = json!(3);
+            wire["model"]["features"]
+                .as_array_mut()
+                .unwrap()
+                .push(other);
+        } else {
+            // The base now has an oblique side; a bounding rectangle alone is not proof.
+            wire["model"]["sketch_entities"][0]["geometry"]["end"]["u"] = json!(9.0);
+            wire["model"]["sketch_entities"][1]["geometry"]["start"]["u"] = json!(9.0);
+        }
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (_, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        let reason = if extra_body {
+            "a base sheet that earlier features changed"
+        } else {
+            "a base sheet that is not one plain rectangle"
+        };
+        assert!(
+            history_line(&report).contains(reason),
+            "{}",
+            history_line(&report)
+        );
+    }
+}
+
+/// SolidCraft's complete measurements, used to distinguish symmetric but misplaced flanges.
+fn sheet_measurements(cli: &Path, input: &Path, output: &Path) -> Value {
+    let status = std::process::Command::new(cli)
+        .arg("eval")
+        .arg(input)
+        .arg("--json-out")
+        .arg(output)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let result: Value = serde_json::from_str(&std::fs::read_to_string(output).unwrap()).unwrap();
+    for entry in result["timeline"].as_array().into_iter().flatten() {
+        assert!(entry["error"].is_null(), "{entry}");
+    }
+    assert_eq!(result["bodies"].as_array().unwrap().len(), 1, "{result}");
+    result["bodies"][0].clone()
+}
+
+#[test]
+fn solidcraft_replays_input_edge_flanges_with_the_expected_shape() {
+    let Some(cli) = solidcraft() else { return };
+    for (back, position, degrees, radius, both) in [
+        (false, "outside", 90.0_f64, 2.0, false),
+        (true, "outside", 90.0, 2.0, false),
+        (false, "inside", 60.0, 1.5, false),
+        (true, "inside", 120.0, 3.0, false),
+        (false, "outside", 90.0, 2.0, true),
+    ] {
+        let mut model = input_edge_flange(back, position, degrees.to_radians(), radius);
+        let mut points = vec![[5.0, if back { 10.0 } else { 0.0 }, 1.0]];
+        if both {
+            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            wire["model"]["features"][2]["definition"]["edges"]["value"]["edges"] = json!([
+                "test:sheet:historical-edge#front",
+                "test:sheet:historical-edge#back",
+            ]);
+            model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+            points.push([5.0, 10.0, 1.0]);
+            let (document, report) = convert(
+                &model,
+                &SolidCraftWriter::new().verification(Verification::Off),
+            );
+            assert!(history_line(&report).starts_with("3 of 3 features mapped"));
+            assert_eq!(document["features"][2]["edges"], json!(points));
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let design = dir.path().join("mapped.solidcraft");
+        std::fs::write(&design, written(&model).0).unwrap();
+        // Build the expected body independently with documented commands and an explicit
+        // point on the intended edge. In particular the back case must grow toward +Y.
+        let reference = json!([
+            {"command": "sketch.create", "params": {"plane": "XY", "name": "Base"}},
+            {"command": "sketch.rectangle.two_point", "params": {"p0": [0, 0], "p1": [10, 10]}},
+            {"command": "sketch.finish", "params": {}},
+            {"command": "sheet.manage_rules", "params": {"name": "Sheet 1 mm", "thickness": "1 mm", "active": true}},
+            {"command": "sheet.flange", "params": {"sketch": "Base"}},
+            {"command": "sheet.flange", "params": {
+                "edges": points, "height": "30 mm",
+                "angle": format!("{degrees} deg"), "radius": format!("{radius} mm"), "position": position,
+            }},
+        ]);
+        let script = dir.path().join("expected.json");
+        std::fs::write(&script, serde_json::to_vec(&reference).unwrap()).unwrap();
+        let actual = sheet_measurements(&cli, &design, &dir.path().join("actual.json"));
+        let expected = sheet_measurements(&cli, &script, &dir.path().join("reference.json"));
+        let volume = expected["volume_mm3"].as_f64().unwrap();
+        assert!((actual["volume_mm3"].as_f64().unwrap() - volume).abs() / volume < 1e-4);
+        assert_eq!(actual["faces"], expected["faces"]);
+        for corner in ["min", "max"] {
+            for axis in 0..3 {
+                let actual_at = actual["bbox"][corner][axis].as_f64().unwrap();
+                let expected_at = expected["bbox"][corner][axis].as_f64().unwrap();
+                assert!(
+                    (actual_at - expected_at).abs() < 1e-6,
+                    "{back} {position}: {actual} != {expected}"
+                );
+            }
+        }
+        if !both && degrees == 90.0 && position == "outside" {
+            let corner = if back { "max" } else { "min" };
+            let y = if back { 13.0 } else { -3.0 };
+            assert!((actual["bbox"][corner][1].as_f64().unwrap() - y).abs() < 1e-6);
+            assert_eq!(actual["faces"], 14);
+        }
+    }
 }
 
 #[test]

@@ -516,9 +516,8 @@ fn map_feature(
         Some("sheet_metal_base_flange") => {
             sheet::base_flange(feature, definition, ctx).map(Mapped::Feature)
         }
-        // Its edge is known only on the final body, where it has become the flange's bend.
         Some("sheet_metal_edge_flange") => {
-            Err("edge flanges wait on input edge geometry".to_owned())
+            sheet::edge_flange(feature, definition, ctx, preceding).map(Mapped::Feature)
         }
         Some("sheet_metal_hem") => Err(sheet::hem_refusal(definition)),
         Some("base_feature") => base::map(feature, definition, ctx).map(Mapped::Feature),

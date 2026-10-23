@@ -64,9 +64,11 @@ For holes, a blocked feature's `reason` names the unsupported entry form, placem
 maps with an ISO metric thread label; thread details it can't keep are a `Degraded` loss on
 that feature. The wording is text for people, not a stable code.
 
-Sheet-metal edge flanges report `blocked` with the `reason` "edge flanges wait on input edge
-geometry", and hems with the form or developed length SolidCraft cannot express; the design
-falls back to geometry. These use the existing report fields; no schema fields change.
+Sheet-metal edge flanges with proven input-edge picks and supported dimensions report
+`mapped`. Other flanges report `blocked` with the specific selection or dimension reason
+(for example, "its input edge midpoint does not identify exactly one rebuilt edge"). Hems
+report the form or developed length SolidCraft cannot express. A blocked history falls back
+to geometry. These use the existing report fields; no schema fields change.
 
 A failure carries `"ok": false`, `input` and `error`, and exits 1:
 

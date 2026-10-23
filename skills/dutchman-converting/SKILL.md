@@ -65,9 +65,11 @@ Tell the user what to expect in one or two sentences before converting, for exam
 part has one body. Its history won't carry across (the fillet isn't supported yet), so you'll
 get the solid shape without the feature history."
 
-Sheet-metal histories map base flanges. Edge flanges and hems keep geometry and explain the
-blocked feature: an edge flange's edge is known only after the flange has bent it, and
-CADIR's hem developed length has no exact mapping to SolidCraft's outer-face length. Do not claim
+Sheet-metal histories map base flanges and full-edge flanges on unchanged rectangular base
+sheets when their own input-edge midpoint, tangent, and vertices prove the pick. Fixed
+outer-face heights, inside/outside placement, angles, and bend radii map. Other dimensions
+or unproven selections keep geometry and explain the blocked feature. CADIR's hem developed
+length has no exact mapping to SolidCraft's outer-face length. Do not claim
 that K-factor or relief settings were preserved: CADIR does not supply them, so sheet rules
 use SolidCraft defaults. Contour flange, bend, unfold/refold and corner-relief operations
 are not present in the pinned CADIR version.
