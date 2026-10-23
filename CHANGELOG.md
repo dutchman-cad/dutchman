@@ -25,6 +25,8 @@ report's schema name changes when a field does).
 
 ### cadmpeg
 
+- The cadmpeg pin moves to 8f8ff2a: Inventor sketches whose tangent relations key a hint
+  code to either operand close again (two parts regressed under 0872c6d).
 - The cadmpeg pin moves to 0872c6d: Inventor parts saved by Inventor 2019 and later carry
   their feature history, and newer Inventor assemblies place their parts; FreeCAD compounds
   of closed solids read as solid bodies; Fusion reads every context binding of a component,
