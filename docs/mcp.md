@@ -273,3 +273,9 @@ in a hidden **Rebuilt history (partial)** group, with STEP as the visible final 
 the prefix differs. The report says `rebuilt N of M features; kept as reference`.
 FreeCAD output is unverified and does not invoke SolidCraft or FreeCAD. `import_only` writes STEP geometry alone. See
 [FreeCAD output](guide.md#freecad-output-experimental) for feature coverage and running the macro.
+
+Experimental Assembly output keeps supported joints, through sub-assemblies too, with
+resolved connector frames, limits, and grounding. Unsupported operands or joint options
+produce specific `joints` losses. An inferred grounded part is reported as `Info`. The macro
+checks that solving preserves stored placements; failure removes the joints, restores those
+placements, and warns in FreeCAD. `import_only` leaves joints out.

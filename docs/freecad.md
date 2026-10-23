@@ -62,3 +62,15 @@ not add bodies or volumes. This output remains experimental and unverified.
 The synthetic macro regression tests can also run in a prebuilt FreeCAD command-line
 binary when `FREECAD_CMD` names that executable, including a final-volume check beside a
 hidden partial rebuild.
+
+Assembly output also follows the public [Assembly workbench](https://wiki.freecad.org/Assembly_Workbench),
+[joint properties](https://wiki.freecad.org/Assembly_CreateJointFixed), and
+[grounding properties](https://wiki.freecad.org/Assembly_ToggleGrounded) documentation.
+The Assembly object, the `JointObject.Joint` and `JointObject.GroundedJoint` constructors, and
+`solve()` were exercised through the installed FreeCAD 1.1.4 runtime on synthetic parts.
+Only runtime calls, properties, and signatures were inspected; no FreeCAD source was read.
+The unit tests include joint data assertions and a hinge golden. Set `FREECAD_CMD` to a
+FreeCAD command-line executable (or a wrapper accepting `-c CODE`) to run the synthetic
+macro checks for every mapped joint family, including hinge and slider motion about their
+own axes, a sub-assembly solved inside its assembly, grounding, limit clamping, and volume
+preservation. Joint coverage and specific fallback cases are listed in the guide.

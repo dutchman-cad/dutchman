@@ -217,3 +217,10 @@ STEP when it differs from the prefix. `import_only` blocks all mapped features a
 no prefix. Runtime rebuild failures restore embedded geometry and warn inside FreeCAD; they cannot update the earlier
 conversion report. Scalar parameter values are retained; their expressions are stored as
 inert text and are not evaluated by the macro.
+
+Assembly losses use the existing `subject: "joints"`: `Degraded` names each joint option
+or operand that cannot be written, and `Info` records inferred grounding and the need to
+run the macro. Supported workbench joints retain frames, limits, and suppression. A failed
+runtime solve removes the joints, restores stored placements, and warns in FreeCAD;
+it cannot modify this conversion report. Joint reconstruction does not change how
+`mode` or `verification.status` describe the part histories. `import_only` omits joints.

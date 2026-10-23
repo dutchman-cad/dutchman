@@ -598,12 +598,44 @@ Body. Examples include unresolved source selections, intersect operations, fixed
 guided, twisted, scaled or binormal sweeps and lofts, lofts ending at a point, extrudes from
 or to a point or face or with taper, counterbored, countersunk or face-ended holes, coils
 about an axis other than Z, two-direction patterns, and histories spanning multiple bodies. The report gives one result per source feature, including the reason each feature
-was not rebuilt. `--import-only` keeps every part as STEP. Assemblies retain placements;
-joints are not rebuilt. Pattern counts are limited to 10,000. Solid lines drawn corner to
+was not rebuilt. `--import-only` keeps every part as STEP and leaves out joints.
+Assemblies retain placements and rebuild supported joints as described below.
+Pattern counts are limited to 10,000. Solid lines drawn corner to
 corner across a profile taken whole (a centre rectangle's diagonals, when the source does
 not mark them construction) are left out of the padded profile, which is the same region.
 Geometry whose STEP uses replicated trimming curves (`CURVE_REPLICA`) is refused, because
 FreeCAD 1.1's STEP reader crashes on it.
+
+Assembly workbench joints are experimental and exercised with FreeCAD 1.1.4. The fixed,
+revolute, and slider joints the SolidCraft output writes are written to FreeCAD too, with the
+same resolved parts, connector frames, frame sense, angles, and limits, through
+sub-assemblies as well. Between parts placed directly in the assembly, cylindrical, ball,
+distance, parallel, perpendicular, and angle joints are also written; axis coincidence uses
+a cylindrical joint, and an insert uses a revolute joint with its plane offset. Their
+attachment offsets are kept, angular limits use degrees and linear limits millimetres, and
+either bound may be enabled alone. FreeCAD's static solve preserves free coordinates; limit
+properties are kept for the workbench rather than used to drive a pose during conversion.
+For a single revolute joint with one of its parts grounded, the macro also provides
+`drive_joint_angle(assembly, joint, degrees)`, which clamps the requested angle to the
+stored bounds and solves the other part's new pose. Use the workbench's simulation tools
+for chains and loops.
+
+A sub-assembly whose parts are joined gets its own Assembly, solved before the one that
+holds it; FreeCAD moves a sub-assembly as one body in its parent, so a moving joint from a
+part outside it to a part inside it turns the whole sub-assembly, with a note. Explicit
+grounding is retained. In each assembly, a joint chain nothing grounds gets one inferred
+grounded part (the second side of its first joint, as in the SolidCraft output), named in
+the report. Suppressed joints remain suppressed. External CADIR operands, subelement
+operands, joints between a sub-assembly and a part inside it, suppressed grounding, limits
+on fixed joints, driving parameter expressions, rack/pinion, screw, gear, and belt
+couplings, plane coincidence, point-on-axis, tangent, and native joint families get
+specific report notes. Their stored placements are kept.
+
+The macro checks the solver result and every part's stored pose. If the Assembly API is
+unavailable, solving fails, or a part moves during reconstruction, it removes the new
+joints and puts each part back where it was placed, as the macro does without joints.
+FreeCAD's report view gives the reason. Conversion reports remain unverified until the
+macro runs.
 
 Open the macro in FreeCAD with **Macro > Macros… > Execute**, or run:
 
