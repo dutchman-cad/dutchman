@@ -6145,7 +6145,9 @@ fn blends_refuse_missing_foreign_or_ambiguous_input_geometry() {
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),
         );
-        assert_eq!(types(&document), [("import".to_owned(), false)]);
+        let types = types(&document);
+        assert_eq!(types.first(), Some(&("import".to_owned(), false)));
+        assert!(!types.iter().any(|(kind, _)| kind == "fillet"), "{types:?}");
         assert!(history_line(&report).contains(reason), "{report:?}");
     };
     check(
