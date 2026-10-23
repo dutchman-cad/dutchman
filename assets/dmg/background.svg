@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="480" viewBox="0 0 640 480">
+  <!-- Original Dutchman artwork: a quiet drafting ground and a single transfer arrow. -->
+  <defs>
+    <linearGradient id="ground" x2="0" y2="1">
+      <stop stop-color="#F4F6F3"/>
+      <stop offset="1" stop-color="#DDE7E3"/>
+    </linearGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#1F7A6A" stroke-opacity=".07"/>
+    </pattern>
+  </defs>
+  <path fill="url(#ground)" d="M0 0h640v480H0z"/>
+  <path fill="url(#grid)" d="M0 0h640v480H0z"/>
+  <path fill="#0E1A24" d="M0 0h640v64H0z"/>
+  <path d="M48 32h224m96 0h224" stroke="#1F7A6A" stroke-width="2"/>
+  <circle cx="320" cy="32" r="5" fill="#D98E2B"/>
+  <g fill="none" stroke="#1F7A6A" stroke-width="2" opacity=".3">
+    <path d="M124 156v-22h22m68 0h22v22m-112 68v22h22m68 0h22v-22"/>
+    <path d="M404 156v-22h22m68 0h22v22m-112 68v22h22m68 0h22v-22"/>
+  </g>
+  <path d="M264 190h108m-22-22 22 22-22 22" fill="none" stroke="#1F7A6A"
+        stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M288 272h64" stroke="#D98E2B" stroke-width="2" stroke-linecap="round"/>
+</svg>

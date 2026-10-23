@@ -23,6 +23,33 @@ A release is cut from `main` once CI is green there.
    Both are `publish = false` today, and publishing them makes their APIs public. Run
    `cargo publish --dry-run -p <crate>` before each.
 
+## Packaging
+
+`scripts/macos-dmg.sh` builds the universal app and a compressed, read-only HFS+ disk
+image. The installation window opens in icon view with about 640 × 440 points of content,
+96-point app and Applications icons under the ends of a teal arrow, and the read-me below
+them. The toolbar, status bar and sidebar are hidden.
+
+The original background and its provenance live in `assets/dmg/`; regenerate both PNG
+sizes from the SVG using the Rust example documented there. Packaging uses macOS `sips`
+and `tiffutil` to combine @1x and @2x images into a hidden multi-resolution TIFF.
+It needs no additional packaging dependencies.
+
+macOS does not provide a standard headless writer for Finder's `.DS_Store` layout.
+The script mounts a temporary writable image and asks Finder to save the view, positions
+and background before detaching and compressing it. Finder needs a logged-in session and
+permission for the build to control it (GitHub's macOS runners have both). Finder has a
+30-second request timeout and an outer 45-second process limit. If styling fails, including when Finder is
+unavailable or automation access is denied, the script discards that image and builds
+the plain app, Applications link and read-me image from the untouched staging folder.
+Image creation, signing, detaching and final `hdiutil verify` errors still stop packaging.
+
+On macOS, mount the finished image afresh, check the icon positions and background in
+both appearances and on Retina and standard-density displays, open the read-me, then
+drag the app into Applications and launch it. Eject and remount to check persistence.
+Also build with a failing `osascript` earlier on `PATH` to check that the plain fallback
+still mounts, retains all three items and passes `hdiutil verify`.
+
 ## Stable and nightly
 
 A stable release depends on cadmpeg at one commit of its `main` branch, pinned as the same

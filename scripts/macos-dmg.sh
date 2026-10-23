@@ -19,7 +19,14 @@ fi
 version=$1 label=$2 arm=$3 intel=$4 out=$5
 root=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+mount="" device=""
+cleanup() {
+  if [[ -n $device ]]; then
+    hdiutil detach "$device" || hdiutil detach -force "$device" || true
+  fi
+  rm -rf "$work"
+}
+trap cleanup EXIT
 
 stage="$work/Dutchman"
 app="$stage/Dutchman.app"
@@ -102,5 +109,93 @@ ref=main
 printf '\nGetting started: https://github.com/dutchman-cad/dutchman/blob/%s/docs/guide.md\n' "$ref" \
   >> "$stage/Read me first.txt"
 
-hdiutil create -volname "Dutchman $label" -srcfolder "$stage" -fs HFS+ -format UDZO -ov "$out"
+# Finder owns its view metadata. Configure a disposable writable image so a missing
+# desktop or denied Finder access can fall back to the untouched staging folder.
+read -r -d '' finder_script <<'APPLESCRIPT' || true
+on run arguments
+  set mountPath to item 1 of arguments
+  with timeout of 30 seconds
+    tell application "Finder"
+      set imageFolder to (POSIX file mountPath) as alias
+      open imageFolder
+      set imageWindow to container window of imageFolder
+      set current view of imageWindow to icon view
+      -- Hiding the toolbar also hides Finder's sidebar.
+      set toolbar visible of imageWindow to false
+      set statusbar visible of imageWindow to false
+      -- About 440 points of content below the title bar. The background is 480 points tall, so
+      -- a shorter title bar on older macOS shows more of it rather than a blank strip.
+      set bounds of imageWindow to {100, 100, 740, 576}
+      set viewOptions to icon view options of imageWindow
+      set arrangement of viewOptions to not arranged
+      set icon size of viewOptions to 96
+      set text size of viewOptions to 13
+      set background picture of viewOptions to (POSIX file (mountPath & "/.background/background.tiff")) as alias
+      set position of item "Dutchman.app" of imageFolder to {180, 190}
+      set position of item "Applications" of imageFolder to {460, 190}
+      set position of item "Read me first.txt" of imageFolder to {320, 320}
+      close imageWindow
+      open imageFolder
+      update imageFolder without registering applications
+      delay 2
+      close container window of imageFolder
+    end tell
+  end timeout
+end run
+APPLESCRIPT
+
+# One Finder pass, bounded outside AppleScript's own timeout too, as Finder's launch and
+# permission prompts are not covered by it.
+style_window() {
+  local finder_pid watchdog_pid status=0
+  osascript - "$mount" <<< "$finder_script" &
+  finder_pid=$!
+  (sleep 45; kill "$finder_pid" 2>/dev/null || true) >/dev/null 2>&1 &
+  watchdog_pid=$!
+  wait "$finder_pid" || status=$?
+  kill "$watchdog_pid" 2>/dev/null || true
+  wait "$watchdog_pid" 2>/dev/null || true
+  [[ $status == 0 && -s "$mount/.DS_Store" ]]
+}
+
+prepare_window() {
+  hdiutil create -volname "Dutchman $label" -srcfolder "$stage" -fs HFS+ \
+    -format UDRW -ov "$work/window.dmg" || return 1
+  # Finder only shows (and so only lays out) a volume mounted where it browses volumes.
+  local attached attempt
+  attached=$(hdiutil attach -readwrite -noverify -noautoopen "$work/window.dmg") || return 1
+  device=$(awk -F '\t' '/Apple_HFS/ { sub(/[ \t]+$/, "", $1); print $1; exit }' <<< "$attached")
+  mount=$(awk -F '\t' '/Apple_HFS/ { print $NF; exit }' <<< "$attached")
+  [[ -n $device && -d $mount ]] || return 1
+  mkdir -p "$mount/.background" || return 1
+  sips -s format tiff -s dpiWidth 72 -s dpiHeight 72 \
+    "$root/assets/dmg/background.png" --out "$work/background.tiff" || return 1
+  sips -s format tiff -s dpiWidth 144 -s dpiHeight 144 \
+    "$root/assets/dmg/background@2x.png" --out "$work/background@2x.tiff" || return 1
+  tiffutil -cathidpicheck "$work/background.tiff" "$work/background@2x.tiff" \
+    -out "$mount/.background/background.tiff" || return 1
+
+  # Finder sometimes stalls on a volume it has only just noticed: give it a moment, and
+  # a second and third try.
+  for attempt in 1 2 3; do
+    sleep 2
+    style_window && return 0
+    echo "Finder did not lay out the disk image window (try $attempt of 3)." >&2
+  done
+  return 1
+}
+
+if prepare_window; then
+  hdiutil detach "$device"
+  device=""
+  hdiutil convert "$work/window.dmg" -format UDZO -ov -o "$out"
+else
+  echo "Disk image window could not be styled; packaging the plain installation window." >&2
+  # Discard all partial Finder metadata rather than copying it into the fallback.
+  if [[ -n $device ]]; then
+    hdiutil detach "$device" || hdiutil detach -force "$device"
+    device=""
+  fi
+  hdiutil create -volname "Dutchman $label" -srcfolder "$stage" -fs HFS+ -format UDZO -ov "$out"
+fi
 hdiutil verify "$out"

@@ -17,6 +17,7 @@ on:
       - scripts/macos-dmg.sh
       - scripts/archive-readme.py
       - crates/dutchman-gui/assets/Dutchman.icns
+      - assets/dmg/**
 
 permissions:
   contents: read
