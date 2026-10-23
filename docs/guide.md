@@ -504,6 +504,12 @@ For a flattened design, one Info line reports `sketches: kept N sketches for ref
 with `; M left out` when any sketches did not map or their planes did not resolve.
 `--import-only` continues to omit sketches.
 
+An assembly keeps the sketches of its own file the same way, hidden, in the design itself
+(SolidCraft's root component), with the parameters their dimensions use; one Info line
+reports `sketches: kept N sketches in the design itself, for reference`. cadmpeg does not say
+which component a sketch belongs to, so a component's sketch stays where it was drawn and
+does not move with the component.
+
 When the design is written as geometry, the same `solidcraft-cli` opens it too. If SolidCraft
 shows fewer faces than the source model has, or warns about it (for example faces it cannot
 mesh), the report says so as `Degraded: geometry: …`, such as

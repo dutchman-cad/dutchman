@@ -19,6 +19,8 @@ report's schema name changes when a field does).
 - Experimental FreeCAD macros rebuild assembly joints in the Assembly workbench (the fixed, revolute, and slider joints SolidCraft gets, through sub-assemblies, plus cylindrical, ball, distance, parallel, perpendicular, and angle joints between directly placed parts), with connector frames, limits, and grounding; if solving fails, the parts keep their stored placements.
 - Write experimental native FreeCAD documents with `--to fcstd`, or check macros with `--to freecad --verify`, using bounded headless execution and per-part volume and bounding-box verification.
 - Map constant-radius fillets and equal-setback chamfers from proven feature input edges.
+- An assembly keeps the sketches of its own file, hidden for reference in the design itself,
+  with the parameters their dimensions use; they were left out before without a note.
 
 ### cadmpeg
 

@@ -56,7 +56,8 @@ assemblies (`.iam`, with their parts found anywhere in the project), SolidWorks 
   planes that resolve, are kept with it, hidden, for reference (on main, in the next release).
 - Assemblies keep their components and placements. Fusion and FreeCAD assemblies keep their
   joints too (revolute, slider, and rigid), with their grounded parts held where they are;
-  Inventor assemblies place their parts, without joints.
+  Inventor assemblies place their parts, without joints. Sketches in the assembly's own file
+  are kept, hidden, for reference (on main, in the next release).
 - FreeCAD output is experimental: `--to freecad` writes a self-contained rebuild macro,
   `--to fcstd` runs FreeCAD headlessly to save a native `.FCStd` document and checks its
   solids against the original, and `--to freecad --verify` runs the same check on a macro.

@@ -3105,7 +3105,8 @@ fn an_inventor_shaped_extrude_maps_only_when_its_sketch_has_one_profile() {
 }
 
 /// Two parts with the cube history (and so the same parameter names), `First` placed at the
-/// origin and `Second` twice, 30 mm and 60 mm along X.
+/// origin and `Second` twice, 30 mm and 60 mm along X. The assembly's own file holds no
+/// sketches, as an Inventor assembly's holds none of its parts'.
 fn assembly_of_histories() -> Model {
     let part = |name: &str| Model {
         name: name.to_owned(),
@@ -3135,6 +3136,7 @@ fn assembly_of_histories() -> Model {
             parts: vec![part("First"), part("Second")],
             placements: vec![placed(0, 0.0), placed(1, 30.0), placed(1, 60.0)],
         }),
+        ir: cadmpeg_ir::examples::unit_cube().unwrap(),
         ..part("pair")
     }
 }

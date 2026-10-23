@@ -118,6 +118,35 @@ pub(crate) fn rename_in(expression: &str, renamed: &BTreeMap<String, String>) ->
     out
 }
 
+/// The parameters of `params` (as [`map`] writes them) named in `used`, with every parameter
+/// their expressions name in turn, in their order in `params`.
+pub(crate) fn needed(params: Vec<Value>, mut used: BTreeSet<String>) -> Vec<Value> {
+    let name = |param: &Value| param.get("name").and_then(Value::as_str).map(str::to_owned);
+    let mut open: Vec<String> = used.iter().cloned().collect();
+    while let Some(next) = open.pop() {
+        let Some(expr) = params
+            .iter()
+            .find(|param| name(param).as_deref() == Some(next.as_str()))
+            .and_then(|param| param.get("expr"))
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        let words = expr
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+            .filter(|word| word.chars().next().is_some_and(|c| !c.is_ascii_digit()));
+        for word in words {
+            if used.insert(word.to_owned()) {
+                open.push(word.to_owned());
+            }
+        }
+    }
+    params
+        .into_iter()
+        .filter(|param| name(param).is_some_and(|name| used.contains(&name)))
+        .collect()
+}
+
 /// SolidCraft's unit for a parameter holding `value`.
 fn unit(value: Option<&ParameterValue>) -> &'static str {
     match value {
