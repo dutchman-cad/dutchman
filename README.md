@@ -96,7 +96,8 @@ problem** link opens the **A file didn't convert** form.
 </picture>
 
 On macOS it comes as **Dutchman.app** in a disk image (from 0.1.3 on; see
-[opening it the first time](docs/guide.md#opening-the-app-the-first-time)). It ships in the
+[opening it the first time](docs/guide.md#opening-the-app-the-first-time): approve it once
+and the commands inside it run too). It ships in the
 release archives beside `dutchman` (from 0.1.1 on), or build it from source
 with Rust 1.88 or newer:
 
