@@ -45,7 +45,7 @@ version (`dutchman.convert/2`).
 | `input.format` | `fusion_archive`, `fusion_multi_document`, `inventor_part`, `inventor_assembly`, `solidworks_part`, `solidworks_assembly`, `freecad_document`, or `null` for an unknown extension. `format_name` is the same for people. |
 | `output.format` | The SolidCraft design format written. |
 | `mode` | `history`: editable feature history, with the original geometry kept beside it, suppressed. `import`: the geometry alone. |
-| `verification.status` | `verified`: the history was replayed in SolidCraft and matches the original. `unverified`: the history was written without that check (`reason` says why: no `solidcraft-cli`, a timeout, `--no-verify`). `flattened`: the design has a history but it was not written (`reason`: the first feature that does not map, or `replay differs (…)`). `not_applicable`: there was no history to write (none in the source, or none cadmpeg decodes: every feature is kept in its native form), or `--import-only`. |
+| `verification.status` | `verified`: the history was replayed in SolidCraft, or the FreeCAD output was measured, and matches the original. `differs`: a FreeCAD rebuild differs or restored STEP (`reason` names the part). `unverified`: the history was written without that check (`reason` says why: no `solidcraft-cli`, a timeout, `--no-verify`). `flattened`: the design has a history but it was not written (`reason`: the first feature that does not map, or `replay differs (…)`). `not_applicable`: there was no history to write (none in the source, or none cadmpeg decodes: every feature is kept in its native form), or `--import-only`. |
 | `history.features` | Every source feature in timeline order. `status`: `mapped`, `not_needed` (the target needs no feature, e.g. a principal datum plane), `left_out` (suppressed in the source), `blocked` (does not map; `reason` says why). |
 | `history.mapped`, `history.total` | Mapped or not-needed features, out of all but left-out ones. |
 | `completeness` | For an assembly: how much of it was placed. `placed` and `placements` count every placement the assembly and its placed sub-assemblies record, a sub-assembly's as often as it is placed. `left_out` lists those not placed by cause, most first: `file` (the file placed, or `null`), `reason`, `stage` and `count`. Absent for a single part. |
@@ -205,17 +205,17 @@ For `convert --to freecad` (MCP `to: "freecad"`), `output.format` is
 `"freecad-macro/1"` and `output.path` ends in `.FCMacro`. The schema remains
 `dutchman.convert/1`; no fields are removed or renamed. Batch results use the same per-file
 report. A macro with at least one rebuilt part has `mode: "history"` and
-`verification.status: "unverified"`, because FreeCAD is run by the recipient afterwards.
+`verification.status: "unverified"` unless headless verification was requested.
 An entirely imported macro has `mode: "import"` and `verification.status:
 "not_applicable"`. In a mixed assembly the `history.features` and losses identify the parts
 kept as STEP. A partial history keeps prefix features and all mapped sketches as `mapped`,
 with reference reasons; later body-building features are `blocked`. A `Degraded` loss says
 `rebuilt N of M features; kept as reference`, counting sketches but excluding suppressed
 features (`left_out`) and organizational features (`not_needed`). These macros also use
-`mode: "history"` and `verification.status: "unverified"`; the visible final result remains
+`mode: "history"` and `verification.status: "unverified"` unless headless verification was requested; the visible final result remains
 STEP when it differs from the prefix. `import_only` blocks all mapped features and retains
-no prefix. Runtime rebuild failures restore embedded geometry and warn inside FreeCAD; they cannot update the earlier
-conversion report. Scalar parameter values are retained; their expressions are stored as
+no prefix. Runtime rebuild failures restore embedded geometry and warn inside FreeCAD. Headless
+execution also records these failures in the conversion report. Scalar parameter values are retained; their expressions are stored as
 inert text and are not evaluated by the macro.
 
 Assembly losses use the existing `subject: "joints"`: `Degraded` names each joint option
@@ -224,3 +224,17 @@ run the macro. Supported workbench joints retain frames, limits, and suppression
 runtime solve removes the joints, restores stored placements, and warns in FreeCAD;
 it cannot modify this conversion report. Joint reconstruction does not change how
 `mode` or `verification.status` describe the part histories. `import_only` omits joints.
+
+The CLI also accepts `--to fcstd`: `output.format` is `"freecad-document/1"` and the
+output is a native `.FCStd` document. This runs FreeCAD and always measures the result.
+`--to freecad --verify` measures without saving a native document. Both use the existing
+`verification` object: `status: "verified"` when every part's solid count, volume and bounds
+match its source STEP, or the added status `"differs"`, with a `reason` naming the part
+and differing measurement or runtime fallback. Runtime fallback reasons also appear as
+`Degraded` losses with subject `FreeCAD rebuild`. Feature statuses continue to describe
+mapping; a failed runtime rebuild is identified by verification and losses. Volumes use
+SolidCraft's 1e-4 relative tolerance; bounds use the same tolerance relative to the largest
+local span (minimum 1 mm). Parts without solids cannot be verified. Macro execution errors
+use `"unverified"` and `"not checked: …"`; native execution errors fail the conversion.
+The default timeout is 300 seconds, changed with `--freecad-timeout`. Output remains
+experimental. These CLI additions do not change MCP's existing `to` choices.

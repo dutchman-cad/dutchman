@@ -390,6 +390,7 @@ pub fn completeness_lines(report: &Value) -> Vec<String> {
 fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
     let (status, reason) = match &outcome.check {
         Check::Verified => ("verified", None),
+        Check::Differs(reason) => ("differs", Some(reason)),
         Check::Unverified(reason) => ("unverified", Some(reason)),
         Check::Flattened(reason) => ("flattened", Some(reason)),
         Check::NotApplicable(reason) => ("not_applicable", Some(reason)),
@@ -588,6 +589,21 @@ mod tests {
         assert_eq!(out["history"]["total"], 3);
         assert_eq!(out["history"]["features"][3]["status"], "left_out");
         assert_eq!(out["losses"], json!([]));
+    }
+
+    #[test]
+    fn a_freecad_difference_uses_the_shared_verification_report() {
+        let mut report = Report::default();
+        report.set_outcome(Outcome {
+            mode: Mode::History,
+            check: Check::Differs("part 2 (Bracket): bounding box differs".to_owned()),
+            features: Vec::new(),
+        });
+        let out = Value::Object(success(CONVERT, json!({}), &report));
+        assert_eq!(
+            out["verification"],
+            json!({"status": "differs", "reason": "part 2 (Bracket): bounding box differs"})
+        );
     }
     #[test]
     fn an_assembly_line_counts_components_and_joints() {

@@ -137,11 +137,11 @@ fn partial_history_keeps_pad_and_sketch_beside_the_final_step() {
         .iter()
         .any(|loss| { loss.detail == "rebuilt 2 of 3 features; kept as reference" }));
     assert!(script.contains("group.Label = 'Rebuilt history (partial)'"));
-    assert!(script.contains("shown(group, False)\n    shown(original, True)"));
+    assert!(script.contains("visible(group, False)\n    visible(original, True)"));
     assert!(script.contains("compare_original(tip.Shape, original.Shape)"));
     let data = script
         .lines()
-        .find_map(|line| line.strip_prefix("partial_history(json.loads("))
+        .find_map(|line| line.strip_prefix("selected = partial_history(json.loads("))
         .unwrap();
     let literal = serde_json::Deserializer::from_str(data)
         .into_iter::<String>()
@@ -258,7 +258,7 @@ fn partial_prefix_uses_timeline_order_and_excludes_suppressed_features() {
 
 #[test]
 fn partial_history_checks_final_volume_in_freecad_when_available() {
-    let Some(cli) = std::env::var_os("FREECAD_CMD") else {
+    let Some(cli) = configured_freecad() else {
         return;
     };
     let (mut script, _) = written(&model("partial"), FreeCadWriter::new());
@@ -268,9 +268,16 @@ fn partial_history_checks_final_volume_in_freecad_when_available() {
          assert abs(doc.getObject('Body').Tip.Shape.Volume - 40*math.pi) < 1e-6\n\
          print('DUTCHMAN_PARTIAL_OK')\n",
     );
-    let output = std::process::Command::new(cli)
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("partial.FCMacro");
+    std::fs::write(&path, script).unwrap();
+    let output = cli
+        .process(folder.path())
         .arg("-c")
-        .arg(format!("exec({})", generate::quoted(&script).unwrap()))
+        .arg(format!(
+            "exec(open({}).read())",
+            generate::quoted(&path.to_string_lossy()).unwrap()
+        ))
         .output()
         .unwrap();
     assert!(
@@ -706,7 +713,7 @@ fn unsupported_joint_families_and_fixed_limits_have_specific_notes() {
 
 #[test]
 fn freecad_solves_synthetic_joints_and_moves_only_the_hinge_arm() {
-    let Some(command) = std::env::var_os("FREECAD_CMD") else {
+    let Some(command) = configured_freecad() else {
         return;
     };
     let folder =
@@ -836,16 +843,28 @@ fn cadir_supplements_keep_the_converted_frame_sense() {
     assert_eq!(assembly_data(&script)["joints"][0]["frame_b"], json!(frame));
 }
 
-/// Run a synthetic macro through `FREECAD_CMD` (a FreeCAD command-line executable, or a
-/// wrapper accepting `-c CODE`) and require its success marker.
-fn run_freecad(command: &std::ffi::OsStr, folder: &std::path::Path, name: &str, script: String) {
+/// The FreeCAD that `FREECAD_CMD` names (an executable, a wrapper accepting `-c CODE`, or
+/// the Flatpak form), or `None` to skip the FreeCAD-backed tests.
+fn configured_freecad() -> Option<super::run::FreeCadCommand> {
+    std::env::var_os("FREECAD_CMD")?;
+    super::run::installed()
+}
+
+/// Run a synthetic macro through `FREECAD_CMD` and require its success marker.
+fn run_freecad(
+    command: &super::run::FreeCadCommand,
+    folder: &std::path::Path,
+    name: &str,
+    script: String,
+) {
     let path = folder.join(format!("{name}.FCMacro"));
     std::fs::write(&path, script).unwrap();
     let expression = format!(
         "exec(open({}).read())",
         generate::quoted(&path.to_string_lossy()).unwrap()
     );
-    let output = std::process::Command::new(command)
+    let output = command
+        .process(folder)
         .arg("-c")
         .arg(expression)
         .output()
@@ -909,7 +928,7 @@ fn off_axis_model(definition: Value, ground: Option<usize>) -> Model {
 
 #[test]
 fn freecad_moves_hinges_and_sliders_about_their_own_axes() {
-    let Some(command) = std::env::var_os("FREECAD_CMD") else {
+    let Some(command) = configured_freecad() else {
         return;
     };
     let folder = std::env::temp_dir().join(format!("dutchman-freecad-axes-{}", std::process::id()));
@@ -1086,7 +1105,7 @@ fn joints_inside_a_sub_assembly_are_solved_there() {
 
 #[test]
 fn freecad_solves_a_sub_assembly_inside_its_assembly() {
-    let Some(command) = std::env::var_os("FREECAD_CMD") else {
+    let Some(command) = configured_freecad() else {
         return;
     };
     let folder =
@@ -1120,4 +1139,71 @@ App.Console.PrintMessage('DUTCHMAN_JOINT_OK\n')
     );
     run_freecad(&command, &folder, "nested", script);
     std::fs::remove_dir_all(folder).unwrap();
+}
+
+#[test]
+fn native_document_rebuilds_a_synthetic_pad_when_freecad_is_configured() {
+    if std::env::var_os("FREECAD_CMD").is_none() {
+        return;
+    }
+    // A square pad with exactly the same shape as cadmpeg's synthetic 10 mm cube.
+    let mut source = model("pad");
+    let mut wire = serde_json::to_value(&source.ir).unwrap();
+    let entities = (0..4)
+        .map(|i| {
+            let points = [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]];
+            let a = points[i];
+            let b = points[(i + 1) % 4];
+            json!({"id": format!("synthetic:test:sketch-entity#{}", i + 1),
+                "sketch": "synthetic:test:sketch#1", "construction": false,
+                "geometry": {"kind": "line", "start": {"u": a[0], "v": a[1]}, "end": {"u": b[0], "v": b[1]}}})
+        })
+        .collect::<Vec<_>>();
+    wire["model"]["sketch_entities"] = json!(entities);
+    let profile = (1..=4)
+        .map(|i| json!({"entity": format!("synthetic:test:sketch-entity#{i}")}))
+        .collect::<Vec<_>>();
+    wire["model"]["sketches"][0]["profiles"] = json!([profile]);
+    wire["model"]["features"][1]["definition"]["extent"]["side"]["termination"]["length"] =
+        json!(10.0);
+    source.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let runner = super::run::FreeCadRunner::new(
+        FreeCadWriter::new(),
+        true,
+        true,
+        super::run::DEFAULT_TIMEOUT,
+    );
+    let mut bytes = Vec::new();
+    let mut report = Report::default();
+    runner.write(&source, &mut bytes, &mut report).unwrap();
+    assert!(bytes.starts_with(b"PK"));
+    assert_eq!(
+        report.outcome().unwrap().check,
+        dutchman_core::Check::Verified
+    );
+    assert_eq!(report.outcome().unwrap().mode, Mode::History);
+    // Reopened without the GUI, only the rebuilt body is visible: the saved document
+    // property, not just the view, hides the original STEP.
+    let dir = tempfile::tempdir().unwrap();
+    let saved = dir.path().join("pad.FCStd");
+    std::fs::write(&saved, &bytes).unwrap();
+    let check = format!(
+        "import FreeCAD as App\n\
+         d = App.openDocument({})\n\
+         print('VISIBLE=' + ','.join(sorted(o.Name for o in d.Objects \
+             if o.TypeId == 'PartDesign::Body' and o.Visibility)))\n",
+        generate::quoted(&saved.to_string_lossy()).unwrap()
+    );
+    let output = configured_freecad()
+        .unwrap()
+        .process(dir.path())
+        .arg("-c")
+        .arg(format!("exec({})", generate::quoted(&check).unwrap()))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.lines().any(|line| line == "VISIBLE=Body"),
+        "{stdout}"
+    );
 }

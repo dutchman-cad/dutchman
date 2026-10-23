@@ -403,6 +403,8 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
     };
     Ok(ConvertOptions {
         to,
+        verify: false,
+        freecad_timeout: 300,
         import_only: flag(arguments, "import_only", false)?,
         no_verify: !flag(arguments, "verify", true)?,
         no_clobber: !flag(arguments, "overwrite", true)?,

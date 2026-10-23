@@ -27,6 +27,8 @@ pub enum OutputFormat {
     Solidcraft,
     /// A FreeCAD rebuild macro (`.FCMacro`). Experimental.
     Freecad,
+    /// A native FreeCAD document (`.FCStd`). Experimental; requires FreeCAD.
+    Fcstd,
 }
 
 impl OutputFormat {
@@ -34,6 +36,7 @@ impl OutputFormat {
         match self {
             Self::Solidcraft => "solidcraft",
             Self::Freecad => "FCMacro",
+            Self::Fcstd => "FCStd",
         }
     }
 }
@@ -42,7 +45,7 @@ impl OutputFormat {
 #[derive(Clone, Debug)]
 pub enum OutputWriter {
     SolidCraft(SolidCraftWriter),
-    FreeCad(dutchman_freecad::FreeCadWriter),
+    FreeCad(dutchman_freecad::run::FreeCadRunner),
 }
 
 impl Writer for OutputWriter {
@@ -70,7 +73,7 @@ impl Writer for OutputWriter {
 #[derive(Clone, Debug, clap::Args)]
 pub struct ConvertOptions {
     /// Output format: a SolidCraft design (the default), or a self-contained FreeCAD rebuild
-    /// macro (experimental: rebuilt in FreeCAD, not checked by Dutchman).
+    /// macro or document (experimental).
     #[arg(long, value_enum, default_value = "solidcraft")]
     pub to: OutputFormat,
     /// Write the geometry as one non-parametric import, never the feature history.
@@ -84,6 +87,12 @@ pub struct ConvertOptions {
     /// Write history without checking it in SolidCraft.
     #[arg(long)]
     pub no_verify: bool,
+    /// Check FreeCAD macro output by running FreeCAD headlessly.
+    #[arg(long, conflicts_with = "no_verify")]
+    pub verify: bool,
+    /// Seconds FreeCAD may run before it is killed.
+    #[arg(long, value_name = "SECONDS", default_value_t = 300)]
+    pub freecad_timeout: u64,
     /// Refuse to replace an existing .solidcraft file (by default it is replaced).
     #[arg(long)]
     pub no_clobber: bool,
@@ -108,6 +117,8 @@ impl Default for ConvertOptions {
             import_only: false,
             solidcraft: None,
             no_verify: false,
+            verify: false,
+            freecad_timeout: 300,
             no_clobber: false,
             verify_timeout: DEFAULT_TIMEOUT.as_secs(),
             project: None,
@@ -143,9 +154,14 @@ impl ConvertOptions {
                     .verification(self.verification())
                     .timeout(Duration::from_secs(self.verify_timeout)),
             ),
-            OutputFormat::Freecad => OutputWriter::FreeCad(
-                dutchman_freecad::FreeCadWriter::new().import_only(self.import_only),
-            ),
+            OutputFormat::Freecad | OutputFormat::Fcstd => {
+                OutputWriter::FreeCad(dutchman_freecad::run::FreeCadRunner::new(
+                    dutchman_freecad::FreeCadWriter::new().import_only(self.import_only),
+                    self.to == OutputFormat::Fcstd,
+                    self.verify,
+                    Duration::from_secs(self.freecad_timeout),
+                ))
+            }
         }
     }
 }
@@ -175,6 +191,12 @@ pub fn convert_success(input: &Path, output: &Path, report: &Report) -> Value {
         .is_some_and(|extension| extension.eq_ignore_ascii_case("FCMacro"))
     {
         dutchman_freecad::FORMAT
+    } else if output
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("FCStd"))
+    {
+        dutchman_freecad::run::DOCUMENT_FORMAT
     } else {
         dutchman_solidcraft::FORMAT
     };

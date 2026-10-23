@@ -564,7 +564,7 @@ and requested reports.
 ## FreeCAD output (experimental)
 
 **Experimental.** The macro, its options and what it rebuilds may change between releases,
-and Dutchman cannot check the rebuilt part itself: open it in FreeCAD and compare.
+including the headless verification result. Keep the original design for comparison.
 
 Write a self-contained FreeCAD rebuild macro instead of a SolidCraft design:
 
@@ -643,10 +643,36 @@ Open the macro in FreeCAD with **Macro > Macros… > Execute**, or run:
 freecadcmd out.FCMacro
 ```
 
-The macro creates a new document; save it as `.FCStd` from FreeCAD. The command-line form
-creates the document in memory and does not save it automatically. No FreeCAD installation
-is needed to generate a macro. Dutchman does not run FreeCAD during conversion, so these
-histories are reported as unverified. The original STEP geometry remains in the document,
-hidden after a successful rebuild. The macro compares rebuilt geometry with STEP; a rebuild failure or difference restores
-the original and prints a warning in
-FreeCAD's report view. Temporary STEP files are removed after reading.
+The macro creates a new document. Save it as `.FCStd` from FreeCAD, or have Dutchman
+run FreeCAD headlessly and write the document directly:
+
+```sh
+dutchman convert in.f3d --to fcstd -o out.FCStd
+dutchman convert in.f3d --to freecad --verify -o out.FCMacro
+```
+
+`--to fcstd` always checks the result. `--to freecad --verify` checks the macro without
+saving a native document; the macro remains self-contained. Both compare each part's
+resulting solids with its embedded source STEP: solid count, volume (relative tolerance
+0.01%, the same as SolidCraft), and bounding-box coordinates (0.01% of the part's span,
+with a 1 mm minimum scale). Assemblies are compared in each part's local coordinates.
+The report says `verified` when every part matches, or `differs` and identifies the part.
+A runtime rebuild failure restores embedded STEP and reports the specific reason as a
+loss and a `differs` result, even when the restored solid matches. Sheets, wires and other
+parts without solids are reported as not checked rather than verified.
+
+Discovery uses `FREECAD_CMD` (one executable path, or the Flatpak form
+`flatpak run --command=FreeCADCmd org.freecad.FreeCAD`; no shell is involved),
+then `freecadcmd` or `FreeCADCmd` on `PATH`, the standard `/Applications/FreeCAD.app` or
+`~/Applications/FreeCAD.app` bundle's `Contents/Resources/bin`, then an installed
+`org.freecad.FreeCAD` Flatpak. Flatpak receives access only to the temporary execution
+folder in addition to its existing permissions. `--freecad-timeout SECONDS` defaults to
+300; the process is killed on timeout. Native output fails when FreeCAD cannot run or
+produce measurements. A macro still writes successfully with verification `unverified`
+and reason `not checked: FreeCAD not found` when discovery finds no installation.
+`convert-all` forwards these options to each conversion worker.
+
+No FreeCAD installation is needed to generate a macro without `--verify`. Original STEP
+geometry remains in the document, hidden after a successful rebuild. The macro compares
+rebuilt geometry with STEP; a rebuild failure or difference restores the original and
+prints a warning in FreeCAD's report view. Temporary execution and STEP files are removed.

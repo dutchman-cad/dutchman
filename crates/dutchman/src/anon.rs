@@ -252,7 +252,7 @@ pub fn write(
         crate::OutputFormat::Solidcraft => {
             dutchman_solidcraft::solidcraft_version(&options.verification())
         }
-        crate::OutputFormat::Freecad => None,
+        crate::OutputFormat::Freecad | crate::OutputFormat::Fcstd => None,
     };
     let run = Run {
         verify: solidcraft.is_some(),

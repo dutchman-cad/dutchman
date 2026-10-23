@@ -216,6 +216,8 @@ pub enum Mode {
 pub enum Check {
     /// The replayed history matched the original geometry.
     Verified,
+    /// A rebuilt result differs from its source; original geometry is retained.
+    Differs(String),
     /// The history was written without being checked.
     Unverified(String),
     /// No history was written: it did not map, or its replay did not match.
