@@ -184,6 +184,11 @@ report gets a `Degraded` `geometry` line saying so, since geometry that opens bu
 otherwise go unnoticed. An assembly is checked for warnings only, as its parts are placed any
 number of times.
 
+Sheet-metal edge flanges wait on input edge geometry: CADIR names their edge only on the
+final body, where it has become the flange's bend, so a pick there would guess. Hems are
+refused because their developed lengths cannot be passed as SolidCraft outer-face lengths,
+and rolled, teardrop and unresolved hems have no SolidCraft form.
+
 ## Errors and losses
 
 - **`Error`** stops a conversion: I/O, input over the size cap, unknown or not-yet-supported

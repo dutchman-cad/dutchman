@@ -164,6 +164,15 @@ SolidCraft") and writes the history unverified. SolidCraft 0.19.0 saves designs 
 format that older versions do not open, so a design you save again in 0.19.0 opens in 0.19.0
 or newer only.
 
+Sheet-metal history includes base flanges (not of symmetric thickness). Edge flanges are
+kept as geometry until their edge is known before the flange bends it; the report says "edge
+flanges wait on input edge geometry". Hems are kept as geometry too: CADIR specifies developed
+length while SolidCraft requires length to the outer face, and rolled, teardrop and unresolved
+hem forms are not supported yet. CADIR 0.6.3 has no contour-flange, bend, unfold/refold or
+corner-relief operations, nor K-factor or relief settings; sheet rules keep SolidCraft's
+defaults for those settings. The report names the first feature that stops the history; the
+original geometry is still converted.
+
 ## Your first conversion
 
 You need a native CAD file. Dutchman has no public sample designs yet, but its tests use

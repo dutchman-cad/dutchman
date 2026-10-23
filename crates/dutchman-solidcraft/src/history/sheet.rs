@@ -1,5 +1,6 @@
 //! Sheet-metal base flanges: a sketch profile made a sheet of even thickness, as SolidCraft's
-//! base flange makes it, under a sheet rule of that thickness.
+//! base flange makes it, under a sheet rule of that thickness. Hems are refused with the
+//! reason SolidCraft cannot express them.
 
 use serde_json::{json, Value};
 
@@ -48,6 +49,23 @@ pub(super) fn base_flange(
         fields.insert("flip".to_owned(), Value::Bool(true));
     }
     Ok(out)
+}
+
+/// CADIR hems retain developed lengths; SolidCraft accepts an outer-face length.
+pub(super) fn hem_refusal(definition: &Value) -> String {
+    let reason = match definition.get("direction").and_then(Value::as_str) {
+        Some("unresolved") => "a hem with unresolved fold direction is not supported yet",
+        _ => match definition.pointer("/form/kind").and_then(Value::as_str) {
+            Some("flat" | "open") => {
+                "a hem specified by developed length is not supported yet; SolidCraft requires length to the outer face"
+            }
+            Some("gap_length") => "an unresolved flat-or-open hem is not supported yet",
+            Some("rolled") => "a rolled hem is not supported yet",
+            Some("teardrop") => "a teardrop hem is not supported yet",
+            _ => "this hem form is not supported yet",
+        },
+    };
+    reason.to_owned()
 }
 
 /// A SolidCraft sheet rule of `thickness` mm, named after it, with SolidCraft's own defaults
