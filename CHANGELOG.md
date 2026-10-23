@@ -14,6 +14,7 @@ report's schema name changes when a field does).
   macro (`--to freecad`, experimental) builds cylindrical, ball, distance and other joints
   SolidCraft output leaves out, and no longer reports them as dropped.
 
+- Fillets and chamfers map on any prior history: their input edges are matched on the body SolidCraft rebuilds from the history before them (one replay per design), and are refused, saying why, without `solidcraft-cli`.
 - Sheet-metal edge flanges map supported dimensions on unchanged rectangular base sheets using proven input-edge midpoint picks.
 - Experimental FreeCAD macros keep a mapped history prefix and hidden reference sketches when a later feature cannot be rebuilt, retaining the final STEP shape.
 - Experimental FreeCAD macros rebuild assembly joints in the Assembly workbench (the fixed, revolute, and slider joints SolidCraft gets, through sub-assemblies, plus cylindrical, ball, distance, parallel, perpendicular, and angle joints between directly placed parts), with connector frames, limits, and grounding; if solving fails, the parts keep their stored placements.

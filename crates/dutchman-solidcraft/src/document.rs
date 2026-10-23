@@ -297,6 +297,7 @@ mod history_tests {
             next_id: 3,
             mapped: 2,
             total: 2,
+            blends: Vec::new(),
         }
     }
 

@@ -1740,12 +1740,16 @@ fn changed_ring(change: impl FnOnce(&mut Value)) -> Model {
 }
 
 fn written(model: &Model) -> (Vec<u8>, Report) {
+    written_with(
+        model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    )
+}
+
+fn written_with(model: &Model, writer: &SolidCraftWriter) -> (Vec<u8>, Report) {
     let mut report = Report::default();
     let mut bytes = Vec::new();
-    SolidCraftWriter::new()
-        .verification(Verification::Off)
-        .write(model, &mut bytes, &mut report)
-        .unwrap();
+    writer.write(model, &mut bytes, &mut report).unwrap();
     (bytes, report)
 }
 
@@ -6051,7 +6055,32 @@ fn later_body_mirrors_require_boolean_tools_to_be_retained() {
 /// The stored B-rep deliberately stays an unblended cube. Only the feature's own
 /// historical input samples locate the two symmetric edges; no final edge id is used.
 fn input_blend(kind: &str, dimension: Value, opposite: bool) -> Model {
-    let base = cube_with_history(10.0, first_profile(), None);
+    blend_on(
+        cube_with_history(10.0, first_profile(), None),
+        kind,
+        dimension,
+        opposite,
+        0.0,
+    )
+}
+
+/// The blend of [`input_blend`] on the cube extruded symmetrically about its sketch (Z from
+/// -5 to 5 mm): a base no rebuild without SolidCraft knew the edges of.
+fn symmetric_blend(kind: &str, dimension: Value, opposite: bool) -> Model {
+    let extent = json!({"kind": "symmetric",
+        "side": {"termination": {"kind": "blind", "length": 10.0}}});
+    blend_on(
+        cube_with_history(10.0, first_profile(), Some(extent)),
+        kind,
+        dimension,
+        opposite,
+        -5.0,
+    )
+}
+
+/// `base` with a blend of one of its two symmetric vertical edges, which run from `z0` to
+/// `z0 + 10` mm: at (0, 0), or at (10, 10) when `opposite`.
+fn blend_on(base: Model, kind: &str, dimension: Value, opposite: bool, z0: f64) -> Model {
     let mut wire = serde_json::to_value(&base.ir).unwrap();
     let mut group = json!({"edges": {"kind": "historical", "value": {
         "state": "f3d:model:feature-input-topology#1",
@@ -6070,10 +6099,10 @@ fn input_blend(kind: &str, dimension: Value, opposite: bool) -> Model {
         }));
     let sample = |edge: &str, xy: f64| {
         json!({
-            "edge": edge, "interior": {"x": xy, "y": xy, "z": 5.0},
+            "edge": edge, "interior": {"x": xy, "y": xy, "z": z0 + 5.0},
             "tangent": {"x": 0.0, "y": 0.0, "z": 1.0},
-            "start": {"x": xy, "y": xy, "z": 0.0},
-            "end": {"x": xy, "y": xy, "z": 10.0},
+            "start": {"x": xy, "y": xy, "z": z0},
+            "end": {"x": xy, "y": xy, "z": z0 + 10.0},
             "faces": if edge == "near" { json!(["front", "left"]) } else { json!(["back", "right"]) },
         })
     };
@@ -6104,68 +6133,207 @@ fn blend_cases() -> Vec<(&'static str, Value)> {
     ]
 }
 
+#[cfg(unix)]
+/// The edges SolidCraft's `model.edges` reports for a prism: the polygon `ring` (on XY)
+/// extruded from `z0` to `z1`.
+fn prism_edges(ring: &[[f64; 2]], z0: f64, z1: f64) -> Vec<Value> {
+    let edge = |a: [f64; 3], b: [f64; 3]| {
+        let length = ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2) + (b[2] - a[2]).powi(2)).sqrt();
+        let mid = [0, 1, 2].map(|i| (a[i] + b[i]) / 2.0);
+        json!({"start": a, "end": b, "mid": mid, "length": length})
+    };
+    let mut edges = Vec::new();
+    for (i, p) in ring.iter().enumerate() {
+        let q = ring[(i + 1) % ring.len()];
+        edges.push(edge([p[0], p[1], z0], [q[0], q[1], z0]));
+        edges.push(edge([q[0], q[1], z1], [p[0], p[1], z1]));
+        edges.push(edge([p[0], p[1], z0], [p[0], p[1], z1]));
+    }
+    edges
+}
+
+#[cfg(unix)]
+const SQUARE: [[f64; 2]; 4] = [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]];
+
+/// A stand-in SolidCraft CLI that answers a replay with `bodies` (name, edges), after
+/// sleeping `delay` seconds; the folder holding it lives as long as the value.
+#[cfg(unix)]
+struct FakeCli {
+    _dir: tempfile::TempDir,
+    path: PathBuf,
+}
+
+#[cfg(unix)]
+fn fake_cli(bodies: &[(&str, Vec<Value>)], delay: u32) -> FakeCli {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let inspect = json!([{"features": 3, "marker": 2}, {
+        "bodies": bodies.iter().map(|(name, _)| json!({"name": name})).collect::<Vec<_>>(),
+        "timeline": [],
+    }]);
+    let mut edges = vec![json!({"features": 3, "marker": 2})];
+    edges.extend(
+        bodies
+            .iter()
+            .map(|(name, edges)| json!({"body": name, "edges": edges})),
+    );
+    std::fs::write(dir.path().join("bodies.json"), inspect.to_string()).unwrap();
+    std::fs::write(
+        dir.path().join("edges.json"),
+        Value::from(edges).to_string(),
+    )
+    .unwrap();
+    let path = dir.path().join("solidcraft-cli");
+    let folder = dir.path().display();
+    std::fs::write(
+        &path,
+        format!(
+            "#!/bin/sh\nfor last; do out=\"$last\"; done\n\
+             case \"$1\" in --version) echo 'solidcraft-cli 0.19.0'; exit 0;; esac\n\
+             sleep {delay}\n\
+             if grep -q model.edges \"$2\"; then cat '{folder}/edges.json' > \"$out\"; \
+             else cat '{folder}/bodies.json' > \"$out\"; fi\n"
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    FakeCli { _dir: dir, path }
+}
+
+/// A writer that finds blend edges with `cli` and checks nothing else.
+fn replaying(cli: &Path) -> SolidCraftWriter {
+    SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .replay(Verification::With(cli.to_path_buf()))
+}
+
+#[cfg(unix)]
 #[test]
 fn blends_select_symmetric_edges_by_their_own_input_geometry() {
-    for (kind, dimension) in blend_cases() {
-        for opposite in [false, true] {
-            let model = input_blend(kind, dimension.clone(), opposite);
-            let (document, report) = convert(
-                &model,
-                &SolidCraftWriter::new().verification(Verification::Off),
-            );
-            assert!(
-                !history_line(&report).starts_with("flattened"),
-                "{report:?}"
-            );
-            let blend = &document["features"][2];
-            assert_eq!(blend["type"], kind);
-            assert_eq!(blend["body"], "unit cube");
-            let xy = if opposite { 10.0 } else { 0.0 };
-            assert_eq!(blend["edges"], json!([[xy, xy, 5.0]]));
-            if kind == "fillet" {
-                assert_eq!(blend["radius"], "1 mm");
-                assert_eq!(blend["style"], json!({"type": "constant"}));
-            } else {
-                assert_eq!(blend["distance"], "1 mm");
-                assert!(blend.get("distance2").is_none());
-                assert!(blend.get("angle").is_none());
+    for (symmetric, z0) in [(false, 0.0), (true, -5.0)] {
+        let cli = fake_cli(&[("unit cube", prism_edges(&SQUARE, z0, z0 + 10.0))], 0);
+        for (kind, dimension) in blend_cases() {
+            for opposite in [false, true] {
+                let model = if symmetric {
+                    symmetric_blend(kind, dimension.clone(), opposite)
+                } else {
+                    input_blend(kind, dimension.clone(), opposite)
+                };
+                let (document, report) = convert(&model, &replaying(&cli.path));
+                assert!(
+                    !history_line(&report).starts_with("flattened"),
+                    "{report:?}"
+                );
+                let blend = &document["features"][2];
+                assert_eq!(blend["type"], kind);
+                assert_eq!(blend["body"], "unit cube");
+                let xy = if opposite { 10.0 } else { 0.0 };
+                assert_eq!(blend["edges"], json!([[xy, xy, z0 + 5.0]]));
+                if kind == "fillet" {
+                    assert_eq!(blend["radius"], "1 mm");
+                    assert_eq!(blend["style"], json!({"type": "constant"}));
+                } else {
+                    assert_eq!(blend["distance"], "1 mm");
+                    assert!(blend.get("distance2").is_none());
+                    assert!(blend.get("angle").is_none());
+                }
             }
         }
     }
 }
 
 #[test]
+fn blends_without_a_solidcraft_to_replay_the_history_are_refused() {
+    let model = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_eq!(
+        types(&document).first(),
+        Some(&("import".to_owned(), false))
+    );
+    assert!(
+        history_line(&report).contains(
+            "feature \"Edge treatment\": its input edges are found only on SolidCraft's replay \
+             of the history before it, and there is none: verification turned off"
+        ),
+        "{report:?}"
+    );
+    let missing = Path::new("/nonexistent/solidcraft-cli");
+    let (_, report) = convert(&model, &replaying(missing));
+    assert!(history_line(&report).contains("cannot run"), "{report:?}");
+    // Inspecting says the same, without running anything.
+    let mut report = Report::default();
+    let outcome = SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .plan(&model, &mut report);
+    assert_eq!(outcome.mode, Mode::Import);
+    let blend = outcome.features.last().unwrap();
+    assert!(
+        blend
+            .reason
+            .as_deref()
+            .unwrap_or("")
+            .contains("there is none"),
+        "{blend:?}"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_replay_that_runs_out_of_time_refuses_the_blend() {
+    let cli = fake_cli(&[("unit cube", prism_edges(&SQUARE, 0.0, 10.0))], 5);
+    let model = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
+    let started = std::time::Instant::now();
+    let (document, report) = convert(
+        &model,
+        &replaying(&cli.path).timeout(std::time::Duration::from_millis(300)),
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(4));
+    assert_eq!(
+        types(&document).first(),
+        Some(&("import".to_owned(), false))
+    );
+    assert!(history_line(&report).contains("timed out"), "{report:?}");
+}
+
+#[cfg(unix)]
+#[test]
 fn blends_refuse_missing_foreign_or_ambiguous_input_geometry() {
+    let cube = fake_cli(&[("unit cube", prism_edges(&SQUARE, 0.0, 10.0))], 0);
     let base = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
-    let check = |change: fn(&mut Value), reason: &str| {
+    let check = |cli: &Path, change: fn(&mut Value), reason: &str| {
         let mut wire = serde_json::to_value(&base.ir).unwrap();
         change(&mut wire["model"]);
         let model = Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
             ..base.clone()
         };
-        let (document, report) = convert(
-            &model,
-            &SolidCraftWriter::new().verification(Verification::Off),
-        );
+        let (document, report) = convert(&model, &replaying(cli));
         let types = types(&document);
         assert_eq!(types.first(), Some(&("import".to_owned(), false)));
         assert!(!types.iter().any(|(kind, _)| kind == "fillet"), "{types:?}");
         assert!(history_line(&report).contains(reason), "{report:?}");
     };
+    let cli = cube.path.as_path();
     check(
+        cli,
         |m| m["feature_input_topologies"] = json!([]),
         "input topology is missing",
     );
     check(
+        cli,
         |m| m["feature_input_topologies"][0]["input_of"] = json!("f3d:model:feature#2"),
         "does not uniquely belong",
     );
     check(
+        cli,
         |m| m["feature_input_topologies"][0]["edge_geometry"] = json!([]),
         "input edge geometry is missing",
     );
     check(
+        cli,
         |m| {
             m["feature_input_topologies"][0]["edge_geometry"][0]
                 .as_object_mut()
@@ -6175,17 +6343,21 @@ fn blends_refuse_missing_foreign_or_ambiguous_input_geometry() {
         "tangent is missing",
     );
     check(
+        cli,
         |m| m["feature_input_topologies"][0]["edges"] = json!(["opposite"]),
         "not a unique member",
     );
     check(
+        cli,
         |m| {
             m["feature_input_topologies"][0]["edge_geometry"][0]["interior"] =
                 json!({"x": 0.0, "y": 0.0, "z": 0.0})
         },
         "cannot be proven",
     );
+    // A midpoint on no rebuilt edge, and ends or a tangent other than the rebuilt edge's.
     check(
+        cli,
         |m| {
             m["feature_input_topologies"][0]["edge_geometry"][0]["interior"] =
                 json!({"x": 5.0, "y": 5.0, "z": 5.0})
@@ -6193,33 +6365,44 @@ fn blends_refuse_missing_foreign_or_ambiguous_input_geometry() {
         "cannot be proven",
     );
     check(
+        cli,
         |m| m["feature_input_topologies"][0]["edge_geometry"][0]["end"]["z"] = json!(9.0),
         "cannot be proven",
     );
     check(
+        cli,
         |m| {
             m["feature_input_topologies"][0]["edge_geometry"][0]["tangent"] =
                 json!({"x": 1.0, "y": 0.0, "z": 0.0})
         },
         "cannot be proven",
     );
+    // A curve that is neither a line nor a circular arc.
     check(
+        cli,
+        |m| {
+            m["feature_input_topologies"][0]["edge_geometry"][0]["interior"] =
+                json!({"x": 1.0, "y": 1.0, "z": 4.0})
+        },
+        "other than circular arcs",
+    );
+    check(
+        cli,
         |m| {
             m["features"][2]["definition"]["groups"][0]["edges"] =
                 json!({"kind": "edges", "value": ["synthetic:cube:edge#8"]})
         },
         "require edges from their own feature input topology",
     );
-    check(
-        |m| {
-            let mut earlier = m["features"][1].clone();
-            earlier["id"] = json!("f3d:model:feature#4");
-            earlier["ordinal"] = json!(3);
-            m["features"].as_array_mut().unwrap().push(earlier);
-            m["features"][2]["ordinal"] = json!(4);
-        },
-        "cannot be proven",
+    // Two bodies in the same place: the midpoint lies on an edge of each.
+    let twins = fake_cli(
+        &[
+            ("unit cube", prism_edges(&SQUARE, 0.0, 10.0)),
+            ("unit cube (2)", prism_edges(&SQUARE, 0.0, 10.0)),
+        ],
+        0,
     );
+    check(twins.path.as_path(), |_| {}, "cannot be proven");
 }
 
 #[test]
@@ -6273,84 +6456,123 @@ fn blend_measurement(cli: &Path, input: &Path, output: &Path) -> Value {
     measured["bodies"][0].clone()
 }
 
+/// The blend found on SolidCraft's own replay of the history before it, on the one-sided and
+/// on the symmetric cube, against the same blend made directly in SolidCraft: same volume,
+/// bounding box, face count and centre of mass, the last telling the symmetric edges apart.
 #[test]
 fn solidcraft_blends_the_input_edge_and_matches_the_expected_body() {
     let Some(cli) = solidcraft() else { return };
     let dir = tempfile::tempdir().unwrap();
-    for (kind, dimension) in blend_cases() {
-        for opposite in [false, true] {
-            let model = input_blend(kind, dimension.clone(), opposite);
-            let actual_path = dir.path().join("actual.solidcraft");
-            std::fs::write(&actual_path, written(&model).0).unwrap();
-            let actual = blend_measurement(&cli, &actual_path, &dir.path().join("actual.json"));
-            let xy = if opposite { 10.0 } else { 0.0 };
-            let mut params = json!({"edges": [[xy, xy, 5.0]], "body": "Reference"});
-            if kind == "fillet" {
-                params["radius"] = json!("1 mm");
-            } else {
-                params["distance"] = json!("1 mm");
-                match dimension["kind"].as_str().unwrap() {
-                    "two_distances" => params["distance2"] = json!("1 mm"),
-                    "distance_angle" => params["angle"] = json!("45 deg"),
-                    _ => {}
+    for (symmetric, z0) in [(false, 0.0), (true, -5.0)] {
+        for (kind, dimension) in blend_cases() {
+            for opposite in [false, true] {
+                let model = if symmetric {
+                    symmetric_blend(kind, dimension.clone(), opposite)
+                } else {
+                    input_blend(kind, dimension.clone(), opposite)
+                };
+                let (bytes, report) = written_with(&model, &replaying(&cli));
+                assert!(
+                    !history_line(&report).starts_with("flattened"),
+                    "{report:?}"
+                );
+                let actual_path = dir.path().join("actual.solidcraft");
+                std::fs::write(&actual_path, bytes).unwrap();
+                let actual = blend_measurement(&cli, &actual_path, &dir.path().join("actual.json"));
+                let xy = if opposite { 10.0 } else { 0.0 };
+                let mut params = json!({"edges": [[xy, xy, z0 + 5.0]], "body": "Reference"});
+                if kind == "fillet" {
+                    params["radius"] = json!("1 mm");
+                } else {
+                    params["distance"] = json!("1 mm");
+                    match dimension["kind"].as_str().unwrap() {
+                        "two_distances" => params["distance2"] = json!("1 mm"),
+                        "distance_angle" => params["angle"] = json!("45 deg"),
+                        _ => {}
+                    }
                 }
-            }
-            let script = json!([
-                {"command": "solid.box", "params": {"length": "10 mm", "width": "10 mm",
-                    "height": "10 mm", "corner": [0, 0, 0], "body_name": "Reference"}},
-                {"command": format!("solid.{kind}"), "params": params},
-            ]);
-            let expected_path = dir.path().join("expected-script.json");
-            std::fs::write(&expected_path, script.to_string()).unwrap();
-            let expected =
-                blend_measurement(&cli, &expected_path, &dir.path().join("expected.json"));
-            let volume = actual["volume_mm3"].as_f64().unwrap();
-            let wanted = expected["volume_mm3"].as_f64().unwrap();
-            assert!((volume - wanted).abs() / wanted < dutchman_solidcraft::VOLUME_TOLERANCE);
-            let analytic = if kind == "fillet" {
-                1000.0 - 10.0 * (1.0 - std::f64::consts::FRAC_PI_4)
-            } else {
-                995.0
-            };
-            assert!((volume - analytic).abs() < 0.05, "{actual}");
-            assert_eq!(
-                actual["faces"].as_u64().unwrap(),
-                expected["faces"].as_u64().unwrap()
-            );
-            assert_eq!(actual["faces"].as_u64().unwrap(), 7);
-            for axis in 0..3 {
-                for corner in ["min", "max"] {
+                let script = json!([
+                    {"command": "solid.box", "params": {"length": "10 mm", "width": "10 mm",
+                        "height": "10 mm", "corner": [0, 0, z0], "body_name": "Reference"}},
+                    {"command": format!("solid.{kind}"), "params": params},
+                ]);
+                let expected_path = dir.path().join("expected-script.json");
+                std::fs::write(&expected_path, script.to_string()).unwrap();
+                let expected =
+                    blend_measurement(&cli, &expected_path, &dir.path().join("expected.json"));
+                let volume = actual["volume_mm3"].as_f64().unwrap();
+                let wanted = expected["volume_mm3"].as_f64().unwrap();
+                assert!((volume - wanted).abs() / wanted < dutchman_solidcraft::VOLUME_TOLERANCE);
+                let analytic = if kind == "fillet" {
+                    1000.0 - 10.0 * (1.0 - std::f64::consts::FRAC_PI_4)
+                } else {
+                    995.0
+                };
+                assert!((volume - analytic).abs() < 0.05, "{actual}");
+                assert_eq!(
+                    actual["faces"].as_u64().unwrap(),
+                    expected["faces"].as_u64().unwrap()
+                );
+                assert_eq!(actual["faces"].as_u64().unwrap(), 7);
+                for axis in 0..3 {
+                    for corner in ["min", "max"] {
+                        assert!(
+                            (actual["bbox"][corner][axis].as_f64().unwrap()
+                                - expected["bbox"][corner][axis].as_f64().unwrap())
+                            .abs()
+                                < 1e-6
+                        );
+                    }
                     assert!(
-                        (actual["bbox"][corner][axis].as_f64().unwrap()
-                            - expected["bbox"][corner][axis].as_f64().unwrap())
+                        (actual["center_of_mass"][axis].as_f64().unwrap()
+                            - expected["center_of_mass"][axis].as_f64().unwrap())
                         .abs()
-                            < 1e-6
+                            < 1e-5
                     );
                 }
-                assert!(
-                    (actual["center_of_mass"][axis].as_f64().unwrap()
-                        - expected["center_of_mass"][axis].as_f64().unwrap())
-                    .abs()
-                        < 1e-5
-                );
-            }
-            // Volume, bounding box and face count are identical for these symmetric
-            // alternatives. The centre of mass proves which corner lost material.
-            for axis in 0..2 {
-                let center = actual["center_of_mass"][axis].as_f64().unwrap();
-                assert!(
-                    if opposite {
-                        center < 4.999
-                    } else {
-                        center > 5.001
-                    },
-                    "{actual}"
-                );
+                // Volume, bounding box and face count are identical for these symmetric
+                // alternatives. The centre of mass proves which corner lost material.
+                for axis in 0..2 {
+                    let center = actual["center_of_mass"][axis].as_f64().unwrap();
+                    assert!(
+                        if opposite {
+                            center < 4.999
+                        } else {
+                            center > 5.001
+                        },
+                        "{actual}"
+                    );
+                }
             }
         }
     }
 }
 
+/// Two bodies where the cube is, made by extruding its profile twice: SolidCraft's replay
+/// gives each the edge the blend's midpoint is on, so the blend is refused.
+#[test]
+fn solidcraft_refuses_a_blend_whose_midpoint_lies_on_two_rebuilt_edges() {
+    let Some(cli) = solidcraft() else { return };
+    let base = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let model = &mut wire["model"];
+    let mut earlier = model["features"][1].clone();
+    earlier["id"] = json!("f3d:model:feature#4");
+    earlier["ordinal"] = json!(3);
+    model["features"].as_array_mut().unwrap().push(earlier);
+    model["features"][2]["ordinal"] = json!(4);
+    let model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    };
+    let (_, report) = written_with(&model, &replaying(&cli));
+    assert!(
+        history_line(&report).contains("cannot be proven"),
+        "{report:?}"
+    );
+}
+
+#[cfg(unix)]
 #[test]
 fn a_distance_angle_chamfer_requires_perpendicular_input_faces() {
     let base = input_blend(
@@ -6371,16 +6593,16 @@ fn a_distance_angle_chamfer_requires_perpendicular_input_faces() {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..base
     };
-    let (_, report) = convert(
-        &model,
-        &SolidCraftWriter::new().verification(Verification::Off),
-    );
+    let parallelogram = [[0.0, 0.0], [10.0, 0.0], [20.0, 10.0], [10.0, 10.0]];
+    let cli = fake_cli(&[("unit cube", prism_edges(&parallelogram, 0.0, 10.0))], 0);
+    let (_, report) = convert(&model, &replaying(&cli.path));
     assert!(
         history_line(&report).contains("non-perpendicular input faces"),
         "{report:?}"
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn blends_keep_multiple_picks_and_refuse_repeated_geometry_and_weighted_groups() {
     let base = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
@@ -6391,12 +6613,14 @@ fn blends_keep_multiple_picks_and_refuse_repeated_geometry_and_weighted_groups()
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..base.clone()
     };
-    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    let cli = fake_cli(&[("unit cube", prism_edges(&SQUARE, 0.0, 10.0))], 0);
+    let writer = replaying(&cli.path);
     let (document, _) = convert(&model, &writer);
     assert_eq!(
         document["features"][2]["edges"],
         json!([[0.0, 0.0, 5.0], [10.0, 10.0, 5.0]])
     );
+    assert_eq!(document["features"][2]["body"], "unit cube");
     let sample = wire["model"]["feature_input_topologies"][0]["edge_geometry"][0].clone();
     wire["model"]["feature_input_topologies"][0]["edge_geometry"][1] = sample;
     wire["model"]["feature_input_topologies"][0]["edge_geometry"][1]["edge"] = json!("opposite");

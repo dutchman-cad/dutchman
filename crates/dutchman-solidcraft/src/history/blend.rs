@@ -1,25 +1,65 @@
-//! Blends picked exclusively from their own historical input-edge geometry.
-//! A single convex polygon extrusion gives a complete, provable pre-feature edge set.
-//! Other preceding geometry is refused rather than selecting from the final body.
+//! Blends picked exclusively from their own historical input-edge geometry, on the body
+//! SolidCraft rebuilds from the history before the blend, never on the final body.
+//!
+//! Mapping keeps each selected input edge ([`Pending`]); once SolidCraft has replayed the
+//! mapped history ([`crate::verify::replay_edges`]), [`prove`] finds it among the edges of the
+//! bodies the blend starts from. SolidCraft reports each rebuilt edge's ends, the point
+//! halfway along it and its length, but no carrier or tangent, so the rule is:
+//!
+//! - The input edge must be a straight line (its midpoint on the segment between its ends and
+//!   its tangent along that segment) or a circular arc (its tangent square to the radius of
+//!   the circle through its ends and midpoint, in that circle's plane). Other curves and
+//!   closed edges are refused.
+//! - Its midpoint must lie on exactly one rebuilt edge across every body: within the segment
+//!   of a straight one (a length equal to its chord proves it straight), or at the midpoint of
+//!   a curved one. Anything else, including two rebuilt edges through it, is refused.
+//! - That edge must have the input edge's ends, in either order, and its length: the chord of
+//!   a line, `radius × angle` of an arc. A straight rebuilt edge then lies along the input
+//!   tangent; a curved one is not checked for a tangent SolidCraft does not report.
 
 use serde_json::{json, Map, Value};
 
-use super::sketch::{dot, number, unit, v3, V3};
+use super::sketch::{cross, dot, number, unit, v3, V3};
 use super::{name, Context};
+use crate::verify::{ReplayedBodies, ReplayedEdge};
 
 const LIMIT: usize = 256;
-const TOLERANCE: f64 = 1e-7;
+/// How far apart, in millimetres, two positions may be and still be the same.
+const TOLERANCE: f64 = 1e-6;
+/// How far from square or parallel two unit directions may be.
+const ANGLE: f64 = 1e-6;
 const INPUT: &str =
     "its input edge midpoint cannot be proven to select exactly one rebuilt edge yet";
 
 type Segment = (V3, V3);
 
-pub(super) fn map(
-    feature: &Value,
-    definition: &Value,
-    ctx: &mut Context,
-    preceding: &[Value],
-) -> Result<Value, String> {
+/// A blend whose input edges wait for SolidCraft's replay of the history before it.
+#[derive(Clone, Debug)]
+pub(crate) struct Pending {
+    /// The blend's index in the mapped features.
+    pub(crate) feature: usize,
+    /// Its source feature's index in the mapping's outcomes.
+    pub(crate) outcome: usize,
+    /// Its source feature, as the report names it.
+    pub(crate) subject: String,
+    edges: Vec<Input>,
+    /// A 45-degree chamfer, written as an equal-distance one.
+    angle_chamfer: bool,
+}
+
+/// One selected input edge, from its feature input topology.
+#[derive(Clone, Debug)]
+struct Input {
+    /// The point at the middle of its carrier's parameter interval.
+    point: V3,
+    ends: Segment,
+    tangent: V3,
+    /// Its length: the chord of a line, or the arc's.
+    length: f64,
+    straight: bool,
+}
+
+pub(super) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Result<Value, String> {
     let kind = definition
         .get("definition")
         .and_then(Value::as_str)
@@ -110,10 +150,9 @@ pub(super) fn map(
     if members.len() > 10_000 || geometry.len() > 10_000 {
         return Err("its input topology exceeds the blend resolution limit".to_owned());
     }
-    let (body, rebuilt) = input_edges(ctx, preceding).ok_or(INPUT)?;
     let angle_chamfer =
         group.pointer("/spec/kind").and_then(Value::as_str) == Some("distance_angle");
-    let mut selected = Vec::new();
+    let mut inputs = Vec::new();
     let mut points = Vec::new();
     for edge in ids {
         if !edge.is_string() || members.iter().filter(|member| *member == edge).count() != 1 {
@@ -131,38 +170,48 @@ pub(super) fn map(
             return Err("its selected input edge has repeated geometry".to_owned());
         }
         let point = v3(sample.get("interior")).ok_or("its input edge midpoint is missing")?;
-        let segment = (
+        let ends = (
             v3(sample.get("start")).ok_or("its input edge start is missing")?,
             v3(sample.get("end")).ok_or("its input edge end is missing")?,
         );
         let tangent = v3(sample.get("tangent"))
             .and_then(unit)
             .ok_or("its input edge tangent is missing")?;
-        let mut matches = rebuilt
-            .iter()
-            .enumerate()
-            .filter(|(_, candidate)| on_segment(point, **candidate));
-        let (index, candidate) = matches.next().ok_or(INPUT)?;
-        if matches.next().is_some()
-            || !same(segment, *candidate)
-            || near(point, segment.0)
-            || near(point, segment.1)
-            || !unit(sub(candidate.1, candidate.0))
-                .is_some_and(|direction| (dot(direction, tangent).abs() - 1.0).abs() <= 1e-9)
-        {
+        if near(ends.0, ends.1) {
+            return Err("blends on closed input edges are not supported yet".to_owned());
+        }
+        if near(point, ends.0) || near(point, ends.1) {
             return Err(INPUT.to_owned());
         }
-        // A 45-degree chamfer has equal setbacks only at a right-angle corner.
-        if angle_chamfer && !right_angle(*candidate, &rebuilt) {
+        let input = if on_segment(point, ends) {
+            if !parallel(sub(ends.1, ends.0), tangent) {
+                return Err(INPUT.to_owned());
+            }
+            Input {
+                point,
+                ends,
+                tangent,
+                length: distance(ends.0, ends.1),
+                straight: true,
+            }
+        } else {
+            let length = arc_length(point, ends, tangent).ok_or(
+                "blends on curved input edges other than circular arcs are not supported yet",
+            )?;
+            Input {
+                point,
+                ends,
+                tangent,
+                length,
+                straight: false,
+            }
+        };
+        if angle_chamfer && !input.straight {
             return Err("distance-and-angle chamfers on non-perpendicular input faces are not supported yet".to_owned());
         }
-        if selected.contains(&index) {
-            return Err("its input edge selection repeats a rebuilt edge".to_owned());
-        }
-        selected.push(index);
+        inputs.push(input);
         points.push(point);
     }
-    out.insert("body".to_owned(), json!(body));
     out.insert("edges".to_owned(), json!(points));
     let id = ctx.id();
     out.insert("id".to_owned(), json!(id));
@@ -172,28 +221,147 @@ pub(super) fn map(
             .map(str::to_owned)
             .unwrap_or_else(|| format!("Blend{id}"))),
     );
+    ctx.blends.push(Pending {
+        feature: 0,
+        outcome: 0,
+        subject: String::new(),
+        edges: inputs,
+        angle_chamfer,
+    });
     Ok(Value::Object(out))
 }
 
-/// At a convex prism vertex the other two edges point along the support faces.
-fn right_angle(edge: Segment, rebuilt: &[Segment]) -> bool {
-    let directions: Vec<_> = rebuilt
-        .iter()
-        .filter(|candidate| !same(edge, **candidate))
-        .filter_map(|(a, b)| {
-            if near(edge.0, *a) {
-                unit(sub(*b, *a))
-            } else if near(edge.0, *b) {
-                unit(sub(*a, *b))
-            } else {
-                None
+/// The body the blend's input edges lie on, among `bodies`: what SolidCraft rebuilt from the
+/// history before it. Each input edge must select exactly one rebuilt edge (see the module
+/// note), and all of them one body.
+pub(crate) fn prove(pending: &Pending, bodies: &ReplayedBodies) -> Result<String, String> {
+    let mut chosen: Vec<(usize, usize)> = Vec::new();
+    for input in &pending.edges {
+        let mut on = Vec::new();
+        for (b, (_, edges)) in bodies.iter().enumerate() {
+            for (e, edge) in edges.iter().enumerate() {
+                let hit = if straight(edge) {
+                    on_segment(input.point, (edge.start, edge.end))
+                } else {
+                    near(input.point, edge.mid)
+                };
+                if hit {
+                    on.push((b, e));
+                }
             }
-        })
-        .collect();
-    match directions.as_slice() {
-        [a, b] => dot(*a, *b).abs() <= 1e-9,
-        _ => false,
+        }
+        let [(b, e)] = on.as_slice() else {
+            return Err(INPUT.to_owned());
+        };
+        let edges = bodies
+            .get(*b)
+            .map(|(_, edges)| edges.as_slice())
+            .ok_or(INPUT)?;
+        let edge = edges.get(*e).ok_or(INPUT)?;
+        if !same(input.ends, (edge.start, edge.end))
+            || !same_length(edge.length, input.length)
+            || straight(edge) != input.straight
+            || (input.straight && !parallel(sub(edge.end, edge.start), input.tangent))
+        {
+            return Err(INPUT.to_owned());
+        }
+        // A 45-degree chamfer has equal setbacks only at a right-angle corner.
+        if pending.angle_chamfer && !right_angle(edge, edges) {
+            return Err("distance-and-angle chamfers on non-perpendicular input faces are not supported yet".to_owned());
+        }
+        if chosen.contains(&(*b, *e)) {
+            return Err("its input edge selection repeats a rebuilt edge".to_owned());
+        }
+        chosen.push((*b, *e));
     }
+    let body = chosen.first().map(|(b, _)| *b).ok_or(INPUT)?;
+    if chosen.iter().any(|(b, _)| *b != body) {
+        return Err(
+            "its input edges lie on more than one rebuilt body; blends across bodies are not supported yet"
+                .to_owned(),
+        );
+    }
+    bodies
+        .get(body)
+        .map(|(name, _)| name.clone())
+        .ok_or_else(|| INPUT.to_owned())
+}
+
+/// Whether the faces either side of a straight `edge` meet square, judged at both its ends by
+/// the two other edges there, which must be straight: the corner of a prism.
+fn right_angle(edge: &ReplayedEdge, edges: &[ReplayedEdge]) -> bool {
+    let Some(along) = unit(sub(edge.end, edge.start)) else {
+        return false;
+    };
+    [edge.start, edge.end].into_iter().all(|vertex| {
+        let mut directions = Vec::new();
+        for other in edges {
+            if same((other.start, other.end), (edge.start, edge.end)) {
+                continue;
+            }
+            let far = if near(vertex, other.start) {
+                other.end
+            } else if near(vertex, other.end) {
+                other.start
+            } else {
+                continue;
+            };
+            if !straight(other) {
+                return false;
+            }
+            let d = sub(far, vertex);
+            let across = sub(d, scale(along, dot(d, along)));
+            match unit(across) {
+                Some(across) => directions.push(across),
+                None => return false,
+            }
+        }
+        match directions.as_slice() {
+            [a, b] => dot(*a, *b).abs() <= ANGLE,
+            _ => false,
+        }
+    })
+}
+
+/// The length of the circular arc from `ends.0` through `point` to `ends.1`, when `tangent`
+/// is the tangent at `point` of the circle through the three; `None` for any other curve.
+fn arc_length(point: V3, ends: Segment, tangent: V3) -> Option<f64> {
+    let a = sub(ends.0, point);
+    let b = sub(ends.1, point);
+    let normal = cross(a, b);
+    let n2 = dot(normal, normal);
+    if !n2.is_finite() || n2 <= TOLERANCE * TOLERANCE * dot(a, a) * dot(b, b) {
+        return None;
+    }
+    let towards = sub(scale(b, dot(a, a)), scale(a, dot(b, b)));
+    let offset = scale(cross(towards, normal), 1.0 / (2.0 * n2));
+    let center = add(point, offset);
+    let radius = distance(point, center);
+    let out = unit(sub(point, center))?;
+    if dot(out, tangent).abs() > ANGLE || dot(unit(normal)?, tangent).abs() > ANGLE {
+        return None;
+    }
+    let angle = |p: V3, q: V3| {
+        let (u, v) = (sub(p, center), sub(q, center));
+        let c = cross(u, v);
+        dot(c, c).sqrt().atan2(dot(u, v))
+    };
+    let length = radius * (angle(ends.0, point) + angle(point, ends.1));
+    (length.is_finite() && length > 0.0).then_some(length)
+}
+
+/// Whether SolidCraft's edge is straight: as long as its chord.
+fn straight(edge: &ReplayedEdge) -> bool {
+    let chord = distance(edge.start, edge.end);
+    chord > TOLERANCE && same_length(edge.length, chord)
+}
+
+fn same_length(a: f64, b: f64) -> bool {
+    (a - b).abs() <= TOLERANCE * a.abs().max(b.abs()).max(1.0)
+}
+
+fn parallel(direction: V3, tangent: V3) -> bool {
+    unit(direction).is_some_and(|direction| (dot(direction, tangent).abs() - 1.0).abs() <= ANGLE)
 }
 
 fn length(value: Option<&Value>) -> Result<String, String> {
@@ -226,175 +394,19 @@ fn same(a: Segment, b: Segment) -> bool {
     (near(a.0, b.0) && near(a.1, b.1)) || (near(a.0, b.1) && near(a.1, b.0))
 }
 
-/// Reconstructs an input for which every edge's location is known without a kernel.
-/// Refuse prior modifications, multiple bodies, curved profiles and split profile selections.
-fn input_edges(ctx: &Context, preceding: &[Value]) -> Option<(String, Vec<Segment>)> {
-    let mut solids = preceding
-        .iter()
-        .filter(|feature| feature.get("type").and_then(Value::as_str) != Some("sketch"));
-    let extrude = solids.next()?;
-    if solids.next().is_some()
-        || extrude.get("type")?.as_str()? != "extrude"
-        || extrude.get("operation")?.as_str()? != "new_body"
-        || ctx.named_bodies.len() != 1
-    {
-        return None;
-    }
-    let body = ctx.named_bodies.first()?.1.clone();
-    let sketch = ctx
-        .sketches
-        .values()
-        .find(|sketch| Some(sketch.feature) == extrude.get("sketch").and_then(Value::as_u64))?;
-    let extent = extrude.get("extent")?;
-    if extent
-        .as_object()?
-        .keys()
-        .any(|key| !matches!(key.as_str(), "direction" | "distance"))
-    {
-        return None;
-    }
-    let sign = match extent.get("direction")?.as_str()? {
-        "positive" => 1.0,
-        "negative" => -1.0,
-        _ => return None,
-    };
-    let distance = extent
-        .get("distance")?
-        .as_str()?
-        .strip_suffix(" mm")?
-        .parse::<f64>()
-        .ok()?;
-    if !distance.is_finite() || distance <= 0.0 {
-        return None;
-    }
-    if sketch.shapes.len() > LIMIT {
-        return None;
-    }
-    let profiles = extrude.get("profiles")?;
-    let curves: Vec<&super::sketch::Curve> = sketch
-        .shapes
-        .values()
-        .map(|shape| match shape {
-            super::sketch::Shape::Curve(curve) if curve.kind == "line" => Some(curve),
-            _ => None,
-        })
-        .collect::<Option<_>>()?;
-    if !(3..=LIMIT).contains(&curves.len()) {
-        return None;
-    }
-    match profiles.get("type")?.as_str()? {
-        "all" => {}
-        "curves" => {
-            let loops = profiles.get("loops")?.as_array()?;
-            let ids = loops.first()?.as_array()?;
-            if loops.len() != 1
-                || ids.len() != curves.len()
-                || curves
-                    .iter()
-                    .any(|curve| !ids.iter().any(|id| id.as_str() == Some(curve.id.as_str())))
-            {
-                return None;
-            }
-        }
-        _ => return None,
-    }
-    let mut boundary = Vec::new();
-    for curve in &curves {
-        let a = sketch.world(sketch.points.get(curve.start?)?.1);
-        let b = sketch.world(sketch.points.get(curve.end?)?.1);
-        if near(a, b) {
-            return None;
-        }
-        boundary.push((a, b));
-    }
-    // Every corner must join exactly two non-collinear sides. This excludes dangling
-    // curves, overlapping sides and corners SolidCraft merges into one longer edge.
-    for (a, b) in &boundary {
-        let neighbours: Vec<_> = boundary
-            .iter()
-            .filter(|segment| near(*a, segment.0) || near(*a, segment.1))
-            .collect();
-        if neighbours.len() != 2 {
-            return None;
-        }
-        let other = neighbours
-            .into_iter()
-            .find(|segment| !same(**segment, (*a, *b)))?;
-        let c = if near(*a, other.0) { other.1 } else { other.0 };
-        let ab = sub(*b, *a);
-        let ac = sub(c, *a);
-        let cross = super::sketch::cross(ab, ac);
-        if dot(cross, cross) <= TOLERANCE * TOLERANCE * dot(ab, ab) * dot(ac, ac) {
-            return None;
-        }
-    }
-    let shift = |p: V3| {
-        [0, 1, 2].map(|i| {
-            p.get(i).copied().unwrap_or(0.0)
-                + sign * distance * sketch.normal.get(i).copied().unwrap_or(0.0)
-        })
-    };
-    // Order one connected ring and require convexity. This also excludes crossings,
-    // nested loops and multiple profiles, whose evaluated topology needs a kernel.
-    let first = boundary.first()?.0;
-    let mut ring = vec![first];
-    let mut at = first;
-    let mut previous = None;
-    for _ in 0..boundary.len() {
-        let next = boundary.iter().find_map(|(a, b)| {
-            let next = if near(at, *a) {
-                *b
-            } else if near(at, *b) {
-                *a
-            } else {
-                return None;
-            };
-            (!previous.is_some_and(|previous| near(previous, next))).then_some(next)
-        })?;
-        previous = Some(at);
-        at = next;
-        if near(at, first) {
-            break;
-        }
-        if ring.iter().any(|point| near(*point, at)) {
-            return None;
-        }
-        ring.push(at);
-    }
-    if !near(at, first) || ring.len() != boundary.len() {
-        return None;
-    }
-    let mut orientation = None;
-    for i in 0..ring.len() {
-        let a = *ring.get(i)?;
-        let b = *ring.get((i + 1) % ring.len())?;
-        for c in ring.iter().filter(|c| !near(**c, a) && !near(**c, b)) {
-            let side = dot(super::sketch::cross(sub(b, a), sub(*c, a)), sketch.normal);
-            if !side.is_finite()
-                || side.abs() <= TOLERANCE
-                || orientation.is_some_and(|sign| side * sign <= 0.0)
-            {
-                return None;
-            }
-            orientation = Some(side.signum());
-        }
-    }
-    let mut edges = Vec::new();
-    for (a, b) in boundary {
-        edges.extend([(a, b), (shift(a), shift(b))]);
-    }
-    for point in ring {
-        edges.push((point, shift(point)));
-    }
-    if edges
-        .iter()
-        .any(|(a, b)| a.iter().chain(b).any(|v| !v.is_finite()))
-    {
-        return None;
-    }
-    Some((body, edges))
-}
-
 fn sub(a: V3, b: V3) -> V3 {
     [0, 1, 2].map(|i| a.get(i).copied().unwrap_or(0.0) - b.get(i).copied().unwrap_or(0.0))
+}
+
+fn add(a: V3, b: V3) -> V3 {
+    [0, 1, 2].map(|i| a.get(i).copied().unwrap_or(0.0) + b.get(i).copied().unwrap_or(0.0))
+}
+
+fn scale(a: V3, k: f64) -> V3 {
+    a.map(|v| v * k)
+}
+
+fn distance(a: V3, b: V3) -> f64 {
+    let d = sub(a, b);
+    dot(d, d).sqrt()
 }

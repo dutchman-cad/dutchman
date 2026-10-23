@@ -438,9 +438,15 @@ cadmpeg; in `--json` it is the `code` field, which scripts can match on.
 
 Constant-radius fillets and equal-setback chamfers keep editable history when their own
 feature input topology supplies edge midpoints, tangents and endpoints, and each midpoint
-can be proven to pick exactly one edge of the replayed pre-feature body. This currently
-requires one blind, untapered extrusion of a single convex polygon and no earlier body
-modifications. Equal two-distance chamfers also map; distance-and-angle chamfers map at
+can be proven to pick exactly one edge of the pre-feature body, whatever history builds it.
+SolidCraft itself rebuilds that body: Dutchman replays the mapped history in `solidcraft-cli`
+once per design (two runs, however many blends, within the check's time limit) and reads the
+edges each blend starts from. Without `solidcraft-cli`, or when the replay fails or runs out
+of time, blends are refused, saying why. SolidCraft reports each edge's ends, midpoint and
+length but no tangent, so an input edge must be a line or a circular arc; its midpoint must
+lie on exactly one rebuilt edge across every body, and that edge must have the same ends (in
+either order) and length; a straight one must lie along the input tangent. Arcs SolidCraft
+splits into pieces, closed edges and other curves are refused. Equal two-distance chamfers also map; distance-and-angle chamfers map at
 45 degrees on perpendicular faces. Unequal distances and other angles lack a source
 reference-face ordering and are refused specifically. Variable fillets lack a proven
 chain direction. Final-body edge selections never stand in for input geometry.

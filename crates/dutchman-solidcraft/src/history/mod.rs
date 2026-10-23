@@ -54,6 +54,9 @@ pub(crate) struct History {
     pub(crate) mapped: usize,
     /// Active source features.
     pub(crate) total: usize,
+    /// Blends whose input edges wait for SolidCraft's replay of the history before them
+    /// ([`prove_blends`]); until then each has no body.
+    pub(crate) blends: Vec<blend::Pending>,
 }
 
 /// What one source feature becomes.
@@ -249,6 +252,8 @@ struct Context<'a> {
     builds: bool,
     /// The sheet thicknesses (mm) its sheet-metal features use, each with its rule's name.
     sheet_rules: Vec<(f64, String)>,
+    /// Blends mapped so far, waiting for their input edges to be proven.
+    blends: Vec<blend::Pending>,
 }
 
 impl<'a> Context<'a> {
@@ -263,6 +268,7 @@ impl<'a> Context<'a> {
             named_bodies: Vec::new(),
             builds: false,
             sheet_rules: Vec::new(),
+            blends: Vec::new(),
         }
     }
 
@@ -391,6 +397,7 @@ fn map_into(
             continue;
         }
         history.total += 1;
+        let blends = ctx.blends.len();
         match map_feature(feature, &mut ctx, report, &mut history.features) {
             Ok(Mapped::Nothing) => {
                 history.mapped += 1;
@@ -410,6 +417,11 @@ fn map_into(
                 }
                 history.features.push(mapped);
                 out.push(outcome(FeatureStatus::Mapped, None));
+                if let Some(pending) = ctx.blends.get_mut(blends) {
+                    pending.feature = history.features.len().saturating_sub(1);
+                    pending.outcome = out.len().saturating_sub(1);
+                    pending.subject = describe(feature);
+                }
             }
             Err(reason) => {
                 blocked.get_or_insert_with(|| format!("{}: {reason}", describe(feature)));
@@ -441,6 +453,7 @@ fn map_into(
         .map(|(thickness, name)| sheet::rule(name, *thickness))
         .collect();
     history.next_id = ctx.next_id;
+    history.blends = std::mem::take(&mut ctx.blends);
     Ok(history)
 }
 
@@ -509,6 +522,89 @@ pub(crate) fn sketches(model: &Model, report: &mut Report) -> (History, usize) {
     }
     kept.next_id = ctx.next_id;
     (kept, left_out)
+}
+
+/// What SolidCraft rebuilt before each blend, as [`crate::verify::replay_edges`] reports it.
+pub(crate) type Replayed = Result<Vec<Result<crate::verify::ReplayedBodies, String>>, String>;
+
+/// Proves the input edges of every blend of a history that maps, on the bodies `replay`
+/// gives for the history before each blend (`replay(history, after)` with the ids of the
+/// features each blend follows), and names its body. A blend that cannot be proven blocks
+/// the history with the reason; without a replay (`replay` returning `Err`) none can be.
+pub(crate) fn prove_blends(
+    mapping: &mut Mapping,
+    replay: impl FnOnce(&History, &[u64]) -> Replayed,
+) {
+    let Ok(history) = &mut mapping.result else {
+        return;
+    };
+    if history.blends.is_empty() {
+        return;
+    }
+    let after: Vec<Option<u64>> = history
+        .blends
+        .iter()
+        .map(|pending| {
+            pending
+                .feature
+                .checked_sub(1)
+                .and_then(|before| history.features.get(before))
+                .and_then(|feature| feature.get("id"))
+                .and_then(Value::as_u64)
+        })
+        .collect();
+    let steps: Vec<u64> = after.iter().flatten().copied().collect();
+    let replayed = if steps.is_empty() {
+        Ok(Vec::new())
+    } else {
+        replay(history, &steps)
+    };
+    let blends = std::mem::take(&mut history.blends);
+    let mut step = 0usize;
+    let mut first = None;
+    for (pending, after) in blends.iter().zip(&after) {
+        let proven = match (after, &replayed) {
+            (None, _) => Err("no feature before it builds a body to blend".to_owned()),
+            (Some(_), Err(why)) => Err(format!(
+                "its input edges are found only on SolidCraft's replay of the history before \
+                 it, and there is none: {why}"
+            )),
+            (Some(_), Ok(bodies)) => {
+                let at = bodies.get(step);
+                step = step.saturating_add(1);
+                match at {
+                    Some(Ok(bodies)) => blend::prove(pending, bodies),
+                    Some(Err(why)) => Err(format!(
+                        "SolidCraft cannot replay the history before it: {why}"
+                    )),
+                    None => {
+                        Err("SolidCraft's replay of the history before it is missing".to_owned())
+                    }
+                }
+            }
+        };
+        match proven {
+            Ok(body) => {
+                if let Some(fields) = history
+                    .features
+                    .get_mut(pending.feature)
+                    .and_then(Value::as_object_mut)
+                {
+                    fields.insert("body".to_owned(), Value::String(body));
+                }
+            }
+            Err(reason) => {
+                if let Some(outcome) = mapping.features.get_mut(pending.outcome) {
+                    outcome.status = FeatureStatus::Blocked;
+                    outcome.reason = Some(reason.clone());
+                }
+                first.get_or_insert_with(|| format!("{}: {reason}", pending.subject));
+            }
+        }
+    }
+    if let Some(reason) = first {
+        mapping.result = Err(reason);
+    }
 }
 
 /// Refuses a CADIR wire version the mapping does not know.
@@ -583,7 +679,7 @@ fn map_feature(
         }
         Some("pattern") => pattern::map(feature, definition, ctx).map(Mapped::Feature),
         Some("fillet" | "chamfer") => {
-            blend::map(feature, definition, ctx, preceding).map(Mapped::Feature)
+            blend::map(feature, definition, ctx).map(Mapped::Feature)
         }
         Some("hole") => hole::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some("sheet_metal_base_flange") => {

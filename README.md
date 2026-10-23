@@ -48,7 +48,9 @@ assemblies (`.iam`, with their parts found anywhere in the project), SolidWorks 
   - sweeps, lofts, and coils;
   - linear, circular, and path patterns of features or bodies, body mirrors, and body
     booleans;
-  - sheet-metal base flanges.
+  - sheet-metal base flanges;
+  - constant-radius fillets and equal-setback chamfers, on edges proven on SolidCraft's own
+    replay of the history before them (so they need `solidcraft-cli`).
 
   [Feature history](docs/guide.md#feature-history-and-the-solidcraft-check) in the guide has
   the detail, and what stops a history.

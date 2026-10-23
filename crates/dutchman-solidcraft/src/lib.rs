@@ -50,6 +50,7 @@ const GEOMETRY: &str = "geometry";
 pub struct SolidCraftWriter {
     import_only: bool,
     verification: Verification,
+    replay: Verification,
     timeout: Duration,
 }
 
@@ -58,6 +59,7 @@ impl Default for SolidCraftWriter {
         SolidCraftWriter {
             import_only: false,
             verification: Verification::Auto,
+            replay: Verification::Auto,
             timeout: DEFAULT_TIMEOUT,
         }
     }
@@ -75,9 +77,19 @@ impl SolidCraftWriter {
         self
     }
 
-    /// How a written history is checked.
+    /// How a written history is checked, and which SolidCraft CLI finds the input edges of
+    /// its blends (see [`SolidCraftWriter::replay`]).
     pub fn verification(mut self, verification: Verification) -> Self {
+        self.replay = verification.clone();
         self.verification = verification;
+        self
+    }
+
+    /// Which SolidCraft CLI replays the history before each fillet or chamfer to find the
+    /// edges it blends, after [`SolidCraftWriter::verification`] has set it too. Without one
+    /// ([`Verification::Off`], or none found) blends are refused, saying why.
+    pub fn replay(mut self, replay: Verification) -> Self {
+        self.replay = replay;
         self
     }
 
@@ -132,7 +144,8 @@ impl SolidCraftWriter {
             };
         }
         let mut history_report = Report::default();
-        let mapping = history::map(model, &mut history_report);
+        let mut mapping = history::map(model, &mut history_report);
+        self.plan_blends(&mut mapping);
         let undecoded = no_decoded_history(&mapping.features);
         match mapping.result {
             Ok(_) => {
@@ -200,6 +213,42 @@ impl SolidCraftWriter {
         history::base::store(&mut history.features, &mut design)?;
         let doc: Value = document::history_design(model, &history, design.step_blob(), live);
         design.finish(&doc)
+    }
+
+    /// What inspecting says of the blends, which it does not replay: refused when no
+    /// SolidCraft CLI would find their edges, as writing would refuse them.
+    fn plan_blends(&self, mapping: &mut history::Mapping) {
+        if let Err(why) = verify::find_cli(&self.replay) {
+            history::prove_blends(mapping, |_, _| Err(why));
+        }
+    }
+
+    /// Finds the input edges of the history's blends on SolidCraft's replay of the history
+    /// written so far (two runs of the CLI for the whole design, within the timeout), or
+    /// refuses them, saying why.
+    fn prove_blends(
+        &self,
+        model: &Model,
+        mapping: &mut history::Mapping,
+        step: &str,
+    ) -> Result<(), Error> {
+        let mut failure = None;
+        history::prove_blends(mapping, |history, after| {
+            let cli = verify::usable_cli(&self.replay).map_err(|why| why.to_string())?;
+            let design = match self.history_design(model, history, step, Live::History) {
+                Ok(design) => design,
+                Err(err) => {
+                    let why = err.to_string();
+                    failure = Some(err);
+                    return Err(why);
+                }
+            };
+            verify::replay_edges(&cli, self.timeout, &design, after)
+        });
+        match failure {
+            Some(err) => Err(err),
+            None => Ok(()),
+        }
     }
 
     fn check(
@@ -468,6 +517,7 @@ impl Writer for SolidCraftWriter {
                     mapping.result = Err(why);
                 }
             }
+            self.prove_blends(model, &mut mapping, &step)?;
             let flat = |reason: String| Outcome {
                 mode: Mode::Import,
                 check: Check::Flattened(reason),
@@ -570,7 +620,11 @@ pub struct MappedHistory {
 
 /// Maps history without writing a container or running SolidCraft.
 pub fn mapped_history(model: &Model, report: &mut Report) -> MappedHistory {
-    let mapping = history::map(model, report);
+    let mut mapping = history::map(model, report);
+    // Blends are proven only on SolidCraft's replay of the history before them.
+    history::prove_blends(&mut mapping, |_, _| {
+        Err("only a SolidCraft design is replayed to find them".to_owned())
+    });
     MappedHistory {
         features: mapping.result.map(|history| history.features),
         sketches: mapping.references.features,
