@@ -161,8 +161,8 @@ SolidCraft app is enough: Dutchman finds the tool inside it (on macOS, the newes
 desktop app says which one it checks with. Without one, conversions still work; a converted
 history is marked unverified.
 
-Dutchman's designs open in **SolidCraft 0.18.2 or newer**, and are tested with 0.18.2 and
-0.19.0. A `solidcraft-cli` older than 0.18.2 is not used: the conversion says so ("… is older
+Dutchman's designs open in **SolidCraft 0.18.2 or newer**, and are tested with 0.18.2, 0.19.0,
+and 0.20.0. A `solidcraft-cli` older than 0.18.2 is not used: the conversion says so ("… is older
 than SolidCraft 0.18.2, the oldest that opens and checks Dutchman's designs; install a newer
 SolidCraft") and writes the history unverified. SolidCraft 0.19.0 saves designs in a newer
 format that older versions do not open, so a design you save again in 0.19.0 opens in 0.19.0

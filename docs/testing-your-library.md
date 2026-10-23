@@ -28,8 +28,8 @@ including ones you cannot open any more.
    disk image (`Dutchman.app`, with the `dutchman` command inside it, which the guide shows
    how to put on your `PATH`); elsewhere, the release archive. Check that `dutchman --version`
    prints the version.
-2. Optional, recommended: install SolidCraft 0.18.2 or newer (Dutchman is tested with 0.18.2
-   and 0.19.0). With it, Dutchman checks every converted design
+2. Optional, recommended: install SolidCraft 0.18.2 or newer (Dutchman is tested with 0.18.2,
+   0.19.0, and 0.20.0). With it, Dutchman checks every converted design
    in SolidCraft: whether a feature history replays to the same shape, and whether the
    geometry shows whole, with a volume. Dutchman finds the command-line tool inside an
    installed SolidCraft app (`SolidCraft.app` on macOS, under Program Files on Windows). If
