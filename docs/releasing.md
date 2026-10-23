@@ -11,7 +11,7 @@ A release is cut from `main` once CI is green there.
 3. Pushing the tag runs the `Release builds` workflow. It keeps each platform's archive
    (`scripts/package-archive.sh`: `dutchman`, `dutchman-mcp` and `dutchman-gui`, with LICENSE,
    NOTICE, README and a SHA-256), and the macOS disk image (`scripts/macos-dmg.sh`:
-   Dutchman.app, universal, signed ad hoc), as workflow artifacts; both Mac targets build on
+   Dutchman Convert.app, universal, signed ad hoc), as workflow artifacts; both Mac targets build on
    one Apple silicon runner. Attach them to a GitHub release for the tag. Its notes start with
    the download table, `scripts/downloads.py X.Y.Z`, then the changelog entry. The workflow
    also runs on demand (`gh workflow run release-build.yml`) and for a pull request that

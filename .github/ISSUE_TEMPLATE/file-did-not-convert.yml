@@ -8,7 +8,7 @@ body:
       value: |
         Thank you for reporting it. One file per issue, please; for a whole library, use the **Library test report** form instead.
 
-        In the desktop app, **Report this on GitHub** on the failed file opens this form filled in; read what it filled in before you submit.
+        In the desktop app, Dutchman Convert, **Report this on GitHub** on the failed file opens this form filled in; read what it filled in before you submit.
 
         **Do not attach design files, logs, the key file, the salt, or the journal.** They hold names and paths. A link to a file that is already public (a GitHub repository, GrabCAD, a maker's site) is welcome: it lets us test the same file. If you are willing to let a maintainer see the file privately, say so below; we will reply with a private way to send it. File here even when the report says `upstream: cadmpeg` or `upstream: solidcraft`; we take it upstream.
   - type: dropdown
@@ -35,7 +35,7 @@ body:
     id: dutchman-version
     attributes:
       label: Dutchman version
-      description: "What `dutchman --version` prints (on a Mac, `/Applications/Dutchman.app/Contents/Helpers/dutchman --version`), and whether it is a stable or nightly build."
+      description: "What `dutchman --version` prints (on a Mac, `"/Applications/Dutchman Convert.app/Contents/Helpers/dutchman" --version`, or `/Applications/Dutchman.app/…` for 0.1.5 and earlier), and whether it is a stable or nightly build."
       placeholder: "dutchman 0.1.5, stable"
     validations:
       required: true

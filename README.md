@@ -1,10 +1,10 @@
 <h1>
-  <img alt="Dutchman" src="assets/logo/dutchman-lockup.png#gh-light-mode-only" width="252">
-  <img alt="Dutchman" src="assets/logo/dutchman-lockup-night.png#gh-dark-mode-only" width="252">
+  <img alt="Dutchman Convert" src="assets/logo/dutchman-lockup.png#gh-light-mode-only" width="252">
+  <img alt="Dutchman Convert" src="assets/logo/dutchman-lockup-night.png#gh-dark-mode-only" width="252">
 </h1>
 
-Dutchman ferries CAD designs between formats: it converts native CAD designs into open,
-editable models. Reading the native file is
+Dutchman Convert, part of Dutchman CAD, ferries CAD designs between formats: it converts
+native CAD designs into open, editable models. Reading the native file is
 done by [cadmpeg](https://github.com/cadmpeg/cadmpeg); Dutchman maps cadmpeg's model onto a
 target format, starting with [SolidCraft](https://github.com/tangency-labs/solidcraft) designs.
 
@@ -27,7 +27,8 @@ dutchman convert part.f3d part.solidcraft
 Not sure which Mac you have? Apple menu › **About This Mac**: a chip named Apple M… is Apple silicon; a processor named Intel… is Intel.
 <!-- /downloads -->
 
-Each archive holds `dutchman`, `dutchman-mcp` and the desktop app, `dutchman-gui`.
+Each archive holds `dutchman`, `dutchman-mcp` and the desktop app, Dutchman Convert
+(`dutchman-gui`).
 [Getting started](docs/guide.md) shows how to check it, install it and convert a sample in a
 minute. Every release is on the [releases page](https://github.com/dutchman-cad/dutchman/releases).
 
@@ -94,15 +95,16 @@ its **Output format** choice offers a FreeCAD macro, the window title shows its 
 `dutchman-gui --version` and `--help` print without opening a window, a **Report a
 problem** link opens the **A file didn't convert** form, and a failed file's **Report this
 on GitHub** opens that form filled in with the version, system, error and an anonymous
-report.
+report. On main, in the next release, the app is named **Dutchman Convert**: its window, and
+on macOS **Dutchman Convert.app**; the commands keep their names.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/dutchman-gui-night.png">
-  <img alt="The Dutchman app after converting three files: two converted, one failed with its reason" src="docs/images/dutchman-gui-day.png" width="480">
+  <img alt="The Dutchman Convert app after converting three files: two converted, one failed with its reason" src="docs/images/dutchman-gui-day.png" width="480">
 </picture>
 
-On macOS it comes as **Dutchman.app** in a disk image (from 0.1.3 on): open it and drag
-Dutchman onto Applications in the window that appears (see
+On macOS it comes as **Dutchman Convert.app** in a disk image (**Dutchman.app** in 0.1.5 and
+earlier, from 0.1.3 on): open it and drag it onto Applications in the window that appears (see
 [opening it the first time](docs/guide.md#opening-the-app-the-first-time): approve it once
 and the commands inside it run too). It ships in the
 release archives beside `dutchman` (from 0.1.1 on), or build it from source

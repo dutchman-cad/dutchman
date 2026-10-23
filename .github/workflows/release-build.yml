@@ -2,9 +2,9 @@ name: Release builds
 
 # Builds the dutchman command, the dutchman-mcp server and the dutchman-gui app for each
 # platform and keeps the archives as workflow artifacts, with a macOS disk image holding
-# Dutchman.app for Apple silicon and Intel. Runs for a release tag, on demand, and for a pull
-# request that changes the packaging; never for every push to main, as the account runs few
-# macOS jobs at once. Nothing is published from here.
+# Dutchman Convert.app for Apple silicon and Intel. Runs for a release tag, on demand, and
+# for a pull request that changes the packaging; never for every push to main, as the
+# account runs few macOS jobs at once. Nothing is published from here.
 
 on:
   push:

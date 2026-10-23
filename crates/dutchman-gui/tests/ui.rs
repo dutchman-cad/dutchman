@@ -52,7 +52,7 @@ fn the_window_offers_the_file_problem_form_and_names_its_version() {
     assert!(harness.query_by_label("Report a problem").is_some());
     assert_eq!(
         dutchman_gui::WINDOW_TITLE,
-        format!("Dutchman {}", env!("CARGO_PKG_VERSION"))
+        format!("Dutchman Convert {}", env!("CARGO_PKG_VERSION"))
     );
     assert_eq!(
         dutchman_gui::REPORT_PROBLEM_URL,
