@@ -25,6 +25,11 @@ report's schema name changes when a field does).
 
 ### cadmpeg
 
+- The cadmpeg pin moves to 8a7ae67: a Fusion rectangular pattern of faces with two
+  directions carries both, and a Fusion rectangular or circular pattern of features names the
+  feature it repeats instead of a set of faces, so it maps when that feature does; STEP output
+  writes face boundary curves on their edges' ranges, and a FreeCAD chamfer or fillet keeps its
+  edge ends on its vertices.
 - The cadmpeg pin moves to 8f8ff2a: Inventor sketches whose tangent relations key a hint
   code to either operand close again (two parts regressed under 0872c6d).
 - The cadmpeg pin moves to 0872c6d: Inventor parts saved by Inventor 2019 and later carry
