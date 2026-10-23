@@ -166,6 +166,15 @@ thread standards and pitches and shape-replacing mirrors are not supported yet. 
 named uniquely on the timeline, since SolidCraft patterns refer to them by name. Parameters
 keep their expressions where SolidCraft reads them the same way, else their evaluated values.
 
+Constant-radius fillets and equal-setback chamfers keep editable history when their own
+feature input topology supplies edge midpoints, tangents and endpoints, and each midpoint
+can be proven to pick exactly one edge of the replayed pre-feature body. This currently
+requires one blind, untapered extrusion of a single convex polygon and no earlier body
+modifications. Equal two-distance chamfers also map; distance-and-angle chamfers map at
+45 degrees on perpendicular faces. Unequal distances and other angles lack a source
+reference-face ordering and are refused specifically. Variable fillets lack a proven
+chain direction. Final-body edge selections never stand in for input geometry.
+
 Selected straight profile loops that cross or retrace their own curves are split at
 intersections into bounded regions for selection. The sketch keeps its original curves and
 constraints; SolidCraft matches the pieces on recompute. Selected subsets with overlapping
@@ -239,8 +248,7 @@ and synthetic files from cadmpeg's public test suite (provenance in
 ## After v0.1
 
 - **History** (v0.2, in progress): partial revolves once CADIR states the
-  turning direction; fillet, chamfer and hole once cadmpeg gives typed references to the edges
-  they act on.
+  turning direction; more blend inputs once their pre-feature topology can be proven.
 - **Components**: designs that define and place their own components (Fusion) convert as
   SolidCraft components when cadmpeg says which bodies each owns, components inside components
   as sub-assemblies; see fusion.md.
