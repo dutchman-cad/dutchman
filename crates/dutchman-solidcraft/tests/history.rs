@@ -6604,6 +6604,43 @@ fn a_distance_angle_chamfer_requires_perpendicular_input_faces() {
 
 #[cfg(unix)]
 #[test]
+fn a_fillet_of_tangency_weight_one_maps_as_a_circular_fillet() {
+    let base = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
+    let cli = fake_cli(&[("unit cube", prism_edges(&SQUARE, 0.0, 10.0))], 0);
+    let writer = replaying(&cli.path);
+    for (weight, maps) in [(1.0, true), (0.999, false), (2.0, false)] {
+        let mut wire = serde_json::to_value(&base.ir).unwrap();
+        wire["model"]["features"][2]["definition"]["groups"][0]["tangency_weight"] = json!(weight);
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..base.clone()
+        };
+        let (document, report) = convert(&model, &writer);
+        let noted = report.losses().iter().any(|loss| {
+            loss.severity == Severity::Info
+                && loss.detail == "tangency weight 1.0 treated as a circular fillet"
+        });
+        if maps {
+            assert_eq!(document["features"][2]["type"], "fillet", "{report:?}");
+            assert_eq!(document["features"][2]["radius"], "1 mm");
+            assert_eq!(
+                document["features"][2]["style"],
+                json!({"type": "constant"})
+            );
+            assert!(noted, "{report:?}");
+        } else {
+            assert!(
+                history_line(&report)
+                    .contains("fillets with a tangency weight are not supported yet"),
+                "{weight}: {report:?}"
+            );
+            assert!(!noted, "{report:?}");
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn blends_keep_multiple_picks_and_refuse_repeated_geometry_and_weighted_groups() {
     let base = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
     let mut wire = serde_json::to_value(&base.ir).unwrap();

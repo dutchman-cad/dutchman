@@ -17,10 +17,11 @@
 //!   a line, `radius × angle` of an arc. A straight rebuilt edge then lies along the input
 //!   tangent; a curved one is not checked for a tangent SolidCraft does not report.
 
+use dutchman_core::{Report, Severity};
 use serde_json::{json, Map, Value};
 
 use super::sketch::{cross, dot, number, unit, v3, V3};
-use super::{name, Context};
+use super::{describe, name, Context};
 use crate::verify::{ReplayedBodies, ReplayedEdge};
 
 const LIMIT: usize = 256;
@@ -59,7 +60,12 @@ struct Input {
     straight: bool,
 }
 
-pub(super) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Result<Value, String> {
+pub(super) fn map(
+    feature: &Value,
+    definition: &Value,
+    ctx: &mut Context,
+    report: &mut Report,
+) -> Result<Value, String> {
     let kind = definition
         .get("definition")
         .and_then(Value::as_str)
@@ -73,10 +79,17 @@ pub(super) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
     let mut out = Map::new();
     out.insert("type".to_owned(), json!(kind));
     out.insert("suppressed".to_owned(), json!(false));
-    if kind == "fillet" {
-        if group.get("tangency_weight").is_some_and(|v| !v.is_null()) {
-            return Err("fillets with a tangency weight are not supported yet".to_owned());
+    // A tangency weight of exactly 1 blends with a circular cross-section: the fillet's faces
+    // are circular cylinders and tori, as an unweighted fillet's are.
+    let weighted = match group.get("tangency_weight").filter(|v| !v.is_null()) {
+        None => false,
+        Some(weight) if kind == "fillet" && number(Some(weight)) == Some(1.0) => true,
+        Some(_) if kind == "fillet" => {
+            return Err("fillets with a tangency weight are not supported yet".to_owned())
         }
+        Some(_) => false,
+    };
+    if kind == "fillet" {
         let law = group.get("radius").ok_or("its radius is not given")?;
         match law.get("kind").and_then(Value::as_str) {
             Some("constant") => {
@@ -228,6 +241,13 @@ pub(super) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         edges: inputs,
         angle_chamfer,
     });
+    if weighted {
+        report.push(
+            Severity::Info,
+            describe(feature),
+            "tangency weight 1.0 treated as a circular fillet",
+        );
+    }
     Ok(Value::Object(out))
 }
 

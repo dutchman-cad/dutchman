@@ -50,7 +50,8 @@ assemblies (`.iam`, with their parts found anywhere in the project), SolidWorks 
     booleans;
   - sheet-metal base flanges;
   - constant-radius fillets and equal-setback chamfers, on edges proven on SolidCraft's own
-    replay of the history before them (so they need `solidcraft-cli`).
+    replay of the history before them (so they need `solidcraft-cli`); a Fusion fillet with a
+    tangency weight of exactly 1 maps as a circular fillet (on main, in the next release).
 
   [Feature history](docs/guide.md#feature-history-and-the-solidcraft-check) in the guide has
   the detail, and what stops a history.

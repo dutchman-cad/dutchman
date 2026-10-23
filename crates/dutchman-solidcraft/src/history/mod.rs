@@ -679,7 +679,7 @@ fn map_feature(
         }
         Some("pattern") => pattern::map(feature, definition, ctx).map(Mapped::Feature),
         Some("fillet" | "chamfer") => {
-            blend::map(feature, definition, ctx).map(Mapped::Feature)
+            blend::map(feature, definition, ctx, report).map(Mapped::Feature)
         }
         Some("hole") => hole::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some("sheet_metal_base_flange") => {
