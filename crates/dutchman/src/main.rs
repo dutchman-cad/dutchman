@@ -3,6 +3,7 @@
 //! Exit codes: 0 when the design was converted (or inspected), 1 when it could not be, 2 for a
 //! usage error. See `docs/json.md` for the `--json` reports.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -11,9 +12,15 @@ use dutchman::{anon, batch, formats, json, worker, ConvertOptions};
 use dutchman_core::{Check, FeatureStatus, Format, Mode};
 use serde_json::Value;
 
-/// Ferries CAD designs between formats.
+/// Convert CAD files: dutchman part.f3d writes part.solidcraft.
 #[derive(Parser)]
-#[command(name = "dutchman", version, about)]
+#[command(
+    name = "dutchman",
+    version,
+    about,
+    allow_external_subcommands = true,
+    after_help = "Examples:\n  dutchman part.f3d\n  dutchman part.f3d out.solidcraft\n  dutchman convert part.f3d out.solidcraft"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -24,6 +31,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    #[command(external_subcommand)]
+    External(Vec<OsString>),
     /// Drive SolidCraft from plain-language requests with Pilot.
     #[cfg(feature = "pilot")]
     #[command(name = "pilot")]
@@ -33,15 +42,16 @@ enum Command {
         /// The native design file to read (for example a `.f3d`, `.ipt` or `.sldprt`).
         input: PathBuf,
         /// The `.solidcraft`, `.FCMacro` or `.FCStd` file to write, matching --to.
-        /// An existing file is replaced, unless --no-clobber.
-        #[arg(
-            required_unless_present = "output_flag",
-            conflicts_with = "output_flag"
-        )]
+        /// Omit to write beside the input with the extension chosen by --to.
+        /// An explicit output is replaced, unless --no-clobber; an existing default needs --force.
+        #[arg(conflicts_with = "output_flag")]
         output: Option<PathBuf>,
         /// Output path (an alternative to the positional output).
         #[arg(short = 'o', long = "output", value_name = "FILE")]
         output_flag: Option<PathBuf>,
+        /// Replace an existing default output beside the input.
+        #[arg(long, conflicts_with = "no_clobber")]
+        force: bool,
         #[command(flatten)]
         options: ConvertOptions,
         /// Also write the whole text report, every loss in full, to FILE.
@@ -125,19 +135,82 @@ fn main() -> ExitCode {
     if let Some(code) = worker::run_if_worker() {
         return code;
     }
+    let mut args: Vec<OsString> = std::env::args_os().collect();
+    if let Some((index, arg)) = args
+        .iter()
+        .enumerate()
+        .skip(1)
+        .find(|(_, arg)| *arg != "--verbose")
+    {
+        let name = arg.to_str().unwrap_or("");
+        let builtin = Cli::command()
+            .get_subcommands()
+            .any(|cmd| cmd.get_name() == name)
+            || matches!(name, "pilot" | "help");
+        if name == "pilot" || !builtin && !name.starts_with('-') {
+            if let Some(path) = dutchman_launcher::find_tool(name) {
+                let rest: Vec<_> = args.iter().skip(index + 1).cloned().collect();
+                return run_tool(&path, &rest);
+            }
+        }
+        if !builtin && (!name.starts_with('-') || name.is_empty()) && is_input(Path::new(arg)) {
+            args.insert(index, OsString::from("convert"));
+        }
+    }
     // Name the command `dutchman` in every usage line, also where argv[0] is `dutchman.exe`.
-    let command = Cli::command().bin_name("dutchman");
+    let mut command = Cli::command().bin_name("dutchman");
+    if args.len() == 1
+        || args
+            .iter()
+            .any(|arg| arg == "--help" || arg == "-h" || arg == "help")
+    {
+        let listing = dutchman_launcher::tools_listing();
+        if !listing.is_empty() {
+            let examples = command
+                .get_after_help()
+                .map(ToString::to_string)
+                .unwrap_or_default();
+            command = command.after_help(format!("{examples}\n\n{listing}"));
+        }
+    }
     #[cfg(feature = "pilot")]
-    let command = command.mut_subcommand("pilot", |c| {
+    let mut command = command.mut_subcommand("pilot", |c| {
         dutchman_pilot::cli::with_bin_name(c, "dutchman pilot")
     });
-    let matches = command.get_matches();
+    if args.len() == 1 {
+        let _ = command.print_help();
+        println!();
+        return ExitCode::SUCCESS;
+    }
+    let suggestion_command = command
+        .clone()
+        .external_subcommand_value_parser(None::<clap::builder::ValueParser>)
+        .allow_external_subcommands(false);
+    let matches = command.get_matches_from(&args);
     let cli = match Cli::from_arg_matches(&matches) {
         Ok(cli) => cli,
         Err(err) => err.exit(),
     };
     let verbose = cli.verbose;
     match cli.command {
+        Command::External(args) => {
+            let mut args = args.into_iter();
+            let name = args.next().unwrap_or_default();
+            let name = name.to_str().unwrap_or("");
+            if let Some(path) = dutchman_launcher::find_tool(name) {
+                return run_tool(&path, &args.collect::<Vec<_>>());
+            }
+            if let Err(error) = suggestion_command.try_get_matches_from(std::env::args_os()) {
+                if error
+                    .get(clap::error::ContextKind::SuggestedSubcommand)
+                    .is_some()
+                {
+                    error.exit();
+                }
+            }
+            eprintln!("{}", dutchman_launcher::not_installed_message(name));
+            ExitCode::FAILURE
+        }
         #[cfg(feature = "pilot")]
         Command::Pilot(cmd) => match dutchman_pilot::cli::run_named(cmd, "dutchman pilot") {
             Ok(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
@@ -150,13 +223,30 @@ fn main() -> ExitCode {
             input,
             output,
             output_flag,
-            options,
+            force,
+            mut options,
             log,
             json,
         } => {
-            let Some(output) = output.or(output_flag) else {
-                return ExitCode::from(2);
-            };
+            let explicit = output.or(output_flag);
+            let derived = explicit.is_none();
+            let output = explicit.unwrap_or_else(|| input.with_extension(options.to.extension()));
+            if derived {
+                if input == output
+                    || std::fs::canonicalize(&input)
+                        .ok()
+                        .zip(std::fs::canonicalize(&output).ok())
+                        .is_some_and(|(input, output)| input == output)
+                {
+                    eprintln!("dutchman: default output {} is the input file; choose another output with -o PATH", output.display());
+                    return ExitCode::from(2);
+                }
+                if output.try_exists().unwrap_or(true) && !force {
+                    eprintln!("dutchman: {} already exists; choose another output with -o PATH, or replace it with --force", output.display());
+                    return ExitCode::from(2);
+                }
+                options.no_clobber |= !force;
+            }
             convert(&input, &output, &options, log.as_deref(), json, verbose)
         }
         Command::ConvertAll {
@@ -261,6 +351,25 @@ fn main() -> ExitCode {
                 print!("{}", formats::text());
             }
             ExitCode::SUCCESS
+        }
+    }
+}
+
+/// Recognise native formats from the shared format registry, plus STEP interchange files.
+fn is_input(path: &Path) -> bool {
+    path.is_file()
+        || Format::from_path(path).is_some_and(|format| format != Format::SolidWorksAssembly)
+        || path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("step") || ext.eq_ignore_ascii_case("stp"))
+}
+
+fn run_tool(path: &Path, args: &[OsString]) -> ExitCode {
+    match dutchman_launcher::exec(path, args) {
+        Ok(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
+        Err(err) => {
+            eprintln!("dutchman: cannot run {}: {err}", path.display());
+            ExitCode::FAILURE
         }
     }
 }
@@ -452,8 +561,8 @@ mod output_tests {
     }
 
     #[test]
-    fn output_path_is_required_and_cannot_be_given_twice() {
-        assert!(Cli::try_parse_from(["dutchman", "convert", "in.f3d", "--to", "freecad"]).is_err());
+    fn output_path_is_optional_and_cannot_be_given_twice() {
+        assert!(Cli::try_parse_from(["dutchman", "convert", "in.f3d", "--to", "freecad"]).is_ok());
         assert!(Cli::try_parse_from([
             "dutchman",
             "convert",

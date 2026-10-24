@@ -10,6 +10,17 @@ report's schema name changes when a field does).
 
 ### Command line
 
+- Convert with `dutchman part.f3d`, optionally followed by an output path. `convert` also
+  accepts no output: it derives the path beside the input from `--to`. Existing derived
+  outputs are kept (exit 2) unless `--force`; explicit outputs still replace by default.
+  `--force` conflicts with `--no-clobber`, and a default cannot replace the input.
+
+- Run installed Dutchman CAD tools with `dutchman <tool>`: executables named
+  `dutchman-<tool>` next to the command take precedence over those on `PATH`.
+  Help lists installed tools and versions. An installed Pilot takes precedence over the
+  built-in Pilot and accepts its own flags. The std-only `dutchman-launcher` crate supplies
+  a tiny `dutchman` front command for Pilot-only installations.
+
 - `dutchman pilot` runs [Pilot](https://github.com/dutchman-cad/pilot) 0.1.0-beta.1:
   `dutchman pilot --help` lists its commands, and `dutchman pilot how "round all edges 3 mm"`
   shows example calls.

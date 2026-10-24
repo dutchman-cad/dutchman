@@ -1,5 +1,15 @@
 # Machine-readable reports
 
+The `dutchman` command also dispatches installed Dutchman CAD tools such as `pilot` and
+`fixtures` through `dutchman-<tool>` beside the command or on `PATH`. `dutchman --help`
+lists them. These external commands provide their own interfaces; the conversion MCP tools
+and JSON reports described here retain their existing schemas.
+
+The full CLI also accepts `dutchman part.f3d` (or `dutchman convert part.f3d`) and derives
+the output beside the input from `--to`. An existing derived output is kept with exit 2;
+choose `-o PATH` or use `--force` to replace it. `--force` conflicts with `--no-clobber`.
+Explicit outputs retain their replacement behaviour. MCP output paths remain required.
+
 `dutchman convert --json` and `dutchman inspect --json` print one JSON object on stdout and
 nothing on stderr. The `dutchman-mcp` server's tools return the same objects, as structured
 content and as text, with `isError` set when `ok` is false. The schema is named in `schema`. Within a schema version, fields are only

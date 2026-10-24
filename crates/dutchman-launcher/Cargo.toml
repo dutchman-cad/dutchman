@@ -1,0 +1,11 @@
+[package]
+name = "dutchman-launcher"
+description = "Dispatch installed Dutchman CAD commands"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
