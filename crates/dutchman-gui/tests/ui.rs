@@ -63,22 +63,27 @@ fn the_window_offers_the_file_problem_form_and_names_its_version() {
 #[test]
 fn designs_convert_from_the_window() {
     let out = tempfile::tempdir().unwrap();
-    let mut harness = harness();
+    // Keep Convert and all three results visible without scrolling.
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(760.0, 1040.0))
+        .build_eframe(|cc| App::new(cc));
     harness.state_mut().add_inputs([
         fixture("generated_unit_cube.f3d"),
         fixture("synthetic_cube.ipt"),
+        fixture("solidworks_cube.sldprt"),
     ]);
     harness.state_mut().set_out_dir(out.path().to_path_buf());
     harness.state_mut().set_verify(false);
     convert(&mut harness);
 
     let rows = harness.state().rows();
-    assert_eq!(rows.len(), 2);
+    assert_eq!(rows.len(), 3);
     assert!(rows.iter().all(|row| row.status == Status::Converted));
     assert!(out.path().join("generated_unit_cube.solidcraft").is_file());
     assert!(out.path().join("synthetic_cube.solidcraft").is_file());
-    assert!(harness.query_by_label("2 converted, 0 failed").is_some());
-    assert_eq!(harness.query_all_by_label("Open in SolidCraft").count(), 2);
+    assert!(out.path().join("solidworks_cube.solidcraft").is_file());
+    assert!(harness.query_by_label("3 converted, 0 failed").is_some());
+    assert_eq!(harness.query_all_by_label("Open in SolidCraft").count(), 3);
 }
 
 #[test]

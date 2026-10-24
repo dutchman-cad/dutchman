@@ -391,7 +391,7 @@ fn raw_joint(
             .iter()
             .find(|joint| joint.a == path_a && joint.b == path_b)
             .map(|joint| joint.flip)
-            .unwrap_or_else(|| row.get("frame_sense").and_then(Value::as_str) == Some("aligned"))
+            .unwrap_or_else(|| dutchman_core::frame_aligned(row))
     };
     if !aligned {
         frame_b = compose(&frame_b, &FACING);

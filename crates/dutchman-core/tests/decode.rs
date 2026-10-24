@@ -68,6 +68,11 @@ fn decodes_a_solidworks_unit_cube() {
     assert_eq!(model.ir.model.bodies.len(), 1);
     assert_eq!(model.ir.model.faces.len(), 6);
     assert!(
+        model.ir.model.features.is_empty(),
+        "the cube has no history"
+    );
+    assert!(model.fidelity.is_some(), "the native envelope is retained");
+    assert!(
         report
             .losses()
             .iter()

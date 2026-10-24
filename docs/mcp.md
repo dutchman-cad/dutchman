@@ -138,12 +138,13 @@ Inspect a file:
   "schema":"dutchman.inspect/1","ok":true,
   "input":{"format":"solidworks_part","format_name":"SolidWorks part (.sldprt)","path":"/home/me/designs/solidworks_cube.sldprt"},
   "geometry":{"bodies":1,"faces":6},
+  "conversion":{"possible":true,"reason":null},
   "mode":"import",
   "verification":{"status":"not_applicable","reason":"the design carries no feature history"},
   "history":{"features":[],"mapped":0,"total":0},
   "losses":[
-    {"level":"Degraded","code":"sldprt/source.dialect-unverified","subject":"sldprt/source.dialect-unverified","message":"the document carries no swSolidWorks swVersion declaration, …"},
-    {"level":"Degraded","code":"sldprt/config.inferred-without-native","subject":"sldprt/config.inferred-without-native","message":"1 configuration state(s) are inferred from geometry partitions without native configuration definitions."}]}}}
+    {"level":"Degraded","stage":"project","upstream":"cadmpeg","code":"sldprt/source.dialect-unverified","subject":"sldprt/source.dialect-unverified","message":"the document carries no swSolidWorks swVersion declaration, …"},
+    {"level":"Degraded","stage":"project","upstream":"cadmpeg","code":"sldprt/config.inferred-without-native","subject":"sldprt/config.inferred-without-native","message":"1 configuration state(s) are inferred from geometry partitions without native configuration definitions."}]}}}
 ```
 
 Convert one file:

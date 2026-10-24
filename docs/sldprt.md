@@ -57,10 +57,13 @@ suggests exporting a STEP file.
 Dutchman never uses customer files. The fixtures (provenance in
 `crates/dutchman-core/tests/fixtures/README.md`):
 
-- `body_history.sldprt` and `container_metadata.sldprt`, copied unchanged from cadmpeg's
-  SolidWorks golden fixtures: a history with an extrusion (blocked by gap 2), and a file
-  with no geometry.
+- `body_history.sldprt`, copied unchanged from cadmpeg's `authored_complete_history.sldprt`
+  golden fixture: a one-triangle body and a history with an extrusion (blocked by gap 2).
+  Inspect reports the history blocker; the triangle cannot convert to an importable solid
+  or surface.
+- `container_metadata.sldprt`, generated with cadmpeg's authored native envelope test helper:
+  a readable container with no geometry.
 - `solidworks_cube.sldprt`, generated with cadmpeg's own SolidWorks encoder from its 10 mm
-  example cube, since cadmpeg's published SolidWorks fixtures hold one-triangle bodies that do
-  not restate as solids. It converts end to end against a golden document and opens in
-  SolidCraft.
+  example cube and authored native envelope helper. It converts end to end against a golden
+  document and opens in SolidCraft. All three fixtures follow the conforming envelope layout
+  introduced by cadmpeg PR #286; the fixtures README records the exact commit and recipes.

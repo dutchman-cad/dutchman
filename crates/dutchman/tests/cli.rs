@@ -329,6 +329,15 @@ fn inspect_json_names_what_blocks_a_solidworks_history() {
     assert_eq!(out.status.code(), Some(0));
     let report = json_of(&out);
     assert_eq!(report["input"]["format"], "solidworks_part");
+    assert_eq!(
+        report["geometry"],
+        serde_json::json!({"bodies": 1, "faces": 1})
+    );
+    assert_eq!(
+        report["conversion"],
+        serde_json::json!({"possible": false,
+            "reason": "the model has no solids or surfaces SolidCraft can import"})
+    );
     assert_eq!(report["mode"], "import");
     assert_eq!(report["verification"]["status"], "flattened");
     assert_eq!(
@@ -339,9 +348,21 @@ fn inspect_json_names_what_blocks_a_solidworks_history() {
         .as_array()
         .unwrap()
         .iter()
-        .map(|f| (f["kind"].as_str().unwrap(), f["status"].as_str().unwrap()))
+        .map(|f| {
+            (
+                f["name"].as_str().unwrap(),
+                f["kind"].as_str().unwrap(),
+                f["status"].as_str().unwrap(),
+            )
+        })
         .collect();
-    assert_eq!(features, [("extrude", "blocked"), ("native", "blocked")]);
+    assert_eq!(
+        features,
+        [
+            ("Boss", "extrude", "blocked"),
+            ("Profile", "native", "blocked")
+        ]
+    );
 }
 
 #[test]
@@ -572,6 +593,16 @@ fn convert_says_what_it_wrote_and_cuts_long_notes_short() {
         )
     );
     let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains(
+            "step/native.passthrough-record-omitted: 2 uninterpreted passthrough record(s)"
+        ),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("step/native.source-record-omitted: 1 source-native record(s)"),
+        "{stderr}"
+    );
     assert!(
         stderr.contains("so no declared identity was verified. …\n"),
         "{stderr}"
