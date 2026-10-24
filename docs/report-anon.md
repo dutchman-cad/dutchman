@@ -43,7 +43,7 @@ When a maintainer asks about `f3a9c0e1d2b4f5a6`, look it up in your key.
 ```json
 {
   "schema": "dutchman.report-anon/1",
-  "versions": {"dutchman": "0.1.5", "cadmpeg": "0.6.5+892efad", "solidcraft": "0.18.2",
+  "versions": {"dutchman": "0.1.5", "cadmpeg": "0.6.5+63ebadd", "solidcraft": "0.18.2",
                "os": "linux", "arch": "x86_64"},
   "run": {"verify": true, "import_only": false, "jobs": 8, "timeout_s": 900,
           "max_memory_mb": 8192, "resumed": 0},
