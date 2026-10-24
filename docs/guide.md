@@ -637,6 +637,9 @@ agent can do the same through SolidCraft's MCP server: open the design with
 
 ## Troubleshooting
 
+For a question, or to talk a problem through first, post in the Convert help forum on the
+[Dutchman CAD Discord](https://discord.gg/yTcseBEdeu).
+
 For a failed conversion, or a design that looks wrong in SolidCraft, start with an anonymous
 report (replace `part.f3d` with your file or folder):
 

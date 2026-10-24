@@ -8,6 +8,10 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Docs
+
+- The README and guide link the Dutchman CAD Discord for questions and help.
+
 ### Install
 
 - Install with Homebrew (`brew install dutchman-cad/tap/dutchman`) or Scoop (`scoop install

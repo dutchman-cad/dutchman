@@ -3,6 +3,8 @@
   <img alt="Dutchman Convert" src="assets/logo/dutchman-lockup-night.png#gh-dark-mode-only" width="252">
 </h1>
 
+[![Discord](https://img.shields.io/badge/Discord-Dutchman%20CAD-5865F2?logo=discord&logoColor=white)](https://discord.gg/yTcseBEdeu)
+
 Dutchman Convert, part of Dutchman CAD, ferries CAD designs between formats: it converts
 native CAD designs into open, editable models. Reading the native file is
 done by [cadmpeg](https://github.com/cadmpeg/cadmpeg); Dutchman maps cadmpeg's model onto a
@@ -191,6 +193,7 @@ desktop portal, and dropping files works without it.
 - Reporting a problem: a file that doesn't convert goes on the
   [**A file didn't convert**](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
   form, with no design file; see [Troubleshooting](docs/guide.md#troubleshooting).
+- Questions and help: the [Dutchman CAD Discord](https://discord.gg/yTcseBEdeu) has a forum for Dutchman Convert.
 - Contributing: [CONTRIBUTING.md](CONTRIBUTING.md), and [AGENTS.md](AGENTS.md) for AI
   contributors.
 
