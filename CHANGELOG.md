@@ -34,6 +34,11 @@ report's schema name changes when a field does).
 
 ### cadmpeg
 
+- The cadmpeg pin moves to 892efad: joints carry their connector frame sense on their
+  operands, Fusion components bound through an unregistered link entity place, edges that
+  bound a selected face keep their geometry, a failed Fusion manifest says where its framing
+  stopped, more ACIS curve families read reversed, and native CAD state is kept through the
+  Fusion, SolidWorks, Creo and NX readers.
 - The cadmpeg pin moves to 8a7ae67: a Fusion rectangular pattern of faces with two
   directions carries both, and a Fusion rectangular or circular pattern of features names the
   feature it repeats instead of a set of faces, so it maps when that feature does; STEP output
@@ -79,10 +84,10 @@ report's schema name changes when a field does).
 
 ### Assemblies
 
-- A joint whose connector frames point the same way (CADIR `frame_sense: "aligned"`) is
-  written as a flipped SolidCraft joint, and a part a joint places meets its other part z to
-  z rather than face to face. A Fusion robot arm's gripper mounted on its wrist this way had
-  been turned over into the wrist.
+- A joint whose connector frames point the same way (its CADIR operands' `frame_sense:
+  "aligned"`) is written as a flipped SolidCraft joint, and a part a joint places meets its
+  other part z to z rather than face to face. A Fusion robot arm's gripper mounted on its
+  wrist this way had been turned over into the wrist.
 - When the source grounds none of the parts a set of joints ties together, Dutchman grounds
   the fixed side of that set's first joint, so SolidCraft's solver holds the set where the
   source places it, and the report names the occurrence as inferred (`Info`, `joints`).

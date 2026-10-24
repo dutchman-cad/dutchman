@@ -18,8 +18,8 @@ mod report;
 use std::path::Path;
 
 pub use assembly::{
-    local_assembly, Assembly, Joint, JointNote, LeftOut, Motion, Placement, MAX_DEPTH, MAX_PARTS,
-    MAX_PLACEMENTS,
+    frame_aligned, local_assembly, Assembly, Joint, JointNote, LeftOut, Motion, Placement,
+    MAX_DEPTH, MAX_PARTS, MAX_PLACEMENTS,
 };
 pub use error::{Error, FILE_DID_NOT_CONVERT, RELEASES};
 pub use format::Format;

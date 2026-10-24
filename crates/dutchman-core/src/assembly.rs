@@ -181,10 +181,10 @@ impl Motion {
     }
 }
 
-/// Whether a joint row's connector frames point the same way (`frame_sense: "aligned"`);
-/// absent or `opposed`, they meet face to face.
-fn aligned(row: &Value) -> bool {
-    row.get("frame_sense").and_then(Value::as_str) == Some("aligned")
+/// Whether a CADIR joint row's connector frames point the same way (its operands'
+/// `frame_sense: "aligned"`); absent or `opposed`, they meet face to face.
+pub fn frame_aligned(row: &Value) -> bool {
+    row.pointer("/operands/frame_sense").and_then(Value::as_str) == Some("aligned")
 }
 
 /// Half a turn about x: how the second frame of a joint meets the first.
@@ -1010,7 +1010,7 @@ fn joint(
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
             motion,
-            flip: aligned(row),
+            flip: frame_aligned(row),
         },
         note,
     ))
@@ -2027,6 +2027,26 @@ mod tests {
     }
 
     #[test]
+    fn a_joint_takes_its_flip_from_its_operands_frame_sense() {
+        let flip = |sense: Option<&str>| {
+            let mut row = joint(
+                1,
+                json!({"kind": "fixed"}),
+                connector_at(2, &[], at([0.0, 0.0, 0.0], 0.0)),
+                connector_at(1, &[], at([10.0, 0.0, 0.0], 0.0)),
+            );
+            if let Some(sense) = sense {
+                row["operands"]["frame_sense"] = json!(sense);
+            }
+            let model = with_joints(nested(false, None), json!([row]));
+            local_components(&model).unwrap().unwrap().0.joints[0].flip
+        };
+        assert!(flip(Some("aligned")));
+        assert!(!flip(Some("opposed")));
+        assert!(!flip(None));
+    }
+
+    #[test]
     fn a_joint_left_out_is_noted_with_its_kind_for_the_writer() {
         let row = joint(
             1,
@@ -2049,9 +2069,12 @@ mod tests {
 
     #[test]
     fn a_joint_is_aligned_only_when_its_source_says_so() {
-        assert!(aligned(&json!({"frame_sense": "aligned"})));
-        assert!(!aligned(&json!({"frame_sense": "opposed"})));
-        assert!(!aligned(&json!({})));
+        let sensed = |sense: &str| json!({"operands": {"arity": "pair", "frame_sense": sense}});
+        assert!(frame_aligned(&sensed("aligned")));
+        assert!(!frame_aligned(&sensed("opposed")));
+        assert!(!frame_aligned(&json!({"operands": {"arity": "pair"}})));
+        // Only the operands carry the sense: a stray top-level field is not read.
+        assert!(!frame_aligned(&json!({"frame_sense": "aligned"})));
     }
 
     #[test]

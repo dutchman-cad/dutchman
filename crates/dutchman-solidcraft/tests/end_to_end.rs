@@ -102,6 +102,7 @@ fn converts_to_an_import(file: &str) {
     assert!(step.starts_with("ISO-10303-21;"), "STEP text");
     assert!(step.contains("AUTOMOTIVE_DESIGN"), "AP214");
     assert!(step.contains("MANIFOLD_SOLID_BREP"), "the cube is a solid");
+    assert_eq!(step.matches("ADVANCED_FACE(").count(), 6, "six cube faces");
 
     let (document, method) = entry(&mut archive, "document.json");
     assert_eq!(method, CompressionMethod::Deflated);
