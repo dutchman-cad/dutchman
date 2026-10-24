@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use dutchman::{anon, batch, formats, json, worker, ConvertOptions};
 use dutchman_core::{Check, FeatureStatus, Format, Mode};
 use serde_json::Value;
@@ -24,6 +24,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Drive SolidCraft from plain-language requests with Pilot.
+    #[cfg(feature = "pilot")]
+    #[command(name = "pilot")]
+    Pilot(dutchman_pilot::cli::Command),
     /// Convert a native CAD file into a SolidCraft design, FreeCAD macro or document.
     Convert {
         /// The native design file to read (for example a `.f3d`, `.ipt` or `.sldprt`).
@@ -121,9 +125,27 @@ fn main() -> ExitCode {
     if let Some(code) = worker::run_if_worker() {
         return code;
     }
-    let cli = Cli::parse();
+    // Name the command `dutchman` in every usage line, also where argv[0] is `dutchman.exe`.
+    let command = Cli::command().bin_name("dutchman");
+    #[cfg(feature = "pilot")]
+    let command = command.mut_subcommand("pilot", |c| {
+        dutchman_pilot::cli::with_bin_name(c, "dutchman pilot")
+    });
+    let matches = command.get_matches();
+    let cli = match Cli::from_arg_matches(&matches) {
+        Ok(cli) => cli,
+        Err(err) => err.exit(),
+    };
     let verbose = cli.verbose;
     match cli.command {
+        #[cfg(feature = "pilot")]
+        Command::Pilot(cmd) => match dutchman_pilot::cli::run_named(cmd, "dutchman pilot") {
+            Ok(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
+            Err(err) => {
+                eprintln!("dutchman: {err}");
+                ExitCode::FAILURE
+            }
+        },
         Command::Convert {
             input,
             output,

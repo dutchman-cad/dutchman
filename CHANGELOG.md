@@ -8,6 +8,12 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Command line
+
+- `dutchman pilot` runs [Pilot](https://github.com/dutchman-cad/pilot) 0.1.0-beta.1:
+  `dutchman pilot --help` lists its commands, and `dutchman pilot how "round all edges 3 mm"`
+  shows example calls.
+
 ### Reports
 
 - A joint Dutchman does not convert is reported by the output that leaves it out. A FreeCAD
