@@ -9,8 +9,25 @@ done by [cadmpeg](https://github.com/cadmpeg/cadmpeg); Dutchman maps cadmpeg's m
 target format, starting with [SolidCraft](https://github.com/tangency-labs/solidcraft) designs.
 
 ```sh
-dutchman convert part.f3d part.solidcraft
+dutchman part.f3d                 # writes part.solidcraft
+dutchman part.f3d out.solidcraft
+dutchman convert part.f3d out.solidcraft
 ```
+
+With no output given, Dutchman writes beside the input using the extension chosen by `--to`
+(`.solidcraft`, `.FCMacro`, or `.FCStd`). If that default already exists, choose `-o PATH`
+or use `--force` to replace it. An explicit output is replaced unless `--no-clobber`;
+`--force` conflicts with `--no-clobber`. The default may never replace the input itself.
+
+Dutchman Convert is the `dutchman` command; converting is its main job. It also runs other
+Dutchman CAD tools: `dutchman pilot` and `dutchman fixtures` run installed `dutchman-pilot`
+and `dutchman-fixtures` executables, found next to `dutchman` first, then on `PATH`.
+`dutchman --help` lists the installed tools and their versions. An installed Pilot takes
+precedence over the built-in Pilot; the default `pilot` Cargo feature supplies the fallback.
+
+The std-only `dutchman-launcher` crate provides a tiny front command for installations that
+ship with Pilot alone. Packagers install its binary as `dutchman`; `dutchman --version`
+identifies it as `dutchman launcher <version>`. Install Dutchman Convert for conversion commands.
 
 ## Download
 

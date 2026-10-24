@@ -1,8 +1,23 @@
 # Getting started
 
-Dutchman converts native CAD files into [SolidCraft](https://github.com/tangency-labs/solidcraft)
+Dutchman Convert is the `dutchman` command. Its main job is converting native CAD files into [SolidCraft](https://github.com/tangency-labs/solidcraft)
 designs (`.solidcraft`). This guide covers installing it, converting your first design,
 reading what the conversion reports, and opening the result in SolidCraft.
+
+```sh
+dutchman part.f3d                 # writes part.solidcraft
+dutchman part.f3d out.solidcraft
+dutchman convert part.f3d out.solidcraft
+```
+
+Omit the output to write beside the input, using its stem and the extension chosen by
+`--to`: `.solidcraft` (default), `.FCMacro`, or `.FCStd`. If that default exists, Dutchman
+exits 2 without changing it: choose `-o PATH` or pass `--force` to replace it. A default
+that is the input itself is always refused. `--force` conflicts with `--no-clobber`.
+Explicit output paths are replaced unless `--no-clobber` is given. Built-in commands win
+over files with the same name; use `dutchman convert pilot` for a file named `pilot`.
+Installed tools take precedence over bare files; otherwise an existing file or a recognised
+CAD extension selects conversion.
 
 - [Install](#install)
 - [Your first conversion](#your-first-conversion)
@@ -14,6 +29,18 @@ reading what the conversion reports, and opening the result in SolidCraft.
 - [Feature history and the SolidCraft check](#feature-history-and-the-solidcraft-check)
 - [Open the result in SolidCraft](#open-the-result-in-solidcraft)
 - [Troubleshooting](#troubleshooting)
+
+`dutchman pilot` and `dutchman fixtures` also run other installed Dutchman CAD tools.
+Install `dutchman-pilot` or `dutchman-fixtures` next to `dutchman` or on `PATH`; the copy
+next to `dutchman` wins. `dutchman --help` (or `dutchman` alone) lists installed tools with
+their versions. An installed Pilot receives its arguments unchanged, taking precedence over
+the built-in Pilot. Without it, builds with the default `pilot` feature use the built-in
+Pilot; other missing tools print their installation link and exit 1.
+
+Pilot-only installations can ship the small `dutchman-launcher` binary renamed to `dutchman`.
+It runs installed tools and identifies itself as `dutchman launcher <version>` with
+`--version`. Get [Dutchman Convert](https://github.com/dutchman-cad/dutchman) for `convert`,
+`convert-all`, `inspect` and `formats`.
 
 ## Install
 
@@ -241,7 +268,7 @@ The exit code is 0, and the first line, on stdout, says what was written where: 
 geometry, as this file has no feature history (else `editable history, verified in SolidCraft`
 or `editable history, unverified`). The lines on stderr are the loss report, explained
 [below](#reading-the-loss-report). Long notes are cut to their first sentence, marked `…`;
-`--verbose` prints them whole. An existing output file is
+`--verbose` prints them whole. An explicitly named existing output file is
 replaced (`--no-clobber` keeps it, and the conversion fails instead), and nothing is written
 when the conversion fails.
 

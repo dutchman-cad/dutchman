@@ -5,6 +5,16 @@ description: Use when someone wants a native CAD file (Fusion .f3d or .f3z, Inve
 
 # Converting CAD files with Dutchman
 
+The `dutchman` command also dispatches installed Dutchman CAD tools such as `pilot` and
+`fixtures` through `dutchman-<tool>` beside the command or on `PATH`. `dutchman --help`
+lists them. These external commands provide their own interfaces; the conversion MCP tools
+and JSON reports described here retain their existing schemas.
+
+The full CLI also accepts `dutchman part.f3d` (or `dutchman convert part.f3d`) and derives
+the output beside the input from `--to`. An existing derived output is kept with exit 2;
+choose `-o PATH` or use `--force` to replace it. `--force` conflicts with `--no-clobber`.
+Explicit outputs retain their replacement behaviour. MCP output paths remain required.
+
 Dutchman converts native CAD files into SolidCraft designs. Use the `dutchman-mcp` tools when
 they are connected (`inspect`, `convert`, `convert_all`, `formats`); otherwise run the
 `dutchman` command with `--json`. Both return the same reports, described in Dutchman's

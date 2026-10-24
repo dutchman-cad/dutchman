@@ -54,7 +54,13 @@ fn pilot_is_absent_without_the_feature() {
     let out = dutchman(&["--help"]);
     assert!(out.status.success());
     assert!(!String::from_utf8_lossy(&out.stdout).contains("pilot"));
-    assert_eq!(dutchman(&["pilot", "--help"]).status.code(), Some(2));
+    let out = Command::new(env!("CARGO_BIN_EXE_dutchman"))
+        .args(["pilot", "--help"])
+        .env("PATH", "")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(String::from_utf8(out.stderr).unwrap(), "dutchman: `dutchman pilot` is not installed; get it at https://github.com/dutchman-cad/pilot\n");
 }
 
 fn scratch(name: &str) -> PathBuf {
@@ -656,7 +662,7 @@ fn no_clobber_keeps_an_existing_design() {
     assert_eq!(out.status.code(), Some(0));
     assert_ne!(std::fs::read(&output).unwrap(), b"SENTINEL");
     let help = dutchman(&["convert", "--help"]);
-    assert!(String::from_utf8_lossy(&help.stdout).contains("An existing file is replaced"));
+    assert!(String::from_utf8_lossy(&help.stdout).contains("An explicit output is replaced"));
 
     // convert-all fails that one file and converts the rest.
     let out_dir = dir.join("all");
@@ -950,4 +956,301 @@ fn freecad_macro_output_is_available_without_freecad_input_support() {
     let script = std::fs::read_to_string(output).unwrap();
     assert!(script.contains("original_step("));
     assert!(script.contains("ISO-10303-21"));
+}
+
+#[test]
+fn unknown_tool_explains_where_to_install_it() {
+    let out = Command::new(env!("CARGO_BIN_EXE_dutchman"))
+        .arg("unknown-tool-for-test")
+        .env("PATH", "")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(String::from_utf8(out.stderr).unwrap(), "dutchman: `dutchman unknown-tool-for-test` is not installed; get it at https://github.com/dutchman-cad/unknown-tool-for-test\n");
+}
+
+#[test]
+fn builtin_typos_keep_clap_suggestions() {
+    let out = dutchman(&["conver"]);
+    assert_eq!(out.status.code(), Some(2));
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(text.contains("similar subcommand"), "{text}");
+    assert!(text.contains("convert"), "{text}");
+}
+
+#[cfg(unix)]
+mod external_tools {
+    use super::*;
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    use std::process::Stdio;
+
+    fn script(dir: &std::path::Path, name: &str, body: &str) {
+        let path = dir.join(format!("dutchman-{name}"));
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[test]
+    fn dispatch_preserves_stdin_arguments_and_exit_code() {
+        let dir = tempfile::tempdir().unwrap();
+        script(
+            dir.path(),
+            "foo",
+            "printf '<%s>\\n' \"$@\"; IFS= read -r line; printf 'stdin:%s\\n' \"$line\"; exit 7",
+        );
+        let mut child = Command::new(env!("CARGO_BIN_EXE_dutchman"))
+            .args(["foo", "a", "b c"])
+            .env("PATH", dir.path())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(b"hello world\n")
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert_eq!(out.status.code(), Some(7));
+        assert_eq!(out.stdout, b"<a>\n<b c>\nstdin:hello world\n");
+    }
+
+    #[test]
+    fn installed_pilot_accepts_its_own_flags_before_clap() {
+        let dir = tempfile::tempdir().unwrap();
+        script(
+            dir.path(),
+            "pilot",
+            "printf 'installed Pilot'; printf ' <%s>' \"$@\"; printf '\\n'",
+        );
+        for args in [
+            vec!["pilot", "--version"],
+            vec!["--verbose", "pilot", "--own-flag", "b c"],
+        ] {
+            let out = Command::new(env!("CARGO_BIN_EXE_dutchman"))
+                .args(&args)
+                .env("PATH", dir.path())
+                .output()
+                .unwrap();
+            assert!(out.status.success());
+            let expected = if args.len() == 2 {
+                "installed Pilot <--version>\n"
+            } else {
+                "installed Pilot <--own-flag> <b c>\n"
+            };
+            assert_eq!(out.stdout, expected.as_bytes());
+        }
+    }
+
+    #[test]
+    fn adjacent_tool_is_preferred_and_help_lists_it() {
+        let adjacent = tempfile::tempdir().unwrap();
+        let path = tempfile::tempdir().unwrap();
+        let binary = adjacent.path().join("dutchman");
+        std::fs::copy(env!("CARGO_BIN_EXE_dutchman"), &binary).unwrap();
+        script(adjacent.path(), "foo", "echo adjacent-1.0");
+        script(path.path(), "foo", "echo path-2.0");
+        let out = Command::new(&binary)
+            .arg("foo")
+            .env("PATH", path.path())
+            .output()
+            .unwrap();
+        assert_eq!(out.stdout, b"adjacent-1.0\n");
+        for args in [vec![], vec!["--help"]] {
+            let out = Command::new(&binary)
+                .args(args)
+                .env("PATH", path.path())
+                .output()
+                .unwrap();
+            assert!(out.status.success());
+            let text = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                text.contains("Installed Dutchman CAD tools:\n  foo  adjacent-1.0"),
+                "{text}"
+            );
+            assert!(!text.contains("path-2.0"), "{text}");
+        }
+    }
+
+    #[test]
+    fn non_utf8_arguments_pass_through() {
+        use std::os::unix::ffi::OsStringExt;
+        let dir = tempfile::tempdir().unwrap();
+        script(dir.path(), "foo", "printf '%s' \"$1\"");
+        let out = Command::new(env!("CARGO_BIN_EXE_dutchman"))
+            .arg("foo")
+            .arg(std::ffi::OsString::from_vec(vec![0xff, b'a']))
+            .env("PATH", dir.path())
+            .output()
+            .unwrap();
+        assert_eq!(out.stdout, [0xff, b'a']);
+    }
+
+    #[test]
+    fn resolution_prefers_builtins_then_installed_tools_then_files() {
+        let dir = tempfile::tempdir().unwrap();
+        script(dir.path(), "formats", "echo external-formats");
+        script(dir.path(), "foo", "echo external-foo");
+        std::fs::write(dir.path().join("foo"), b"sentinel").unwrap();
+        let run = |args: &[&str]| {
+            Command::new(env!("CARGO_BIN_EXE_dutchman"))
+                .current_dir(dir.path())
+                .env("PATH", dir.path())
+                .args(args)
+                .output()
+                .unwrap()
+        };
+        let out = run(&["formats"]);
+        assert!(out.status.success());
+        assert!(!String::from_utf8_lossy(&out.stdout).contains("external-formats"));
+        assert_eq!(run(&["foo"]).stdout, b"external-foo\n");
+        std::fs::copy(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../dutchman-core/tests/fixtures/generated_unit_cube.f3d"
+            ),
+            dir.path().join("pilot"),
+        )
+        .unwrap();
+        let out = run(&["convert", "pilot", "pilot.solidcraft", "--no-verify"]);
+        assert_eq!(out.status.code(), Some(1));
+        assert!(String::from_utf8_lossy(&out.stderr).contains("does not convert this kind of file"));
+    }
+
+    #[test]
+    fn installed_tool_with_builtin_typo_name_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        script(dir.path(), "conver", "echo installed");
+        let out = Command::new(env!("CARGO_BIN_EXE_dutchman"))
+            .arg("conver")
+            .env("PATH", dir.path())
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        assert_eq!(out.stdout, b"installed\n");
+    }
+}
+
+#[cfg(feature = "pilot")]
+#[test]
+fn pilot_version_falls_back_to_builtin() {
+    let out = Command::new(env!("CARGO_BIN_EXE_dutchman"))
+        .args(["pilot", "--version"])
+        .env("PATH", "")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("0.1.0-beta.1"));
+}
+
+#[test]
+fn bare_and_explicit_conversion_derive_and_protect_default_outputs() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::copy(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../dutchman-core/tests/fixtures/generated_unit_cube.f3d"
+        ),
+        dir.path().join("part.f3d"),
+    )
+    .unwrap();
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_dutchman"))
+            .current_dir(dir.path())
+            .args(args)
+            .env("PATH", "")
+            .output()
+            .unwrap()
+    };
+    for prefix in [vec![], vec!["convert"], vec!["--verbose"]] {
+        let mut args = prefix;
+        args.extend(["part.f3d", "--no-verify"]);
+        let out = run(&args);
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let output = dir.path().join("part.solidcraft");
+        assert!(std::fs::read(&output).unwrap().starts_with(b"PK"));
+        std::fs::remove_file(output).unwrap();
+    }
+    let output = dir.path().join("part.solidcraft");
+    std::fs::write(&output, b"sentinel").unwrap();
+    let modified = output.metadata().unwrap().modified().unwrap();
+    let out = run(&["part.f3d"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(out.stderr, b"dutchman: part.solidcraft already exists; choose another output with -o PATH, or replace it with --force\n");
+    assert_eq!(std::fs::read(&output).unwrap(), b"sentinel");
+    assert_eq!(output.metadata().unwrap().modified().unwrap(), modified);
+    assert!(run(&["part.f3d", "--force", "--no-verify"])
+        .status
+        .success());
+    assert_ne!(std::fs::read(&output).unwrap(), b"sentinel");
+    std::fs::write(&output, b"sentinel").unwrap();
+    assert!(run(&["part.f3d", "part.solidcraft", "--no-verify"])
+        .status
+        .success());
+    assert_ne!(std::fs::read(&output).unwrap(), b"sentinel");
+    assert_eq!(
+        run(&["part.f3d", "--force", "--no-clobber"]).status.code(),
+        Some(2)
+    );
+    assert!(run(&["part.f3d", "-o", "other.solidcraft", "--no-verify"])
+        .status
+        .success());
+}
+
+#[test]
+fn default_output_extensions_and_input_protection() {
+    let dir = tempfile::tempdir().unwrap();
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_dutchman"))
+            .current_dir(dir.path())
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    std::fs::write(dir.path().join("part.FCStd"), b"sentinel").unwrap();
+    for force in [vec![], vec!["--force"]] {
+        let mut args = vec!["convert", "part.FCStd", "--to", "fcstd"];
+        args.extend(force);
+        let out = run(&args);
+        assert_eq!(out.status.code(), Some(2));
+        assert!(String::from_utf8_lossy(&out.stderr).contains("is the input file"));
+        assert_eq!(
+            std::fs::read(dir.path().join("part.FCStd")).unwrap(),
+            b"sentinel"
+        );
+    }
+    std::fs::copy(
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../dutchman-core/tests/fixtures/generated_unit_cube.f3d"
+        ),
+        dir.path().join("part.F3D"),
+    )
+    .unwrap();
+    assert!(run(&["part.F3D", "--to", "freecad"]).status.success());
+    assert!(dir.path().join("part.FCMacro").is_file());
+    for ext in ["step", "StP", "IPT", "f3z", "sldprt"] {
+        let out = run(&[&format!("missing.{ext}")]);
+        assert_eq!(out.status.code(), Some(1));
+        assert!(!String::from_utf8_lossy(&out.stderr).contains("is not installed"));
+    }
+}
+
+#[test]
+fn builtin_command_wins_over_a_same_named_file() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("formats"), b"sentinel").unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_dutchman"))
+        .current_dir(dir.path())
+        .arg("formats")
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("Fusion"));
 }
