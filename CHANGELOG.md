@@ -34,6 +34,13 @@ report's schema name changes when a field does).
 
 ### cadmpeg
 
+- The cadmpeg pin moves to 63ebadd: a Fusion parameter whose owner frame cadmpeg cannot
+  read is kept native-only instead of failing the decode, Fusion as-built joints and joint
+  freedoms read, a Fusion fillet whose tangency weight carries a unit stays native, Fusion
+  extrude profiles resolve from circle-bounded and cap faces, ambiguous Fusion face
+  appearances are reported instead of failing, Inventor thread annotations project as
+  cosmetic threads and Thicken joins through selection lists, and Creo 11-13 order tables
+  read.
 - The cadmpeg pin moves to 892efad: joints carry their connector frame sense on their
   operands, Fusion components bound through an unregistered link entity place, edges that
   bound a selected face keep their geometry, a failed Fusion manifest says where its framing
