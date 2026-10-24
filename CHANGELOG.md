@@ -52,6 +52,8 @@ report's schema name changes when a field does).
 
 ### Desktop app
 
+- When macOS blocks SolidCraft's first run, the CLI and desktop app explain how to allow
+  it in Finder or System Settings and try the check again, without changing quarantine.
 - The desktop app is named **Dutchman Convert**, part of Dutchman CAD: its window title and
   heading, and on macOS **Dutchman Convert.app** with a "Dutchman Convert" disk image volume.
   The commands (`dutchman`, `dutchman-gui`, `dutchman-mcp`), their subcommands, the settings

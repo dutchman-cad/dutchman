@@ -404,8 +404,8 @@ impl SolidCraftWriter {
     fn check_geometry(&self, design: &[u8], expected: verify::Expected, report: &mut Report) {
         let cli = match verify::usable_cli(&self.verification) {
             Ok(cli) => cli,
-            // No SolidCraft is not worth a note on every file; one too old to check with is.
-            Err(verify::NoCli::TooOld(why)) => {
+            // Report a CLI that was found but cannot check the design.
+            Err(verify::NoCli::TooOld(why) | verify::NoCli::Blocked(why)) => {
                 report.push_at(
                     Stage::SolidCraft,
                     Severity::Info,
