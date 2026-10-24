@@ -53,6 +53,11 @@ version (`dutchman.convert/2`).
 | `names` | Every name the conversion met, sorted: the paths and folders it read from, and the names the design gives its parts, components, bodies, features, sketches, parameters and properties. For tools that take names out of a report before it is shared (the anonymous report does); absent when there were none. |
 | `losses` | What did not survive intact. `level` is `Info` (no effect on geometry), `Degraded` (carried in a weaker form) or `Dropped` (left out). `code` is cadmpeg's stable loss code when cadmpeg reported it, else `null`; `subject` says what was affected; `message` is for people. `stage` and `upstream` say where it arose (below). |
 
+When SolidCraft has a quarantine attribute without the user-approved flag on macOS,
+`verification.reason` explains how to allow its first run in Finder or System Settings
+and try again; the history stays `unverified`. A geometry check that cannot run records
+the same guidance in its `not checked` loss message.
+
 For a blocked sweep, `history.features[].reason` names the unsupported option, such as
 `sweeps with round corner transitions are not mapped yet` or
 `sweeps with linear section interpolation are not mapped yet`. Tangent-path extension and

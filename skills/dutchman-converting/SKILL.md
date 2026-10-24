@@ -110,6 +110,11 @@ post it yourself.
 
 Never report success on the reply alone.
 
+If macOS blocks SolidCraft, follow the report's first-run guidance: open SolidCraft once
+from Applications, then click Open Anyway in System Settings > Privacy & Security, and
+try again. Dutchman checks whether the quarantine attribute has the user-approved flag.
+Never remove or change the quarantine attribute.
+
 - `verification.status` `verified`: SolidCraft replayed the history and it matches the
   original. `unverified`: written without that check (the reason says why, usually no
   `solidcraft-cli` was found); mention that the history has not been checked. `flattened`:

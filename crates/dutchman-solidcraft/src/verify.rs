@@ -78,21 +78,23 @@ pub enum NoCli {
     NotFound(String),
     /// The one found is older than [`OLDEST_SOLIDCRAFT`].
     TooOld(String),
+    /// macOS has not allowed the CLI to run yet.
+    Blocked(String),
 }
 
 impl std::fmt::Display for NoCli {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            NoCli::NotFound(why) | NoCli::TooOld(why) => f.write_str(why),
+            NoCli::NotFound(why) | NoCli::TooOld(why) | NoCli::Blocked(why) => f.write_str(why),
         }
     }
 }
 
 /// [`find_cli`], refused with the reason when the CLI found says it is older than
-/// [`OLDEST_SOLIDCRAFT`]. One that does not say its version is used as it is.
+/// [`OLDEST_SOLIDCRAFT`] or macOS blocks it. One that does not say its version is used as it is.
 pub fn usable_cli(verification: &Verification) -> Result<PathBuf, NoCli> {
     let cli = find_cli(verification).map_err(NoCli::NotFound)?;
-    let Some(line) = version_of(&cli) else {
+    let Some(line) = version_of(&cli).map_err(NoCli::Blocked)? else {
         return Ok(cli);
     };
     match parse_version(&line) {
@@ -202,53 +204,107 @@ fn bundle_version(app: &Path) -> Vec<u64> {
 /// The version the SolidCraft CLI `verification` finds prints (`solidcraft-cli 0.18.2`),
 /// when there is one and it answers within a few seconds.
 pub fn solidcraft_version(verification: &Verification) -> Option<String> {
-    version_of(&find_cli(verification).ok()?)
+    version_of(&find_cli(verification).ok()?).ok().flatten()
 }
 
 /// How many times to try running a CLI the system says is busy being written.
 const BUSY_TRIES: u32 = 50;
 
 /// The first line `cli --version` prints, when it answers within a few seconds.
-fn version_of(cli: &Path) -> Option<String> {
-    let spawn = || {
-        Command::new(cli)
+fn version_of(cli: &Path) -> Result<Option<String>, String> {
+    let mut child = match spawn(cli, |command| {
+        command
             .arg("--version")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-    };
-    // A CLI just written, as an installer or update leaves it, can be busy for a moment while
-    // another process still holds it open for writing.
-    let mut tries = 0;
-    let mut child = loop {
-        match spawn() {
-            Err(err)
-                if err.kind() == std::io::ErrorKind::ExecutableFileBusy && tries < BUSY_TRIES =>
-            {
-                tries += 1;
-                std::thread::sleep(POLL);
-            }
-            spawned => break spawned.ok()?,
-        }
+            .stderr(Stdio::null());
+    }) {
+        Ok(child) => child,
+        Err(_) => return blocked_failure(cli).map_or(Ok(None), Err),
     };
     let started = Instant::now();
-    while child.try_wait().ok()?.is_none() {
-        if started.elapsed() > Duration::from_secs(10) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return None;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if !status.success() {
+                    if let Some(why) = blocked_failure(cli) {
+                        return Err(why);
+                    }
+                }
+                break;
+            }
+            Ok(None) if started.elapsed() > Duration::from_secs(10) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return blocked_failure(cli).map_or(Ok(None), Err);
+            }
+            Ok(None) => std::thread::sleep(POLL),
+            Err(_) => return blocked_failure(cli).map_or(Ok(None), Err),
         }
-        std::thread::sleep(POLL);
     }
-    let mut text = String::new();
-    std::io::Read::read_to_string(
-        &mut std::io::Read::take(child.stdout.take()?, 4096),
-        &mut text,
-    )
-    .ok()?;
-    let line = text.lines().next()?.trim();
-    (!line.is_empty()).then(|| line.to_owned())
+    let line = (|| {
+        let mut text = String::new();
+        std::io::Read::read_to_string(
+            &mut std::io::Read::take(child.stdout.take()?, 4096),
+            &mut text,
+        )
+        .ok()?;
+        let line = text.lines().next()?.trim();
+        (!line.is_empty()).then(|| line.to_owned())
+    })();
+    Ok(line)
+}
+
+#[cfg(any(target_os = "macos", test))]
+const MACOS_BLOCKED: &str = "macOS has not yet allowed SolidCraft to run: open SolidCraft once \
+    from Applications, click Done when macOS stops it, then click Open Anyway in System \
+    Settings > Privacy & Security, and try again.";
+
+#[cfg(any(target_os = "macos", test))]
+fn enclosing_app(cli: &Path) -> Option<&Path> {
+    cli.parent()?.ancestors().find(|path| {
+        path.extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("app"))
+    })
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn quarantine_blocks(value: &str) -> bool {
+    let Some((flags, _)) = value.trim().split_once(';') else {
+        return false;
+    };
+    flags.len() == 4
+        && flags.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && u16::from_str_radix(flags, 16).is_ok_and(|flags| flags & 0x0040 == 0)
+}
+
+fn blocked_failure(cli: &Path) -> Option<String> {
+    #[cfg(target_os = "macos")]
+    {
+        let resolved = std::fs::canonicalize(cli).ok();
+        let app = enclosing_app(resolved.as_deref().unwrap_or(cli))?;
+        let output = Command::new("/usr/bin/xattr")
+            .arg("-p")
+            .arg("com.apple.quarantine")
+            .arg(app)
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        (output.status.success()
+            && std::str::from_utf8(&output.stdout).is_ok_and(quarantine_blocks))
+        .then(|| MACOS_BLOCKED.to_owned())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = cli;
+        None
+    }
+}
+
+fn launch_failure(cli: &Path, err: std::io::Error) -> String {
+    blocked_failure(cli).unwrap_or_else(|| format!("cannot run {}: {err}", cli.display()))
 }
 
 fn on_path() -> Option<PathBuf> {
@@ -480,7 +536,7 @@ fn evaluate(
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|err| format!("cannot run {}: {err}", cli.display()))?;
+        .map_err(|err| launch_failure(cli, err))?;
     let started = Instant::now();
     let status = loop {
         match child.try_wait() {
@@ -488,17 +544,21 @@ fn evaluate(
             Ok(None) if started.elapsed() >= timeout => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(format!(
-                    "{} timed out after {} s",
-                    cli.display(),
-                    timeout.as_secs()
-                ));
+                return Err(blocked_failure(cli).unwrap_or_else(|| {
+                    format!("{} timed out after {} s", cli.display(), timeout.as_secs())
+                }));
             }
             Ok(None) => std::thread::sleep(POLL),
-            Err(err) => return Err(format!("cannot wait for {}: {err}", cli.display())),
+            Err(err) => {
+                return Err(blocked_failure(cli)
+                    .unwrap_or_else(|| format!("cannot wait for {}: {err}", cli.display())))
+            }
         }
     };
     if !status.success() {
+        if let Some(why) = blocked_failure(cli) {
+            return Err(why);
+        }
         return Ok(Evaluation::Failed(format!(
             "{CLI_NAME} exited with {status}"
         )));
@@ -689,10 +749,12 @@ fn run_script(
             .stdout(Stdio::null())
             .stderr(Stdio::null());
     })
-    .map_err(|err| format!("cannot run {}: {err}", cli.display()))?;
+    .map_err(|err| launch_failure(cli, err))?;
     let status = wait(&mut child, cli, deadline)?;
     if !status.success() {
-        return Err(format!("{CLI_NAME} exited with {status}"));
+        return Err(
+            blocked_failure(cli).unwrap_or_else(|| format!("{CLI_NAME} exited with {status}"))
+        );
     }
     let text = std::fs::read_to_string(&output)
         .map_err(|err| format!("{CLI_NAME} wrote no result: {err}"))?;
@@ -734,10 +796,15 @@ fn wait(
             Ok(None) if Instant::now() >= deadline => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err(format!("{} timed out", cli.display()));
+                return Err(
+                    blocked_failure(cli).unwrap_or_else(|| format!("{} timed out", cli.display()))
+                );
             }
             Ok(None) => std::thread::sleep(POLL),
-            Err(err) => return Err(format!("cannot wait for {}: {err}", cli.display())),
+            Err(err) => {
+                return Err(blocked_failure(cli)
+                    .unwrap_or_else(|| format!("cannot wait for {}: {err}", cli.display())))
+            }
         }
     }
 }
@@ -785,6 +852,47 @@ fn parse(value: &Value) -> Result<Eval, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_nearest_enclosing_app_is_found() {
+        for bundle in ["SolidCraft.app", "SolidCraft 0.20.APP", "Solid Craft.app"] {
+            let app = Path::new("Applications").join(bundle);
+            let cli = app.join("Contents/MacOS/solidcraft-cli");
+            assert_eq!(enclosing_app(&cli), Some(app.as_path()));
+        }
+        assert_eq!(enclosing_app(Path::new("bin/solidcraft-cli")), None);
+        assert_eq!(enclosing_app(Path::new("solidcraft-cli")), None);
+        assert_eq!(
+            enclosing_app(Path::new("Apps.app/Inner.app/bin/cli")),
+            Some(Path::new("Apps.app/Inner.app"))
+        );
+        assert_eq!(
+            enclosing_app(Path::new("SolidCraft.app.backup/bin/cli")),
+            None
+        );
+    }
+
+    #[test]
+    fn only_quarantine_without_user_approval_blocks() {
+        for value in ["0081;1234;Safari;uuid", "0083;1234;Safari;uuid"] {
+            assert!(quarantine_blocks(value), "{value}");
+        }
+        for value in [
+            "00c1;1234;Safari;uuid",
+            "00C3;1234;Safari;uuid\n",
+            "",
+            "garbage",
+            "zzzz;1234;Safari;uuid",
+            "081;1234;Safari;uuid",
+            "00081;1234;Safari;uuid",
+            "+081;1234;Safari;uuid",
+        ] {
+            assert!(!quarantine_blocks(value), "{value}");
+        }
+        assert!(MACOS_BLOCKED.contains("Open Anyway in System Settings > Privacy & Security"));
+        // One sentence, so the CLI's first-sentence notes keep the steps.
+        assert!(!MACOS_BLOCKED.trim_end_matches('.').contains(". "));
+    }
 
     #[test]
     fn volumes_match_in_any_order_within_tolerance() {
@@ -892,6 +1000,25 @@ mod cli_tests {
 
     use super::*;
 
+    #[test]
+    fn an_unblocked_probe_keeps_its_version_even_on_failure() {
+        let _turn = ONE_AT_A_TIME
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = tempfile::tempdir().unwrap();
+        let cli = dir.path().join("solidcraft-cli");
+        std::fs::write(&cli, "#!/bin/sh\necho 'solidcraft-cli 0.1.0'\nexit 3\n").unwrap();
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            version_of(&cli),
+            Ok(Some("solidcraft-cli 0.1.0".to_owned()))
+        );
+        assert!(matches!(
+            usable_cli(&Verification::With(cli)),
+            Err(NoCli::TooOld(_))
+        ));
+    }
+
     /// A stand-in SolidCraft CLI: `script` runs with `$design` (the design path) and must
     /// print the eval result, which is written to the `--json-out` file.
     #[test]
@@ -963,6 +1090,14 @@ mod cli_tests {
                 ..Expected::default()
             },
         )
+    }
+
+    #[test]
+    fn a_sigkill_without_unapproved_quarantine_keeps_its_failure_message() {
+        assert!(matches!(
+            run("kill -KILL $$", DEFAULT_TIMEOUT),
+            Outcome::Unverified(why) if why.contains("signal: 9")
+        ));
     }
 
     #[test]

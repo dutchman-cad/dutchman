@@ -138,6 +138,7 @@ impl App {
         let job = job.clone();
         row.status = Status::Waiting;
         row.report = None;
+        self.refresh_blocked_checker();
         self.notice = None;
         self.run = Some(Run::retry(
             job,
@@ -180,7 +181,15 @@ impl App {
         self.run.is_some()
     }
 
+    fn refresh_blocked_checker(&mut self) {
+        if matches!(self.checker, Err(dutchman_solidcraft::NoCli::Blocked(_))) {
+            self.checker =
+                dutchman_solidcraft::usable_cli(&dutchman_solidcraft::Verification::Auto);
+        }
+    }
+
     fn start(&mut self, ctx: &egui::Context) {
+        self.refresh_blocked_checker();
         let Some(out_dir) = self.out_dir.clone() else {
             return;
         };
@@ -293,6 +302,14 @@ impl App {
 
     /// Draws the window, for eframe and for tests.
     pub fn ui(&mut self, ctx: &egui::Context) {
+        if ctx.input(|input| {
+            input
+                .events
+                .iter()
+                .any(|event| matches!(event, egui::Event::WindowFocused(true)))
+        }) {
+            self.refresh_blocked_checker();
+        }
         self.receive(ctx);
         self.take_dropped_files(ctx);
 
@@ -503,6 +520,7 @@ impl App {
                 }
                 let checker = match &self.checker {
                     Ok(cli) => format!("Checks with {}.", display(cli)),
+                    Err(dutchman_solidcraft::NoCli::Blocked(why)) => why.clone(),
                     Err(dutchman_solidcraft::NoCli::TooOld(why)) => {
                         format!("History is written unchecked: {why}.")
                     }
@@ -512,10 +530,13 @@ impl App {
                         dutchman_solidcraft::CLI_ENV
                     ),
                 };
-                // One line whatever the path, so the window keeps its height and Convert stays
-                // in view; the whole line is on hover.
-                ui.add(egui::Label::new(RichText::new(&checker).small().color(p.tide)).truncate())
-                    .on_hover_text(checker);
+                let label = egui::Label::new(RichText::new(&checker).small().color(p.tide));
+                if matches!(self.checker, Err(dutchman_solidcraft::NoCli::Blocked(_))) {
+                    ui.add(label.wrap());
+                } else {
+                    // Keep paths on one line; the whole path is on hover.
+                    ui.add(label.truncate()).on_hover_text(checker);
+                }
                 ui.add_space(theme::SPACE_2);
                 let chosen = self.options.project.clone();
                 let mut find = false;
@@ -1081,6 +1102,22 @@ mod tests {
             report: None,
             job: None,
         }
+    }
+
+    #[test]
+    fn a_blocked_checker_shows_the_recovery_message() {
+        use egui_kittest::kittest::Queryable;
+        let message =
+            "macOS has not yet allowed SolidCraft to run: open SolidCraft once from Applications.";
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(760.0, 680.0))
+            .build_eframe(move |cc| {
+                let mut app = App::new(cc);
+                app.checker = Err(dutchman_solidcraft::NoCli::Blocked(message.to_owned()));
+                app
+            });
+        harness.run();
+        assert!(harness.query_by_label(message).is_some());
     }
 
     #[test]

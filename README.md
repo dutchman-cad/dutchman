@@ -128,6 +128,12 @@ with Rust 1.88 or newer:
 cargo install --git https://github.com/dutchman-cad/dutchman dutchman-gui
 ```
 
+On macOS, let SolidCraft itself run once before the first check: open SolidCraft from
+Applications, click **Done** when macOS stops it, then click **Open Anyway** in **System
+Settings > Privacy & Security**, the same steps as for Dutchman Convert. Dutchman reads the
+app's quarantine attribute and its user-approved flag without changing them. The desktop app
+retries a blocked check when its window regains focus or you start a conversion.
+
 On Linux it needs a desktop session (X11 or Wayland with OpenGL); the file dialogs use the
 desktop portal, and dropping files works without it.
 

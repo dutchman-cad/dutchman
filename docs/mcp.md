@@ -23,6 +23,10 @@ relief use the target rule defaults because CADIR does not supply them.
 claude mcp add dutchman -- dutchman-mcp
 ```
 
+On macOS, a blocked SolidCraft check explains how to open SolidCraft once and allow it
+with **Open Anyway** in **System Settings > Privacy & Security**, then try again.
+Dutchman checks the quarantine attribute for the user-approved flag without changing it.
+
 Optional: if Dutchman cannot find `solidcraft-cli` on `PATH` or inside an installed SolidCraft
 app, pass its path. Replace `/path/to/solidcraft-cli` with the installed executable's absolute
 path before running this command:

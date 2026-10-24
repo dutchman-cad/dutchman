@@ -172,6 +172,15 @@ SolidCraft app is enough: Dutchman finds the tool inside it (on macOS, the newes
 desktop app says which one it checks with. Without one, conversions still work; a converted
 history is marked unverified.
 
+On macOS, let SolidCraft itself run once before the first check: open SolidCraft from
+Applications, click **Done** when macOS stops it, then click **Open Anyway** in **System
+Settings > Privacy & Security**, the same steps as for Dutchman Convert. Dutchman reads the
+app's quarantine attribute and its user-approved flag without changing them. The desktop app
+retries a blocked check when its window regains focus or you start a conversion. Until then
+it says so under the check option:
+
+<img alt="Dutchman Convert with macOS's “SolidCraft” Not Opened box over it; under Check feature history in SolidCraft it reads: macOS has not yet allowed SolidCraft to run, with the steps to allow it." src="images/macos-solidcraft-blocked.png" width="450">
+
 Dutchman's designs open in **SolidCraft 0.18.2 or newer**, and are tested with 0.18.2, 0.19.0,
 and 0.20.0. A `solidcraft-cli` older than 0.18.2 is not used: the conversion says so ("… is older
 than SolidCraft 0.18.2, the oldest that opens and checks Dutchman's designs; install a newer
