@@ -125,7 +125,8 @@ fn main() -> ExitCode {
     if let Some(code) = worker::run_if_worker() {
         return code;
     }
-    let command = Cli::command();
+    // Name the command `dutchman` in every usage line, also where argv[0] is `dutchman.exe`.
+    let command = Cli::command().bin_name("dutchman");
     #[cfg(feature = "pilot")]
     let command = command.mut_subcommand("pilot", |c| {
         dutchman_pilot::cli::with_bin_name(c, "dutchman pilot")
