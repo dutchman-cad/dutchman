@@ -44,6 +44,28 @@ It runs installed tools and identifies itself as `dutchman launcher <version>` w
 
 ## Install
 
+### Homebrew or Scoop
+
+On macOS or Linux with [Homebrew](https://brew.sh):
+
+```sh
+brew install dutchman-cad/tap/dutchman
+```
+
+On Windows with [Scoop](https://scoop.sh):
+
+```powershell
+scoop bucket add dutchman-cad https://github.com/dutchman-cad/scoop-bucket
+scoop install dutchman-cad/dutchman
+```
+
+Either installs `dutchman`, `dutchman-mcp` and the desktop app, `dutchman-gui` (Scoop also adds
+a **Dutchman Convert** Start menu shortcut), on your `PATH`. `brew upgrade` or `scoop update`
+brings each new release, usually within an hour of it. On macOS a Homebrew install opens
+without the first-run approval below, because Homebrew's downloads are not quarantined.
+[Pilot](https://github.com/dutchman-cad/pilot) installs the same way, as `dutchman-pilot`
+(`brew install dutchman-cad/tap/dutchman-pilot`, `scoop install dutchman-cad/dutchman-pilot`).
+
 ### macOS: the app
 
 From 0.1.3 on, each release has `dutchman-VERSION-macos-universal.dmg`: **Dutchman

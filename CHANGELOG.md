@@ -8,6 +8,12 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Install
+
+- Install with Homebrew (`brew install dutchman-cad/tap/dutchman`) or Scoop (`scoop install
+  dutchman-cad/dutchman` after `scoop bucket add dutchman-cad
+  https://github.com/dutchman-cad/scoop-bucket`); both follow each release.
+
 ### Command line
 
 - Convert with `dutchman part.f3d`, optionally followed by an output path. `convert` also

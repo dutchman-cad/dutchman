@@ -29,6 +29,26 @@ The std-only `dutchman-launcher` crate provides a tiny front command for install
 ship with Pilot alone. Packagers install its binary as `dutchman`; `dutchman --version`
 identifies it as `dutchman launcher <version>`. Install Dutchman Convert for conversion commands.
 
+## Install
+
+With [Homebrew](https://brew.sh) on macOS or Linux:
+
+```sh
+brew install dutchman-cad/tap/dutchman
+```
+
+With [Scoop](https://scoop.sh) on Windows:
+
+```powershell
+scoop bucket add dutchman-cad https://github.com/dutchman-cad/scoop-bucket
+scoop install dutchman-cad/dutchman
+```
+
+Both install `dutchman`, `dutchman-mcp` and the desktop app (`dutchman-gui`; Scoop also adds a
+Start menu shortcut), and follow each release: `brew upgrade` or `scoop update` brings the
+newest. A Homebrew install on macOS needs no first-run approval, because Homebrew's downloads
+are not quarantined. Or download a release below.
+
 ## Download
 
 <!-- downloads -->
