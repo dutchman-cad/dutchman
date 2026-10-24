@@ -256,9 +256,9 @@ fn version_of(cli: &Path) -> Result<Option<String>, String> {
 }
 
 #[cfg(any(target_os = "macos", test))]
-const MACOS_BLOCKED: &str = "macOS has not yet allowed SolidCraft to run; open SolidCraft once \
-    from Finder (right-click SolidCraft in Applications, choose Open, then Open), or allow it \
-    in System Settings > Privacy & Security > Open Anyway, then try again.";
+const MACOS_BLOCKED: &str = "macOS has not yet allowed SolidCraft to run. Open SolidCraft once \
+    from Applications, click Done when macOS stops it, then click Open Anyway in System \
+    Settings > Privacy & Security, and try again.";
 
 #[cfg(any(target_os = "macos", test))]
 fn enclosing_app(cli: &Path) -> Option<&Path> {
@@ -889,7 +889,7 @@ mod tests {
         ] {
             assert!(!quarantine_blocks(value), "{value}");
         }
-        assert!(MACOS_BLOCKED.contains("Privacy & Security > Open Anyway"));
+        assert!(MACOS_BLOCKED.contains("Open Anyway in System Settings > Privacy & Security"));
     }
 
     #[test]

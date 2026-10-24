@@ -1108,7 +1108,7 @@ mod tests {
     fn a_blocked_checker_shows_the_recovery_message() {
         use egui_kittest::kittest::Queryable;
         let message =
-            "macOS has not yet allowed SolidCraft to run; open SolidCraft once from Finder.";
+            "macOS has not yet allowed SolidCraft to run. Open SolidCraft once from Applications.";
         let mut harness = egui_kittest::Harness::builder()
             .with_size(egui::vec2(760.0, 680.0))
             .build_eframe(move |cc| {

@@ -111,7 +111,7 @@ post it yourself.
 Never report success on the reply alone.
 
 If macOS blocks SolidCraft, follow the report's first-run guidance: open SolidCraft once
-from Finder, or allow it in System Settings > Privacy & Security > Open Anyway, then
+from Applications, then click Open Anyway in System Settings > Privacy & Security, and
 try again. Dutchman checks whether the quarantine attribute has the user-approved flag.
 Never remove or change the quarantine attribute.
 
