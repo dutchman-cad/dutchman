@@ -1,0 +1,41 @@
+<!doctype html>
+<!-- Source of docs/social-preview.png, the repository's social card (1280x640).
+     Render: chrome-headless-shell --screenshot=docs/social-preview.png --window-size=1280,640 assets/social/social-preview.html -->
+<html><head><meta charset="utf-8"><style>
+@font-face { font-family: Spectral; font-weight: 600; src: url(../../crates/dutchman-gui/assets/fonts/Spectral-SemiBold.ttf); }
+@font-face { font-family: Plex; src: url(../../crates/dutchman-gui/assets/fonts/IBMPlexSans-Regular.ttf); }
+@font-face { font-family: Plex; font-weight: 600; src: url(../../crates/dutchman-gui/assets/fonts/IBMPlexSans-SemiBold.ttf); }
+@font-face { font-family: PlexMono; src: url(../../crates/dutchman-gui/assets/fonts/IBMPlexMono-Regular.ttf); }
+html, body { margin: 0; width: 1280px; height: 640px; overflow: hidden; background: #0F1A23; }
+.left { position: absolute; left: 100px; top: 0; width: 720px; height: 640px; }
+.mark { position: absolute; left: 4px; top: 56px; width: 128px; height: 128px; }
+.org { position: absolute; left: 0; top: 204px; font: 600 22px Plex; letter-spacing: 0.14em; color: #6FD3BC; text-transform: uppercase; }
+h1 { position: absolute; left: -4px; top: 236px; margin: 0; font: 600 100px/0.98 Spectral; color: #E6EEEA; letter-spacing: -0.01em; }
+.tag { position: absolute; left: 0; top: 462px; font: 28px Plex; color: #9FB0B8; }
+.url { position: absolute; left: 0; top: 556px; font: 22px PlexMono; color: #6FD3BC; }
+.panel { position: absolute; left: 860px; top: 0; width: 420px; height: 640px; background: #122029; }
+.grid { position: absolute; left: 860px; top: 0; width: 420px; height: 400px; background: #1C2D3B; border-left: 3px solid #6FD3BC; box-sizing: border-box; }
+.formats { position: absolute; left: 896px; top: 556px; font: 22px PlexMono; color: #9FB0B8; white-space: nowrap; }
+.formats b { font-weight: normal; color: #E8A64A; }
+</style></head><body>
+<div class="panel"></div>
+<div class="grid"><svg width="417" height="400" viewBox="0 0 417 400" fill="none" stroke="#2C4152" stroke-width="2">
+  <path d="M207 0V400M0 200H417M0 0L417 200M0 200L417 400"/></svg></div>
+<div class="left">
+  <svg class="mark" viewBox="0 0 64 64">
+    <path d="M32 9.5V45" stroke="#E6EEEA" stroke-width="2.4" stroke-linecap="round"/>
+    <path d="M30.6 14H14.5c1.4 8.2 1.4 16.2 0 24h16.1z" fill="#6FD3BC"/>
+    <g fill="none" stroke="#6FD3BC" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">
+      <path d="M33.4 14h16.1c-1.4 8.2-1.4 16.2 0 24H33.4z"/>
+      <path d="M33.4 26h15.3M33.4 14l15.3 12M33.4 26l16.1 12"/>
+    </g>
+    <path d="M7 45h50l-7.5 9.5h-35z" fill="#E6EEEA"/>
+    <circle cx="32" cy="6.2" r="2.8" fill="#E8A64A"/>
+  </svg>
+  <div class="org">Dutchman CAD</div>
+  <h1>Dutchman<br>Convert</h1>
+  <div class="tag">Converts native CAD designs into SolidCraft designs</div>
+  <div class="url">github.com/dutchman-cad/dutchman</div>
+</div>
+<div class="formats">.f3d&nbsp;&nbsp;.ipt&nbsp;&nbsp;&#8594; <b>.solidcraft</b></div>
+</body></html>
