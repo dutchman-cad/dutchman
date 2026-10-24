@@ -13,6 +13,50 @@ fn dutchman(args: &[&str]) -> Output {
         .unwrap()
 }
 
+#[cfg(feature = "pilot")]
+#[test]
+fn pilot_help_names_the_embedded_command() {
+    for args in [vec!["pilot", "--help"], vec!["pilot"]] {
+        let out = dutchman(&args);
+        assert!(out.status.success());
+        let help = String::from_utf8_lossy(&out.stdout);
+        assert!(help.contains("Usage:\n  dutchman pilot how"), "{help}");
+        assert!(!help.contains("dutchman-pilot how"), "{help}");
+    }
+    let out = dutchman(&["pilot", "model", "--help"]);
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("Usage: dutchman pilot model"));
+}
+
+#[cfg(feature = "pilot")]
+#[test]
+fn pilot_dispatches_and_reports_errors() {
+    let out = dutchman(&["pilot", "how", "round all edges 3 mm"]);
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("solid.fillet"));
+
+    let dir = tempfile::tempdir().unwrap();
+    let missing_log = dir.path().join("missing.jsonl");
+    let out = dutchman(&["pilot", "log-summary", missing_log.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).starts_with("dutchman: "));
+
+    let out = dutchman(&["pilot", "model", "--upstream-timeout", "0"]);
+    assert_eq!(out.status.code(), Some(2));
+    let error = String::from_utf8_lossy(&out.stderr);
+    assert!(error.contains("--upstream-timeout"), "{error}");
+    assert!(error.contains("1..=3600"), "{error}");
+}
+
+#[cfg(not(feature = "pilot"))]
+#[test]
+fn pilot_is_absent_without_the_feature() {
+    let out = dutchman(&["--help"]);
+    assert!(out.status.success());
+    assert!(!String::from_utf8_lossy(&out.stdout).contains("pilot"));
+    assert_eq!(dutchman(&["pilot", "--help"]).status.code(), Some(2));
+}
+
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("dutchman-cli-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();

@@ -20,7 +20,8 @@ name = "dutchman-mcp"
 path = "src/bin/dutchman-mcp.rs"
 
 [features]
-default = ["freecad"]
+default = ["freecad", "pilot"]
+pilot = ["dep:dutchman-pilot"]
 # FreeCAD documents (.FCStd); see dutchman-core's feature of the same name.
 freecad = ["dutchman-core/freecad"]
 
@@ -29,6 +30,7 @@ aho-corasick.workspace = true
 clap.workspace = true
 dutchman-core.workspace = true
 dutchman-freecad.workspace = true
+dutchman-pilot = { workspace = true, optional = true }
 dutchman-solidcraft.workspace = true
 getrandom.workspace = true
 serde_json.workspace = true

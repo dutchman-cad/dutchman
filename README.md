@@ -81,6 +81,20 @@ options.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it fits together.
 
+## Pilot
+
+`dutchman pilot` runs [Pilot](https://github.com/dutchman-cad/pilot), a local helper for
+driving SolidCraft from plain-language requests through its public interfaces.
+
+```sh
+dutchman pilot --help
+dutchman pilot how "round all edges 3 mm"
+dutchman pilot model --upstream http://localhost:11434/v1
+```
+
+Install SolidCraft separately. The `model` command connects to a chat-completions endpoint
+such as Ollama or LM Studio. Pilot is included with the default `pilot` Cargo feature.
+
 ## Desktop app
 
 `dutchman-gui` converts without a terminal. Drop design files or folders on the window (or use
