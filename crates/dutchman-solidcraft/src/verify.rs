@@ -256,7 +256,7 @@ fn version_of(cli: &Path) -> Result<Option<String>, String> {
 }
 
 #[cfg(any(target_os = "macos", test))]
-const MACOS_BLOCKED: &str = "macOS has not yet allowed SolidCraft to run. Open SolidCraft once \
+const MACOS_BLOCKED: &str = "macOS has not yet allowed SolidCraft to run: open SolidCraft once \
     from Applications, click Done when macOS stops it, then click Open Anyway in System \
     Settings > Privacy & Security, and try again.";
 
@@ -890,6 +890,8 @@ mod tests {
             assert!(!quarantine_blocks(value), "{value}");
         }
         assert!(MACOS_BLOCKED.contains("Open Anyway in System Settings > Privacy & Security"));
+        // One sentence, so the CLI's first-sentence notes keep the steps.
+        assert!(!MACOS_BLOCKED.trim_end_matches('.').contains(". "));
     }
 
     #[test]
