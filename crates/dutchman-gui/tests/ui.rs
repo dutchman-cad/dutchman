@@ -65,7 +65,7 @@ fn designs_convert_from_the_window() {
     let out = tempfile::tempdir().unwrap();
     // Keep Convert and all three results visible without scrolling.
     let mut harness = Harness::builder()
-        .with_size(egui::vec2(760.0, 1040.0))
+        .with_size(egui::vec2(760.0, 1280.0))
         .build_eframe(|cc| App::new(cc));
     harness.state_mut().add_inputs([
         fixture("generated_unit_cube.f3d"),
@@ -232,4 +232,42 @@ fn screenshots() {
             .save(dir.join(format!("{name}-losses.png")))
             .unwrap();
     }
+}
+
+#[test]
+fn dropped_files_and_results_show_format_status_and_one_invitation() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = dir.path().join("creo.prt");
+    let second = dir.path().join("nx.prt");
+    std::fs::write(&first, b"#UGC:2").unwrap();
+    std::fs::write(&second, b"SPLMSSTR").unwrap();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1100.0, 1400.0))
+        .build_eframe(|cc| App::new(cc));
+    harness.state_mut().add_inputs([first, second]);
+    harness.state_mut().set_out_dir(dir.path().join("out"));
+    harness.run();
+    for program in ["Creo", "NX"] {
+        assert!(harness
+            .query_by_label(&format!("{program} .prt: opens, no geometry yet"))
+            .is_some());
+    }
+    convert(&mut harness);
+    assert!(harness
+        .state()
+        .rows()
+        .iter()
+        .all(|r| r.status == Status::Failed));
+    assert_eq!(
+        harness
+            .query_all_by_label_contains("Want to help Dutchman read Creo, NX better?")
+            .count(),
+        1
+    );
+    assert!(harness
+        .query_by_label(dutchman::json::FIXTURES_URL)
+        .is_some());
+    assert!(harness
+        .query_by_label(dutchman::json::DISCORD_URL)
+        .is_some());
 }

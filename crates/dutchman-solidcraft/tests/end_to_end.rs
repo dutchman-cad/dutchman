@@ -156,3 +156,44 @@ fn solidcraft_shows_every_face_of_each_cube() {
         assert!(geometry.is_empty(), "{file}: {geometry:?}");
     }
 }
+
+#[test]
+fn interchange_codecs_convert_generated_geometry_through_step() {
+    use cadmpeg_ir::codec::write::{target::TargetRequest, EncodeInput};
+    use cadmpeg_registry::{build_encoder, Format};
+    let dir = tempfile::tempdir().unwrap();
+    let mut ir = cadmpeg_ir::examples::unit_cube().unwrap();
+    for face in &mut ir.model.faces {
+        face.name = None;
+    }
+    for (format, extension) in [
+        (Format::Step, "stp"),
+        (Format::Iges, "igs"),
+        (Format::Rhino, "3dm"),
+    ] {
+        let encoder = build_encoder(format);
+        let (_, target) = encoder.targets().default().unwrap();
+        let plan = encoder
+            .plan(
+                EncodeInput::new(&ir, None),
+                TargetRequest::Explicit(target.id.as_str()),
+            )
+            .unwrap();
+        let mut bytes = Vec::new();
+        plan.write_to(&mut bytes).unwrap();
+        let input = dir.path().join(format!("cube.{extension}"));
+        let output = dir.path().join(format!("{extension}.solidcraft"));
+        std::fs::write(&input, bytes).unwrap();
+        let report = convert(
+            &input,
+            &output,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        )
+        .unwrap();
+        assert!(output.is_file());
+        assert!(!report
+            .losses()
+            .iter()
+            .any(|loss| loss.detail.contains("no solids or surfaces")));
+    }
+}

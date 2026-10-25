@@ -8,6 +8,23 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Formats
+
+- Convert CATIA `.CATPart`, Creo View `.pvz`, Rhino `.3dm`, ACIS `.sat`/`.sab`/`.smt`/`.smb`,
+  STEP `.step`/`.stp` and IGES `.igs`/`.iges` through the geometry path. Creo and NX parts
+  (`.prt`, including numbered Creo saves) are recognised by contents and report when geometry
+  reading is not supported yet. SolidWorks assemblies remain recognised without a reader.
+- The CLI, JSON reports and desktop app show whether each format reads geometry, opens
+  without geometry, or is recognised without a reader. `dutchman formats` lists that status
+  alongside what Dutchman converts. After a refused conversion or a history that did not
+  fully map, one invitation links to test-file recipes and private help with wrong conversions.
+  `--quiet` hides it; JSON output contains no invitation.
+- Directory conversion keeps the newest numbered `.prt.N` save per part and reports older
+  revisions as skipped. Numbered saves use the part's base output name and keep existing outputs.
+- The cadmpeg pin moves from `63ebadd` to `66550bb`:
+  Creo View geometry becomes available, and Fusion As-built joints carry limit owners,
+  slider limits and rest positions from the reader.
+
 ### Docs
 
 - The README and guide link the Dutchman CAD Discord for questions and help.

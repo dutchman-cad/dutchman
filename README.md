@@ -73,9 +73,40 @@ minute. Every release is on the [releases page](https://github.com/dutchman-cad/
 
 ## What converts
 
-Early development. Fusion (`.f3d`, `.f3z`) designs, Inventor parts (`.ipt`), Inventor
-assemblies (`.iam`, with their parts found anywhere in the project), SolidWorks parts
-(`.sldprt`), and FreeCAD documents (`.FCStd`) convert today:
+Early development. Reader status says whether geometry can be read; the conversion report
+says what this file kept. Formats with geometry readers attempt conversion through STEP.
+Creo and NX share `.prt` and are identified by contents, including numbered `.prt.N` saves.
+SolidWorks assemblies are recognised without a reader. `dutchman formats` lists the current
+reader status and what Dutchman converts:
+
+<!-- formats: generated from dutchman formats -->
+```text
+Fusion archive (.f3d)  reads geometry  converts: geometry; feature history when every feature maps; components and mapped joints
+Fusion multi-document archive (.f3z)  reads geometry  converts: as a Fusion archive, with referenced designs merged in by cadmpeg
+Inventor part (.ipt)  reads geometry  converts: geometry; feature history when every feature maps
+Inventor assembly (.iam)  reads geometry  converts: placed parts and sub-assemblies, read from their files in the project
+SolidWorks part (.sldprt)  reads geometry  converts: geometry; feature history waits on cadmpeg binding sketches and extrude profiles
+SolidWorks assembly (.sldasm)  recognised, not read yet  not yet: nothing yet; reading geometry is not supported yet
+FreeCAD document (.FCStd)  reads geometry  converts: geometry and components; feature history and joints when they map
+CATIA part (.CATPart)  reads geometry  converts: geometry through STEP; solids and surfaces SolidCraft can import
+Creo part (.prt, .prt.N)  opens, no geometry yet  not yet: nothing yet; reading geometry is not supported yet
+NX part (.prt)  opens, no geometry yet  not yet: nothing yet; reading geometry is not supported yet
+Creo View (.pvz)  reads geometry  converts: geometry through STEP; solids and surfaces SolidCraft can import
+Rhino (.3dm)  reads geometry  converts: geometry through STEP; solids and surfaces SolidCraft can import
+ACIS (.sat, .sab, .smt, .smb)  reads geometry  converts: geometry through STEP; solids and surfaces SolidCraft can import
+STEP (.step, .stp)  reads geometry  converts: geometry through STEP; solids and surfaces SolidCraft can import
+IGES (.igs, .iges)  reads geometry  converts: geometry through STEP; solids and surfaces SolidCraft can import
+Creo or NX part (.prt)  recognised, not read yet  not yet: nothing yet; reading geometry is not supported yet
+
+Written as a SolidCraft design (.solidcraft), or, experimental, as a FreeCAD rebuild macro (.FCMacro, --to freecad)
+```
+<!-- /formats -->
+
+After a refused conversion or a history that did not fully map, Dutchman offers short recipes
+for making small test files: [fixtures](https://dutchman-cad.github.io/fixtures/) or
+`/volunteer` in [Discord](https://discord.gg/yTcseBEdeu). `--quiet` hides the invitation;
+`--json` prints only the report. The desktop app shows the same invitation once under its results.
+Got a file that converts wrong? Drop it, with its STEP export, in a DM to Dutchy in our Discord.
 
 - When every feature in a design's history maps onto SolidCraft, the SolidCraft design keeps
   that history, editable, with the original geometry kept beside it. If `solidcraft-cli` is

@@ -80,9 +80,7 @@ fn convert_reports_unsupported_format_cleanly() {
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains(
-            "SolidWorks assembly (.sldasm) files are not supported yet. Export a STEP file"
-        ),
+        stderr.contains("reading geometry is not supported yet. Export a STEP file"),
         "{stderr}"
     );
     assert!(!output.exists(), "no output file is created on failure");
@@ -101,17 +99,11 @@ fn convert_rejects_unknown_input() {
     std::fs::write(&input, b"hello").unwrap();
     let out = dutchman(&["convert", input.to_str().unwrap(), "x.solidcraft"]);
     assert_eq!(out.status.code(), Some(1));
-    let converts = if cfg!(feature = "freecad") {
-        "Inventor part (.ipt), Inventor assembly (.iam), Fusion archive (.f3d), Fusion \
-         multi-document archive (.f3z), SolidWorks part (.sldprt) and FreeCAD document (.FCStd)"
-    } else {
-        "Inventor part (.ipt), Inventor assembly (.iam), Fusion archive (.f3d), Fusion \
-         multi-document archive (.f3z) and SolidWorks part (.sldprt)"
-    };
+    let converts = dutchman_core::Format::supported_names();
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains(&format!(
-            "Dutchman does not convert this kind of file. It converts {converts} files."
+            "Dutchman does not convert this kind of file. It converts {converts}."
         )),
         "{stderr}"
     );
@@ -262,6 +254,10 @@ fn convert_json_reports_what_was_written() {
     assert_eq!(report["schema"], "dutchman.convert/1");
     assert_eq!(report["ok"], true);
     assert_eq!(report["input"]["format"], "inventor_part");
+    assert_eq!(
+        report["input"]["words"],
+        dutchman_core::Format::InventorPart.words()
+    );
     assert_eq!(report["output"]["path"], output.to_str().unwrap());
     assert_eq!(report["output"]["format"], "solidcraft/23");
     assert_eq!(report["mode"], "import");
@@ -531,6 +527,7 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
 
     let text = dutchman(&[
         "convert-all",
+        "--quiet",
         "--no-verify",
         "--out-dir",
         out_dir.to_str().unwrap(),
@@ -541,9 +538,10 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
     assert!(stdout.ends_with("1 converted, 0 failed\n"), "{stdout}");
     // Each converted file's losses are listed beneath it, as `convert` prints them.
     let lines: Vec<&str> = stdout.lines().collect();
-    assert!(lines[0].starts_with("converted  "), "{stdout}");
+    assert_eq!(lines[0], "Fusion .f3d: reads geometry");
+    assert!(lines[1].starts_with("converted  "), "{stdout}");
     assert!(
-        lines[1..lines.len() - 1]
+        lines[2..lines.len() - 1]
             .iter()
             .all(|line| line.starts_with("           ") && line.contains(": ")),
         "{stdout}"
@@ -556,6 +554,7 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
     // A folder with a file Dutchman does not know says so in the counts.
     let text = dutchman(&[
         "convert-all",
+        "--quiet",
         "--no-verify",
         "--out-dir",
         out_dir.to_str().unwrap(),
@@ -572,6 +571,7 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
     assert!(stdout.ends_with("2 converted, 1 failed\n"), "{stdout}");
     let text = dutchman(&[
         "convert-all",
+        "--quiet",
         "--no-verify",
         "--out-dir",
         out_dir.to_str().unwrap(),
@@ -588,13 +588,19 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
 fn convert_says_what_it_wrote_and_cuts_long_notes_short() {
     let output = scratch("plain.solidcraft");
     let cube = fixture("solidworks_cube.sldprt");
-    let out = dutchman(&["convert", "--no-verify", &cube, output.to_str().unwrap()]);
+    let out = dutchman(&[
+        "convert",
+        "--quiet",
+        "--no-verify",
+        &cube,
+        output.to_str().unwrap(),
+    ]);
     assert_eq!(out.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_eq!(
         stdout.trim_end(),
         format!(
-            "converted  {cube} -> {} (geometry without history)",
+            "SolidWorks .sldprt: reads geometry\nconverted  {cube} -> {} (geometry without history)",
             output.display()
         )
     );
@@ -1253,4 +1259,153 @@ fn builtin_command_wins_over_a_same_named_file() {
         .unwrap();
     assert!(out.status.success());
     assert!(String::from_utf8_lossy(&out.stdout).contains("Fusion"));
+}
+
+#[test]
+fn format_status_and_volunteer_invitation_follow_run_options() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = dir.path().join("first.prt");
+    let second = dir.path().join("second.prt");
+    for path in [&first, &second] {
+        std::fs::write(path, b"#UGC:2").unwrap();
+    }
+    let output = dir.path().join("out.solidcraft");
+    for option in [None, Some("--quiet"), Some("--json")] {
+        let mut args = vec!["convert", first.to_str().unwrap(), output.to_str().unwrap()];
+        args.extend(option);
+        let out = dutchman(&args);
+        assert_eq!(out.status.code(), Some(1));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if option == Some("--json") {
+            let report = json_of(&out);
+            assert_eq!(report["input"]["format"], "creo_part");
+            assert_eq!(report["input"]["words"], "opens, no geometry yet");
+            assert!(!stderr.contains("Want to help"));
+        } else {
+            assert!(stdout.starts_with("Creo .prt: opens, no geometry yet\n"));
+        }
+        assert_eq!(
+            stdout.matches("Want to help").count(),
+            usize::from(option.is_none())
+        );
+        assert!(!stdout.contains("unknown format"));
+        assert!(!output.exists());
+        let mut args = vec![
+            "convert-all",
+            first.to_str().unwrap(),
+            second.to_str().unwrap(),
+            "--out-dir",
+            dir.path().to_str().unwrap(),
+        ];
+        args.extend(option);
+        let out = dutchman(&args);
+        assert_eq!(out.status.code(), Some(1));
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(
+            stdout.matches("Want to help").count(),
+            usize::from(option.is_none())
+        );
+        if option.is_none() {
+            let pitch = stdout
+                .lines()
+                .find(|l| l.starts_with("Want to help"))
+                .unwrap();
+            assert!(pitch.starts_with("Want to help Dutchman read Creo better?"));
+            assert!(!pitch.contains("first") && !pitch.contains("second"));
+        }
+    }
+}
+
+#[test]
+fn every_listed_format_has_reader_status() {
+    let report = json_of(&dutchman(&["formats", "--json"]));
+    let formats = report["formats"].as_array().unwrap();
+    assert_eq!(formats.len(), dutchman_core::Format::ALL.len());
+    for format in dutchman_core::Format::ALL {
+        let row = formats.iter().find(|row| row["id"] == format.id()).unwrap();
+        assert_eq!(row["words"], format.words());
+    }
+}
+
+#[test]
+fn an_inconclusive_part_is_recognised_and_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("inconclusive.prt");
+    std::fs::write(&input, b"no recognised signature").unwrap();
+    let output = dir.path().join("out.solidcraft");
+    let out = dutchman(&[
+        "convert",
+        "--json",
+        input.to_str().unwrap(),
+        output.to_str().unwrap(),
+    ]);
+    assert_eq!(out.status.code(), Some(1));
+    let report = json_of(&out);
+    assert_eq!(report["input"]["format"], "unclassified_part");
+    assert_eq!(report["input"]["words"], "recognised, not read yet");
+    assert!(report["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("not supported yet"));
+    assert!(!output.exists());
+}
+
+#[test]
+fn numbered_saves_select_the_newest_and_report_the_older_revision() {
+    let dir = tempfile::tempdir().unwrap();
+    let inputs = dir.path().join("inputs");
+    let outputs = dir.path().join("outputs");
+    std::fs::create_dir_all(&inputs).unwrap();
+    for name in ["bracket.prt.3", "bracket.prt.7"] {
+        std::fs::write(inputs.join(name), b"#UGC:2").unwrap();
+    }
+    for json in [false, true] {
+        let mut args = vec![
+            "convert-all",
+            inputs.to_str().unwrap(),
+            "--out-dir",
+            outputs.to_str().unwrap(),
+        ];
+        if json {
+            args.push("--json");
+        }
+        let out = dutchman(&args);
+        // Creo is recognised but does not supply geometry yet; only the newest is attempted.
+        assert_eq!(out.status.code(), Some(1));
+        if json {
+            let report = json_of(&out);
+            assert_eq!(report["results"].as_array().unwrap().len(), 1);
+            assert_eq!(
+                report["results"][0]["input"]["path"],
+                inputs.join("bracket.prt.7").to_str().unwrap()
+            );
+            assert_eq!(report["results"][0]["input"]["extension"], "prt.7");
+            assert_eq!(report["skipped"], 1);
+            assert_eq!(
+                report["skipped_revisions"][0]["path"],
+                inputs.join("bracket.prt.3").to_str().unwrap()
+            );
+        } else {
+            let text = String::from_utf8(out.stdout).unwrap();
+            assert!(text.contains("Creo .prt.7: opens, no geometry yet"));
+            assert!(text.contains("bracket.prt.3: older revision; using "));
+            assert!(text.contains("1 skipped (older revisions)"));
+            assert!(!text.contains("Creo .prt.3:"));
+        }
+    }
+}
+
+#[test]
+fn numbered_default_outputs_use_the_base_name_and_keep_existing_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("bracket.prt.7");
+    let output = dir.path().join("bracket.solidcraft");
+    std::fs::write(&input, b"#UGC:2").unwrap();
+    std::fs::write(&output, b"keep this design").unwrap();
+    let out = dutchman(&[input.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("bracket.solidcraft already exists"));
+    assert_eq!(std::fs::read(output).unwrap(), b"keep this design");
+    assert!(!dir.path().join("bracket.prt.solidcraft").exists());
 }

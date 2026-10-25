@@ -34,3 +34,25 @@ fn the_readme_links_to_this_versions_downloads() {
         );
     }
 }
+
+#[test]
+fn the_readmes_format_listing_matches_the_command() {
+    let readme = include_str!("../../../README.md");
+    let listing = readme
+        .split_once("<!-- formats: generated from dutchman formats -->")
+        .unwrap()
+        .1
+        .split_once("```text\n")
+        .unwrap()
+        .1
+        .split_once("```")
+        .unwrap()
+        .0;
+    let lines = |text: &str| {
+        text.lines()
+            .filter(|line| cfg!(feature = "freecad") || !line.starts_with("FreeCAD document "))
+            .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(lines(listing), lines(&dutchman::formats::text()));
+}

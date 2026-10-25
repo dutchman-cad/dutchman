@@ -51,3 +51,15 @@ encoder's fixture envelope context. It exercises a readable envelope without geo
 rather than a malformed directory.
 
 All three SolidWorks fixtures use cadmpeg's public synthetic sources under Apache-2.0.
+
+Format detection tests also construct short byte signatures in Rust: ZIP/OLE markers,
+Creo `#UGC:1`/`#UGC:2`, NX `SPLMSSTR`, CATIA `V5_CFV2`, Rhino's archive header,
+ACIS text/binary markers, STEP Part 21 and an IGES start record. They contain no design
+data and are generated only in temporary test folders. Creo and NX signatures are passed
+to cadmpeg's detector; all other suffixes identify the format before its decoder checks
+the contents.
+
+The STEP, IGES and Rhino conversion tests generate inputs in temporary folders with the
+pinned cadmpeg encoders from `cadmpeg_ir::examples::unit_cube()`. Face names are cleared,
+as in cadmpeg's Rhino measured-geometry tests, because that writer does not carry face
+names. No generated interchange files are stored here.

@@ -53,6 +53,12 @@ salvage mode under cadmpeg's desktop ceilings, folds cadmpeg's loss notes into t
 geometry or with validation errors is refused. A panic inside cadmpeg is caught and
 returned as a decode error.
 
+Shared `.prt` and numbered `.prt.N` suffixes use cadmpeg's bounded content detector before
+choosing Creo or NX. Inconclusive contents remain recognised without choosing a reader.
+Dutchman's `Format::reads_geometry` records whether the reader supplies geometry. Formats
+without geometry support or a codec in this build are refused before decode. All cadmpeg
+crates come from the same git revision; `scripts/use-cadmpeg-main.sh` updates those pins together.
+
 ## The plugin seam
 
 ```rust
@@ -73,9 +79,9 @@ design to SolidCraft in memory instead of as bytes). Neither crate changes.
   `cadmpeg-core`, `cadmpeg-registry`, the same `rev` for each); Cargo fetches it, so CI and
   `cargo install --git` work without a cadmpeg checkout. docs/releasing.md says when the pin
   moves; the nightly build takes cadmpeg's `main` instead.
-- `cadmpeg-registry` with `default-features = false` and only the codec features Dutchman
-  ships (`f3d`, `inventor`, `sldprt`, and `step` for the restatement), to keep the build small;
-  `fcstd` with Dutchman's `freecad` feature, on by default.
+- `cadmpeg-registry` with `default-features = false` and every published codec feature:
+  `fcstd`, `f3d`, `inventor`, `sldprt`, `catia`, `creo`, `nx`, `rhino`, `step`, `iges`,
+  `sat` and `pvz`. Dutchman's `freecad` feature controls whether FreeCAD inputs are accepted.
 - Unmerged cadmpeg work is tried locally with a `[patch."https://github.com/cadmpeg/cadmpeg"]`
   path override that is never committed.
 - Minimum Rust follows cadmpeg's (1.88 today).

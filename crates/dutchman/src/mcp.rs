@@ -128,11 +128,7 @@ fn answer(method: &str, params: &Value) -> Result<Value, (i64, String)> {
                      inspect to see what a file would carry across, convert for one file, \
                      convert_all for many. Paths are on the machine running this server; give \
                      absolute paths.",
-                    if cfg!(feature = "freecad") {
-                        "Fusion .f3d/.f3z, Inventor .ipt/.iam, SolidWorks .sldprt, FreeCAD .FCStd"
-                    } else {
-                        "Fusion .f3d/.f3z, Inventor .ipt/.iam, SolidWorks .sldprt"
-                    }
+                    dutchman_core::Format::supported_names()
                 ),
             }))
         }
@@ -239,7 +235,7 @@ fn search_property() -> Value {
 fn tools() -> Value {
     let input = json!({
         "type": "string",
-        "description": "Absolute path of a native CAD file: .f3d, .f3z, .ipt, .iam or .sldprt (and .FCStd in builds with FreeCAD).",
+        "description": "Absolute path of a CAD file. Call formats for supported extensions, reader status and what Dutchman converts. Creo and NX parts share .prt and are distinguished by contents; reading their geometry is not supported yet.",
     });
     let mut convert = option_properties();
     convert.insert("input".to_owned(), input.clone());

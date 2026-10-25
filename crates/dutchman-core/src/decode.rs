@@ -17,6 +17,33 @@ use cadmpeg_registry::{
 
 use crate::{Error, Format, Model, Report, Severity, Stage, FILE_DID_NOT_CONVERT, MAX_INPUT_BYTES};
 
+/// Uses cadmpeg's bounded detector to distinguish Creo and NX part files.
+pub(crate) fn detect_part(path: &Path) -> Option<Format> {
+    use std::io::Read;
+    catch_unwind(AssertUnwindSafe(|| {
+        if !std::fs::metadata(path).ok()?.is_file() {
+            return None;
+        }
+        let file = std::fs::File::open(path).ok()?;
+        let mut prefix = Vec::new();
+        file.take(DETECTION_PREFIX_LEN as u64)
+            .read_to_end(&mut prefix)
+            .ok()?;
+        let arena = DecodeArena::new();
+        let policy = policy();
+        let (ctx, root) = DecodeContext::from_root_bytes(&prefix, &arena, &policy).ok()?;
+        let catalog = InputCatalog::with_builtins();
+        let found = match catalog.resolve_source(&ctx, root, None).ok()? {
+            ResolvedSource::Native { codec, .. } => Format::from_codec_id(codec.id().as_str()),
+            _ => None,
+        };
+        ctx.finish_session().ok()?;
+        found.filter(|f| matches!(f, Format::CreoPart | Format::NxPart))
+    }))
+    .ok()
+    .flatten()
+}
+
 /// cadmpeg's desktop ceilings in salvage mode: a successful decode keeps going past a loss
 /// and reports it, rather than refusing the whole file. The input cap is Dutchman's own.
 fn policy() -> DecodePolicy {
