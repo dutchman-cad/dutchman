@@ -74,7 +74,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.container }}-${{ matrix.target }}
-      - run: cargo build --release --locked -p dutchman -p dutchman-gui --target ${{ matrix.target }}
+      - name: Build archive programs
+        shell: bash
+        run: |
+          packages=(-p dutchman -p dutchman-gui)
+          if [[ '${{ matrix.target }}' == *linux* ]]; then
+            packages+=(-p dutchman-web)
+          fi
+          cargo build --release --locked "${packages[@]}" --target ${{ matrix.target }}
       - name: Package
         shell: bash
         run: |

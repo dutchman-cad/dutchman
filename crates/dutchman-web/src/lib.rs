@@ -26,7 +26,7 @@ use dutchman::{ConvertOptions, OutputFormat};
 use dutchman_core::Format;
 use serde_json::{json, Value};
 use tokio::io::AsyncWriteExt as _;
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, SemaphorePermit};
 
 use crate::upload::ZipLimits;
 
@@ -43,7 +43,15 @@ pub struct Config {
     pub data_dir: PathBuf,
     /// The most one upload may hold, in bytes, all its files together.
     pub max_upload: u64,
-    /// What an uploaded zip may unpack to.
+    /// How many uploads may be received at once; more are refused.
+    pub uploads: usize,
+    /// Refuse new jobs when the saved data exceeds this many bytes.
+    pub max_data: u64,
+    /// Refuse new jobs below this many available filesystem bytes (Unix).
+    pub min_free: u64,
+    /// Additional browser origins allowed to submit uploads through a reverse proxy.
+    pub public_origin: Vec<String>,
+    /// What all zips of one upload may unpack to.
     pub zip: ZipLimits,
     /// How long a job's designs are kept.
     pub keep: Duration,
@@ -66,6 +74,10 @@ impl Default for Config {
         Config {
             data_dir: std::env::temp_dir().join("dutchman-web"),
             max_upload: 200 << 20,
+            uploads: 4,
+            max_data: 10 << 30,
+            min_free: 1 << 30,
+            public_origin: Vec::new(),
             zip: ZipLimits {
                 entries: 5_000,
                 bytes: 2 << 30,
@@ -83,6 +95,7 @@ impl Default for Config {
 struct App {
     config: Config,
     runs: Semaphore,
+    uploads: Semaphore,
 }
 
 type Shared = Arc<App>;
@@ -94,6 +107,7 @@ pub fn router(config: Config) -> Router {
         .saturating_add(1 << 20);
     let app = Arc::new(App {
         runs: Semaphore::new(config.runs.max(1)),
+        uploads: Semaphore::new(config.uploads.clamp(1, Semaphore::MAX_PERMITS)),
         config,
     });
     let protected = Router::new()
@@ -105,12 +119,87 @@ pub fn router(config: Config) -> Router {
         .route("/jobs/{job}/files/{*path}", get(download))
         .route("/jobs/{job}/designs.zip", get(download_all))
         .layer(DefaultBodyLimit::max(body_limit))
+        .route_layer(middleware::from_fn_with_state(app.clone(), guard_origin))
         .route_layer(middleware::from_fn_with_state(app.clone(), require_login));
     Router::new()
         .route("/healthz", get(|| async { "ok" }))
         .merge(protected)
         .layer(middleware::from_fn(security_headers))
         .with_state(app)
+}
+
+/// Creates a private data folder and checks an existing folder before using it.
+pub fn prepare_data_dir(path: &Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt as _;
+        builder.mode(0o700);
+    }
+    match builder.create(path) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(err) => return Err(err),
+    }
+    let metadata = std::fs::symlink_metadata(path)?;
+    if metadata.is_symlink() || !metadata.is_dir() {
+        return Err(std::io::Error::other(
+            "Choose a data folder that is a directory, not a symbolic link.",
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        if metadata.uid() != rustix::process::geteuid().as_raw() || metadata.mode() & 0o022 != 0 {
+            return Err(std::io::Error::other("Choose a data folder belonging to the current user with no group or other write permission."));
+        }
+    }
+    Ok(())
+}
+
+fn check_storage(config: &Config) -> Result<(), Problem> {
+    let full = || {
+        Problem::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "The server has too little storage for a new job. Try again after saved jobs expire.",
+        )
+    };
+    let mut total = 0u64;
+    let mut pending = vec![config.data_dir.clone()];
+    while let Some(dir) = pending.pop() {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound && dir != config.data_dir => {
+                continue
+            }
+            Err(err) => return Err(server_error(&err)),
+        };
+        for entry in entries {
+            let entry = entry.map_err(|err| server_error(&err))?;
+            let metadata = match entry.path().symlink_metadata() {
+                Ok(metadata) => metadata,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(err) => return Err(server_error(&err)),
+            };
+            if metadata.is_dir() {
+                pending.push(entry.path());
+            } else {
+                total = total.saturating_add(metadata.len());
+                if total > config.max_data {
+                    return Err(full());
+                }
+            }
+        }
+    }
+    #[cfg(unix)]
+    {
+        let stats = rustix::fs::statvfs(&config.data_dir).map_err(|err| server_error(&err))?;
+        if stats.f_bavail.saturating_mul(stats.f_frsize) < config.min_free {
+            return Err(full());
+        }
+    }
+    Ok(())
 }
 
 /// Deletes jobs older than `keep` in `data_dir`, now and then every few minutes; run it
@@ -303,9 +392,19 @@ async fn saved_report(app: &App, job: &str) -> Result<Value, Problem> {
 /// Saves the upload in a new job folder, converts it, saves the report and returns the job
 /// and its browser-ready report. A job that fails before converting leaves nothing behind.
 async fn convert(app: &App, form: Multipart) -> Result<(String, Value), Problem> {
+    let receiving = app.uploads.try_acquire().map_err(|_| {
+        Problem::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "The server is receiving too many uploads. Try again later.",
+        )
+    })?;
+    let config = app.config.clone();
+    tokio::task::spawn_blocking(move || check_storage(&config))
+        .await
+        .map_err(|err| server_error(&err))??;
     let job = new_job_id()?;
     let dir = app.config.data_dir.join(&job);
-    let result = convert_in(app, &job, &dir, form).await;
+    let result = convert_in(app, &job, &dir, form, receiving).await;
     if result.is_err() {
         let _ = tokio::fs::remove_dir_all(&dir).await;
     }
@@ -317,6 +416,7 @@ async fn convert_in(
     job: &str,
     dir: &Path,
     mut form: Multipart,
+    receiving: SemaphorePermit<'_>,
 ) -> Result<Value, Problem> {
     let (in_dir, out_dir) = (dir.join("in"), dir.join("out"));
     for folder in [&in_dir, &out_dir] {
@@ -327,6 +427,7 @@ async fn convert_in(
     let mut options = ConvertOptions::default();
     let mut files = 0usize;
     let mut total = 0u64;
+    let mut zip_budget = app.config.zip;
     let too_big = || {
         Problem::new(
             StatusCode::PAYLOAD_TOO_LARGE,
@@ -375,11 +476,14 @@ async fn convert_in(
                 drop(out);
                 files += 1;
                 if upload::is_zip(&path) {
-                    let (limits, into) = (app.config.zip, in_dir.clone());
-                    tokio::task::spawn_blocking(move || upload::unzip(&path, &into, limits))
-                        .await
-                        .map_err(|err| server_error(&err))?
-                        .map_err(|message| Problem::new(StatusCode::BAD_REQUEST, message))?;
+                    let into = in_dir.clone();
+                    zip_budget = tokio::task::spawn_blocking(move || {
+                        upload::unzip(&path, &into, &mut zip_budget)?;
+                        Ok::<_, String>(zip_budget)
+                    })
+                    .await
+                    .map_err(|err| server_error(&err))?
+                    .map_err(|message| Problem::new(StatusCode::BAD_REQUEST, message))?;
                 }
             }
             Some("import_only") => {
@@ -407,6 +511,7 @@ async fn convert_in(
         ));
     }
 
+    drop(receiving);
     let settings = dutchman::batch::Settings {
         jobs: app.config.jobs,
         worker: app.config.worker.clone(),
@@ -592,6 +697,58 @@ async fn send_file(path: &Path, name: &str, kind: &'static str) -> Response {
 }
 
 // ---- Middleware ------------------------------------------------------------------------------
+
+async fn guard_origin(State(app): State<Shared>, request: Request, next: Next) -> Response {
+    if request.method() == axum::http::Method::POST
+        && matches!(request.uri().path(), "/convert" | "/api/convert")
+    {
+        let headers = request.headers();
+        let cross_site = headers
+            .get("sec-fetch-site")
+            .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"cross-site"));
+        let wrong_origin = headers.get(header::ORIGIN).is_some_and(|origin| {
+            let Ok(origin) = origin.to_str() else {
+                return true;
+            };
+            let Some(authority) = origin_authority(origin) else {
+                return true;
+            };
+            let same_host = headers
+                .get(header::HOST)
+                .and_then(|host| host.to_str().ok())
+                .is_some_and(|host| authority.eq_ignore_ascii_case(host));
+            !same_host
+                && !app.config.public_origin.iter().any(|allowed| {
+                    origin_authority(allowed).is_some() && allowed.eq_ignore_ascii_case(origin)
+                })
+        });
+        if cross_site || wrong_origin {
+            let problem = Problem::new(
+                StatusCode::FORBIDDEN,
+                "Submit uploads from this server's page or a configured public origin.",
+            );
+            return if request.uri().path() == "/api/convert" {
+                problem.json()
+            } else {
+                problem.page()
+            };
+        }
+    }
+    next.run(request).await
+}
+
+fn origin_authority(origin: &str) -> Option<String> {
+    let uri: axum::http::Uri = origin.parse().ok()?;
+    if !matches!(uri.scheme_str(), Some("http" | "https"))
+        || uri
+            .path_and_query()
+            .is_some_and(|path| path.as_str() != "/")
+    {
+        return None;
+    }
+    let authority = uri.authority()?.as_str();
+    (!authority.contains('@')).then(|| authority.to_owned())
+}
 
 async fn require_login(State(app): State<Shared>, request: Request, next: Next) -> Response {
     let Some((user, password)) = &app.config.login else {

@@ -317,3 +317,211 @@ async fn a_password_is_asked_for_when_set() {
     // A health check needs no password.
     assert_eq!(send(&app, get("/healthz")).await.0, StatusCode::OK);
 }
+
+#[tokio::test]
+async fn zip_budgets_are_shared_by_the_upload() {
+    let mut archive = std::io::Cursor::new(Vec::new());
+    {
+        let mut zip = zip::ZipWriter::new(&mut archive);
+        zip.start_file("part.txt", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(b"1234").unwrap();
+        zip.finish().unwrap();
+    }
+    for (entries, bytes, message) in [
+        (10, 7, "unpacks to more than"),
+        (1, 100, "entries"),
+        (2, 8, ""),
+    ] {
+        let data = tempfile::tempdir().unwrap();
+        let app = dutchman_web::router(Config {
+            data_dir: data.path().to_path_buf(),
+            zip: dutchman_web::upload::ZipLimits { entries, bytes },
+            ..Config::default()
+        });
+        let (status, _, body) = send(
+            &app,
+            post(
+                "/api/convert",
+                form(
+                    &[],
+                    &[
+                        ("files", "first.zip", archive.get_ref().clone()),
+                        ("files", "second.zip", archive.get_ref().clone()),
+                    ],
+                ),
+            ),
+        )
+        .await;
+        if message.is_empty() {
+            assert_eq!(status, StatusCode::OK, "{}", text(&body));
+            let report: Value = serde_json::from_slice(&body).unwrap();
+            assert_eq!(report["skipped"], 2);
+        } else {
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{}", text(&body));
+            assert!(text(&body).contains(message));
+            assert_eq!(std::fs::read_dir(data.path()).unwrap().count(), 0);
+        }
+    }
+}
+
+#[tokio::test]
+async fn saved_data_above_the_limit_refuses_new_jobs() {
+    let data = tempfile::tempdir().unwrap();
+    let nested = data.path().join("saved/out");
+    std::fs::create_dir_all(&nested).unwrap();
+    std::fs::write(nested.join("design"), b"12345").unwrap();
+    let app = dutchman_web::router(Config {
+        data_dir: data.path().to_path_buf(),
+        max_data: 4,
+        ..Config::default()
+    });
+    for uri in ["/convert", "/api/convert"] {
+        let (status, _, body) = send(&app, post(uri, form(&[], &[]))).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(text(&body).contains("too little storage"));
+        assert_eq!(std::fs::read_dir(data.path()).unwrap().count(), 1);
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn too_little_free_space_refuses_new_jobs() {
+    let data = tempfile::tempdir().unwrap();
+    let app = dutchman_web::router(Config {
+        data_dir: data.path().to_path_buf(),
+        min_free: u64::MAX,
+        ..Config::default()
+    });
+    let (status, _, body) = send(&app, post("/api/convert", form(&[], &[]))).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(text(&body).contains("too little storage"));
+    assert_eq!(std::fs::read_dir(data.path()).unwrap().count(), 0);
+}
+
+struct SlowUpload(Option<tokio::sync::oneshot::Sender<()>>);
+
+impl axum::body::HttpBody for SlowUpload {
+    type Data = axum::body::Bytes;
+    type Error = std::io::Error;
+
+    fn poll_frame(
+        mut self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        if let Some(started) = self.0.take() {
+            let _ = started.send(());
+        }
+        std::task::Poll::Pending
+    }
+}
+
+#[tokio::test]
+async fn excess_uploads_are_refused_without_waiting_for_the_body() {
+    let data = tempfile::tempdir().unwrap();
+    let app = dutchman_web::router(Config {
+        data_dir: data.path().to_path_buf(),
+        uploads: 1,
+        ..Config::default()
+    });
+    let (started, receiving) = tokio::sync::oneshot::channel();
+    let mut request = post("/api/convert", Vec::new());
+    *request.body_mut() = Body::new(SlowUpload(Some(started)));
+    let first = tokio::spawn(app.clone().oneshot(request));
+    tokio::time::timeout(std::time::Duration::from_secs(5), receiving)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut excess = post("/api/convert", Vec::new());
+    *excess.body_mut() = Body::new(SlowUpload(None));
+    let (status, _, body) =
+        tokio::time::timeout(std::time::Duration::from_secs(5), send(&app, excess))
+            .await
+            .unwrap();
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(text(&body).contains("too many uploads"));
+    first.abort();
+    let _ = first.await;
+    let (status, _, _) = send(&app, post("/api/convert", form(&[], &[]))).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "the permit is released");
+}
+
+#[tokio::test]
+async fn browser_origins_are_checked_on_both_upload_routes() {
+    let data = tempfile::tempdir().unwrap();
+    let app = dutchman_web::router(Config {
+        data_dir: data.path().to_path_buf(),
+        public_origin: vec!["https://public.example".to_owned()],
+        ..Config::default()
+    });
+    for uri in ["/convert", "/api/convert"] {
+        for (origin, fetch, allowed) in [
+            (None, None, true),
+            (Some("http://server:8080"), Some("same-origin"), true),
+            (Some("http://SERVER:8080"), None, true),
+            (Some("https://public.example"), None, true),
+            (Some("http://server:8080"), Some("cross-site"), false),
+            (Some("https://public.example"), Some("cross-site"), false),
+            (None, Some("cross-site"), false),
+            (Some("https://other.example"), None, false),
+            (Some("http://server:9999"), None, false),
+            (Some("null"), None, false),
+            (Some("http://server:8080@other.example"), None, false),
+            (Some("http://server:8080/path"), None, false),
+        ] {
+            let mut request = post(uri, form(&[], &[]));
+            request
+                .headers_mut()
+                .insert(header::HOST, "server:8080".parse().unwrap());
+            if let Some(origin) = origin {
+                request
+                    .headers_mut()
+                    .insert(header::ORIGIN, origin.parse().unwrap());
+            }
+            if let Some(fetch) = fetch {
+                request
+                    .headers_mut()
+                    .insert("sec-fetch-site", fetch.parse().unwrap());
+            }
+            let (status, _, body) = send(&app, request).await;
+            assert_eq!(
+                status,
+                if allowed {
+                    StatusCode::BAD_REQUEST
+                } else {
+                    StatusCode::FORBIDDEN
+                },
+                "{uri} {origin:?} {fetch:?}: {}",
+                text(&body)
+            );
+            if !allowed {
+                assert!(text(&body).contains("Submit uploads"));
+            }
+        }
+    }
+    assert_eq!(std::fs::read_dir(data.path()).unwrap().count(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn data_folders_are_private_and_checked_before_use() {
+    use std::os::unix::fs::{symlink, PermissionsExt as _};
+    let data = tempfile::tempdir().unwrap();
+    let fresh = data.path().join("fresh");
+    dutchman_web::prepare_data_dir(&fresh).unwrap();
+    assert_eq!(
+        std::fs::metadata(&fresh).unwrap().permissions().mode() & 0o777,
+        0o700
+    );
+    dutchman_web::prepare_data_dir(&fresh).unwrap();
+    let link = data.path().join("link");
+    symlink(&fresh, &link).unwrap();
+    assert!(dutchman_web::prepare_data_dir(&link).is_err());
+    std::fs::set_permissions(&fresh, std::fs::Permissions::from_mode(0o777)).unwrap();
+    assert!(dutchman_web::prepare_data_dir(&fresh).is_err());
+    std::fs::set_permissions(&fresh, std::fs::Permissions::from_mode(0o720)).unwrap();
+    assert!(dutchman_web::prepare_data_dir(&fresh).is_err());
+    let file = data.path().join("file");
+    std::fs::write(&file, b"").unwrap();
+    assert!(dutchman_web::prepare_data_dir(&file).is_err());
+}

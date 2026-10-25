@@ -32,7 +32,29 @@ struct Args {
         default_value_t = 200
     )]
     max_upload: u64,
-    /// The most an uploaded zip may unpack to, in megabytes.
+    /// How many uploads may be received at once; more are refused.
+    #[arg(long, env = "DUTCHMAN_WEB_UPLOADS", default_value_t = 4)]
+    uploads: usize,
+    /// Refuse new jobs above this many megabytes of saved data.
+    #[arg(
+        long,
+        env = "DUTCHMAN_WEB_MAX_DATA",
+        value_name = "MB",
+        default_value_t = 10240
+    )]
+    max_data: u64,
+    /// Refuse new jobs below this many megabytes of free space (Unix).
+    #[arg(
+        long,
+        env = "DUTCHMAN_WEB_MIN_FREE",
+        value_name = "MB",
+        default_value_t = 1024
+    )]
+    min_free: u64,
+    /// Additional browser origins allowed through a reverse proxy (comma-separated).
+    #[arg(long, env = "DUTCHMAN_WEB_PUBLIC_ORIGIN", value_delimiter = ',')]
+    public_origin: Vec<String>,
+    /// The most all zips of one upload may unpack to, in megabytes.
     #[arg(
         long,
         env = "DUTCHMAN_WEB_MAX_UNZIPPED",
@@ -95,6 +117,10 @@ fn main() -> ExitCode {
             .data_dir
             .unwrap_or_else(|| std::env::temp_dir().join("dutchman-web")),
         max_upload: args.max_upload.saturating_mul(1 << 20),
+        uploads: args.uploads,
+        max_data: args.max_data.saturating_mul(1 << 20),
+        min_free: args.min_free.saturating_mul(1 << 20),
+        public_origin: args.public_origin,
         zip: ZipLimits {
             entries: 5_000,
             bytes: args.max_unzipped.saturating_mul(1 << 20),
@@ -109,9 +135,9 @@ fn main() -> ExitCode {
         worker: Some(worker),
         login,
     };
-    if let Err(err) = std::fs::create_dir_all(&config.data_dir) {
+    if let Err(err) = dutchman_web::prepare_data_dir(&config.data_dir) {
         eprintln!(
-            "dutchman-web: cannot create {}: {err}",
+            "dutchman-web: cannot use {}: {err}",
             config.data_dir.display()
         );
         return ExitCode::FAILURE;
@@ -174,5 +200,39 @@ async fn stopped() {
     tokio::select! {
         () = interrupt => {}
         () = terminate => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upload_and_storage_options_parse() {
+        let args = Args::try_parse_from([
+            "dutchman-web",
+            "--uploads",
+            "1",
+            "--max-data",
+            "2",
+            "--min-free",
+            "3",
+            "--public-origin",
+            "https://one.example,https://two.example",
+            "--public-origin",
+            "https://three.example",
+        ])
+        .unwrap();
+        assert_eq!(args.uploads, 1);
+        assert_eq!(args.max_data, 2);
+        assert_eq!(args.min_free, 3);
+        assert_eq!(
+            args.public_origin,
+            [
+                "https://one.example",
+                "https://two.example",
+                "https://three.example"
+            ]
+        );
     }
 }

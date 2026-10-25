@@ -136,7 +136,14 @@ jobs:
           targets: ${{ matrix.target }}
       - shell: bash
         run: scripts/use-cadmpeg-main.sh "${{ needs.changes.outputs.cadmpeg }}"
-      - run: cargo build --release -p dutchman -p dutchman-gui --target ${{ matrix.target }}
+      - name: Build archive programs
+        shell: bash
+        run: |
+          packages=(-p dutchman -p dutchman-gui)
+          if [[ '${{ matrix.target }}' == *linux* ]]; then
+            packages+=(-p dutchman-web)
+          fi
+          cargo build --release "${packages[@]}" --target ${{ matrix.target }}
       - name: Package
         shell: bash
         run: |

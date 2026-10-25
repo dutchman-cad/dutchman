@@ -92,7 +92,12 @@ docker run -d --name dutchman-web -p 8080:8080 -e DUTCHMAN_WEB_PASSWORD=choose-o
   --entrypoint dutchman-web dutchman
 ```
 
-[Dutchman Web](web.md) describes the page, its settings and its limits.
+When exposing the port beyond the local network, put it behind an HTTPS reverse proxy and
+keep port 8080 private to the proxy. HTTP basic authentication over plain HTTP sends the
+password readably. Preserve the request's `Host` header or set `DUTCHMAN_WEB_PUBLIC_ORIGIN`
+to the proxy's public origin, such as `https://cad.example.org`.
+
+[Dutchman Web](web.md) describes the page, its upload and disk limits, and its settings.
 
 ## As an MCP server
 

@@ -861,3 +861,8 @@ No FreeCAD installation is needed to generate a macro without `--verify`. Origin
 geometry remains in the document, hidden after a successful rebuild. The macro compares
 rebuilt geometry with STEP; a rebuild failure or difference restores the original and
 prints a warning in FreeCAD's report view. Temporary execution and STEP files are removed.
+
+For self-hosted browser conversions, [Dutchman Web](web.md#settings) documents the shared
+zip budget, concurrent upload and saved-data limits, private data folder, and allowed browser
+origins. Uploads may be refused with 403 (origin check) or 503 (capacity); the CLI and MCP
+reports are unchanged.

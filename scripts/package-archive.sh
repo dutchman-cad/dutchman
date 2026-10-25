@@ -3,7 +3,7 @@
 #
 #   scripts/package-archive.sh <target> <name> <ref>
 #
-# Takes dutchman, dutchman-mcp and dutchman-gui from target/<target>/release and writes
+# Takes dutchman, dutchman-mcp and dutchman-gui (plus dutchman-web on Linux) and writes
 # dist/<name>.zip (Windows) or dist/<name>.tar.gz, holding a <name> folder with the programs,
 # LICENSE, NOTICE, the font licences and the README, its links pinned to <ref> (a tag or a
 # commit). Prints the archive's file name. The programs are run once to check them, unless
@@ -22,7 +22,9 @@ exe=""
 [[ $target == *windows* ]] && exe=".exe"
 rm -rf "dist/$name"
 mkdir -p "dist/$name/licences"
-for program in dutchman dutchman-mcp dutchman-gui; do
+programs=(dutchman dutchman-mcp dutchman-gui)
+[[ $target == *linux* ]] && programs+=(dutchman-web)
+for program in "${programs[@]}"; do
   cp "target/$target/release/$program$exe" "dist/$name/"
 done
 cp LICENSE NOTICE "dist/$name/"
@@ -32,6 +34,9 @@ cp crates/dutchman-gui/assets/fonts/*.txt "dist/$name/licences/"
 
 if [[ ${SKIP_RUN:-0} != 1 ]]; then
   "dist/$name/dutchman$exe" --version >&2
+  if [[ $target == *linux* ]]; then
+    "dist/$name/dutchman-web$exe" --version >&2
+  fi
   echo '{"jsonrpc":"2.0","id":1,"method":"ping"}' | "dist/$name/dutchman-mcp$exe" | grep -q '"result"'
 fi
 

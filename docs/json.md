@@ -297,3 +297,8 @@ local span (minimum 1 mm). Parts without solids cannot be verified. Macro execut
 use `"unverified"` and `"not checked: …"`; native execution errors fail the conversion.
 The default timeout is 300 seconds, changed with `--freecad-timeout`. Output remains
 experimental. These CLI additions do not change MCP's existing `to` choices.
+
+For self-hosted browser conversions, [Dutchman Web](web.md#settings) documents the shared
+zip budget, concurrent upload and saved-data limits, private data folder, and allowed browser
+origins. Uploads may be refused with 403 (origin check) or 503 (capacity); the CLI and MCP
+reports are unchanged.
