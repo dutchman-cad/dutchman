@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="sub">Convert CAD designs into open, editable SolidCraft designs.</p>
+
+<form method="post" action="convert" enctype="multipart/form-data" id="form">
+  <label class="drop" id="drop">
+    <strong>Choose design files, or drop them here</strong>
+    <span class="hint">{{ extensions }}, or a .zip of a project folder for an assembly and its parts</span>
+    <input type="file" name="files" id="files" multiple required>
+  </label>
+  <div class="row">
+    <button type="submit" id="go">Convert</button>
+    <label><input type="radio" name="to" value="solidcraft" checked> SolidCraft design</label>
+    <label><input type="radio" name="to" value="freecad"> FreeCAD macro (experimental)</label>
+    <label><input type="checkbox" name="import_only" value="true"> Geometry only, no feature history</label>
+  </div>
+</form>
+<p class="muted">Uploads up to {{ max_upload_mb }} MB. Uploads and designs are deleted after {{ keep_minutes }} minutes.</p>
+
+<details>
+  <summary>What converts from each format</summary>
+  <table>
+    {% for (name, converts) in formats %}
+    <tr><td>{{ name }}</td><td>{{ converts }}</td></tr>
+    {% endfor %}
+  </table>
+</details>
+
+<script>
+  // Optional: the form works without it. Dropping anywhere on the box picks the files, and
+  // the button says the upload is converting.
+  const drop = document.getElementById("drop"), files = document.getElementById("files");
+  ["dragenter", "dragover"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach(t => drop.addEventListener(t, () => drop.classList.remove("over")));
+  drop.addEventListener("drop", e => { e.preventDefault(); if (e.dataTransfer.files.length) files.files = e.dataTransfer.files; });
+  document.getElementById("form").addEventListener("submit", () => {
+    const go = document.getElementById("go");
+    setTimeout(() => { go.disabled = true; go.textContent = "Converting…"; });
+  });
+</script>
+{% endblock %}

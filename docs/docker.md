@@ -1,9 +1,10 @@
 # Docker
 
 The [`Dockerfile`](../Dockerfile) at the top of the repository builds an image with the
-`dutchman` command and the `dutchman-mcp` [MCP server](mcp.md), for x86_64 and ARM64 Linux.
-It has no desktop app: `dutchman-gui` needs a desktop session. Use it to convert on a server, in
-CI, or anywhere you would rather not install Dutchman.
+`dutchman` command, the `dutchman-mcp` [MCP server](mcp.md) and the `dutchman-web`
+[browser interface](web.md), for x86_64 and ARM64 Linux. It has no desktop app: `dutchman-gui`
+needs a desktop session. Use it to convert on a server, in CI, or anywhere you would rather not
+install Dutchman.
 
 ## Build the image
 
@@ -13,7 +14,7 @@ From a checkout of the repository:
 docker build -t dutchman .
 ```
 
-It builds `dutchman` from that checkout in a Rust container, then copies the two programs into
+It builds `dutchman` from that checkout in a Rust container, then copies the three programs into
 a small Debian image. The first build takes several minutes; later builds reuse the downloaded
 crates. It compiles one crate per core at once, and the largest need several GB of memory each:
 if the build stops with `cannot allocate memory` or `SIGKILL`, compile fewer at once, or give
@@ -51,6 +52,24 @@ assembly's own folder, or the parts it cannot find are reported as left out.
 `convert-all` stops a file that runs past `--timeout` or holds more than `--max-memory`
 (8192 MB by default). Give the container at least that much memory, or lower `--max-memory`,
 so the container is not stopped first.
+
+## In a browser
+
+The repository's [`compose.yaml`](../compose.yaml) runs `dutchman-web` from the image on port
+8080, asking for the password you give it:
+
+```sh
+DUTCHMAN_WEB_PASSWORD=choose-one docker compose up -d --build
+```
+
+Open `http://<server>:8080` and sign in as `dutchman`. Or run it with `docker run`:
+
+```sh
+docker run -d --name dutchman-web -p 8080:8080 -e DUTCHMAN_WEB_PASSWORD=choose-one \
+  --entrypoint dutchman-web dutchman
+```
+
+[Dutchman Web](web.md) describes the page, its settings and its limits.
 
 ## As an MCP server
 

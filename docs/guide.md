@@ -212,8 +212,14 @@ dutchman --version
 
 ### Docker
 
-The repository's `Dockerfile` builds an image with `dutchman` and `dutchman-mcp`, without the
-desktop app. [Docker](docker.md) says how to build it and convert with it.
+The repository's `Dockerfile` builds an image with `dutchman`, `dutchman-mcp` and
+`dutchman-web`, without the desktop app. [Docker](docker.md) says how to build it and convert
+with it.
+
+### Dutchman Web, in a browser
+
+`dutchman-web` serves a page that converts uploaded designs, for a Dutchman hosted on one
+server and used from any browser. [Dutchman Web](web.md) says how to run it.
 
 ### SolidCraft (optional, recommended)
 

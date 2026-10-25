@@ -18,11 +18,13 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
-  # Whether the change touches Rust code, which the macOS tests (macOS runners are scarce) wait on.
+  # Whether the change touches Rust code, which the macOS tests (macOS runners are scarce) wait on,
+  # or the Docker image, which the Docker job waits on.
   changes:
     runs-on: ubuntu-latest
     outputs:
       rust: ${{ steps.diff.outputs.rust }}
+      docker: ${{ steps.diff.outputs.docker }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,6 +35,7 @@ jobs:
         run: |
           if ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
             echo "rust=true" >> "$GITHUB_OUTPUT"
+            echo "docker=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if git diff --name-only "$BASE" HEAD \
@@ -40,6 +43,12 @@ jobs:
             echo "rust=true" >> "$GITHUB_OUTPUT"
           else
             echo "rust=false" >> "$GITHUB_OUTPUT"
+          fi
+          if git diff --name-only "$BASE" HEAD \
+            | grep -qE '^(crates/|Cargo\.(toml|lock)$|Dockerfile$|\.dockerignore$|\.github/workflows/ci\.yml$)'; then
+            echo "docker=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "docker=false" >> "$GITHUB_OUTPUT"
           fi
 
   fmt:
@@ -112,6 +121,46 @@ jobs:
         with:
           cache-on-failure: true
       - run: cargo test --workspace --locked
+
+  # Builds the Docker image (docs/docker.md), converts a fixture in it, starts its MCP server,
+  # and converts a fixture through its web server (docs/web.md).
+  docker:
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: dutchman:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Convert a fixture in the image
+        run: |
+          fixtures="$PWD/crates/dutchman-core/tests/fixtures"
+          docker run --rm -v "$fixtures:/work:ro" -v "$RUNNER_TEMP:/out" --user "$(id -u):$(id -g)" \
+            dutchman:ci convert --json generated_unit_cube.f3d /out/cube.solidcraft | tee report.json
+          grep -q '"ok":true' report.json
+          test -s "$RUNNER_TEMP/cube.solidcraft"
+      - name: Start the MCP server in the image
+        run: |
+          echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \
+            | docker run --rm -i --entrypoint dutchman-mcp dutchman:ci | grep -q '"result"'
+      - name: Convert through the web server in the image
+        run: |
+          docker run -d --name web -p 8080:8080 -e DUTCHMAN_WEB_PASSWORD=ci --entrypoint dutchman-web dutchman:ci
+          for _ in $(seq 30); do curl -fs http://127.0.0.1:8080/healthz && break; sleep 1; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/)" = 401
+          curl -fsS -u dutchman:ci -F files=@crates/dutchman-core/tests/fixtures/generated_unit_cube.f3d \
+            http://127.0.0.1:8080/api/convert | tee web.json
+          grep -q '"converted":1' web.json
+          download=$(grep -o '"download":"[^"]*"' web.json | cut -d'"' -f4)
+          curl -fsS -u dutchman:ci -o cube.solidcraft "http://127.0.0.1:8080/$download"
+          test -s cube.solidcraft
+          docker rm -f web
 
   msrv:
     runs-on: ubuntu-latest
