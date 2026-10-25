@@ -125,6 +125,9 @@ plain drilled hole"; SolidCraft 0.21.0 ignores `tip_angle` on counterbores and c
 | `convert_all` | `inputs`, `out_dir`, and optionally `jobs`, `timeout`, `max_memory_mb`, `journal`, `report_anon`, `report_salt`, `report_key`, `import_only`, `verify`, `solidcraft`, `verify_timeout`, `overwrite`, `project`, `search` | `dutchman.convert-all/1` | designs and the default log inside `out_dir`, plus `journal`, `report_anon`, and `report_key` at their specified paths |
 | `formats` | none | `dutchman.formats/1` | nothing |
 
+The formats report includes each reader's status and cadmpeg's published headline
+`level` (`L0`–`L9`, or `null` when none is published). The level supplements the status.
+
 | Argument | Type | Meaning |
 |---|---|---|
 | `input` | string | Absolute path of a native CAD file: `.f3d`, `.f3z`, `.ipt`, `.iam` or `.sldprt` or `.FCStd`. |

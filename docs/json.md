@@ -183,7 +183,7 @@ one that crashes the converter. `--report-anon FILE` also writes the anonymous r
 ```json
 {"schema": "dutchman.formats/1", "ok": true, "formats": [
   {"id": "fusion_archive", "name": "Fusion archive (.f3d)", "extension": "f3d",
-   "extensions": ["f3d"], "words": "reads geometry",
+   "extensions": ["f3d"], "words": "reads geometry", "level": "L5",
    "status": "converts", "converts": "geometry; feature history (…) when every feature maps; …"}
 ]}
 ```
@@ -192,6 +192,9 @@ one that crashes the converter. `--report-anon FILE` also writes the anonymous r
 what carries across.
 `words` is `reads geometry`, `opens, no geometry yet`, `recognised, not read yet`, or
 `open it in SolidCraft directly` (IGES).
+`level` is cadmpeg's published headline in its format-support ladder (`L0`–`L9`),
+or `null` when none is published. It supplements `words` and does not promise conversion
+of a particular file. This additive field retains `dutchman.formats/1`.
 `extensions` lists all accepted suffixes without dots (`prt.N` denotes a numbered save);
 the existing `extension` remains the preferred suffix.
 Dutchman attempts conversion when the format reads geometry and its codec is available in

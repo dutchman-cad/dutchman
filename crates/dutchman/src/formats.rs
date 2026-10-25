@@ -47,9 +47,13 @@ pub fn text() -> String {
             "not yet"
         };
         out.push_str(&format!(
-            "{}  {}  {status}: {}\n",
+            "{}  {}{}  {status}: {}\n",
             format.name(),
             format.words(),
+            format
+                .headline_level()
+                .map(|level| format!("  {level}"))
+                .unwrap_or_default(),
             converts(format)
         ));
     }
@@ -65,6 +69,7 @@ pub fn json() -> Value {
             json!({
                 "id": format.id(), "name": format.name(), "extension": format.extension(),
                 "extensions": format.extensions(),
+                "level": format.headline_level(),
                 "status": if format.can_convert() { "converts" } else { "not_supported" },
                 "words": format.words(), "converts": converts(format),
             })

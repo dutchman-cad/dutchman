@@ -158,6 +158,14 @@ impl Format {
         self.registry_id()
     }
 
+    /// cadmpeg's published headline, in its format-support ladder wording.
+    pub fn headline_level(self) -> Option<String> {
+        cadmpeg_registry::headline_level(self.registry_id()?)
+            .ok()
+            .flatten()
+            .map(|level| format!("L{level}"))
+    }
+
     /// Whether Dutchman can read usable geometry for this format.
     pub fn reads_geometry(self) -> bool {
         !matches!(

@@ -542,6 +542,14 @@ fn formats_lists_what_converts() {
         .find(|f| f["id"] == "fusion_archive")
         .unwrap();
     assert_eq!(fusion["status"], "converts");
+    assert_eq!(fusion["level"], "L5");
+    let unclassified = report["formats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["id"] == "unclassified_part")
+        .unwrap();
+    assert_eq!(unclassified.get("level"), Some(&serde_json::Value::Null));
     assert_eq!(fusion["extension"], "f3d");
     let solidworks = report["formats"]
         .as_array()
@@ -567,7 +575,7 @@ fn formats_lists_what_converts() {
     let text = dutchman(&["formats"]);
     let stdout = String::from_utf8_lossy(&text.stdout);
     assert!(stdout.contains("Inventor assembly (.iam)"), "{stdout}");
-    assert!(stdout.contains("IGES (.igs, .iges)  open it in SolidCraft directly  not yet: SolidCraft imports IGES itself (File > Import)"), "{stdout}");
+    assert!(stdout.contains("IGES (.igs, .iges)  open it in SolidCraft directly  L9  not yet: SolidCraft imports IGES itself (File > Import)"), "{stdout}");
 }
 
 #[test]
@@ -1449,6 +1457,10 @@ fn every_listed_format_has_reader_status() {
     for format in dutchman_core::Format::ALL {
         let row = formats.iter().find(|row| row["id"] == format.id()).unwrap();
         assert_eq!(row["words"], format.words());
+        assert_eq!(
+            row.get("level"),
+            Some(&serde_json::json!(format.headline_level()))
+        );
     }
 }
 

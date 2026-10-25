@@ -465,22 +465,27 @@ Got a file that converts wrong? Drop it, with its STEP export, in a DM to Dutchy
 dutchman formats
 ```
 
+Each listing adds cadmpeg's published headline level (`L0`–`L9`) beside the reader
+status, when available. The desktop app's **Formats** list shows the same levels.
+The level describes cadmpeg's format-support ladder; the status still says whether
+Dutchman can attempt conversion.
+
 ```text
-Fusion archive (.f3d)  reads geometry  converts: geometry; feature history when every feature maps; components and mapped joints
-Fusion multi-document archive (.f3z)  reads geometry  converts: as a Fusion archive, with referenced designs merged in by cadmpeg
-Inventor part (.ipt)  reads geometry  converts: geometry; feature history when every feature maps
-Inventor assembly (.iam)  reads geometry  converts: placed parts and sub-assemblies, read from their files in the project
-SolidWorks part (.sldprt)  reads geometry  converts: geometry; feature history waits on cadmpeg binding sketches and extrude profiles
+Fusion archive (.f3d)  reads geometry  L5  converts: geometry; feature history when every feature maps; components and mapped joints
+Fusion multi-document archive (.f3z)  reads geometry  L5  converts: as a Fusion archive, with referenced designs merged in by cadmpeg
+Inventor part (.ipt)  reads geometry  L3  converts: geometry; feature history when every feature maps
+Inventor assembly (.iam)  reads geometry  L3  converts: placed parts and sub-assemblies, read from their files in the project
+SolidWorks part (.sldprt)  reads geometry  L3  converts: geometry; feature history waits on cadmpeg binding sketches and extrude profiles
 SolidWorks assembly (.sldasm)  recognised, not read yet  not yet: nothing yet; reading geometry is not supported yet
-FreeCAD document (.FCStd)  reads geometry  converts: geometry and components; feature history and joints when they map
-CATIA part (.CATPart)  reads geometry  converts: geometry through STEP; solids and surfaces SolidCraft can import
-Creo part (.prt, .prt.N)  opens, no geometry yet  not yet: nothing yet; reading geometry is not supported yet
-NX part (.prt)  opens, no geometry yet  not yet: nothing yet; reading geometry is not supported yet
-Creo View (.pvz)  reads geometry  converts: geometry through STEP; solids and surfaces SolidCraft can import
-Rhino (.3dm)  reads geometry  converts: geometry through STEP; solids and surfaces SolidCraft can import
-ACIS (.sat, .sab, .smt, .smb)  reads geometry  converts: geometry through STEP; solids and surfaces SolidCraft can import
-STEP (.step, .stp)  reads geometry  converts: geometry through STEP; solids and surfaces SolidCraft can import
-IGES (.igs, .iges)  open it in SolidCraft directly  not yet: SolidCraft imports IGES itself (File > Import)
+FreeCAD document (.FCStd)  reads geometry  L5  converts: geometry and components; feature history and joints when they map
+CATIA part (.CATPart)  reads geometry  L3  converts: geometry through STEP; solids and surfaces SolidCraft can import
+Creo part (.prt, .prt.N)  opens, no geometry yet  L1  not yet: nothing yet; reading geometry is not supported yet
+NX part (.prt)  opens, no geometry yet  L1  not yet: nothing yet; reading geometry is not supported yet
+Creo View (.pvz)  reads geometry  L3  converts: geometry through STEP; solids and surfaces SolidCraft can import
+Rhino (.3dm)  reads geometry  L2  converts: geometry through STEP; solids and surfaces SolidCraft can import
+ACIS (.sat, .sab, .smt, .smb)  reads geometry  L3  converts: geometry through STEP; solids and surfaces SolidCraft can import
+STEP (.step, .stp)  reads geometry  L8  converts: geometry through STEP; solids and surfaces SolidCraft can import
+IGES (.igs, .iges)  open it in SolidCraft directly  L9  not yet: SolidCraft imports IGES itself (File > Import)
 Creo or NX part (.prt)  recognised, not read yet  not yet: nothing yet; reading geometry is not supported yet
 
 Written as a SolidCraft design (.solidcraft), or, experimental, as a FreeCAD rebuild macro (.FCMacro, --to freecad)

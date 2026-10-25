@@ -2,7 +2,7 @@
 
 All notable changes to Dutchman are listed here. Versions follow [Semantic Versioning]; until
 1.0, a minor version may change the command line, the Rust API or the JSON reports (a JSON
-report's schema name changes when a field does).
+report's schema name changes when a field changes incompatibly).
 
 Unreleased changes live in [changelog.d/](changelog.d/).
 
