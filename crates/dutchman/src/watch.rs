@@ -328,12 +328,19 @@ fn run_loop(
                     continue;
                 };
                 let observation = observed.entry(relative.clone()).or_insert_with(|| {
-                    let age = SystemTime::now()
-                        .duration_since(current.modified)
-                        .unwrap_or_default();
-                    let since = Instant::now()
-                        .checked_sub(age.min(Duration::from_secs(command.settle)))
-                        .unwrap_or_else(Instant::now);
+                    // A copy can keep its source's modification time (Finder, `cp -p`,
+                    // `rsync -t`), so a watcher waits a whole settle period from when it first
+                    // sees a file. A single `--once` pass has only the file's own age to go on.
+                    let since = if command.once {
+                        let age = SystemTime::now()
+                            .duration_since(current.modified)
+                            .unwrap_or_default();
+                        Instant::now()
+                            .checked_sub(age.min(Duration::from_secs(command.settle)))
+                            .unwrap_or_else(Instant::now)
+                    } else {
+                        Instant::now()
+                    };
                     (current.clone(), since)
                 });
                 if observation.0 != current {

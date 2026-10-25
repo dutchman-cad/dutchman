@@ -452,8 +452,11 @@ newest numbered `.prt.N` save and derives its output from the base part name. Sa
 inputs in one scan receive numbered output names as in `convert-all`.
 
 A file is ready after its size and modification time stay unchanged for `--settle`
-seconds (default 10). On the first scan an already old modification time counts toward
-settling; recent and future timestamps wait. Use `--settle 0` for files already uploaded.
+seconds (default 10), counted from when the watcher first sees it: a copy can keep its
+source's old modification time (Finder, `cp -p`, `rsync -t`), so that time alone does not
+mean the copy has finished. With `--once`, which looks only once, a file is ready when its
+modification time is at least `--settle` seconds old; future timestamps always wait. Use
+`--settle 0` for files already uploaded.
 The inbox is only read: mount it read-only in a container if desired. Choose a separate
 output folder, with neither folder inside the other and no symbolic links in output subfolders.
 

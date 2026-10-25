@@ -249,6 +249,13 @@ fn polling_settles_changes_and_sigterm_saves_state() {
         .unwrap();
     let input = inbox.join("cube.f3d");
     cube(&input);
+    // A copy that keeps its source's old modification time still waits a settle period.
+    std::fs::File::options()
+        .write(true)
+        .open(&input)
+        .unwrap()
+        .set_modified(std::time::SystemTime::now() - Duration::from_secs(3600))
+        .unwrap();
     // Keep changing both size and mtime while the service is polling.
     use std::io::Write;
     for _ in 0..8 {
