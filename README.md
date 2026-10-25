@@ -85,6 +85,7 @@ assemblies (`.iam`, with their parts found anywhere in the project), SolidWorks 
   - sketches: lines, arcs, circles, conics, splines, and many constraints and dimensions;
   - extrudes and revolves, with their end forms;
   - holes: counterbores, countersinks, chamfered entries, and thread labels on tapped holes;
+    drill points on plain drilled holes only (SolidCraft ignores them on entry recesses);
   - sweeps, lofts, and coils;
   - linear, circular, and path patterns of features or bodies, body mirrors, and body
     booleans;
