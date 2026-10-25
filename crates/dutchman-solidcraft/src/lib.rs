@@ -500,7 +500,18 @@ impl Writer for SolidCraftWriter {
                 .write_all(&bytes)
                 .map_err(|err| Error::Encode(format!("cannot write the design: {err}")));
         }
-        let step = step::restate(model, report)?;
+        let step = match &model.source_step {
+            // A STEP input goes to SolidCraft as it is: restating it would only lose detail.
+            Some(text) => {
+                report.push(
+                    Severity::Info,
+                    GEOMETRY,
+                    "the STEP file is passed to SolidCraft as it is",
+                );
+                text.clone()
+            }
+            None => step::restate(model, report)?,
+        };
         let (bytes, outcome) = if self.import_only {
             report.push(Severity::Info, HISTORY, "not written (--import-only)");
             let outcome = Outcome {

@@ -1431,6 +1431,7 @@ pub(crate) fn only(
         name,
         source_file: model.source_file.clone(),
         assembly: None,
+        source_step: None,
     })
 }
 
@@ -1563,6 +1564,7 @@ mod tests {
                 fidelity: None,
                 name: name.trim_end_matches(".iam").to_owned(),
                 source_file: Some(name),
+                source_step: None,
                 assembly: None,
             })
         }

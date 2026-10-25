@@ -40,6 +40,9 @@ pub struct Model {
     pub source_file: Option<String>,
     /// For an assembly: its parts, read from their own files, and where each is placed.
     pub assembly: Option<Assembly>,
+    /// The input file's text when it is a STEP file whose geometry is used unchanged: writers
+    /// hand it on as it is instead of restating the decoded model as STEP.
+    pub source_step: Option<String>,
 }
 pub use report::{
     Check, Completeness, FeatureOutcome, FeatureStatus, LeftOutGroup, Loss, Mode, Outcome, Report,
@@ -99,6 +102,14 @@ pub fn read_in(
             assembly::Components::None => {}
             // The writer reports the assembly's joint notes: what it leaves out depends on
             // what it can build.
+            // A STEP file's own product structure around one part placed once is no assembly to
+            // build: the file goes to SolidCraft as it is.
+            assembly::Components::Assembly(components)
+                if model.source_step.is_some()
+                    && components.parts.len() == 1
+                    && components.placements.len() == 1
+                    && components.joints.is_empty()
+                    && components.left_out.is_empty() => {}
             assembly::Components::Assembly(components) => {
                 model.assembly = Some(components);
             }

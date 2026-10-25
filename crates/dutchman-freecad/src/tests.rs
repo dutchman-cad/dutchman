@@ -57,6 +57,7 @@ fn model(kind: &str) -> Model {
         fidelity: None,
         name: "Synthetic".to_owned(),
         source_file: None,
+        source_step: None,
         assembly: None,
     };
     if kind == "partial" {

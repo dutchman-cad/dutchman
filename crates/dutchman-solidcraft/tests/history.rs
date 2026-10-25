@@ -153,6 +153,7 @@ fn cube_with_history(length: f64, profile: Value, extent: Option<Value>) -> Mode
         fidelity: None,
         name: "cube".to_owned(),
         source_file: Some("cube.f3d".to_owned()),
+        source_step: None,
         assembly: None,
     }
 }
@@ -3115,6 +3116,7 @@ fn assembly_of_histories() -> Model {
     let part = |name: &str| Model {
         name: name.to_owned(),
         source_file: Some(format!("{name}.ipt")),
+        source_step: None,
         ..cube_with_history(10.0, first_profile(), None)
     };
     let at = |x: f64| {
@@ -3132,6 +3134,7 @@ fn assembly_of_histories() -> Model {
     Model {
         name: "pair".to_owned(),
         source_file: Some("pair.iam".to_owned()),
+        source_step: None,
         assembly: Some(dutchman_core::Assembly {
             joints: Vec::new(),
             left_out: Vec::new(),
@@ -4864,6 +4867,7 @@ fn cube_under(features: &[(&str, Value)]) -> Model {
         fidelity: None,
         name: "cube".to_owned(),
         source_file: Some("cube.ipt".to_owned()),
+        source_step: None,
         assembly: None,
     }
 }
@@ -4946,6 +4950,7 @@ fn parameters_alone() -> Model {
         fidelity: None,
         name: "Parameters".to_owned(),
         source_file: Some("Parameters.f3d".to_owned()),
+        source_step: None,
         assembly: None,
     }
 }
