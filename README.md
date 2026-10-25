@@ -262,6 +262,7 @@ Convert a whole project folder, four files at a time:
 
 ```sh
 dutchman convert-all --json --jobs 4 --out-dir converted/ project/
+dutchman watch inbox/ --out-dir converted/  # Poll for settled uploads; keep reports beside results
 ```
 
 Exit codes: `0` converted, `1` could not convert (the JSON report has `"ok": false` and

@@ -11,6 +11,7 @@ pub mod issue;
 pub mod json;
 pub mod mcp;
 pub mod present;
+pub mod watch;
 pub mod worker;
 
 use std::path::{Path, PathBuf};

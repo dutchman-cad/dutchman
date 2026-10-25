@@ -26,6 +26,8 @@ pilot = ["dep:dutchman-pilot"]
 freecad = ["dutchman-core/freecad"]
 
 [dependencies]
+ctrlc = { version = "3.5", features = ["termination"] }
+tempfile.workspace = true
 aho-corasick.workspace = true
 clap = { workspace = true, features = ["suggestions"] }
 dutchman-launcher.workspace = true

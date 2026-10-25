@@ -302,3 +302,35 @@ For self-hosted browser conversions, [Dutchman Web](web.md#settings) documents t
 zip budget, concurrent upload and saved-data limits, private data folder, and allowed browser
 origins. Uploads may be refused with 403 (origin check) or 503 (capacity); the CLI and MCP
 reports are unchanged.
+
+## Watch events: `dutchman.watch-event/1`
+
+`dutchman watch INBOX --out-dir DIR --json` streams newline-delimited JSON, one object
+per completed attempt. There is no enclosing array or final batch report. Each object has:
+
+| Field | Meaning |
+|---|---|
+| `schema` | `"dutchman.watch-event/1"` |
+| `event` | `"converted"`, `"failed"` or `"skipped"` |
+| `path` | Input path relative to the inbox, using platform path separators |
+| `elapsed_ms` | Milliseconds spent converting and publishing this result |
+| `message` | Empty on success; the error or skip reason otherwise |
+| `report` | The `dutchman.convert/1` result, or null when the input changed during conversion |
+
+For example:
+
+```json
+{"schema":"dutchman.watch-event/1","event":"skipped","path":"parts/cube.f3d","elapsed_ms":93,"message":"input changed during conversion","report":null}
+```
+
+An existing unrelated destination produces `skipped`; its nested report describes the
+staged conversion, while `event` describes publication. Successful reports name the final
+output path and are also saved as `<stem>.report.json`; failed reports are saved as
+`<stem>.failed.json`, always under the output folder. Reports include `elapsed_ms`.
+Ignored files, unsettled uploads and previously recorded hashes emit no event.
+The private `.dutchman-watch.json` state has schema `dutchman.watch-state/1`, an `inbox`
+identity, `files` mapping relative paths to SHA-256 hashes to `{ "outcome": ... }`, and
+`owned` mapping relative output paths to `{ "sha256": "...", "input": "..." }`.
+The ownership input is relative to the inbox; numbered `.prt.N` saves share the base `.prt`
+owner. Outputs belonging to another input are protected. It is not a conversion report.
+Watcher events and state contain paths; keep them private like batch journals.

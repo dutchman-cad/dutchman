@@ -168,9 +168,32 @@ pub fn convert_isolated(
     options: &ConvertOptions,
     limits: &Limits,
 ) -> Value {
+    convert_isolated_until(program, job, options, limits, None)
+}
+
+/// Converts in a child, allowing thirty seconds to finish after shutdown is requested.
+pub fn convert_isolated_until(
+    program: &Path,
+    job: &Job,
+    options: &ConvertOptions,
+    limits: &Limits,
+    shutdown: Option<&std::sync::atomic::AtomicBool>,
+) -> Value {
     let mut options = options.clone();
     options.no_clobber = !job.replace;
-    let child = Command::new(program)
+    let mut command = Command::new(program);
+    #[cfg(unix)]
+    if shutdown.is_some() {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    #[cfg(windows)]
+    if shutdown.is_some() {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        command.creation_flags(CREATE_NEW_PROCESS_GROUP);
+    }
+    let child = command
         .arg(WORKER_ARG)
         .arg(&job.input)
         .arg(&job.output)
@@ -203,7 +226,7 @@ pub fn convert_isolated(
         std::thread::spawn(move || follow_stages(err, &stage))
     });
 
-    let stopped = supervise(&mut child, limits);
+    let stopped = supervise(&mut child, limits, shutdown);
     let text = stdout
         .and_then(|reader| reader.join().ok())
         .unwrap_or_default();
@@ -235,6 +258,10 @@ pub fn convert_isolated(
         Stopped::TimedOut => fail(format!(
             "stopped after {} s, Dutchman's limit for one file, while at the {} stage",
             limits.timeout.as_secs(),
+            at.id()
+        )),
+        Stopped::Shutdown => fail(format!(
+            "stopped after the 30 s shutdown grace period while at the {} stage",
             at.id()
         )),
         Stopped::OverMemory(bytes) => fail(format!(
@@ -280,6 +307,8 @@ enum Stopped {
     Exited(std::process::ExitStatus),
     /// Stopped for running past its time.
     TimedOut,
+    /// Stopped after the shutdown grace period.
+    Shutdown,
     /// Stopped for holding this many bytes, over its limit.
     OverMemory(u64),
     /// It could not be waited on.
@@ -287,7 +316,12 @@ enum Stopped {
 }
 
 /// Waits for `child`, stopping it when it runs past `limits`.
-fn supervise(child: &mut Child, limits: &Limits) -> Stopped {
+fn supervise(
+    child: &mut Child,
+    limits: &Limits,
+    shutdown: Option<&std::sync::atomic::AtomicBool>,
+) -> Stopped {
+    let mut stopping = None;
     let started = Instant::now();
     let mut measured = started;
     loop {
@@ -297,6 +331,13 @@ fn supervise(child: &mut Child, limits: &Limits) -> Stopped {
             Err(err) => {
                 let _ = child.kill();
                 return Stopped::Lost(err);
+            }
+        }
+        if shutdown.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed)) {
+            let since = stopping.get_or_insert_with(Instant::now);
+            if since.elapsed() >= Duration::from_secs(30) {
+                stop(child);
+                return Stopped::Shutdown;
             }
         }
         if started.elapsed() > limits.timeout {

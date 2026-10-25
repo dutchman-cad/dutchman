@@ -34,6 +34,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Convert files dropped into an inbox, polling until shutdown.
+    Watch(dutchman::watch::Command),
     #[command(external_subcommand)]
     External(Vec<OsString>),
     /// Drive SolidCraft from plain-language requests with Pilot.
@@ -197,6 +199,14 @@ fn main() -> ExitCode {
     let verbose = cli.verbose;
     let quiet = cli.quiet;
     match cli.command {
+        Command::Watch(command) => match dutchman::watch::run(command) {
+            Ok(true) => ExitCode::SUCCESS,
+            Ok(false) => ExitCode::FAILURE,
+            Err(err) => {
+                eprintln!("dutchman: {err}");
+                ExitCode::FAILURE
+            }
+        },
         Command::External(args) => {
             let mut args = args.into_iter();
             let name = args.next().unwrap_or_default();

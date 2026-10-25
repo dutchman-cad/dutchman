@@ -23,6 +23,7 @@ CAD extension selects conversion.
 - [Your first conversion](#your-first-conversion)
 - [Look before you convert: inspect](#look-before-you-convert-inspect)
 - [Convert a whole folder: convert-all](#convert-a-whole-folder-convert-all)
+- [Watch a folder](#watch-a-folder)
 - [Formats](#formats)
 - [Pilot](#pilot)
 - [Reading the loss report](#reading-the-loss-report)
@@ -40,7 +41,7 @@ Pilot; other missing tools print their installation link and exit 1.
 Pilot-only installations can ship the small `dutchman-launcher` binary renamed to `dutchman`.
 It runs installed tools and identifies itself as `dutchman launcher <version>` with
 `--version`. Get [Dutchman Convert](https://github.com/dutchman-cad/dutchman) for `convert`,
-`convert-all`, `inspect` and `formats`.
+`convert-all`, `watch`, `inspect` and `formats`.
 
 ## Install
 
@@ -435,6 +436,57 @@ For an Inventor assembly (`.iam`), Dutchman finds its part files as Inventor doe
 paths it stores, else anywhere under the project folder, the nearest folder above it holding a
 `.ipj`. Give another with `--project DIR`; `convert-all` searches each folder it is given. See
 [Finding the part files](inventor.md#finding-the-part-files).
+
+## Watch a folder
+
+```sh
+dutchman watch /mnt/inbox --out-dir /mnt/converted
+# One scan for cron (files modified within the last 10 seconds wait for the next run):
+dutchman watch /mnt/inbox --out-dir /mnt/converted --once
+```
+
+The watcher polls recursively every `--interval` seconds (default 5), keeping relative
+folders in the output. It ignores hidden files and folders, `~$*`, `*.part`, `*.tmp`,
+`*.crdownload`, unknown formats and symbolic links. Like `convert-all`, it selects the
+newest numbered `.prt.N` save and derives its output from the base part name. Same-stem
+inputs in one scan receive numbered output names as in `convert-all`.
+
+A file is ready after its size and modification time stay unchanged for `--settle`
+seconds (default 10), counted from when the watcher first sees it: a copy can keep its
+source's old modification time (Finder, `cp -p`, `rsync -t`), so that time alone does not
+mean the copy has finished. With `--once`, which looks only once, a file is ready when its
+modification time is at least `--settle` seconds old; future timestamps always wait. Use
+`--settle 0` for files already uploaded.
+The inbox is only read: mount it read-only in a container if desired. Choose a separate
+output folder, with neither folder inside the other and no symbolic links in output subfolders.
+
+Each conversion runs in the existing isolated batch worker. `--jobs` defaults to the
+machine's cores, at most 8. `--timeout` defaults to 900 seconds per file, and
+`--max-memory` to 8192 MB (0 disables the memory limit). The same conversion options as
+`convert-all` apply, including `--to`, `--import-only`, `--no-verify`, `--solidcraft`,
+`--project` and `--search`.
+
+For `parts/cube.f3d`, the default results are `parts/cube.solidcraft` and
+`parts/cube.report.json` under the output folder. Failures write `parts/cube.failed.json`
+there, with the ordinary `dutchman.convert/1` error report. A failed update keeps the
+previous design. Successful updates replace the design and report; obsolete report sidecars
+are removed only when they still contain the watcher's bytes. Unrelated or externally
+edited outputs and sidecars are skipped, as are destinations assigned to another input. `--no-clobber` also keeps existing watcher outputs.
+
+The output folder's `.dutchman-watch.json` records SHA-256 input hashes and outcomes,
+plus hashes proving which outputs the watcher owns. It is saved by temporary file and
+atomic rename after each result. Recorded content is never retried, including failures
+and skips, across restarts and option changes. Keep this state with the outputs; choose a
+fresh output folder to retry unchanged files. Run one watcher per output folder.
+
+Each result prints one line with `converted`, `failed` or `skipped`, a relative input path
+and duration. `--json` prints one `dutchman.watch-event/1` object per line instead (see
+[JSON reports](json.md)). Hash skips and ignored or unsettled files print nothing.
+`--once` scans once, drains all ready work, then exits 0 if no attempted conversions failed,
+or 1 otherwise. A previous failure remembered in state does not fail a new run. Ctrl-C or
+SIGTERM stops scanning and starting queued work, gives running conversions up to 30 seconds
+to finish (their per-file limits still apply), saves state and exits. Inputs changed during
+a conversion are skipped without recording that hash, then settled again on a later scan.
 
 ## Formats
 
