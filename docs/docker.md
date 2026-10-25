@@ -15,12 +15,13 @@ docker build -t dutchman .
 
 It builds `dutchman` from that checkout in a Rust container, then copies the two programs into
 a small Debian image. The first build takes several minutes; later builds reuse the downloaded
-crates. It compiles one crate per core at once, and each can take more than 1 GB of memory: if
-the build stops with `cannot allocate memory` or `SIGKILL`, compile fewer at once, or give
-Docker more memory:
+crates. It compiles one crate per core at once, and the largest need several GB of memory each:
+if the build stops with `cannot allocate memory` or `SIGKILL`, compile fewer at once, or give
+Docker more memory. With about 8 GB for Docker, compile one at a time; on an Apple silicon Mac
+that build took about 45 minutes:
 
 ```sh
-docker build -t dutchman --build-arg CARGO_BUILD_JOBS=2 .
+docker build -t dutchman --build-arg CARGO_BUILD_JOBS=1 .
 ```
 
 Check it:
