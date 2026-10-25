@@ -83,7 +83,11 @@ design to SolidCraft in memory instead of as bytes). Neither crate changes.
   `fcstd`, `f3d`, `inventor`, `sldprt`, `catia`, `creo`, `nx`, `rhino`, `step`, `iges`,
   `sat` and `pvz`. Dutchman's `freecad` feature controls whether FreeCAD inputs are accepted.
 - Unmerged cadmpeg work is tried locally with a `[patch."https://github.com/cadmpeg/cadmpeg"]`
-  path override that is never committed.
+  path override that is never committed. When the checkout's crate version differs from the
+  pinned one, Cargo keeps the locked version and lists the override as unused
+  (`warning: Patch ... was not used`, `[[patch.unused]]` in `Cargo.lock`). Run
+  `cargo update -p cadmpeg-core -p cadmpeg-ir -p cadmpeg-registry` to take it, and restore
+  `Cargo.lock` along with `Cargo.toml` afterwards.
 - Minimum Rust follows cadmpeg's (1.88 today).
 
 ## Writing SolidCraft designs
