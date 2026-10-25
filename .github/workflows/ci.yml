@@ -69,13 +69,22 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      # Debug info is most of a cold Windows build's time and is not needed to run the tests.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Save the build even when a test fails, so the next run does not start cold.
+          cache-on-failure: true
       - run: cargo test --workspace --locked
-      # A build without FreeCAD says it leaves FreeCAD files out.
-      - run: cargo test --locked -p dutchman --no-default-features
+      # A build without FreeCAD says it leaves FreeCAD files out. This checks feature gating, not
+      # the platform, and on another OS it would rebuild every crate a second time.
+      - if: matrix.os == 'ubuntu-latest'
+        run: cargo test --locked -p dutchman --no-default-features
 
   # The same on macOS, only when Rust code changed: the account runs few macOS jobs at once.
   test-macos:
@@ -83,10 +92,15 @@ jobs:
     needs: changes
     if: needs.changes.outputs.rust == 'true'
     runs-on: macos-latest
+    env:
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - run: cargo test --workspace --locked
 
   msrv:
