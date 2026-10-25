@@ -158,3 +158,121 @@ fn formats_without_a_decoder_are_not_supported_yet() {
         }
     ));
 }
+
+#[test]
+fn recognises_all_format_extensions_and_shared_part_contents() {
+    // Synthetic signatures only; no vendor files are needed to identify the formats.
+    for (name, bytes, expected) in [
+        ("x.f3d", b"PK\x03\x04".as_slice(), Format::FusionArchive),
+        ("x.f3z", b"PK\x03\x04", Format::FusionMultiDocument),
+        ("x.ipt", b"\xd0\xcf\x11\xe0", Format::InventorPart),
+        ("x.iam", b"\xd0\xcf\x11\xe0", Format::InventorAssembly),
+        ("x.sldprt", b"\xd0\xcf\x11\xe0", Format::SolidWorksPart),
+        ("x.sldasm", b"\xd0\xcf\x11\xe0", Format::SolidWorksAssembly),
+        ("x.CATPart", b"V5_CFV2", Format::CatiaPart),
+        ("creo.prt", b"#UGC:2", Format::CreoPart),
+        ("creo.prt.12", b"#UGC:1", Format::CreoPart),
+        ("nx.prt", b"SPLMSSTR", Format::NxPart),
+        ("nx.prt.3", b"SPLMSSTR", Format::NxPart),
+        ("x.pvz", b"PK\x03\x04", Format::CreoView),
+        ("x.3dm", b"3D Geometry File Format       80", Format::Rhino),
+        ("x.sat", b"700 0 0 0\n", Format::Acis),
+        ("x.sab", b"ACIS BinaryFile", Format::Acis),
+        ("x.smt", b"700 0 0 0\n", Format::Acis),
+        ("x.smb", b"ASM BinaryFile", Format::Acis),
+        ("x.step", b"ISO-10303-21;", Format::Step),
+        ("x.stp", b"ISO-10303-21;", Format::Step),
+        (
+            "x.igs",
+            b"                                                                        S      1",
+            Format::Iges,
+        ),
+        (
+            "x.iges",
+            b"                                                                        S      1",
+            Format::Iges,
+        ),
+        ("x.FCStd", b"PK\x03\x04", Format::FreeCadDocument),
+        ("unknown.prt", b"unknown", Format::UnclassifiedPart),
+        ("unknown.prt.7", b"unknown", Format::UnclassifiedPart),
+    ] {
+        assert_eq!(
+            Format::from_path(&scratch(name, bytes)),
+            Some(expected),
+            "{name}"
+        );
+        assert_eq!(
+            Format::from_path(&scratch(&name.to_ascii_uppercase(), bytes)),
+            Some(expected),
+            "{name}"
+        );
+    }
+    assert_eq!(Format::from_path(Path::new("x.txt")), None);
+    assert_eq!(Format::from_path(Path::new("x.prt.3.7")), None);
+}
+
+#[test]
+fn a_numbered_save_strips_one_suffix_and_uses_contents_for_its_program() {
+    let path = scratch("bracket.prt.7", b"#UGC:2");
+    let (part, revision) = Format::part_revision(&path).unwrap();
+    assert_eq!(part.file_name().unwrap(), "bracket.prt");
+    assert_eq!(revision, "7");
+    assert_eq!(Format::source_extension(&path).as_deref(), Some("prt.7"));
+    for (bytes, format, words) in [
+        (
+            b"#UGC:2".as_slice(),
+            Format::CreoPart,
+            "opens, no geometry yet",
+        ),
+        (
+            b"SPLMSSTR".as_slice(),
+            Format::NxPart,
+            "opens, no geometry yet",
+        ),
+        (
+            b"unknown".as_slice(),
+            Format::UnclassifiedPart,
+            "recognised, not read yet",
+        ),
+    ] {
+        std::fs::write(&path, bytes).unwrap();
+        assert_eq!(Format::from_path(&path), Some(format));
+        assert_eq!(
+            format.status_for(&path),
+            format!("{} .prt.7: {words}", format.family())
+        );
+    }
+    assert!(Format::part_revision(Path::new("bracket.prt.3.7")).is_none());
+    assert!(Format::part_revision(Path::new("bracket.prt.x")).is_none());
+}
+
+#[test]
+fn conversion_requires_geometry_and_an_available_codec() {
+    for format in Format::ALL {
+        let geometry = !matches!(
+            format,
+            Format::CreoPart
+                | Format::NxPart
+                | Format::SolidWorksAssembly
+                | Format::UnclassifiedPart
+        );
+        assert_eq!(format.reads_geometry(), geometry, "{}", format.name());
+        assert_eq!(
+            format.can_convert(),
+            geometry && format.codec_id().is_some()
+        );
+    }
+}
+
+#[test]
+fn inputs_without_geometry_are_refused_before_decoding() {
+    for (name, bytes, format) in [
+        ("low-creo.prt", b"#UGC:2".as_slice(), Format::CreoPart),
+        ("low-nx.prt", b"SPLMSSTR".as_slice(), Format::NxPart),
+    ] {
+        let path = scratch(name, bytes);
+        let err = read(format, &path, &mut Report::default()).unwrap_err();
+        assert!(matches!(err, Error::NotSupportedYet { .. }));
+        assert!(err.to_string().contains("opens, no geometry yet"));
+    }
+}

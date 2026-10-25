@@ -27,6 +27,9 @@ struct Cli {
     /// Print each loss note in full (the text reports cut them to their first sentence).
     #[arg(long, global = true)]
     verbose: bool,
+    /// Hide the volunteer invitation after conversion results.
+    #[arg(long, global = true)]
+    quiet: bool,
 }
 
 #[derive(Subcommand)]
@@ -140,7 +143,7 @@ fn main() -> ExitCode {
         .iter()
         .enumerate()
         .skip(1)
-        .find(|(_, arg)| *arg != "--verbose")
+        .find(|(_, arg)| *arg != "--verbose" && *arg != "--quiet")
     {
         let name = arg.to_str().unwrap_or("");
         let builtin = Cli::command()
@@ -192,6 +195,7 @@ fn main() -> ExitCode {
         Err(err) => err.exit(),
     };
     let verbose = cli.verbose;
+    let quiet = cli.quiet;
     match cli.command {
         Command::External(args) => {
             let mut args = args.into_iter();
@@ -230,7 +234,11 @@ fn main() -> ExitCode {
         } => {
             let explicit = output.or(output_flag);
             let derived = explicit.is_none();
-            let output = explicit.unwrap_or_else(|| input.with_extension(options.to.extension()));
+            let output = explicit.unwrap_or_else(|| {
+                dutchman_core::Format::part_revision(&input)
+                    .map_or_else(|| input.clone(), |(part, _)| part)
+                    .with_extension(options.to.extension())
+            });
             if derived {
                 if input == output
                     || std::fs::canonicalize(&input)
@@ -247,7 +255,15 @@ fn main() -> ExitCode {
                 }
                 options.no_clobber |= !force;
             }
-            convert(&input, &output, &options, log.as_deref(), json, verbose)
+            convert(
+                &input,
+                &output,
+                &options,
+                log.as_deref(),
+                json,
+                verbose,
+                quiet,
+            )
         }
         Command::ConvertAll {
             inputs,
@@ -300,6 +316,17 @@ fn main() -> ExitCode {
                 print_json(&report);
             } else {
                 print!("{}", batch::text(&report, verbose));
+                if !quiet {
+                    if let Some(pitch) = json::fixtures_pitch(
+                        report
+                            .get("results")
+                            .and_then(Value::as_array)
+                            .into_iter()
+                            .flatten(),
+                    ) {
+                        println!("{pitch}");
+                    }
+                }
             }
             let log = log.unwrap_or_else(|| out_dir.join(batch::LOG_NAME));
             let written = log
@@ -355,13 +382,9 @@ fn main() -> ExitCode {
     }
 }
 
-/// Recognise native formats from the shared format registry, plus STEP interchange files.
+/// Recognise files and known CAD suffixes for the conversion shorthand.
 fn is_input(path: &Path) -> bool {
-    path.is_file()
-        || Format::from_path(path).is_some_and(|format| format != Format::SolidWorksAssembly)
-        || path
-            .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("step") || ext.eq_ignore_ascii_case("stp"))
+    path.is_file() || Format::from_path(path).is_some()
 }
 
 fn run_tool(path: &Path, args: &[OsString]) -> ExitCode {
@@ -381,7 +404,13 @@ fn convert(
     log: Option<&Path>,
     as_json: bool,
     verbose: bool,
+    quiet: bool,
 ) -> ExitCode {
+    if !as_json {
+        if let Some(status) = json::status_line(&serde_json::json!({"input": json::input(input)})) {
+            println!("{status}");
+        }
+    }
     let report = dutchman::convert(
         input,
         output,
@@ -421,6 +450,11 @@ fn convert(
                     "dutchman: (--verbose prints every loss; --log FILE writes them to FILE)"
                 ),
             }
+        }
+    }
+    if !as_json && !quiet {
+        if let Some(pitch) = json::fixtures_pitch([&report]) {
+            println!("{pitch}");
         }
     }
     exit(&report)

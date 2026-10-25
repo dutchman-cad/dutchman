@@ -271,6 +271,7 @@ dutchman convert solidworks_cube.sldprt cube.solidcraft
 ```
 
 ```text
+SolidWorks .sldprt: reads geometry
 converted  solidworks_cube.sldprt -> cube.solidcraft (geometry without history)
 dutchman: Degraded: sldprt/source.dialect-unverified: the document carries no swSolidWorks swVersion declaration, so no declared identity was verified. …
 dutchman: Degraded: sldprt/config.inferred-without-native: 1 configuration state(s) are inferred from geometry partitions without native configuration definitions.
@@ -279,6 +280,7 @@ dutchman: Info: step/native.passthrough-record-omitted: 2 uninterpreted passthro
 dutchman: Info: step/native.source-record-omitted: 1 source-native record(s) were not represented in STEP
 dutchman: Info: history: flattened: the design carries no feature history
 dutchman: (notes are cut to their first sentence; --verbose prints them in full)
+Want to help Dutchman read SolidWorks better? If you have SolidWorks, you can make a few small test files from short recipes: https://dutchman-cad.github.io/fixtures/ or type /volunteer in our Discord (https://discord.gg/yTcseBEdeu).
 ```
 
 The synthetic SolidWorks cube lacks native version and configuration metadata, so those
@@ -371,18 +373,22 @@ dutchman convert-all --jobs 2 --out-dir converted project
 ```
 
 ```text
+Fusion .f3d: reads geometry
 converted  project/generated_unit_cube.f3d -> converted/generated_unit_cube.solidcraft (geometry without history)
            Degraded: f3d/material.not-transferred: Materials/appearances (.protein assets, ACT/design assignments) were not transferred.
            Info: step/attribute.source-record-not-written: 7 source attribute record(s) were not written to STEP
            Info: step/native.source-record-omitted: 45 source-native record(s) were not represented in STEP
            Info: history: flattened: the design carries no feature history
+Fusion .f3d: reads geometry
 failed     project/sub/container_metadata_only.f3d: cannot read this design: no geometry could be read from this Fusion archive (.f3d) file
+Inventor .ipt: reads geometry
 converted  project/sub/synthetic_cube.ipt -> converted/sub/synthetic_cube.solidcraft (geometry without history)
            Degraded: inventor/rse.segment-pair-untyped: Retained 1 structurally paired RSe segment(s) without record semantics.
            Info: step/attribute.source-record-not-written: 7 source attribute record(s) were not written to STEP
            Info: step/native.source-record-omitted: 67 source-native record(s) were not represented in STEP
            Info: history: flattened: the design carries no feature history
 2 converted, 1 failed, 1 skipped (not in a format Dutchman knows)
+Want to help Dutchman read Fusion, Inventor better? If you have Fusion, Inventor, you can make a few small test files from short recipes: https://dutchman-cad.github.io/fixtures/ or type /volunteer in our Discord (https://discord.gg/yTcseBEdeu).
 ```
 
 Each converted file's loss report is listed beneath it, summarised by component when it has
@@ -420,18 +426,48 @@ paths it stores, else anywhere under the project folder, the nearest folder abov
 
 ## Formats
 
+Each conversion starts with a reader status such as
+`Fusion .f3d: reads geometry`. The history and verification report says what came through
+for this file. Formats with geometry readers attempt conversion through the STEP path.
+Creo and NX share `.prt` and are identified by contents; `.prt.N` numbered saves are
+recognised too. Inputs without geometry support or a codec are refused with exit 1.
+A recognised format whose geometry produces no
+solids or surfaces SolidCraft can import says so.
+
+Directory conversion keeps only the highest numeric `.prt.N` revision of each part in its
+folder and reports each older revision as skipped. A numbered save such as `bracket.prt.7`
+uses `bracket.solidcraft` as its default output. Existing outputs for numbered saves are
+kept; choose another output path (or `--force` for a single file) to replace one deliberately.
+
+After the results, a refused conversion or a history that did not fully map prints one
+invitation naming programs and linking to [test-file recipes](https://dutchman-cad.github.io/fixtures/)
+and `/volunteer` in [Discord](https://discord.gg/yTcseBEdeu). `convert --quiet` and
+`convert-all --quiet` hide that invitation. `--json` contains only the report. The desktop
+app shows the same status beside each file and one invitation under the results, with
+clickable links.
+Got a file that converts wrong? Drop it, with its STEP export, in a DM to Dutchy in our Discord.
+
 ```sh
 dutchman formats
 ```
 
 ```text
-Fusion archive (.f3d)            converts  geometry; feature history (sketches, constraints, dimensions, extrudes, revolves, lofts, sweeps, spheres, tori, coils) when every feature maps; components when the file says which bodies they own
-Fusion multi-document archive (.f3z) converts  as a Fusion archive, with the designs it references merged in by cadmpeg
-Inventor part (.ipt)             converts  geometry; feature history (sketches, constraints, extrudes) when every feature maps
-Inventor assembly (.iam)         converts  placed parts and sub-assemblies, read from their files in the project
-SolidWorks part (.sldprt)        converts  geometry; feature history waits on cadmpeg binding sketches and extrude profiles
-SolidWorks assembly (.sldasm)    not yet   nothing yet
-FreeCAD document (.FCStd)        converts  geometry and components; feature history (sketches, pads, simple holes) when every feature maps
+Fusion archive (.f3d)  reads geometry  converts: geometry; feature history when every feature maps; components and mapped joints
+Fusion multi-document archive (.f3z)  reads geometry  converts: as a Fusion archive, with referenced designs merged in by cadmpeg
+Inventor part (.ipt)  reads geometry  converts: geometry; feature history when every feature maps
+Inventor assembly (.iam)  reads geometry  converts: placed parts and sub-assemblies, read from their files in the project
+SolidWorks part (.sldprt)  reads geometry  converts: geometry; feature history waits on cadmpeg binding sketches and extrude profiles
+SolidWorks assembly (.sldasm)  recognised, not read yet  not yet: nothing yet; reading geometry is not supported yet
+FreeCAD document (.FCStd)  reads geometry  converts: geometry and components; feature history and joints when they map
+CATIA part (.CATPart)  reads geometry  converts: geometry through STEP; solids and surfaces SolidCraft can import
+Creo part (.prt, .prt.N)  opens, no geometry yet  not yet: nothing yet; reading geometry is not supported yet
+NX part (.prt)  opens, no geometry yet  not yet: nothing yet; reading geometry is not supported yet
+Creo View (.pvz)  reads geometry  converts: geometry through STEP; solids and surfaces SolidCraft can import
+Rhino (.3dm)  reads geometry  converts: geometry through STEP; solids and surfaces SolidCraft can import
+ACIS (.sat, .sab, .smt, .smb)  reads geometry  converts: geometry through STEP; solids and surfaces SolidCraft can import
+STEP (.step, .stp)  reads geometry  converts: geometry through STEP; solids and surfaces SolidCraft can import
+IGES (.igs, .iges)  reads geometry  converts: geometry through STEP; solids and surfaces SolidCraft can import
+Creo or NX part (.prt)  recognised, not read yet  not yet: nothing yet; reading geometry is not supported yet
 
 Written as a SolidCraft design (.solidcraft), or, experimental, as a FreeCAD rebuild macro (.FCMacro, --to freecad)
 ```
@@ -669,8 +705,8 @@ and requested reports.
 | Message | What to do |
 |---|---|
 | `x.step: output must be a .solidcraft file` | Name the output `something.solidcraft`. |
-| `a.step: Dutchman does not convert this kind of file. It converts …` | Dutchman converts the native formats listed; it does not read STEP or other exchange formats. Open STEP files in SolidCraft directly. |
-| `SolidWorks assembly (.sldasm) files are not supported yet. Export a STEP file for SolidCraft to open; Dutchman's issues (…) say when …` | Export the assembly as STEP from the program that made it and open that in SolidCraft. |
+| `a.txt: Dutchman does not convert this kind of file. It converts …` | Choose one of the formats listed by `dutchman formats`. STEP and IGES exchange files convert too. |
+| `… reading geometry is not supported yet. Export a STEP file and convert that instead.` | The format is recognised, but its reader has no geometry path yet. Export STEP from the program that made the design and convert that. |
 | `cannot read this design: its contents are inventor data, not Fusion archive (.f3d); rename it to match` | The file's extension does not match its contents. Rename it with the right extension. |
 | `cannot read this design: no geometry could be read from this Fusion archive (.f3d) file` | The file holds no geometry Dutchman can read yet, for example a design saved without bodies, or one whose geometry is stored in a form cadmpeg does not read yet. |
 | `cannot read this design: malformed container: …` | Download or copy the file again, or check its extension. If the original opens in the program that made it, use the anonymous reporting route above. |

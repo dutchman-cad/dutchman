@@ -110,6 +110,7 @@ fn not_supported(format: Format) -> String {
                  Dutchman's release builds convert them: {RELEASES}"
             )
         }
+        _ if !format.reads_geometry() => format!("{}; reading geometry is not supported yet. Export a STEP file and convert that instead.", format.status()),
         _ => format!(
             "{} files are not supported yet. Export a STEP file for SolidCraft to open; \
              Dutchman's issues (https://github.com/dutchman-cad/dutchman/issues) say when {} \

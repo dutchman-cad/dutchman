@@ -1,6 +1,6 @@
 ---
 name: dutchman-converting
-description: Use when someone wants a native CAD file (Fusion .f3d or .f3z, Inventor .ipt or .iam, SolidWorks .sldprt, FreeCAD .FCStd) turned into a SolidCraft design (.solidcraft) with Dutchman, through the dutchman-mcp tools or the dutchman command. Covers inspecting first, converting one file or a folder, checking the result in SolidCraft, explaining the loss report in plain words, and what to say about formats Dutchman does not convert.
+description: Use when someone wants a CAD file (Fusion, Inventor, SolidWorks, FreeCAD, CATIA, Creo View, Rhino, ACIS, STEP or IGES) turned into a SolidCraft design (.solidcraft) with Dutchman, through the dutchman-mcp tools or the dutchman command. Covers inspecting first, reader status and refusals (including Creo and NX), converting one file or a folder, checking the result in SolidCraft, and explaining losses in plain words.
 ---
 
 # Converting CAD files with Dutchman
@@ -36,17 +36,28 @@ they are connected (`inspect`, `convert`, `convert_all`, `formats`); otherwise r
 
 ## 1. Check the format
 
-The extensions that convert are `.f3d`, `.f3z`, `.ipt`, `.iam`, `.sldprt`, and `.FCStd`. Call
-`formats` if unsure; its `status` is `converts`, `coming` or `not_supported`.
+Call `formats` for the installed build's formats, status `words` and `converts`.
+Fusion, Inventor, SolidWorks parts, FreeCAD, CATIA, Creo View, Rhino, ACIS, STEP and IGES
+can convert geometry. Creo and NX parts are identified by contents
+(they share `.prt`) and currently open without geometry, so conversion is refused. SolidWorks
+assemblies are recognised without a reader. `input.words` appears on
+conversion successes and failures. Reader status describes capability; the actual
+history and verification report says what the file kept. CLI `--quiet` hides the volunteer
+invitation; JSON and MCP reports never include it.
+
+Directory conversion keeps the highest numbered `.prt.N` revision per part, reports older
+saves as skipped, and uses the part's base output name without replacing an existing file.
+After a refused conversion or a history that did not fully map, the invitation links to
+test-file recipes and offers private help: send the file and its STEP export to Dutchy in Discord.
 
 What the installed build converts is what its `formats` says; check it rather than this
 list when unsure.
 
 For anything else, don't try workarounds such as renaming the file. Tell the user plainly:
 
-- **STEP (`.step`, `.stp`)**: SolidCraft opens these itself; Dutchman is not needed.
-- **SolidWorks assemblies (`.sldasm`)** and other native formats: not supported yet. Suggest
-  exporting STEP from the program that made the design and opening that in SolidCraft.
+- **STEP (`.step`, `.stp`)**: converts through the geometry path; SolidCraft also opens STEP directly.
+- **SolidWorks assemblies (`.sldasm`)**, Creo and NX: reading geometry is not supported yet.
+  Suggest exporting STEP from the program that made the design and converting that.
 - **Inventor assemblies (`.iam`)** convert, but need their part files next to the assembly
   (or at the paths it stores). If parts are missing, the report lists them as `Dropped`.
 

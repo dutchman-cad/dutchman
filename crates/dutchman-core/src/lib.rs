@@ -127,7 +127,7 @@ pub fn with_bodies(model: &Model, bodies: &[&str], name: String) -> Result<Model
 
 /// Decodes one file, without reading the parts an assembly places.
 fn decode_file(format: Format, input: &Path, report: &mut Report) -> Result<Model, Error> {
-    if format.codec_id().is_none() {
+    if !format.can_convert() {
         return Err(Error::NotSupportedYet { format });
     }
     names::saw_path(input, report);

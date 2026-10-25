@@ -88,6 +88,17 @@ provides a usable CLI.
 
 ## Tools
 
+`formats` lists all recognised formats, their status `words`,
+and what Dutchman converts. Inputs without geometry support or a codec in this build
+return a failure describing the reader's current capability. Creo and NX `.prt` inputs
+are distinguished by contents. CATIA, Creo View, Rhino, ACIS, STEP and IGES use the geometry
+path. Each conversion report's `input` also carries `words`, `program` and `extension`.
+Status words are `reads geometry`, `opens, no geometry yet`, or `recognised, not read yet`.
+Numbered `.prt.N` saves are identified by contents too; a directory conversion keeps only
+the highest revision per part and returns older saves in `skipped_revisions` (`path`, `newer`).
+Numbered saves use the part's base output name and keep existing output files.
+The CLI and desktop volunteer invitation is absent from MCP and `--json` output.
+
 For `inspect`, `ok: true` means the file was read. Check `conversion.possible` and
 `conversion.reason` before converting: inspection can succeed even when conversion cannot.
 

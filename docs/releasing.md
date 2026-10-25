@@ -60,3 +60,6 @@ leak check on a real library before merging it. A fix merged on cadmpeg's `main`
 pinned commit reaches users through the nightly channel: the `nightly` pre-release, rebuilt
 each day from Dutchman's `main` against cadmpeg's `main` (`scripts/use-cadmpeg-main.sh`, see
 `.github/workflows/nightly.yml`). The stable release after the pin moves carries it.
+
+All cadmpeg crates, including cadmpeg-registry, come directly from the pinned git revision.
+`scripts/use-cadmpeg-main.sh <sha>` updates the dependencies and checks their lockfile sources.

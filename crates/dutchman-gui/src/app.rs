@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use dutchman::batch::{Event, Job};
-use dutchman::ConvertOptions;
+use dutchman::{json, ConvertOptions};
 use eframe::egui::{
     self, Align, CornerRadius, Frame, Layout, Margin, RichText, ScrollArea, Stroke, TextStyle,
     ThemePreference,
@@ -396,11 +396,7 @@ impl App {
                     ui.add_space(theme::SPACE_4);
                     ui.label(RichText::new("Drop design files or folders here").heading());
                     ui.label(
-                        RichText::new(if cfg!(feature = "freecad") {
-                            "Fusion (.f3d, .f3z), Inventor (.ipt, .iam), SolidWorks (.sldprt) and FreeCAD (.FCStd)"
-                        } else {
-                            "Fusion (.f3d, .f3z), Inventor (.ipt, .iam) and SolidWorks (.sldprt)"
-                        })
+                        RichText::new("Fusion, Inventor, SolidWorks, FreeCAD, CATIA, Creo, NX, Creo View, Rhino, ACIS, STEP and IGES")
                         .small()
                         .color(p.tide),
                     );
@@ -412,7 +408,12 @@ impl App {
                 for (index, input) in self.inputs.iter().enumerate() {
                     egui::Sides::new().shrink_left().truncate().show(
                         ui,
-                        |ui| path_label(ui, &p, input),
+                        |ui| {
+                            path_label(ui, &p, input);
+                            if let Some(format) = dutchman_core::Format::from_path(input) {
+                                ui.label(format.status_for(input));
+                            }
+                        },
                         |ui| {
                             let button = egui::Button::new(RichText::new("Remove").small());
                             if ui.add_enabled(!running, button).clicked() {
@@ -680,6 +681,27 @@ impl App {
         if let Err(err) = result {
             self.notice = Some(err);
         }
+        if !running {
+            if let Some(pitch) =
+                json::fixtures_pitch(self.rows.iter().filter_map(|row| row.report.as_ref()))
+            {
+                ui.horizontal_wrapped(|ui| {
+                    for (index, part) in pitch.split(json::FIXTURES_URL).enumerate() {
+                        if index > 0 {
+                            ui.hyperlink_to(json::FIXTURES_URL, json::FIXTURES_URL);
+                        }
+                        for (index, text) in part.split(json::DISCORD_URL).enumerate() {
+                            if index > 0 {
+                                ui.hyperlink_to(json::DISCORD_URL, json::DISCORD_URL);
+                            }
+                            if !text.is_empty() {
+                                ui.label(text);
+                            }
+                        }
+                    }
+                });
+            }
+        }
     }
 }
 
@@ -758,6 +780,12 @@ fn row_ui(
             }
         },
     );
+    if let Some(status) = report
+        .and_then(json::status_line)
+        .or_else(|| dutchman_core::Format::from_path(&row.input).map(|f| f.status_for(&row.input)))
+    {
+        ui.label(status);
+    }
     if let Some(missing) = report.and_then(missing_parts) {
         missing_ui(ui, p, &missing);
         ui.horizontal(|ui| {

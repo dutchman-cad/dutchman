@@ -117,6 +117,8 @@ pub fn pick(kind: Pick, messages: Sender<Message>, ctx: egui::Context) {
                         "CAD designs",
                         &[
                             "f3d", "f3z", "ipt", "iam", "sldprt", "sldasm", "FCStd", "fcstd",
+                            "CATPart", "catpart", "prt", "pvz", "3dm", "sat", "sab", "smt", "smb",
+                            "step", "stp", "igs", "iges",
                         ],
                     )
                     .pick_files()

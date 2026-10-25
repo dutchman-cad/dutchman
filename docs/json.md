@@ -52,7 +52,9 @@ version (`dutchman.convert/2`).
 | Field | Meaning |
 |---|---|
 | `ok` | `true` when the design was written. |
-| `input.format` | `fusion_archive`, `fusion_multi_document`, `inventor_part`, `inventor_assembly`, `solidworks_part`, `solidworks_assembly`, `freecad_document`, or `null` for an unknown extension. `format_name` is the same for people. |
+| `input.format` | `fusion_archive`, `fusion_multi_document`, `inventor_part`, `inventor_assembly`, `solidworks_part`, `solidworks_assembly`, `freecad_document`, `catia_part`, `creo_part`, `nx_part`, `creo_view`, `rhino`, `acis`, `step`, `iges`, `unclassified_part`, or `null` for an unknown extension. `format_name` is the same for people. Creo and NX share `.prt` and are distinguished by contents; inconclusive contents give `unclassified_part`. |
+| `input.words` | Reader status: `reads geometry`, `opens, no geometry yet`, or `recognised, not read yet`; `null` for an unknown format. Present on successes and failures, including batch results and MCP reports. The conversion's history and verification describe what this file kept. |
+| `input.program`, `input.extension` | Program or format family, and the input's actual suffix without a dot, used for status text (`prt.12` for a numbered save). Unknown programs are `null`. |
 | `output.format` | The SolidCraft design format written. |
 | `mode` | `history`: editable feature history, with the original geometry kept beside it, suppressed. `import`: the geometry alone. |
 | `verification.status` | `verified`: the history was replayed in SolidCraft, or the FreeCAD output was measured, and matches the original. `differs`: a FreeCAD rebuild differs or restored STEP (`reason` names the part). `unverified`: the history was written without that check (`reason` says why: no `solidcraft-cli`, a timeout, `--no-verify`). `flattened`: the design has a history but it was not written (`reason`: the first feature that does not map, or `replay differs (…)`). `not_applicable`: there was no history to write (none in the source, or none cadmpeg decodes: every feature is kept in its native form), or `--import-only`. |
@@ -131,18 +133,26 @@ does not stop the others.
 
 ```json
 {"schema": "dutchman.convert-all/1", "ok": false, "converted": 2, "failed": 1, "skipped": 1,
- "skipped_by_extension": {"txt": 1}, "resumed": 0,
+ "skipped_by_extension": {"txt": 1}, "skipped_revisions": [], "resumed": 0,
  "results": [ {"schema": "dutchman.convert/1", "ok": true, "input": {…}, "output": {…}, "elapsed_ms": 412, …},
               {"schema": "dutchman.convert/1", "ok": false, "input": {…}, "error": {…}, "elapsed_ms": 96} ]}
 ```
 
 `results` holds one `dutchman.convert/1` report per file (inputs that are neither a file nor a
 folder come first), in the order found, each with `elapsed_ms`, the time it took. `skipped`
-counts the files in the folders searched that are not in a format Dutchman knows; they are not
+counts older numbered saves and files in the folders searched that are not in a format Dutchman knows; unknown formats are not
 converted and not reported one by one, and `skipped_by_extension` counts them by extension
 (lower case; `none`, or `other` for one that is not 1–8 letters and digits). `resumed` counts
 the files whose reports came from `--journal` rather than a new conversion. `ok` is `true` only
 when every file converted; the exit code is then 0, else 1.
+
+For numbered `.prt.N` saves found in a directory, only the highest numeric revision per
+part in that folder is converted. `skipped_revisions` lists each older save as
+`{"path": "bracket.prt.3", "newer": "bracket.prt.7"}` (full paths as supplied).
+These skips count in `skipped`, separately from `skipped_by_extension`. Explicit file
+arguments are converted as named. A numbered save strips exactly one revision suffix
+before deriving its base output name (`bracket.solidcraft`); existing outputs are kept.
+These report additions retain `dutchman.convert-all/1`; existing fields keep their types.
 
 Each file converts in a process of its own. One that runs past `--timeout` or holds more than
 `--max-memory` is stopped and fails alone, its `error.stage` the stage it had reached; so does
@@ -156,12 +166,24 @@ one that crashes the converter. `--report-anon FILE` also writes the anonymous r
 ```json
 {"schema": "dutchman.formats/1", "ok": true, "formats": [
   {"id": "fusion_archive", "name": "Fusion archive (.f3d)", "extension": "f3d",
+   "extensions": ["f3d"], "words": "reads geometry",
    "status": "converts", "converts": "geometry; feature history (…) when every feature maps; …"}
 ]}
 ```
 
 `status` is `converts`, `coming` (in progress) or `not_supported`; `converts` says, for people,
 what carries across.
+`words` is `reads geometry`, `opens, no geometry yet`, or `recognised, not read yet`.
+`extensions` lists all accepted suffixes without dots (`prt.N` denotes a numbered save);
+the existing `extension` remains the preferred suffix.
+Dutchman attempts conversion when the format reads geometry and its codec is available in
+this build. Creo and NX open without geometry support; SolidWorks assemblies and
+unclassified `.prt` files are recognised without readers. Reader status does not promise
+that a particular file will convert or that every feature will map.
+`--quiet` suppresses only the text volunteer invitation after a conversion run; JSON
+reports contain neither that invitation nor status prose outside the report.
+The invitation appears once for programs with `ok: false`, `verification.status: "flattened"`,
+or `history.mapped < history.total`, and offers test-file recipes and private help in Discord.
 
 ## `dutchman.inspect/1`
 

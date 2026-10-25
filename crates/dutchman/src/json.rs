@@ -22,7 +22,55 @@ pub fn input(path: &Path) -> Value {
         "path": path.display().to_string(),
         "format": format.map(Format::id),
         "format_name": format.map(Format::name),
+        "program": format.map(Format::family),
+        "extension": Format::source_extension(path),
+        "words": format.map(Format::words),
     })
+}
+
+/// A conversion's input capability, before its result.
+pub fn status_line(report: &Value) -> Option<String> {
+    let input = report.get("input")?;
+    Some(format!(
+        "{} .{}: {}",
+        input.get("program")?.as_str()?,
+        input.get("extension")?.as_str()?,
+        input.get("words")?.as_str()?
+    ))
+}
+
+pub const FIXTURES_URL: &str = "https://dutchman-cad.github.io/fixtures/";
+pub const DISCORD_URL: &str = "https://discord.gg/yTcseBEdeu";
+
+/// One invitation for the programs whose inputs need more coverage.
+pub fn fixtures_pitch<'a>(reports: impl IntoIterator<Item = &'a Value>) -> Option<String> {
+    let mut programs = std::collections::BTreeSet::new();
+    for report in reports {
+        let input = report.get("input");
+        if report.get("ok").and_then(Value::as_bool) == Some(false)
+            || report
+                .pointer("/verification/status")
+                .and_then(Value::as_str)
+                == Some("flattened")
+            || report
+                .pointer("/history/mapped")
+                .and_then(Value::as_u64)
+                .zip(report.pointer("/history/total").and_then(Value::as_u64))
+                .is_some_and(|(mapped, total)| mapped < total)
+        {
+            programs.insert(
+                input
+                    .and_then(|i| i.get("program"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("CAD programs"),
+            );
+        }
+    }
+    if programs.is_empty() {
+        return None;
+    }
+    let programs = programs.into_iter().collect::<Vec<_>>().join(", ");
+    Some(format!("Want to help Dutchman read {programs} better? If you have {programs}, you can make a few small test files from short recipes: {FIXTURES_URL} or type /volunteer in our Discord ({DISCORD_URL}). Got a file that converts wrong? Drop it, with its STEP export, in a DM to Dutchy in our Discord."))
 }
 
 /// One loss of a report as the text reports print it, `LEVEL: SUBJECT: MESSAGE`, with the
@@ -466,6 +514,36 @@ mod tests {
     use dutchman_core::FeatureOutcome;
 
     use super::*;
+
+    #[test]
+    fn the_invitation_names_programs_once_when_conversion_fails_or_history_does_not_map() {
+        let below = json!({"ok": true, "input": {"program": "Fusion", "path": "secret.f3d"},
+            "verification": {"status": "flattened"}, "history": {"mapped": 2, "total": 2}});
+        let complete = json!({"ok": true, "input": {"program": "STEP"},
+            "verification": {"status": "not_applicable"}, "history": {"mapped": 0, "total": 0}});
+        assert!(fixtures_pitch([&complete]).is_none());
+        let pitch = fixtures_pitch([&below, &below, &complete]).unwrap();
+        assert_eq!(pitch.matches("Want to help").count(), 1);
+        assert!(pitch.starts_with("Want to help Dutchman read Fusion better? If you have Fusion,"));
+        assert!(
+            !pitch.contains("secret")
+                && !pitch.contains("read STEP")
+                && !pitch.contains("have STEP")
+        );
+        assert!(pitch.ends_with("Got a file that converts wrong? Drop it, with its STEP export, in a DM to Dutchy in our Discord."));
+        let refused = json!({"ok": false, "input": {"program": "STEP"}});
+        assert!(fixtures_pitch([&refused])
+            .unwrap()
+            .contains("read STEP better?"));
+        let full = json!({"ok": true, "input": {"program": "Example"},
+            "verification": {"status": "unverified"}, "history": {"mapped": 2, "total": 2}});
+        assert!(fixtures_pitch([&full]).is_none());
+        let incomplete = json!({"ok": true, "input": {"program": "Inventor"},
+            "verification": {"status": "not_applicable"}, "history": {"mapped": 0, "total": 2}});
+        assert!(fixtures_pitch([&incomplete])
+            .unwrap()
+            .contains("read Inventor better?"));
+    }
 
     #[test]
     fn losses_are_grouped_by_the_part_they_belong_to() {

@@ -85,11 +85,11 @@ impl Settings {
 
 /// Sets planned `jobs` to replace designs and look for part files as `options` say: in the
 /// options' project folder when they name one, else in the folder given that holds each file,
-/// then in the options' other folders.
+/// then in the options' other folders. Numbered saves keep existing output files.
 pub fn prepare(jobs: &mut [Job], options: &ConvertOptions) {
     for job in jobs {
         let _ = job.output.set_extension(options.to.extension());
-        job.replace = !options.no_clobber;
+        job.replace = !options.no_clobber && Format::part_revision(&job.input).is_none();
         if options.project.is_some() {
             job.search.project.clone_from(&options.project);
         }
@@ -112,6 +112,7 @@ pub fn convert_all(
         problems,
         skipped,
         skipped_by_extension,
+        skipped_revisions,
     } = plan(inputs, out_dir);
     prepare(&mut work, options);
     let mut journal = match &settings.journal {
@@ -186,6 +187,7 @@ pub fn convert_all(
         "failed": failed,
         "skipped": skipped,
         "skipped_by_extension": skipped_by_extension,
+        "skipped_revisions": skipped_revisions,
         "resumed": resumed,
         "results": all,
     }))
@@ -214,6 +216,10 @@ pub fn text(report: &Value, verbose: bool) -> String {
         .into_iter()
         .flatten()
     {
+        if let Some(status) = report::status_line(result) {
+            out.push_str(&status);
+            out.push('\n');
+        }
         out.push_str(&line(result));
         out.push('\n');
         for line in report::completeness_lines(result) {
@@ -242,20 +248,46 @@ pub fn text(report: &Value, verbose: bool) -> String {
         }
     }
     let count = |key: &str| report.get(key).and_then(Value::as_u64).unwrap_or(0);
+    let revisions = report.get("skipped_revisions").and_then(Value::as_array);
+    let older = revisions.map_or(0, Vec::len) as u64;
+    out.push_str(&revision_skip_text(report));
     out.push_str(&format!(
         "{} converted, {} failed",
         count("converted"),
         count("failed")
     ));
-    if count("skipped") > 0 {
+    if count("skipped") > older {
         out.push_str(&format!(
             ", {} skipped (not in a format Dutchman knows)",
-            count("skipped")
+            count("skipped").saturating_sub(older)
         ));
+    }
+    if older > 0 {
+        out.push_str(&format!(", {older} skipped (older revisions)"));
     }
     out.push('\n');
     if cut {
         out.push_str(&format!("({})\n", report::CUT_NOTE));
+    }
+    out
+}
+
+fn revision_skip_text(report: &Value) -> String {
+    let mut out = String::new();
+    for revision in report
+        .get("skipped_revisions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if let (Some(path), Some(newer)) = (
+            revision.get("path").and_then(Value::as_str),
+            revision.get("newer").and_then(Value::as_str),
+        ) {
+            out.push_str(&format!(
+                "skipped    {path}: older revision; using {newer}\n"
+            ));
+        }
     }
     out
 }
@@ -276,6 +308,7 @@ pub fn full_log(report: &Value) -> String {
         out.push_str(&report::full_log(result, &line(result)));
         out.push('\n');
     }
+    out.push_str(&revision_skip_text(report));
     let count = |key: &str| report.get(key).and_then(Value::as_u64).unwrap_or(0);
     out.push_str(&format!(
         "{} converted, {} failed, {} skipped\n",
@@ -346,24 +379,28 @@ pub struct Plan {
     pub jobs: Vec<Job>,
     /// Failure reports for inputs that are neither a known file nor a readable folder.
     pub problems: Vec<Value>,
-    /// Files in the folders searched that are not in a format Dutchman knows.
+    /// Files skipped in directory searches: unknown formats and older numbered saves.
     pub skipped: usize,
-    /// Those files, counted by their extension (see [`extension_of`]).
+    /// Unknown-format files, counted by their extension (see [`extension_of`]).
     pub skipped_by_extension: BTreeMap<String, usize>,
+    /// Older numbered saves omitted in favour of a newer save in the same folder.
+    pub skipped_revisions: Vec<Value>,
 }
 
 /// The files to convert, with their output paths; failure reports for inputs that are
 /// neither a known file nor a readable folder; and how many files in the folders searched
-/// were skipped as not in a format Dutchman knows.
+/// were skipped as unknown formats or older numbered saves.
 pub fn plan(inputs: &[PathBuf], out_dir: &Path) -> Plan {
     let mut jobs = Vec::new();
     let mut problems = Vec::new();
     let mut skipped = BTreeMap::new();
+    let mut skipped_revisions = Vec::new();
     let mut outputs = BTreeSet::new();
     for input in inputs {
         let mut found = Vec::new();
         if input.is_dir() {
             search(input, input, 0, &mut found, &mut skipped);
+            newest_revisions(&mut found, &mut skipped_revisions);
         } else if input.is_file() {
             let name = input.file_name().map(PathBuf::from).unwrap_or_default();
             found.push((input.clone(), name));
@@ -385,13 +422,19 @@ pub fn plan(inputs: &[PathBuf], out_dir: &Path) -> Plan {
                 continue;
             }
             let output = unique(
-                out_dir.join(relative).with_extension("solidcraft"),
+                out_dir
+                    .join(
+                        Format::part_revision(&relative)
+                            .map_or_else(|| relative.clone(), |(part, _)| part),
+                    )
+                    .with_extension("solidcraft"),
                 &mut outputs,
             );
+            let replace = Format::part_revision(&path).is_none();
             jobs.push(Job {
                 input: path,
                 output,
-                replace: true,
+                replace,
                 search: PartSearch {
                     project: input.is_dir().then(|| input.clone()),
                     also: Vec::new(),
@@ -402,9 +445,37 @@ pub fn plan(inputs: &[PathBuf], out_dir: &Path) -> Plan {
     Plan {
         jobs,
         problems,
-        skipped: skipped.values().sum(),
+        skipped: skipped.values().sum::<usize>() + skipped_revisions.len(),
         skipped_by_extension: skipped,
+        skipped_revisions,
     }
+}
+
+/// Keeps the highest numeric revision for each part found in a directory search.
+fn newest_revisions(found: &mut Vec<(PathBuf, PathBuf)>, skipped: &mut Vec<Value>) {
+    let mut newest: BTreeMap<PathBuf, (String, PathBuf)> = BTreeMap::new();
+    for (path, _) in found.iter() {
+        if let Some((part, revision)) = Format::part_revision(path) {
+            let revision = revision.trim_start_matches('0');
+            let entry = newest
+                .entry(part)
+                .or_insert_with(|| (revision.to_owned(), path.clone()));
+            if (revision.len(), revision) > (entry.0.len(), entry.0.as_str()) {
+                *entry = (revision.to_owned(), path.clone());
+            }
+        }
+    }
+    found.retain(|(path, _)| {
+        let newer = Format::part_revision(path)
+            .and_then(|(part, _)| newest.get(&part))
+            .map(|(_, newer)| newer);
+        if let Some(newer) = newer.filter(|newer| *newer != path) {
+            skipped.push(json!({"path": path, "newer": newer}));
+            false
+        } else {
+            true
+        }
+    });
 }
 
 /// A file's extension as the reports count it: lower case, letters and digits only, at most
@@ -674,5 +745,63 @@ mod tests {
             .map(|job| job.search.project)
             .collect();
         assert_eq!(projects, [Some(project), None]);
+    }
+
+    #[test]
+    fn numbered_saves_keep_the_highest_number_and_existing_outputs() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("in");
+        let out = dir.path().join("out");
+        std::fs::create_dir_all(&input).unwrap();
+        std::fs::create_dir_all(&out).unwrap();
+        for name in ["bracket.prt.3", "bracket.prt.7", "pin.prt.9", "pin.prt.10"] {
+            std::fs::write(input.join(name), b"#UGC:2").unwrap();
+        }
+        let existing = out.join("bracket.solidcraft");
+        std::fs::write(&existing, b"keep this design").unwrap();
+        let mut plan = plan(&[input], &out);
+        assert_eq!(plan.jobs.len(), 2);
+        assert!(plan
+            .jobs
+            .iter()
+            .any(|job| job.input.ends_with("bracket.prt.7")));
+        assert!(plan
+            .jobs
+            .iter()
+            .any(|job| job.input.ends_with("pin.prt.10")));
+        assert_eq!(plan.skipped, 2);
+        assert_eq!(plan.skipped_revisions.len(), 2);
+        prepare(&mut plan.jobs, &ConvertOptions::default());
+        let bracket = plan
+            .jobs
+            .iter()
+            .find(|job| job.input.ends_with("bracket.prt.7"))
+            .unwrap();
+        assert_eq!(bracket.output, existing);
+        assert!(!bracket.replace);
+        let report = convert_job(bracket, &ConvertOptions::default().writer());
+        assert_eq!(report["ok"], false);
+        assert!(report["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("already exists"));
+        assert_eq!(std::fs::read(existing).unwrap(), b"keep this design");
+    }
+
+    #[test]
+    fn revision_comparison_handles_large_numbers_and_leading_zeroes() {
+        let names = [
+            "p.prt.0009",
+            "p.prt.10",
+            "p.prt.999999999999999999999999999999",
+        ];
+        let mut found = names
+            .map(|name| (PathBuf::from(name), PathBuf::from(name)))
+            .to_vec();
+        let mut skipped = Vec::new();
+        newest_revisions(&mut found, &mut skipped);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].0, Path::new(names[2]));
+        assert_eq!(skipped.len(), 2);
     }
 }
