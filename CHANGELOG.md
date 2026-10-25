@@ -11,13 +11,17 @@ report's schema name changes when a field does).
 ### Formats
 
 - Convert CATIA `.CATPart`, Creo View `.pvz`, Rhino `.3dm`, ACIS `.sat`/`.sab`/`.smt`/`.smb`,
-  STEP `.step`/`.stp` and IGES `.igs`/`.iges` through the geometry path. Creo and NX parts
+  and STEP `.step`/`.stp` through the geometry path. Creo and NX parts
   (`.prt`, including numbered Creo saves) are recognised by contents and report when geometry
   reading is not supported yet. SolidWorks assemblies remain recognised without a reader.
+- IGES `.igs`/`.iges` files are recognised and refused before decoding, with directions to
+  open them in SolidCraft directly (File > Import). SolidCraft's own importer sews their
+  faces into solids; cadmpeg does not yet. IGES refusals do not invite test files.
 - The CLI, JSON reports and desktop app show whether each format reads geometry, opens
-  without geometry, or is recognised without a reader. `dutchman formats` lists that status
-  alongside what Dutchman converts. After a refused conversion or a history that did not
-  fully map, one invitation links to test-file recipes and private help with wrong conversions.
+  without geometry, is recognised without a reader, or should be opened in SolidCraft directly.
+  `dutchman formats` lists that status alongside what Dutchman converts. After a refused
+  conversion (except IGES) or a history that did not fully map, one invitation links to
+  test-file recipes and private help with wrong conversions.
   `--quiet` hides it; JSON output contains no invitation.
 - Directory conversion keeps the newest numbered `.prt.N` save per part and reports older
   revisions as skipped. Numbered saves use the part's base output name and keep existing outputs.

@@ -255,6 +255,7 @@ fn conversion_requires_geometry_and_an_available_codec() {
                 | Format::NxPart
                 | Format::SolidWorksAssembly
                 | Format::UnclassifiedPart
+                | Format::Iges
         );
         assert_eq!(format.reads_geometry(), geometry, "{}", format.name());
         assert_eq!(
@@ -275,4 +276,31 @@ fn inputs_without_geometry_are_refused_before_decoding() {
         assert!(matches!(err, Error::NotSupportedYet { .. }));
         assert!(err.to_string().contains("opens, no geometry yet"));
     }
+}
+
+#[test]
+fn iges_is_recognised_and_refused_before_opening_the_file() {
+    for suffix in ["igs", "iges", "IGS", "IGES"] {
+        let path = scratch(&format!("refused.{suffix}"), b"not IGES data");
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(Format::from_path(&path), Some(Format::Iges));
+        assert_eq!(
+            Format::Iges.status_for(&path),
+            format!("IGES .{suffix}: open it in SolidCraft directly")
+        );
+        let err = read(Format::Iges, &path, &mut Report::default()).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::NotSupportedYet {
+                format: Format::Iges
+            }
+        ));
+        assert_eq!(
+            err.to_string(),
+            "Dutchman doesn't convert IGES yet: open it in SolidCraft directly (File > Import)."
+        );
+        assert_eq!(err.upstream(), None);
+    }
+    assert!(!Format::Iges.can_convert());
+    assert!(!Format::supported_names().contains("IGES"));
 }

@@ -7,6 +7,9 @@ pub const SCHEMA: &str = "dutchman.formats/1";
 
 /// What Dutchman can carry from this format.
 pub fn converts(format: Format) -> &'static str {
+    if format == Format::Iges {
+        return "SolidCraft imports IGES itself (File > Import)";
+    }
     if format == Format::FreeCadDocument && format.codec_id().is_none() {
         return "left out of this build (the `freecad` feature); release builds convert them: https://github.com/dutchman-cad/dutchman/releases";
     }

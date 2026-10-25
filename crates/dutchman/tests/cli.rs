@@ -87,6 +87,116 @@ fn convert_reports_unsupported_format_cleanly() {
 }
 
 #[test]
+fn iges_is_refused_before_decoding_in_text_and_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("out.solidcraft");
+    let reason =
+        "Dutchman doesn't convert IGES yet: open it in SolidCraft directly (File > Import).";
+    for suffix in ["igs", "iges", "IGS", "IGES"] {
+        let input = dir.path().join(format!("design.{suffix}"));
+        std::fs::write(&input, b"not IGES data").unwrap();
+        for command in ["convert", "inspect"] {
+            for json in [false, true] {
+                let mut args = vec![command, input.to_str().unwrap()];
+                if command == "convert" {
+                    args.push(output.to_str().unwrap());
+                }
+                if json {
+                    args.push("--json");
+                }
+                let out = dutchman(&args);
+                assert_eq!(out.status.code(), Some(1));
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                let stderr = String::from_utf8_lossy(&out.stderr);
+                if json {
+                    let report = json_of(&out);
+                    assert_eq!(report["ok"], false);
+                    assert_eq!(report["input"]["format"], "iges");
+                    assert_eq!(report["input"]["extension"], suffix);
+                    assert_eq!(report["input"]["words"], "open it in SolidCraft directly");
+                    assert_eq!(report["error"]["message"], reason);
+                    assert_eq!(report["error"]["stage"], "decode");
+                    assert_eq!(report["error"]["upstream"], serde_json::Value::Null);
+                } else {
+                    assert_eq!(stderr, format!("dutchman: {reason}\n"));
+                    if command == "convert" {
+                        assert_eq!(
+                            stdout,
+                            format!("IGES .{suffix}: open it in SolidCraft directly\n")
+                        );
+                    } else {
+                        assert!(stdout.is_empty());
+                    }
+                }
+                assert!(!stdout.contains("Want to help"));
+                assert!(!stderr.contains("Want to help"));
+                assert!(!output.exists());
+            }
+        }
+    }
+}
+
+#[test]
+fn batch_refuses_iges_without_inviting_test_files_and_continues_other_formats() {
+    let dir = tempfile::tempdir().unwrap();
+    let inputs = dir.path().join("inputs");
+    let outputs = dir.path().join("outputs");
+    std::fs::create_dir(&inputs).unwrap();
+    let first = inputs.join("first.igs");
+    let second = inputs.join("second.iges");
+    for path in [&first, &second] {
+        std::fs::write(path, b"not IGES data").unwrap();
+    }
+    let reason =
+        "Dutchman doesn't convert IGES yet: open it in SolidCraft directly (File > Import).";
+    for directory in [false, true] {
+        for json in [false, true] {
+            let mut args = vec!["convert-all", "--out-dir", outputs.to_str().unwrap()];
+            if directory {
+                args.push(inputs.to_str().unwrap());
+            } else {
+                args.extend([first.to_str().unwrap(), second.to_str().unwrap()]);
+            }
+            if json {
+                args.push("--json");
+            }
+            let out = dutchman(&args);
+            assert_eq!(out.status.code(), Some(1));
+            if json {
+                let report = json_of(&out);
+                assert_eq!(report["converted"], 0);
+                let results = report["results"].as_array().unwrap();
+                assert_eq!(results.len(), 2);
+                for result in results {
+                    assert_eq!(result["ok"], false);
+                    assert_eq!(result["input"]["format"], "iges");
+                    assert_eq!(result["error"]["message"], reason);
+                }
+            } else {
+                let text = String::from_utf8_lossy(&out.stdout);
+                assert_eq!(text.matches(reason).count(), 2);
+                assert!(!text.contains("Want to help"));
+            }
+            assert!(!outputs.join("first.solidcraft").exists());
+            assert!(!outputs.join("second.solidcraft").exists());
+        }
+    }
+    std::fs::copy(fixture("generated_unit_cube.f3d"), inputs.join("cube.f3d")).unwrap();
+    let out = dutchman(&[
+        "convert-all",
+        inputs.to_str().unwrap(),
+        "--out-dir",
+        outputs.to_str().unwrap(),
+        "--no-verify",
+        "--json",
+    ]);
+    let report = json_of(&out);
+    assert_eq!(report["converted"], 1);
+    assert_eq!(report["failed"], 2);
+    assert!(outputs.join("cube.solidcraft").is_file());
+}
+
+#[test]
 fn convert_rejects_wrong_output_extension() {
     let out = dutchman(&["convert", "part.f3d", "part.step"]);
     assert_eq!(out.status.code(), Some(1));
@@ -441,9 +551,23 @@ fn formats_lists_what_converts() {
         .unwrap();
     assert_eq!(solidworks["status"], "converts");
 
+    let iges = report["formats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["id"] == "iges")
+        .unwrap();
+    assert_eq!(iges["status"], "not_supported");
+    assert_eq!(iges["words"], "open it in SolidCraft directly");
+    assert_eq!(
+        iges["converts"],
+        "SolidCraft imports IGES itself (File > Import)"
+    );
+
     let text = dutchman(&["formats"]);
     let stdout = String::from_utf8_lossy(&text.stdout);
     assert!(stdout.contains("Inventor assembly (.iam)"), "{stdout}");
+    assert!(stdout.contains("IGES (.igs, .iges)  open it in SolidCraft directly  not yet: SolidCraft imports IGES itself (File > Import)"), "{stdout}");
 }
 
 #[test]

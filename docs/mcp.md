@@ -91,9 +91,13 @@ provides a usable CLI.
 `formats` lists all recognised formats, their status `words`,
 and what Dutchman converts. Inputs without geometry support or a codec in this build
 return a failure describing the reader's current capability. Creo and NX `.prt` inputs
-are distinguished by contents. CATIA, Creo View, Rhino, ACIS, STEP and IGES use the geometry
+are distinguished by contents. CATIA, Creo View, Rhino, ACIS and STEP use the geometry
 path. Each conversion report's `input` also carries `words`, `program` and `extension`.
-Status words are `reads geometry`, `opens, no geometry yet`, or `recognised, not read yet`.
+Status words are `reads geometry`, `opens, no geometry yet`, `recognised, not read yet`,
+or `open it in SolidCraft directly` for IGES (`.igs`, `.iges`). IGES is recognised and
+refused before decoding by `inspect`, `convert` and `convert_all`, with `error.message`:
+`Dutchman doesn't convert IGES yet: open it in SolidCraft directly (File > Import).`
+Batch results retain that refusal; IGES does not trigger the CLI or GUI fixtures invitation.
 Numbered `.prt.N` saves are identified by contents too; a directory conversion keeps only
 the highest revision per part and returns older saves in `skipped_revisions` (`path`, `newer`).
 Numbered saves use the part's base output name and keep existing output files.

@@ -191,3 +191,42 @@ pub enum Pick {
     /// Where to save the full log of the result row at this index.
     SaveLog(usize),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn iges_in_a_folder_returns_the_shared_refusal_to_the_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let inputs = dir.path().join("inputs");
+        let outputs = dir.path().join("outputs");
+        std::fs::create_dir_all(&inputs).unwrap();
+        std::fs::write(inputs.join("design.igs"), b"not IGES data").unwrap();
+        let (send, receive) = std::sync::mpsc::channel();
+        let _run = Run::start(
+            vec![inputs],
+            outputs.clone(),
+            &ConvertOptions::default(),
+            send,
+            egui::Context::default(),
+        );
+        let mut reports = Vec::new();
+        loop {
+            match receive
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .unwrap()
+            {
+                Message::Progress(Event::Finished(_, report)) => reports.push(report),
+                Message::Done => break,
+                _ => {}
+            }
+        }
+        assert_eq!(reports.len(), 1);
+        let report = reports.first().unwrap();
+        assert_eq!(report.pointer("/ok"), Some(&serde_json::json!(false)));
+        assert_eq!(report.pointer("/error/message").and_then(Value::as_str), Some("Dutchman doesn't convert IGES yet: open it in SolidCraft directly (File > Import)."));
+        assert!(dutchman::json::fixtures_pitch(&reports).is_none());
+        assert!(!outputs.join("design.solidcraft").exists());
+    }
+}
