@@ -106,6 +106,8 @@ pub(crate) fn shown(model: &Model) -> Result<Option<(Model, usize)>, String> {
             name: model.name.clone(),
             source_file: model.source_file.clone(),
             assembly: model.assembly.clone(),
+            // The shown bodies are a subset of the file's: restate them.
+            source_step: None,
         },
         hidden,
     )))

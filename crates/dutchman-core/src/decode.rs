@@ -201,6 +201,9 @@ fn decode_unguarded(
             .file_name()
             .map(|name| name.to_string_lossy().into_owned()),
         assembly: None,
+        source_step: (format == Format::Step)
+            .then(|| String::from_utf8(bytes.to_vec()).ok())
+            .flatten(),
     })
 }
 
