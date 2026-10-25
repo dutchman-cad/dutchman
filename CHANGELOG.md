@@ -82,6 +82,9 @@ report's schema name changes when a field does).
 
 ### Reports
 
+- A counterbore, countersink or chamfered hole with a drill point at its bottom says why it is
+  not mapped: SolidCraft holes take a drill point only on a plain drilled hole, and ignore it
+  on one with an entry recess, which would leave the cone out of the geometry.
 - A joint Dutchman does not convert is reported by the output that leaves it out. A FreeCAD
   macro (`--to freecad`, experimental) builds cylindrical, ball, distance and other joints
   SolidCraft output leaves out, and no longer reports them as dropped.

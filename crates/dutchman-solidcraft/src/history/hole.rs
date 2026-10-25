@@ -33,7 +33,7 @@ pub(crate) fn map(
             Some("counterbore" | "countersink" | "chamfer")
         )
     {
-        return Err("a counterbore or countersink with a drill point is not mapped yet".to_owned());
+        return Err("SolidCraft holes take a drill point only on a plain drilled hole".to_owned());
     }
     let diameter = number(shape.get("diameter")).ok_or("its diameter is not given")?;
     let (thread, thread_note) = cosmetic_thread(construction.get("specification"), diameter)?;
@@ -67,7 +67,9 @@ pub(crate) fn map(
             }
         }
         (Some("form"), Some("counterbore_drilled")) => {
-            return Err("a counterbore with a drill point is not mapped yet".to_owned())
+            return Err(
+                "SolidCraft holes take a drill point only on a plain drilled hole".to_owned(),
+            )
         }
         (Some("form"), Some("counterdrill")) => {
             return Err(
@@ -914,7 +916,10 @@ mod tests {
         })))
         .unwrap();
         assert_eq!(to_shoulder["depth"], "6 mm");
-        assert_eq!(to_shoulder["hole"]["type"], "drilled");
+        assert_eq!(
+            to_shoulder["hole"],
+            json!({"type": "drilled", "tip_angle": "118.00000000000001"})
+        );
         let to_tip = mapped(&hole(json!({
             "extent": {"kind": "blind", "length": 6.0},
             "bottom": {"kind": "angled", "included_angle": angle, "depth_to_tip": true},
@@ -968,26 +973,31 @@ mod tests {
         for form in [
             json!({"kind": "counterbore", "diameter": 8.0, "depth": 2.0}),
             json!({"kind": "countersink", "diameter": 8.0, "angle": std::f64::consts::FRAC_PI_2}),
+            json!({"kind": "chamfer", "diameter": 8.0, "angle": std::f64::consts::FRAC_PI_2}),
         ] {
-            let definition = hole(json!({
-                "shape": {"construction": {"construction": "form", "kind": form}, "diameter": 5.0},
-                "extent": {"kind": "blind", "length": 6.0},
-                "bottom": {"kind": "angled", "included_angle": 118_f64.to_radians(), "depth_to_tip": false},
-            }));
-            assert_eq!(
-                mapped(&definition).unwrap_err(),
-                "a counterbore or countersink with a drill point is not mapped yet"
-            );
+            for to_tip in [false, true] {
+                let definition = hole(json!({
+                    "shape": {"construction": {"construction": "form", "kind": form}, "diameter": 5.0},
+                    "extent": {"kind": "blind", "length": 6.0},
+                    "bottom": {"kind": "angled", "included_angle": 118_f64.to_radians(), "depth_to_tip": to_tip},
+                }));
+                assert_eq!(
+                    mapped(&definition).unwrap_err(),
+                    "SolidCraft holes take a drill point only on a plain drilled hole"
+                );
+            }
         }
     }
 
     #[test]
     fn other_holes_say_why_they_are_not_mapped() {
         let counterbore = hole(json!({"shape": {"construction": {"construction": "form",
-            "kind": {"kind": "counterbore_drilled"}}, "diameter": 5.0}}));
+            "kind": {"kind": "counterbore_drilled", "diameter": 8.0, "depth": 2.0,
+                "drill_point_angle": 118_f64.to_radians()}}, "diameter": 5.0},
+            "extent": {"kind": "blind", "length": 6.0}}));
         assert_eq!(
             mapped(&counterbore).unwrap_err(),
-            "a counterbore with a drill point is not mapped yet"
+            "SolidCraft holes take a drill point only on a plain drilled hole"
         );
         let to_face = hole(json!({"extent": {"kind": "to_face"}}));
         assert_eq!(mapped(&to_face).unwrap_err(), "its face is not resolved");

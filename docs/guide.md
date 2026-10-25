@@ -584,6 +584,9 @@ Hole history includes chamfered entries and tapped holes: the hole keeps its bor
 metric thread label such as `M6x1`. A thread's hand, tolerance class, and length don't carry
 across; the report lists them as Degraded. Taper, exit treatments, modeled threads, and entry
 recesses combined with drill points are not supported yet, and the report names the option.
+For a counterbore, countersink, or chamfered entry with a drill point, the reason is
+"SolidCraft holes take a drill point only on a plain drilled hole": SolidCraft 0.21.0 ignores
+`tip_angle` on counterbores and countersinks. Conversion keeps the original geometry.
 
 When every feature in a design's history maps onto SolidCraft (sketches, extrudes, revolves,
 patterns, body mirrors, and body booleans so far), the design keeps that history, editable, with
