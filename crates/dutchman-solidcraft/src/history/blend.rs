@@ -129,8 +129,15 @@ pub(super) fn map(
         out.insert("distance".to_owned(), json!(length(distance)?));
     }
     let selection = group.get("edges").ok_or("its input edges are not given")?;
-    if selection.get("kind").and_then(Value::as_str) != Some("historical") {
-        return Err("blends require edges from their own feature input topology; final-body and unresolved selections are not supported yet".to_owned());
+    match selection.get("kind").and_then(Value::as_str) {
+        Some("historical") => {}
+        Some("native" | "unresolved") => {
+            return Err("its edges are a selection cadmpeg does not resolve to edges yet".to_owned())
+        }
+        Some("historical_partial") => {
+            return Err("some of its edges are not resolved in its input topology".to_owned())
+        }
+        _ => return Err("blends require edges from their own feature input topology; edges of the final body are not supported yet".to_owned()),
     }
     let state_id = selection
         .pointer("/value/state")
