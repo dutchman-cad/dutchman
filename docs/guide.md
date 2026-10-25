@@ -210,6 +210,11 @@ This installs both `dutchman` and `dutchman-mcp`. Check the install:
 dutchman --version
 ```
 
+### Docker
+
+The repository's `Dockerfile` builds an image with `dutchman` and `dutchman-mcp`, without the
+desktop app. [Docker](docker.md) says how to build it and convert with it.
+
 ### SolidCraft (optional, recommended)
 
 When a design's feature history converts, Dutchman checks it by replaying it in SolidCraft's

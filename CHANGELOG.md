@@ -24,6 +24,12 @@ report's schema name changes when a field does).
   from its leftmost point. This affected Inventor parts read with cadmpeg's sketch-region
   profiles.
 
+### Install
+
+- Run Dutchman in Docker: the `Dockerfile` builds an image with `dutchman` and `dutchman-mcp`
+  for x86_64 and ARM64 Linux, optionally with SolidCraft to check histories
+  ([docs/docker.md](docs/docker.md)).
+
 ## 0.2.0 (2026-10-25)
 
 ### Known issue
