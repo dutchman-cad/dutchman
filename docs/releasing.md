@@ -27,6 +27,9 @@ A release is cut from `main` once CI is green there.
    The workflow also runs on demand (`gh workflow run release-build.yml`) and for a pull
    request that changes the packaging, but those runs keep only workflow artifacts and
    do not create a draft. It does not run for every push to `main`.
+   Pushed `vX.Y.Z` tags also publish `ghcr.io/dutchman-cad/dutchman:X.Y.Z` and `:latest`,
+   using the checksum-verified Linux archives, with no second Rust build. On-demand and
+   packaging pull-request runs build both image architectures without logging in or pushing.
 4. crates.io: releases ship as GitHub release archives only, until the core API settles. The
    crates.io `dutchman` crate stays the 0.0.1 placeholder. When crates are published, the
    order matters: `dutchman` depends on `dutchman-core` and `dutchman-solidcraft`, so those go
@@ -74,3 +77,24 @@ each day from Dutchman's `main` against cadmpeg's `main` (`scripts/use-cadmpeg-m
 
 All cadmpeg crates, including cadmpeg-registry, come directly from the pinned git revision.
 `scripts/use-cadmpeg-main.sh <sha>` updates the dependencies and checks their lockfile sources.
+
+## Container image
+
+The Linux archive builds run in Debian bookworm so their glibc requirements fit the
+`debian:bookworm-slim` runtime. `docker/release.Dockerfile` installs the CLI and MCP
+server, plus `dutchman-web` whenever it is included in the archives, and retains the
+licence files. Image licence metadata comes from `Cargo.toml`. Only the image publishing
+jobs receive `packages: write`. The nightly image job waits for the nightly pre-release
+publication to succeed, then publishes `ghcr.io/dutchman-cad/dutchman:nightly` from the
+same run's Linux artifacts.
+
+Check the image job in the workflow, then check the published manifest and executable:
+
+```sh
+docker buildx imagetools inspect ghcr.io/dutchman-cad/dutchman:X.Y.Z
+docker run --rm ghcr.io/dutchman-cad/dutchman:X.Y.Z --version
+```
+
+The manifest must include `linux/amd64` and `linux/arm64`; test `--version` on each
+architecture. On first publication, check that the GHCR package is public so anonymous
+pulls work. See [Docker](docker.md) for conversion, MCP and Compose examples.

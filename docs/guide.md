@@ -212,9 +212,10 @@ dutchman --version
 
 ### Docker
 
-The repository's `Dockerfile` builds an image with `dutchman`, `dutchman-mcp` and
-`dutchman-web`, without the desktop app. [Docker](docker.md) says how to build it and convert
-with it.
+Each release is published as a container image with `dutchman`, `dutchman-mcp` and
+`dutchman-web`, without the desktop app, for amd64 and arm64:
+`docker pull ghcr.io/dutchman-cad/dutchman:latest`. The repository's `Dockerfile` builds the
+same from source. [Docker](docker.md) says how to get it and convert with it.
 
 ### Dutchman Web, in a browser
 

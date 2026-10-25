@@ -1,14 +1,37 @@
 # Docker
 
-The [`Dockerfile`](../Dockerfile) at the top of the repository builds an image with the
-`dutchman` command, the `dutchman-mcp` [MCP server](mcp.md) and the `dutchman-web`
-[browser interface](web.md), for x86_64 and ARM64 Linux. It has no desktop app: `dutchman-gui`
-needs a desktop session. Use it to convert on a server, in CI, or anywhere you would rather not
-install Dutchman.
+Dutchman runs in a container with the `dutchman` command, the `dutchman-mcp`
+[MCP server](mcp.md) and the `dutchman-web` [browser interface](web.md), for x86_64 and ARM64
+Linux. It has no desktop app: `dutchman-gui` needs a desktop session. Use it to convert on a
+server, in CI, or anywhere you would rather not install Dutchman.
 
-## Build the image
+## Get the image
 
-From a checkout of the repository:
+### Pull the published image
+
+Each release publishes `ghcr.io/dutchman-cad/dutchman`, made from the same Linux binaries as the
+downloads; Docker picks the image for its own architecture:
+
+```sh
+docker pull ghcr.io/dutchman-cad/dutchman:latest
+docker tag ghcr.io/dutchman-cad/dutchman:latest dutchman
+docker run --rm dutchman --version
+```
+
+The `docker tag` line lets the commands below say `dutchman`; you can also give the full name
+each time. The tags are:
+
+- `X.Y.Z`: one release, such as `0.2.1`; it never changes.
+- `latest`: the newest release.
+- `nightly`: built each day from `main` against cadmpeg's `main`, after its tests pass.
+
+To update, pull again (`docker pull ghcr.io/dutchman-cad/dutchman:latest`, then tag it again),
+or with Compose, `docker compose pull && docker compose up -d`. A tool such as Watchtower can
+pull new releases for you.
+
+### Build it yourself
+
+To build from a checkout of the repository instead, with the [`Dockerfile`](../Dockerfile) at its top:
 
 ```sh
 docker build -t dutchman .
@@ -98,11 +121,29 @@ Other clients take the same command in their `mcpServers` entry:
 Replace `/home/me/cad` with your folder and `1000:1000` with your user and group ids
 (`id -u`, `id -g`).
 
+## With Compose
+
+Save as `compose.yaml` next to your designs, then convert with
+`docker compose run --rm dutchman convert-all --out-dir converted/ .`:
+
+```yaml
+services:
+  dutchman:
+    image: ghcr.io/dutchman-cad/dutchman:latest
+    user: "${LOCAL_UID:-1000}:${LOCAL_GID:-1000}"
+    working_dir: /work
+    volumes:
+      - .:/work
+```
+
+Set `LOCAL_UID=$(id -u) LOCAL_GID=$(id -g)` first so the converted designs belong to you. On a
+host with SELinux, add `:Z` to the volume (`.:/work:Z`).
+
 ## Checking histories in SolidCraft
 
 Without `solidcraft-cli`, a written history is reported `unverified`
-([Feature history](guide.md#feature-history-and-the-solidcraft-check)). On x86_64, the image can
-include a [SolidCraft release](https://github.com/tangency-labs/solidcraft/releases) to check
+([Feature history](guide.md#feature-history-and-the-solidcraft-check)). On x86_64, an image you build
+yourself can include a [SolidCraft release](https://github.com/tangency-labs/solidcraft/releases) to check
 each history. Give its version and the SHA-256 of its `solidcraft-VERSION-linux-x86_64.tar.gz`:
 
 ```sh

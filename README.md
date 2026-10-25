@@ -49,7 +49,8 @@ scoop install dutchman-cad/dutchman
 Both install `dutchman`, `dutchman-mcp` and the desktop app (`dutchman-gui`; Scoop also adds a
 Start menu shortcut), and follow each release: `brew upgrade` or `scoop update` brings the
 newest. A Homebrew install on macOS needs no first-run approval, because Homebrew's downloads
-are not quarantined. Or download a release below, or run it in [Docker](docs/docker.md).
+are not quarantined. Or download a release below, or run it in [Docker](docs/docker.md)
+(`docker pull ghcr.io/dutchman-cad/dutchman:latest`).
 
 ## Download
 
@@ -217,7 +218,7 @@ desktop portal, and dropping files works without it.
   in SolidCraft, troubleshooting.
 - [The MCP server](docs/mcp.md): tools, client setup for Claude Code, Codex and others,
   example calls, safety.
-- [Docker](docs/docker.md): build the image, convert in a container, run the MCP server
+- [Docker](docs/docker.md): pull or build the image, convert in a container, run the MCP server
   from it.
 - [Dutchman Web](docs/web.md): convert from a browser, on a server you host.
 - [Agent skill](skills/README.md): teaches an AI assistant to convert files with Dutchman and
