@@ -6,6 +6,14 @@ report's schema name changes when a field does).
 
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
+## Unreleased
+
+### Install
+
+- Run Dutchman in Docker: the `Dockerfile` builds an image with `dutchman` and `dutchman-mcp`
+  for x86_64 and ARM64 Linux, optionally with SolidCraft to check histories
+  ([docs/docker.md](docs/docker.md)).
+
 ## 0.2.0 (2026-10-25)
 
 ### Formats

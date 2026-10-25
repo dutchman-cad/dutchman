@@ -18,11 +18,13 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
-  # Whether the change touches Rust code, which the macOS tests (macOS runners are scarce) wait on.
+  # Whether the change touches Rust code, which the macOS tests (macOS runners are scarce) wait on,
+  # or the Docker image, which the Docker job waits on.
   changes:
     runs-on: ubuntu-latest
     outputs:
       rust: ${{ steps.diff.outputs.rust }}
+      docker: ${{ steps.diff.outputs.docker }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,6 +35,7 @@ jobs:
         run: |
           if ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
             echo "rust=true" >> "$GITHUB_OUTPUT"
+            echo "docker=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if git diff --name-only "$BASE" HEAD \
@@ -40,6 +43,12 @@ jobs:
             echo "rust=true" >> "$GITHUB_OUTPUT"
           else
             echo "rust=false" >> "$GITHUB_OUTPUT"
+          fi
+          if git diff --name-only "$BASE" HEAD \
+            | grep -qE '^(crates/|Cargo\.(toml|lock)$|Dockerfile$|\.dockerignore$|\.github/workflows/ci\.yml$)'; then
+            echo "docker=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "docker=false" >> "$GITHUB_OUTPUT"
           fi
 
   fmt:
@@ -88,6 +97,33 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --locked
+
+  # Builds the Docker image (docs/docker.md), converts a fixture in it and starts its MCP server.
+  docker:
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: dutchman:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Convert a fixture in the image
+        run: |
+          fixtures="$PWD/crates/dutchman-core/tests/fixtures"
+          docker run --rm -v "$fixtures:/work:ro" -v "$RUNNER_TEMP:/out" --user "$(id -u):$(id -g)" \
+            dutchman:ci convert --json generated_unit_cube.f3d /out/cube.solidcraft | tee report.json
+          grep -q '"ok":true' report.json
+          test -s "$RUNNER_TEMP/cube.solidcraft"
+      - name: Start the MCP server in the image
+        run: |
+          echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \
+            | docker run --rm -i --entrypoint dutchman-mcp dutchman:ci | grep -q '"result"'
 
   msrv:
     runs-on: ubuntu-latest
