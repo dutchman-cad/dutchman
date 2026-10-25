@@ -4,12 +4,51 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
 use std::path::PathBuf;
-use std::process::{Command, Output};
+use std::process::{Child, Command, Output, Stdio};
+use std::sync::Mutex;
+
+// A fork must not inherit a write descriptor for an executable another test will run.
+// Hold this through each spawn (which waits for exec) and each executable publication.
+static EXECUTABLE_PUBLICATION: Mutex<()> = Mutex::new(());
+
+trait TestCommand {
+    fn test_spawn(&mut self) -> std::io::Result<Child>;
+    fn test_output(&mut self) -> std::io::Result<Output>;
+}
+
+impl TestCommand for Command {
+    fn test_spawn(&mut self) -> std::io::Result<Child> {
+        let mut retries = 0;
+        loop {
+            let result = {
+                let _guard = EXECUTABLE_PUBLICATION.lock().unwrap();
+                self.spawn()
+            };
+            match result {
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::ExecutableFileBusy && retries < 5 =>
+                {
+                    retries += 1;
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                result => return result,
+            }
+        }
+    }
+
+    fn test_output(&mut self) -> std::io::Result<Output> {
+        self.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .test_spawn()?
+            .wait_with_output()
+    }
+}
 
 fn dutchman(args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_dutchman"))
         .args(args)
-        .output()
+        .test_output()
         .unwrap()
 }
 
@@ -57,7 +96,7 @@ fn pilot_is_absent_without_the_feature() {
     let out = Command::new(env!("CARGO_BIN_EXE_dutchman"))
         .args(["pilot", "--help"])
         .env("PATH", "")
-        .output()
+        .test_output()
         .unwrap();
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(String::from_utf8(out.stderr).unwrap(), "dutchman: `dutchman pilot` is not installed; get it at https://github.com/dutchman-cad/pilot\n");
@@ -1101,7 +1140,7 @@ fn unknown_tool_explains_where_to_install_it() {
     let out = Command::new(env!("CARGO_BIN_EXE_dutchman"))
         .arg("unknown-tool-for-test")
         .env("PATH", "")
-        .output()
+        .test_output()
         .unwrap();
     assert_eq!(out.status.code(), Some(1));
     assert_eq!(String::from_utf8(out.stderr).unwrap(), "dutchman: `dutchman unknown-tool-for-test` is not installed; get it at https://github.com/dutchman-cad/unknown-tool-for-test\n");
@@ -1121,12 +1160,24 @@ mod external_tools {
     use super::*;
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
-    use std::process::Stdio;
 
     fn script(dir: &std::path::Path, name: &str, body: &str) {
         let path = dir.join(format!("dutchman-{name}"));
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        executable(&path, |file| {
+            write!(file, "#!/bin/sh\n{body}\n").unwrap();
+        });
+    }
+
+    fn executable(path: &std::path::Path, write: impl FnOnce(&mut std::fs::File)) {
+        let _guard = EXECUTABLE_PUBLICATION.lock().unwrap();
+        let mut temporary = tempfile::NamedTempFile::new_in(path.parent().unwrap()).unwrap();
+        write(temporary.as_file_mut());
+        temporary.as_file().sync_all().unwrap();
+        // Close the writer before chmod and rename. Publication alone cannot prevent
+        // inherited writers; the lock also excludes forks until the writer is closed.
+        let temporary = temporary.into_temp_path();
+        std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::rename(&temporary, path).unwrap();
     }
 
     #[test]
@@ -1142,7 +1193,7 @@ mod external_tools {
             .env("PATH", dir.path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .spawn()
+            .test_spawn()
             .unwrap();
         child
             .stdin
@@ -1170,7 +1221,7 @@ mod external_tools {
             let out = Command::new(env!("CARGO_BIN_EXE_dutchman"))
                 .args(&args)
                 .env("PATH", dir.path())
-                .output()
+                .test_output()
                 .unwrap();
             assert!(out.status.success());
             let expected = if args.len() == 2 {
@@ -1187,20 +1238,23 @@ mod external_tools {
         let adjacent = tempfile::tempdir().unwrap();
         let path = tempfile::tempdir().unwrap();
         let binary = adjacent.path().join("dutchman");
-        std::fs::copy(env!("CARGO_BIN_EXE_dutchman"), &binary).unwrap();
+        executable(&binary, |file| {
+            let mut source = std::fs::File::open(env!("CARGO_BIN_EXE_dutchman")).unwrap();
+            std::io::copy(&mut source, file).unwrap();
+        });
         script(adjacent.path(), "foo", "echo adjacent-1.0");
         script(path.path(), "foo", "echo path-2.0");
         let out = Command::new(&binary)
             .arg("foo")
             .env("PATH", path.path())
-            .output()
+            .test_output()
             .unwrap();
         assert_eq!(out.stdout, b"adjacent-1.0\n");
         for args in [vec![], vec!["--help"]] {
             let out = Command::new(&binary)
                 .args(args)
                 .env("PATH", path.path())
-                .output()
+                .test_output()
                 .unwrap();
             assert!(out.status.success());
             let text = String::from_utf8_lossy(&out.stdout);
@@ -1221,7 +1275,7 @@ mod external_tools {
             .arg("foo")
             .arg(std::ffi::OsString::from_vec(vec![0xff, b'a']))
             .env("PATH", dir.path())
-            .output()
+            .test_output()
             .unwrap();
         assert_eq!(out.stdout, [0xff, b'a']);
     }
@@ -1237,7 +1291,7 @@ mod external_tools {
                 .current_dir(dir.path())
                 .env("PATH", dir.path())
                 .args(args)
-                .output()
+                .test_output()
                 .unwrap()
         };
         let out = run(&["formats"]);
@@ -1264,7 +1318,7 @@ mod external_tools {
         let out = Command::new(env!("CARGO_BIN_EXE_dutchman"))
             .arg("conver")
             .env("PATH", dir.path())
-            .output()
+            .test_output()
             .unwrap();
         assert!(out.status.success());
         assert_eq!(out.stdout, b"installed\n");
@@ -1277,7 +1331,7 @@ fn pilot_version_falls_back_to_builtin() {
     let out = Command::new(env!("CARGO_BIN_EXE_dutchman"))
         .args(["pilot", "--version"])
         .env("PATH", "")
-        .output()
+        .test_output()
         .unwrap();
     assert!(out.status.success());
     assert!(String::from_utf8_lossy(&out.stdout).contains("0.1.0-beta.1"));
@@ -1299,7 +1353,7 @@ fn bare_and_explicit_conversion_derive_and_protect_default_outputs() {
             .current_dir(dir.path())
             .args(args)
             .env("PATH", "")
-            .output()
+            .test_output()
             .unwrap()
     };
     for prefix in [vec![], vec!["convert"], vec!["--verbose"]] {
@@ -1348,7 +1402,7 @@ fn default_output_extensions_and_input_protection() {
         Command::new(env!("CARGO_BIN_EXE_dutchman"))
             .current_dir(dir.path())
             .args(args)
-            .output()
+            .test_output()
             .unwrap()
     };
     std::fs::write(dir.path().join("part.FCStd"), b"sentinel").unwrap();
@@ -1387,7 +1441,7 @@ fn builtin_command_wins_over_a_same_named_file() {
     let out = Command::new(env!("CARGO_BIN_EXE_dutchman"))
         .current_dir(dir.path())
         .arg("formats")
-        .output()
+        .test_output()
         .unwrap();
     assert!(out.status.success());
     assert!(String::from_utf8_lossy(&out.stdout).contains("Fusion"));
