@@ -6466,6 +6466,24 @@ fn blends_refuse_missing_foreign_or_ambiguous_input_geometry() {
         },
         "require edges from their own feature input topology",
     );
+    check(
+        cli,
+        |m| {
+            m["features"][2]["definition"]["groups"][0]["edges"] =
+                json!({"kind": "native", "value": "feature-property:93"})
+        },
+        "a selection cadmpeg does not resolve to edges yet",
+    );
+    check(
+        cli,
+        |m| {
+            let edges = &mut m["features"][2]["definition"]["groups"][0]["edges"];
+            let value = edges["value"].clone();
+            *edges = json!({"kind": "historical_partial", "value": {"state": value["state"],
+                "edges": [], "unresolved": ["op:1"], "native": value["native"]}})
+        },
+        "some of its edges are not resolved in its input topology",
+    );
     // Two bodies in the same place: the midpoint lies on an edge of each.
     let twins = fake_cli(
         &[
