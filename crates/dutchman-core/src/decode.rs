@@ -154,7 +154,7 @@ fn decode_unguarded(
         .decode(&mut Cursor::new(bytes), &options)
         .map_err(|err| decode_failure(format, err))
         .map_err(other)?;
-    let (ir, decode_report, fidelity) = decoded.into_parts();
+    let (mut ir, decode_report, fidelity) = decoded.into_parts();
     // An assembly's geometry is in its parts' files, read afterwards.
     if !decode_report.geometry_transferred() && !format.is_assembly() {
         return Err(other(Error::Decode(format!(
@@ -164,13 +164,79 @@ fn decode_unguarded(
     }
     report.extend_from_cadmpeg(&decode_report.losses);
 
+    validate_decoded(&mut ir, depth, &policy, bytes.len() as u64, report)?;
+
+    Ok(Model {
+        ir,
+        fidelity: Some(fidelity),
+        name: design_name(path),
+        source_file: path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned()),
+        assembly: None,
+        source_step: (format == Format::Step)
+            .then(|| String::from_utf8(bytes.to_vec()).ok())
+            .flatten(),
+    })
+}
+
+/// Keep only the arenas needed to restate geometry and its assembly structure.
+/// Rebuilding the model also removes the private feature-regeneration parent graph.
+fn geometry_only(ir: &mut cadmpeg_ir::CadIr) {
+    let mut source = std::mem::take(&mut ir.model);
+    macro_rules! keep {
+        ($($arena:ident),+ $(,)?) => {
+            $(ir.model.$arena = std::mem::take(&mut source.$arena);)+
+        };
+    }
+    keep!(
+        bodies,
+        regions,
+        shells,
+        faces,
+        loops,
+        coedges,
+        edges,
+        vertices,
+        points,
+        surfaces,
+        curves,
+        subds,
+        pcurves,
+        procedural_surfaces,
+        procedural_curves,
+        assets,
+        product_definitions,
+        occurrences,
+        assembly_joints,
+        tessellations,
+        appearances,
+        appearance_bindings,
+        attributes,
+    );
+    for joint in &mut ir.model.assembly_joints {
+        joint.driving_parameter = None;
+    }
+}
+
+fn validate_decoded(
+    ir: &mut cadmpeg_ir::CadIr,
+    depth: DecodeDepth,
+    policy: &DecodePolicy,
+    input_bytes: u64,
+    report: &mut Report,
+) -> Result<(), Failed> {
+    if depth == DecodeDepth::Geometry {
+        geometry_only(ir);
+    }
+
     // Check the model the way cadmpeg's own conversion does before anything is built on it.
     let arena = DecodeArena::new();
-    let decode_error = |err: &dyn std::fmt::Display| other(Error::Decode(err.to_string()));
-    let ctx = DecodeContext::for_loaded_input(&arena, &policy, bytes.len() as u64)
+    let decode_error = |err: &dyn std::fmt::Display| Failed::Other(Error::Decode(err.to_string()));
+    let ctx = DecodeContext::for_loaded_input(&arena, policy, input_bytes)
         .map_err(|err| decode_error(&err))?;
     let validation =
-        validate_neutral_for_decode(&ctx, &ir, Vec::new()).map_err(|err| decode_error(&err))?;
+        validate_neutral_for_decode(&ctx, ir, Vec::new()).map_err(|err| decode_error(&err))?;
     ctx.finish_session().map_err(|err| decode_error(&err))?;
     if !validation.is_ok() {
         let first = validation
@@ -193,15 +259,7 @@ fn decode_unguarded(
         );
     }
 
-    Ok(Model {
-        ir,
-        fidelity: Some(fidelity),
-        name: design_name(path),
-        source_file: path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned()),
-        assembly: None,
-    })
+    Ok(())
 }
 
 /// Keep cadmpeg's cause, and give a recovery step for unreadable containers.
@@ -325,6 +383,130 @@ mod tests {
             &mut Report::default(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn duplicate_parameters_are_removed_before_geometry_validation() {
+        let mut source = cube();
+        for ordinal in 0..2 {
+            source.ir.model.parameters.push(
+                serde_json::from_value(serde_json::json!({
+                    "id": format!("test:design:parameter#{ordinal}"),
+                    "ordinal": ordinal,
+                    "name": "HoleOffset",
+                    "expression": "2 mm"
+                }))
+                .unwrap(),
+            );
+        }
+        let failure = validate_decoded(
+            &mut source.ir.clone(),
+            DecodeDepth::Full,
+            &policy(),
+            0,
+            &mut Report::default(),
+        )
+        .unwrap_err();
+        assert!(
+            matches!(failure, Failed::Checks(ref why)
+            if why.contains("repeats parameter name `HoleOffset`")),
+            "{failure:?}"
+        );
+
+        source.ir.model.sketches.push(
+            serde_json::from_value(serde_json::json!({
+                "id": "test:design:sketch#1",
+                "placement": {"kind": "unresolved"}
+            }))
+            .unwrap(),
+        );
+        for ordinal in 0..2 {
+            source.ir.model.features.push(
+                serde_json::from_value(serde_json::json!({
+                    "id": format!("test:design:feature#{ordinal}"),
+                    "ordinal": ordinal,
+                    "suppressed": false,
+                    "definition": {
+                        "definition": "sketch",
+                        "sketch": {"space": "planar", "sketch": "test:design:sketch#1"}
+                    }
+                }))
+                .unwrap(),
+            );
+        }
+        let parent = source.ir.model.features[0].id.clone();
+        let child = source.ir.model.features[1].id.clone();
+        source
+            .ir
+            .model
+            .set_feature_regeneration_parent(&child, &parent)
+            .unwrap();
+        source.ir.model.configurations.push(
+            serde_json::from_value(serde_json::json!({
+                "id": "test:design:configuration#1",
+                "parameter_overrides": {"test:design:parameter#0": "HoleOffset + 1 mm"},
+                "properties": {"HoleOffset": "2 mm"}
+            }))
+            .unwrap(),
+        );
+        let mut joint = cadmpeg_ir::products::AssemblyJoint::grounded(
+            cadmpeg_ir::products::JointId::mint("test:assembly:joint#1").unwrap(),
+            cadmpeg_ir::products::JointConnector {
+                operand: cadmpeg_ir::products::JointOperand::root(
+                    source.ir.model.bodies[0].id.as_str(),
+                    Vec::new(),
+                ),
+                frame: cadmpeg_ir::transform::Transform::identity(),
+                detached: false,
+            },
+            None,
+        );
+        joint.driving_parameter = Some(source.ir.model.parameters[0].id.clone());
+        source.ir.model.assembly_joints.push(joint.clone());
+
+        let mut report = Report::default();
+        let model = with_fallback(&mut report, |depth, report| {
+            let mut model = source.clone();
+            validate_decoded(&mut model.ir, depth, &policy(), 0, report)?;
+            Ok(model)
+        })
+        .unwrap();
+        assert_eq!(model.ir.model.bodies.len(), 1);
+        assert_eq!(model.ir.model.bodies, source.ir.model.bodies);
+        assert_eq!(
+            model.ir.model.product_definitions,
+            source.ir.model.product_definitions
+        );
+        assert_eq!(model.ir.model.occurrences, source.ir.model.occurrences);
+        assert_eq!(model.ir.model.appearances, source.ir.model.appearances);
+        assert!(model.ir.model.parameters.is_empty());
+        assert!(model.ir.model.populated_design_arena().is_none());
+        assert!(model.ir.model.feature_regeneration_parent(&child).is_none());
+        joint.driving_parameter = None;
+        assert_eq!(model.ir.model.assembly_joints, vec![joint]);
+        assert!(report.losses().iter().any(|loss| {
+            loss.severity == Severity::Degraded
+                && loss.stage == Stage::Project
+                && loss
+                    .to_string()
+                    .contains("sketches and parameters are left out")
+                && loss.to_string().contains("HoleOffset")
+        }));
+    }
+
+    #[test]
+    fn geometry_validation_still_rejects_duplicate_bodies() {
+        let mut model = cube();
+        model.ir.model.bodies.push(model.ir.model.bodies[0].clone());
+        let failure = validate_decoded(
+            &mut model.ir,
+            DecodeDepth::Geometry,
+            &policy(),
+            0,
+            &mut Report::default(),
+        )
+        .unwrap_err();
+        assert!(matches!(failure, Failed::Checks(_)), "{failure:?}");
     }
 
     #[test]

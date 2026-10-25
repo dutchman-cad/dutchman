@@ -2,7 +2,7 @@
 
 use serde_json::{json, Value};
 
-use super::sketch::Mapped;
+use super::sketch::{Curve, Mapped, Shape, P2};
 use super::Context;
 
 /// The sketch a profile reference uses, and the SolidCraft profile selection for it.
@@ -71,7 +71,14 @@ pub(super) fn profile(profile: Option<&Value>, ctx: &Context) -> Result<(String,
                     .filter(|index| *index != outer)
                     .map(|index| source_loop(ctx, sketch, &json!(index), mapped))
                     .collect::<Result<Vec<_>, _>>()?;
-                json!({"type": "whole_boundaries", "profiles": [{"outer": boundary, "holes": holes}]})
+                let holes: Vec<_> = holes
+                    .into_iter()
+                    .map(|hole| canonical_loop(hole, mapped))
+                    .collect();
+                json!({"type": "whole_boundaries", "profiles": [{
+                    "outer": canonical_loop(boundary, mapped),
+                    "holes": holes,
+                }]})
             } else {
                 return Err(format!(
                     "a profile cadmpeg does not resolve, in a sketch of {count} profiles, is not \
@@ -82,6 +89,191 @@ pub(super) fn profile(profile: Option<&Value>, ctx: &Context) -> Result<(String,
         other => return Err(format!("{other} profiles are not mapped yet")),
     };
     Ok((sketch.to_owned(), selection))
+}
+
+/// A whole boundary as SolidCraft lists the loops it finds itself, which is the only order it
+/// matches: counter-clockwise, holes included, starting at the curve through the loop's leftmost
+/// point, or at the curve leaving it when that point is a vertex. Of vertices equally far left,
+/// the one with the lowest sketch point index starts the loop.
+/// A loop of curves other than lines and arcs, or one that does not close, is left as it is.
+fn canonical_loop(ring: Vec<String>, mapped: &Mapped) -> Vec<String> {
+    let Some(curves) = ring
+        .iter()
+        .map(|id| {
+            mapped.shapes.values().find_map(|shape| match shape {
+                Shape::Curve(curve) if curve.id == *id => Some(curve),
+                _ => None,
+            })
+        })
+        .collect::<Option<Vec<&Curve>>>()
+    else {
+        return ring;
+    };
+    if curves.len() < 2 || ring.len() > LOOP_LIMIT {
+        return ring;
+    }
+    let Some(mut steps) = chain(&curves) else {
+        return ring;
+    };
+    let Some(mut samples) = steps
+        .iter()
+        .map(|&(index, forward)| run_points(curves.get(index).copied(), forward, mapped))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return ring;
+    };
+    if signed_area(&samples) < 0.0 {
+        steps.reverse();
+        for step in &mut steps {
+            step.1 = !step.1;
+        }
+        samples = match steps
+            .iter()
+            .map(|&(index, forward)| run_points(curves.get(index).copied(), forward, mapped))
+            .collect::<Option<Vec<_>>>()
+        {
+            Some(samples) => samples,
+            None => return ring,
+        };
+    }
+    let mut first = 0;
+    let mut best: Option<(f64, usize)> = None;
+    for (position, points) in samples.iter().enumerate() {
+        for (point, vertex) in points {
+            // A point inside an arc ranks after every vertex at the same x.
+            let rank = vertex.unwrap_or(usize::MAX);
+            let left = match best {
+                None => true,
+                Some((x, best_rank)) => {
+                    point[0] < x - EPSILON || ((point[0] - x).abs() <= EPSILON && rank < best_rank)
+                }
+            };
+            if left {
+                best = Some((point[0], rank));
+                first = position;
+            }
+        }
+    }
+    steps.rotate_left(first);
+    steps
+        .iter()
+        .filter_map(|&(index, _)| ring.get(index).cloned())
+        .collect()
+}
+
+/// More curves than this in one loop are left in their source order.
+const LOOP_LIMIT: usize = 10_000;
+
+/// Positions within this (mm) are the same for the leftmost-point test.
+const EPSILON: f64 = 1e-9;
+
+/// The loop's curves in order, each with whether it runs from its start to its end.
+fn chain(curves: &[&Curve]) -> Option<Vec<(usize, bool)>> {
+    let ends = |curve: &Curve, forward: bool| -> Option<(usize, usize)> {
+        let (start, end) = (curve.start?, curve.end?);
+        Some(if forward { (start, end) } else { (end, start) })
+    };
+    if curves
+        .iter()
+        .any(|curve| !matches!(curve.kind, "line" | "arc"))
+    {
+        return None;
+    }
+    let first = *curves.first()?;
+    let second = *curves.get(1)?;
+    let (start, end) = ends(first, true)?;
+    let (next_start, next_end) = ends(second, true)?;
+    let forward = if end == next_start || end == next_end {
+        true
+    } else if start == next_start || start == next_end {
+        false
+    } else {
+        return None;
+    };
+    let mut steps = vec![(0, forward)];
+    let mut at = ends(first, forward)?.1;
+    for (index, curve) in curves.iter().enumerate().skip(1) {
+        let (start, end) = ends(curve, true)?;
+        let forward = if start == at {
+            true
+        } else if end == at {
+            false
+        } else {
+            return None;
+        };
+        steps.push((index, forward));
+        at = if forward { end } else { start };
+    }
+    (at == ends(first, forward)?.0).then_some(steps)
+}
+
+/// Points along a curve as the loop runs it, from its start and leaving out its end, each with
+/// its sketch point index when it is a vertex. An arc's run includes its leftmost point when the
+/// arc passes it.
+fn run_points(
+    curve: Option<&Curve>,
+    forward: bool,
+    mapped: &Mapped,
+) -> Option<Vec<(P2, Option<usize>)>> {
+    let curve = curve?;
+    let at = |index: Option<usize>| mapped.points.get(index?).map(|(_, position)| *position);
+    let (start, end) = (at(curve.start)?, at(curve.end)?);
+    let first = if forward {
+        (start, curve.start)
+    } else {
+        (end, curve.end)
+    };
+    if curve.kind == "line" {
+        return Some(vec![first]);
+    }
+    // SolidCraft arcs run counter-clockwise from their start to their end about their centre.
+    let center = at(curve.center)?;
+    let radius = ((start[0] - center[0]).powi(2) + (start[1] - center[1]).powi(2)).sqrt();
+    let from = (start[1] - center[1]).atan2(start[0] - center[0]);
+    let to = (end[1] - center[1]).atan2(end[0] - center[0]);
+    let tau = std::f64::consts::TAU;
+    let mut sweep = (to - from).rem_euclid(tau);
+    if sweep <= EPSILON {
+        sweep = tau;
+    }
+    let point = |angle: f64| {
+        [
+            center[0] + radius * angle.cos(),
+            center[1] + radius * angle.sin(),
+        ]
+    };
+    let mut angles: Vec<f64> = (0..16)
+        .map(|step| from + sweep * f64::from(step) / 16.0)
+        .collect();
+    let leftmost = (std::f64::consts::PI - from).rem_euclid(tau);
+    if leftmost > EPSILON && leftmost < sweep - EPSILON {
+        angles.push(from + leftmost);
+        angles.sort_by(f64::total_cmp);
+    }
+    // Interior points only: the stored ends are exact.
+    let interior: Vec<(P2, Option<usize>)> = angles
+        .into_iter()
+        .skip(1)
+        .map(|angle| (point(angle), None))
+        .collect();
+    Some(if forward {
+        std::iter::once(first).chain(interior).collect()
+    } else {
+        // Run backwards: from the end, leaving out the start.
+        std::iter::once(first)
+            .chain(interior.into_iter().rev())
+            .collect()
+    })
+}
+
+/// Twice the signed area enclosed by the samples, positive counter-clockwise.
+fn signed_area(samples: &[Vec<(P2, Option<usize>)>]) -> f64 {
+    let points: Vec<P2> = samples.iter().flatten().map(|(point, _)| *point).collect();
+    points
+        .iter()
+        .zip(points.iter().cycle().skip(1))
+        .map(|(a, b)| a[0] * b[1] - b[0] * a[1])
+        .sum()
 }
 
 /// Whether a loop runs along one of its curves more than once.
@@ -213,6 +405,22 @@ fn regions(
         .and_then(Value::as_array)
         .filter(|regions| !regions.is_empty())
         .ok_or("its profile regions are malformed")?;
+    // The one loop of a one-loop sketch, whole: every profile, which needs no boundary order.
+    if let [region] = regions.as_slice() {
+        let holes = region
+            .get("holes")
+            .and_then(Value::as_array)
+            .is_some_and(|holes| !holes.is_empty());
+        if region.get("region").and_then(Value::as_str) == Some("loops")
+            && region.get("outer").and_then(Value::as_u64) == Some(0)
+            && !holes
+            && profile_count(ctx, sketch) == 1
+            && !source_loop(ctx, sketch, &json!(0), mapped)
+                .is_ok_and(|ring| needs_split(ctx, sketch, &json!(0), &ring))
+        {
+            return Ok(json!({"type": "all"}));
+        }
+    }
     let mut whole = Vec::with_capacity(regions.len());
     let mut outers = Vec::with_capacity(regions.len());
     let mut trimmed = false;
@@ -248,7 +456,13 @@ fn regions(
                     outers.extend(split_loop(ctx, sketch, index, mapped)?);
                 } else {
                     outers.push(outer.clone());
-                    whole.push(json!({"outer": outer, "holes": holes}));
+                    whole.push(json!({
+                        "outer": canonical_loop(outer, mapped),
+                        "holes": holes
+                            .into_iter()
+                            .map(|hole| canonical_loop(hole, mapped))
+                            .collect::<Vec<_>>(),
+                    }));
                 }
             }
             Some("trimmed") => {
@@ -493,5 +707,165 @@ mod tests {
             "value": {"sketch": "s", "profiles": [7]}})
         )
         .is_err());
+    }
+
+    /// A mapped sketch from point positions and curves (id, kind, start, end, centre).
+    fn drawn(
+        points: &[[f64; 2]],
+        curves: &[(&str, &'static str, usize, usize, Option<usize>)],
+    ) -> Mapped {
+        let mut mapped = mapped();
+        mapped.points = points
+            .iter()
+            .enumerate()
+            .map(|(i, at)| (format!("p{i}"), *at))
+            .collect();
+        mapped.shapes = curves
+            .iter()
+            .enumerate()
+            .map(|(index, (id, kind, start, end, center))| {
+                (
+                    format!("e{index}"),
+                    Shape::Curve(Curve {
+                        index,
+                        id: (*id).to_owned(),
+                        kind,
+                        start: Some(*start),
+                        end: Some(*end),
+                        center: *center,
+                    }),
+                )
+            })
+            .collect();
+        mapped
+    }
+
+    fn ring(ids: &[&str]) -> Vec<String> {
+        ids.iter().map(|id| (*id).to_owned()).collect()
+    }
+
+    // Each case is one SolidCraft opens; every other order of the same loop it refuses as a
+    // damaged design ("invalid analytic offset topology or boundary reference").
+    #[test]
+    fn whole_boundaries_run_counter_clockwise_from_the_leftmost_point() {
+        // A half disc right of its diameter: the arc runs up from (0, -10).
+        let d = drawn(
+            &[[0.0, 0.0], [0.0, -10.0], [0.0, 10.0]],
+            &[("l1", "line", 1, 2, None), ("a1", "arc", 1, 2, Some(0))],
+        );
+        assert_eq!(canonical_loop(ring(&["l1", "a1"]), &d), ring(&["a1", "l1"]));
+        assert_eq!(canonical_loop(ring(&["a1", "l1"]), &d), ring(&["a1", "l1"]));
+        // Mirrored: the arc's own middle is the leftmost point.
+        let mirrored = drawn(
+            &[[0.0, 0.0], [0.0, -5.0], [0.0, 5.0]],
+            &[("l1", "line", 1, 2, None), ("a1", "arc", 2, 1, Some(0))],
+        );
+        assert_eq!(
+            canonical_loop(ring(&["l1", "a1"]), &mirrored),
+            ring(&["a1", "l1"])
+        );
+        // A square, from any curve and in either direction, starts at its lower left corner.
+        let square = drawn(
+            &[[-20.0, -20.0], [20.0, -20.0], [20.0, 20.0], [-20.0, 20.0]],
+            &[
+                ("s1", "line", 0, 1, None),
+                ("s2", "line", 1, 2, None),
+                ("s3", "line", 2, 3, None),
+                ("s4", "line", 3, 0, None),
+            ],
+        );
+        for order in [
+            ["s3", "s4", "s1", "s2"],
+            ["s4", "s3", "s2", "s1"],
+            ["s2", "s1", "s4", "s3"],
+        ] {
+            assert_eq!(
+                canonical_loop(ring(&order), &square),
+                ring(&["s1", "s2", "s3", "s4"])
+            );
+        }
+        // The leftmost vertex, not the lowest one, starts a triangle.
+        let triangle = drawn(
+            &[[0.0, 0.0], [10.0, -5.0], [5.0, 10.0]],
+            &[
+                ("e2", "line", 1, 2, None),
+                ("e3", "line", 2, 0, None),
+                ("e1", "line", 0, 1, None),
+            ],
+        );
+        assert_eq!(
+            canonical_loop(ring(&["e3", "e2", "e1"]), &triangle),
+            ring(&["e1", "e2", "e3"])
+        );
+    }
+
+    #[test]
+    fn whole_boundaries_order_their_holes_the_same_way() {
+        let mut points = vec![[0.0, 0.0], [0.0, -5.0], [0.0, 5.0]];
+        points.extend([[-20.0, -20.0], [20.0, -20.0], [20.0, 20.0], [-20.0, 20.0]]);
+        let mut mapped = drawn(
+            &points,
+            &[
+                ("l1", "line", 1, 2, None),
+                ("a1", "arc", 1, 2, Some(0)),
+                ("s1", "line", 3, 4, None),
+                ("s2", "line", 4, 5, None),
+                ("s3", "line", 5, 6, None),
+                ("s4", "line", 6, 3, None),
+            ],
+        );
+        assert_eq!(
+            canonical_loop(ring(&["l1", "a1"]), &mapped),
+            ring(&["a1", "l1"])
+        );
+        // Curves it cannot place, or a loop that does not close, keep their source order.
+        mapped.points.clear();
+        assert_eq!(
+            canonical_loop(ring(&["l1", "a1"]), &mapped),
+            ring(&["l1", "a1"])
+        );
+        let open = drawn(
+            &points,
+            &[("s1", "line", 3, 4, None), ("s3", "line", 5, 6, None)],
+        );
+        assert_eq!(
+            canonical_loop(ring(&["s3", "s1"]), &open),
+            ring(&["s3", "s1"])
+        );
+    }
+
+    #[test]
+    fn the_whole_loop_of_a_one_loop_sketch_is_every_profile() {
+        let one_loop = json!({"sketches": [{"id": "s", "profiles": [
+            [{"entity": "e0"}, {"entity": "e1"}, {"entity": "e2"}],
+        ]}]});
+        let whole = json!({"kind": "sketch_regions", "value": {"sketch": "s",
+            "regions": [{"region": "loops", "outer": 0, "holes": []}]}});
+        assert_eq!(select(&one_loop, whole).unwrap(), json!({"type": "all"}));
+        // With two loops in the sketch, the region names its boundary.
+        let two = select(
+            &model(),
+            json!({"kind": "sketch_regions", "value": {"sketch": "s",
+                "regions": [{"region": "loops", "outer": 0}]}}),
+        );
+        assert_eq!(two.unwrap()["type"], "whole_boundaries");
+    }
+
+    #[test]
+    fn whole_boundaries_break_a_leftmost_tie_by_point_index() {
+        // Left corners at the same x: the top one has the lower point index.
+        let rectangle = drawn(
+            &[[7.5, -2.5], [7.5, -7.5], [12.5, -7.5], [12.5, -2.5]],
+            &[
+                ("l1", "line", 0, 1, None),
+                ("l4", "line", 1, 2, None),
+                ("l5", "line", 2, 3, None),
+                ("l6", "line", 3, 0, None),
+            ],
+        );
+        assert_eq!(
+            canonical_loop(ring(&["l4", "l5", "l6", "l1"]), &rectangle),
+            ring(&["l1", "l4", "l5", "l6"])
+        );
     }
 }

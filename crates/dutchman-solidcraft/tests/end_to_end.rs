@@ -166,11 +166,7 @@ fn interchange_codecs_convert_generated_geometry_through_step() {
     for face in &mut ir.model.faces {
         face.name = None;
     }
-    for (format, extension) in [
-        (Format::Step, "stp"),
-        (Format::Iges, "igs"),
-        (Format::Rhino, "3dm"),
-    ] {
+    for (format, extension) in [(Format::Step, "stp"), (Format::Rhino, "3dm")] {
         let encoder = build_encoder(format);
         let (_, target) = encoder.targets().default().unwrap();
         let plan = encoder
@@ -196,4 +192,65 @@ fn interchange_codecs_convert_generated_geometry_through_step() {
             .iter()
             .any(|loss| loss.detail.contains("no solids or surfaces")));
     }
+}
+
+#[test]
+fn a_step_input_is_stored_as_it_is() {
+    use cadmpeg_ir::codec::write::{target::TargetRequest, EncodeInput};
+    use cadmpeg_registry::{build_encoder, Format};
+    use sha2::Digest;
+    use std::io::Read;
+    let dir = tempfile::tempdir().unwrap();
+    let ir = cadmpeg_ir::examples::unit_cube().unwrap();
+    let encoder = build_encoder(Format::Step);
+    let (_, target) = encoder.targets().default().unwrap();
+    let plan = encoder
+        .plan(
+            EncodeInput::new(&ir, None),
+            TargetRequest::Explicit(target.id.as_str()),
+        )
+        .unwrap();
+    let mut bytes = Vec::new();
+    plan.write_to(&mut bytes).unwrap();
+    // A comment cadmpeg's own STEP writer would never restate.
+    let text = String::from_utf8(bytes).unwrap().replacen(
+        "DATA;",
+        "/* written by another program */\nDATA;",
+        1,
+    );
+    let input = dir.path().join("cube.step");
+    let output = dir.path().join("cube.solidcraft");
+    std::fs::write(&input, &text).unwrap();
+    let report = convert(
+        &input,
+        &output,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    )
+    .unwrap();
+    assert!(report
+        .losses()
+        .iter()
+        .any(|loss| loss.detail.contains("passed to SolidCraft as it is")));
+    // Reading the file reports its own losses; restating it would add the writer's.
+    assert!(!report.losses().iter().any(|loss| loss
+        .code
+        .as_deref()
+        .is_some_and(|code| code.starts_with("step/") && !code.starts_with("step/decode."))));
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(&output).unwrap()).unwrap();
+    // Payloads are named by the SHA-256 of their bytes: the input's own name proves it is unchanged.
+    let digest = sha2::Sha256::digest(text.as_bytes());
+    let name = format!(
+        "blobs/{}.step",
+        digest
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<String>()
+    );
+    let mut stored = String::new();
+    archive
+        .by_name(&name)
+        .unwrap()
+        .read_to_string(&mut stored)
+        .unwrap();
+    assert_eq!(stored, text);
 }

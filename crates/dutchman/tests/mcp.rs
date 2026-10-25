@@ -185,3 +185,40 @@ fn an_mcp_client_converts_through_dutchman() {
 
     client.finish();
 }
+
+#[test]
+fn iges_tools_return_the_shared_refusal_without_decoding() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("design.iges");
+    let output = dir.path().join("out.solidcraft");
+    std::fs::write(&input, b"not IGES data").unwrap();
+    let mut client = Client::start();
+    for (tool, arguments) in [
+        ("convert", json!({"input": input, "output": output})),
+        ("inspect", json!({"input": input})),
+        (
+            "convert_all",
+            json!({"inputs": [input], "out_dir": dir.path().join("out")}),
+        ),
+    ] {
+        let result = client.call(tool, arguments);
+        assert_eq!(result["isError"], true);
+        let content = &result["structuredContent"];
+        let report = if tool == "convert_all" {
+            &content["results"][0]
+        } else {
+            content
+        };
+        assert_eq!(report["input"]["words"], "open it in SolidCraft directly");
+        assert_eq!(
+            report["error"]["message"],
+            "Dutchman doesn't convert IGES yet: open it in SolidCraft directly (File > Import)."
+        );
+        let text: Value =
+            serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(&text, content);
+    }
+    client.finish();
+    assert!(!output.exists());
+    assert!(!dir.path().join("out").join("design.solidcraft").exists());
+}

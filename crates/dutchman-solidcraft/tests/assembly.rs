@@ -32,6 +32,7 @@ fn placed_twice() -> Model {
     Model {
         name: "pair".to_owned(),
         source_file: Some("pair.iam".to_owned()),
+        source_step: None,
         assembly: Some(Assembly {
             joints: Vec::new(),
             left_out: Vec::new(),
@@ -177,6 +178,7 @@ fn nested() -> Model {
     Model {
         name: "top".to_owned(),
         source_file: Some("top.iam".to_owned()),
+        source_step: None,
         assembly: Some(Assembly {
             joints: Vec::new(),
             left_out: Vec::new(),

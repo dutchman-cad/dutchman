@@ -1,6 +1,6 @@
 ---
 name: dutchman-converting
-description: Use when someone wants a CAD file (Fusion, Inventor, SolidWorks, FreeCAD, CATIA, Creo View, Rhino, ACIS, STEP or IGES) turned into a SolidCraft design (.solidcraft) with Dutchman, through the dutchman-mcp tools or the dutchman command. Covers inspecting first, reader status and refusals (including Creo and NX), converting one file or a folder, checking the result in SolidCraft, and explaining losses in plain words.
+description: Use when someone wants a CAD file (Fusion, Inventor, SolidWorks, FreeCAD, CATIA, Creo View, Rhino, ACIS or STEP) turned into a SolidCraft design (.solidcraft) with Dutchman, through the dutchman-mcp tools or the dutchman command. Covers inspecting first, reader status and refusals (including IGES, Creo and NX), converting one file or a folder, checking the result in SolidCraft, and explaining losses in plain words.
 ---
 
 # Converting CAD files with Dutchman
@@ -37,7 +37,7 @@ they are connected (`inspect`, `convert`, `convert_all`, `formats`); otherwise r
 ## 1. Check the format
 
 Call `formats` for the installed build's formats, status `words` and `converts`.
-Fusion, Inventor, SolidWorks parts, FreeCAD, CATIA, Creo View, Rhino, ACIS, STEP and IGES
+Fusion, Inventor, SolidWorks parts, FreeCAD, CATIA, Creo View, Rhino, ACIS and STEP
 can convert geometry. Creo and NX parts are identified by contents
 (they share `.prt`) and currently open without geometry, so conversion is refused. SolidWorks
 assemblies are recognised without a reader. `input.words` appears on
@@ -47,8 +47,9 @@ invitation; JSON and MCP reports never include it.
 
 Directory conversion keeps the highest numbered `.prt.N` revision per part, reports older
 saves as skipped, and uses the part's base output name without replacing an existing file.
-After a refused conversion or a history that did not fully map, the invitation links to
-test-file recipes and offers private help: send the file and its STEP export to Dutchy in Discord.
+After a refused conversion (except IGES) or a history that did not fully map, the invitation
+links to test-file recipes and offers private help: send the file and its STEP export to
+Dutchy in Discord.
 
 What the installed build converts is what its `formats` says; check it rather than this
 list when unsure.
@@ -56,6 +57,10 @@ list when unsure.
 For anything else, don't try workarounds such as renaming the file. Tell the user plainly:
 
 - **STEP (`.step`, `.stp`)**: converts through the geometry path; SolidCraft also opens STEP directly.
+- **IGES (`.igs`, `.iges`)**: recognised with `input.words: "open it in SolidCraft directly"`
+  and refused before decoding: "Dutchman doesn't convert IGES yet: open it in SolidCraft
+  directly (File > Import)." Use SolidCraft's own importer. Batch results retain the same
+  refusal; do not invite the user to make IGES test files.
 - **SolidWorks assemblies (`.sldasm`)**, Creo and NX: reading geometry is not supported yet.
   Suggest exporting STEP from the program that made the design and converting that.
 - **Inventor assemblies (`.iam`)** convert, but need their part files next to the assembly
@@ -81,6 +86,8 @@ simplification. Explain that the converted design keeps its original geometry.
 Holes keep chamfered entries and tapped holes (the bore plus an ISO metric thread label; a
 thread's hand, class, and length are listed as losses). Taper, exit treatments, modeled
 threads, and entry recesses with drill points block history: explain the reported reason.
+"SolidCraft holes take a drill point only on a plain drilled hole" means SolidCraft 0.21.0
+ignores drill points on counterbores and countersinks; conversion keeps the original geometry.
 
 Tell the user what to expect in one or two sentences before converting, for example: "This
 part has one body. Its history won't carry across (the fillet's input edges can't be proven),
@@ -201,6 +208,12 @@ the feature has already removed or tilted them; they wait on input face geometry
 Replacing a source shape with its mirror is not supported yet: SolidCraft's mirror keeps
 the original. Cosmetic threads lack a resolved standard and pitch in CADIR, so assigning
 SolidCraft's ISO metric designation would invent thread data; these remain flattened.
+
+When cadmpeg's model fails its checks, Dutchman retries after removing history, sketches,
+parameters and associated design records, including parameter links on joints. A successful
+retry retains geometry and assembly structure, validates them, and reports a `Degraded`
+`history` loss explaining that parameters were left out and naming the original check failure.
+Duplicate parameter names cannot block this geometry-only validation.
 
 ### FreeCAD output (experimental)
 

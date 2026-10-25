@@ -91,9 +91,13 @@ provides a usable CLI.
 `formats` lists all recognised formats, their status `words`,
 and what Dutchman converts. Inputs without geometry support or a codec in this build
 return a failure describing the reader's current capability. Creo and NX `.prt` inputs
-are distinguished by contents. CATIA, Creo View, Rhino, ACIS, STEP and IGES use the geometry
+are distinguished by contents. CATIA, Creo View, Rhino, ACIS and STEP use the geometry
 path. Each conversion report's `input` also carries `words`, `program` and `extension`.
-Status words are `reads geometry`, `opens, no geometry yet`, or `recognised, not read yet`.
+Status words are `reads geometry`, `opens, no geometry yet`, `recognised, not read yet`,
+or `open it in SolidCraft directly` for IGES (`.igs`, `.iges`). IGES is recognised and
+refused before decoding by `inspect`, `convert` and `convert_all`, with `error.message`:
+`Dutchman doesn't convert IGES yet: open it in SolidCraft directly (File > Import).`
+Batch results retain that refusal; IGES does not trigger the CLI or GUI fixtures invitation.
 Numbered `.prt.N` saves are identified by contents too; a directory conversion keeps only
 the highest revision per part and returns older saves in `skipped_revisions` (`path`, `newer`).
 Numbered saves use the part's base output name and keep existing output files.
@@ -111,6 +115,8 @@ Hole history keeps chamfered entries and tapped holes (the bore and an ISO metri
 label); thread details it can't keep are `Degraded` losses. Unsupported hole forms,
 placements, and ends appear in `history.features[].reason`, and conversion keeps the
 geometry when the history can't map.
+Entry recesses with drill points report "SolidCraft holes take a drill point only on a
+plain drilled hole"; SolidCraft 0.21.0 ignores `tip_angle` on counterbores and countersinks.
 
 | Tool | Arguments | Returns | Writes |
 |---|---|---|---|
@@ -192,6 +198,11 @@ Convert one file:
     {"level":"Info","code":"step/native.source-record-omitted","subject":"step/native.source-record-omitted","message":"67 source-native record(s) were not represented in STEP"},
     {"level":"Info","code":null,"subject":"history","message":"flattened: the design carries no feature history"}]}}}
 ```
+
+If cadmpeg's model fails its checks, the reader retries after removing history, sketches,
+parameters and associated design records, including parameter links on joints. Geometry and
+assembly structure still undergo validation. A successful retry reports a `Degraded` loss
+with subject `history`, saying parameters were left out and giving the original failure.
 
 A conversion that fails is a tool error (`isError: true`) carrying its failure report:
 

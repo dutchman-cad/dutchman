@@ -78,7 +78,9 @@ SOLIDCRAFT_CLI=/path/to/solidcraft-cli cargo test -p dutchman-solidcraft --test 
    [docs/mcp.md](docs/mcp.md) for the MCP tools, [docs/json.md](docs/json.md) for report
    fields, the format pages, and [skills/](skills/) when a tool or message the skill
    describes changes.
-4. Open the pull request against `main` and make sure CI passes.
+4. Add a [changelog.d/](changelog.d/) fragment for the change; do not edit `CHANGELOG.md`.
+   Run `python3 scripts/changelog.py check` and `python3 scripts/changelog.py preview`.
+5. Open the pull request against `main` and make sure CI passes.
 
 Write commit messages and pull request titles in the imperative, in sentence case, saying
 what changes for the user: "Map patterns of features", "Convert SolidWorks parts".

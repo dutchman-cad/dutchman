@@ -76,8 +76,10 @@ minute. Every release is on the [releases page](https://github.com/dutchman-cad/
 Early development. Reader status says whether geometry can be read; the conversion report
 says what this file kept. Formats with geometry readers attempt conversion through STEP.
 Creo and NX share `.prt` and are identified by contents, including numbered `.prt.N` saves.
-SolidWorks assemblies are recognised without a reader. `dutchman formats` lists the current
-reader status and what Dutchman converts:
+SolidWorks assemblies are recognised without a reader.
+IGES (`.igs`, `.iges`) is recognised and refused before decoding: "Dutchman doesn't convert
+IGES yet: open it in SolidCraft directly (File > Import)."
+`dutchman formats` lists the current reader status and what Dutchman converts:
 
 <!-- formats: generated from dutchman formats -->
 ```text
@@ -95,15 +97,15 @@ Creo View (.pvz)  reads geometry  converts: geometry through STEP; solids and su
 Rhino (.3dm)  reads geometry  converts: geometry through STEP; solids and surfaces SolidCraft can import
 ACIS (.sat, .sab, .smt, .smb)  reads geometry  converts: geometry through STEP; solids and surfaces SolidCraft can import
 STEP (.step, .stp)  reads geometry  converts: geometry through STEP; solids and surfaces SolidCraft can import
-IGES (.igs, .iges)  reads geometry  converts: geometry through STEP; solids and surfaces SolidCraft can import
+IGES (.igs, .iges)  open it in SolidCraft directly  not yet: SolidCraft imports IGES itself (File > Import)
 Creo or NX part (.prt)  recognised, not read yet  not yet: nothing yet; reading geometry is not supported yet
 
 Written as a SolidCraft design (.solidcraft), or, experimental, as a FreeCAD rebuild macro (.FCMacro, --to freecad)
 ```
 <!-- /formats -->
 
-After a refused conversion or a history that did not fully map, Dutchman offers short recipes
-for making small test files: [fixtures](https://dutchman-cad.github.io/fixtures/) or
+After a refused conversion (except IGES) or a history that did not fully map, Dutchman offers
+short recipes for making small test files: [fixtures](https://dutchman-cad.github.io/fixtures/) or
 `/volunteer` in [Discord](https://discord.gg/yTcseBEdeu). `--quiet` hides the invitation;
 `--json` prints only the report. The desktop app shows the same invitation once under its results.
 Got a file that converts wrong? Drop it, with its STEP export, in a DM to Dutchy in our Discord.
@@ -116,6 +118,7 @@ Got a file that converts wrong? Drop it, with its STEP export, in a DM to Dutchy
   - sketches: lines, arcs, circles, conics, splines, and many constraints and dimensions;
   - extrudes and revolves, with their end forms;
   - holes: counterbores, countersinks, chamfered entries, and thread labels on tapped holes;
+    drill points on plain drilled holes only (SolidCraft ignores them on entry recesses);
   - sweeps, lofts, and coils;
   - linear, circular, and path patterns of features or bodies, body mirrors, and body
     booleans;

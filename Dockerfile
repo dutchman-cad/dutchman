@@ -3,16 +3,18 @@
 # The `dutchman` command, the `dutchman-mcp` server and the `dutchman-web` browser interface,
 # without the desktop app. docs/docker.md says how to build and run it.
 
-FROM rust:1-bookworm AS build
+# The same Rust as the workspace's rust-version (Cargo.toml); update both together.
+FROM rust:1.88-bookworm AS build
 # How many crates to compile at once (default: one per core). Each can take more than 1 GB, so
-# lower it where the build runs short of memory, for example --build-arg CARGO_BUILD_JOBS=2.
-ARG CARGO_BUILD_JOBS=
+# lower it where the build runs short of memory, for example --build-arg CARGO_BUILD_JOBS=2. Cargo
+# reads the variable itself; it must not be empty, so the default is `default`.
+ARG CARGO_BUILD_JOBS=default
 WORKDIR /src
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/src/target \
-    cargo build --release --locked -p dutchman -p dutchman-web --bins ${CARGO_BUILD_JOBS:+--jobs "$CARGO_BUILD_JOBS"} \
+    cargo build --release --locked -p dutchman -p dutchman-web --bins \
  && install -m 0755 target/release/dutchman target/release/dutchman-mcp target/release/dutchman-web /usr/local/bin/
 
 FROM debian:bookworm-slim
