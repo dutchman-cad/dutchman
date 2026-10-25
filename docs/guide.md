@@ -543,6 +543,12 @@ Each loss line reads `LEVEL: SUBJECT: MESSAGE`:
 | `Degraded` | Carried across in a weaker form. | Check that part of the design in SolidCraft. |
 | `Dropped` | Left out of the design. | Compare with the original; redraw what is missing, or convert again when Dutchman or cadmpeg supports it. |
 
+When cadmpeg's model fails its checks, Dutchman retries with geometry and assembly structure
+alone. It removes history, sketches, parameters and associated design records before checking
+again, including parameter links on joints. A `Degraded: history` loss says these were left out
+and gives the original check failure. Duplicate parameter names therefore cannot block this
+retry; geometry checks still apply.
+
 Lines from the examples above, in plain words:
 
 - `Info: history: flattened: the design carries no feature history`: the file has no

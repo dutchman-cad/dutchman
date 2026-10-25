@@ -209,6 +209,12 @@ Replacing a source shape with its mirror is not supported yet: SolidCraft's mirr
 the original. Cosmetic threads lack a resolved standard and pitch in CADIR, so assigning
 SolidCraft's ISO metric designation would invent thread data; these remain flattened.
 
+When cadmpeg's model fails its checks, Dutchman retries after removing history, sketches,
+parameters and associated design records, including parameter links on joints. A successful
+retry retains geometry and assembly structure, validates them, and reports a `Degraded`
+`history` loss explaining that parameters were left out and naming the original check failure.
+Duplicate parameter names cannot block this geometry-only validation.
+
 ### FreeCAD output (experimental)
 
 When FreeCAD is the requested destination, pass `to: "freecad"` to `convert` or

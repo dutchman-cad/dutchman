@@ -199,6 +199,11 @@ Convert one file:
     {"level":"Info","code":null,"subject":"history","message":"flattened: the design carries no feature history"}]}}}
 ```
 
+If cadmpeg's model fails its checks, the reader retries after removing history, sketches,
+parameters and associated design records, including parameter links on joints. Geometry and
+assembly structure still undergo validation. A successful retry reports a `Degraded` loss
+with subject `history`, saying parameters were left out and giving the original failure.
+
 A conversion that fails is a tool error (`isError: true`) carrying its failure report:
 
 ```json

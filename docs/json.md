@@ -18,6 +18,12 @@ version (`dutchman.convert/2`).
 
 ## Exit codes
 
+A geometry-only retry removes history, sketches, parameters and associated design records
+before validation, including parameter links on joints. When it succeeds, `losses` includes
+the existing `Degraded` loss with subject `history` and stage `project`, stating that parameters
+were left out and giving the original check failure. Geometry and assembly checks still apply;
+report schemas and field names are unchanged.
+
 | Code | Meaning |
 |---|---|
 | 0 | The design was converted (`convert`) or read (`inspect`). Losses do not change this. |
