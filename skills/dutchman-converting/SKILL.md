@@ -86,6 +86,8 @@ simplification. Explain that the converted design keeps its original geometry.
 Holes keep chamfered entries and tapped holes (the bore plus an ISO metric thread label; a
 thread's hand, class, and length are listed as losses). Taper, exit treatments, modeled
 threads, and entry recesses with drill points block history: explain the reported reason.
+"SolidCraft holes take a drill point only on a plain drilled hole" means SolidCraft 0.21.0
+ignores drill points on counterbores and countersinks; conversion keeps the original geometry.
 
 Tell the user what to expect in one or two sentences before converting, for example: "This
 part has one body. Its history won't carry across (the fillet's input edges can't be proven),

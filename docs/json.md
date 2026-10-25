@@ -88,6 +88,9 @@ For holes, a blocked feature's `reason` names the unsupported entry form, placem
 (for example, `a hole ending at the last encountered face is not mapped yet`). A tapped hole
 maps with an ISO metric thread label; thread details it can't keep are a `Degraded` loss on
 that feature. The wording is text for people, not a stable code.
+Counterbores, countersinks, and chamfered entries with drill points report
+`SolidCraft holes take a drill point only on a plain drilled hole`: SolidCraft 0.21.0 ignores
+`tip_angle` on entry recesses. This uses the existing blocked feature and reason fields.
 
 Sheet-metal edge flanges with proven input-edge picks and supported dimensions report
 `mapped`. Other flanges report `blocked` with the specific selection or dimension reason

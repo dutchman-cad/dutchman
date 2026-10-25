@@ -2233,6 +2233,70 @@ fn solidcraft_drills_counterbores_and_countersinks() {
 }
 
 #[test]
+fn a_plain_drilled_form_keeps_its_angle_and_shoulder_depth() {
+    let model = holed_cube(4.0, |hole| {
+        hole["shape"]["construction"]["kind"] = json!({"kind": "simple_drilled",
+            "drill_point_angle": std::f64::consts::FRAC_PI_2});
+        hole["extent"] = json!({"kind": "blind", "length": 6.0});
+    });
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).starts_with("4 of 4 features mapped"));
+    let hole = &document["features"][3];
+    assert_eq!(hole["hole"], json!({"type": "drilled", "tip_angle": "90"}));
+    assert_eq!(hole["diameter"], "4 mm");
+    assert_eq!(hole["depth"], "6 mm");
+    assert_eq!(hole["position"], json!([5.0, 5.0, 10.0]));
+    assert_eq!(hole["direction"], json!([0.0, 0.0, -1.0]));
+    assert_eq!(hole["points"]["sketch"], document["features"][2]["id"]);
+}
+
+#[test]
+fn solidcraft_entry_recesses_ignore_tip_angle() {
+    let Some(cli) = solidcraft() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let bore = std::f64::consts::PI * 4.0;
+    for (kind, extra) in [
+        ("counterbore", std::f64::consts::PI * 12.0 * 2.0),
+        (
+            "countersink",
+            std::f64::consts::PI * 2.0 / 3.0 * 28.0 - bore * 2.0,
+        ),
+    ] {
+        let mut previous = None;
+        for tip in [None, Some("90"), Some("118")] {
+            let mut params = json!({"position": [5, 5, 10], "direction": [0, 0, -1],
+                "diameter": "4 mm", "depth": "6 mm", "type": kind,
+                "cb_diameter": "8 mm", "cb_depth": "2 mm",
+                "cs_diameter": "8 mm", "cs_angle": "90"});
+            if let Some(tip) = tip {
+                params["tip_angle"] = json!(tip);
+            }
+            let script = json!([
+                {"command": "solid.box", "params": {"length": "10 mm", "width": "10 mm", "height": "10 mm"}},
+                {"command": "solid.hole", "params": params},
+            ]);
+            let input = dir.path().join("hole.json");
+            std::fs::write(&input, script.to_string()).unwrap();
+            let measured = blend_measurement(&cli, &input, &dir.path().join("eval.json"));
+            let volume = measured["volume_mm3"].as_f64().unwrap();
+            let flat = 1000.0 - bore * 6.0 - extra;
+            // Tessellated volumes have a small error, well below either missing cone.
+            assert!(
+                (volume - flat).abs() < 0.05,
+                "{kind} {tip:?}: {volume} vs {flat}"
+            );
+            if let Some(previous) = previous {
+                assert_eq!(volume, previous, "{kind} {tip:?}");
+            }
+            previous = Some(volume);
+        }
+    }
+}
+
+#[test]
 fn solidcraft_drills_the_holes() {
     let Some(cli) = solidcraft() else { return };
     let close = |got: &[f64], want: f64| {
@@ -2245,17 +2309,21 @@ fn solidcraft_drills_the_holes() {
         &volumes(&cli, &written(&holed_cube(4.0, |_| {})).0),
         1000.0 - bore * 10.0,
     );
-    // 6 mm to its shoulder, with a 118° drill point below.
+    // The same 118° point, with depth measured either to its shoulder or its tip.
     let angle = 118_f64.to_radians();
-    let blind = holed_cube(4.0, |hole| {
-        hole["extent"] = json!({"kind": "blind", "length": 6.0});
-        hole["bottom"] = json!({"kind": "angled", "included_angle": angle, "depth_to_tip": false});
-    });
     let point = 2.0 / (angle / 2.0).tan();
-    close(
-        &volumes(&cli, &written(&blind).0),
-        1000.0 - bore * 6.0 - bore * point / 3.0,
-    );
+    for to_tip in [false, true] {
+        let blind = holed_cube(4.0, |hole| {
+            hole["extent"] = json!({"kind": "blind", "length": 6.0});
+            hole["bottom"] =
+                json!({"kind": "angled", "included_angle": angle, "depth_to_tip": to_tip});
+        });
+        let shoulder = if to_tip { 6.0 - point } else { 6.0 };
+        close(
+            &volumes(&cli, &written(&blind).0),
+            1000.0 - bore * shoulder - bore * point / 3.0,
+        );
+    }
 }
 
 /// A spatial placement takes its position from the feature, without a sketch.
@@ -2536,7 +2604,7 @@ fn unsupported_hole_forms_have_specific_reasons() {
         ),
         (
             json!({"kind": "counterbore_drilled", "diameter": 8.0, "depth": 2.0, "drill_point_angle": 1.5}),
-            "a counterbore with a drill point is not mapped yet",
+            "SolidCraft holes take a drill point only on a plain drilled hole",
         ),
         (
             json!({"kind": "counterdrill", "diameter": 8.0, "entry_diameter": 9.0, "depth": 2.0, "angle": 1.5}),
@@ -2574,9 +2642,8 @@ fn unsupported_hole_forms_have_specific_reasons() {
                 &model,
                 &SolidCraftWriter::new().verification(Verification::Off),
             );
-            assert!(
-                history_line(&report).contains("a counterbore or countersink with a drill point")
-            );
+            assert!(history_line(&report)
+                .contains("SolidCraft holes take a drill point only on a plain drilled hole"));
         }
     }
 }
@@ -6398,6 +6465,24 @@ fn blends_refuse_missing_foreign_or_ambiguous_input_geometry() {
                 json!({"kind": "edges", "value": ["synthetic:cube:edge#8"]})
         },
         "require edges from their own feature input topology",
+    );
+    check(
+        cli,
+        |m| {
+            m["features"][2]["definition"]["groups"][0]["edges"] =
+                json!({"kind": "native", "value": "feature-property:93"})
+        },
+        "a selection cadmpeg does not resolve to edges yet",
+    );
+    check(
+        cli,
+        |m| {
+            let edges = &mut m["features"][2]["definition"]["groups"][0]["edges"];
+            let value = edges["value"].clone();
+            *edges = json!({"kind": "historical_partial", "value": {"state": value["state"],
+                "edges": [], "unresolved": ["op:1"], "native": value["native"]}})
+        },
+        "some of its edges are not resolved in its input topology",
     );
     // Two bodies in the same place: the midpoint lies on an edge of each.
     let twins = fake_cli(

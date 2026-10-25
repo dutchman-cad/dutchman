@@ -115,6 +115,8 @@ Hole history keeps chamfered entries and tapped holes (the bore and an ISO metri
 label); thread details it can't keep are `Degraded` losses. Unsupported hole forms,
 placements, and ends appear in `history.features[].reason`, and conversion keeps the
 geometry when the history can't map.
+Entry recesses with drill points report "SolidCraft holes take a drill point only on a
+plain drilled hole"; SolidCraft 0.21.0 ignores `tip_angle` on counterbores and countersinks.
 
 | Tool | Arguments | Returns | Writes |
 |---|---|---|---|
