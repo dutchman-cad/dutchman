@@ -1247,7 +1247,7 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 
 [[package]]
 name = "dutchman"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "aho-corasick",
  "clap",
@@ -1264,7 +1264,7 @@ dependencies = [
 
 [[package]]
 name = "dutchman-core"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "cadmpeg-core",
  "cadmpeg-ir",
@@ -1277,7 +1277,7 @@ dependencies = [
 
 [[package]]
 name = "dutchman-freecad"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "cadmpeg-ir",
  "dutchman-core",
@@ -1288,7 +1288,7 @@ dependencies = [
 
 [[package]]
 name = "dutchman-gui"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "dutchman",
  "dutchman-core",
@@ -1305,7 +1305,7 @@ dependencies = [
 
 [[package]]
 name = "dutchman-launcher"
-version = "0.1.5"
+version = "0.2.0"
 
 [[package]]
 name = "dutchman-pilot"
@@ -1321,7 +1321,7 @@ dependencies = [
 
 [[package]]
 name = "dutchman-solidcraft"
-version = "0.1.5"
+version = "0.2.0"
 dependencies = [
  "cadmpeg-ir",
  "cadmpeg-registry",
