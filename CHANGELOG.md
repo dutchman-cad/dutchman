@@ -8,6 +8,12 @@ report's schema name changes when a field does).
 
 ## 0.2.0 (2026-10-25)
 
+### Known issue
+
+- Some SolidWorks parts that 0.1.5 read now decode empty, fail cadmpeg's edge checks, or come
+  through with fewer bodies (reported as losses, not as a clean conversion); a fix is in
+  progress in cadmpeg. If 0.1.5 worked better for a part, keep using it for that part for now.
+
 ### Formats
 
 - Convert CATIA `.CATPart`, Creo View `.pvz`, Rhino `.3dm`, ACIS `.sat`/`.sab`/`.smt`/`.smb`,
