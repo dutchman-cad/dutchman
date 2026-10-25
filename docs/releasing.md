@@ -2,9 +2,11 @@
 
 A release is cut from `main` once CI is green there.
 
-1. Move the `CHANGELOG.md` entry from "unreleased" to the release date, and set the workspace
-   `version` in `Cargo.toml`, along with the `version` of the `dutchman-core` and
-   `dutchman-solidcraft` workspace dependencies. Run `cargo build` so `Cargo.lock` follows, and
+1. Run `python3 scripts/changelog.py release X.Y.Z` to assemble the fragments into a dated
+   `CHANGELOG.md` entry (use `--date YYYY-MM-DD` to override today). Review it, add any known
+   issue, and stage the deleted fragments. Set the workspace `version` in `Cargo.toml`, along
+   with the `version` of the `dutchman-core` and `dutchman-solidcraft` workspace dependencies.
+   Run `cargo build` so `Cargo.lock` follows, and
    `scripts/downloads.py X.Y.Z README.md` so the README's download table links the new
    archives (a test checks it does). Write `release-notes/X.Y.Z.md`: one intro paragraph,
    then `## What's new` with at most 7 bullets, each with a bold lead phrase. Use plain

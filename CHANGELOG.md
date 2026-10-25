@@ -4,39 +4,9 @@ All notable changes to Dutchman are listed here. Versions follow [Semantic Versi
 1.0, a minor version may change the command line, the Rust API or the JSON reports (a JSON
 report's schema name changes when a field does).
 
+Unreleased changes live in [changelog.d/](changelog.d/).
+
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
-
-## Unreleased
-
-### Releases
-
-- Tagged builds now create a draft release with short highlights, downloads, and a link to the full changelog.
-
-### Formats
-
-- A STEP file of one part goes into the SolidCraft design as it is, instead of being read by
-  cadmpeg and written again as STEP: nothing is lost on the way, and the report no longer lists
-  the writer's STEP losses. A STEP assembly of several parts still converts part by part into
-  components.
-
-### History
-
-- An extrude, revolve or other sketch feature whose profile cadmpeg gives as whole sketch
-  regions no longer makes a design SolidCraft refuses as damaged ("invalid analytic offset
-  topology or boundary reference"). The one loop of a one-loop sketch is written as every
-  profile. Otherwise each boundary is written in the order SolidCraft finds it: counter-clockwise,
-  from its leftmost point. This affected Inventor parts read with cadmpeg's sketch-region
-  profiles.
-- A counterbore, countersink or chamfered hole with a drill point at its bottom says why it is
-  not mapped: SolidCraft holes take a drill point only on a plain drilled hole, and ignore it
-  on one with an entry recess, which would leave the cone out of the geometry.
-- A fillet or chamfer left unmapped for its edges says which case it is: a selection cadmpeg
-  does not resolve to edges yet, edges only partly resolved in its input topology, or edges of
-  the final body.
-- A fillet or chamfer on edges an extrusion generated maps when cadmpeg names them by the
-  sketch entity that made them, as it does for Inventor: a sketch point's side edge, or a sketch
-  line's edge where the extrusion starts or ends. Each edge is proven on SolidCraft's rebuilt
-  body before the blend is written.
 
 ## 0.2.0 (2026-10-25)
 
@@ -49,146 +19,33 @@ report's schema name changes when a field does).
 ### Formats
 
 - Convert CATIA `.CATPart`, Creo View `.pvz`, Rhino `.3dm`, ACIS `.sat`/`.sab`/`.smt`/`.smb`,
-  and STEP `.step`/`.stp` through the geometry path. Creo and NX parts
-  (`.prt`, including numbered Creo saves) are recognised by contents and report when geometry
-  reading is not supported yet. SolidWorks assemblies remain recognised without a reader.
-- IGES `.igs`/`.iges` files are recognised and refused before decoding, with directions to
-  open them in SolidCraft directly (File > Import). SolidCraft's own importer sews their
-  faces into solids; cadmpeg does not yet. IGES refusals do not invite test files.
-- The CLI, JSON reports and desktop app show whether each format reads geometry, opens
-  without geometry, is recognised without a reader, or should be opened in SolidCraft directly.
+  and STEP `.step`/`.stp` through the geometry path. Creo and NX parts (`.prt`, including
+  numbered Creo saves) are recognised by contents and report when geometry reading is not
+  supported yet. SolidWorks assemblies remain recognised without a reader.
+- IGES `.igs`/`.iges` files are recognised and refused before decoding, with directions to open
+  them in SolidCraft directly (File > Import). SolidCraft's own importer sews their faces into
+  solids; cadmpeg does not yet. IGES refusals do not invite test files.
+- The CLI, JSON reports, and desktop app show whether each format reads geometry, opens without
+  geometry, is recognised without a reader, or should be opened in SolidCraft directly.
   `dutchman formats` lists that status alongside what Dutchman converts. After a refused
   conversion (except IGES) or a history that did not fully map, one invitation links to
-  test-file recipes and private help with wrong conversions.
-  `--quiet` hides it; JSON output contains no invitation.
-- Directory conversion keeps the newest numbered `.prt.N` save per part and reports older
-  revisions as skipped. Numbered saves use the part's base output name and keep existing outputs.
-- The cadmpeg pin moves from `63ebadd` to `66550bb`:
-  Creo View geometry becomes available, and Fusion As-built joints carry limit owners,
-  slider limits and rest positions from the reader.
+  test-file recipes and private help with wrong conversions. `--quiet` hides it; JSON output
+  contains no invitation.
 
-### Docs
+### History
 
-- The README and guide link the Dutchman CAD Discord for questions and help.
-
-### Install
-
-- Install with Homebrew (`brew install dutchman-cad/tap/dutchman`) or Scoop (`scoop install
-  dutchman-cad/dutchman` after `scoop bucket add dutchman-cad
-  https://github.com/dutchman-cad/scoop-bucket`); both follow each release.
-
-### Command line
-
-- Convert with `dutchman part.f3d`, optionally followed by an output path. `convert` also
-  accepts no output: it derives the path beside the input from `--to`. Existing derived
-  outputs are kept (exit 2) unless `--force`; explicit outputs still replace by default.
-  `--force` conflicts with `--no-clobber`, and a default cannot replace the input.
-
-- Run installed Dutchman CAD tools with `dutchman <tool>`: executables named
-  `dutchman-<tool>` next to the command take precedence over those on `PATH`.
-  Help lists installed tools and versions. An installed Pilot takes precedence over the
-  built-in Pilot and accepts its own flags. The std-only `dutchman-launcher` crate supplies
-  a tiny `dutchman` front command for Pilot-only installations.
-
-- `dutchman pilot` runs [Pilot](https://github.com/dutchman-cad/pilot) 0.1.0-beta.1:
-  `dutchman pilot --help` lists its commands, and `dutchman pilot how "round all edges 3 mm"`
-  shows example calls.
-
-### Reports
-
-- A joint Dutchman does not convert is reported by the output that leaves it out. A FreeCAD
-  macro (`--to freecad`, experimental) builds cylindrical, ball, distance and other joints
-  SolidCraft output leaves out, and no longer reports them as dropped.
-
-- Fillets and chamfers map on any prior history: their input edges are matched on the body SolidCraft rebuilds from the history before them (one replay per design), and are refused, saying why, without `solidcraft-cli`.
-- Sheet-metal edge flanges map supported dimensions on unchanged rectangular base sheets using proven input-edge midpoint picks.
-- Experimental FreeCAD macros keep a mapped history prefix and hidden reference sketches when a later feature cannot be rebuilt, retaining the final STEP shape.
-- Experimental FreeCAD macros rebuild assembly joints in the Assembly workbench (the fixed, revolute, and slider joints SolidCraft gets, through sub-assemblies, plus cylindrical, ball, distance, parallel, perpendicular, and angle joints between directly placed parts), with connector frames, limits, and grounding; if solving fails, the parts keep their stored placements.
-- Write experimental native FreeCAD documents with `--to fcstd`, or check macros with `--to freecad --verify`, using bounded headless execution and per-part volume and bounding-box verification.
-- Map constant-radius fillets and equal-setback chamfers from proven feature input edges.
+- Constant-radius fillets and equal-setback chamfers map from proven feature input edges on any
+  prior history: their input edges are matched on the body SolidCraft rebuilds from the history
+  before them (one replay per design), and are refused, saying why, without `solidcraft-cli`.
 - A Fusion constant-radius fillet with a tangency weight of exactly 1 maps as a circular
   fillet, its blend being circular in section, with an Info note ("tangency weight 1.0 treated
   as a circular fillet"). Other weights are still refused.
-- An assembly keeps the sketches of its own file, hidden for reference in the design itself,
-  with the parameters their dimensions use; they were left out before without a note.
-
-### cadmpeg
-
-- The cadmpeg pin moves to 63ebadd: a Fusion parameter whose owner frame cadmpeg cannot
-  read is kept native-only instead of failing the decode, Fusion as-built joints and joint
-  freedoms read, a Fusion fillet whose tangency weight carries a unit stays native, Fusion
-  extrude profiles resolve from circle-bounded and cap faces, ambiguous Fusion face
-  appearances are reported instead of failing, Inventor thread annotations project as
-  cosmetic threads and Thicken joins through selection lists, and Creo 11-13 order tables
-  read.
-- The cadmpeg pin moves to 892efad: joints carry their connector frame sense on their
-  operands, Fusion components bound through an unregistered link entity place, edges that
-  bound a selected face keep their geometry, a failed Fusion manifest says where its framing
-  stopped, more ACIS curve families read reversed, and native CAD state is kept through the
-  Fusion, SolidWorks, Creo and NX readers.
-- The cadmpeg pin moves to 8a7ae67: a Fusion rectangular pattern of faces with two
-  directions carries both, and a Fusion rectangular or circular pattern of features names the
-  feature it repeats instead of a set of faces, so it maps when that feature does; STEP output
-  writes face boundary curves on their edges' ranges, and a FreeCAD chamfer or fillet keeps its
-  edge ends on its vertices.
-- The cadmpeg pin moves to 8f8ff2a: Inventor sketches whose tangent relations key a hint
-  code to either operand close again (two parts regressed under 0872c6d).
-- The cadmpeg pin moves to 0872c6d: Inventor parts saved by Inventor 2019 and later carry
-  their feature history, and newer Inventor assemblies place their parts; FreeCAD compounds
-  of closed solids read as solid bodies; Fusion reads every context binding of a component,
-  more parameter expressions, and a base flange's thickness from its sheet-metal rule.
-- The cadmpeg pin moves to 525b961: Fusion rigid groups of any size (each member held to the
-  first as built), and more Inventor sketches closed (solver hints on more relations, equal
-  length).
-
-### cadmpeg
-
-- The cadmpeg pin moves to a2407a3 (CADIR 9): the geometry of a feature's historical input
-  edges, rigid as-built joints in Fusion, evaluable procedural faces (a coil's swept face
-  among them) written to STEP as sampled B-spline surfaces, and fixes to ASM intcurve
-  pcurves and FreeCAD restoration.
-
-### Desktop app
-
-- When macOS blocks SolidCraft's first run, the CLI and desktop app explain how to allow
-  it in Finder or System Settings and try the check again, without changing quarantine.
-- The desktop app is named **Dutchman Convert**, part of Dutchman CAD: its window title and
-  heading, and on macOS **Dutchman Convert.app** with a "Dutchman Convert" disk image volume.
-  The commands (`dutchman`, `dutchman-gui`, `dutchman-mcp`), their subcommands, the settings
-  and the download file names are unchanged. A Mac with 0.1.5 or earlier keeps
-  `/Applications/Dutchman.app` until it is replaced.
-- The macOS disk image opens on an installation window: Dutchman and Applications side by
-  side with an arrow between them on Dutchman's own background, and the read-me below. If
-  the window cannot be laid out while packaging, the image is built plain as before.
-- A file that fails says what to do next: **Report this on GitHub** opens the **A file
-  didn't convert** form filled in with Dutchman's version, the system, the error with its
-  stage and upstream, and the file's anonymous report (copied to paste when it is too long
-  for the link). The form had come back with its report and stage boxes empty.
-- The issue forms' privacy box says that links to files that are already public are welcome;
-  it asked for no file names at all, which kept a reporter from linking the public file that
-  failed.
-- The line naming the SolidCraft that checks history stays on one line (the whole of it on
-  hover): a long path to `solidcraft-cli` wrapped onto several lines and pushed the Convert
-  button out of view at the window's default size.
-
-### Assemblies
-
-- A joint whose connector frames point the same way (its CADIR operands' `frame_sense:
-  "aligned"`) is written as a flipped SolidCraft joint, and a part a joint places meets its
-  other part z to z rather than face to face. A Fusion robot arm's gripper mounted on its
-  wrist this way had been turned over into the wrist.
-- When the source grounds none of the parts a set of joints ties together, Dutchman grounds
-  the fixed side of that set's first joint, so SolidCraft's solver holds the set where the
-  source places it, and the report names the occurrence as inferred (`Info`, `joints`).
-- A Fusion design's root component is grounded where it is: the document's own, and the
-  root of each design inserted into it, held by the occurrence that inserts it. Both were left
-  free to move.
-- CADIR versions 8, 9 and 10 are read.
-
-- The desktop app prints `--version` and `--help` without opening a window, shows its version
-  in the title, and has a **Report a problem** link to the **A file didn't convert** form. An
-  unreadable-file error links to that form too.
-- Sweeps accept single-curve whole-sketch paths and guide rails, and report specific reasons for unsupported corner transitions, section laws, tangent extension, and simplification.
+- Sheet-metal edge flanges map supported dimensions on unchanged rectangular base sheets using
+  proven input-edge midpoint picks. Other edge flanges say why they are not mapped when their
+  edge is known only after bending. Hems say why their developed length or rolled, teardrop, or
+  unresolved form has no SolidCraft equivalent.
+- Sweeps accept single-curve whole-sketch paths and guide rails, and report specific reasons
+  for unsupported corner transitions, section laws, tangent extension, and simplification.
 - Lofts map in more forms: surface lofts become SolidCraft surface lofts, and ruled lofts
   through two sections map. Loft rails share the sweep path reader, so a single-curve
   whole-sketch rail maps and each unsupported rail kind gives its own reason.
@@ -196,31 +53,134 @@ report's schema name changes when a field does).
   details SolidCraft has no field for are reported, not blocking), and names the unsupported
   hole forms, placements, and ends it refuses.
 - Revolves keep more of their history: unequal sides that add up to a full turn, surface
-  revolves short of a full turn, and an axis drawn in the profile's sketch (kept as that
-  line). Ends at a face, vertex or body and other face makers stop the history with a reason
-  that names them.
-- Patterns map named bodies, planar sketch paths, regular explicit offsets and angles, and two linear composite stages; unsupported pattern options receive specific refusals.
-- Sketch history carries bounded conics, rational quadratic Béziers, equal-weight splines, and more geometric relations and dimensions; unsupported constraints retain counted, specific loss messages.
-- A second issue form, **A file didn't convert**, reports one file: its format, the versions,
-  the operating system, what was expected and what happened, and that file's anonymous
-  report. Both forms list FreeCAD documents (`.FCStd`), and the agent skill does too.
+  revolves short of a full turn, and an axis drawn in the profile's sketch (kept as that line).
+  Ends at a face, vertex, or body and other face makers stop the history with a reason that
+  names them.
+- Patterns map named bodies, planar sketch paths, regular explicit offsets and angles, and two
+  linear composite stages; unsupported pattern options receive specific refusals.
+- Sketch history carries bounded conics, rational quadratic Béziers, equal-weight splines, and
+  more geometric relations and dimensions; unsupported constraints retain counted, specific
+  loss messages.
 - Body mirror patterns and body booleans (join, cut, or intersect, optionally keeping the
   tools) map to SolidCraft. Shells and drafts, shape-replacing mirrors, and threads without a
   resolved standard and pitch say why they are not mapped.
-- Sheet-metal edge flanges and hems say why they are not mapped: an edge flange's edge is
-  known only after the flange has bent it, and a hem's developed length or its rolled,
-  teardrop, or unresolved form has no SolidCraft equivalent.
 - Flattened designs keep mapped sketches with resolved planes, hidden for reference after the
   imported geometry, and report how many were kept or left out.
 
+### Assemblies
+
+- A joint Dutchman does not convert is reported by the output that leaves it out. A FreeCAD
+  macro (`--to freecad`, experimental) builds cylindrical, ball, distance, and other joints
+  SolidCraft output leaves out, and no longer reports them as dropped.
+- An assembly keeps the sketches of its own file, hidden for reference in the design itself,
+  with the parameters their dimensions use; they were left out before without a note.
+- A joint whose connector frames point the same way (its CADIR operands' `frame_sense:
+  "aligned"`) is written as a flipped SolidCraft joint, and a part a joint places meets its
+  other part z to z rather than face to face. A Fusion robot arm's gripper mounted on its wrist
+  this way had been turned over into the wrist.
+- When the source grounds none of the parts a set of joints ties together, Dutchman grounds the
+  fixed side of that set's first joint, so SolidCraft's solver holds the set where the source
+  places it, and the report names the occurrence as inferred (`Info`, `joints`).
+- A Fusion design's root component is grounded where it is: the document's own, and the root of
+  each design inserted into it, held by the occurrence that inserts it. Both were left free to
+  move.
+- Experimental FreeCAD macros rebuild assembly joints in the Assembly workbench (the fixed,
+  revolute, and slider joints SolidCraft gets, through sub-assemblies, plus cylindrical, ball,
+  distance, parallel, perpendicular, and angle joints between directly placed parts), with
+  connector frames, limits, and grounding; if solving fails, the parts keep their stored
+  placements.
+
+### Desktop app
+
+- When macOS blocks SolidCraft's first run, the CLI and desktop app explain how to allow it in
+  Finder or System Settings and try the check again, without changing quarantine.
+- The desktop app is named **Dutchman Convert**, part of Dutchman CAD: its window title and
+  heading, and on macOS **Dutchman Convert.app** with a "Dutchman Convert" disk image volume.
+  The commands (`dutchman`, `dutchman-gui`, `dutchman-mcp`), their subcommands, the settings
+  and the download file names are unchanged. A Mac with 0.1.5 or earlier keeps
+  `/Applications/Dutchman.app` until it is replaced.
+- The macOS disk image opens on an installation window: Dutchman and Applications side by side
+  with an arrow between them on Dutchman's own background, and the read-me below. If the window
+  cannot be laid out while packaging, the image is built plain as before.
+- A file that fails says what to do next: **Report this on GitHub** opens the **A file didn't
+  convert** form filled in with Dutchman's version, the system, the error with its stage and
+  upstream, and the file's anonymous report (copied to paste when it is too long for the link).
+  The form had come back with its report and stage boxes empty.
+- The line naming the SolidCraft that checks history stays on one line (the whole of it on
+  hover): a long path to `solidcraft-cli` wrapped onto several lines and pushed the Convert
+  button out of view at the window's default size.
+- The desktop app prints `--version` and `--help` without opening a window, shows its version
+  in the title, and has a **Report a problem** link to the **A file didn't convert** form. An
+  unreadable-file error links to that form too.
+
+### Command line and install
+
+- Install with Homebrew (`brew install dutchman-cad/tap/dutchman`) or Scoop (`scoop install
+  dutchman-cad/dutchman` after `scoop bucket add dutchman-cad
+  https://github.com/dutchman-cad/scoop-bucket`); both follow each release.
+- Convert with `dutchman part.f3d`, optionally followed by an output path. `convert` also
+  accepts no output: it derives the path beside the input from `--to`. Existing derived outputs
+  are kept (exit 2) unless `--force`; explicit outputs still replace by default. `--force`
+  conflicts with `--no-clobber`, and a default cannot replace the input.
+- Run installed Dutchman CAD tools with `dutchman <tool>`: executables named `dutchman-<tool>`
+  next to the command take precedence over those on `PATH`. Help lists installed tools and
+  versions. An installed Pilot takes precedence over the built-in Pilot and accepts its own
+  flags. The std-only `dutchman-launcher` crate supplies a tiny `dutchman` front command for
+  Pilot-only installations.
+- `dutchman pilot` runs [Pilot](https://github.com/dutchman-cad/pilot) 0.1.0-beta.1: `dutchman
+  pilot --help` lists its commands, and `dutchman pilot how "round all edges 3 mm"` shows
+  example calls.
+- Directory conversion keeps the newest numbered `.prt.N` save per part and reports older
+  revisions as skipped. Numbered saves use the part's base output name and keep existing
+  outputs.
+
 ### FreeCAD output (experimental)
 
-- `dutchman convert --to freecad` (and `convert-all`, the MCP tools and the desktop app's
-  output choice) writes a FreeCAD rebuild macro (`.FCMacro`) instead of a SolidCraft design:
-  it rebuilds the mapped history through FreeCAD's public scripting API and keeps the
-  original geometry as embedded STEP, which it restores when the rebuild fails or differs.
+- `dutchman convert --to freecad` (and `convert-all`, the MCP tools, and the desktop app's
+  output choice) writes a FreeCAD rebuild macro (`.FCMacro`) instead of a SolidCraft design: it
+  rebuilds the mapped history through FreeCAD's public scripting API and keeps the original
+  geometry as embedded STEP, which it restores when the rebuild fails or differs. By default,
   Dutchman does not run FreeCAD, so these histories are unverified. Geometry whose STEP uses
   replicated trimming curves (`CURVE_REPLICA`), which crash FreeCAD 1.1's reader, is refused.
+- Experimental FreeCAD macros keep a mapped history prefix and hidden reference sketches when a
+  later feature cannot be rebuilt, retaining the final STEP shape.
+- Write experimental native FreeCAD documents with `--to fcstd`, or check macros with `--to
+  freecad --verify`, using bounded headless execution and per-part volume and bounding-box
+  verification.
+
+### cadmpeg
+
+- The cadmpeg pin moves to `66550bb`. Fusion keeps parameters whose frames cannot be read as
+  native-only instead of failing, reads more parameter expressions and every component context
+  binding, places components bound through unregistered links, and reports ambiguous face
+  appearances instead of failing. As-built joints carry slider limits, their limit references,
+  and rest positions; rigid as-built joints and rigid groups of any size read, with each group
+  member held to the first. Fillets with unit-bearing tangency weights stay native, extrude
+  profiles resolve from circle-bounded and cap faces, rectangular face patterns keep both
+  directions, feature patterns name the feature they repeat, and base flanges read thickness
+  from their sheet-metal rule. Failed manifests say where framing stopped. Inventor 2019 and
+  later parts carry history, newer assemblies place parts, and more sketches close through
+  tangent-relation hints on either operand, other solver hints, and equal-length relations;
+  thread annotations become cosmetic threads, and Thicken joins through selection lists.
+  SolidWorks keeps native CAD state, as do Fusion, Creo, and NX. Creo 11–13 order tables read,
+  and Creo View geometry becomes available. FreeCAD compounds of closed solids read as solids,
+  fillets and chamfers keep edge ends on vertices, and document restoration improves. STEP/ACIS
+  gains face boundary curves on their edges' ranges, more reversed ACIS curve families, fixes
+  to ASM intcurve pcurves, and evaluable procedural faces (including a coil's swept face)
+  written as sampled B-spline surfaces. Across formats, feature input edges carry their
+  historical geometry, edges bounding selected faces keep their geometry, and joints carry
+  connector frame sense on their operands.
+- CADIR versions 8, 9, and 10 are read.
+
+### Docs
+
+- The README and guide link the Dutchman CAD Discord for questions and help.
+- The issue forms' privacy box says that links to files that are already public are welcome; it
+  asked for no file names at all, which kept a reporter from linking the public file that
+  failed.
+- A second issue form, **A file didn't convert**, reports one file: its format, the versions,
+  the operating system, what was expected and what happened, and that file's anonymous report.
+  Both forms list FreeCAD documents (`.FCStd`), and the conversion skill does too.
 
 ## 0.1.5 (2026-10-22)
 
@@ -262,42 +222,6 @@ report's schema name changes when a field does).
 - A solid line drawn across a sketch profile from one point of its boundary to another, such
   as the diagonals of an Inventor centre-point rectangle, is written as construction when the
   sketch's profile table takes that profile whole, and the report counts them (`Info`).
-
-### FreeCAD
-
-- A grounded joint in a FreeCAD assembly becomes a rigid joint to the design, holding its part
-  where it is stored, so the assembly's other joints keep their motion.
-- Leaving out a FreeCAD document's hidden bodies no longer takes their sketches with them.
-
-### Assemblies
-
-- An Inventor assembly that places no parts, as Inventor's own assembly templates do,
-  converts as an empty design with a note ("the assembly places no parts"), verification
-  `not_applicable`, instead of failing with "none of the assembly's parts could be found or
-  read".
-
-### Parameters and reports
-
-- A design holding parameters and nothing else converts as a SolidCraft design of those
-  parameters (verification `not_applicable`). A design with no bodies and no parameters fails
-  up front, saying it has no geometry.
-- A design none of whose features cadmpeg decodes has no history to write: it converts as
-  geometry with verification `not_applicable`, not as a history flattened.
-
-### Getting started
-
-- A file that cannot be read as its format (cut short, damaged or misnamed) says how to
-  recover: copy it again or check its extension, and report it anonymously if the original
-  opens. The CLI and the MCP tools give the same advice.
-- The desktop app says what to check when its window cannot start (a desktop session and
-  working graphics drivers), and exits with that advice when graphics start stalls for 30
-  seconds instead of waiting.
-- The guide and CONTRIBUTING start problem reports from an anonymous report, explain the
-  sample cube's expected warnings, and the MCP tool descriptions say exactly what
-  `convert_all` writes and that a successful `inspect` does not mean a file converts.
-
-### Feature history
-
 - More holes map: at a directed position without a sketch, on an axis through the cap of the
   extrusion before them, at selected sketch points and centres, with a drill-point form, and
   ending at that earlier cap. A tapered hole is not mapped yet.
@@ -336,6 +260,39 @@ report's schema name changes when a field does).
   sketch's profile table takes that profile whole: solid, it would split the profile, and
   SolidCraft found no profile to match. cadmpeg does not yet say which Inventor sketch curves
   are construction. The report says how many lines were written so (`Info`).
+
+### FreeCAD
+
+- A grounded joint in a FreeCAD assembly becomes a rigid joint to the design, holding its part
+  where it is stored, so the assembly's other joints keep their motion.
+- Leaving out a FreeCAD document's hidden bodies no longer takes their sketches with them.
+
+### Assemblies
+
+- An Inventor assembly that places no parts, as Inventor's own assembly templates do,
+  converts as an empty design with a note ("the assembly places no parts"), verification
+  `not_applicable`, instead of failing with "none of the assembly's parts could be found or
+  read".
+
+### Parameters and reports
+
+- A design holding parameters and nothing else converts as a SolidCraft design of those
+  parameters (verification `not_applicable`). A design with no bodies and no parameters fails
+  up front, saying it has no geometry.
+- A design none of whose features cadmpeg decodes has no history to write: it converts as
+  geometry with verification `not_applicable`, not as a history flattened.
+
+### Getting started
+
+- A file that cannot be read as its format (cut short, damaged or misnamed) says how to
+  recover: copy it again or check its extension, and report it anonymously if the original
+  opens. The CLI and the MCP tools give the same advice.
+- The desktop app says what to check when its window cannot start (a desktop session and
+  working graphics drivers), and exits with that advice when graphics start stalls for 30
+  seconds instead of waiting.
+- The guide and CONTRIBUTING start problem reports from an anonymous report, explain the
+  sample cube's expected warnings, and the MCP tool descriptions say exactly what
+  `convert_all` writes and that a successful `inspect` does not mean a file converts.
 
 ### Parameters
 
