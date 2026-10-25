@@ -8,6 +8,10 @@ report's schema name changes when a field does).
 
 ## Unreleased
 
+### Releases
+
+- Tagged builds now create a draft release with short highlights, downloads, and a link to the full changelog.
+
 ### Formats
 
 - A STEP file of one part goes into the SolidCraft design as it is, instead of being read by
