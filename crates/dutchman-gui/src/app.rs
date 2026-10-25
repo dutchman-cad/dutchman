@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use dutchman::batch::{Event, Job};
-use dutchman::{json, ConvertOptions};
+use dutchman::present::FileView;
+use dutchman::{json, present, ConvertOptions};
 use eframe::egui::{
     self, Align, CornerRadius, Frame, Layout, Margin, RichText, ScrollArea, Stroke, TextStyle,
     ThemePreference,
@@ -15,16 +16,7 @@ use crate::platform;
 use crate::theme::{self, Palette};
 use crate::worker::{self, Message, Pick, Run};
 
-/// What became of one file in a run.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Status {
-    Waiting,
-    Converting,
-    Converted,
-    Failed,
-    /// The run was stopped before this file started.
-    NotStarted,
-}
+pub use dutchman::present::Progress as Status;
 
 /// One file of a run.
 pub struct Row {
@@ -35,6 +27,22 @@ pub struct Row {
     pub report: Option<Value>,
     /// The job that converts it; none for an input that could not be planned.
     pub job: Option<Job>,
+}
+
+impl Row {
+    fn view(&self) -> FileView {
+        let mut view = FileView::new(
+            &self.input,
+            self.output.as_deref(),
+            self.status,
+            self.report.as_ref(),
+        );
+        if view.capability.is_none() {
+            view.capability = dutchman_core::Format::from_path(&self.input)
+                .map(|format| format.status_for(&self.input));
+        }
+        view
+    }
 }
 
 /// Dutchman Convert's window.
@@ -163,14 +171,11 @@ impl App {
             jobs: 1,
             ..dutchman::anon::Run::default()
         };
-        let issue = dutchman::issue::issue(report, &out_dir, &run)?;
-        if !issue.report_in_url {
+        let link = present::ReportLink::new(dutchman::issue::issue(report, &out_dir, &run)?);
+        let issue = link.issue;
+        if let Some(notice) = link.copy_notice {
             ctx.copy_text(issue.anonymous_report.clone());
-            self.notice = Some(
-                "The anonymous report is too long for the link, so it is copied: paste it into \
-                 the form's \"Anonymous report for this file\" box."
-                    .to_owned(),
-            );
+            self.notice = Some(notice.to_owned());
         }
         ctx.open_url(egui::OpenUrl::new_tab(issue.url));
         Ok(())
@@ -312,6 +317,7 @@ impl App {
         }
         self.receive(ctx);
         self.take_dropped_files(ctx);
+        let view = self.view();
 
         egui::TopBottomPanel::top("title")
             .frame(
@@ -342,10 +348,10 @@ impl App {
                     .show(ui, |ui| {
                         self.inputs_panel(ui);
                         ui.add_space(theme::SPACE_4);
-                        self.output_panel(ui, ctx);
+                        self.output_panel(ui, ctx, view.summary.as_deref());
                         if !self.rows.is_empty() {
                             ui.add_space(theme::SPACE_8);
-                            self.results(ui);
+                            self.results(ui, &view);
                         }
                     });
             });
@@ -443,7 +449,7 @@ impl App {
         });
     }
 
-    fn output_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+    fn output_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, summary: Option<&str>) {
         let p = *theme::palette(ui);
         section_label(ui, &p, "Output folder");
         panel(ui, &p, false, |ui| {
@@ -609,7 +615,7 @@ impl App {
                     ui.label(RichText::new(why).small().color(p.tide));
                 }
             }
-            if let Some(summary) = self.summary() {
+            if let Some(summary) = summary.filter(|_| !self.rows.is_empty()) {
                 ui.label(RichText::new(summary).color(p.tide));
             }
         });
@@ -618,48 +624,33 @@ impl App {
         }
     }
 
-    fn summary(&self) -> Option<String> {
-        if self.rows.is_empty() {
-            return None;
-        }
-        let count = |status: Status| self.rows.iter().filter(|r| r.status == status).count();
-        let (converted, failed) = (count(Status::Converted), count(Status::Failed));
-        Some(if self.running() {
-            format!("{} of {} done", converted + failed, self.rows.len())
-        } else {
-            let incomplete = self
-                .rows
-                .iter()
-                .filter(|row| {
-                    row.status == Status::Converted && row.report.as_ref().is_some_and(incomplete)
-                })
-                .count();
-            let mut text = if incomplete > 0 {
-                format!("{converted} converted ({incomplete} incomplete), {failed} failed")
-            } else {
-                format!("{converted} converted, {failed} failed")
-            };
-            let skipped = count(Status::NotStarted);
-            if skipped > 0 {
-                text.push_str(&format!(", {skipped} not started"));
-            }
-            text
-        })
+    fn view(&self) -> present::RunView {
+        present::RunView::from_files(
+            self.rows.iter().map(Row::view).collect(),
+            self.rows.iter().filter_map(|row| row.report.as_ref()),
+            self.running(),
+        )
     }
 
-    fn results(&mut self, ui: &mut egui::Ui) {
+    fn results(&mut self, ui: &mut egui::Ui, view: &present::RunView) {
         let p = *theme::palette(ui);
         let heading = section_label(ui, &p, "Results");
         let reveal = self.reveal.take();
         if reveal == Some(Reveal::Results) {
             heading.scroll_to_me(Some(Align::Min));
         }
-        let first = (reveal == Some(Reveal::FirstIssue)).then(|| first_to_show(&self.rows));
+        let first = (reveal == Some(Reveal::FirstIssue)).then_some(view.first_to_show);
         let mut action = None;
         let running = self.running();
-        for (index, row) in self.rows.iter().enumerate() {
+        let mut files: Vec<_> = view.files.iter().collect();
+        files.sort_by_key(|(index, _)| *index);
+        for (index, file) in files {
+            let index = *index;
+            let Some(row) = self.rows.get(index) else {
+                continue;
+            };
             let shown = card(ui, &p, |ui| {
-                if let Some(chosen) = row_ui(ui, &p, index, row, self.has_app, running) {
+                if let Some(chosen) = row_ui(ui, &p, index, row, file, self.has_app, running) {
                     action = Some(chosen);
                 }
             });
@@ -682,9 +673,7 @@ impl App {
             self.notice = Some(err);
         }
         if !running {
-            if let Some(pitch) =
-                json::fixtures_pitch(self.rows.iter().filter_map(|row| row.report.as_ref()))
-            {
+            if let Some(pitch) = &view.invitation {
                 ui.horizontal_wrapped(|ui| {
                     for (index, part) in pitch.split(json::FIXTURES_URL).enumerate() {
                         if index > 0 {
@@ -725,19 +714,20 @@ fn row_ui(
     p: &Palette,
     index: usize,
     row: &Row,
+    view: &FileView,
     has_app: bool,
     running: bool,
 ) -> Option<Action> {
     let mut action = None;
-    let report = row.report.as_ref();
-    let (word, colour) = match row.status {
-        Status::Waiting => ("Waiting", p.tide),
-        Status::Converting => ("Converting", p.tide),
-        Status::Converted if report.is_some_and(incomplete) => ("Incomplete", p.lantern_text),
-        Status::Converted => ("Converted", p.spectre),
-        Status::Failed => ("Failed", p.danger),
-        Status::NotStarted => ("Not started", p.tide),
+    let colour = match view.status {
+        present::Status::Incomplete => p.lantern_text,
+        present::Status::Converted
+        | present::Status::ConvertedWithLosses
+        | present::Status::Flattened => p.spectre,
+        present::Status::Failed => p.danger,
+        _ => p.tide,
     };
+    let word = view.status_word;
     let output = row
         .output
         .as_ref()
@@ -749,7 +739,7 @@ fn row_ui(
                 ui.add(egui::Spinner::new().size(14.0).color(p.lantern));
             }
             ui.label(RichText::new(word).heading().color(colour));
-            ui.add(egui::Label::new(RichText::new(file_name(&row.input)).heading()).truncate())
+            ui.add(egui::Label::new(RichText::new(&view.name).heading()).truncate())
                 .on_hover_text(display(&row.input));
         },
         |ui| {
@@ -780,14 +770,11 @@ fn row_ui(
             }
         },
     );
-    if let Some(status) = report
-        .and_then(json::status_line)
-        .or_else(|| dutchman_core::Format::from_path(&row.input).map(|f| f.status_for(&row.input)))
-    {
+    if let Some(status) = &view.capability {
         ui.label(status);
     }
-    if let Some(missing) = report.and_then(missing_parts) {
-        missing_ui(ui, p, &missing);
+    if let Some(text) = &view.missing_summary {
+        missing_ui(ui, p, text);
         ui.horizontal(|ui| {
             ui.add_enabled_ui(!running && row.job.is_some(), |ui| {
                 if ui.button("Search a folder…").clicked() {
@@ -799,29 +786,17 @@ fn row_ui(
             });
         });
     }
-    if let Some(message) = report
-        .and_then(|r| r.pointer("/error/message"))
-        .and_then(Value::as_str)
-    {
+    if let Some(message) = &view.error {
         ui.label(RichText::new(message).color(p.danger));
-        if report.and_then(missing_parts).is_none() {
-            ui.label(
-                RichText::new(
-                    "If the file opens in the app that made it, this is a bug in Dutchman: \
-                     report it on GitHub. The form opens filled in with the error and an \
-                     anonymous report that names no file; read it before you submit, and \
-                     never attach the design.",
-                )
-                .small()
-                .color(p.tide),
-            );
+        if view.can_report {
+            ui.label(RichText::new(present::REPORT_HELP).small().color(p.tide));
             if ui.button("Report this on GitHub").clicked() {
                 action = Some(Action::Report(index));
             }
         }
         return action;
     }
-    if let (Status::Converted, Some(report)) = (&row.status, report) {
+    if row.status == Status::Converted && row.report.is_some() {
         let output = row.output.as_deref().map(display).unwrap_or_default();
         ui.add(
             egui::Label::new(
@@ -832,50 +807,39 @@ fn row_ui(
             .truncate(),
         )
         .on_hover_text(output);
-        ui.label(RichText::new(outcome(report)).color(p.ink));
-        let lines = dutchman::json::completeness_lines(report);
-        if let (Some(summary), Some((_, causes))) =
-            (dutchman::json::assembly_line(report), lines.split_first())
-        {
-            let colour = if incomplete(report) { p.danger } else { p.tide };
+        ui.label(RichText::new(&view.outcome).color(p.ink));
+        if let Some(summary) = &view.assembly {
+            let colour = if view.incomplete { p.danger } else { p.tide };
             ui.label(RichText::new(summary).color(colour));
-            for cause in causes {
-                ui.label(RichText::new(cause.trim()).small().color(p.ink));
+            for cause in &view.assembly_causes {
+                ui.label(RichText::new(cause).small().color(p.ink));
             }
         }
-        let losses: Vec<&Value> = report
-            .get("losses")
-            .and_then(Value::as_array)
-            .map(|l| l.iter().collect())
-            .unwrap_or_default();
-        if !losses.is_empty() {
-            let components = dutchman::json::components(report);
-            egui::CollapsingHeader::new(RichText::new(loss_counts(&losses)).color(p.tide))
+        if !view.components.is_empty() {
+            let components = &view.components;
+            egui::CollapsingHeader::new(RichText::new(&view.loss_summary).color(p.tide))
                 .id_salt(("losses", index))
                 .show(ui, |ui| {
                     // One component: its losses. Several: each in its own section, most that
                     // matters first.
                     if let [only] = components.as_slice() {
-                        for loss in &only.losses {
+                        for loss in &only.lines {
                             loss_line(ui, p, loss);
                         }
                         return;
                     }
                     for (n, component) in components.iter().enumerate() {
-                        let name = component.file.as_deref().unwrap_or("The design");
-                        let colour = if component.dropped > 0 {
-                            p.danger
-                        } else if component.degraded > 0 || component.flattened.is_some() {
-                            p.lantern_text
-                        } else {
-                            p.tide
+                        let colour = match component.severity_rank {
+                            0 => p.danger,
+                            1 => p.lantern_text,
+                            _ => p.tide,
                         };
                         egui::CollapsingHeader::new(
-                            RichText::new(format!("{name}: {}", component.summary())).color(colour),
+                            RichText::new(&component.heading).color(colour),
                         )
                         .id_salt(("component", index, n))
                         .show(ui, |ui| {
-                            for loss in &component.losses {
+                            for loss in &component.lines {
                                 loss_line(ui, p, loss);
                             }
                         });
@@ -889,129 +853,15 @@ fn row_ui(
     action
 }
 
-/// Whether `report` is of an assembly that converted with placements left out.
-fn incomplete(report: &Value) -> bool {
-    report
-        .pointer("/completeness/left_out")
-        .and_then(Value::as_array)
-        .is_some_and(|causes| !causes.is_empty())
-}
-
-/// What marks a part file an assembly places as not found, in its loss.
-const NOT_FOUND: &str = ": not found at its stored path";
-
-/// The part files an assembly's conversion could not find, by name, when it missed any; an
-/// empty list when it failed for want of all of them, without naming them.
-fn missing_parts(report: &Value) -> Option<Vec<String>> {
-    let mut names: Vec<String> = report
-        .get("losses")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|loss| loss.get("message").and_then(Value::as_str))
-        .filter_map(|message| message.find(NOT_FOUND).map(|at| message.get(..at)))
-        .flatten()
-        .map(str::to_owned)
-        .collect();
-    names.sort();
-    names.dedup();
-    let none_found = report
-        .pointer("/error/message")
-        .and_then(Value::as_str)
-        .is_some_and(|message| message.contains("parts could be found or read"));
-    (!names.is_empty() || none_found).then_some(names)
-}
-
-/// The part files not found, the first few by name.
-fn missing_ui(ui: &mut egui::Ui, p: &Palette, missing: &[String]) {
-    const SHOWN: usize = 5;
-    let text = match missing.len() {
-        0 => "Its part files were not found.".to_owned(),
-        n => {
-            let mut text = format!(
-                "{n} part file{} not found: {}",
-                if n == 1 { " was" } else { "s were" },
-                missing
-                    .iter()
-                    .take(SHOWN)
-                    .map(String::as_str)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
-            if n > SHOWN {
-                text.push_str(&format!(" and {} more", n - SHOWN));
-            }
-            text
-        }
-    };
+/// The missing-part summary and recovery instructions.
+fn missing_ui(ui: &mut egui::Ui, p: &Palette, text: &str) {
     ui.label(RichText::new(text).color(p.danger));
-    ui.label(
-        RichText::new(
-            "Choose the folder that holds them, or one of them, to convert this file again \
-             searching there too.",
-        )
-        .small()
-        .color(p.tide),
-    );
-}
-
-/// What was written, in a sentence.
-fn outcome(report: &Value) -> String {
-    let field = |pointer: &str| report.pointer(pointer).and_then(Value::as_str);
-    let history = |mapped: u64, total: u64| format!("{mapped} of {total} features mapped");
-    let counts = (
-        report.pointer("/history/mapped").and_then(Value::as_u64),
-        report.pointer("/history/total").and_then(Value::as_u64),
-    );
-    match field("/mode") {
-        Some("history") => {
-            let check = match (field("/verification/status"), field("/verification/reason")) {
-                (Some("verified"), _) => {
-                    if field("/output/format").is_some_and(|format| format.starts_with("freecad-"))
-                    {
-                        "verified in FreeCAD".to_owned()
-                    } else {
-                        "verified in SolidCraft".to_owned()
-                    }
-                }
-                (Some("differs"), Some(reason)) => format!("rebuild differs: {reason}"),
-                (_, Some(reason)) => format!("unverified: {reason}"),
-                _ => "unverified".to_owned(),
-            };
-            match counts {
-                (Some(m), Some(t)) => format!("Editable history, {}; {check}.", history(m, t)),
-                _ => format!("Editable history; {check}."),
-            }
-        }
-        _ => match (field("/verification/status"), field("/verification/reason")) {
-            (Some("flattened"), Some(reason)) => {
-                format!("Geometry without history (flattened: {reason}).")
-            }
-            _ => "Geometry without history.".to_owned(),
-        },
-    }
-}
-
-fn loss_counts(losses: &[&Value]) -> String {
-    let count = |level: &str| {
-        losses
-            .iter()
-            .filter(|l| l.get("level").and_then(Value::as_str) == Some(level))
-            .count()
-    };
-    let parts: Vec<String> = ["Info", "Degraded", "Dropped"]
-        .into_iter()
-        .map(|level| (level, count(level)))
-        .filter(|(_, n)| *n > 0)
-        .map(|(level, n)| format!("{n} {level}"))
-        .collect();
-    format!("Losses: {}", parts.join(", "))
+    ui.label(RichText::new(present::MISSING_HELP).small().color(p.tide));
 }
 
 /// One loss: its level word, coloured, then its subject and message.
-fn loss_line(ui: &mut egui::Ui, p: &Palette, loss: &Value) {
-    let field = |key: &str| loss.get(key).and_then(Value::as_str).unwrap_or("");
-    let level = field("level");
+fn loss_line(ui: &mut egui::Ui, p: &Palette, loss: &present::LossLine) {
+    let level = loss.level.as_str();
     let colour = match level {
         "Degraded" => p.lantern_text,
         "Dropped" => p.danger,
@@ -1020,11 +870,7 @@ fn loss_line(ui: &mut egui::Ui, p: &Palette, loss: &Value) {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = theme::SPACE_1;
         ui.label(RichText::new(level).monospace().color(colour));
-        ui.label(
-            RichText::new(format!("{}: {}", field("subject"), field("message")))
-                .monospace()
-                .color(p.ink),
-        );
+        ui.label(RichText::new(&loss.text).monospace().color(p.ink));
     });
 }
 
@@ -1034,17 +880,6 @@ fn section_label(ui: &mut egui::Ui, p: &Palette, text: &str) -> egui::Response {
             .text_style(theme::label())
             .color(p.tide),
     )
-}
-
-/// The row to show first when a run ends: the first that failed or converted incomplete,
-/// else the first.
-fn first_to_show(rows: &[Row]) -> usize {
-    rows.iter()
-        .position(|row| {
-            row.status == Status::Failed
-                || (row.status == Status::Converted && row.report.as_ref().is_some_and(incomplete))
-        })
-        .unwrap_or(0)
 }
 
 /// A raised panel on `surface-2` with a hairline border (spectre while files hover over it).
@@ -1122,13 +957,93 @@ mod tests {
 
     use super::*;
 
-    fn row(status: Status) -> Row {
-        Row {
-            input: PathBuf::from("a.f3d"),
-            output: None,
-            status,
-            report: None,
-            job: None,
+    #[test]
+    fn result_list_uses_shared_strings() {
+        use egui_kittest::kittest::Queryable;
+        let reports = [
+            json!({"ok": true, "mode": "history", "history": {"mapped": 3, "total": 3},
+                "verification": {"status": "verified"}, "losses": []}),
+            json!({"ok": true, "mode": "import", "verification": {"status": "flattened", "reason": "fillet is not mapped yet"},
+                "losses": [{"level": "Degraded", "subject": "history", "message": "flattened: fillet is not mapped yet"}]}),
+            json!({"ok": true, "completeness": {"placed": 1, "placements": 2, "left_out": [{"file": "pin.ipt", "count": 1, "reason": "not found", "stage": "input"}]},
+                "losses": [{"level": "Dropped", "subject": "occurrence", "message": "pin.ipt: not found at its stored path"}]}),
+            json!({"ok": false, "error": {"message": "cannot read this design: no geometry could be read", "stage": "decode", "upstream": "cadmpeg"}}),
+        ];
+        let rows: Vec<Row> = reports
+            .into_iter()
+            .enumerate()
+            .map(|(n, report)| Row {
+                input: PathBuf::from(format!("design-{n}.f3d")),
+                output: Some(PathBuf::from(format!("converted/design-{n}.solidcraft"))),
+                status: if report.get("ok") == Some(&Value::Bool(true)) {
+                    Status::Converted
+                } else {
+                    Status::Failed
+                },
+                report: Some(report),
+                job: None,
+            })
+            .collect();
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1000.0, 1200.0))
+            .build_ui(|ui| {
+                theme::install(ui.ctx());
+                let p = *theme::palette(ui);
+                for (index, row) in rows.iter().enumerate() {
+                    card(ui, &p, |ui| {
+                        row_ui(ui, &p, index, row, &row.view(), true, false);
+                    });
+                    ui.add_space(theme::SPACE_2);
+                }
+            });
+        harness.run();
+        for label in [
+            "Editable history, 3 of 3 features mapped; verified in SolidCraft.",
+            "Geometry without history (flattened: fillet is not mapped yet).",
+            "Incomplete",
+            "1 part file was not found: pin.ipt",
+            "Losses: 1 Degraded",
+            "Losses: 1 Dropped",
+            "cannot read this design: no geometry could be read",
+            "Report this on GitHub",
+        ] {
+            assert!(harness.query_by_label(label).is_some(), "missing {label}");
+        }
+        use egui_kittest::kittest::NodeT;
+        let labels = harness
+            .query_all_by(|node| node.label().is_some())
+            .filter_map(|node| node.accesskit_node().label())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if let Some(dir) = std::env::var_os("DUTCHMAN_PRESENT_SCREENSHOTS") {
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(PathBuf::from(&dir).join("synthetic-results.txt"), &labels).unwrap();
+
+            harness
+                .render()
+                .unwrap()
+                .save(PathBuf::from(&dir).join("synthetic-results.png"))
+                .unwrap();
+            if let Some(before) = std::env::var_os("DUTCHMAN_PRESENT_COMPARE") {
+                assert_eq!(
+                    std::fs::read_to_string(PathBuf::from(&before).join("synthetic-results.txt"))
+                        .unwrap(),
+                    labels
+                );
+                let before = image::open(PathBuf::from(before).join("synthetic-results.png"))
+                    .unwrap()
+                    .to_rgba8();
+                let after = image::open(PathBuf::from(dir).join("synthetic-results.png"))
+                    .unwrap()
+                    .to_rgba8();
+                assert_eq!(before.dimensions(), after.dimensions());
+                let changed = before
+                    .pixels()
+                    .zip(after.pixels())
+                    .filter(|(a, b)| a != b)
+                    .count();
+                assert_eq!(changed, 0, "result list pixels changed");
+            }
         }
     }
 
@@ -1146,56 +1061,5 @@ mod tests {
             });
         harness.run();
         assert!(harness.query_by_label(message).is_some());
-    }
-
-    #[test]
-    fn a_finished_run_shows_its_first_failure_first() {
-        let rows = [
-            row(Status::Converted),
-            row(Status::Failed),
-            row(Status::Failed),
-        ];
-        assert_eq!(first_to_show(&rows), 1);
-        assert_eq!(first_to_show(&[row(Status::Converted)]), 0);
-        let mut incomplete = row(Status::Converted);
-        incomplete.report = Some(json!({"completeness": {"placed": 1, "placements": 2,
-            "left_out": [{"file": "pin.ipt", "reason": "gone", "stage": "input", "count": 1}]}}));
-        assert_eq!(
-            first_to_show(&[row(Status::Converted), incomplete, row(Status::Failed)]),
-            1
-        );
-        assert_eq!(first_to_show(&[]), 0);
-    }
-
-    #[test]
-    fn the_parts_an_assembly_could_not_find_are_named() {
-        let report = json!({"ok": true, "losses": [
-            {"level": "Dropped", "subject": "occurrence \"Pin:1\"",
-             "message": "pin.ipt: not found at its stored path or in the project folder /p"},
-            {"level": "Dropped", "subject": "sub.iam: occurrence \"Pin:2\"",
-             "message": "pin.ipt: not found at its stored path or in the project folder /p"},
-            {"level": "Dropped", "subject": "occurrence \"Base:1\"",
-             "message": "base.ipt: not found at its stored path or in the project folder /p"},
-            {"level": "Info", "subject": "history", "message": "flattened"},
-        ]});
-        assert_eq!(missing_parts(&report).unwrap(), ["base.ipt", "pin.ipt"]);
-        let failed = json!({"ok": false, "error": {"message": "cannot read this design: none of \
-            the assembly's parts could be found or read; if they are elsewhere, give the project \
-            folder that holds them"}});
-        assert_eq!(missing_parts(&failed).unwrap(), Vec::<String>::new());
-        assert_eq!(missing_parts(&json!({"ok": true, "losses": []})), None);
-    }
-
-    #[test]
-    fn an_assembly_with_placements_left_out_is_incomplete() {
-        assert!(incomplete(
-            &json!({"completeness": {"placed": 1, "placements": 2,
-            "left_out": [{"file": "pin.ipt", "reason": "gone", "stage": "input", "count": 1}]}})
-        ));
-        assert!(!incomplete(
-            &json!({"completeness": {"placed": 2, "placements": 2,
-            "left_out": []}})
-        ));
-        assert!(!incomplete(&json!({"ok": true})));
     }
 }
