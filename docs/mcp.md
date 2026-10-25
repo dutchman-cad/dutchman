@@ -326,3 +326,8 @@ a document. These options are currently CLI-only; the MCP FreeCAD macro output a
 remains unverified. `FREECAD_CMD` selects the headless executable and
 `--freecad-timeout SECONDS` sets its 300-second default limit. See the guide for discovery,
 measurement tolerances, fallback reporting and the `differs` verification status.
+
+For self-hosted browser conversions, [Dutchman Web](web.md#settings) documents the shared
+zip budget, concurrent upload and saved-data limits, private data folder, and allowed browser
+origins. Uploads may be refused with 403 (origin check) or 503 (capacity); the CLI and MCP
+reports are unchanged.

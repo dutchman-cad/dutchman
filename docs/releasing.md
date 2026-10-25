@@ -16,7 +16,7 @@ A release is cut from `main` once CI is green there.
    a link to the dated CHANGELOG entry at the tag.
 2. Merge that, then tag the merge commit `vX.Y.Z` and push the tag.
 3. Pushing the tag runs the `Release builds` workflow. It builds each platform's archive
-   (`scripts/package-archive.sh`: `dutchman`, `dutchman-mcp` and `dutchman-gui`, with LICENSE,
+   (`scripts/package-archive.sh`: `dutchman`, `dutchman-mcp` and `dutchman-gui`, plus `dutchman-web` on Linux, with LICENSE,
    NOTICE, README and a SHA-256), and the macOS disk image (`scripts/macos-dmg.sh`:
    Dutchman Convert.app, universal, signed ad hoc), as workflow artifacts; both Mac targets build on
    one Apple silicon runner. After all builds succeed, the workflow checks every SHA-256
@@ -38,6 +38,10 @@ A release is cut from `main` once CI is green there.
    `cargo publish --dry-run -p <crate>` before each.
 
 ## Packaging
+
+Linux release and nightly archives include `dutchman-web`; it needs no desktop libraries.
+Windows and macOS archives currently leave it out: native builds of the web server have not
+yet been verified there. Build it from source on those platforms until that check is complete.
 
 `scripts/macos-dmg.sh` builds the universal app and a compressed, read-only HFS+ disk
 image. The installation window opens in icon view with about 640 × 440 points of content,

@@ -9,7 +9,7 @@ use std::path::{Component, Path, PathBuf};
 /// The most characters kept of an uploaded file's name.
 const MAX_NAME: usize = 200;
 
-/// What an uploaded zip may unpack to.
+/// What all zips of one upload may unpack to.
 #[derive(Clone, Copy, Debug)]
 pub struct ZipLimits {
     /// The most entries it may hold.
@@ -73,8 +73,9 @@ pub fn is_zip(path: &Path) -> bool {
 /// Unpacks the zip at `archive` into `dest` and removes it. A zip of one folder unpacks as that
 /// folder; one with several entries at its top unpacks into a folder named after the zip.
 /// Refuses entries that would land outside that folder, skips symbolic links, and stops when
-/// the zip holds more than `limits` allow, whatever its headers claim.
-pub fn unzip(archive: &Path, dest: &Path, limits: ZipLimits) -> Result<(), String> {
+/// the remaining job budget is exhausted, whatever the headers claim. Subtracts the entries
+/// and actual unpacked bytes from `limits` for the next zip in the upload.
+pub fn unzip(archive: &Path, dest: &Path, limits: &mut ZipLimits) -> Result<(), String> {
     let label = archive
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -89,6 +90,7 @@ pub fn unzip(archive: &Path, dest: &Path, limits: ZipLimits) -> Result<(), Strin
         ));
     }
 
+    limits.entries -= zip.len();
     let mut names = Vec::with_capacity(zip.len());
     for index in 0..zip.len() {
         let entry = zip
@@ -148,6 +150,7 @@ pub fn unzip(archive: &Path, dest: &Path, limits: ZipLimits) -> Result<(), Strin
             )
         })?;
     }
+    limits.bytes = left;
     drop(zip);
     fs::remove_file(archive).map_err(|err| format!("{label}: {err}"))?;
     Ok(())
@@ -216,7 +219,7 @@ mod tests {
                 ("proj/b.iam", b"b"),
             ],
         );
-        unzip(&archive, dir.path(), LIMITS).unwrap();
+        unzip(&archive, dir.path(), &mut { LIMITS }).unwrap();
         assert!(dir.path().join("proj/sub/a.ipt").is_file());
         assert!(dir.path().join("proj/b.iam").is_file());
         assert!(!archive.exists());
@@ -227,7 +230,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let archive = dir.path().join("parts.zip");
         zip_of(&archive, &[("a.ipt", b"a"), ("b.ipt", b"b")]);
-        unzip(&archive, dir.path(), LIMITS).unwrap();
+        unzip(&archive, dir.path(), &mut { LIMITS }).unwrap();
         assert!(dir.path().join("parts/a.ipt").is_file());
     }
 
@@ -236,7 +239,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let archive = dir.path().join("evil.zip");
         zip_of(&archive, &[("../evil.txt", b"x")]);
-        let err = unzip(&archive, &dir.path().join("in"), LIMITS).unwrap_err();
+        let err = unzip(&archive, &dir.path().join("in"), &mut { LIMITS }).unwrap_err();
         assert!(err.contains("outside its own folder"), "{err}");
         assert!(!dir.path().join("evil.txt").exists());
     }
@@ -250,7 +253,7 @@ mod tests {
             entries: 2,
             bytes: 1 << 20,
         };
-        assert!(unzip(&archive, dir.path(), few)
+        assert!(unzip(&archive, dir.path(), &mut { few })
             .unwrap_err()
             .contains("more than 2 entries"));
 
@@ -260,7 +263,7 @@ mod tests {
             entries: 10,
             bytes: 1024,
         };
-        assert!(unzip(&archive, dir.path(), small)
+        assert!(unzip(&archive, dir.path(), &mut { small })
             .unwrap_err()
             .contains("unpacks to more than"));
     }
@@ -270,7 +273,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let archive = dir.path().join("fake.zip");
         fs::write(&archive, b"not a zip").unwrap();
-        assert!(unzip(&archive, dir.path(), LIMITS)
+        assert!(unzip(&archive, dir.path(), &mut { LIMITS })
             .unwrap_err()
             .contains("could not be opened as a zip file"));
     }

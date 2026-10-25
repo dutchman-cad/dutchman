@@ -244,3 +244,7 @@ when discovery cannot find it; `--freecad-timeout SECONDS` defaults to 300 and k
 process. Explain `differs` using the named part and reason; a runtime fallback restores
 STEP and adds a specific loss. A macro may be written with `not checked: FreeCAD not found`;
 native output requires working FreeCAD. These extra flags are CLI-only and experimental.
+
+For browser conversions, consult [Dutchman Web](../../docs/web.md) for upload and storage
+limits and HTTPS setup. A 403 means the browser origin was refused; a 503 means capacity is
+unavailable. Retry after saved jobs expire or adjust the documented server settings.
