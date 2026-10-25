@@ -26,7 +26,7 @@ consumer benefits and Dutchman stays small.
 | `dutchman-launcher` | Discovers installed `dutchman-<tool>` commands and dispatches them; also supplies a small front command. | std only |
 | `dutchman-core` | Format gate, input caps, the `Writer` seam, the `Report`, the `convert` pipeline. Owns the cadmpeg decode call. | `cadmpeg-ir`, `cadmpeg-core`, `cadmpeg-registry` |
 | `dutchman-solidcraft` | Implements `Writer` for `.solidcraft`. Knows the SolidCraft design format and nothing about native formats. | `dutchman-core`, cadmpeg's STEP encoder, `zip`, `sha2`, `serde_json` |
-| `dutchman` | The CLI (`dutchman convert <in> <out.solidcraft>`) and the MCP server (`dutchman-mcp`), sharing one small library that sets up a conversion and builds the JSON reports both return. Argument parsing, printing and the MCP protocol only. | both of the above, `clap` |
+| `dutchman` | The CLI (`dutchman convert <in> <out.solidcraft>`) and the MCP server (`dutchman-mcp`), sharing one small library that sets up a conversion and builds the JSON reports both return. Front-end orchestration, printing, the MCP protocol and plain presentation data. | both of the above, `clap` |
 | `dutchman-gui` | The desktop app (eframe/egui). Plans and converts through the `dutchman` library's batch code on background threads; draws the Dutchman design system's Day and Night themes. | `dutchman`, `eframe`, `rfd` |
 
 `dutchman-core` and `dutchman-solidcraft` are `publish = false` until their APIs settle. The
@@ -221,6 +221,16 @@ reconstructed from the mapped sketch and thickness; other input bodies are refus
 outer-face heights, full-edge widths, inside/outside placement, angles, and bend radii map.
 Hems are refused because their developed lengths cannot be passed as SolidCraft outer-face lengths,
 and rolled, teardrop and unresolved hems have no SolidCraft form.
+
+## Presentation
+
+`dutchman::present` builds plain `FileView` and `RunView` data from the conversion JSON
+reports. It owns desktop outcome wording, status classification, missing-part recovery,
+loss groups, summary counts, first-issue selection and severity ranks. `RunView` keeps source
+indices alongside its severity-sorted files so the desktop can retain input order.
+Component ordering, assembly wording, invitations and issue-form encoding reuse the existing
+CLI library helpers. Issue anonymization stays with the caller; presentation only fills the
+form from an already anonymous report. No UI types or I/O enter this module.
 
 ## Errors and losses
 

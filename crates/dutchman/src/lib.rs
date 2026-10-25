@@ -10,6 +10,7 @@ pub mod formats;
 pub mod issue;
 pub mod json;
 pub mod mcp;
+pub mod present;
 pub mod worker;
 
 use std::path::{Path, PathBuf};
