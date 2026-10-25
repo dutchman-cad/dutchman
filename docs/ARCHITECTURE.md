@@ -58,6 +58,8 @@ choosing Creo or NX. Inconclusive contents remain recognised without choosing a 
 Dutchman's `Format::reads_geometry` records whether the reader supplies geometry. Formats
 without geometry support or a codec in this build are refused before decode. All cadmpeg
 crates come from the same git revision; `scripts/use-cadmpeg-main.sh` updates those pins together.
+IGES is also refused before opening the input: cadmpeg does not yet sew its faces into
+solids, so Dutchman directs users to SolidCraft's own IGES importer (File > Import).
 
 ## The plugin seam
 

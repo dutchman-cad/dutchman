@@ -431,6 +431,9 @@ Each conversion starts with a reader status such as
 for this file. Formats with geometry readers attempt conversion through the STEP path.
 Creo and NX share `.prt` and are identified by contents; `.prt.N` numbered saves are
 recognised too. Inputs without geometry support or a codec are refused with exit 1.
+IGES (`.igs`, `.iges`) is recognised and refused before decoding: "Dutchman doesn't convert
+IGES yet: open it in SolidCraft directly (File > Import)." This applies to single files and
+directory runs; IGES refusals appear in batch results and do not invite test files.
 A recognised format whose geometry produces no
 solids or surfaces SolidCraft can import says so.
 
@@ -439,8 +442,8 @@ folder and reports each older revision as skipped. A numbered save such as `brac
 uses `bracket.solidcraft` as its default output. Existing outputs for numbered saves are
 kept; choose another output path (or `--force` for a single file) to replace one deliberately.
 
-After the results, a refused conversion or a history that did not fully map prints one
-invitation naming programs and linking to [test-file recipes](https://dutchman-cad.github.io/fixtures/)
+After the results, a refused conversion (except IGES) or a history that did not fully map
+prints one invitation naming programs and linking to [test-file recipes](https://dutchman-cad.github.io/fixtures/)
 and `/volunteer` in [Discord](https://discord.gg/yTcseBEdeu). `convert --quiet` and
 `convert-all --quiet` hide that invitation. `--json` contains only the report. The desktop
 app shows the same status beside each file and one invitation under the results, with
@@ -466,7 +469,7 @@ Creo View (.pvz)  reads geometry  converts: geometry through STEP; solids and su
 Rhino (.3dm)  reads geometry  converts: geometry through STEP; solids and surfaces SolidCraft can import
 ACIS (.sat, .sab, .smt, .smb)  reads geometry  converts: geometry through STEP; solids and surfaces SolidCraft can import
 STEP (.step, .stp)  reads geometry  converts: geometry through STEP; solids and surfaces SolidCraft can import
-IGES (.igs, .iges)  reads geometry  converts: geometry through STEP; solids and surfaces SolidCraft can import
+IGES (.igs, .iges)  open it in SolidCraft directly  not yet: SolidCraft imports IGES itself (File > Import)
 Creo or NX part (.prt)  recognised, not read yet  not yet: nothing yet; reading geometry is not supported yet
 
 Written as a SolidCraft design (.solidcraft), or, experimental, as a FreeCAD rebuild macro (.FCMacro, --to freecad)
@@ -705,7 +708,8 @@ and requested reports.
 | Message | What to do |
 |---|---|
 | `x.step: output must be a .solidcraft file` | Name the output `something.solidcraft`. |
-| `a.txt: Dutchman does not convert this kind of file. It converts …` | Choose one of the formats listed by `dutchman formats`. STEP and IGES exchange files convert too. |
+| `a.txt: Dutchman does not convert this kind of file. It converts …` | Choose one of the formats listed by `dutchman formats`. STEP exchange files convert too. |
+| `Dutchman doesn't convert IGES yet: open it in SolidCraft directly (File > Import).` | Open the `.igs` or `.iges` file in SolidCraft using File > Import. |
 | `… reading geometry is not supported yet. Export a STEP file and convert that instead.` | The format is recognised, but its reader has no geometry path yet. Export STEP from the program that made the design and convert that. |
 | `cannot read this design: its contents are inventor data, not Fusion archive (.f3d); rename it to match` | The file's extension does not match its contents. Rename it with the right extension. |
 | `cannot read this design: no geometry could be read from this Fusion archive (.f3d) file` | The file holds no geometry Dutchman can read yet, for example a design saved without bodies, or one whose geometry is stored in a form cadmpeg does not read yet. |

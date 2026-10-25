@@ -53,7 +53,7 @@ version (`dutchman.convert/2`).
 |---|---|
 | `ok` | `true` when the design was written. |
 | `input.format` | `fusion_archive`, `fusion_multi_document`, `inventor_part`, `inventor_assembly`, `solidworks_part`, `solidworks_assembly`, `freecad_document`, `catia_part`, `creo_part`, `nx_part`, `creo_view`, `rhino`, `acis`, `step`, `iges`, `unclassified_part`, or `null` for an unknown extension. `format_name` is the same for people. Creo and NX share `.prt` and are distinguished by contents; inconclusive contents give `unclassified_part`. |
-| `input.words` | Reader status: `reads geometry`, `opens, no geometry yet`, or `recognised, not read yet`; `null` for an unknown format. Present on successes and failures, including batch results and MCP reports. The conversion's history and verification describe what this file kept. |
+| `input.words` | Reader status: `reads geometry`, `opens, no geometry yet`, `recognised, not read yet`, or `open it in SolidCraft directly` (IGES); `null` for an unknown format. Present on successes and failures, including batch results and MCP reports. The conversion's history and verification describe what this file kept. |
 | `input.program`, `input.extension` | Program or format family, and the input's actual suffix without a dot, used for status text (`prt.12` for a numbered save). Unknown programs are `null`. |
 | `output.format` | The SolidCraft design format written. |
 | `mode` | `history`: editable feature history, with the original geometry kept beside it, suppressed. `import`: the geometry alone. |
@@ -64,6 +64,14 @@ version (`dutchman.convert/2`).
 | `joints` | For an assembly whose joints were written: how many of each kind, `{"revolute": 5, "rigid": 1}` (kinds `revolute`, `slider`, `rigid`). Grounded joints count as `rigid`, fixing their occurrence to the design at its stored placement. Absent when none were. |
 | `names` | Every name the conversion met, sorted: the paths and folders it read from, and the names the design gives its parts, components, bodies, features, sketches, parameters and properties. For tools that take names out of a report before it is shared (the anonymous report does); absent when there were none. |
 | `losses` | What did not survive intact. `level` is `Info` (no effect on geometry), `Degraded` (carried in a weaker form) or `Dropped` (left out). `code` is cadmpeg's stable loss code when cadmpeg reported it, else `null`; `subject` says what was affected; `message` is for people. `stage` and `upstream` say where it arose (below). |
+
+IGES (`.igs`, `.iges`) is recognised as `input.format: "iges"` and refused before decoding
+in conversion, inspection, batch results and MCP reports. Its `error.message` is
+`Dutchman doesn't convert IGES yet: open it in SolidCraft directly (File > Import).`,
+with `error.stage: "decode"` and `error.upstream: null`. Batch results count it as a refused
+file (`ok: false`); the CLI and GUI do not offer a fixtures invitation for IGES.
+The formats listing reports `status: "not_supported"`, `words: "open it in SolidCraft directly"`
+and `converts: "SolidCraft imports IGES itself (File > Import)"`.
 
 When SolidCraft has a quarantine attribute without the user-approved flag on macOS,
 `verification.reason` explains how to allow its first run in Finder or System Settings
@@ -173,7 +181,8 @@ one that crashes the converter. `--report-anon FILE` also writes the anonymous r
 
 `status` is `converts`, `coming` (in progress) or `not_supported`; `converts` says, for people,
 what carries across.
-`words` is `reads geometry`, `opens, no geometry yet`, or `recognised, not read yet`.
+`words` is `reads geometry`, `opens, no geometry yet`, `recognised, not read yet`, or
+`open it in SolidCraft directly` (IGES).
 `extensions` lists all accepted suffixes without dots (`prt.N` denotes a numbered save);
 the existing `extension` remains the preferred suffix.
 Dutchman attempts conversion when the format reads geometry and its codec is available in
@@ -183,7 +192,8 @@ that a particular file will convert or that every feature will map.
 `--quiet` suppresses only the text volunteer invitation after a conversion run; JSON
 reports contain neither that invitation nor status prose outside the report.
 The invitation appears once for programs with `ok: false`, `verification.status: "flattened"`,
-or `history.mapped < history.total`, and offers test-file recipes and private help in Discord.
+or `history.mapped < history.total`, except IGES, and offers test-file recipes and private help
+in Discord.
 
 ## `dutchman.inspect/1`
 

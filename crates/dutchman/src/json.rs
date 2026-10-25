@@ -47,6 +47,9 @@ pub fn fixtures_pitch<'a>(reports: impl IntoIterator<Item = &'a Value>) -> Optio
     let mut programs = std::collections::BTreeSet::new();
     for report in reports {
         let input = report.get("input");
+        if input.and_then(|i| i.get("format")).and_then(Value::as_str) == Some(Format::Iges.id()) {
+            continue;
+        }
         if report.get("ok").and_then(Value::as_bool) == Some(false)
             || report
                 .pointer("/verification/status")
@@ -543,6 +546,26 @@ mod tests {
         assert!(fixtures_pitch([&incomplete])
             .unwrap()
             .contains("read Inventor better?"));
+    }
+
+    #[test]
+    fn iges_refusals_do_not_invite_test_files_in_single_or_mixed_runs() {
+        let iges = error(
+            CONVERT,
+            input(Path::new("design.igs")),
+            &Error::NotSupportedYet {
+                format: Format::Iges,
+            },
+        );
+        let creo = error(
+            CONVERT,
+            input(Path::new("design.prt")),
+            &Error::NotSupportedYet {
+                format: Format::CreoPart,
+            },
+        );
+        assert!(fixtures_pitch([&iges]).is_none());
+        assert_eq!(fixtures_pitch([&iges, &creo]), fixtures_pitch([&creo]));
     }
 
     #[test]

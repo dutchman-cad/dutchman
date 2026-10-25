@@ -30,7 +30,7 @@ pub enum Error {
         Format::supported_names()
     )]
     UnknownFormat { path: PathBuf },
-    /// The format is known but no reader exists for it yet, or not in this build.
+    /// The format is known but conversion is not supported yet, or not in this build.
     #[error("{}", not_supported(*format))]
     NotSupportedYet { format: Format },
     /// The output file exists and replacing it was not allowed.
@@ -80,9 +80,9 @@ impl Error {
     /// The project whose code it stopped in, when it is not Dutchman's own.
     pub fn upstream(&self) -> Option<&'static str> {
         match self {
-            // A FreeCAD file in a build without FreeCAD is this build's doing.
+            // These formats are refused by Dutchman before calling a reader.
             Error::NotSupportedYet {
-                format: Format::FreeCadDocument,
+                format: Format::FreeCadDocument | Format::Iges,
             } => None,
             Error::NotSupportedYet { .. }
             | Error::Decode(_)
@@ -103,6 +103,10 @@ pub const FILE_DID_NOT_CONVERT: &str =
 /// What to do with a file of a format this build does not convert.
 fn not_supported(format: Format) -> String {
     match format {
+        Format::Iges => {
+            "Dutchman doesn't convert IGES yet: open it in SolidCraft directly (File > Import)."
+                .to_owned()
+        }
         // Built without the `freecad` feature.
         Format::FreeCadDocument => {
             format!(

@@ -166,11 +166,7 @@ fn interchange_codecs_convert_generated_geometry_through_step() {
     for face in &mut ir.model.faces {
         face.name = None;
     }
-    for (format, extension) in [
-        (Format::Step, "stp"),
-        (Format::Iges, "igs"),
-        (Format::Rhino, "3dm"),
-    ] {
+    for (format, extension) in [(Format::Step, "stp"), (Format::Rhino, "3dm")] {
         let encoder = build_encoder(format);
         let (_, target) = encoder.targets().default().unwrap();
         let plan = encoder

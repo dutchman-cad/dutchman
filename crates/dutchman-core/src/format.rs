@@ -158,17 +158,23 @@ impl Format {
         self.registry_id()
     }
 
-    /// Whether the reader can supply geometry for this format.
+    /// Whether Dutchman can read usable geometry for this format.
     pub fn reads_geometry(self) -> bool {
         !matches!(
             self,
-            Self::CreoPart | Self::NxPart | Self::SolidWorksAssembly | Self::UnclassifiedPart
+            Self::CreoPart
+                | Self::NxPart
+                | Self::SolidWorksAssembly
+                | Self::UnclassifiedPart
+                | Self::Iges
         )
     }
 
     /// Plain words for the reader's current capability.
     pub fn words(self) -> &'static str {
-        if self.reads_geometry() {
+        if self == Self::Iges {
+            "open it in SolidCraft directly"
+        } else if self.reads_geometry() {
             "reads geometry"
         } else if self.codec_id().is_some() {
             "opens, no geometry yet"
