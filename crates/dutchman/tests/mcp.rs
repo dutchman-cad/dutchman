@@ -98,6 +98,19 @@ fn an_mcp_client_converts_through_dutchman() {
     let formats = client.call("formats", json!({}));
     assert_eq!(formats["isError"], false);
     assert_eq!(formats["structuredContent"]["schema"], "dutchman.formats/1");
+    let rows = formats["structuredContent"]["formats"].as_array().unwrap();
+    for (id, level) in [
+        ("fusion_archive", json!("L5")),
+        ("unclassified_part", Value::Null),
+    ] {
+        assert_eq!(
+            rows.iter()
+                .find(|row| row["id"] == id)
+                .unwrap()
+                .get("level"),
+            Some(&level)
+        );
+    }
 
     let cube = fixture("generated_unit_cube.f3d");
     let inspected = client.call("inspect", json!({"input": cube}));

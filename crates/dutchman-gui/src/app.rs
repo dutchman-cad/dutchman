@@ -417,7 +417,11 @@ impl App {
                         |ui| {
                             path_label(ui, &p, input);
                             if let Some(format) = dutchman_core::Format::from_path(input) {
-                                ui.label(format.status_for(input));
+                                let level = format
+                                    .headline_level()
+                                    .map(|level| format!("  {level}"))
+                                    .unwrap_or_default();
+                                ui.label(format!("{}{level}", format.status_for(input)));
                             }
                         },
                         |ui| {
@@ -618,6 +622,17 @@ impl App {
             if let Some(summary) = summary.filter(|_| !self.rows.is_empty()) {
                 ui.label(RichText::new(summary).color(p.tide));
             }
+            ui.menu_button("Formats", |ui| {
+                for format in dutchman_core::Format::ALL {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(format.name());
+                        ui.label(format.words());
+                        if let Some(level) = format.headline_level() {
+                            ui.label(level);
+                        }
+                    });
+                }
+            });
         });
         if let Some(notice) = &self.notice {
             ui.label(RichText::new(notice).color(p.danger));

@@ -22,9 +22,9 @@ dutchman-pilot = { git = "https://github.com/dutchman-cad/pilot", rev = "a91cade
 aho-corasick = "1.1"
 # cadmpeg at one tested commit of its main branch, the same for every cadmpeg crate. Move it
 # after a batch of cadmpeg merges (docs/releasing.md); the nightly build takes cadmpeg's main.
-cadmpeg-core = { git = "https://github.com/cadmpeg/cadmpeg", rev = "66550bbc598eed1218706d704819d47e211cccd1" }
-cadmpeg-ir = { git = "https://github.com/cadmpeg/cadmpeg", rev = "66550bbc598eed1218706d704819d47e211cccd1" }
-cadmpeg-registry = { git = "https://github.com/cadmpeg/cadmpeg", rev = "66550bbc598eed1218706d704819d47e211cccd1", default-features = false, features = ["fcstd", "f3d", "inventor", "sldprt", "catia", "creo", "nx", "rhino", "step", "iges", "sat", "pvz"] }
+cadmpeg-core = { git = "https://github.com/cadmpeg/cadmpeg", rev = "c3a1b1b1d331abd5a88647d91170c771e2861514" }
+cadmpeg-ir = { git = "https://github.com/cadmpeg/cadmpeg", rev = "c3a1b1b1d331abd5a88647d91170c771e2861514" }
+cadmpeg-registry = { git = "https://github.com/cadmpeg/cadmpeg", rev = "c3a1b1b1d331abd5a88647d91170c771e2861514", default-features = false, features = ["fcstd", "f3d", "inventor", "sldprt", "catia", "creo", "nx", "rhino", "step", "iges", "sat", "pvz"] }
 getrandom = "0.3"
 serde_json = "1"
 sha2 = "0.11"

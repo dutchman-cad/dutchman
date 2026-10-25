@@ -266,6 +266,21 @@ fn conversion_requires_geometry_and_an_available_codec() {
 }
 
 #[test]
+fn published_headlines_are_independent_of_codec_availability() {
+    assert_eq!(
+        Format::FusionArchive.headline_level().as_deref(),
+        Some("L5")
+    );
+    assert_eq!(
+        Format::FreeCadDocument.headline_level().as_deref(),
+        Some("L5")
+    );
+    assert_eq!(Format::Iges.headline_level().as_deref(), Some("L9"));
+    assert_eq!(Format::SolidWorksAssembly.headline_level(), None);
+    assert_eq!(Format::UnclassifiedPart.headline_level(), None);
+}
+
+#[test]
 fn inputs_without_geometry_are_refused_before_decoding() {
     for (name, bytes, format) in [
         ("low-creo.prt", b"#UGC:2".as_slice(), Format::CreoPart),

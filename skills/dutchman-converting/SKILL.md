@@ -37,6 +37,8 @@ they are connected (`inspect`, `convert`, `convert_all`, `formats`); otherwise r
 ## 1. Check the format
 
 Call `formats` for the installed build's formats, status `words` and `converts`.
+Its `level` adds cadmpeg's published headline (`L0`–`L9`), or `null` when none is
+published; reader status still determines whether conversion can be attempted.
 Fusion, Inventor, SolidWorks parts, FreeCAD, CATIA, Creo View, Rhino, ACIS and STEP
 can convert geometry. Creo and NX parts are identified by contents
 (they share `.prt`) and currently open without geometry, so conversion is refused. SolidWorks

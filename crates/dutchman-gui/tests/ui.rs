@@ -87,6 +87,24 @@ fn designs_convert_from_the_window() {
 }
 
 #[test]
+fn the_format_list_shows_headlines_beside_reader_status() {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1200.0, 1800.0))
+        .build_eframe(|cc| App::new(cc));
+    harness.run();
+    harness.get_by_label("Formats").click();
+    harness.run();
+    assert!(harness.query_by_label("Fusion archive (.f3d)").is_some());
+    assert!(harness.query_all_by_label("L5").count() >= 1);
+    assert!(harness.query_by_label("IGES (.igs, .iges)").is_some());
+    assert!(harness.query_by_label("L9").is_some());
+    assert!(harness
+        .query_by_label("open it in SolidCraft directly")
+        .is_some());
+    assert!(harness.query_by_label("Creo or NX part (.prt)").is_some());
+}
+
+#[test]
 fn a_file_that_cannot_convert_says_why() {
     let dir = tempfile::tempdir().unwrap();
     let broken = dir.path().join("broken.f3d");
@@ -249,7 +267,7 @@ fn dropped_files_and_results_show_format_status_and_one_invitation() {
     harness.run();
     for program in ["Creo", "NX"] {
         assert!(harness
-            .query_by_label(&format!("{program} .prt: opens, no geometry yet"))
+            .query_by_label(&format!("{program} .prt: opens, no geometry yet  L1"))
             .is_some());
     }
     convert(&mut harness);
