@@ -134,8 +134,7 @@ pub fn convert_all(
     let writer = options.writer();
     let journal_lock = Mutex::new(journal.take());
     let convert = |job: &Job| match &settings.worker {
-        Some(program) => make_folder(job)
-            .unwrap_or_else(|| worker::convert_isolated(program, job, options, &settings.limits)),
+        Some(program) => convert_isolated_job(program, job, options, &settings.limits, None),
         None => convert_job(job, &writer),
     };
     run_with(
@@ -391,6 +390,21 @@ pub struct Plan {
 /// neither a known file nor a readable folder; and how many files in the folders searched
 /// were skipped as unknown formats or older numbered saves.
 pub fn plan(inputs: &[PathBuf], out_dir: &Path) -> Plan {
+    plan_with_limit(inputs, out_dir, |_| true, MAX_FILES)
+}
+
+/// Builds a service's conversion list, excluding paths before descending into folders.
+/// Unlike one batch, a service may process more than `MAX_FILES` over its lifetime.
+pub fn plan_filtered(inputs: &[PathBuf], out_dir: &Path, include: fn(&Path) -> bool) -> Plan {
+    plan_with_limit(inputs, out_dir, include, usize::MAX)
+}
+
+fn plan_with_limit(
+    inputs: &[PathBuf],
+    out_dir: &Path,
+    include: fn(&Path) -> bool,
+    max_files: usize,
+) -> Plan {
     let mut jobs = Vec::new();
     let mut problems = Vec::new();
     let mut skipped = BTreeMap::new();
@@ -399,7 +413,7 @@ pub fn plan(inputs: &[PathBuf], out_dir: &Path) -> Plan {
     for input in inputs {
         let mut found = Vec::new();
         if input.is_dir() {
-            search(input, input, 0, &mut found, &mut skipped);
+            search(input, input, 0, &mut found, &mut skipped, include);
             newest_revisions(&mut found, &mut skipped_revisions);
         } else if input.is_file() {
             let name = input.file_name().map(PathBuf::from).unwrap_or_default();
@@ -413,11 +427,11 @@ pub fn plan(inputs: &[PathBuf], out_dir: &Path) -> Plan {
             continue;
         }
         for (path, relative) in found {
-            if jobs.len() >= MAX_FILES {
+            if jobs.len() >= max_files {
                 problems.push(report::failure(
                     report::CONVERT,
                     report::input(&path),
-                    &format!("over Dutchman's limit of {MAX_FILES} files in one run"),
+                    &format!("over Dutchman's limit of {max_files} files in one run"),
                 ));
                 continue;
             }
@@ -503,6 +517,7 @@ fn search(
     depth: usize,
     out: &mut Vec<(PathBuf, PathBuf)>,
     skipped: &mut BTreeMap<String, usize>,
+    include: fn(&Path) -> bool,
 ) {
     if depth > MAX_DEPTH {
         return;
@@ -513,11 +528,14 @@ fn search(
     let mut entries: Vec<PathBuf> = entries.filter_map(Result::ok).map(|e| e.path()).collect();
     entries.sort();
     for path in entries {
+        if !path.strip_prefix(root).is_ok_and(include) {
+            continue;
+        }
         let Ok(meta) = std::fs::symlink_metadata(&path) else {
             continue;
         };
         if meta.is_dir() {
-            search(root, &path, depth + 1, out, skipped);
+            search(root, &path, depth + 1, out, skipped, include);
         } else if meta.is_file() && Format::from_path(&path).is_none() {
             *skipped.entry(extension_of(&path)).or_insert(0) += 1;
         } else if meta.is_file() {
@@ -689,6 +707,26 @@ pub fn convert_job(job: &Job, writer: &(dyn Writer + Sync)) -> Value {
         Some(failure) => failure,
         None => crate::convert(&job.input, &job.output, writer, job.replace, &job.search),
     }
+}
+
+/// Converts one job through the batch worker, making its destination folder first.
+pub fn convert_isolated_job(
+    program: &Path,
+    job: &Job,
+    options: &ConvertOptions,
+    limits: &Limits,
+    stop: Option<&AtomicBool>,
+) -> Value {
+    let started = Instant::now();
+    let mut report = make_folder(job)
+        .unwrap_or_else(|| worker::convert_isolated_until(program, job, options, limits, stop));
+    if let Some(fields) = report.as_object_mut() {
+        fields.insert(
+            "elapsed_ms".into(),
+            json!(u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)),
+        );
+    }
+    report
 }
 
 /// Makes the folder `job`'s design goes in; a failure report when it cannot be made.

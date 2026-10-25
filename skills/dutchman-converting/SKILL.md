@@ -248,3 +248,15 @@ native output requires working FreeCAD. These extra flags are CLI-only and exper
 For browser conversions, consult [Dutchman Web](../../docs/web.md) for upload and storage
 limits and HTTPS setup. A 403 means the browser origin was refused; a 503 means capacity is
 unavailable. Retry after saved jobs expire or adjust the documented server settings.
+
+## Watch an inbox with the CLI
+
+For a local, self-hosted inbox use `dutchman watch INBOX --out-dir OUTPUT --json`.
+Polling defaults to 5 seconds and settling to 10 seconds (`--interval`, `--settle`).
+`--once` handles one scan for cron, and uses the usual bounded batch child workers and
+conversion flags. The inbox is only read. Results and `dutchman.convert/1` report sidecars
+(`.report.json` or `.failed.json`) go under OUTPUT with relative folders preserved.
+Existing unrelated outputs are skipped. SHA-256 state in `.dutchman-watch.json` prevents
+retries of recorded content, including failures, after restart. `--json` is an NDJSON stream
+of `dutchman.watch-event/1`, not a batch report. Ctrl-C/SIGTERM allows running work a
+30-second grace period and saves state. This command has no MCP counterpart.
