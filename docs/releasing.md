@@ -6,16 +6,25 @@ A release is cut from `main` once CI is green there.
    `version` in `Cargo.toml`, along with the `version` of the `dutchman-core` and
    `dutchman-solidcraft` workspace dependencies. Run `cargo build` so `Cargo.lock` follows, and
    `scripts/downloads.py X.Y.Z README.md` so the README's download table links the new
-   archives (a test checks it does).
+   archives (a test checks it does). Write `release-notes/X.Y.Z.md`: one intro paragraph,
+   then `## What's new` with at most 7 bullets, each with a bold lead phrase. Use plain
+   words and Oxford commas; describe the highlights rather than copying the CHANGELOG.
+   Add `## Known issue` if needed. Preview the full body with
+   `python3 scripts/release-notes.py X.Y.Z`; it adds the downloads, install commands, and
+   a link to the dated CHANGELOG entry at the tag.
 2. Merge that, then tag the merge commit `vX.Y.Z` and push the tag.
-3. Pushing the tag runs the `Release builds` workflow. It keeps each platform's archive
+3. Pushing the tag runs the `Release builds` workflow. It builds each platform's archive
    (`scripts/package-archive.sh`: `dutchman`, `dutchman-mcp` and `dutchman-gui`, with LICENSE,
    NOTICE, README and a SHA-256), and the macOS disk image (`scripts/macos-dmg.sh`:
    Dutchman Convert.app, universal, signed ad hoc), as workflow artifacts; both Mac targets build on
-   one Apple silicon runner. Attach them to a GitHub release for the tag. Its notes start with
-   the download table, `scripts/downloads.py X.Y.Z`, then the changelog entry. The workflow
-   also runs on demand (`gh workflow run release-build.yml`) and for a pull request that
-   changes the packaging, but not for every push to `main`.
+   one Apple silicon runner. After all builds succeed, the workflow checks every SHA-256
+   and creates a draft GitHub release from `release-notes/X.Y.Z.md`, with the archives and
+   checksums attached. It fails if a release for that tag already exists. A maintainer
+   verifies the body and downloads, then publishes the release. Before publishing, check
+   that the draft shows tag `vX.Y.Z`, not `untagged-…`.
+   The workflow also runs on demand (`gh workflow run release-build.yml`) and for a pull
+   request that changes the packaging, but those runs keep only workflow artifacts and
+   do not create a draft. It does not run for every push to `main`.
 4. crates.io: releases ship as GitHub release archives only, until the core API settles. The
    crates.io `dutchman` crate stays the 0.0.1 placeholder. When crates are published, the
    order matters: `dutchman` depends on `dutchman-core` and `dutchman-solidcraft`, so those go

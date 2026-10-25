@@ -4,7 +4,7 @@ name: Release builds
 # platform and keeps the archives as workflow artifacts, with a macOS disk image holding
 # Dutchman Convert.app for Apple silicon and Intel. Runs for a release tag, on demand, and
 # for a pull request that changes the packaging; never for every push to main, as the
-# account runs few macOS jobs at once. Nothing is published from here.
+# account runs few macOS jobs at once. A pushed tag also creates a draft release.
 
 on:
   push:
@@ -16,6 +16,9 @@ on:
       - scripts/package-archive.sh
       - scripts/macos-dmg.sh
       - scripts/archive-readme.py
+      - scripts/downloads.py
+      - scripts/release-notes.py
+      - release-notes/**
       - crates/dutchman-gui/assets/Dutchman.icns
       - assets/dmg/**
 
@@ -100,3 +103,60 @@ jobs:
             dist/*.dmg
             dist/*.dmg.sha256
           retention-days: 30
+
+  draft-release:
+    needs: [build, macos]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Flatten artifacts and check checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir dist
+          while IFS= read -r -d '' file; do
+            name=$(basename "$file")
+            if [[ -e "dist/$name" ]]; then
+              echo "Duplicate release artifact: $name" >&2
+              exit 1
+            fi
+            mv "$file" "dist/$name"
+          done < <(find artifacts -type f -print0)
+          cd dist
+          shopt -s nullglob
+          checksums=(*.sha256)
+          if (( ${#checksums[@]} == 0 )); then
+            echo "No release checksums were downloaded." >&2
+            exit 1
+          fi
+          for checksum in "${checksums[@]}"; do
+            sha256sum --check --strict "$checksum"
+          done
+          for file in *; do
+            if [[ "$file" != *.sha256 && ! -f "$file.sha256" ]]; then
+              echo "Missing release checksum: $file.sha256" >&2
+              exit 1
+            fi
+          done
+      - name: Create draft release
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$GITHUB_REF_NAME"
+          version="${tag#v}"
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq ".[] | select(.tag_name == \"$tag\") | .html_url")
+          if [[ -n "$existing" ]]; then
+            echo "A release already exists for $tag; remove it explicitly before retrying." >&2
+            exit 1
+          fi
+          python3 scripts/release-notes.py "$version" > notes.md
+          files=(dist/*)
+          gh release create "$tag" --draft --verify-tag --title "Dutchman $version" -F notes.md "${files[@]}"
