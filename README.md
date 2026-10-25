@@ -215,6 +215,7 @@ desktop portal, and dropping files works without it.
   example calls, safety.
 - [Docker](docs/docker.md): build the image, convert in a container, run the MCP server
   from it.
+- [Dutchman Web](docs/web.md): convert from a browser, on a server you host.
 - [Agent skill](skills/README.md): teaches an AI assistant to convert files with Dutchman and
   explain the results.
 - [JSON reports](docs/json.md): every field of the `--json` reports, and

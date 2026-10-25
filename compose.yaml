@@ -1,0 +1,16 @@
+# Dutchman Web, the browser interface, on port 8080 (docs/web.md):
+#   DUTCHMAN_WEB_PASSWORD=choose-one docker compose up -d --build
+services:
+  dutchman-web:
+    build: .
+    image: dutchman
+    entrypoint: ["dutchman-web"]
+    ports:
+      - "8080:8080"
+    environment:
+      # Leave it empty only on a network where everyone may convert files.
+      DUTCHMAN_WEB_PASSWORD: ${DUTCHMAN_WEB_PASSWORD:-}
+    # One file may hold up to 8 GB while it converts (--max-memory); keep room for that.
+    mem_limit: 10g
+    stop_grace_period: 30s
+    restart: unless-stopped

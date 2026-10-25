@@ -98,7 +98,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace --locked
 
-  # Builds the Docker image (docs/docker.md), converts a fixture in it and starts its MCP server.
+  # Builds the Docker image (docs/docker.md), converts a fixture in it, starts its MCP server,
+  # and converts a fixture through its web server (docs/web.md).
   docker:
     needs: changes
     if: needs.changes.outputs.docker == 'true'
@@ -124,6 +125,18 @@ jobs:
         run: |
           echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' \
             | docker run --rm -i --entrypoint dutchman-mcp dutchman:ci | grep -q '"result"'
+      - name: Convert through the web server in the image
+        run: |
+          docker run -d --name web -p 8080:8080 -e DUTCHMAN_WEB_PASSWORD=ci --entrypoint dutchman-web dutchman:ci
+          for _ in $(seq 30); do curl -fs http://127.0.0.1:8080/healthz && break; sleep 1; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/)" = 401
+          curl -fsS -u dutchman:ci -F files=@crates/dutchman-core/tests/fixtures/generated_unit_cube.f3d \
+            http://127.0.0.1:8080/api/convert | tee web.json
+          grep -q '"converted":1' web.json
+          download=$(grep -o '"download":"[^"]*"' web.json | cut -d'"' -f4)
+          curl -fsS -u dutchman:ci -o cube.solidcraft "http://127.0.0.1:8080/$download"
+          test -s cube.solidcraft
+          docker rm -f web
 
   msrv:
     runs-on: ubuntu-latest

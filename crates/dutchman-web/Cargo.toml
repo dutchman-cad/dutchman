@@ -1,0 +1,39 @@
+[package]
+name = "dutchman-web"
+description = "Dutchman Web: converts CAD designs from a browser, for a self-hosted Dutchman"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "dutchman-web"
+path = "src/main.rs"
+
+[features]
+default = ["freecad"]
+# FreeCAD documents (.FCStd); see dutchman-core's feature of the same name.
+freecad = ["dutchman/freecad"]
+
+[dependencies]
+askama = { version = "0.16", default-features = false, features = ["derive", "std"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "multipart", "query", "tokio"] }
+base64 = "0.22"
+clap = { workspace = true, features = ["env"] }
+dutchman.workspace = true
+dutchman-core.workspace = true
+getrandom.workspace = true
+serde_json.workspace = true
+tokio = { version = "1.47", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["io"] }
+zip.workspace = true
+
+[dev-dependencies]
+http-body-util = "0.1"
+tempfile.workspace = true
+tower = { version = "0.5", default-features = false, features = ["util"] }
+
+[lints]
+workspace = true

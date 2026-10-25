@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 #
-# The `dutchman` command and the `dutchman-mcp` server, without the desktop app.
-# docs/docker.md says how to build and run it.
+# The `dutchman` command, the `dutchman-mcp` server and the `dutchman-web` browser interface,
+# without the desktop app. docs/docker.md says how to build and run it.
 
 FROM rust:1-bookworm AS build
 # How many crates to compile at once (default: one per core). Each can take more than 1 GB, so
@@ -12,8 +12,8 @@ COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/src/target \
-    cargo build --release --locked -p dutchman --bins ${CARGO_BUILD_JOBS:+--jobs "$CARGO_BUILD_JOBS"} \
- && install -m 0755 target/release/dutchman target/release/dutchman-mcp /usr/local/bin/
+    cargo build --release --locked -p dutchman -p dutchman-web --bins ${CARGO_BUILD_JOBS:+--jobs "$CARGO_BUILD_JOBS"} \
+ && install -m 0755 target/release/dutchman target/release/dutchman-mcp target/release/dutchman-web /usr/local/bin/
 
 FROM debian:bookworm-slim
 ARG TARGETARCH
@@ -28,7 +28,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 RUN --mount=type=bind,from=build,source=/usr/local/bin,target=/mnt/bin set -eu; \
-    install -m 0755 /mnt/bin/dutchman /mnt/bin/dutchman-mcp /usr/local/bin/; \
+    install -m 0755 /mnt/bin/dutchman /mnt/bin/dutchman-mcp /mnt/bin/dutchman-web /usr/local/bin/; \
     if [ -n "$SOLIDCRAFT_VERSION" ]; then \
       if [ "$TARGETARCH" != amd64 ]; then echo "SolidCraft releases are for Linux x86_64 only" >&2; exit 1; fi; \
       if [ -z "$SOLIDCRAFT_SHA256" ]; then echo "SOLIDCRAFT_SHA256 is needed with SOLIDCRAFT_VERSION" >&2; exit 1; fi; \
@@ -45,5 +45,8 @@ RUN --mount=type=bind,from=build,source=/usr/local/bin,target=/mnt/bin set -eu; 
 RUN useradd --create-home --uid 1000 dutchman
 USER dutchman
 WORKDIR /work
+# For `dutchman-web` (docs/web.md): listen on every network, on port 8080.
+ENV DUTCHMAN_WEB_LISTEN=0.0.0.0:8080
+EXPOSE 8080
 ENTRYPOINT ["dutchman"]
 CMD ["--help"]

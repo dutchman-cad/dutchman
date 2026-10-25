@@ -13,6 +13,11 @@ report's schema name changes when a field does).
 - Run Dutchman in Docker: the `Dockerfile` builds an image with `dutchman` and `dutchman-mcp`
   for x86_64 and ARM64 Linux, optionally with SolidCraft to check histories
   ([docs/docker.md](docs/docker.md)).
+- Convert from a browser with `dutchman-web`, a web server for a self-hosted Dutchman: drop
+  design files or a project zip, read each file's report, download the designs. Uploads are
+  converted as `convert-all` converts them and deleted after a while; a password and upload
+  limits are settings. The Docker image includes it, and `compose.yaml` runs it on port 8080
+  ([docs/web.md](docs/web.md)).
 
 ## 0.2.0 (2026-10-25)
 

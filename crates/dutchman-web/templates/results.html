@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Results · Dutchman Convert{% endblock %}
+{% block home %}../{% endblock %}
+{% block content %}
+<div class="summary">
+  <strong>{{ converted }} converted, {{ failed }} failed{% if skipped > 0 %}, {{ skipped }} skipped (not a format Dutchman knows){% endif %}</strong>
+  {% if converted > 0 %}<a href="../jobs/{{ job }}/designs.zip">Download all (.zip)</a>{% endif %}
+</div>
+
+{% for card in cards %}
+<section class="card">
+  <header>
+    <h2>{{ card.name }}</h2>
+    {% if card.ok %}<span class="pill ok">Converted</span>{% else %}<span class="pill failed">Failed</span>{% endif %}
+  </header>
+  {% if card.ok %}
+  <p class="outcome">{{ card.outcome }}</p>
+  {% else %}
+  <p class="error">{{ card.outcome }}</p>
+  {% if let Some(stage) = card.stage %}<p class="muted">Stopped in the {{ stage }} stage.</p>{% endif %}
+  {% endif %}
+  {% if !card.blocked.is_empty() %}
+  <details>
+    <summary>{{ card.blocked.len() }} feature(s) did not map</summary>
+    <ul>{% for (name, reason) in card.blocked %}<li>{{ name }}: {{ reason }}</li>{% endfor %}</ul>
+  </details>
+  {% endif %}
+  {% if !card.losses.is_empty() %}
+  <details>
+    <summary>Losses: {{ card.loss_counts }}</summary>
+    <ul>{% for (level, subject, message) in card.losses %}<li><span class="{{ level }}">{{ level }}</span> {{ subject }}: {{ message }}</li>{% endfor %}</ul>
+  </details>
+  {% endif %}
+  {% if let Some((name, link)) = card.download %}<a class="download" href="../{{ link }}">Download {{ name }}</a>{% endif %}
+</section>
+{% endfor %}
+
+<p class="muted">These results and designs are deleted {{ keep_minutes }} minutes after the upload. <a href="../">Convert more</a></p>
+{% endblock %}
