@@ -105,8 +105,7 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 - Each pull request adds a changelog fragment; release preparation assembles the fragments
   into one ordered entry, and CI checks fragment headings and repeated release headings.
 - Tagged builds now create a draft release with short highlights, downloads, and a link to the
-  full changelog. Each release page shows at least one new image of what's new, committed under
-  `docs/images/releases/<version>/`; the release-notes check enforces it.
+  full changelog.
 
 ## 0.2.0 (2026-10-25)
 

@@ -61,8 +61,7 @@ class ReleaseNotes(unittest.TestCase):
             complete = ("Intro.\n\n" + image + "## What's new\n\n"
                         + "- **Change.** Details.\n" * 7 + "\n## Known issue\n\n- An issue.\n")
             notes.write_text(complete.replace(image, ""), encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "at least one new image"):
-                RELEASE_NOTES.body("1.2.3", root)
+            self.assertIn("#123-2027-01-02", RELEASE_NOTES.body("1.2.3", root))
             notes.write_text(complete.replace("[A converted part]", "[ ]"), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "alt text"):
                 RELEASE_NOTES.body("1.2.3", root)

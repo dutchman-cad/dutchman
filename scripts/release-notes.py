@@ -9,10 +9,6 @@ from downloads import REPO, table
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Releases from this version on show at least one new image of what is new.
-FIRST_WITH_IMAGE = (0, 2, 1)
-
-
 def image_url(version: str, name: str) -> str:
     """Where a release's image is served: the file committed for that release, at its tag."""
     return (f"https://raw.githubusercontent.com/dutchman-cad/dutchman/v{version}"
@@ -20,17 +16,9 @@ def image_url(version: str, name: str) -> str:
 
 
 def check_images(version: str, notes: str, path: Path, root: Path) -> None:
-    if tuple(int(part) for part in version.split(".")) < FIRST_WITH_IMAGE:
-        return
+    """Images are optional (kept for milestones); each one shown needs alt text and its file."""
     prefix = re.escape(image_url(version, ""))
-    images = re.findall(rf"!\[([^\]]*)\]\({prefix}([^)\s]+)\)", notes)
-    if not images:
-        raise ValueError(
-            f"{path}: show at least one new image of what's new: "
-            f"![description]({image_url(version, '<file>')}), "
-            f"with the file in docs/images/releases/{version}/."
-        )
-    for alt, name in images:
+    for alt, name in re.findall(rf"!\[([^\]]*)\]\({prefix}([^)\s]+)\)", notes):
         if not alt.strip():
             raise ValueError(f"{path}: describe the image {name} in its alt text.")
         if not (root / "docs" / "images" / "releases" / version / name).is_file():
