@@ -203,9 +203,11 @@ region, with its holes; multiple islands and touching loops remain ambiguous.
 
 A written history is checked in SolidCraft itself, since Dutchman has no kernel. The writer
 runs `solidcraft-cli eval` on the design as written and on a copy with the history suppressed
-and the original live, and compares body count and volumes (relative tolerance 1e-4). A
-mismatch or a feature SolidCraft cannot replay flattens the design (`flattened: replay
-differs`). When no CLI is found (`--solidcraft PATH`, else `$SOLIDCRAFT_CLI`, else `PATH`),
+and the original live, and compares body count, volumes and areas. SolidCraft measures from
+a mesh whose chords keep within 5e-5 of a body's size of its faces, so two meshes of one shape
+may differ in volume by both their areas times that chord, and never less than 1e-4 of the
+volume is allowed; areas must agree within 1e-3. A mismatch or a feature SolidCraft cannot
+replay flattens the design (`flattened: replay differs`). When no CLI is found (`--solidcraft PATH`, else `$SOLIDCRAFT_CLI`, else `PATH`),
 when it times out (`--verify-timeout`, default 120 s), or with `--no-verify`, the history is
 written and reported unverified. `--import-only` always writes the import design.
 
