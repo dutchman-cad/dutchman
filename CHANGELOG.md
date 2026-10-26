@@ -8,6 +8,105 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
+## 0.2.1 (2026-10-25)
+
+### Known issue
+
+- Some SolidWorks parts that 0.1.5 read still decode empty, fail cadmpeg's edge checks, or come
+  through with fewer bodies (reported as losses, not as a clean conversion); a fix is in
+  progress in cadmpeg. If 0.1.5 worked better for a part, keep using it for that part for now.
+
+### Formats
+
+- Show cadmpeg's published headline level beside reader status in the CLI, MCP formats
+  report, desktop format list, README and guide.
+- A STEP file of one part goes into the SolidCraft design as it is, instead of being read by
+  cadmpeg and written again as STEP: nothing is lost on the way, and the report no longer lists
+  the writer's STEP losses. A STEP assembly of several parts still converts part by part into
+  components.
+
+### History
+
+- A fillet or chamfer on edges a sheet-metal base flange generated maps the same way as one on
+  an extrusion's generated edges: a sketch point's side edge runs the flange's thickness on the
+  side it is drawn, and each edge is proven on SolidCraft's rebuilt body before the blend is
+  written.
+- A fillet or chamfer left unmapped for its edges says which case it is: a selection cadmpeg
+  does not resolve to edges yet, edges only partly resolved in its input topology, or edges of
+  the final body.
+- A fillet or chamfer on edges an extrusion generated maps when cadmpeg names them by the
+  sketch entity that made them, as it does for Inventor: a sketch point's side edge, or a sketch
+  line's edge where the extrusion starts or ends. Each edge is proven on SolidCraft's rebuilt
+  body before the blend is written.
+- A counterbore, countersink or chamfered hole with a drill point at its bottom says why it is
+  not mapped: SolidCraft holes take a drill point only on a plain drilled hole, and ignore it
+  on one with an entry recess, which would leave the cone out of the geometry.
+- An extrude, revolve or other sketch feature whose profile cadmpeg gives as whole sketch
+  regions no longer makes a design SolidCraft refuses as damaged ("invalid analytic offset
+  topology or boundary reference"). The one loop of a one-loop sketch is written as every
+  profile. Otherwise each boundary is written in the order SolidCraft finds it:
+  counter-clockwise, from its leftmost point. This affected Inventor parts read with cadmpeg's
+  sketch-region profiles.
+
+### Command line and install
+
+- Each release is also published as a container image, `ghcr.io/dutchman-cad/dutchman`, for
+  amd64 and arm64, tagged with its version and `latest` (nightly builds as `nightly`). It holds
+  the same binaries as the Linux downloads; [docs/docker.md](docs/docker.md) covers pulling,
+  converting a mounted folder, the MCP server, and updating. Linux downloads are built on
+  Debian bookworm, so they run on systems with glibc 2.36 or newer.
+- Run Dutchman in Docker: the `Dockerfile` builds an image with `dutchman` and `dutchman-mcp`
+  for x86_64 and ARM64 Linux, optionally with SolidCraft to check histories
+  ([docs/docker.md](docs/docker.md)).
+- Convert from a browser with `dutchman-web`, a web server for a self-hosted Dutchman: drop
+  design files or a project zip, read each file's report, and download the designs. Uploads are
+  converted as `convert-all` converts them and deleted after a while; a password and upload
+  limits are settings. The Docker image includes it, and `compose.yaml` runs it on port 8080
+  ([docs/web.md](docs/web.md)).
+- `dutchman watch <inbox> --out-dir <dir>` converts files dropped into a folder, for a
+  self-hosted Dutchman on a shared or network folder. It checks the folder on an interval,
+  waits until a file stops changing, converts it into the output folder with its report beside
+  it, and never converts the same content twice (also after a restart). A file that fails
+  gets a `.failed.json` report and is tried again only once it changes. The inbox is never
+  written to. `--once` converts what is ready and exits, for cron and scripts.
+- Dutchman Web shares zip limits across each upload, limits uploads being received, and
+  refuses new jobs when saved data or available disk space reaches its configured limit.
+  Data folders are checked for private access on Unix, and browser uploads check their origin.
+  The web guide explains HTTPS setup for HTTP basic authentication.
+- Linux release and nightly archives include `dutchman-web` alongside the command, MCP server
+  and desktop app.
+
+### Reports
+
+- The geometry-only retry leaves out parameters as well as history and sketches before it checks
+  the model, so a design whose parameters repeat a name (as merged Fusion multi-document
+  archives can) converts as geometry; the report says parameters were left out.
+
+### cadmpeg
+
+- The cadmpeg pin moves from `66550bb` to `fb1cd0a`. Fusion keeps nested local component
+  placements, more resolved face selections, and compact coil handedness; reads designs whose
+  exact edge curves end slightly away from their vertices (as in some large multi-part
+  assemblies) instead of refusing them; gives each design merged into a multi-document
+  archive its own parameter scope; and assigns sketches to their components. Inventor reads
+  more extrusion and hole extents, full revolves about a work axis, center-point holes,
+  spotfaces and hole end targets, oriented chamfers, circular sweeps, unguided two-section
+  lofts, closed sketch splines, stored-body base features, and bend-free sheet-metal plates as
+  base flanges, and resolves more extrusion profiles and fillet and chamfer edge selections.
+  SolidWorks corrects compact-curve edge orientation. Creo preserves plane axes and boundary
+  orientation, avoids ambiguous operation states, reads circle radii from type-4 dimensions,
+  and binds two-cap circular sweeps. FreeCAD reads point symmetry and improves mesh placement,
+  spline domains, joint angles, Body visibility, and document restoration. STEP keeps
+  unclaimed bodies, corrects replica transformations, and writes reflected conic pcurves as
+  exact rational splines.
+
+### Docs
+
+- Each pull request adds a changelog fragment; release preparation assembles the fragments
+  into one ordered entry, and CI checks fragment headings and repeated release headings.
+- Tagged builds now create a draft release with short highlights, downloads, and a link to the
+  full changelog.
+
 ## 0.2.0 (2026-10-25)
 
 ### Known issue

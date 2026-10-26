@@ -11,7 +11,13 @@ A release is cut from `main` once CI is green there.
    archives (a test checks it does). Write `release-notes/X.Y.Z.md`: one intro paragraph,
    then `## What's new` with at most 7 bullets, each with a bold lead phrase. Use plain
    words and Oxford commas; describe the highlights rather than copying the CHANGELOG.
-   Add `## Known issue` if needed. Preview the full body with
+   Add `## Known issue` if needed. Images are kept for milestones, such as a design that now
+   converts fully: commit one under `docs/images/releases/X.Y.Z/` (from a public, licensed
+   file) and place it after the intro as
+   `![description](https://raw.githubusercontent.com/dutchman-cad/dutchman/vX.Y.Z/docs/images/releases/X.Y.Z/<file>)`,
+   so the release page and announcements show the file at the tag. The release-notes check
+   fails when a shown image has no alt text or its file is not committed.
+   Preview the full body with
    `python3 scripts/release-notes.py X.Y.Z`; it adds the downloads, install commands, and
    a link to the dated CHANGELOG entry at the tag.
 2. Merge that, then tag the merge commit `vX.Y.Z` and push the tag.
