@@ -56,8 +56,22 @@ class ReleaseNotes(unittest.TestCase):
                     notes.write_text(text, encoding="utf-8")
                     with self.assertRaisesRegex(ValueError, message):
                         RELEASE_NOTES.body("1.2.3", root)
-            notes.write_text("Intro.\n\n## What's new\n\n" + "- **Change.** Details.\n" * 7
-                             + "\n## Known issue\n\n- An issue.\n", encoding="utf-8")
+            image = ("![A converted part](https://raw.githubusercontent.com/dutchman-cad/dutchman"
+                     "/v1.2.3/docs/images/releases/1.2.3/part.png)\n\n")
+            complete = ("Intro.\n\n" + image + "## What's new\n\n"
+                        + "- **Change.** Details.\n" * 7 + "\n## Known issue\n\n- An issue.\n")
+            notes.write_text(complete.replace(image, ""), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "at least one new image"):
+                RELEASE_NOTES.body("1.2.3", root)
+            notes.write_text(complete.replace("[A converted part]", "[ ]"), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "alt text"):
+                RELEASE_NOTES.body("1.2.3", root)
+            notes.write_text(complete, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "commit the image"):
+                RELEASE_NOTES.body("1.2.3", root)
+            picture = root / "docs/images/releases/1.2.3/part.png"
+            picture.parent.mkdir(parents=True)
+            picture.write_bytes(b"png")
             self.assertIn("#123-2027-01-02", RELEASE_NOTES.body("1.2.3", root))
             for text in ["## Unreleased\n", "## 1.2.3\n", "## 1.2.30 (2027-01-02)\n"]:
                 changelog.write_text(text, encoding="utf-8")

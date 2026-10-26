@@ -9,6 +9,33 @@ from downloads import REPO, table
 
 ROOT = Path(__file__).resolve().parent.parent
 
+# Releases from this version on show at least one new image of what is new.
+FIRST_WITH_IMAGE = (0, 2, 1)
+
+
+def image_url(version: str, name: str) -> str:
+    """Where a release's image is served: the file committed for that release, at its tag."""
+    return (f"https://raw.githubusercontent.com/dutchman-cad/dutchman/v{version}"
+            f"/docs/images/releases/{version}/{name}")
+
+
+def check_images(version: str, notes: str, path: Path, root: Path) -> None:
+    if tuple(int(part) for part in version.split(".")) < FIRST_WITH_IMAGE:
+        return
+    prefix = re.escape(image_url(version, ""))
+    images = re.findall(rf"!\[([^\]]*)\]\({prefix}([^)\s]+)\)", notes)
+    if not images:
+        raise ValueError(
+            f"{path}: show at least one new image of what's new: "
+            f"![description]({image_url(version, '<file>')}), "
+            f"with the file in docs/images/releases/{version}/."
+        )
+    for alt, name in images:
+        if not alt.strip():
+            raise ValueError(f"{path}: describe the image {name} in its alt text.")
+        if not (root / "docs" / "images" / "releases" / version / name).is_file():
+            raise ValueError(f"docs/images/releases/{version}/{name}: commit the image the notes show.")
+
 
 def body(version: str, root: Path = ROOT) -> str:
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
@@ -26,6 +53,7 @@ def body(version: str, root: Path = ROOT) -> str:
     highlights = re.split(r"^##\s", sections[1], maxsplit=1, flags=re.MULTILINE)[0]
     if len(re.findall(r"^\s*[-+*]\s+", highlights, flags=re.MULTILINE)) > 7:
         raise ValueError(f"{path}: What's new has more than 7 bullets; shorten it.")
+    check_images(version, notes, path, root)
     changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
     entry = re.search(
         rf"^## ({re.escape(version)} \([0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}\))[ \t]*$",
