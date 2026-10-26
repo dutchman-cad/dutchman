@@ -9,8 +9,21 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-/// The relative difference in volume at which a replay no longer matches the original.
+/// The relative difference in volume at which a replay no longer matches the original, when
+/// SolidCraft gives no area and box to bound its meshes' error by (see [`mesh_slack`]).
 pub const VOLUME_TOLERANCE: f64 = 1e-4;
+
+/// SolidCraft measures a body from a mesh whose chords keep within this fraction of the body's
+/// size of its faces, and never closer than [`MESH_CHORD_FLOOR`].
+const MESH_CHORD: f64 = 5e-5;
+
+/// The closest, in millimetres, SolidCraft's measuring mesh keeps to a body's faces.
+const MESH_CHORD_FLOOR: f64 = 1e-4;
+
+/// The relative difference in area at which a replay no longer matches the original. A mesh
+/// misses a curved face's area by about a third of its chord over the face's radius, and
+/// SolidCraft keeps that chord within 3e-4 of the smallest radius: well inside this.
+const AREA_TOLERANCE: f64 = 1e-3;
 
 /// How long one SolidCraft evaluation may run before the check gives up.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(120);
@@ -347,14 +360,14 @@ pub(crate) fn compare(
     if let Some(error) = replayed.errors.first() {
         return Outcome::Differs(error.clone());
     }
-    let unsound = volume_problems(&expected.volumes, bodies);
+    let unsound = volume_problems(&expected.volumes(), bodies);
     if !unsound.is_empty() {
         return Outcome::Unverified(format!(
             "the original geometry cannot be compared with: {}",
             unsound.join("; ")
         ));
     }
-    match_volumes(&replayed.volumes, &expected.volumes)
+    match_bodies(&replayed.bodies, &expected.bodies)
 }
 
 /// What is wrong with a design's body `volumes` in SolidCraft, for a design with
@@ -458,7 +471,7 @@ fn shown(eval: &Eval, expected: Expected) -> Shown {
         }
         _ => {}
     }
-    problems.extend(volume_problems(&eval.volumes, expected));
+    problems.extend(volume_problems(&eval.volumes(), expected));
     // SolidCraft warns of every open shell; the design's sheets are open by design.
     let mut sheets = expected.sheets;
     problems.extend(eval.warnings.iter().filter_map(|warning| {
@@ -476,8 +489,9 @@ fn shown(eval: &Eval, expected: Expected) -> Shown {
     }
 }
 
-/// Whether two sets of body volumes match, regardless of body order.
-fn match_volumes(replayed: &[f64], expected: &[f64]) -> Outcome {
+/// Whether two sets of bodies match, regardless of body order: in volume, within what
+/// SolidCraft's measuring meshes can miss, and in area.
+fn match_bodies(replayed: &[Measured], expected: &[Measured]) -> Outcome {
     if replayed.len() != expected.len() {
         return Outcome::Differs(format!(
             "{} bodies replayed, {} expected",
@@ -487,27 +501,69 @@ fn match_volumes(replayed: &[f64], expected: &[f64]) -> Outcome {
     }
     let mut replayed = replayed.to_vec();
     let mut expected = expected.to_vec();
-    replayed.sort_by(f64::total_cmp);
-    expected.sort_by(f64::total_cmp);
+    replayed.sort_by(|a, b| a.volume.total_cmp(&b.volume));
+    expected.sort_by(|a, b| a.volume.total_cmp(&b.volume));
     for (got, want) in replayed.iter().zip(&expected) {
-        let scale = got.abs().max(want.abs()).max(f64::MIN_POSITIVE);
-        if (got - want).abs() / scale > VOLUME_TOLERANCE {
+        let (v, w) = (got.volume, want.volume);
+        let allowed = (VOLUME_TOLERANCE * v.abs().max(w.abs())).max(mesh_slack(got, want));
+        if !within((v - w).abs(), allowed) {
             return Outcome::Differs(format!(
-                "a body's volume is {got:.6} mm³, the original's {want:.6} mm³"
+                "a body's volume is {v:.6} mm³, the original's {w:.6} mm³"
             ));
+        }
+        if let (Some(a), Some(b)) = (got.area, want.area) {
+            if !within((a - b).abs(), AREA_TOLERANCE * a.abs().max(b.abs())) {
+                return Outcome::Differs(format!(
+                    "a body's area is {a:.6} mm², the original's {b:.6} mm²"
+                ));
+            }
         }
     }
     Outcome::Matches
 }
 
+/// Whether `difference` is no more than `limit`; not when either is not a number.
+fn within(difference: f64, limit: f64) -> bool {
+    difference <= limit
+}
+
+/// The most two SolidCraft measurements of one shape can differ in volume: each mesh's chords
+/// sag at most [`MESH_CHORD`] of the body's size from its faces, so it misses at most its area
+/// times that. Zero when SolidCraft gives no area or box.
+fn mesh_slack(a: &Measured, b: &Measured) -> f64 {
+    match (a.area, a.size, b.area, b.size) {
+        (Some(area_a), Some(size_a), Some(area_b), Some(size_b)) => {
+            let chord = (MESH_CHORD * size_a.max(size_b)).max(MESH_CHORD_FLOOR);
+            (area_a.abs() + area_b.abs()) * chord
+        }
+        _ => 0.0,
+    }
+}
+
+/// One body as SolidCraft measured it, in millimetres.
+#[derive(Clone, Debug, PartialEq)]
+struct Measured {
+    volume: f64,
+    /// Its area, when SolidCraft gives it.
+    area: Option<f64>,
+    /// The diagonal of its box, when SolidCraft gives it.
+    size: Option<f64>,
+}
+
 /// One design as SolidCraft evaluated it.
 struct Eval {
-    volumes: Vec<f64>,
+    bodies: Vec<Measured>,
     errors: Vec<String>,
     /// The faces SolidCraft shows across every body, when it says.
     faces: Option<u64>,
     /// Warnings on timeline features, such as faces that could not be meshed.
     warnings: Vec<String>,
+}
+
+impl Eval {
+    fn volumes(&self) -> Vec<f64> {
+        self.bodies.iter().map(|body| body.volume).collect()
+    }
 }
 
 enum Evaluation {
@@ -809,20 +865,38 @@ fn wait(
     }
 }
 
-/// The body volumes, face count and timeline errors and warnings in a SolidCraft `eval` result.
+/// The bodies, face count and timeline errors and warnings in a SolidCraft `eval` result.
 fn parse(value: &Value) -> Result<Eval, String> {
     let bodies = value
         .get("bodies")
         .and_then(Value::as_array)
         .ok_or_else(|| format!("{CLI_NAME} result has no bodies"))?;
-    let volumes = bodies
+    let bodies = bodies
         .iter()
         .map(|body| {
-            body.get("volume_mm3")
+            let volume = body
+                .get("volume_mm3")
                 .and_then(Value::as_f64)
-                .ok_or_else(|| format!("{CLI_NAME} result has a body without a volume"))
+                .ok_or_else(|| format!("{CLI_NAME} result has a body without a volume"))?;
+            let corner = |end: &str| -> Option<Vec<f64>> {
+                let corner = body.pointer(&format!("/bbox/{end}"))?.as_array()?;
+                let corner: Option<Vec<f64>> = corner.iter().map(Value::as_f64).collect();
+                corner.filter(|corner| corner.len() == 3)
+            };
+            let size = corner("min").zip(corner("max")).map(|(min, max)| {
+                min.iter()
+                    .zip(&max)
+                    .map(|(lo, hi)| (hi - lo) * (hi - lo))
+                    .sum::<f64>()
+                    .sqrt()
+            });
+            Ok(Measured {
+                volume,
+                area: body.get("area_mm2").and_then(Value::as_f64),
+                size: size.filter(|size| size.is_finite()),
+            })
         })
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, String>>()?;
     let timeline = value
         .get("timeline")
         .and_then(Value::as_array)
@@ -842,7 +916,7 @@ fn parse(value: &Value) -> Result<Eval, String> {
         .collect();
     let faces = value.pointer("/total/faces").and_then(Value::as_u64);
     Ok(Eval {
-        volumes,
+        bodies,
         errors,
         faces,
         warnings,
@@ -894,34 +968,101 @@ mod tests {
         assert!(!MACOS_BLOCKED.trim_end_matches('.').contains(". "));
     }
 
+    pub(super) fn volumes_of(volumes: &[f64]) -> Vec<Measured> {
+        volumes
+            .iter()
+            .map(|&volume| Measured {
+                volume,
+                area: None,
+                size: None,
+            })
+            .collect()
+    }
+
+    fn body(volume: f64, area: f64, size: f64) -> Vec<Measured> {
+        vec![Measured {
+            volume,
+            area: Some(area),
+            size: Some(size),
+        }]
+    }
+
     #[test]
     fn volumes_match_in_any_order_within_tolerance() {
         assert_eq!(
-            match_volumes(&[2.0, 1.0], &[1.0, 2.00001]),
+            match_bodies(&volumes_of(&[2.0, 1.0]), &volumes_of(&[1.0, 2.00001])),
             Outcome::Matches
         );
     }
 
     #[test]
     fn a_different_volume_or_body_count_differs() {
-        assert!(matches!(match_volumes(&[1.0], &[1.1]), Outcome::Differs(_)));
         assert!(matches!(
-            match_volumes(&[1.0], &[1.0, 1.0]),
+            match_bodies(&volumes_of(&[1.0]), &volumes_of(&[1.1])),
             Outcome::Differs(_)
+        ));
+        assert!(matches!(
+            match_bodies(&volumes_of(&[1.0]), &volumes_of(&[1.0, 1.0])),
+            Outcome::Differs(_)
+        ));
+    }
+
+    #[test]
+    fn a_curved_body_matches_within_what_the_meshes_miss() {
+        // A 60 mm ring 40 mm tall around a 40 mm bore (exactly 20000π mm³), revolved in
+        // SolidCraft and read from the original's surfaces: the two meshes differ by 1.6e-4.
+        assert_eq!(
+            match_bodies(
+                &body(62835.566016, 15707.98, 93.81),
+                &body(62825.683952, 15707.33, 93.81)
+            ),
+            Outcome::Matches
+        );
+        // A replay 5 % larger differs far past that.
+        assert!(matches!(
+            match_bodies(
+                &body(13995.7, 7012.0, 85.0),
+                &body(13288.7, 6823.4, 85.0)
+            ),
+            Outcome::Differs(why) if why.contains("volume")
+        ));
+    }
+
+    #[test]
+    fn a_thin_plate_missing_a_hole_differs_in_area() {
+        // 100 × 100 × 1 mm: the mesh bound allows about 285 mm³, more than an 18 mm hole's
+        // 254 mm³, but the hole changes the area by 2.2 %.
+        let hole = std::f64::consts::PI * 9.0 * 9.0;
+        let plate = 2.0 * 100.0 * 100.0 + 4.0 * 100.0;
+        assert!(matches!(
+            match_bodies(
+                &body(10_000.0, plate, 141.4),
+                &body(10_000.0 - hole, plate - 2.0 * hole + std::f64::consts::PI * 18.0, 141.4)
+            ),
+            Outcome::Differs(why) if why.contains("area")
         ));
     }
 
     #[test]
     fn parses_an_eval_result() {
         let value = serde_json::json!({
-            "bodies": [{"name": "Body1", "volume_mm3": 1000.0}],
+            "bodies": [
+                {"name": "Body1", "volume_mm3": 1000.0},
+                {
+                    "name": "Body2", "volume_mm3": 24.0, "area_mm2": 52.0,
+                    "bbox": {"min": [0.0, 0.0, 0.0], "max": [2.0, 3.0, 6.0]}
+                }
+            ],
             "timeline": [
                 {"name": "Sketch1", "error": null},
                 {"name": "Extrude1", "error": "profile not closed"}
             ]
         });
         let eval = parse(&value).unwrap();
-        assert_eq!(eval.volumes, [1000.0]);
+        assert_eq!(eval.volumes(), [1000.0, 24.0]);
+        assert_eq!(eval.bodies[0].area, None);
+        assert_eq!(eval.bodies[1].area, Some(52.0));
+        assert_eq!(eval.bodies[1].size, Some(7.0));
         assert_eq!(
             eval.errors,
             ["feature \"Extrude1\" failed: profile not closed"]
@@ -960,7 +1101,7 @@ mod tests {
     #[test]
     fn solids_without_a_volume_or_inside_out_are_reported() {
         let eval = |volumes: &[f64]| Eval {
-            volumes: volumes.to_vec(),
+            bodies: volumes_of(volumes),
             errors: Vec::new(),
             faces: None,
             warnings: Vec::new(),
@@ -1264,7 +1405,7 @@ mod cli_tests {
     #[test]
     fn sheets_are_not_reported_as_inside_out_or_open() {
         let eval = |volumes: &[f64], warnings: &[&str]| Eval {
-            volumes: volumes.to_vec(),
+            bodies: super::tests::volumes_of(volumes),
             errors: Vec::new(),
             faces: None,
             warnings: warnings.iter().map(|w| (*w).to_owned()).collect(),
