@@ -1068,6 +1068,9 @@ fn railed_loft(top: f64) -> Model {
     });
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
+    let ring: Vec<Value> = [31, 32, 33, 34]
+        .map(|k| json!({"entity": format!("f3d:model:sketch-entity#{k}")}))
+        .to_vec();
     m["sketches"].as_array_mut().unwrap().push(json!({
         "id": RAIL,
         "name": "Rail",
@@ -2074,6 +2077,9 @@ fn holed_cube(diameter: f64, change: impl FnOnce(&mut Value)) -> Model {
     let mut model = cube_with_history(10.0, first_profile(), None);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
+    let ring: Vec<Value> = [31, 32, 33, 34]
+        .map(|k| json!({"entity": format!("f3d:model:sketch-entity#{k}")}))
+        .to_vec();
     m["sketches"].as_array_mut().unwrap().push(json!({
         "id": HOLES,
         "name": "Holes",
@@ -4657,6 +4663,211 @@ fn edge_flanges_pick_their_own_input_edges_and_keep_dimensions() {
             assert_eq!(document["sheet"]["rules"][0]["relief_width"], "Thickness");
         }
     }
+}
+
+const PLATE_SKETCH: &str = "f3d:model:sketch#4";
+
+/// A 10 mm square base sheet 1 thick, then an attached plate and the bend joining it on the
+/// back top edge (y = 10, z = 1), as Inventor stores a flange: the plate, sketched on a plane
+/// facing +Y at `y` with u along -X, covers x 0..10 and z 0..20, 1 thick toward +Y.
+fn plate_flange(y: f64) -> Model {
+    let mut model = flanged_cube(1.0, "forward");
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    let ring: Vec<Value> = [31, 32, 33, 34]
+        .map(|k| json!({"entity": format!("f3d:model:sketch-entity#{k}")}))
+        .to_vec();
+    m["sketches"].as_array_mut().unwrap().push(json!({
+        "id": PLATE_SKETCH, "name": "Plate sketch",
+        "placement": {"kind": "resolved", "frame": {
+            "origin": {"x": 0.0, "y": y, "z": 0.0},
+            "normal": {"x": 0.0, "y": 1.0, "z": 0.0},
+            "u_axis": {"x": -1.0, "y": 0.0, "z": 0.0},
+        }},
+        "profiles": [ring],
+    }));
+    let plate_line = |key: u32, from: [f64; 2], to: [f64; 2]| {
+        let mut row = line(key, from, to);
+        row["sketch"] = json!(PLATE_SKETCH);
+        row
+    };
+    m["sketch_entities"].as_array_mut().unwrap().extend([
+        plate_line(31, [-10.0, 0.0], [0.0, 0.0]),
+        plate_line(32, [0.0, 0.0], [0.0, 20.0]),
+        plate_line(33, [0.0, 20.0], [-10.0, 20.0]),
+        plate_line(34, [-10.0, 20.0], [-10.0, 0.0]),
+    ]);
+    let point = |x, y, z| json!({"x": x, "y": y, "z": z});
+    let edge = "test:sheet:input-edge#back";
+    let row = |id: &str, of: &str| {
+        json!({
+            "id": id, "input_of": of, "edges": [edge],
+            "edge_geometry": [{
+                "edge": edge, "interior": point(5.0, 10.0, 1.0),
+                "start": point(0.0, 10.0, 1.0), "end": point(10.0, 10.0, 1.0),
+                "tangent": point(1.0, 0.0, 0.0),
+            }],
+        })
+    };
+    m["feature_input_topologies"] = json!([
+        row("test:sheet:feature-input#plate", "f3d:model:feature#5"),
+        row("test:sheet:feature-input#bend", "f3d:model:feature#6"),
+    ]);
+    // Both select the bend's input state, as Inventor's plate and bend share one attachment.
+    let attachment = json!({"kind": "historical", "value": {
+        "state": "test:sheet:feature-input#bend", "edges": [edge], "native": "synthetic edge",
+    }});
+    let relief = json!({"form": "style_default", "width": 1.0, "depth": 0.5,
+                        "minimum_remnant": 2.0, "seam_gap": 0.01});
+    let transition = json!({"form": "style_default", "radius": 1.0});
+    m["features"].as_array_mut().unwrap().extend([
+        json!({
+            "id": "f3d:model:feature#4", "ordinal": 2, "name": "Plate sketch", "suppressed": false,
+            "definition": {"definition": "sketch", "sketch": {"space": "planar", "sketch": PLATE_SKETCH}},
+        }),
+        json!({
+            "id": "f3d:model:feature#5", "ordinal": 3, "name": "Plate2", "suppressed": false,
+            "definition": {
+                "definition": "sheet_metal_attached_plate",
+                "profile": {"kind": "sketch_regions", "value": {
+                    "sketch": PLATE_SKETCH, "regions": [{"region": "loops", "outer": 0}]}},
+                "thickness": 1.0, "side": "forward", "op": "join",
+                "attachment": attachment, "inside_radius": 0.5,
+                "relief": relief, "transition": transition,
+            },
+        }),
+        json!({
+            "id": "f3d:model:feature#6", "ordinal": 4, "name": "Bend1", "suppressed": false,
+            "definition": {
+                "definition": "sheet_metal_bend", "plate": "f3d:model:feature#5",
+                "attachment": attachment, "inside_radius": 0.5,
+                "relief": relief, "transition": transition,
+            },
+        }),
+    ]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn an_attached_plate_and_its_bend_become_one_flange() {
+    for (y, position) in [(9.0, "inside"), (10.0, "outside")] {
+        let (document, report) = convert(
+            &plate_flange(y),
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).starts_with("5 of 5 features mapped"),
+            "{}",
+            history_line(&report)
+        );
+        let features = types(&document);
+        assert_eq!(
+            features
+                .iter()
+                .filter(|(kind, _)| kind == "sheet_flange")
+                .count(),
+            1,
+            "{features:?}"
+        );
+        let flange = document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["type"] == "sheet_flange")
+            .unwrap();
+        assert_eq!(flange["name"], "Bend1");
+        assert_eq!(flange["edges"], json!([[5.0, 10.0, 1.0]]));
+        assert_eq!(flange["height"], "20 mm");
+        assert_eq!(flange["angle"], "90 deg");
+        assert_eq!(flange["radius"], "0.5 mm");
+        assert_eq!(flange["position"], position);
+    }
+}
+
+#[test]
+fn attached_plates_refuse_shapes_a_flange_cannot_rebuild() {
+    let mutations = [
+        (
+            "/model/features/3/definition/thickness",
+            json!(2.0),
+            "another thickness",
+        ),
+        (
+            "/model/features/3/definition/op",
+            json!("cut"),
+            "does not join",
+        ),
+        (
+            "/model/features/3/definition/inside_radius",
+            json!(1.0),
+            "another bend radius",
+        ),
+        (
+            "/model/features/3/definition/side",
+            json!("symmetric"),
+            "both sides",
+        ),
+        (
+            "/model/features/3/definition/attachment/value/edges",
+            json!(["other"]),
+            "other edges",
+        ),
+        (
+            "/model/sketches/1/placement/frame/origin/y",
+            json!(8.0),
+            "not flush",
+        ),
+        (
+            "/model/sketches/1/placement/frame/origin/z",
+            json!(-1.0),
+            "outer face",
+        ),
+        (
+            "/model/sketch_entities/4/geometry/start/u",
+            json!(-8.0),
+            "one plain rectangle",
+        ),
+        (
+            "/model/feature_input_topologies/1/input_of",
+            json!("f3d:model:feature#5"),
+            "does not belong",
+        ),
+        (
+            "/model/features/4/definition/attachment/value/edges",
+            json!(["test:sheet:input-edge#back", "test:sheet:input-edge#side"]),
+            "more than one edge",
+        ),
+    ];
+    for (path, value, reason) in mutations {
+        let mut wire = serde_json::to_value(&plate_flange(9.0).ir).unwrap();
+        *wire.pointer_mut(path).unwrap() = value;
+        let mut model = plate_flange(9.0);
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (_, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).contains(reason),
+            "{path}: {}",
+            history_line(&report)
+        );
+    }
+    // A plate no bend joins is not mapped on its own.
+    let mut wire = serde_json::to_value(&plate_flange(9.0).ir).unwrap();
+    wire["model"]["features"].as_array_mut().unwrap().pop();
+    let mut model = plate_flange(9.0);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("no bend joins"),
+        "{}",
+        history_line(&report)
+    );
 }
 
 #[test]

@@ -688,6 +688,12 @@ fn map_feature(
         Some("sheet_metal_edge_flange") => {
             sheet::edge_flange(feature, definition, ctx, preceding).map(Mapped::Feature)
         }
+        Some("sheet_metal_attached_plate") => {
+            sheet::attached_plate(feature, ctx).map(|()| Mapped::Nothing)
+        }
+        Some("sheet_metal_bend") => {
+            sheet::bend(feature, definition, ctx, preceding).map(Mapped::Feature)
+        }
         Some("sheet_metal_hem") => Err(sheet::hem_refusal(definition)),
         Some("base_feature") => base::map(feature, definition, ctx).map(Mapped::Feature),
         // A placed datum plane: what is sketched on it carries the same frame of its own.
