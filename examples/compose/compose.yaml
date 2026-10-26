@@ -1,0 +1,56 @@
+# One address for SolidCraft, Dutchman Web, and a watched shared folder.
+services:
+  proxy:
+    image: caddy:2.10
+    ports:
+      - "${PORT:-8080}:80"
+      # For HTTPS, publish port 80 above as 80:80 and enable this:
+      # - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    restart: unless-stopped
+
+  solidcraft:
+    # Until tangency-labs/solidcraft#2878 makes the image public, build locally.
+    # Once a public release includes #6670, remove build and use
+    # image: ghcr.io/tangency-labs/solidcraft-web:latest
+    image: solidcraft-web:local
+    build:
+      context: https://github.com/tangency-labs/solidcraft.git#66b872a749d01759a288724a95cc0a3bce9db879
+      dockerfile: packaging/docker/Dockerfile
+    restart: unless-stopped
+
+  dutchman:
+    # nightly until a release includes --base-path, --output-dir and --solidcraft (after 0.2.1);
+    # then use latest, here and in watch.
+    image: ghcr.io/dutchman-cad/dutchman:nightly
+    entrypoint: ["dutchman-web"]
+    command: ["--base-path", "/dutchman", "--output-dir", "/designs/Converted", "--solidcraft", "/"]
+    environment:
+      DUTCHMAN_WEB_PASSWORD: ${DUTCHMAN_WEB_PASSWORD:?set a password}
+      # Optional if another proxy changes Host; use the browser's exact origin.
+      DUTCHMAN_WEB_PUBLIC_ORIGIN: ${DUTCHMAN_WEB_PUBLIC_ORIGIN:-}
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - ${DESIGNS:-./designs}:/designs
+    # One file may hold up to 8 GB (--max-memory); keep room for that.
+    # Lower --runs, --jobs, or --max-memory for this limit; see README.md.
+    mem_limit: 10g
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+  watch:
+    image: ghcr.io/dutchman-cad/dutchman:nightly
+    entrypoint: ["dutchman"]
+    command: ["watch", "/designs/Inbox", "--out-dir", "/designs/Converted"]
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - ${DESIGNS:-./designs}:/designs
+    # The same per-file memory limit applies to watched conversions.
+    mem_limit: 10g
+    stop_grace_period: 30s
+    restart: unless-stopped
+
+volumes:
+  caddy_data:

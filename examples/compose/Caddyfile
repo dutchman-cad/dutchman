@@ -1,0 +1,33 @@
+:80 {
+	# Allow the default 200 MB upload plus multipart headers.
+	request_body {
+		max_size 256MB
+	}
+
+	# Keep the path prefix and the request's Host header unchanged.
+	handle /dutchman* {
+		reverse_proxy dutchman:8080
+	}
+	handle {
+		reverse_proxy solidcraft:8080
+	}
+}
+
+# For LAN HTTPS, replace the :80 block above with this block, publish ports
+# 80 and 443, and make cad.home.arpa resolve to this server on your LAN.
+# Trust Caddy's local root certificate on each browser's computer (see README.md).
+# cad.home.arpa {
+# 	tls internal
+# 	request_body {
+# 		max_size 256MB
+# 	}
+# 	handle /dutchman* {
+# 		reverse_proxy dutchman:8080
+# 	}
+# 	handle {
+# 		reverse_proxy solidcraft:8080
+# 	}
+# }
+
+# For a Tailscale HTTPS name, terminate HTTPS with Tailscale Serve and forward
+# to this HTTP listener on localhost; see README.md. Keep the same routes.

@@ -128,6 +128,9 @@ Replace `/home/me/cad` with your folder and `1000:1000` with your user and group
 
 ## With Compose
 
+The [Compose example](../examples/compose/) serves SolidCraft and Dutchman on one address,
+with a shared folder and a watched inbox.
+
 Save as `compose.yaml` next to your designs, then convert with
 `docker compose run --rm dutchman convert-all --out-dir converted/ .`:
 
