@@ -48,8 +48,8 @@ scoop install dutchman-cad/dutchman
 
 Both install `dutchman`, `dutchman-mcp` and the desktop app (`dutchman-gui`; Scoop also adds a
 Start menu shortcut), and follow each release: `brew upgrade` or `scoop update` brings the
-newest. A Homebrew install on macOS needs no first-run approval, because Homebrew's downloads
-are not quarantined. Or download a release below, or run it in [Docker](docs/docker.md)
+newest. Homebrew pours a ready-made bottle, so it needs no Xcode or Command Line Tools, and on
+macOS no first-run approval, because Homebrew's downloads are not quarantined. Or download a release below, or run it in [Docker](docs/docker.md)
 (`docker pull ghcr.io/dutchman-cad/dutchman:latest`).
 
 ## Download
