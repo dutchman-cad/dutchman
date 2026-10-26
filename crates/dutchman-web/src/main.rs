@@ -93,6 +93,20 @@ struct Args {
     /// The user name asked for when DUTCHMAN_WEB_PASSWORD is set.
     #[arg(long, env = "DUTCHMAN_WEB_USER", default_value = "dutchman")]
     user: String,
+    /// The path the server is reached under behind a reverse proxy, such as /dutchman (default:
+    /// the root). Have the proxy pass the path on unchanged.
+    #[arg(
+        long,
+        env = "DUTCHMAN_WEB_BASE_PATH",
+        value_name = "PATH",
+        default_value = ""
+    )]
+    base_path: String,
+    /// A folder each job's designs are also saved in, such as a mounted network share. They
+    /// keep their uploaded folders and names, are numbered rather than replace a file already
+    /// there, and stay after the job is deleted.
+    #[arg(long, env = "DUTCHMAN_WEB_OUTPUT", value_name = "DIR")]
+    output_dir: Option<PathBuf>,
 }
 
 fn main() -> ExitCode {
@@ -112,6 +126,13 @@ fn main() -> ExitCode {
         .ok()
         .filter(|password| !password.is_empty())
         .map(|password| (args.user.clone(), password));
+    let base_path = match dutchman_web::base_path(&args.base_path) {
+        Ok(path) => path,
+        Err(err) => {
+            eprintln!("dutchman-web: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
     let config = Config {
         data_dir: args
             .data_dir
@@ -134,6 +155,8 @@ fn main() -> ExitCode {
         },
         worker: Some(worker),
         login,
+        base_path,
+        output_dir: args.output_dir,
     };
     if let Err(err) = dutchman_web::prepare_data_dir(&config.data_dir) {
         eprintln!(
@@ -141,6 +164,12 @@ fn main() -> ExitCode {
             config.data_dir.display()
         );
         return ExitCode::FAILURE;
+    }
+    if let Some(folder) = &config.output_dir {
+        if let Err(err) = dutchman_web::prepare_output_dir(folder) {
+            eprintln!("dutchman-web: cannot use {}: {err}", folder.display());
+            return ExitCode::FAILURE;
+        }
     }
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -171,7 +200,10 @@ async fn serve(listen: SocketAddr, config: Config) -> std::io::Result<()> {
              DUTCHMAN_WEB_PASSWORD to ask for a password"
         );
     }
-    eprintln!("dutchman-web: listening on http://{listen}");
+    eprintln!(
+        "dutchman-web: listening on http://{listen}{}/",
+        config.base_path
+    );
     tokio::spawn(dutchman_web::remove_expired(
         config.data_dir.clone(),
         config.keep,
@@ -224,6 +256,8 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(args.uploads, 1);
+        assert_eq!(args.base_path, "");
+        assert_eq!(args.output_dir, None);
         assert_eq!(args.max_data, 2);
         assert_eq!(args.min_free, 3);
         assert_eq!(

@@ -5,6 +5,7 @@
 //! Jobs are deleted after a while. `docs/web.md` describes it.
 
 pub mod report;
+pub mod save;
 pub mod upload;
 
 use std::num::NonZeroUsize;
@@ -67,6 +68,12 @@ pub struct Config {
     pub worker: Option<PathBuf>,
     /// The user name and password a browser must give (HTTP basic authentication), if any.
     pub login: Option<(String, String)>,
+    /// The path the server is reached under behind a reverse proxy (`/dutchman`), or empty at
+    /// the root; see [`base_path`].
+    pub base_path: String,
+    /// A folder each job's designs are also saved in, as uploaded and never replacing a file
+    /// already there; kept after the job expires.
+    pub output_dir: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -88,6 +95,8 @@ impl Default for Config {
             limits: Limits::default(),
             worker: None,
             login: None,
+            base_path: String::new(),
+            output_dir: None,
         }
     }
 }
@@ -100,8 +109,10 @@ struct App {
 
 type Shared = Arc<App>;
 
-/// The server's routes, with `config`.
+/// The server's routes, with `config`, under its base path.
 pub fn router(config: Config) -> Router {
+    let base = config.base_path.clone();
+    let at = |path: &str| format!("{base}{path}");
     let body_limit = usize::try_from(config.max_upload)
         .unwrap_or(usize::MAX)
         .saturating_add(1 << 20);
@@ -111,21 +122,59 @@ pub fn router(config: Config) -> Router {
         config,
     });
     let protected = Router::new()
-        .route("/", get(index))
-        .route("/convert", post(convert_page))
-        .route("/api/convert", post(convert_api))
-        .route("/jobs/{job}", get(job_page))
-        .route("/jobs/{job}/report.json", get(job_report))
-        .route("/jobs/{job}/files/{*path}", get(download))
-        .route("/jobs/{job}/designs.zip", get(download_all))
+        .route(&at("/"), get(index))
+        .route(&at("/convert"), post(convert_page))
+        .route(&at("/api/convert"), post(convert_api))
+        .route(&at("/jobs/{job}"), get(job_page))
+        .route(&at("/jobs/{job}/report.json"), get(job_report))
+        .route(&at("/jobs/{job}/files/{*path}"), get(download))
+        .route(&at("/jobs/{job}/designs.zip"), get(download_all))
         .layer(DefaultBodyLimit::max(body_limit))
         .route_layer(middleware::from_fn_with_state(app.clone(), guard_origin))
         .route_layer(middleware::from_fn_with_state(app.clone(), require_login));
-    Router::new()
+    let mut routes = Router::new()
         .route("/healthz", get(|| async { "ok" }))
-        .merge(protected)
+        .merge(protected);
+    if !base.is_empty() {
+        // The page's links are relative to `<base>/`, so the bare path moves there.
+        let home = at("/");
+        routes = routes.route(&at("/healthz"), get(|| async { "ok" })).route(
+            &base,
+            get(move || async move { Redirect::permanent(&home) }),
+        );
+    }
+    routes
         .layer(middleware::from_fn(security_headers))
         .with_state(app)
+}
+
+/// `path` as a server's base path: empty for the root, otherwise `/` and segments of letters,
+/// digits, `-`, `_`, `.` and `~`, without a trailing `/` (`dutchman/` gives `/dutchman`).
+pub fn base_path(path: &str) -> Result<String, String> {
+    let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    for segment in &segments {
+        let plain = segment
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~'));
+        if !plain || *segment == "." || *segment == ".." {
+            return Err(format!(
+                "Choose a base path of plain names such as /dutchman, not {path}."
+            ));
+        }
+    }
+    Ok(segments.iter().map(|s| format!("/{s}")).collect())
+}
+
+/// Creates the output folder if needed and checks that it is a folder.
+pub fn prepare_output_dir(path: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(path)?;
+    if std::fs::metadata(path)?.is_dir() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(
+            "Choose an output folder that is a directory.",
+        ))
+    }
 }
 
 /// Creates a private data folder and checks an existing folder before using it.
@@ -240,6 +289,8 @@ struct IndexPage<'a> {
     keep_minutes: u64,
     extensions: String,
     formats: Vec<(&'static str, &'static str)>,
+    /// Whether designs are also saved in an output folder.
+    saves: bool,
 }
 
 #[derive(Template)]
@@ -259,6 +310,8 @@ struct ResultsPage<'a> {
 struct ProblemPage<'a> {
     version: &'a str,
     message: &'a str,
+    /// The page's address, `<base>/`.
+    home: &'a str,
 }
 
 const VERSION: &str = concat!("dutchman-web ", env!("CARGO_PKG_VERSION"));
@@ -290,6 +343,7 @@ async fn index(State(app): State<Shared>) -> Response {
                 .into_iter()
                 .map(|f| (f.name(), dutchman::formats::converts(f)))
                 .collect(),
+            saves: app.config.output_dir.is_some(),
         },
         StatusCode::OK,
     )
@@ -309,11 +363,13 @@ impl Problem {
         }
     }
 
-    fn page(self) -> Response {
+    /// The page for a browser, under the server's `base` path.
+    fn page(self, base: &str) -> Response {
         render(
             ProblemPage {
                 version: VERSION,
                 message: &self.message,
+                home: &format!("{base}/"),
             },
             self.status,
         )
@@ -327,7 +383,7 @@ impl Problem {
 async fn convert_page(State(app): State<Shared>, form: Multipart) -> Response {
     match convert(&app, form).await {
         Ok((job, _)) => Redirect::to(&format!("jobs/{job}")).into_response(),
-        Err(problem) => problem.page(),
+        Err(problem) => problem.page(&app.config.base_path),
     }
 }
 
@@ -364,7 +420,7 @@ async fn job_page(State(app): State<Shared>, UrlPath(job): UrlPath<String>) -> R
                 StatusCode::OK,
             )
         }
-        Err(problem) => problem.page(),
+        Err(problem) => problem.page(&app.config.base_path),
     }
 }
 
@@ -529,6 +585,15 @@ async fn convert_in(
     .await
     .map_err(|err| server_error(&err))?
     .map_err(|message| Problem::new(StatusCode::INTERNAL_SERVER_ERROR, message))?;
+    if let Some(folder) = app.config.output_dir.clone() {
+        let out = out_dir.clone();
+        report = tokio::task::spawn_blocking(move || {
+            save::save_all(&mut report, &out, &folder);
+            report
+        })
+        .await
+        .map_err(|err| server_error(&err))?;
+    }
     report::for_browser(&mut report, job, &in_dir, &out_dir);
     let saved = serde_json::to_vec(&report).map_err(|err| server_error(&err))?;
     tokio::fs::write(dir.join(REPORT_FILE), saved)
@@ -578,9 +643,10 @@ async fn download(
     State(app): State<Shared>,
     UrlPath((job, path)): UrlPath<(String, String)>,
 ) -> Response {
-    let not_found = || Problem::new(StatusCode::NOT_FOUND, "There is no such design.").page();
+    let base = app.config.base_path.as_str();
+    let not_found = || Problem::new(StatusCode::NOT_FOUND, "There is no such design.").page(base);
     let Ok(dir) = job_dir(&app, &job) else {
-        return expired().page();
+        return expired().page(base);
     };
     let mut file = dir.join("out");
     for segment in path.split('/') {
@@ -600,13 +666,14 @@ async fn download(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    send_file(&file, &name, "application/octet-stream").await
+    send_file(&file, &name, "application/octet-stream", base).await
 }
 
 async fn download_all(State(app): State<Shared>, UrlPath(job): UrlPath<String>) -> Response {
+    let base = app.config.base_path.as_str();
     let dir = match job_dir(&app, &job) {
         Ok(dir) => dir,
-        Err(problem) => return problem.page(),
+        Err(problem) => return problem.page(base),
     };
     let archive = dir.join("designs.zip");
     let (out, to) = (dir.join("out"), archive.clone());
@@ -616,13 +683,14 @@ async fn download_all(State(app): State<Shared>, UrlPath(job): UrlPath<String>) 
             StatusCode::INTERNAL_SERVER_ERROR,
             "The designs could not be put in one zip. Download them one by one.",
         )
-        .page();
+        .page(base);
     }
     let short = job.get(..8).unwrap_or(&job);
     send_file(
         &archive,
         &format!("dutchman-{short}.zip"),
         "application/zip",
+        base,
     )
     .await
 }
@@ -664,9 +732,9 @@ fn zip_folder(folder: &Path, archive: &Path) -> Result<(), String> {
     Ok(())
 }
 
-async fn send_file(path: &Path, name: &str, kind: &'static str) -> Response {
+async fn send_file(path: &Path, name: &str, kind: &'static str, base: &str) -> Response {
     let Ok(file) = tokio::fs::File::open(path).await else {
-        return Problem::new(StatusCode::NOT_FOUND, "There is no such design.").page();
+        return Problem::new(StatusCode::NOT_FOUND, "There is no such design.").page(base);
     };
     let length = file.metadata().await.map(|m| m.len()).ok();
     let body = Body::from_stream(tokio_util::io::ReaderStream::new(file));
@@ -699,8 +767,10 @@ async fn send_file(path: &Path, name: &str, kind: &'static str) -> Response {
 // ---- Middleware ------------------------------------------------------------------------------
 
 async fn guard_origin(State(app): State<Shared>, request: Request, next: Next) -> Response {
+    let base = app.config.base_path.as_str();
+    let api = request.uri().path().strip_prefix(base) == Some("/api/convert");
     if request.method() == axum::http::Method::POST
-        && matches!(request.uri().path(), "/convert" | "/api/convert")
+        && (api || request.uri().path().strip_prefix(base) == Some("/convert"))
     {
         let headers = request.headers();
         let cross_site = headers
@@ -727,10 +797,10 @@ async fn guard_origin(State(app): State<Shared>, request: Request, next: Next) -
                 StatusCode::FORBIDDEN,
                 "Submit uploads from this server's page or a configured public origin.",
             );
-            return if request.uri().path() == "/api/convert" {
+            return if api {
                 problem.json()
             } else {
-                problem.page()
+                problem.page(base)
             };
         }
     }
@@ -820,6 +890,17 @@ mod tests {
         assert!(is_job_id(&id));
         assert!(!is_job_id("../etc"));
         assert!(!is_job_id(&"A".repeat(32)));
+    }
+
+    #[test]
+    fn base_paths_are_plain_names() {
+        assert_eq!(base_path("").unwrap(), "");
+        assert_eq!(base_path("/").unwrap(), "");
+        assert_eq!(base_path("dutchman/").unwrap(), "/dutchman");
+        assert_eq!(base_path("/cad/dutchman").unwrap(), "/cad/dutchman");
+        for bad in ["/../x", "/a b", "/a?b", "/{job}", "/./x"] {
+            assert!(base_path(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

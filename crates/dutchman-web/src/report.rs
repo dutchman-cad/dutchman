@@ -86,6 +86,10 @@ pub struct Card {
     pub loss_counts: String,
     /// The written design: its name and download link.
     pub download: Option<(String, String)>,
+    /// Where the design was saved in the server's output folder.
+    pub saved: Option<String>,
+    /// Why the design could not be saved in the server's output folder.
+    pub save_error: Option<String>,
 }
 
 /// The cards of a browser-ready report (see [`for_browser`]), in the report's order.
@@ -167,6 +171,8 @@ fn card(result: &Value) -> Card {
         losses,
         loss_counts,
         download,
+        saved: text("/output/saved").filter(|_| ok),
+        save_error: text("/output/save_error").filter(|_| ok),
     }
 }
 
@@ -287,6 +293,7 @@ mod tests {
         assert_eq!(cards[1].outcome, "not supported yet");
         assert_eq!(cards[1].stage.as_deref(), Some("decode"));
         assert_eq!(cards[1].download, None);
+        assert_eq!(cards[0].saved, None);
     }
 
     #[test]

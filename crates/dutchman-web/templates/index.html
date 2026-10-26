@@ -15,7 +15,7 @@
     <label><input type="checkbox" name="import_only" value="true"> Geometry only, no feature history</label>
   </div>
 </form>
-<p class="muted">Uploads up to {{ max_upload_mb }} MB. Uploads and designs are deleted after {{ keep_minutes }} minutes.</p>
+<p class="muted">Uploads up to {{ max_upload_mb }} MB. Uploads and designs are deleted after {{ keep_minutes }} minutes{% if saves %}; designs are also saved in the server's output folder, where they stay{% endif %}.</p>
 
 <details>
   <summary>What converts from each format</summary>
