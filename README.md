@@ -222,7 +222,7 @@ desktop portal, and dropping files works without it.
   from it.
 - [Dutchman Web](docs/web.md): convert from a browser, on a server you host.
 - [Dutchman Print](docs/print.md): `dutchman printers` and `dutchman print`, a local companion with a
-  job API for printing from SolidCraft ([job API v1](docs/print-api.md)). MIT OR Apache-2.0.
+  job API for printing from SolidCraft ([job API v1](docs/print-api.md)).
 - [Agent skill](skills/README.md): teaches an AI assistant to convert files with Dutchman and
   explain the results.
 - [JSON reports](docs/json.md): every field of the `--json` reports, and

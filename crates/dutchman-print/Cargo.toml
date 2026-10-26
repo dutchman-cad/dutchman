@@ -4,7 +4,7 @@ description = "Dutchman Print: a local printer companion for SolidCraft"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license = "MIT OR Apache-2.0"
+license.workspace = true
 repository.workspace = true
 publish = false
 

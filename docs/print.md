@@ -5,9 +5,6 @@ A backend prepares 3MF files, estimates jobs, and controls printers. The include
 `simulated` backend is a demo: it does no slicing, contacts no printers, and uses no network.
 Real printer backends come later.
 
-The `dutchman-print` and `dutchman-serve` crates are licensed under MIT OR Apache-2.0.
-The MIT text is in each crate’s `LICENSE-MIT`; the Apache licence is in the root `LICENSE`.
-
 Build `dutchman-print` from this checkout with Rust 1.88 or newer:
 
 ```sh
