@@ -21,8 +21,11 @@ const FUNCTIONS: [&str; 23] = [
 const CONSTANTS: [&str; 2] = ["pi", "PI"];
 
 /// The model's parameters as SolidCraft `params`, in source order, and the SolidCraft name of
-/// each one written, by CADIR parameter id. An expression SolidCraft could not read the same way
-/// is replaced by the parameter's evaluated value.
+/// each one written, by CADIR parameter id. A parameter renamed (a name SolidCraft cannot use,
+/// or one another parameter already has, as when merged designs each have a `d1`) is renamed in
+/// the expressions that depend on it. An expression SolidCraft could not read the same way, or
+/// that names a parameter it cannot tell apart from another of that name, is replaced by the
+/// parameter's evaluated value.
 pub(crate) fn map(
     parameters: &[DesignParameter],
     report: &mut Report,
@@ -35,28 +38,56 @@ pub(crate) fn map(
     for parameter in &ordered {
         let name = usable_name(&parameter.name, &names);
         if name != parameter.name {
+            let (severity, why) =
+                if usable_name(&parameter.name, &BTreeSet::new()) == parameter.name {
+                    (Severity::Info, "another parameter already has that name")
+                } else {
+                    (Severity::Degraded, "SolidCraft cannot use that name")
+                };
             report.push(
-                Severity::Degraded,
+                severity,
                 format!("parameter {}", parameter.name),
-                format!("renamed to {name}: SolidCraft cannot use that name"),
+                format!("renamed to {name}: {why}"),
             );
         }
         names.insert(name.clone());
         renamed.push(name);
     }
+    // Each parameter's written name by id, and by source name when only one parameter has it.
+    let by_id: BTreeMap<&str, (&str, &str)> = ordered
+        .iter()
+        .zip(&renamed)
+        .map(|(p, name)| (p.id.as_str(), (p.name.as_str(), name.as_str())))
+        .collect();
+    let mut by_name: BTreeMap<&str, Option<&str>> = BTreeMap::new();
+    for (parameter, name) in ordered.iter().zip(&renamed) {
+        by_name
+            .entry(parameter.name.as_str())
+            .and_modify(|only| *only = None)
+            .or_insert(Some(name.as_str()));
+    }
 
     let mut out = Vec::with_capacity(ordered.len());
     let mut written = BTreeMap::new();
-    for (parameter, name) in ordered.into_iter().zip(renamed) {
+    for (parameter, name) in ordered.iter().zip(&renamed) {
         let unit = unit(parameter.value.as_ref());
-        let expr = if readable(&parameter.expression, &names) {
-            parameter.expression.clone()
+        let bound = bind(parameter, &by_id, &by_name);
+        let expression = bound
+            .as_ref()
+            .ok()
+            .filter(|expression| readable(expression, &names));
+        let expr = if let Some(expression) = expression {
+            expression.clone()
         } else if let Some(value) = parameter.value.as_ref().and_then(literal) {
+            let why = match &bound {
+                Err(shared) => format!(": more than one parameter is named {shared}"),
+                Ok(_) => String::new(),
+            };
             report.push(
                 Severity::Degraded,
                 format!("parameter {name}"),
                 format!(
-                    "expression `{}` kept as its value {value}",
+                    "expression `{}` kept as its value {value}{why}",
                     parameter.expression
                 ),
             );
@@ -81,6 +112,40 @@ pub(crate) fn map(
         }));
     }
     (out, written)
+}
+
+/// `parameter`'s expression with each parameter it names written as that parameter is
+/// written: its own dependencies first (`by_id`), then any parameter that alone has the name
+/// (`by_name`). `Err` with the name when the expression names a parameter that is not a
+/// dependency and shares its name with another.
+fn bind(
+    parameter: &DesignParameter,
+    by_id: &BTreeMap<&str, (&str, &str)>,
+    by_name: &BTreeMap<&str, Option<&str>>,
+) -> Result<String, String> {
+    let mut renamed: BTreeMap<String, String> = parameter
+        .dependencies
+        .iter()
+        .filter_map(|id| by_id.get(id.as_str()))
+        .map(|(source, name)| ((*source).to_owned(), (*name).to_owned()))
+        .collect();
+    let words = parameter
+        .expression
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .filter(|word| word.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_'));
+    for word in words {
+        if renamed.contains_key(word) || reserved(word) {
+            continue;
+        }
+        match by_name.get(word) {
+            Some(Some(name)) => {
+                renamed.insert(word.to_owned(), (*name).to_owned());
+            }
+            Some(None) => return Err(word.to_owned()),
+            None => {}
+        }
+    }
+    Ok(rename_in(&parameter.expression, &renamed))
 }
 
 /// `expression` with each parameter name in `renamed` replaced by its new name; numbers, units,
@@ -413,5 +478,84 @@ mod map_tests {
             ]
         );
         assert_eq!(report.losses().len(), 2, "{:?}", report.losses());
+    }
+
+    fn depending(row: Value, on: &[u32]) -> Value {
+        let mut row = row;
+        row["dependencies"] = json!(on
+            .iter()
+            .map(|key| format!("f3d:model:parameter#{key}"))
+            .collect::<Vec<_>>());
+        row
+    }
+
+    #[test]
+    fn merged_designs_sharing_names_keep_their_own_references() {
+        let length = |v: f64| json!({"kind": "length", "value": v});
+        // Two designs merged into one, each with its own d1 and a d2 that depends on it.
+        let parameters = json!([
+            parameter(1, "d1", "10 mm", length(10.0), false),
+            depending(parameter(2, "d2", "d1 * 2", length(20.0), false), &[1]),
+            parameter(3, "d1", "7 mm", length(7.0), false),
+            depending(parameter(4, "d2", "d1 * 2", length(14.0), false), &[3]),
+            // Naming a shared name without saying which is ambiguous.
+            parameter(5, "d9", "d1 + 1 mm", length(11.0), false),
+        ]);
+        let model = with(cube(), json!([]), parameters);
+        let mut report = Report::default();
+        let (params, names) = map(&model.ir.model.parameters, &mut report);
+        let expr = |name: &str| {
+            params
+                .iter()
+                .find(|p| p["name"] == name)
+                .and_then(|p| p["expr"].as_str())
+                .map(str::to_owned)
+        };
+        assert_eq!(expr("d2").as_deref(), Some("d1 * 2"));
+        assert_eq!(expr("d2_2").as_deref(), Some("d1_2 * 2"));
+        assert_eq!(expr("d9").as_deref(), Some("11 mm"));
+        assert_eq!(
+            names.get("f3d:model:parameter#3").map(String::as_str),
+            Some("d1_2")
+        );
+        let clash = report
+            .losses()
+            .iter()
+            .find(|loss| loss.subject == "parameter d1")
+            .unwrap();
+        assert_eq!(clash.severity, Severity::Info);
+        assert_eq!(
+            clash.detail,
+            "renamed to d1_2: another parameter already has that name"
+        );
+        let shared = report
+            .losses()
+            .iter()
+            .find(|loss| loss.subject == "parameter d9")
+            .unwrap();
+        assert_eq!(
+            shared.detail,
+            "expression `d1 + 1 mm` kept as its value 11 mm: more than one parameter is named d1"
+        );
+    }
+
+    #[test]
+    fn a_name_solidcraft_cannot_use_is_renamed_where_it_is_used() {
+        let length = |v: f64| json!({"kind": "length", "value": v});
+        let parameters = json!([
+            parameter(1, "pi", "5 mm", length(5.0), false),
+            depending(parameter(2, "w", "pi * 3", length(15.0), false), &[1]),
+        ]);
+        let model = with(cube(), json!([]), parameters);
+        let mut report = Report::default();
+        let (params, _) = map(&model.ir.model.parameters, &mut report);
+        assert_eq!(params[0]["name"], "p_pi");
+        assert_eq!(params[1]["expr"], "p_pi * 3");
+        let renamed = &report.losses()[0];
+        assert_eq!(renamed.severity, Severity::Degraded);
+        assert_eq!(
+            renamed.detail,
+            "renamed to p_pi: SolidCraft cannot use that name"
+        );
     }
 }
