@@ -525,3 +525,111 @@ fn data_folders_are_private_and_checked_before_use() {
     std::fs::write(&file, b"").unwrap();
     assert!(dutchman_web::prepare_data_dir(&file).is_err());
 }
+
+#[tokio::test]
+async fn a_base_path_serves_every_page_under_it() {
+    let data = tempfile::tempdir().unwrap();
+    let app = dutchman_web::router(Config {
+        data_dir: data.path().to_path_buf(),
+        base_path: "/dutchman".to_owned(),
+        ..Config::default()
+    });
+    let (status, _, page) = send(&app, get("/dutchman/")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(text(&page).contains("action=\"convert\""));
+    // The page's links are relative to `/dutchman/`, so the bare path moves there.
+    let (status, headers, _) = send(&app, get("/dutchman")).await;
+    assert_eq!(status, StatusCode::PERMANENT_REDIRECT);
+    assert_eq!(headers[header::LOCATION], "/dutchman/");
+    assert_eq!(send(&app, get("/")).await.0, StatusCode::NOT_FOUND);
+    assert_eq!(send(&app, get("/healthz")).await.0, StatusCode::OK);
+    assert_eq!(send(&app, get("/dutchman/healthz")).await.0, StatusCode::OK);
+
+    let cube = std::fs::read(fixture("generated_unit_cube.f3d")).unwrap();
+    let (status, headers, _) = send(
+        &app,
+        post(
+            "/dutchman/convert",
+            form(&[], &[("files", "cube.f3d", cube.clone())]),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let location = headers[header::LOCATION].to_str().unwrap().to_owned();
+    assert!(location.starts_with("jobs/"), "{location}");
+    let (status, _, page) = send(&app, get(&format!("/dutchman/{location}"))).await;
+    assert_eq!(status, StatusCode::OK);
+    let page = text(&page);
+    let link = page
+        .split("class=\"download\" href=\"../")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap();
+    let (status, _, design) = send(&app, get(&format!("/dutchman/{link}"))).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(design.starts_with(b"PK"));
+
+    // Problem pages lead back to the base path, whatever their depth.
+    let (status, _, page) = send(
+        &app,
+        get("/dutchman/jobs/0123456789abcdef0123456789abcdef/files/a/b.solidcraft"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(text(&page).contains("href=\"/dutchman/\""));
+
+    // The cross-site check still guards the upload routes under the base path.
+    let request = Request::post("/dutchman/api/convert")
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={BOUNDARY}"),
+        )
+        .header("sec-fetch-site", "cross-site")
+        .body(Body::from(form(&[], &[("files", "cube.f3d", cube)])))
+        .unwrap();
+    let (status, _, body) = send(&app, request).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(text(&body).starts_with("{\"error\""), "{}", text(&body));
+}
+
+#[tokio::test]
+async fn designs_are_also_saved_in_the_output_folder() {
+    let data = tempfile::tempdir().unwrap();
+    let share = tempfile::tempdir().unwrap();
+    let app = dutchman_web::router(Config {
+        data_dir: data.path().to_path_buf(),
+        output_dir: Some(share.path().to_path_buf()),
+        ..Config::default()
+    });
+    let (_, _, page) = send(&app, get("/")).await;
+    assert!(text(&page).contains("also saved in the server's output folder"));
+
+    let cube = std::fs::read(fixture("generated_unit_cube.f3d")).unwrap();
+    let mut saved = Vec::new();
+    for _ in 0..2 {
+        let (status, _, body) = send(
+            &app,
+            post(
+                "/api/convert",
+                form(&[], &[("files", "Bracket.f3d", cube.clone())]),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{}", text(&body));
+        let report: Value = serde_json::from_slice(&body).unwrap();
+        saved.push(report["results"][0]["output"]["saved"].clone());
+        assert!(
+            !text(&body).contains(&share.path().display().to_string()),
+            "the report shows where the server keeps designs"
+        );
+        let job = report["job"].as_str().unwrap();
+        let (_, _, page) = send(&app, get(&format!("/jobs/{job}"))).await;
+        assert!(text(&page).contains("Saved in the output folder as Bracket"));
+    }
+    // A second upload of the same name never replaces the first one's design.
+    assert_eq!(saved, ["Bracket.solidcraft", "Bracket (1).solidcraft"]);
+    for name in ["Bracket.solidcraft", "Bracket (1).solidcraft"] {
+        let design = std::fs::read(share.path().join(name)).unwrap();
+        assert!(design.starts_with(b"PK"), "{name}");
+    }
+}

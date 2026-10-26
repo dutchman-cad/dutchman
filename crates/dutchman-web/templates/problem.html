@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Dutchman Convert{% endblock %}
-{% block home %}/{% endblock %}
+{% block home %}{{ home }}{% endblock %}
 {% block content %}
 <p class="error">{{ message }}</p>
-<p><a href="/">Back to Dutchman Convert</a></p>
+<p><a href="{{ home }}">Back to Dutchman Convert</a></p>
 {% endblock %}

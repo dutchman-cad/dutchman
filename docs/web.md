@@ -55,6 +55,8 @@ them.
 | `--jobs` | `DUTCHMAN_WEB_JOBS` | the machine's cores, at most 8 | Files of one upload converted at once |
 | `--timeout` | `DUTCHMAN_WEB_TIMEOUT` | 900 | Seconds one file may take |
 | `--max-memory` | `DUTCHMAN_WEB_MAX_MEMORY` | 8192 | Megabytes one file may hold (0: no limit) |
+| `--output-dir` | `DUTCHMAN_WEB_OUTPUT` | none | A folder each job's designs are also saved in, such as a network share ([Save to a shared folder](#save-to-a-shared-folder)) |
+| `--base-path` | `DUTCHMAN_WEB_BASE_PATH` | none (the root) | The path it is reached under behind a reverse proxy, such as `/dutchman` ([Under a path](#under-a-path)) |
 
 At most `--runs` × `--jobs` files convert at once, each holding up to `--max-memory`. Give the
 server or container that much memory, or lower them.
@@ -69,6 +71,41 @@ server or container that much memory, or lower them.
   upload share the 5,000-entry cap and `--max-unzipped` byte cap.
 - **SolidCraft design** writes `.solidcraft` designs; **FreeCAD macro (experimental)** writes
   `.FCMacro` rebuild macros (`--to freecad`). **Geometry only** is `--import-only`.
+
+## Save to a shared folder
+
+With `--output-dir`, each converted design is also saved in that folder, such as a network
+share the server has mounted, where it stays after the job is deleted. Designs keep the folders
+and names they were uploaded with (`project/bracket.solidcraft`). A name already taken in the
+folder gets a number, as a browser's downloads do (`bracket (1).solidcraft`), so a file already
+there is never replaced. Designs are not saved through a symbolic link in the folder.
+
+Each card says where its design was saved, and the API report gives it as `saved` in the
+file's `output`, relative to the folder. A design that could not be saved, for instance because
+the share is not mounted, still downloads; its card says why, as `save_error` does. The folder
+counts towards neither `--max-data` nor the expiry.
+
+In Docker, mount the share and run as a user who may write to it:
+
+```sh
+docker run -d -p 8080:8080 -e DUTCHMAN_WEB_PASSWORD=choose-one \
+  -v /mnt/share:/designs --user "$(id -u):$(id -g)" \
+  --entrypoint dutchman-web ghcr.io/dutchman-cad/dutchman:latest --output-dir /designs/Converted
+```
+
+## Under a path
+
+To share one address with other services, serve `dutchman-web` under a path such as
+`/dutchman/`: start it with `--base-path /dutchman`, and have the reverse proxy send that path
+on unchanged, without taking the prefix off. Every page and API route is then under the path
+(`/dutchman/api/convert`), `/dutchman` moves to `/dutchman/`, and `/healthz` answers both at the
+root and under the path. In Caddy:
+
+```caddyfile
+handle /dutchman* {
+	reverse_proxy dutchman-web:8080
+}
+```
 
 ## Keep it safe
 
@@ -90,19 +127,18 @@ server or container that much memory, or lower them.
   These are admission checks; uploads and conversions already running can still grow the
   saved data. Size the volume for the configured upload and conversion limits. Expired jobs
   continue to be deleted.
-- Serve it at the root of a host name, not under a path.
 - Uploaded files are hostile until read. Each one is converted in a child process with the
   time and memory limits above, and uploads are limited in size and in what a zip may unpack
   to.
 
 ## Its API
 
-Scripts can use the same server. Paths are relative to the server's root; give the password
-with HTTP basic authentication.
+Scripts can use the same server. Paths are relative to the server's address, under
+`--base-path` when one is set; give the password with HTTP basic authentication.
 
 | Request | Returns |
 |---|---|
-| `POST /api/convert`, a `multipart/form-data` body: `files` (one or more), and optionally `to` (`solidcraft` or `freecad`) and `import_only` (`true`) | The [`dutchman.convert-all/1`](json.md#dutchmanconvert-all1) report, with `job` and `designs_zip` added, and a `download` path added to each converted file's `output`. Paths in it are relative to the upload. A refused upload is `{"error": "…"}` with status 400, 403, 413 or 503 |
+| `POST /api/convert`, a `multipart/form-data` body: `files` (one or more), and optionally `to` (`solidcraft` or `freecad`) and `import_only` (`true`) | The [`dutchman.convert-all/1`](json.md#dutchmanconvert-all1) report, with `job` and `designs_zip` added, and a `download` path added to each converted file's `output` (and with `--output-dir`, `saved` or `save_error`). Paths in it are relative to the upload. A refused upload is `{"error": "…"}` with status 400, 403, 413 or 503 |
 | `GET /jobs/<job>/report.json` | The same report again, while the job is kept |
 | `GET /jobs/<job>/files/<path>` | One design |
 | `GET /jobs/<job>/designs.zip` | Every design of the job, in one zip |

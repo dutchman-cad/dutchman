@@ -32,6 +32,8 @@
   </details>
   {% endif %}
   {% if let Some((name, link)) = card.download %}<a class="download" href="../{{ link }}">Download {{ name }}</a>{% endif %}
+  {% if let Some(saved) = card.saved %}<p class="muted">Saved in the output folder as {{ saved }}.</p>{% endif %}
+  {% if let Some(error) = card.save_error %}<p class="error">{{ error }}</p>{% endif %}
 </section>
 {% endfor %}
 
