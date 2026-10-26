@@ -95,6 +95,9 @@ docker run -d -p 8080:8080 -e DUTCHMAN_WEB_PASSWORD=choose-one \
 
 ## Under a path
 
+The [Compose example](../examples/compose/) serves SolidCraft and Dutchman on one address,
+with a shared folder and a watched inbox.
+
 To share one address with other services, serve `dutchman-web` under a path such as
 `/dutchman/`: start it with `--base-path /dutchman`, and have the reverse proxy send that path
 on unchanged, without taking the prefix off. Every page and API route is then under the path
