@@ -592,7 +592,7 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
         path: Vec::new(),
         paths: BTreeMap::new(),
     };
-    let mut placements = tree.placements(&roots, false)?;
+    let mut placements = tree.placements(&roots, None)?;
     if tree.placed != occurrences.len() {
         return Err(
             "some components are placed inside components the design does not place".to_owned(),
@@ -613,12 +613,14 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
     }
     // A design's root component is held by what holds the design: the document, or the
     // occurrence that inserts it. cadmpeg names its occurrence `root-…`.
-    let held = tree
+    let mut held: Vec<Vec<usize>> = tree
         .paths
         .iter()
         .filter(|(id, _)| id.contains("occurrence#root-"))
-        .map(|(_, (path, _))| path.clone())
+        .map(|(_, located)| located.path.clone())
         .collect();
+    held.sort();
+    held.dedup();
     let mut assembly = Assembly {
         parts,
         placements,
@@ -845,15 +847,18 @@ fn world_placements<'a>(
 }
 
 /// The joints that can be written between placed parts, and a note for each that cannot.
-/// `paths` gives each occurrence's placement path and whether it is inside a component placed
-/// more than once; `worlds`, its placement in the world as cadmpeg stores it.
+/// `paths` gives where each occurrence is placed; `worlds`, its placement in the world as
+/// cadmpeg stores it.
 fn joints(
     rows: &[Value],
-    paths: &BTreeMap<&str, (Vec<usize>, bool)>,
+    paths: &BTreeMap<&str, Located>,
     worlds: &BTreeMap<&str, Placement3x4>,
     inserted: &BTreeMap<&str, &str>,
 ) -> (Vec<Joint>, Vec<JointNote>) {
-    let mut joints = Vec::new();
+    let mut joints: Vec<Joint> = Vec::new();
+    // Whether each joint is in a copy of a component placed more than once, other than the
+    // first.
+    let mut copied: Vec<bool> = Vec::new();
     let mut notes = Vec::new();
     for (index, row) in rows.iter().enumerate() {
         let family = family(row);
@@ -864,11 +869,20 @@ fn joints(
             });
         };
         match joint(row, paths, worlds, inserted) {
-            Ok((joint, changed)) => {
+            Ok((joint, changed, copy)) => {
+                // A component's own joint is stored again in each copy of the component; the
+                // copies hold one component, so they are one joint of it.
+                let again = joints.iter().zip(&copied).any(|(other, other_copy)| {
+                    (copy || *other_copy) && other.a == joint.a && other.b == joint.b
+                });
+                if again {
+                    continue;
+                }
                 if let Some(changed) = changed {
                     note(changed);
                 }
                 joints.push(joint);
+                copied.push(copy);
             }
             Err(reason) => note(reason),
         }
@@ -888,27 +902,38 @@ fn family(row: &Value) -> Option<String> {
     }
 }
 
+/// What a joint holds when it joins a part inside one copy of a component placed more than
+/// once to something outside that copy.
+const WHOLE_COPY: &str =
+    "it holds the whole copy of the component placed more than once that its part is in";
+
+/// One joint row as a joint, with a note when it is changed, and whether it is in a copy of a
+/// component placed more than once other than the first.
 fn joint(
     row: &Value,
-    paths: &BTreeMap<&str, (Vec<usize>, bool)>,
+    paths: &BTreeMap<&str, Located>,
     worlds: &BTreeMap<&str, Placement3x4>,
     inserted: &BTreeMap<&str, &str>,
-) -> Result<(Joint, Option<String>), String> {
+) -> Result<(Joint, Option<String>, bool), String> {
     let operands = row.get("operands").unwrap_or(&Value::Null);
     if operands.get("arity").and_then(Value::as_str) == Some("grounded") {
         let operand = operands
             .pointer("/connector/operand")
             .ok_or("it is malformed")?;
-        let (path, _, world) = side_path(operand, paths, worlds, inserted)?;
-        if path.is_empty() {
+        let (located, _, world) = side_path(operand, paths, worlds, inserted)?;
+        if located.path.is_empty() {
             return Err("it joins a component to itself".to_owned());
+        }
+        // Grounding one copy would ground every copy of the component that holds it.
+        if located.shared.is_some() {
+            return Err("it grounds a component inside one placed more than once".to_owned());
         }
         // Grounding fixes the occurrence where it is stored. Use the same rigid joint to
         // the design as a paired joint to the root, with frames that preserve its placement.
         return Ok((
             Joint {
                 a: Vec::new(),
-                b: path,
+                b: located.path,
                 frame_a: world,
                 frame_b: FACING,
                 flip: false,
@@ -919,13 +944,14 @@ fn joint(
                 motion: Motion::Rigid,
             },
             None,
+            false,
         ));
     }
     if operands.get("arity").and_then(Value::as_str) != Some("pair") {
         return Err("its operands are not supported yet".to_owned());
     }
     let kind = operands.get("kind").unwrap_or(&Value::Null);
-    let side = |index: usize| -> Result<(Vec<usize>, Placement3x4), String> {
+    let side = |index: usize| -> Result<(Located, Placement3x4, Placement3x4), String> {
         let connector = operands
             .pointer(&format!("/connectors/{index}"))
             .ok_or("it is malformed")?;
@@ -933,17 +959,53 @@ fn joint(
             .get("frame")
             .and_then(matrix)
             .ok_or("its connector frames are malformed")?;
-        let (path, container, side) = side_path(
+        let (located, container, side) = side_path(
             connector.get("operand").unwrap_or(&Value::Null),
             paths,
             worlds,
             inserted,
         )?;
         // The frame is in its operand's own container; the side is the deepest occurrence
-        // the operand names, inside that container.
-        Ok((path, compose(&compose(&inverse(&side), &container), &frame)))
+        // the operand names, inside that container. Both are kept in the world.
+        Ok((located, compose(&container, &frame), side))
     };
-    let ((a, frame_a), (b, frame_b)) = (side(0)?, side(1)?);
+    let ((mut a, a_frame, mut a_at), (mut b, b_frame, mut b_at)) = (side(0)?, side(1)?);
+    // A joint inside one copy of a component placed more than once is that component's own,
+    // written through its first copy. A joint from inside a copy to something outside it
+    // cannot hold that part alone, as every copy holds it: it holds the whole copy, which
+    // its part is fixed in, where the part is.
+    let mut lifted = false;
+    let whole_copy = |side: &Located, other: &Located| {
+        let depth = side.shared?;
+        if side.own.get(..depth) == other.own.get(..depth) {
+            return None;
+        }
+        let own = side.own.get(..depth)?;
+        paths
+            .iter()
+            .find(|(_, holder)| holder.own == own)
+            .map(|(id, holder)| (holder.clone(), worlds.get(id).copied().unwrap_or(IDENTITY)))
+    };
+    if let Some((holder, at)) = whole_copy(&a, &b) {
+        (a, a_at, lifted) = (holder, at, true);
+    }
+    if let Some((holder, at)) = whole_copy(&b, &a) {
+        (b, b_at, lifted) = (holder, at, true);
+    }
+    for depth in [a.shared, b.shared].into_iter().flatten() {
+        if a.own.get(..depth) != b.own.get(..depth) {
+            return Err(
+                "it joins a component inside one placed more than once to one outside that copy"
+                    .to_owned(),
+            );
+        }
+    }
+    let (frame_a, frame_b) = (
+        compose(&inverse(&a_at), &a_frame),
+        compose(&inverse(&b_at), &b_frame),
+    );
+    let copy = a.own != a.path || b.own != b.path;
+    let (a, b) = (a.path, b.path);
     if a == b {
         return Err("it joins a component to itself".to_owned());
     }
@@ -1013,7 +1075,12 @@ fn joint(
             motion,
             flip: frame_aligned(row),
         },
-        note,
+        match (lifted, note) {
+            (true, Some(note)) => Some(format!("{WHOLE_COPY}; {note}")),
+            (true, None) => Some(WHOLE_COPY.to_owned()),
+            (false, note) => note,
+        },
+        copy,
     ))
 }
 
@@ -1042,23 +1109,37 @@ fn listed(value: Option<&Value>) -> &[Value] {
 /// operand's container and of that occurrence.
 fn side_path(
     operand: &Value,
-    paths: &BTreeMap<&str, (Vec<usize>, bool)>,
+    paths: &BTreeMap<&str, Located>,
     worlds: &BTreeMap<&str, Placement3x4>,
     inserted: &BTreeMap<&str, &str>,
-) -> Result<(Vec<usize>, Placement3x4, Placement3x4), String> {
+) -> Result<(Located, Placement3x4, Placement3x4), String> {
     let container = operand.get("container").unwrap_or(&Value::Null);
     match container.get("container").and_then(Value::as_str) {
-        Some("root") => Ok((Vec::new(), IDENTITY, IDENTITY)),
+        Some("root") => Ok((Located::default(), IDENTITY, IDENTITY)),
         Some("occurrence") => {
             let id = container
                 .get("occurrence")
                 .and_then(Value::as_str)
                 .ok_or("it is malformed")?;
             // Occurrences nested inside the named one are listed by their keys, outermost
-            // first (as `occurrence_path`, or as the object's subelements), and their ids are
-            // built the same way as its: the deepest one placed wins.
+            // first (as `occurrence_path`, or as the object's subelements): the deepest one
+            // placed wins. Their ids are built the same way as its, or, inside a design
+            // inserted into it, end in their key.
             let object = operand.get("object").and_then(Value::as_str).unwrap_or("");
             let prefix = id.strip_suffix(object).filter(|_| !object.is_empty());
+            let below = paths.get(id).map(|located| located.own.as_slice());
+            let inside = |key: &str| {
+                let below = below?;
+                let mut found = paths.iter().filter(|(nested, located)| {
+                    nested.rsplit(['#', ':']).next() == Some(key)
+                        && located.own.len() > below.len()
+                        && located.own.starts_with(below)
+                });
+                match (found.next(), found.next()) {
+                    (Some((nested, _)), None) => Some(*nested),
+                    _ => None,
+                }
+            };
             let nested = listed(container.get("occurrence_path"))
                 .iter()
                 .chain(listed(operand.get("subelements")))
@@ -1066,20 +1147,20 @@ fn side_path(
                 .into_iter()
                 .rev()
                 .filter_map(Value::as_str)
-                .filter_map(|key| {
-                    let nested = format!("{}{key}", prefix?);
-                    paths.get_key_value(nested.as_str()).map(|(id, _)| *id)
-                })
-                .next();
+                .find_map(|key| {
+                    prefix
+                        .and_then(|prefix| {
+                            let nested = format!("{prefix}{key}");
+                            paths.get_key_value(nested.as_str()).map(|(id, _)| *id)
+                        })
+                        .or_else(|| inside(key))
+                });
             let named = nested.unwrap_or(id);
-            let (path, shared) = paths
+            let located = paths
                 .get(named)
                 .ok_or("it joins a component the design does not place")?;
-            if *shared {
-                return Err("it joins a component inside one placed more than once".to_owned());
-            }
             let world = |id: &str| worlds.get(id).copied().unwrap_or(IDENTITY);
-            Ok((path.clone(), world(id), world(named)))
+            Ok((located.clone(), world(id), world(named)))
         }
         Some("external") => {
             // A component inside a design inserted into this one, whose contents the file
@@ -1102,22 +1183,33 @@ fn side_path(
                 })
                 .ok_or("it joins a component of another design")?;
             let holder = inserted.get(named).copied().unwrap_or(named);
-            let (path, shared) = paths
+            let located = paths
                 .get(holder)
                 .ok_or("it joins a component the design does not place")?;
-            if *shared {
-                return Err("it joins a component inside one placed more than once".to_owned());
-            }
             let world = |id: &str| worlds.get(id).copied().unwrap_or(IDENTITY);
-            Ok((path.clone(), world(named), world(holder)))
+            Ok((located.clone(), world(named), world(holder)))
         }
         _ => Err("it is malformed".to_owned()),
     }
 }
 
-/// A definition built into a part: the part, and the components it holds (each one's
-/// definition and placement), which every other occurrence of it at that level must match.
-type Built = (usize, Vec<(String, [[f64; 4]; 3])>);
+/// A definition built into a part: the part, the components it holds (each one's definition
+/// and placement), which every other occurrence of it at that level must match, and the
+/// placement path of the occurrence it was built for.
+type Built = (usize, Vec<(String, [[f64; 4]; 3])>, Vec<usize>);
+
+/// Where an occurrence is placed.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct Located {
+    /// Its placement path, through the first copy of each component placed more than once that
+    /// holds it: the copy a joint inside such a component is written through.
+    path: Vec<usize>,
+    /// Its own placement path.
+    own: Vec<usize>,
+    /// The length of the path to the outermost component placed more than once that holds it,
+    /// when one does.
+    shared: Option<usize>,
+}
 
 /// A design's occurrence tree, turned into parts and sub-assemblies one definition at a time.
 struct Tree<'a> {
@@ -1136,21 +1228,20 @@ struct Tree<'a> {
     open: Vec<&'a str>,
     /// The placement indices leading to the occurrence being built.
     path: Vec<usize>,
-    /// Each occurrence's placement path, and whether it is inside a component placed more
-    /// than once at its level, so that a joint to it would not say which copy.
-    paths: BTreeMap<&'a str, (Vec<usize>, bool)>,
+    /// Where each occurrence is placed.
+    paths: BTreeMap<&'a str, Located>,
     /// Whether every body of the design belongs to a component, so that a component naming
     /// no bodies and holding none is empty rather than one cadmpeg could not attribute.
     all_owned: bool,
 }
 
 impl<'a> Tree<'a> {
-    /// The placements of `occurrences` among `self.parts`; `shared` when they are inside a
-    /// component placed more than once.
+    /// The placements of `occurrences` among `self.parts`; `shared`, the length of the path to
+    /// the outermost component placed more than once that holds them, when one does.
     fn placements(
         &mut self,
         occurrences: &[&'a Value],
-        shared: bool,
+        shared: Option<usize>,
     ) -> Result<Vec<Placement>, String> {
         let definition = |row: &Value| definition_key(row).map(str::to_owned);
         let mut placements = Vec::with_capacity(occurrences.len());
@@ -1161,11 +1252,21 @@ impl<'a> Tree<'a> {
                 .count();
             self.path.push(index);
             if let Some(id) = occurrence.get("id").and_then(Value::as_str) {
-                self.paths.insert(id, (self.path.clone(), shared));
+                let located = Located {
+                    path: self.path.clone(),
+                    own: self.path.clone(),
+                    shared,
+                };
+                self.paths.insert(id, located);
             }
             // A placement is its own occurrence however many copies sit beside it; what it
             // holds is shared between those copies.
-            let part = self.part(occurrence, shared || copies > 1);
+            let inner = if copies > 1 {
+                shared.or(Some(self.path.len()))
+            } else {
+                shared
+            };
+            let part = self.part(occurrence, inner);
             self.path.pop();
             self.placed += 1;
             placements.push(Placement {
@@ -1181,16 +1282,24 @@ impl<'a> Tree<'a> {
     }
 
     /// Counts and records the occurrences inside `id`, an occurrence of a definition already
-    /// built at this level, whose own placements are that definition's.
-    fn reuse_inside(&mut self, id: &str) {
+    /// built at this level, whose own placements are that definition's: `first` is the path of
+    /// the copy it matches, and `shared` as for [`Tree::placements`].
+    fn reuse_inside(&mut self, id: &str, first: &[usize], shared: Option<usize>) {
         let inner: Vec<&'a Value> = self.children.get(id).cloned().unwrap_or_default();
         for (index, occurrence) in inner.iter().enumerate() {
             self.placed += 1;
             self.path.push(index);
+            let mut path = first.to_vec();
+            path.push(index);
             if let Some(id) = occurrence.get("id").and_then(Value::as_str) {
-                self.paths.insert(id, (self.path.clone(), true));
+                let located = Located {
+                    path: path.clone(),
+                    own: self.path.clone(),
+                    shared,
+                };
+                self.paths.insert(id, located);
                 if self.path.len() <= MAX_DEPTH {
-                    self.reuse_inside(id);
+                    self.reuse_inside(id, &path, shared);
                 }
             }
             self.path.pop();
@@ -1198,8 +1307,9 @@ impl<'a> Tree<'a> {
     }
 
     /// The part an occurrence places: its definition's bodies, and, when components are
-    /// placed inside it, those as a sub-assembly beside them.
-    fn part(&mut self, occurrence: &'a Value, shared: bool) -> Result<usize, String> {
+    /// placed inside it, those as a sub-assembly beside them. `shared` is for the components
+    /// inside it, as for [`Tree::placements`].
+    fn part(&mut self, occurrence: &'a Value, shared: Option<usize>) -> Result<usize, String> {
         let definition =
             definition_key(occurrence).ok_or("a component placement names no component")?;
         let id = occurrence.get("id").and_then(Value::as_str).unwrap_or("");
@@ -1216,10 +1326,10 @@ impl<'a> Tree<'a> {
                 transform(child).map(|t| (definition, t))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        if let Some((part, built_with)) = self.built.get(definition) {
+        if let Some((part, built_with, first)) = self.built.get(definition) {
             return if *built_with == signature {
-                let part = *part;
-                self.reuse_inside(id);
+                let (part, first) = (*part, first.clone());
+                self.reuse_inside(id, &first, shared);
                 Ok(part)
             } else {
                 Err("one component holds different components where it is placed".to_owned())
@@ -1293,7 +1403,8 @@ impl<'a> Tree<'a> {
         };
         self.parts.push(model);
         let index = self.parts.len() - 1;
-        self.built.insert(definition, (index, signature));
+        self.built
+            .insert(definition, (index, signature, self.path.clone()));
         Ok(index)
     }
 }
@@ -2579,21 +2690,99 @@ mod tests {
         let fixed = json!({"kind": "fixed"});
         let model = with_joints(
             model,
-            json!([joint(
-                1,
-                fixed,
-                connector(Some((2, &[]))),
-                connector(Some((3, &[])))
-            )]),
+            json!([
+                // The frame's own joint, stored once for each frame.
+                joint(
+                    1,
+                    fixed.clone(),
+                    connector(Some((4, &[]))),
+                    connector(Some((5, &[])))
+                ),
+                joint(
+                    2,
+                    fixed.clone(),
+                    connector(Some((2, &[]))),
+                    connector(Some((3, &[])))
+                ),
+                // From one frame's block to the other frame's, and to the design.
+                joint(
+                    3,
+                    fixed.clone(),
+                    connector(Some((2, &[]))),
+                    connector(Some((4, &[])))
+                ),
+                joint(4, fixed, connector(None), connector(Some((3, &[])))),
+            ]),
         );
         let (assembly, left_out) = local_components(&model).unwrap().unwrap();
         assert_eq!(assembly.parts.len(), 1, "one frame, placed twice");
         assert_eq!(assembly.placements.len(), 2);
-        // Which frame's blocks the joint means cannot be said in a design that holds the frame once.
+        // The frame's joint is written once, through the first frame: the design holds the
+        // frame once, so both frames' blocks follow it.
+        let sides: Vec<_> = assembly
+            .joints
+            .iter()
+            .map(|j| (j.a.clone(), j.b.clone()))
+            .collect();
+        // A joint from one frame's block to something outside that frame cannot hold the block
+        // alone, as both frames hold it: it holds that whole frame.
+        assert_eq!(
+            sides,
+            [
+                (vec![0, 0], vec![0, 1]),
+                (vec![0], vec![1]),
+                (vec![], vec![0]),
+            ]
+        );
         assert_eq!(
             left_out,
-            ["joint 1: it joins a component inside one placed more than once"]
+            [
+                format!("joint 3: {WHOLE_COPY}"),
+                format!("joint 4: {WHOLE_COPY}"),
+            ]
         );
+        // The second frame is placed so that its first block meets the first frame's.
+        let first = world_at(&assembly, &[0, 0]).unwrap();
+        let second = world_at(&assembly, &[1, 0]).unwrap();
+        for axis in 0..3 {
+            assert!(
+                (first[axis][3] - second[axis][3]).abs() < 1e-9,
+                "{first:?} {second:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_nested_occurrence_named_by_its_key_alone_is_found_inside_its_container() {
+        // As inside a design inserted into the frame: the block's id ends in its key but is
+        // not built from the frame's.
+        let mut block = placed(1, "block", inside(0), 0.0);
+        block["id"] = json!("f3d:inserted/model:occurrence#a1");
+        let model = nested(
+            false,
+            Some(json!([
+                placed(0, "frame", root(), 100.0),
+                block,
+                placed(2, "block", inside(0), 30.0),
+            ])),
+        );
+        let model = with_joints(
+            model,
+            json!([joint(
+                1,
+                json!({"kind": "fixed"}),
+                connector(Some((0, &["a1"]))),
+                connector(Some((2, &[])))
+            )]),
+        );
+        let (assembly, left_out) = local_components(&model).unwrap().unwrap();
+        assert!(left_out.is_empty(), "{left_out:?}");
+        let sides: Vec<_> = assembly
+            .joints
+            .iter()
+            .map(|j| (j.a.clone(), j.b.clone()))
+            .collect();
+        assert_eq!(sides, [(vec![0, 0], vec![0, 1])]);
     }
 
     fn placed(key: u32, definition: &str, parent: Value, x: f64) -> Value {

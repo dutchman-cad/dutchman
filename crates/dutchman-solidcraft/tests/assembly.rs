@@ -67,6 +67,68 @@ fn written(model: &Model) -> (Vec<u8>, Report) {
 }
 
 #[test]
+fn a_part_with_no_bodies_is_an_empty_component_its_joints_still_join() {
+    let mut model = placed_twice();
+    if let Some(assembly) = &mut model.assembly {
+        let mut empty = assembly.parts[0].clone();
+        let mut wire = serde_json::to_value(&empty.ir).unwrap();
+        // Every arena emptied: a component with nothing in it.
+        for arena in wire["model"].as_object_mut().unwrap().values_mut() {
+            if arena.is_array() {
+                *arena = serde_json::json!([]);
+            }
+        }
+        empty.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        empty.name = "Spacer".to_owned();
+        assembly.parts.push(empty);
+        assembly.placements[1].part = 1;
+        assembly.joints.push(dutchman_core::Joint {
+            a: vec![0],
+            b: vec![1],
+            frame_a: dutchman_core::placement::IDENTITY,
+            frame_b: dutchman_core::placement::IDENTITY,
+            suppressed: false,
+            motion: dutchman_core::Motion::Rigid,
+            flip: true,
+        });
+    }
+    let (bytes, report) = written(&model);
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut text = String::new();
+    archive
+        .by_name("document.json")
+        .unwrap()
+        .read_to_string(&mut text)
+        .unwrap();
+    let document: Value = serde_json::from_str(&text).unwrap();
+    let names: Vec<&str> = document["components"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c["name"].as_str())
+        .collect();
+    assert!(names.contains(&"Spacer"), "{names:?}");
+    assert_eq!(document["occurrences"].as_array().unwrap().len(), 2);
+    // Only the cube imports geometry; the joint holds both occurrences.
+    let imports = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["type"] == "import")
+        .count();
+    assert_eq!(imports, 1, "{}", document["features"]);
+    assert_eq!(document["assembly"]["joints"].as_array().unwrap().len(), 1);
+    assert!(!report
+        .losses()
+        .iter()
+        .any(|loss| loss.detail.contains("left out")));
+    assert!(report
+        .losses()
+        .iter()
+        .any(|loss| loss.detail == "Spacer: placed as an empty component: it has no bodies"));
+}
+
+#[test]
 fn an_assembly_that_places_no_parts_is_written_as_an_empty_design() {
     let mut model = placed_twice();
     if let Some(assembly) = &mut model.assembly {
