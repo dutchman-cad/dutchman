@@ -4,6 +4,7 @@
 //! file in a child process of its own; the page shows each file's report and links its design.
 //! Jobs are deleted after a while. `docs/web.md` describes it.
 
+pub mod hardening;
 pub mod report;
 pub mod save;
 pub mod upload;
@@ -16,15 +17,15 @@ use std::time::{Duration, SystemTime};
 use askama::Template;
 use axum::body::Body;
 use axum::extract::{DefaultBodyLimit, Multipart, Path as UrlPath, Request, State};
-use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+use axum::http::{header, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use base64::Engine as _;
 use dutchman::worker::Limits;
 use dutchman::{ConvertOptions, OutputFormat};
 use dutchman_core::Format;
+use hardening::{credentials, same, security_headers};
 use serde_json::{json, Value};
 use tokio::io::AsyncWriteExt as _;
 use tokio::sync::{Semaphore, SemaphorePermit};
@@ -177,78 +178,18 @@ pub fn prepare_output_dir(path: &Path) -> std::io::Result<()> {
     }
 }
 
-/// Creates a private data folder and checks an existing folder before using it.
-pub fn prepare_data_dir(path: &Path) -> std::io::Result<()> {
-    let mut builder = std::fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::DirBuilderExt as _;
-        builder.mode(0o700);
-    }
-    match builder.create(path) {
-        Ok(()) => {}
-        Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
-        Err(err) => return Err(err),
-    }
-    let metadata = std::fs::symlink_metadata(path)?;
-    if metadata.is_symlink() || !metadata.is_dir() {
-        return Err(std::io::Error::other(
-            "Choose a data folder that is a directory, not a symbolic link.",
-        ));
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt as _;
-        if metadata.uid() != rustix::process::geteuid().as_raw() || metadata.mode() & 0o022 != 0 {
-            return Err(std::io::Error::other("Choose a data folder belonging to the current user with no group or other write permission."));
-        }
-    }
-    Ok(())
-}
+pub use dutchman_serve::hardening::prepare_data_dir;
 
 fn check_storage(config: &Config) -> Result<(), Problem> {
-    let full = || {
-        Problem::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "The server has too little storage for a new job. Try again after saved jobs expire.",
-        )
-    };
-    let mut total = 0u64;
-    let mut pending = vec![config.data_dir.clone()];
-    while let Some(dir) = pending.pop() {
-        let entries = match std::fs::read_dir(&dir) {
-            Ok(entries) => entries,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound && dir != config.data_dir => {
-                continue
-            }
-            Err(err) => return Err(server_error(&err)),
-        };
-        for entry in entries {
-            let entry = entry.map_err(|err| server_error(&err))?;
-            let metadata = match entry.path().symlink_metadata() {
-                Ok(metadata) => metadata,
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(err) => return Err(server_error(&err)),
-            };
-            if metadata.is_dir() {
-                pending.push(entry.path());
-            } else {
-                total = total.saturating_add(metadata.len());
-                if total > config.max_data {
-                    return Err(full());
-                }
-            }
+    hardening::check_storage(&config.data_dir, config.max_data, config.min_free).map_err(|err| {
+        match err {
+            hardening::StorageError::Full => Problem::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "The server has too little storage for a new job. Try again after saved jobs expire.",
+            ),
+            hardening::StorageError::Io(err) => server_error(&err),
         }
-    }
-    #[cfg(unix)]
-    {
-        let stats = rustix::fs::statvfs(&config.data_dir).map_err(|err| server_error(&err))?;
-        if stats.f_bavail.saturating_mul(stats.f_frsize) < config.min_free {
-            return Err(full());
-        }
-    }
-    Ok(())
+    })
 }
 
 /// Deletes jobs older than `keep` in `data_dir`, now and then every few minutes; run it
@@ -771,53 +712,19 @@ async fn guard_origin(State(app): State<Shared>, request: Request, next: Next) -
     let api = request.uri().path().strip_prefix(base) == Some("/api/convert");
     if request.method() == axum::http::Method::POST
         && (api || request.uri().path().strip_prefix(base) == Some("/convert"))
+        && !hardening::allowed_origin(request.headers(), &app.config.public_origin)
     {
-        let headers = request.headers();
-        let cross_site = headers
-            .get("sec-fetch-site")
-            .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"cross-site"));
-        let wrong_origin = headers.get(header::ORIGIN).is_some_and(|origin| {
-            let Ok(origin) = origin.to_str() else {
-                return true;
-            };
-            let Some(authority) = origin_authority(origin) else {
-                return true;
-            };
-            let same_host = headers
-                .get(header::HOST)
-                .and_then(|host| host.to_str().ok())
-                .is_some_and(|host| authority.eq_ignore_ascii_case(host));
-            !same_host
-                && !app.config.public_origin.iter().any(|allowed| {
-                    origin_authority(allowed).is_some() && allowed.eq_ignore_ascii_case(origin)
-                })
-        });
-        if cross_site || wrong_origin {
-            let problem = Problem::new(
-                StatusCode::FORBIDDEN,
-                "Submit uploads from this server's page or a configured public origin.",
-            );
-            return if api {
-                problem.json()
-            } else {
-                problem.page(base)
-            };
-        }
+        let problem = Problem::new(
+            StatusCode::FORBIDDEN,
+            "Submit uploads from this server's page or a configured public origin.",
+        );
+        return if api {
+            problem.json()
+        } else {
+            problem.page(base)
+        };
     }
     next.run(request).await
-}
-
-fn origin_authority(origin: &str) -> Option<String> {
-    let uri: axum::http::Uri = origin.parse().ok()?;
-    if !matches!(uri.scheme_str(), Some("http" | "https"))
-        || uri
-            .path_and_query()
-            .is_some_and(|path| path.as_str() != "/")
-    {
-        return None;
-    }
-    let authority = uri.authority()?.as_str();
-    (!authority.contains('@')).then(|| authority.to_owned())
 }
 
 async fn require_login(State(app): State<Shared>, request: Request, next: Next) -> Response {
@@ -838,46 +745,6 @@ async fn require_login(State(app): State<Shared>, request: Request, next: Next) 
         "Sign in to use Dutchman.",
     )
         .into_response()
-}
-
-/// The user name and password of a basic `Authorization` header.
-fn credentials(headers: &HeaderMap) -> Option<(String, String)> {
-    let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
-    let encoded = value
-        .strip_prefix("Basic ")
-        .or_else(|| value.strip_prefix("basic "))?;
-    let decoded = base64::engine::general_purpose::STANDARD
-        .decode(encoded.trim())
-        .ok()?;
-    let text = String::from_utf8(decoded).ok()?;
-    let (user, password) = text.split_once(':')?;
-    Some((user.to_owned(), password.to_owned()))
-}
-
-/// Whether `a` and `b` are equal, taking the same time whatever their contents.
-fn same(a: &[u8], b: &[u8]) -> bool {
-    let mut diff = u8::from(a.len() != b.len());
-    for (x, y) in a.iter().zip(b) {
-        diff |= x ^ y;
-    }
-    diff == 0
-}
-
-async fn security_headers(request: Request, next: Next) -> Response {
-    let mut response = next.run(request).await;
-    let headers = response.headers_mut();
-    for (name, value) in [
-        (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
-        (header::X_FRAME_OPTIONS, "DENY"),
-        (header::REFERRER_POLICY, "no-referrer"),
-        (
-            header::CONTENT_SECURITY_POLICY,
-            "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
-        ),
-    ] {
-        headers.insert(name, HeaderValue::from_static(value));
-    }
-    response
 }
 
 #[cfg(test)]
@@ -905,6 +772,7 @@ mod tests {
 
     #[test]
     fn basic_credentials_are_read() {
+        use axum::http::HeaderMap;
         let mut headers = HeaderMap::new();
         headers.insert(
             header::AUTHORIZATION,

@@ -1207,6 +1207,39 @@ mod external_tools {
     }
 
     #[test]
+    fn printer_commands_dispatch_to_the_print_companion() {
+        let dir = tempfile::tempdir().unwrap();
+        let binary = dir.path().join("dutchman");
+        executable(&binary, |file| {
+            let mut source = std::fs::File::open(env!("CARGO_BIN_EXE_dutchman")).unwrap();
+            std::io::copy(&mut source, file).unwrap();
+        });
+        script(dir.path(), "print", "printf '<%s>\\n' \"$@\"; exit 7");
+        for (args, expected) in [
+            (
+                vec!["printers", "--json", "--config", "a b.toml"],
+                "<printers>\n<--json>\n<--config>\n<a b.toml>\n",
+            ),
+            (
+                vec!["--verbose", "printers", "--json"],
+                "<printers>\n<--json>\n",
+            ),
+            (
+                vec!["print", "a b.3mf", "--printer", "demo", "--yes"],
+                "<print>\n<a b.3mf>\n<--printer>\n<demo>\n<--yes>\n",
+            ),
+        ] {
+            let out = Command::new(&binary)
+                .args(args)
+                .env("PATH", dir.path())
+                .test_output()
+                .unwrap();
+            assert_eq!(out.status.code(), Some(7));
+            assert_eq!(out.stdout, expected.as_bytes());
+        }
+    }
+
+    #[test]
     fn installed_pilot_accepts_its_own_flags_before_clap() {
         let dir = tempfile::tempdir().unwrap();
         script(

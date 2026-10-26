@@ -23,6 +23,8 @@ everyone; this file is the short version, plus what an AI working in the reposit
 | `crates/dutchman-solidcraft` | The `.solidcraft` writer: the design container (`container.rs`, `document.rs`), the STEP restatement (`step.rs`), feature history (`history/`), assemblies (`assembly.rs`), the check in `solidcraft-cli` (`verify.rs`). Knows nothing about native formats. |
 | `crates/dutchman` | The `dutchman` command (`main.rs`, `batch.rs` for `convert-all`, `formats.rs`), the `dutchman-mcp` server (`mcp.rs`, `bin/dutchman-mcp.rs`) and the JSON reports both return (`json.rs`). |
 | `crates/dutchman-web` | The `dutchman-web` server: a page and an API that convert uploads with `dutchman::batch` (`lib.rs`), uploads and project zips (`upload.rs`), reports made fit for the browser (`report.rs`), the pages (`templates/`). |
+| `crates/dutchman-serve` | Shared HTTP guards, private data folder checks (`hardening.rs`), and bounded zip extraction (`upload.rs`). |
+| `crates/dutchman-print` | The `dutchman-print` companion: printer backends (`backend.rs`, `simulated.rs`), the versioned job API (`server.rs`), 3MF checks (`upload.rs`), and the command line (`main.rs`). |
 | `crates/dutchman-core/tests/fixtures` | Synthetic test files, with their origin in the folder's README. |
 | `crates/dutchman-solidcraft/tests/golden` | Expected `document.json` output. |
 | `scripts/solidcraft-roundtrip.sh` | Opens converted fixtures in a SolidCraft CLI. |

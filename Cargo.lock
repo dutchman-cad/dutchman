@@ -1430,6 +1430,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "dutchman-print"
+version = "0.2.1"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "clap",
+ "dutchman-serve",
+ "getrandom 0.3.4",
+ "http-body-util",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "toml",
+ "tower",
+ "zip",
+]
+
+[[package]]
+name = "dutchman-serve"
+version = "0.2.1"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "rustix 1.1.5",
+ "zip",
+]
+
+[[package]]
 name = "dutchman-solidcraft"
 version = "0.2.1"
 dependencies = [
@@ -1448,14 +1478,13 @@ version = "0.2.1"
 dependencies = [
  "askama",
  "axum",
- "base64 0.22.1",
  "clap",
  "dutchman",
  "dutchman-core",
+ "dutchman-serve",
  "getrandom 0.3.4",
  "http-body",
  "http-body-util",
- "rustix 1.1.5",
  "serde_json",
  "tempfile",
  "tokio",

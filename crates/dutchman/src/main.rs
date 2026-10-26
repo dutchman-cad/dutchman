@@ -153,8 +153,13 @@ fn main() -> ExitCode {
             .any(|cmd| cmd.get_name() == name)
             || matches!(name, "pilot" | "help");
         if name == "pilot" || !builtin && !name.starts_with('-') {
-            if let Some(path) = dutchman_launcher::find_tool(name) {
-                let rest: Vec<_> = args.iter().skip(index + 1).cloned().collect();
+            if let Some(path) =
+                dutchman_launcher::find_tool(if name == "printers" { "print" } else { name })
+            {
+                let mut rest: Vec<_> = args.iter().skip(index + 1).cloned().collect();
+                if matches!(name, "printers" | "print") {
+                    rest.insert(0, OsString::from(name));
+                }
                 return run_tool(&path, &rest);
             }
         }
@@ -211,8 +216,14 @@ fn main() -> ExitCode {
             let mut args = args.into_iter();
             let name = args.next().unwrap_or_default();
             let name = name.to_str().unwrap_or("");
-            if let Some(path) = dutchman_launcher::find_tool(name) {
-                return run_tool(&path, &args.collect::<Vec<_>>());
+            if let Some(path) =
+                dutchman_launcher::find_tool(if name == "printers" { "print" } else { name })
+            {
+                let mut rest: Vec<_> = args.collect();
+                if matches!(name, "printers" | "print") {
+                    rest.insert(0, OsString::from(name));
+                }
+                return run_tool(&path, &rest);
             }
             if let Err(error) = suggestion_command.try_get_matches_from(std::env::args_os()) {
                 if error
