@@ -75,6 +75,8 @@ pub struct Config {
     /// A folder each job's designs are also saved in, as uploaded and never replacing a file
     /// already there; kept after the job expires.
     pub output_dir: Option<PathBuf>,
+    /// Where the SolidCraft web app is; see [`solidcraft`].
+    pub solidcraft: Option<String>,
 }
 
 impl Default for Config {
@@ -98,6 +100,7 @@ impl Default for Config {
             login: None,
             base_path: String::new(),
             output_dir: None,
+            solidcraft: None,
         }
     }
 }
@@ -164,6 +167,24 @@ pub fn base_path(path: &str) -> Result<String, String> {
         }
     }
     Ok(segments.iter().map(|s| format!("/{s}")).collect())
+}
+
+/// Checks the SolidCraft app's same-origin path, without a query or fragment.
+pub fn solidcraft(address: &str) -> Result<String, String> {
+    let plain = !address
+        .chars()
+        .any(|c| c.is_control() || matches!(c, '\\' | '?' | '#'));
+    let local = address.starts_with('/') && !address.starts_with("//");
+    if !plain || !local {
+        return Err("--solidcraft must be the path SolidCraft is served at on this server's origin, such as /: one leading /, without backslashes, control characters, a query or a fragment (see \"Open in SolidCraft\" in docs/web.md)".to_owned());
+    }
+    Ok(address.to_owned())
+}
+
+fn open_links(report: &mut Value, config: &Config) {
+    if let Some(address) = &config.solidcraft {
+        report::open_links(report, address, &format!("{}/", config.base_path));
+    }
 }
 
 /// Creates the output folder if needed and checks that it is a folder.
@@ -381,7 +402,9 @@ async fn saved_report(app: &App, job: &str) -> Result<Value, Problem> {
     .ok()
     .and_then(Result::ok)
     .ok_or_else(expired)?;
-    serde_json::from_slice(&bytes).map_err(|_| expired())
+    let mut report = serde_json::from_slice(&bytes).map_err(|_| expired())?;
+    open_links(&mut report, &app.config);
+    Ok(report)
 }
 
 // ---- Converting ----------------------------------------------------------------------------
@@ -540,6 +563,7 @@ async fn convert_in(
     tokio::fs::write(dir.join(REPORT_FILE), saved)
         .await
         .map_err(|err| server_error(&err))?;
+    open_links(&mut report, &app.config);
     Ok(report)
 }
 
@@ -767,6 +791,37 @@ mod tests {
         assert_eq!(base_path("/cad/dutchman").unwrap(), "/cad/dutchman");
         for bad in ["/../x", "/a b", "/a?b", "/{job}", "/./x"] {
             assert!(base_path(bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn solidcraft_addresses_are_same_origin_paths() {
+        for address in ["/", "/cad/", "/cad/app"] {
+            assert_eq!(solidcraft(address).unwrap(), address);
+        }
+        for bad in [
+            "",
+            "cad/",
+            "http://cad.example",
+            "https://cad.example",
+            "https://cad.example/app/",
+            "//cad.example",
+            "///cad.example",
+            "/a\\b",
+            "/a\nb",
+            "/a\rb",
+            "/a\tb",
+            "/a\u{7f}b",
+            "/?x=1",
+            "/#x",
+            "https://cad.example/?x=1",
+            "https://cad.example/#x",
+            "https://cad.example/\\x",
+            "https://",
+            "https://user@cad.example",
+        ] {
+            let error = solidcraft(bad).unwrap_err();
+            assert!(error.contains("Open in SolidCraft"), "{error}");
         }
     }
 

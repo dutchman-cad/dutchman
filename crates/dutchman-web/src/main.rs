@@ -107,6 +107,9 @@ struct Args {
     /// there, and stay after the job is deleted.
     #[arg(long, env = "DUTCHMAN_WEB_OUTPUT", value_name = "DIR")]
     output_dir: Option<PathBuf>,
+    /// Where the SolidCraft web app is: a same-origin path, such as /.
+    #[arg(long, env = "DUTCHMAN_WEB_SOLIDCRAFT", value_name = "ADDRESS")]
+    solidcraft: Option<String>,
 }
 
 fn main() -> ExitCode {
@@ -128,6 +131,18 @@ fn main() -> ExitCode {
         .map(|password| (args.user.clone(), password));
     let base_path = match dutchman_web::base_path(&args.base_path) {
         Ok(path) => path,
+        Err(err) => {
+            eprintln!("dutchman-web: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let solidcraft = match args
+        .solidcraft
+        .as_deref()
+        .map(dutchman_web::solidcraft)
+        .transpose()
+    {
+        Ok(address) => address,
         Err(err) => {
             eprintln!("dutchman-web: {err}");
             return ExitCode::FAILURE;
@@ -157,6 +172,7 @@ fn main() -> ExitCode {
         login,
         base_path,
         output_dir: args.output_dir,
+        solidcraft,
     };
     if let Err(err) = dutchman_web::prepare_data_dir(&config.data_dir) {
         eprintln!(
@@ -240,6 +256,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_solidcraft_address_parses() {
+        let args = Args::try_parse_from(["dutchman-web", "--solidcraft", "/cad/"]).unwrap();
+        assert_eq!(args.solidcraft.as_deref(), Some("/cad/"));
+    }
+
+    #[test]
     fn upload_and_storage_options_parse() {
         let args = Args::try_parse_from([
             "dutchman-web",
@@ -258,6 +280,7 @@ mod tests {
         assert_eq!(args.uploads, 1);
         assert_eq!(args.base_path, "");
         assert_eq!(args.output_dir, None);
+        assert_eq!(args.solidcraft, None);
         assert_eq!(args.max_data, 2);
         assert_eq!(args.min_free, 3);
         assert_eq!(

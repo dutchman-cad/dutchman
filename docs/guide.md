@@ -922,3 +922,7 @@ For self-hosted browser conversions, [Dutchman Web](web.md#settings) documents t
 zip budget, concurrent upload and saved-data limits, private data folder, and allowed browser
 origins. Uploads may be refused with 403 (origin check) or 503 (capacity); the CLI and MCP
 reports are unchanged.
+
+For browser conversions, `dutchman-web --solidcraft` adds an **Open in SolidCraft** link for
+SolidCraft designs. See [Open in SolidCraft](web.md#open-in-solidcraft) for serving both
+apps on one origin and configuring the SolidCraft path.

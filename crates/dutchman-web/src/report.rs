@@ -40,6 +40,37 @@ pub fn for_browser(report: &mut Value, job: &str, in_dir: &Path, out_dir: &Path)
     }
 }
 
+/// Adds SolidCraft links to a browser-ready report, using the app's address and the prefix
+/// before its relative download paths (the base path followed by /).
+pub fn open_links(report: &mut Value, address: &str, prefix: &str) {
+    let Some(Value::Array(results)) = report.get_mut("results") else {
+        return;
+    };
+    for result in results {
+        if result.get("ok") != Some(&json!(true)) {
+            continue;
+        }
+        let Some(output) = result.get_mut("output").and_then(Value::as_object_mut) else {
+            continue;
+        };
+        if !output
+            .get("format")
+            .and_then(Value::as_str)
+            .is_some_and(|f| f.starts_with("solidcraft/"))
+        {
+            continue;
+        }
+        if let Some(download) = output.get("download").and_then(Value::as_str) {
+            let design = encode_component(&format!("{prefix}{download}"));
+            output.insert("open".to_owned(), json!(format!("{address}?open={design}")));
+        }
+    }
+}
+
+fn encode_component(value: &str) -> String {
+    encode_path(value).replace('/', "%2F")
+}
+
 fn scrub(value: &mut Value, prefixes: &[String]) {
     match value {
         Value::String(text) => {
@@ -86,6 +117,8 @@ pub struct Card {
     pub loss_counts: String,
     /// The written design: its name and download link.
     pub download: Option<(String, String)>,
+    /// The link to open the design in SolidCraft.
+    pub open: Option<String>,
     /// Where the design was saved in the server's output folder.
     pub saved: Option<String>,
     /// Why the design could not be saved in the server's output folder.
@@ -171,6 +204,7 @@ fn card(result: &Value) -> Card {
         losses,
         loss_counts,
         download,
+        open: text("/output/open").filter(|_| ok),
         saved: text("/output/saved").filter(|_| ok),
         save_error: text("/output/save_error").filter(|_| ok),
     }
@@ -253,6 +287,16 @@ mod tests {
             report["results"][1]["error"]["message"],
             "cannot read x.sldasm"
         );
+    }
+
+    #[test]
+    fn open_query_encodes_the_download_path_again() {
+        let mut report = json!({"results": [{"ok": true, "output": {
+            "format": "solidcraft/23", "download": format!("jobs/j/files/{}", encode_path("a &?#%é.solidcraft"))
+        }}]});
+        open_links(&mut report, "/", "/dutchman/");
+        assert_eq!(report["results"][0]["output"]["open"],
+            "/?open=%2Fdutchman%2Fjobs%2Fj%2Ffiles%2Fa%2520%2526%253F%2523%2525%25C3%25A9.solidcraft");
     }
 
     #[test]

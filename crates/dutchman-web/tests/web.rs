@@ -633,3 +633,85 @@ async fn designs_are_also_saved_in_the_output_folder() {
         assert!(design.starts_with(b"PK"), "{name}");
     }
 }
+
+#[tokio::test]
+async fn designs_open_in_solidcraft_when_configured() {
+    for (address, to, expected) in [
+        (
+            Some("/"),
+            "solidcraft",
+            Some("/?open=%2Fdutchman%2Fjobs%2F"),
+        ),
+        (None, "solidcraft", None),
+        (Some("/"), "freecad", None),
+    ] {
+        let data = tempfile::tempdir().unwrap();
+        let mut config = Config {
+            data_dir: data.path().to_path_buf(),
+            base_path: "/dutchman".to_owned(),
+            solidcraft: address.map(str::to_owned),
+            ..Config::default()
+        };
+        let app = dutchman_web::router(config.clone());
+        let cube = std::fs::read(fixture("generated_unit_cube.f3d")).unwrap();
+        let (status, _, body) = send(
+            &app,
+            post(
+                "/dutchman/api/convert",
+                form(&[("to", to)], &[("files", "Bracket & v2.f3d", cube)]),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{}", text(&body));
+        let report: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(report["converted"], 1, "{report}");
+        let job = report["job"].as_str().unwrap();
+        let (_, _, page) = send(&app, get(&format!("/dutchman/jobs/{job}"))).await;
+        let (_, _, saved) = send(&app, get(&format!("/dutchman/jobs/{job}/report.json"))).await;
+        let saved: Value = serde_json::from_slice(&saved).unwrap();
+        assert_eq!(
+            saved["results"][0]["output"],
+            report["results"][0]["output"]
+        );
+        let output = &report["results"][0]["output"];
+        if to == "freecad" {
+            assert_eq!(output["format"], "freecad-macro/1");
+        }
+        if let Some(prefix) = expected {
+            let link = format!("{prefix}{job}%2Ffiles%2FBracket%2520%2526%2520v2.solidcraft");
+            assert_eq!(output["open"], link);
+            assert!(
+                text(&page).contains(&format!(
+                    "href=\"{link}\" target=\"_blank\" rel=\"noopener\">Open in SolidCraft</a>"
+                )),
+                "{}",
+                text(&page)
+            );
+            let download = output["download"].as_str().unwrap();
+            assert_eq!(
+                send(&app, get(&format!("/dutchman/{download}"))).await.0,
+                StatusCode::OK
+            );
+            let stored: Value = serde_json::from_slice(
+                &std::fs::read(data.path().join(job).join("report.json")).unwrap(),
+            )
+            .unwrap();
+            assert!(stored["results"][0]["output"].get("open").is_none());
+            config.solidcraft = Some("/cad/".to_owned());
+            let restarted = dutchman_web::router(config);
+            let (_, _, body) = send(
+                &restarted,
+                get(&format!("/dutchman/jobs/{job}/report.json")),
+            )
+            .await;
+            let report: Value = serde_json::from_slice(&body).unwrap();
+            assert!(report["results"][0]["output"]["open"]
+                .as_str()
+                .unwrap()
+                .starts_with("/cad/?open=%2Fdutchman%2F"));
+        } else {
+            assert!(output.get("open").is_none(), "{report}");
+            assert!(!text(&page).contains("Open in SolidCraft"));
+        }
+    }
+}
