@@ -303,6 +303,11 @@ zip budget, concurrent upload and saved-data limits, private data folder, and al
 origins. Uploads may be refused with 403 (origin check) or 503 (capacity); the CLI and MCP
 reports are unchanged.
 
+For `dutchman-web --solidcraft`, converted SolidCraft files also have `output.open`, the
+same-origin link to open the design in the configured web app. FreeCAD macros have no `open`
+field. The link is built when the report is returned, from the current server settings; see
+[Open in SolidCraft](web.md#open-in-solidcraft).
+
 ## Watch events: `dutchman.watch-event/1`
 
 `dutchman watch INBOX --out-dir DIR --json` streams newline-delimited JSON, one object

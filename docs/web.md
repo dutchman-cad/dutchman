@@ -56,6 +56,7 @@ them.
 | `--timeout` | `DUTCHMAN_WEB_TIMEOUT` | 900 | Seconds one file may take |
 | `--max-memory` | `DUTCHMAN_WEB_MAX_MEMORY` | 8192 | Megabytes one file may hold (0: no limit) |
 | `--output-dir` | `DUTCHMAN_WEB_OUTPUT` | none | A folder each job's designs are also saved in, such as a network share ([Save to a shared folder](#save-to-a-shared-folder)) |
+| `--solidcraft` | `DUTCHMAN_WEB_SOLIDCRAFT` | none | The SolidCraft web app's same-origin path ([Open in SolidCraft](#open-in-solidcraft)) |
 | `--base-path` | `DUTCHMAN_WEB_BASE_PATH` | none (the root) | The path it is reached under behind a reverse proxy, such as `/dutchman` ([Under a path](#under-a-path)) |
 
 At most `--runs` × `--jobs` files convert at once, each holding up to `--max-memory`. Give the
@@ -107,6 +108,36 @@ handle /dutchman* {
 }
 ```
 
+## Open in SolidCraft
+
+With `--solidcraft`, each converted SolidCraft design gets an **Open in SolidCraft** link
+beside Download, opening in a new tab. FreeCAD macros keep only their download link. The API
+adds the full link as `open` in the file's `output`. Links are built from the current settings,
+so changing the address on restart also changes existing jobs' links.
+
+For SolidCraft and Dutchman on one origin, use a path: run `dutchman-web` with
+`--base-path /dutchman --solidcraft /`, and serve SolidCraft at `/`. In Caddy, keeping the
+Dutchman path unchanged as in [Under a path](#under-a-path):
+
+```caddyfile
+handle /dutchman* {
+	reverse_proxy dutchman-web:8080
+}
+handle {
+	reverse_proxy solidcraft:8080
+}
+```
+
+The link opens `/?open=...`, with `/dutchman/jobs/<job>/files/<design>` encoded as the query
+value. This also works over plain HTTP on a LAN. Downloads use Dutchman's HTTP basic
+authentication; the browser reuses those credentials when SolidCraft fetches the design on
+the same origin.
+
+The address must start with exactly one `/`, without backslashes, control characters, a
+query or a fragment; anything else stops `dutchman-web` at startup. This needs SolidCraft
+[#6670](https://github.com/tangency-labs/solidcraft/pull/6670): use a build from its main
+branch until its next release. Links work only while the job's design is kept.
+
 ## Keep it safe
 
 - Set `DUTCHMAN_WEB_PASSWORD` unless everyone who can reach the server may convert files on it.
@@ -138,7 +169,7 @@ Scripts can use the same server. Paths are relative to the server's address, und
 
 | Request | Returns |
 |---|---|
-| `POST /api/convert`, a `multipart/form-data` body: `files` (one or more), and optionally `to` (`solidcraft` or `freecad`) and `import_only` (`true`) | The [`dutchman.convert-all/1`](json.md#dutchmanconvert-all1) report, with `job` and `designs_zip` added, and a `download` path added to each converted file's `output` (and with `--output-dir`, `saved` or `save_error`). Paths in it are relative to the upload. A refused upload is `{"error": "…"}` with status 400, 403, 413 or 503 |
+| `POST /api/convert`, a `multipart/form-data` body: `files` (one or more), and optionally `to` (`solidcraft` or `freecad`) and `import_only` (`true`) | The [`dutchman.convert-all/1`](json.md#dutchmanconvert-all1) report, with `job` and `designs_zip` added, and a `download` path added to each converted file's `output` (with `--output-dir`, `saved` or `save_error`; with `--solidcraft`, `open` for SolidCraft designs). Paths in it are relative to the upload. A refused upload is `{"error": "…"}` with status 400, 403, 413 or 503 |
 | `GET /jobs/<job>/report.json` | The same report again, while the job is kept |
 | `GET /jobs/<job>/files/<path>` | One design |
 | `GET /jobs/<job>/designs.zip` | Every design of the job, in one zip |
