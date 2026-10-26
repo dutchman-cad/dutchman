@@ -17,7 +17,10 @@ use dutchman_print::{
 };
 use md5::{Digest as _, Md5};
 use serde_json::{json, Value};
-use std::{path::Path, sync::Arc};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 use tokio::sync::{Mutex, Notify};
 
 #[derive(Clone)]
@@ -218,26 +221,7 @@ impl Fake {
         config
     }
     async fn backend(&self, dir: &Path) -> Arc<Safety> {
-        let input = dir.join("input.3mf");
-        std::fs::write(&input, b"synthetic input").unwrap();
-        let args = vec![
-            "--export-gcode".to_string(),
-            "--no-binary-gcode".into(),
-            "--output".into(),
-            dir.join("sliced.gcode").to_str().unwrap().into(),
-            "--printer-profile".into(),
-            "Machine".into(),
-            "--print-profile".into(),
-            "Draft".into(),
-            "--material-profile".into(),
-            "PLA".into(),
-            input.to_str().unwrap().into(),
-        ];
-        std::fs::write(
-            dir.join("expected.json"),
-            serde_json::to_vec(&args).unwrap(),
-        )
-        .unwrap();
+        let input = slicer_input(dir);
         let backend = Arc::new(Safety::new(Arc::new(Printers::new(self.config()).unwrap())));
         backend
             .prepare("one", &input, "test", Options::default())
@@ -255,6 +239,51 @@ impl Fake {
             .filter(|r| r.method == method && r.path.starts_with("/api/v1/files/"))
             .count()
     }
+}
+
+// Match the slicer's canonical input and output paths without normalizing away
+// differences in argv. The fake slicer still compares every argument exactly.
+fn slicer_input(dir: &Path) -> PathBuf {
+    let input = dir.join("input.3mf");
+    std::fs::write(&input, b"synthetic input").unwrap();
+    let canonical_input = input.canonicalize().unwrap();
+    let folder = canonical_input.parent().unwrap();
+    let args = vec![
+        "--export-gcode".to_string(),
+        "--no-binary-gcode".into(),
+        format!("--output={}", folder.join("sliced.gcode").display()),
+        "--printer-profile=Machine".into(),
+        "--print-profile=Draft".into(),
+        "--material-profile=PLA".into(),
+        canonical_input.to_str().unwrap().into(),
+    ];
+    std::fs::write(
+        dir.join("expected.json"),
+        serde_json::to_vec(&args).unwrap(),
+    )
+    .unwrap();
+    input
+}
+
+#[tokio::test]
+async fn preparation_uses_canonical_paths_and_single_value_arguments() {
+    let fake = Fake::new().await;
+    let dir = tempfile::Builder::new()
+        .prefix("prusalink job= ")
+        .tempdir()
+        .unwrap();
+    std::fs::create_dir(dir.path().join("nested")).unwrap();
+    // Force a different canonical spelling on Linux too, without symlink
+    // privileges on Windows. Spaces and '=' must remain inside one argument.
+    let alias = dir.path().join("nested").join("..");
+    assert_ne!(alias.join("input.3mf"), dir.path().join("input.3mf"));
+    let backend = fake.backend(&alias).await;
+    let job = backend.job("one").await.unwrap();
+    assert_eq!(job.estimate.seconds, Some(123));
+    assert_eq!(job.estimate.layers, Some(12));
+    assert!(dir.path().join("started").is_file());
+    assert_eq!(fake.count(Method::PUT).await, 0);
+    assert_eq!(fake.count(Method::POST).await, 0);
 }
 
 #[tokio::test]
@@ -668,26 +697,7 @@ async fn digest_machine_commands_are_sent_once_and_authentication_stays_private(
     let fake = Fake::new().await;
     fake.shared.machine.lock().await.digest = true;
     let dir = tempfile::tempdir().unwrap();
-    let input = dir.path().join("input.3mf");
-    std::fs::write(&input, b"synthetic").unwrap();
-    let args = vec![
-        "--export-gcode".to_string(),
-        "--no-binary-gcode".into(),
-        "--output".into(),
-        dir.path().join("sliced.gcode").to_str().unwrap().into(),
-        "--printer-profile".into(),
-        "Machine".into(),
-        "--print-profile".into(),
-        "Draft".into(),
-        "--material-profile".into(),
-        "PLA".into(),
-        input.to_str().unwrap().into(),
-    ];
-    std::fs::write(
-        dir.path().join("expected.json"),
-        serde_json::to_vec(&args).unwrap(),
-    )
-    .unwrap();
+    let input = slicer_input(dir.path());
     let mut config = fake.config();
     config.printers[0].api_key = None;
     config.printers[0].username = Some("maker".into());
