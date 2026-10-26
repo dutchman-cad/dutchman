@@ -141,8 +141,11 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+      # Only the release archives: the image job, running alongside, uploads a Docker build
+      # record that is not a release file and cannot be downloaded as one.
       - uses: actions/download-artifact@v4
         with:
+          pattern: dutchman-[0-9]*
           path: artifacts
       - name: Flatten artifacts and check checksums
         shell: bash
