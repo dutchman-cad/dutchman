@@ -29,8 +29,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     use base64::Engine as _;
     let png = base64::engine::general_purpose::STANDARD.decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")?;
-    if let Some(index) = args.iter().position(|s| s == "--output") {
-        let path = args.get(index + 1).ok_or("No output")?;
+    if let Some(path) = args.iter().find_map(|s| s.strip_prefix("--output=")) {
         let mut file = std::fs::File::create(path)?;
         if mode == "missing" {
             writeln!(file, "G1 X0")?;
@@ -43,11 +42,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             base64::engine::general_purpose::STANDARD.encode(&png)
         )?;
     } else {
-        let index = args
+        let path = args
             .iter()
-            .position(|s| s == "--export-3mf")
+            .find_map(|s| s.strip_prefix("--export-3mf="))
             .ok_or("No export")?;
-        let path = args.get(index + 1).ok_or("No output")?;
         let mut zip = zip::ZipWriter::new(std::fs::File::create(Path::new(path))?);
         for (name, bytes) in [
             ("Metadata/plate_1.gcode", b"; model printing time: 1m 50s; total estimated time: 2m 3s\n; total filament length [mm] : 450\n; total filament weight [g] : 1.5\n; total layer number: 12\nG1 X0".as_slice()),

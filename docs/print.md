@@ -75,7 +75,11 @@ filament_profile = "Generic PLA @MINI"
 Profile values are names already installed in the slicer, including its system presets
 and presets you saved there. Dutchman keeps no profile set. Job options (CLI flags or API
 fields) override each printer's corresponding name. Omitted names leave the input project's
-settings and slicer defaults in effect. Unknown slicer kinds produce an error naming the kind.
+settings and slicer defaults in effect. Profile names must contain 1–256 bytes of nonempty
+plain text without control characters and cannot start with `-`. This applies to config,
+CLI flags, and both API upload forms; refusal says "Profile names can't start with '-'."
+Job names are metadata only; uploaded files and slicer outputs use companion-built paths.
+Unknown slicer kinds produce an error naming the kind.
 `slice = true` requires `[slicer]`; without it the simulator keeps its size-based estimates.
 
 An explicit `path` takes precedence and disables executable discovery. Otherwise Dutchman

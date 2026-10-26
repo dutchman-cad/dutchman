@@ -338,6 +338,7 @@ async fn prepare_cli(
     dir: &Path,
 ) -> Result<dutchman_print::backend::Estimate, dutchman_print::backend::Error> {
     use dutchman_print::backend::Error;
+    options.validate().map_err(Error::Refused)?;
     let settings = dutchman_print::StorageConfig::default();
     if !file
         .extension()

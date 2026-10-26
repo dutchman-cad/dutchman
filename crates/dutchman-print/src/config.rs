@@ -99,10 +99,7 @@ impl Config {
             .into_iter()
             .flatten()
             {
-                if name.trim().is_empty() || name.len() > 256 || name.chars().any(char::is_control)
-                {
-                    return Err("Use plain profile names of 1–256 bytes.".into());
-                }
+                crate::backend::validate_profile_name(name)?;
             }
             if printer.id.is_empty()
                 || printer.id.len() > 64

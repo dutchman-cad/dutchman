@@ -36,22 +36,15 @@ fn input(dir: &Path) -> PathBuf {
     path
 }
 fn expected(dir: &Path, kind: &str) {
-    let mut args = vec![
-        "--datadir".to_string(),
-        dir.join("presets").display().to_string(),
-    ];
+    let mut args = vec![format!("--datadir={}", dir.join("presets").display())];
     if kind == "prusaslicer" {
         args.extend([
             "--export-gcode".into(),
             "--no-binary-gcode".into(),
-            "--output".into(),
-            dir.join("sliced.gcode").display().to_string(),
-            "--printer-profile".into(),
-            "Machine".into(),
-            "--print-profile".into(),
-            "Fine ; profile".into(),
-            "--material-profile".into(),
-            "PLA".into(),
+            format!("--output={}", dir.join("sliced.gcode").display()),
+            "--printer-profile=Machine".into(),
+            "--print-profile=Fine ; profile".into(),
+            "--material-profile=PLA".into(),
         ]);
     } else {
         for (category, name) in [
@@ -68,24 +61,21 @@ fn expected(dir: &Path, kind: &str) {
             .unwrap();
         }
         args.extend([
-            "--load-filaments".into(),
-            dir.join("presets/user/default/filament/unrelated-filename.json")
-                .display()
-                .to_string(),
-            "--load-settings".into(),
             format!(
-                "{};{}",
+                "--load-filaments={}",
+                dir.join("presets/user/default/filament/unrelated-filename.json")
+                    .display()
+            ),
+            format!(
+                "--load-settings={};{}",
                 dir.join("presets/user/default/machine/unrelated-filename.json")
                     .display(),
                 dir.join("presets/user/default/process/unrelated-filename.json")
                     .display()
             ),
-            "--slice".into(),
-            "0".into(),
-            "--export-3mf".into(),
-            "sliced.3mf".into(),
-            "--outputdir".into(),
-            dir.display().to_string(),
+            "--slice=0".into(),
+            "--export-3mf=sliced.3mf".into(),
+            format!("--outputdir={}", dir.display()),
         ]);
     }
     args.push(dir.join("input.3mf").display().to_string());
@@ -98,6 +88,8 @@ fn expected(dir: &Path, kind: &str) {
 fn options() -> Options {
     Options {
         print_profile: Some("Fine ; profile".into()),
+        // Job names remain metadata and must never become slicer arguments.
+        name: Some("--post-process=metadata-only".into()),
         ..Default::default()
     }
 }
@@ -301,4 +293,44 @@ async fn missing_estimates_stay_absent() {
         serde_json::to_value(prepared.estimate).unwrap(),
         serde_json::json!({})
     );
+}
+
+#[tokio::test]
+async fn slicer_refuses_option_like_profiles_before_running() {
+    let dir = tempfile::tempdir().unwrap();
+    for kind in ["prusaslicer", "orcaslicer"] {
+        let slicer = Slicer::new(config(dir.path(), kind)).unwrap();
+        for field in 0..3 {
+            for in_options in [false, true] {
+                let mut printer = printer();
+                let mut options = Options::default();
+                let profiles = if in_options {
+                    [
+                        &mut options.printer_profile,
+                        &mut options.print_profile,
+                        &mut options.filament_profile,
+                    ]
+                } else {
+                    [
+                        &mut printer.printer_profile,
+                        &mut printer.print_profile,
+                        &mut printer.filament_profile,
+                    ]
+                };
+                *profiles.into_iter().nth(field).unwrap() = Some("--post-process=command".into());
+                let error = slicer
+                    .prepare(
+                        &dir.path().join("not-read.3mf"),
+                        &printer,
+                        &options,
+                        OutputKind::Gcode,
+                    )
+                    .await
+                    .err()
+                    .unwrap();
+                assert_eq!(error, "Profile names can't start with '-'.");
+                assert!(!dir.path().join("started").exists());
+            }
+        }
+    }
 }

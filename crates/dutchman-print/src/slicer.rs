@@ -72,6 +72,17 @@ impl Slicer {
         options: &Options,
         kind: OutputKind,
     ) -> Result<Prepared, String> {
+        options.validate()?;
+        for name in [
+            &printer.printer_profile,
+            &printer.print_profile,
+            &printer.filament_profile,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            crate::backend::validate_profile_name(name)?;
+        }
         let input =
             std::fs::canonicalize(input).map_err(|e| format!("Cannot locate the 3MF: {e}"))?;
         let folder = input.parent().ok_or("Choose a 3MF in a job folder.")?;
@@ -99,7 +110,7 @@ impl Slicer {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         if let Some(datadir) = &self.config.datadir {
-            command.arg("--datadir").arg(absolute(datadir)?);
+            command.arg(flag_value("--datadir", absolute(datadir)?));
         }
         let profiles = [
             options
@@ -117,14 +128,14 @@ impl Slicer {
         ];
         if self.config.kind == "prusaslicer" {
             command
-                .args(["--export-gcode", "--no-binary-gcode", "--output"])
-                .arg(&gcode);
+                .args(["--export-gcode", "--no-binary-gcode"])
+                .arg(flag_value("--output", &gcode));
             for (flag, name) in ["--printer-profile", "--print-profile", "--material-profile"]
                 .into_iter()
                 .zip(profiles)
             {
                 if let Some(name) = name {
-                    command.arg(flag).arg(name);
+                    command.arg(format!("{flag}={name}"));
                 }
             }
         } else {
@@ -153,7 +164,7 @@ impl Slicer {
                         );
                     }
                     if category == "filament" {
-                        command.arg("--load-filaments").arg(path);
+                        command.arg(flag_value("--load-filaments", path));
                     } else {
                         settings.push(path);
                     }
@@ -167,13 +178,11 @@ impl Slicer {
                     }
                     joined.push(path);
                 }
-                command.arg("--load-settings").arg(joined);
+                command.arg(flag_value("--load-settings", joined));
             }
             command
-                .args(["--slice", "0", "--export-3mf"])
-                .arg("sliced.3mf")
-                .arg("--outputdir")
-                .arg(folder);
+                .args(["--slice=0", "--export-3mf=sliced.3mf"])
+                .arg(flag_value("--outputdir", folder));
         }
         command.arg(&input);
         let mut child = command
@@ -583,6 +592,14 @@ fn read_preset(path: &Path, total_bytes: &mut usize) -> Result<serde_json::Value
     }
     serde_json::from_slice(&bytes)
         .map_err(|_| format!("Cannot read Orca preset JSON: {}", path.display()))
+}
+
+// Preserve non-UTF-8 paths while keeping each option and its value in one argv entry.
+fn flag_value(flag: &str, value: impl AsRef<std::ffi::OsStr>) -> OsString {
+    let mut arg = OsString::from(flag);
+    arg.push("=");
+    arg.push(value);
+    arg
 }
 
 #[cfg(test)]

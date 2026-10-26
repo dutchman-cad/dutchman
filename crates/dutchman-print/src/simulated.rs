@@ -203,6 +203,7 @@ impl Backend for Simulated {
         options: Options,
     ) -> Reply<'a, Estimate> {
         Box::pin(async move {
+            options.validate().map_err(Error::Refused)?;
             let profile = self
                 .printers
                 .iter()
