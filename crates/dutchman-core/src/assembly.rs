@@ -573,7 +573,14 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
         }
     }
 
+    // Bodies no component owns are the design's own, placed where they are.
+    let loose: Vec<&str> = arena("bodies")
+        .iter()
+        .filter_map(|row| row.get("id")?.as_str())
+        .filter(|id| !owned.contains(id))
+        .collect();
     let mut tree = Tree {
+        all_owned: loose.is_empty(),
         model,
         document: &document,
         definitions,
@@ -596,12 +603,6 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
     let inserted = inserted_designs(&occurrences);
     let (joints, mut left_out) = joints(arena("assembly_joints"), &tree.paths, &worlds, &inserted);
 
-    // Bodies no component owns are the design's own, placed where they are.
-    let loose: Vec<&str> = arena("bodies")
-        .iter()
-        .filter_map(|row| row.get("id")?.as_str())
-        .filter(|id| !owned.contains(id))
-        .collect();
     if !loose.is_empty() {
         parts.push(only(model, &document, &loose, model.name.clone())?);
         placements.push(Placement {
@@ -1138,6 +1139,9 @@ struct Tree<'a> {
     /// Each occurrence's placement path, and whether it is inside a component placed more
     /// than once at its level, so that a joint to it would not say which copy.
     paths: BTreeMap<&'a str, (Vec<usize>, bool)>,
+    /// Whether every body of the design belongs to a component, so that a component naming
+    /// no bodies and holding none is empty rather than one cadmpeg could not attribute.
+    all_owned: bool,
 }
 
 impl<'a> Tree<'a> {
@@ -1247,13 +1251,16 @@ impl<'a> Tree<'a> {
             .map(str::to_owned)
             .unwrap_or_else(|| format!("{} component {}", self.model.name, self.parts.len() + 1));
         let model = if inner.is_empty() {
-            if bodies.is_empty() {
+            if bodies.is_empty() && self.all_owned {
+                only(self.model, self.document, &[], name)?
+            } else if bodies.is_empty() {
                 return Err(format!(
                     "cadmpeg does not say which bodies belong to component {}",
                     name_of(row).unwrap_or(definition)
                 ));
+            } else {
+                only(self.model, self.document, &bodies, name)?
             }
-            only(self.model, self.document, &bodies, name)?
         } else {
             // A sub-assembly: the components inside it, and its own bodies at its origin.
             let outer = std::mem::take(&mut self.parts);
@@ -1909,6 +1916,39 @@ mod tests {
             err,
             "cadmpeg does not say which bodies belong to component Block"
         );
+    }
+
+    #[test]
+    fn a_component_that_is_empty_in_the_source_is_placed_empty() {
+        // Every body belongs to `Block`, so `Carriage`, naming none and holding none, is
+        // empty rather than unattributed.
+        let model = with_components(true);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["product_definitions"]
+            .as_array_mut()
+            .unwrap()
+            .push(
+                json!({"id": "f3d:model:component#carriage", "kind": "part", "label": "Carriage"}),
+            );
+        wire["model"]["occurrences"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "id": "f3d:model:occurrence#2",
+                "prototype": {"scope": "local", "definition": "f3d:model:component#carriage"},
+                "parent": root(), "ordinal": 2,
+                "transform": [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
+                "scale": [1.0, 1.0, 1.0],
+            }));
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        };
+        let assembly = local_assembly(&model).unwrap().unwrap();
+        assert_eq!(assembly.parts.len(), 2);
+        assert_eq!(assembly.parts[1].name, "Carriage");
+        assert!(assembly.parts[1].ir.model.bodies.is_empty());
+        assert_eq!(assembly.placements.len(), 3);
     }
 
     /// cadmpeg's example cube, owned by component `Block`, placed twice inside a `Frame`
