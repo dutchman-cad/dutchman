@@ -49,8 +49,11 @@ scoop install dutchman-cad/dutchman
 Both install `dutchman`, `dutchman-mcp` and the desktop app (`dutchman-gui`; Scoop also adds a
 Start menu shortcut), and follow each release: `brew upgrade` or `scoop update` brings the
 newest. Homebrew pours a ready-made bottle, so it needs no Xcode or Command Line Tools, and on
-macOS no first-run approval, because Homebrew's downloads are not quarantined. Or download a release below, or run it in [Docker](docs/docker.md)
-(`docker pull ghcr.io/dutchman-cad/dutchman:latest`).
+macOS the commands need no first-run approval, because Homebrew's downloads are not
+quarantined. For **Dutchman Convert.app** in Applications and Launchpad, add
+`brew install --cask dutchman-cad/tap/dutchman-convert`; the app needs the
+[first-run approval](docs/guide.md#opening-the-app-the-first-time) once. Or download a release
+below, or run it in [Docker](docs/docker.md) (`docker pull ghcr.io/dutchman-cad/dutchman:latest`).
 
 ## Download
 
