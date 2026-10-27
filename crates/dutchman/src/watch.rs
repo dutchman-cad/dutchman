@@ -112,6 +112,11 @@ fn atomic_json(path: &Path, value: &Value) -> Result<(), String> {
 
 /// Runs until a signal requests shutdown, or until the single scan has finished.
 pub fn run(command: Command) -> Result<bool, String> {
+    if command.options.to == crate::OutputFormat::Dxf {
+        return Err(
+            "DXF page output uses dutchman convert --to dxf; watch is not supported yet".into(),
+        );
+    }
     let stop = Arc::new(AtomicBool::new(false));
     let signal = Arc::clone(&stop);
     ctrlc::set_handler(move || signal.store(true, Ordering::Relaxed))

@@ -11,7 +11,9 @@ dutchman convert part.f3d out.solidcraft
 ```
 
 Omit the output to write beside the input, using its stem and the extension chosen by
-`--to`: `.solidcraft` (default), `.FCMacro`, or `.FCStd`. If that default exists, Dutchman
+`--to`: `.solidcraft` (default), `.FCMacro`, or `.FCStd` for model output.
+`--to dxf` writes one `part-PageName.dxf` per TechDraw page; see
+[TechDraw drawing output](freecad.md#techdraw-to-dxf). If a model default exists, Dutchman
 exits 2 without changing it: choose `-o PATH` or pass `--force` to replace it. A default
 that is the input itself is always refused. `--force` conflicts with `--no-clobber`.
 Explicit output paths are replaced unless `--no-clobber` is given. Built-in commands win
@@ -324,7 +326,8 @@ or `editable history, unverified`). The lines on stderr are the loss report, exp
 replaced (`--no-clobber` keeps it, and the conversion fails instead), and nothing is written
 when the conversion fails.
 
-The output must end in `.solidcraft`. To get one machine-readable report on stdout instead
+The default target output must end in `.solidcraft`; other targets use their own extension.
+To get one machine-readable report on stdout instead
 of the text, add `--json` ([json.md](json.md) describes every field):
 
 ```sh
@@ -555,6 +558,8 @@ ACIS (.sat, .sab, .smt, .smb)  reads geometry  L3  converts: geometry through ST
 STEP (.step, .stp)  reads geometry  L8  converts: geometry through STEP; solids and surfaces SolidCraft can import
 IGES (.igs, .iges)  open it in SolidCraft directly  L9  not yet: SolidCraft imports IGES itself (File > Import)
 Creo or NX part (.prt)  recognised, not read yet  not yet: nothing yet; reading geometry is not supported yet
+
+FreeCAD TechDraw → DXF  drawings: page text; view edges, dimensions and templates await typed IR geometry (reported as Dropped)
 
 Written as a SolidCraft design (.solidcraft), or, experimental, as a FreeCAD rebuild macro (.FCMacro, --to freecad)
 ```
@@ -937,3 +942,15 @@ reports are unchanged.
 For browser conversions, `dutchman-web --solidcraft` adds an **Open in SolidCraft** link for
 SolidCraft designs. See [Open in SolidCraft](web.md#open-in-solidcraft) for serving both
 apps on one origin and configuring the SolidCraft path.
+
+
+FreeCAD TechDraw drawing output is available from the CLI:
+`dutchman convert part.FCStd --to dxf [--page NAME]`. It writes one
+`part-PageName.dxf` per page; `-o` accepts an existing directory or a file base
+(an exact file path with `--page`). Defaults require `--force` to overwrite;
+explicit outputs replace unless `--no-clobber` is set. Page names are FreeCAD
+object names. This partial export keeps positioned annotation text; missing view
+edges, dimensions, title blocks and frames are reported as Dropped in the
+per-page JSON `pages` results. No page is an error. See [FreeCAD coverage](freecad.md#techdraw-to-dxf).
+DXF conversion is not supported yet by convert-all, the MCP convert tool, desktop,
+or web. The MCP formats report includes the additive `drawings` capability list.

@@ -339,3 +339,26 @@ identity, `files` mapping relative paths to SHA-256 hashes to `{ "outcome": ... 
 The ownership input is relative to the inbox; numbered `.prt.N` saves share the base `.prt`
 owner. Outputs belonging to another input are protected. It is not a conversion report.
 Watcher events and state contain paths; keep them private like batch journals.
+
+
+### DXF pages (additive to `dutchman.convert/1`)
+
+`convert --to dxf --json` adds `pages`, in source page order. Each entry has
+`name` (FreeCAD object name), `path`, `format` (`dxf/AC1015`), `units` (`mm`),
+`entities_per_layer` (a map including empty declared layers),
+`dimension_representation` (`omitted_missing_ir` for dimensions at the current
+cadmpeg pin, `none` when the page has no visible dimension), and
+`losses` with the same fields as conversion losses. Info notes describe kept text;
+Degraded notes describe default text styling; Dropped notes name unavailable view,
+dimension and template geometry and unmapped metadata/resources. IR gaps use
+`stage: "project"`, `upstream: "cadmpeg"`; writer omissions use `stage: "map"`. The top-level
+`losses` includes every page's mapping losses prefixed by page name, plus decode
+and unassigned-object losses. `output.path` names the first page and `output.format`
+is `dxf/AC1015`; consumers must use `pages` to find every output. Failures use the
+existing error envelope and write no page results. Publication I/O failures can
+leave already-written pages on disk.
+
+`dutchman.formats/1` adds `drawings`, an array of drawing capabilities with `input`,
+`name`, `output` and `converts`; `input` uses the existing native format id
+(`freecad_document`). The FreeCAD TechDraw entry describes partial DXF
+text output and the geometry gaps. Existing `formats` fields keep their meaning.

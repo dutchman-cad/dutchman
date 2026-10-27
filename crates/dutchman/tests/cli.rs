@@ -1632,3 +1632,200 @@ fn numbered_default_outputs_use_the_base_name_and_keep_existing_files() {
     assert_eq!(std::fs::read(output).unwrap(), b"keep this design");
     assert!(!dir.path().join("bracket.prt.solidcraft").exists());
 }
+
+#[cfg(feature = "freecad")]
+#[test]
+fn techdraw_dxf_exports_page_text_and_reports_missing_ir_geometry() {
+    let formats = json_of(&dutchman(&["formats", "--json"]));
+    assert_eq!(formats["drawings"][0]["input"], "freecad_document");
+    assert_eq!(formats["drawings"][0]["output"], "dxf");
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../dutchman-core/tests/fixtures/techdraw.FCStd");
+    let folder = tempfile::tempdir().unwrap();
+    let input = folder.path().join("box.FCStd");
+    std::fs::copy(fixture, &input).unwrap();
+    std::fs::create_dir(folder.path().join("box.dxf")).unwrap();
+    let result = dutchman(&["convert", input.to_str().unwrap(), "--to", "dxf", "--json"]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["pages"][0]["name"], "Page");
+    assert_eq!(
+        report["pages"][0]["dimension_representation"],
+        "omitted_missing_ir"
+    );
+    assert_eq!(report["pages"][0]["entities_per_layer"]["ANNOTATIONS"], 2);
+    assert_eq!(report["pages"][0]["entities_per_layer"]["VIEW_2_Front"], 0);
+    let losses = report["pages"][0]["losses"].as_array().unwrap();
+    for subject in ["Front", "Top", "Length", "Template"] {
+        assert!(
+            losses.iter().any(|l| l["subject"] == subject
+                && l["level"] == "Dropped"
+                && l["upstream"] == "cadmpeg"),
+            "{losses:?}"
+        );
+    }
+    let output = folder.path().join("box-Page.dxf");
+    let text = std::fs::read_to_string(&output).unwrap();
+    let lines: Vec<_> = text.lines().collect();
+    let (records, remainder) = lines.as_chunks::<2>();
+    assert!(remainder.is_empty());
+    let pairs: Vec<_> = records
+        .iter()
+        .map(|[code, value]| (*code, *value))
+        .collect();
+    assert_eq!(pairs.iter().filter(|p| **p == ("0", "TEXT")).count(), 2);
+    assert_eq!(
+        pairs.iter().filter(|p| **p == ("8", "ANNOTATIONS")).count(),
+        2
+    );
+    let ys: Vec<f64> = pairs
+        .iter()
+        .filter(|(c, _)| *c == "20")
+        .map(|(_, v)| v.parse().unwrap())
+        .collect();
+    assert_eq!(ys, vec![100.0, 96.5]);
+    assert!(pairs.contains(&("10", "120")));
+    assert!(text.contains("Synthetic box"));
+    assert!(!text.contains("%.2w"));
+    let retry = dutchman(&["convert", input.to_str().unwrap(), "--to", "dxf", "--json"]);
+    assert!(!retry.status.success());
+    assert_eq!(std::fs::read_to_string(&output).unwrap(), text);
+    let forced = dutchman(&[
+        "convert",
+        input.to_str().unwrap(),
+        "--to",
+        "dxf",
+        "--force",
+        "--page",
+        "Page",
+        "--json",
+    ]);
+    assert!(forced.status.success());
+    assert_eq!(std::fs::read_to_string(&output).unwrap(), text);
+    let mut model =
+        dutchman_core::read_drawings(&input, &mut dutchman_core::Report::default()).unwrap();
+    let note = model
+        .ir
+        .model
+        .drawings
+        .iter()
+        .find(|drawing| drawing.object.ends_with("#Note"))
+        .unwrap()
+        .object
+        .clone();
+    model.ir.model.view_presentations.push(
+        serde_json::from_value(serde_json::json!({
+            "id": "test:dxf:presentation#note", "object": note, "order": 0, "visible": false
+        }))
+        .unwrap(),
+    );
+    let pages = dutchman_dxf::pages(&model, None, &mut dutchman_core::Report::default()).unwrap();
+    assert_eq!(pages[0].entities_per_layer["ANNOTATIONS"], 0);
+    assert!(pages[0]
+        .report
+        .losses()
+        .iter()
+        .any(|loss| loss.subject == "Note" && loss.detail.contains("hidden")));
+    model.ir.model.view_presentations[0].visible = Some(true);
+    model
+        .ir
+        .model
+        .semantic_annotations
+        .iter_mut()
+        .find(|annotation| annotation.object.ends_with("#Note"))
+        .unwrap()
+        .text = vec!["first".into(), "".into(), "third".into()];
+    let pages = dutchman_dxf::pages(&model, None, &mut dutchman_core::Report::default()).unwrap();
+    assert_eq!(pages[0].entities_per_layer["ANNOTATIONS"], 2);
+    let text = String::from_utf8(pages[0].bytes.clone()).unwrap();
+    assert!(text.contains("20\n93\n"));
+    assert!(!text.contains("20\n96.5\n"));
+}
+
+#[cfg(feature = "freecad")]
+#[test]
+fn drawing_only_pages_support_selection_and_output_rules() {
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../dutchman-core/tests/fixtures/techdraw-pages.FCStd");
+    let folder = tempfile::tempdir().unwrap();
+    let result = dutchman(&[
+        "convert",
+        fixture.to_str().unwrap(),
+        "--to",
+        "dxf",
+        "-o",
+        folder.path().to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(
+        result.status.success(),
+        "{} {}",
+        String::from_utf8_lossy(&result.stderr),
+        String::from_utf8_lossy(&result.stdout)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["pages"].as_array().unwrap().len(), 2);
+    assert!(report["pages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|p| p["dimension_representation"] == "none"));
+    for name in ["First", "Second"] {
+        assert!(folder
+            .path()
+            .join(format!("techdraw-pages-{name}.dxf"))
+            .exists());
+    }
+    let selected = folder.path().join("selected.dxf");
+    let result = dutchman(&[
+        "convert",
+        fixture.to_str().unwrap(),
+        "--to",
+        "dxf",
+        "--page",
+        "Second",
+        "-o",
+        selected.to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(result.status.success());
+    let text = std::fs::read_to_string(&selected).unwrap();
+    assert!(text.contains("Second"));
+    assert!(!text.contains("First"));
+    let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["pages"].as_array().unwrap().len(), 1);
+    let missing = dutchman(&[
+        "convert",
+        fixture.to_str().unwrap(),
+        "--to",
+        "dxf",
+        "--page",
+        "Absent",
+        "-o",
+        selected.to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(!missing.status.success());
+    assert_eq!(std::fs::read_to_string(&selected).unwrap(), text);
+    let part = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../dutchman-core/tests/fixtures/design_history.FCStd");
+    let no_page = dutchman(&[
+        "convert",
+        part.to_str().unwrap(),
+        "--to",
+        "dxf",
+        "-o",
+        selected.to_str().unwrap(),
+        "--json",
+    ]);
+    assert!(!no_page.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&no_page.stdout).unwrap();
+    assert!(report["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("no TechDraw page"));
+}

@@ -6,6 +6,7 @@
 
 pub mod anon;
 pub mod batch;
+pub mod dxf;
 pub mod formats;
 pub mod issue;
 pub mod json;
@@ -32,6 +33,8 @@ pub enum OutputFormat {
     Freecad,
     /// A native FreeCAD document (`.FCStd`). Experimental; requires FreeCAD.
     Fcstd,
+    /// FreeCAD TechDraw pages as ASCII DXF (convert command).
+    Dxf,
 }
 
 impl OutputFormat {
@@ -40,6 +43,7 @@ impl OutputFormat {
             Self::Solidcraft => "solidcraft",
             Self::Freecad => "FCMacro",
             Self::Fcstd => "FCStd",
+            Self::Dxf => "dxf",
         }
     }
 }
@@ -49,6 +53,7 @@ impl OutputFormat {
 pub enum OutputWriter {
     SolidCraft(SolidCraftWriter),
     FreeCad(dutchman_freecad::run::FreeCadRunner),
+    Dxf,
 }
 
 impl Writer for OutputWriter {
@@ -56,6 +61,7 @@ impl Writer for OutputWriter {
         match self {
             Self::SolidCraft(writer) => writer.extension(),
             Self::FreeCad(writer) => writer.extension(),
+            Self::Dxf => "dxf",
         }
     }
 
@@ -68,6 +74,7 @@ impl Writer for OutputWriter {
         match self {
             Self::SolidCraft(writer) => writer.write(model, out, report),
             Self::FreeCad(writer) => writer.write(model, out, report),
+            Self::Dxf => Err(Error::Encode("DXF page output uses dutchman convert --to dxf; convert-all and the single-file Writer are not supported yet".into())),
         }
     }
 }
@@ -75,8 +82,8 @@ impl Writer for OutputWriter {
 /// How a design is converted.
 #[derive(Clone, Debug, clap::Args)]
 pub struct ConvertOptions {
-    /// Output format: a SolidCraft design (the default), or a self-contained FreeCAD rebuild
-    /// macro or document (experimental).
+    /// Output format: SolidCraft (default), a FreeCAD macro/document (experimental),
+    /// or partial TechDraw DXF pages (convert command only).
     #[arg(long, value_enum, default_value = "solidcraft")]
     pub to: OutputFormat,
     /// Write the geometry as one non-parametric import, never the feature history.
@@ -96,7 +103,7 @@ pub struct ConvertOptions {
     /// Seconds FreeCAD may run before it is killed.
     #[arg(long, value_name = "SECONDS", default_value_t = 300)]
     pub freecad_timeout: u64,
-    /// Refuse to replace an existing .solidcraft file (by default it is replaced).
+    /// Refuse to replace existing output files (explicit outputs otherwise replace).
     #[arg(long)]
     pub no_clobber: bool,
     /// Seconds each SolidCraft check may run before the history is written unverified.
@@ -151,6 +158,7 @@ impl ConvertOptions {
     /// The writer these options describe.
     pub fn writer(&self) -> OutputWriter {
         match self.to {
+            OutputFormat::Dxf => OutputWriter::Dxf,
             OutputFormat::Solidcraft => OutputWriter::SolidCraft(
                 SolidCraftWriter::new()
                     .import_only(self.import_only)

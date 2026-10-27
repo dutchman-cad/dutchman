@@ -511,6 +511,28 @@ pub fn losses(report: &Report) -> Value {
 }
 
 // Test helpers outside `#[test]` functions are not covered by clippy.toml's test allowances.
+/// A DXF page's kept entity counts and mapping losses.
+pub fn drawing_page(
+    name: &str,
+    path: &Path,
+    entities: &BTreeMap<String, usize>,
+    dimension_representation: &str,
+    report: &Report,
+) -> Value {
+    json!({"name": name, "path": path.display().to_string(), "format": "dxf/AC1015", "units": "mm", "entities_per_layer": entities, "dimension_representation": dimension_representation, "losses": losses(report)})
+}
+
+/// The common conversion schema, with additive per-page drawing results.
+pub fn drawing_success(input_path: &Path, pages: &[Value], report: &Report) -> Value {
+    let mut out = success(CONVERT, input(input_path), report);
+    out.insert("pages".into(), json!(pages));
+    out.insert(
+        "output".into(),
+        json!({"path": pages.first().and_then(|p| p.get("path")), "format": "dxf/AC1015"}),
+    );
+    Value::Object(out)
+}
+
 #[cfg(test)]
 #[allow(clippy::indexing_slicing)]
 mod tests {

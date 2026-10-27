@@ -81,3 +81,49 @@ preservation. Joint coverage and specific fallback cases are listed in the guide
 Headless measurement and saving use the public [topological data scripting](https://wiki.freecad.org/Topological_data_scripting)
 and [FreeCAD scripting basics](https://wiki.freecad.org/FreeCAD_Scripting_Basics) APIs:
 `Shape.Solids`, `Volume`, `BoundBox`, document `recompute()` and `saveAs()`.
+
+## TechDraw to DXF
+
+```
+dutchman convert part.FCStd --to dxf
+dutchman convert part.FCStd --to dxf --page Page -o front.dxf --json
+dutchman convert part.FCStd --to dxf -o existing-directory
+```
+
+One ASCII DXF R2000 (`AC1015`) is written per page with `$INSUNITS=4` (mm) and
+metric measurement. Names are `part-<object name>.dxf`, in source page order;
+`--page` uses the source object name, not its displayed label. Names are limited
+to 100 ASCII letters, digits, underscores and hyphens; other characters become
+underscores and collisions get numeric suffixes, also on case-insensitive systems.
+A selected page with an explicit file path uses that exact path. An unselected
+file path supplies a base: `-o drawing.dxf` writes `drawing-Page.dxf`, etc.
+An output directory must already exist. Defaults need `--force` to overwrite;
+explicit outputs replace unless `--no-clobber` is set. All pages are encoded and
+existing outputs checked before publication; an I/O failure while publishing
+multiple files can leave earlier pages written. A document without a TechDraw
+page returns a clear error. Pages without a 3D body can be exported.
+
+| Source IR | DXF and report |
+|---|---|
+| Page `Views` / collection `Group` relationships and template link | Determine page membership; source associations are not retained as DXF metadata. |
+| `Drawing.position`, rotation and `SemanticAnnotation.text` | One text entity per nonempty line on ANNOTATIONS; blank line spacing is preserved; 2.5 mm font height, 3.5 mm spacing; styling/alignment are Degraded. Page positions are used directly, without model projection or centering. |
+| Drawing visibility, with agreed `ViewPresentation.visible` as fallback | Hidden objects are left out with Info notes; conflicting flags are Degraded; page UI visibility does not filter selected pages. |
+| GUI presentation properties | Dropped explicitly; line/point widths are in display units, not typed millimetres, and display modes and untyped font/style properties are not mapped. |
+| View, projection, section, detail | Empty `VIEW_<order>_<name>` layer; Dropped: `Drawing` has no cached 2D edge geometry, despite retaining position, scale, direction and rotation. |
+| Dimension | Dropped: FreeCAD's `SemanticAnnotation.value` is absent and `References2D` only names subelements, without resolved page anchors. `FormatSpec` is a formatting expression, not a measurement. No DIMENSION or dimension lines/text are fabricated. |
+| Template/title block/frame | Empty TITLE_BLOCK and FRAME layers; Dropped: retained assets have no typed template primitives, editable-text placements or sheet dimensions in `Drawing`. Dutchman does not interpret native/SVG records to fill decoder gaps. |
+| Other objects, resources, parameters and relationships | Reported individually as Dropped; unassigned drawing objects are reported at conversion level when exporting every page. |
+
+The encoder supports LINE, ARC, CIRCLE, LWPOLYLINE, exact polynomial/rational
+SPLINE (degree 1–10 with explicit knots/control points/weights), and TEXT/MTEXT. It is
+ready for typed geometry when cadmpeg supplies it; current FreeCAD drawing
+exports contain text only. Unicode text is ASCII escaped; multiline text is split
+into text entities (long lines use chunked MTEXT). No curve approximation or new external Rust dependency is used.
+DIMENSIONS is declared even when empty. Layer entity counts and losses appear in
+`pages` in the JSON report; decode losses remain at conversion level.
+
+The synthetic fixtures and their generator are in
+`crates/dutchman-core/tests/fixtures/techdraw.py`. Run the generator in FreeCADCmd;
+tests read committed files and require neither FreeCAD nor a Python DXF reader.
+Development interop checks use the MIT-licensed ezdxf reader. No CAD source code
+is used for drawing mapping or fixture generation.

@@ -330,3 +330,22 @@ The experimental FreeCAD writer also retains the longest mapped history prefix a
 mapped sketches when a later feature cannot be rebuilt. They remain hidden references in
 **Rebuilt history (partial)** beside the final embedded STEP body; only an exact prefix
 match can replace that final shape. The SolidCraft writer still requires complete history.
+
+
+## Drawing output
+
+`dutchman-dxf` maps the neutral drawing and semantic annotation arenas to one
+ASCII R2000 DXF per page. It depends on `dutchman-core` and `cadmpeg-ir` only and
+has no native-format parser. Its entity encoder accepts page-space geometry;
+missing typed geometry is reported rather than projected from 3D bodies or read
+from native caches. At the current pin, FreeCAD views have no cached 2D edges and
+only annotation text can be written. See [freecad.md](freecad.md#techdraw-to-dxf).
+
+`dutchman-core::read_drawings` uses the existing input limits, codec detector,
+full decode, validation and panic guard. It requires no 3D body and does not
+retry at geometry depth, which would remove the drawing arenas. The existing
+model conversion geometry gate remains unchanged. `dutchman::dxf` plans and
+encodes all selected pages, checks output paths, then writes them and builds
+per-page results through `json.rs`. This multiple-file operation has its own
+entry point because the existing `Writer` seam writes one byte stream. Batch
+and MCP drawing conversion are not supported yet.

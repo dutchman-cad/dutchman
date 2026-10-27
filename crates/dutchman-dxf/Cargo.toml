@@ -1,0 +1,15 @@
+[package]
+name = "dutchman-dxf"
+description = "ASCII DXF drawing output for Dutchman"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+dutchman-core.workspace = true
+cadmpeg-ir.workspace = true
+
+[lints]
+workspace = true

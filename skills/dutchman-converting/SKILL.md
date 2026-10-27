@@ -260,3 +260,15 @@ Existing unrelated outputs are skipped. SHA-256 state in `.dutchman-watch.json` 
 retries of recorded content, including failures, after restart. `--json` is an NDJSON stream
 of `dutchman.watch-event/1`, not a batch report. Ctrl-C/SIGTERM allows running work a
 30-second grace period and saves state. This command has no MCP counterpart.
+
+
+FreeCAD TechDraw drawing output is available from the CLI:
+`dutchman convert part.FCStd --to dxf [--page NAME]`. It writes one
+`part-PageName.dxf` per page; `-o` accepts an existing directory or a file base
+(an exact file path with `--page`). Defaults require `--force` to overwrite;
+explicit outputs replace unless `--no-clobber` is set. Page names are FreeCAD
+object names. This partial export keeps positioned annotation text; missing view
+edges, dimensions, title blocks and frames are reported as Dropped in the
+per-page JSON `pages` results. No page is an error. See [FreeCAD coverage](../../docs/freecad.md#techdraw-to-dxf).
+DXF conversion is not supported yet by convert-all, the MCP convert tool, desktop,
+or web. The MCP formats report includes the additive `drawings` capability list.

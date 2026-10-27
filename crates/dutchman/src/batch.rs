@@ -107,6 +107,12 @@ pub fn convert_all(
     options: &ConvertOptions,
     settings: &Settings,
 ) -> Result<Value, String> {
+    if options.to == crate::OutputFormat::Dxf {
+        return Err(
+            "DXF page output uses dutchman convert --to dxf; convert-all is not supported yet"
+                .into(),
+        );
+    }
     let Plan {
         jobs: mut work,
         problems,
@@ -325,6 +331,14 @@ pub fn line(result: &Value) -> String {
         .and_then(Value::as_str)
         .unwrap_or("?");
     if result.get("ok") == Some(&json!(true)) {
+        if let Some(pages) = result.get("pages").and_then(Value::as_array) {
+            let paths = pages
+                .iter()
+                .filter_map(|p| p.get("path").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return format!("converted  {input} -> {paths} ({} DXF pages)", pages.len());
+        }
         let output = result
             .pointer("/output/path")
             .and_then(Value::as_str)

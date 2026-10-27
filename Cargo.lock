@@ -1362,6 +1362,7 @@ dependencies = [
  "clap",
  "ctrlc",
  "dutchman-core",
+ "dutchman-dxf",
  "dutchman-freecad",
  "dutchman-launcher",
  "dutchman-pilot",
@@ -1383,6 +1384,14 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "dutchman-dxf"
+version = "0.2.2"
+dependencies = [
+ "cadmpeg-ir",
+ "dutchman-core",
 ]
 
 [[package]]

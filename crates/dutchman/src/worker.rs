@@ -112,7 +112,9 @@ impl ConvertOptions {
         if self.to != crate::OutputFormat::Solidcraft {
             args.push("--to".into());
             args.push(
-                if self.to == crate::OutputFormat::Fcstd {
+                if self.to == crate::OutputFormat::Dxf {
+                    "dxf"
+                } else if self.to == crate::OutputFormat::Fcstd {
                     "fcstd"
                 } else {
                     "freecad"
