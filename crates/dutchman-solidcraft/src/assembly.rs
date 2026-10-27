@@ -433,11 +433,24 @@ impl Builder<'_> {
         Some((occurrence, world))
     }
 
-    /// The component a part or sub-assembly becomes, with its name; `None` when it has nothing
-    /// SolidCraft can show and is left out.
+    /// The component a part or sub-assembly becomes, with its name; `None` when it has
+    /// geometry SolidCraft cannot show and is left out. A part with no bodies at all, as a
+    /// component empty in its source, becomes an empty component, so joints to it still hold.
     fn part(&mut self, part: &Model, parent: u64) -> Result<Option<(u64, String)>, Error> {
         let step = match &part.assembly {
             Some(_) => None,
+            None if part.ir.model.bodies.is_empty() => {
+                let file = part.source_file.as_deref().unwrap_or(&part.name);
+                self.report.push(
+                    Severity::Info,
+                    file,
+                    format!(
+                        "{}: placed as an empty component: it has no bodies",
+                        part.name
+                    ),
+                );
+                None
+            }
             None => match step::restate(part, self.report) {
                 Ok(step) => Some(step),
                 Err(err) => {
