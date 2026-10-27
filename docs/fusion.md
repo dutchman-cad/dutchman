@@ -46,10 +46,17 @@ transform, and each component as a product definition.
   and SolidCraft reports the conflict when it solves. A joint to the design's root component
   holds its occurrence to the design. Fusion joint motion converts from Dutchman 0.1.5 on
   (before it, every Fusion joint was fixed). A revolute limit on one side only is left out,
-  and the report says so. A joint is left out, and reported as Dropped (`joints`), when it is
-  of another kind, joins a component to itself or to one in another design, or joins a component
-  inside one placed more than once (the SolidCraft design holds that component once, so it would
-  not say which copy).
+  and the report says so. A component placed more than once is held once in the SolidCraft
+  design, so a joint between two parts inside one copy of it is that component's own: it is
+  written once, through the first copy, as SolidCraft solves joints between repeated parts in
+  the first placement's frame, and every copy follows. A joint from a part inside one copy to
+  something outside that copy cannot hold the part alone, so it holds the whole copy where the
+  part is, and the report says so. A part inside a design inserted into a component, which
+  Fusion names by its key alone, is found inside that component. A component empty in its
+  source becomes an empty SolidCraft component, so the joints to it are kept. A joint is left
+  out, and reported as Dropped (`joints`), when it is of another kind, joins a component to
+  itself or to one in another design, or grounds a part inside a component placed more than
+  once (grounding it would ground every copy).
 
 ### Upstream gaps
 
