@@ -22,9 +22,7 @@ services:
     restart: unless-stopped
 
   dutchman:
-    # nightly until a release includes --base-path, --output-dir and --solidcraft (after 0.2.1);
-    # then use latest, here and in watch.
-    image: ghcr.io/dutchman-cad/dutchman:nightly
+    image: ghcr.io/dutchman-cad/dutchman:latest
     entrypoint: ["dutchman-web"]
     command: ["--base-path", "/dutchman", "--output-dir", "/designs/Converted", "--solidcraft", "/"]
     environment:
@@ -41,7 +39,7 @@ services:
     restart: unless-stopped
 
   watch:
-    image: ghcr.io/dutchman-cad/dutchman:nightly
+    image: ghcr.io/dutchman-cad/dutchman:latest
     entrypoint: ["dutchman"]
     command: ["watch", "/designs/Inbox", "--out-dir", "/designs/Converted"]
     user: "${UID:-1000}:${GID:-1000}"
