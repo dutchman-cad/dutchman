@@ -1068,9 +1068,6 @@ fn railed_loft(top: f64) -> Model {
     });
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
-    let ring: Vec<Value> = [31, 32, 33, 34]
-        .map(|k| json!({"entity": format!("f3d:model:sketch-entity#{k}")}))
-        .to_vec();
     m["sketches"].as_array_mut().unwrap().push(json!({
         "id": RAIL,
         "name": "Rail",
@@ -2077,9 +2074,6 @@ fn holed_cube(diameter: f64, change: impl FnOnce(&mut Value)) -> Model {
     let mut model = cube_with_history(10.0, first_profile(), None);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     let m = &mut wire["model"];
-    let ring: Vec<Value> = [31, 32, 33, 34]
-        .map(|k| json!({"entity": format!("f3d:model:sketch-entity#{k}")}))
-        .to_vec();
     m["sketches"].as_array_mut().unwrap().push(json!({
         "id": HOLES,
         "name": "Holes",
@@ -4698,8 +4692,7 @@ fn plate_flange(y: f64) -> Model {
         plate_line(34, [-10.0, 20.0], [-10.0, 0.0]),
     ]);
     let point = |x, y, z| json!({"x": x, "y": y, "z": z});
-    let edge = "test:sheet:input-edge#back";
-    let row = |id: &str, of: &str| {
+    let row = |id: &str, of: &str, edge: &str| {
         json!({
             "id": id, "input_of": of, "edges": [edge],
             "edge_geometry": [{
@@ -4709,14 +4702,25 @@ fn plate_flange(y: f64) -> Model {
             }],
         })
     };
+    // The plate and its bend each select the same edge in their own input state.
+    let (plate_edge, bend_edge) = ("test:sheet:input-edge#plate", "test:sheet:input-edge#back");
     m["feature_input_topologies"] = json!([
-        row("test:sheet:feature-input#plate", "f3d:model:feature#5"),
-        row("test:sheet:feature-input#bend", "f3d:model:feature#6"),
+        row(
+            "test:sheet:feature-input#plate",
+            "f3d:model:feature#5",
+            plate_edge
+        ),
+        row(
+            "test:sheet:feature-input#bend",
+            "f3d:model:feature#6",
+            bend_edge
+        ),
     ]);
-    // Both select the bend's input state, as Inventor's plate and bend share one attachment.
-    let attachment = json!({"kind": "historical", "value": {
-        "state": "test:sheet:feature-input#bend", "edges": [edge], "native": "synthetic edge",
-    }});
+    let attachment = |state: &str, edge: &str| {
+        json!({"kind": "historical", "value": {
+            "state": state, "edges": [edge], "native": "synthetic edge",
+        }})
+    };
     let relief = json!({"form": "style_default", "width": 1.0, "depth": 0.5,
                         "minimum_remnant": 2.0, "seam_gap": 0.01});
     let transition = json!({"form": "style_default", "radius": 1.0});
@@ -4731,16 +4735,16 @@ fn plate_flange(y: f64) -> Model {
                 "definition": "sheet_metal_attached_plate",
                 "profile": {"kind": "sketch_regions", "value": {
                     "sketch": PLATE_SKETCH, "regions": [{"region": "loops", "outer": 0}]}},
-                "thickness": 1.0, "side": "forward", "op": "join",
-                "attachment": attachment, "inside_radius": 0.5,
-                "relief": relief, "transition": transition,
+                "thickness": 1.0, "side": "forward",
+                "attachment": attachment("test:sheet:feature-input#plate", plate_edge),
             },
         }),
         json!({
             "id": "f3d:model:feature#6", "ordinal": 4, "name": "Bend1", "suppressed": false,
             "definition": {
                 "definition": "sheet_metal_bend", "plate": "f3d:model:feature#5",
-                "attachment": attachment, "inside_radius": 0.5,
+                "attachment": attachment("test:sheet:feature-input#bend", bend_edge),
+                "inside_radius": 0.5,
                 "relief": relief, "transition": transition,
             },
         }),
@@ -4794,24 +4798,28 @@ fn attached_plates_refuse_shapes_a_flange_cannot_rebuild() {
             "another thickness",
         ),
         (
-            "/model/features/3/definition/op",
-            json!("cut"),
-            "does not join",
-        ),
-        (
-            "/model/features/3/definition/inside_radius",
-            json!(1.0),
-            "another bend radius",
-        ),
-        (
             "/model/features/3/definition/side",
             json!("symmetric"),
             "both sides",
         ),
         (
+            "/model/feature_input_topologies/0/edge_geometry/0",
+            json!({"edge": "test:sheet:input-edge#plate",
+                   "interior": {"x": 5.0, "y": 0.0, "z": 1.0},
+                   "start": {"x": 10.0, "y": 0.0, "z": 1.0},
+                   "end": {"x": 0.0, "y": 0.0, "z": 1.0},
+                   "tangent": {"x": -1.0, "y": 0.0, "z": 0.0}}),
+            "another edge",
+        ),
+        (
             "/model/features/3/definition/attachment/value/edges",
-            json!(["other"]),
-            "other edges",
+            json!(["test:sheet:input-edge#back"]),
+            "absent from its input topology",
+        ),
+        (
+            "/model/feature_input_topologies/0/input_of",
+            json!("f3d:model:feature#6"),
+            "does not belong",
         ),
         (
             "/model/sketches/1/placement/frame/origin/y",

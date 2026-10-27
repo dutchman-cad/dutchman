@@ -130,39 +130,32 @@ pub(super) fn bend(
     ctx: &mut Context,
     preceding: &[Value],
 ) -> Result<Value, String> {
-    let plate = definition
+    let plate_row = definition
         .get("plate")
         .and_then(Value::as_str)
         .and_then(|id| ctx.row("features", id))
         .ok_or("the plate it bends is not in the history")?;
-    let plate = plate.get("definition").unwrap_or(&Value::Null);
+    let plate = plate_row.get("definition").unwrap_or(&Value::Null);
     if plate.get("definition").and_then(Value::as_str) != Some("sheet_metal_attached_plate") {
         return Err("the plate it bends is not an attached plate".to_owned());
-    }
-    if plate.get("op").and_then(Value::as_str) != Some("join") {
-        return Err("a plate that does not join the sheet is not supported yet".to_owned());
     }
     let selection = definition
         .get("attachment")
         .ok_or("its edge selection is missing")?;
-    if selection
-        .pointer("/value/edges")
-        .and_then(Value::as_array)
-        .is_some_and(|edges| edges.len() > 1)
-    {
-        return Err("a plate bent onto more than one edge is not supported yet".to_owned());
-    }
-    if plate.get("attachment").map(|a| a.pointer("/value/edges"))
-        != Some(selection.pointer("/value/edges"))
-    {
-        return Err("its plate is attached to other edges than it bends".to_owned());
+    let attachment = plate
+        .get("attachment")
+        .ok_or("its plate's edge selection is missing")?;
+    for edges in [selection, attachment].map(|s| s.pointer("/value/edges")) {
+        if edges
+            .and_then(Value::as_array)
+            .is_some_and(|edges| edges.len() > 1)
+        {
+            return Err("a plate bent onto more than one edge is not supported yet".to_owned());
+        }
     }
     let radius = number(definition.get("inside_radius"))
         .filter(|v| *v > 0.0)
         .ok_or("its bend radius is not given")?;
-    if number(plate.get("inside_radius")).is_none_or(|r| (r - radius).abs() > 1e-9) {
-        return Err("its plate gives another bend radius than it".to_owned());
-    }
     let base = base_sheet(ctx, preceding)?;
     let thickness = base.thickness;
     if number(plate.get("thickness")).is_none_or(|t| (t - thickness).abs() > 1e-9) {
@@ -171,6 +164,14 @@ pub(super) fn bend(
     let [(point, index)] = picks(feature, selection, ctx, &base.edges, 1)?[..] else {
         return Err("it needs one resolved input edge".to_owned());
     };
+    // The plate and its bend each select the edge in their own input state, so they agree
+    // when both selections resolve to the same edge of the rebuilt sheet.
+    let [(_, attached)] = picks(plate_row, attachment, ctx, &base.edges, 1)?[..] else {
+        return Err("its plate needs one resolved input edge".to_owned());
+    };
+    if attached != index {
+        return Err("its plate is attached to another edge than it bends".to_owned());
+    }
     let (a, b) = *base
         .edges
         .get(index)
@@ -336,7 +337,7 @@ fn base_sheet(ctx: &Context, preceding: &[Value]) -> Result<Base, String> {
     Ok(Base {
         edges,
         thickness,
-        center: [0, 1, 2].map(|i| middle[i] + thickness / 2.0 * up[i]),
+        center: difference(middle, scaled(up, -thickness / 2.0)),
         up,
     })
 }
