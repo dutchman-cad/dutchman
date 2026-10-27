@@ -670,6 +670,10 @@ splits into pieces, closed edges and other curves are refused. Equal two-distanc
 reference-face ordering and are refused specifically. Variable fillets lack a proven
 chain direction. Final-body edge selections never stand in for input geometry.
 
+FreeCAD fillets and chamfers can supply input edges from their base feature's stored shape.
+Those edges must belong to one hidden result of an earlier dependency, and still pass the
+same replay proof. A resolved selection without that proven earlier result is refused.
+
 Hole history includes chamfered entries and tapped holes: the hole keeps its bore and an ISO
 metric thread label such as `M6x1`. A thread's hand, tolerance class, and length don't carry
 across; the report lists them as Degraded. Taper, exit treatments, modeled threads, and entry

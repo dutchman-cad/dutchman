@@ -84,6 +84,11 @@ When SolidCraft has a quarantine attribute without the user-approved flag on mac
 and try again; the history stays `unverified`. A geometry check that cannot run records
 the same guidance in its `not checked` loss message.
 
+For FreeCAD fillets and chamfers, `history.features[].reason` reports missing stored input
+edge geometry or a failed replay proof. Resolved edges without proven membership in an
+earlier stored feature result are refused. This uses the existing feature status and reason
+fields; no report fields change.
+
 For a blocked sweep, `history.features[].reason` names the unsupported option, such as
 `sweeps with round corner transitions are not mapped yet` or
 `sweeps with linear section interpolation are not mapped yet`. Tangent-path extension and
