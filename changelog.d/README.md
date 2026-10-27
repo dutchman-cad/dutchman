@@ -17,6 +17,10 @@ The allowed headings and their order are defined by `HEADINGS` in
 workflow changes. Known issues belong in the dated release entry when preparing a release.
 `README.md` is documentation, not a fragment.
 
+Fragments for a change that is merged but held back from the next release go in
+`changelog.d/held/`; `changelog.py` ignores that folder. Move them back into `changelog.d/`
+in the pull request that ships the change.
+
 Run `python3 scripts/changelog.py check` to validate fragments and catch repeated topic
 headings in any released version. Run `python3 scripts/changelog.py preview` to print the
 would-be Unreleased section: topics follow the canonical order, and fragments within each
