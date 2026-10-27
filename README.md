@@ -9,6 +9,8 @@ Dutchman Convert, part of Dutchman CAD, ferries CAD designs between formats: it 
 native CAD designs into open, editable models. Reading the native file is
 done by [cadmpeg](https://github.com/cadmpeg/cadmpeg); Dutchman maps cadmpeg's model onto a
 target format, starting with [SolidCraft](https://github.com/tangency-labs/solidcraft) designs.
+**Help it convert more:** make a small test file from a [fixtures recipe](https://dutchman-cad.github.io/fixtures/),
+or send a file that converts wrong to Dutchy in [Discord](https://discord.gg/yTcseBEdeu).
 
 ```sh
 dutchman part.f3d                 # writes part.solidcraft
@@ -16,20 +18,9 @@ dutchman part.f3d out.solidcraft
 dutchman convert part.f3d out.solidcraft
 ```
 
-With no output given, Dutchman writes beside the input using the extension chosen by `--to`
-(`.solidcraft`, `.FCMacro`, or `.FCStd`). If that default already exists, choose `-o PATH`
-or use `--force` to replace it. An explicit output is replaced unless `--no-clobber`;
-`--force` conflicts with `--no-clobber`. The default may never replace the input itself.
-
-Dutchman Convert is the `dutchman` command; converting is its main job. It also runs other
-Dutchman CAD tools: `dutchman pilot` and `dutchman fixtures` run installed `dutchman-pilot`
-and `dutchman-fixtures` executables, found next to `dutchman` first, then on `PATH`.
-`dutchman --help` lists the installed tools and their versions. An installed Pilot takes
-precedence over the built-in Pilot; the default `pilot` Cargo feature supplies the fallback.
-
-The std-only `dutchman-launcher` crate provides a tiny front command for installations that
-ship with Pilot alone. Packagers install its binary as `dutchman`; `dutchman --version`
-identifies it as `dutchman launcher <version>`. Install Dutchman Convert for conversion commands.
+With no output given, Dutchman writes beside the input and won't replace a file that is
+already there unless you pass `--force`. `dutchman convert --help` lists every option, and
+[Getting started](docs/guide.md) walks through a first conversion.
 
 ## Install
 
@@ -109,17 +100,15 @@ Written as a SolidCraft design (.solidcraft), or, experimental, as a FreeCAD reb
 ```
 <!-- /formats -->
 
-After a refused conversion (except IGES) or a history that did not fully map, Dutchman offers
-short recipes for making small test files: [fixtures](https://dutchman-cad.github.io/fixtures/) or
-`/volunteer` in [Discord](https://discord.gg/yTcseBEdeu). `--quiet` hides the invitation;
-`--json` prints only the report. The desktop app shows the same invitation once under its results.
-Got a file that converts wrong? Drop it, with its STEP export, in a DM to Dutchy in our Discord.
+After a refused conversion (except IGES) or a history that did not fully map, Dutchman points
+to the same [fixtures recipes](https://dutchman-cad.github.io/fixtures/) and `/volunteer` in
+[Discord](https://discord.gg/yTcseBEdeu); `--quiet` hides that, and `--json` prints only the
+report. For a file that converts wrong, DM it to Dutchy with its STEP export.
 
 - When every feature in a design's history maps onto SolidCraft, the SolidCraft design keeps
   that history, editable, with the original geometry kept beside it. If `solidcraft-cli` is
   installed, Dutchman replays the history in it and checks it against the original before
-  keeping it. What maps, most of it from Fusion (body patterns, mirrors, booleans, and
-  more of the rest on main, in the next release):
+  keeping it. What maps, most of it from Fusion:
   - sketches: lines, arcs, circles, conics, splines, and many constraints and dimensions;
   - extrudes and revolves, with their end forms;
   - holes: counterbores, countersinks, chamfered entries, and thread labels on tapped holes;
@@ -130,16 +119,16 @@ Got a file that converts wrong? Drop it, with its STEP export, in a DM to Dutchy
   - sheet-metal base flanges;
   - constant-radius fillets and equal-setback chamfers, on edges proven on SolidCraft's own
     replay of the history before them (so they need `solidcraft-cli`); a Fusion fillet with a
-    tangency weight of exactly 1 maps as a circular fillet (on main, in the next release).
+    tangency weight of exactly 1 maps as a circular fillet.
 
   [Feature history](docs/guide.md#feature-history-and-the-solidcraft-check) in the guide has
   the detail, and what stops a history.
 - Otherwise the design converts as solid geometry without history. Sketches that map, on
-  planes that resolve, are kept with it, hidden, for reference (on main, in the next release).
+  planes that resolve, are kept with it, hidden, for reference.
 - Assemblies keep their components and placements. Fusion and FreeCAD assemblies keep their
   joints too (revolute, slider, and rigid), with their grounded parts held where they are;
   Inventor assemblies place their parts, without joints. Sketches in the assembly's own file
-  are kept, hidden, for reference (on main, in the next release).
+  are kept, hidden, for reference.
 - FreeCAD output is experimental: `--to freecad` writes a self-contained rebuild macro,
   `--to fcstd` runs FreeCAD headlessly to save a native `.FCStd` document and checks its
   solids against the original, and `--to freecad --verify` runs the same check on a macro.
@@ -150,8 +139,7 @@ instead. It rebuilds the mapped history in FreeCAD, keeps the original geometry,
 an assembly's joints (fixed, revolute, slider, cylindrical, ball, and more, through
 sub-assemblies too) in the Assembly workbench, with its grounded parts. When a later feature
 can't be rebuilt, the mapped features before it and the mapped sketches are kept, hidden, in
-a "Rebuilt history (partial)" group beside the original geometry (experimental, on main, in
-the next release; see
+a "Rebuilt history (partial)" group beside the original geometry (experimental; see
 [FreeCAD output](docs/guide.md#freecad-output-experimental)).
 
 `dutchman formats` lists what converts from each format; `dutchman convert --help` lists the
@@ -173,6 +161,11 @@ dutchman pilot model --upstream http://localhost:11434/v1
 Install SolidCraft separately. The `model` command connects to a chat-completions endpoint
 such as Ollama or LM Studio. Pilot is included with the default `pilot` Cargo feature.
 
+`dutchman` also runs the other Dutchman CAD tools: `dutchman pilot` and `dutchman fixtures`
+run installed `dutchman-pilot` and `dutchman-fixtures` executables, found next to `dutchman`
+first, then on `PATH`. `dutchman --help` lists the installed tools and their versions. An
+installed Pilot takes precedence over the built-in one.
+
 ## Desktop app
 
 `dutchman-gui` converts without a terminal. Drop design files or folders on the window (or use
@@ -182,25 +175,21 @@ Info, Degraded or Dropped. A converted design opens in SolidCraft from its card:
 `SOLIDCRAFT_APP` names, else `solidcraft` on `PATH`, else the system's app for `.solidcraft`
 files. When an Inventor assembly's part files are not found, its card names them: **Search a
 folder…** or **Find a file…** converts it again, searching there too. The app follows the
-system's light or dark setting, or can be set to Day or Night. On main, in the next release:
-its **Output format** choice offers a FreeCAD macro, the window title shows its version,
-`dutchman-gui --version` and `--help` print without opening a window, a **Report a
-problem** link opens the **A file didn't convert** form, and a failed file's **Report this
-on GitHub** opens that form filled in with the version, system, error and an anonymous
-report. On main, in the next release, the app is named **Dutchman Convert**: its window, and
-on macOS **Dutchman Convert.app**; the commands keep their names.
+system's light or dark setting, or can be set to Day or Night. Its **Output format** choice
+offers a FreeCAD macro, and the window title shows its version. A **Report a problem** link
+opens the **A file didn't convert** form; a failed file's **Report this on GitHub** opens it
+filled in with the version, system, error, and an anonymous report. `dutchman-gui --version`
+and `--help` print without opening a window.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/dutchman-gui-night.png">
   <img alt="The Dutchman Convert app after converting three files: two converted, one failed with its reason" src="docs/images/dutchman-gui-day.png" width="480">
 </picture>
 
-On macOS it comes as **Dutchman Convert.app** in a disk image (**Dutchman.app** in 0.1.5 and
-earlier, from 0.1.3 on): open it and drag it onto Applications in the window that appears (see
+On macOS it comes as **Dutchman Convert.app** in a disk image: open it and drag it onto Applications in the window that appears (see
 [opening it the first time](docs/guide.md#opening-the-app-the-first-time): approve it once
 and the commands inside it run too). It ships in the
-release archives beside `dutchman` (from 0.1.1 on), or build it from source
-with Rust 1.88 or newer:
+release archives beside `dutchman`, or build it from source with Rust 1.88 or newer:
 
 ```sh
 cargo install --git https://github.com/dutchman-cad/dutchman dutchman-gui
@@ -322,6 +311,10 @@ installed executable's absolute path.
 cargo build --release
 cargo test --workspace
 ```
+
+For packagers: the std-only `dutchman-launcher` crate provides a tiny front command for installations that
+ship with Pilot alone. Packagers install its binary as `dutchman`; `dutchman --version`
+identifies it as `dutchman launcher <version>`. Install Dutchman Convert for conversion commands.
 
 ## Licence
 
