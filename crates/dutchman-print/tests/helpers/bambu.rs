@@ -5,14 +5,21 @@ use rumqttc::mqttbytes::v4::{
 };
 use rumqttc::QoS;
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{broadcast, Mutex};
 
+#[allow(dead_code)]
 pub struct Fake {
     pub port: u16,
+    pub server: rustls::ServerConfig,
+    pub authorization: Arc<AtomicBool>,
+    pub lose_reply: Arc<AtomicBool>,
+    pub ready: Arc<AtomicBool>,
+    pub no_state: Arc<AtomicBool>,
+    pub commands: Arc<Mutex<Vec<serde_json::Value>>>,
     pub cert: rustls::pki_types::CertificateDer<'static>,
     pub pem: String,
     pub reports: broadcast::Sender<serde_json::Value>,
@@ -49,7 +56,7 @@ impl Fake {
             rustls::pki_types::PrivatePkcs8KeyDer::from(key.signing_key.serialize_der()).into(),
         )
         .unwrap();
-        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server));
+        let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(server.clone()));
         let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
             .await
             .unwrap();
@@ -59,8 +66,24 @@ impl Fake {
         let requests = Arc::new(AtomicUsize::new(0));
         let disconnects = Arc::new(AtomicUsize::new(0));
         let credentials = Arc::new(AtomicUsize::new(0));
+        let authorization = Arc::new(AtomicBool::new(false));
+        let lose_reply = Arc::new(AtomicBool::new(false));
+        let no_state = Arc::new(AtomicBool::new(false));
+        let ready = Arc::new(AtomicBool::new(false));
+        let commands = Arc::new(Mutex::new(Vec::new()));
+        let live = Arc::new(Mutex::new(
+            serde_json::json!({"print":{"gcode_state":"IDLE","mc_percent":20,"mc_remaining_time":3,"nozzle_temper":210,"bed_temper":55,"subtask_name":"Test cube"}}),
+        ));
         let tasks = Arc::new(Mutex::new(Vec::new()));
         let task = {
+            let (authorization, lose_reply, ready, commands, live, no_state) = (
+                authorization.clone(),
+                lose_reply.clone(),
+                ready.clone(),
+                commands.clone(),
+                live.clone(),
+                no_state.clone(),
+            );
             let (reports, connections, requests, disconnects, credentials, tasks) = (
                 reports.clone(),
                 connections.clone(),
@@ -73,12 +96,22 @@ impl Fake {
                 loop {
                     let (socket, _) = listener.accept().await.unwrap();
                     connections.fetch_add(1, Ordering::SeqCst);
+                    let broadcast = reports.clone();
                     let (acceptor, mut reports, requests, disconnects, credentials) = (
                         acceptor.clone(),
                         reports.subscribe(),
                         requests.clone(),
                         disconnects.clone(),
                         credentials.clone(),
+                    );
+                    let (authorization, lose_reply, ready, commands, live, broadcast, no_state) = (
+                        authorization.clone(),
+                        lose_reply.clone(),
+                        ready.clone(),
+                        commands.clone(),
+                        live.clone(),
+                        broadcast,
+                        no_state.clone(),
                     );
                     let task = tokio::spawn(async move {
                         let Ok(mut socket) = acceptor.accept(socket).await else {
@@ -110,9 +143,33 @@ impl Fake {
                                         Packet::Publish(p) => {
                                             assert_eq!(p.topic, "device/TESTSERIAL/request");
                                             let value: serde_json::Value = serde_json::from_slice(&p.payload).unwrap();
-                                            assert_eq!(value, serde_json::json!({"pushing":{"command":"pushall","sequence_id":"0","version":1,"push_target":1}}));
-                                            requests.fetch_add(1, Ordering::SeqCst);
-                                            Packet::Publish(Publish::new("device/TESTSERIAL/report", QoS::AtMostOnce, serde_json::json!({"print":{"gcode_state":"IDLE","mc_percent":20,"mc_remaining_time":3,"nozzle_temper":210,"bed_temper":55,"subtask_name":"Test cube"}}).to_string()))
+                                            if value.get("pushing").is_some() {
+                                                assert_eq!(value, serde_json::json!({"pushing":{"command":"pushall","sequence_id":"0","version":1,"push_target":1}}));
+                                                requests.fetch_add(1, Ordering::SeqCst);
+                                                let mut state = live.lock().await.clone();
+                                                if ready.load(Ordering::SeqCst) { state["print"]["print_error"] = serde_json::json!(0); }
+                                                Packet::Publish(Publish::new("device/TESTSERIAL/report", QoS::AtMostOnce, state.to_string()))
+                                            } else {
+                                                commands.lock().await.push(value.clone());
+                                                if p.qos == QoS::AtLeastOnce && send(&mut socket, Packet::PubAck(rumqttc::mqttbytes::v4::PubAck::new(p.pkid))).await.is_err() { return; }
+                                                let command = value["print"]["command"].as_str().unwrap();
+                                                let mut reply = serde_json::json!({"print":{"command":command,"sequence_id":value["print"]["sequence_id"],"result":"SUCCESS"}});
+                                                if authorization.load(Ordering::SeqCst) {
+                                                    reply["print"]["result"] = serde_json::json!("FAIL");
+                                                    reply["print"]["reason"] = serde_json::json!("verification");
+                                                } else if !no_state.load(Ordering::SeqCst) {
+                                                    let mut state = live.lock().await;
+                                                    state["print"]["gcode_state"] = serde_json::json!(match command { "project_file" | "resume" => "RUNNING", "pause" => "PAUSE", "stop" => "FAILED", _ => panic!("Unexpected command") });
+                                                    state["print"]["print_error"] = serde_json::json!(0);
+                                                    if command == "project_file" {
+                                                        state["print"]["subtask_name"] = value["print"]["subtask_name"].clone();
+                                                        state["print"]["gcode_start_time"] = value["print"]["sequence_id"].clone();
+                                                    }
+                                                    let _ = broadcast.send(state.clone());
+                                                }
+                                                if lose_reply.load(Ordering::SeqCst) { return; }
+                                                Packet::Publish(Publish::new("device/TESTSERIAL/report", QoS::AtMostOnce, reply.to_string()))
+                                            }
                                         }
                                         Packet::PingReq if ignore_ping => continue,
                                         Packet::PingReq => Packet::PingResp,
@@ -129,6 +186,12 @@ impl Fake {
             })
         };
         Self {
+            server,
+            authorization,
+            lose_reply,
+            ready,
+            no_state,
+            commands,
             port,
             cert,
             pem,

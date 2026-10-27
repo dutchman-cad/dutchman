@@ -1,4 +1,4 @@
-//! Bambu LAN telemetry. Control is deliberately unavailable.
+//! Bambu LAN telemetry and explicitly enabled experimental control.
 
 use crate::backend::{Error, Printer, PrinterState};
 use rumqttc::{AsyncClient, Event, Incoming, MqttOptions, QoS, Transport};
@@ -15,9 +15,17 @@ const FRESH: Duration = Duration::from_secs(30);
 const PACING: Duration = Duration::from_secs(300);
 const DEADLINE: Duration = Duration::from_secs(4);
 
+#[path = "bambu_control.rs"]
+mod control;
+pub(crate) use control::start_payload;
+pub use control::StartProfile;
+
+#[path = "bambu_ftps.rs"]
+mod ftps;
+
 pub fn unsupported() -> Error {
     Error::Refused(
-        "Bambu control is not supported yet. Monitoring and local preparation are available."
+        "Bambu control is disabled. Set lan_control = true only after confirming LAN/Developer Mode allows control."
             .into(),
     )
 }
@@ -44,6 +52,9 @@ pub(crate) fn validate_enrollment(
     }
     if p.port == Some(0) {
         return Err("Set the Bambu port between 1 and 65535.".into());
+    }
+    if p.ftps_port == Some(0) {
+        return Err("Set the Bambu ftps_port between 1 and 65535.".into());
     }
     let serial = p.serial.as_deref().unwrap_or_default();
     if serial.is_empty()
@@ -73,6 +84,14 @@ pub(crate) fn validate_enrollment(
     }
     if p.url.is_some() || p.api_key.is_some() || p.username.is_some() || p.password.is_some() {
         return Err("Use host, serial, and access_code for Bambu LAN monitoring.".into());
+    }
+    p.start_profile.validate()?;
+    if p.ams_mapping.len() > 64
+        || p.ams_mapping
+            .iter()
+            .any(|(k, v)| k.parse::<usize>().ok().is_none_or(|n| n == 0 || n > 64) || *v > 15)
+    {
+        return Err("Set ams_mapping keys to filament numbers 1–64 and slots to 0–15.".into());
     }
     Ok(())
 }
@@ -196,6 +215,9 @@ fn tls(p: &crate::config::Printer) -> Result<rustls::ClientConfig, String> {
 struct Telemetry {
     fields: Map<String, Value>,
     received: Option<Instant>,
+    state_received: Option<Instant>,
+    error_received: Option<Instant>,
+    job_received: Option<Instant>,
     reason: &'static str,
     terminal: bool,
 }
@@ -204,6 +226,9 @@ impl Default for Telemetry {
         Self {
             fields: Map::new(),
             received: None,
+            state_received: None,
+            error_received: None,
+            job_received: None,
             reason: "Waiting for fresh Bambu telemetry.",
             terminal: false,
         }
@@ -219,6 +244,13 @@ impl Telemetry {
         };
         let previous_state = self.fields.get("gcode_state").cloned();
         let previous_job = self.fields.get("subtask_name").cloned();
+        if print
+            .get("subtask_name")
+            .is_some_and(|name| Some(name) != previous_job.as_ref())
+            && !print.contains_key("gcode_start_time")
+        {
+            self.fields.remove("gcode_start_time");
+        }
         // Only retain known scalar telemetry. Unknown nested data cannot grow the cache.
         let mut changed = false;
         for key in [
@@ -228,6 +260,7 @@ impl Telemetry {
             "nozzle_temper",
             "bed_temper",
             "subtask_name",
+            "gcode_start_time",
             "gcode_file",
             "print_error",
         ] {
@@ -237,6 +270,15 @@ impl Telemetry {
                     || v.as_str()
                         .is_some_and(|s| s.len() <= 256 && !s.chars().any(char::is_control))
                 {
+                    if key == "subtask_name" && v.is_string() {
+                        self.job_received = Some(Instant::now());
+                    }
+                    if key == "gcode_state" && v.is_string() {
+                        self.state_received = Some(Instant::now());
+                    }
+                    if key == "print_error" && v.as_u64().is_some() {
+                        self.error_received = Some(Instant::now());
+                    }
                     self.fields.insert(key.into(), v.clone());
                     changed = true;
                 }
@@ -262,7 +304,8 @@ impl Telemetry {
         true
     }
     fn printer(&self, p: &crate::config::Printer, fresh: Duration) -> Printer {
-        let live = self.received.is_some_and(|t| t.elapsed() < fresh);
+        let live = self.received.is_some_and(|t| t.elapsed() < fresh)
+            && self.state_received.is_some_and(|t| t.elapsed() < fresh);
         let detail = if live {
             self.fields
                 .get("gcode_state")
@@ -307,7 +350,25 @@ impl Telemetry {
             state,
             detail: Some(detail.into()),
             needs_clearing: Some(self.terminal),
-            job_id: None,
+            job_id: if live {
+                let name = self
+                    .fields
+                    .get("subtask_name")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty());
+                let start = self
+                    .fields
+                    .get("gcode_start_time")
+                    .and_then(|v| {
+                        v.as_u64()
+                            .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+                    })
+                    .filter(|n| *n > 0);
+                name.zip(start)
+                    .map(|(name, start)| format!("{name}:{start}"))
+            } else {
+                None
+            },
             job_name: live
                 .then(|| {
                     self.fields
@@ -343,6 +404,7 @@ pub struct Client {
     oneshot: bool,
     fresh: Duration,
     pacing: Duration,
+    sequence: std::sync::atomic::AtomicU64,
 }
 impl Drop for Client {
     fn drop(&mut self) {
@@ -352,6 +414,115 @@ impl Drop for Client {
     }
 }
 impl Client {
+    /// Stages bytes without starting a print, after a read-only readiness check.
+    pub async fn upload(&self, filename: &str, bytes: &[u8]) -> Result<(), Error> {
+        self.check_control()?;
+        self.ready().await?;
+        ftps::upload(&self.config, filename, bytes).await
+    }
+
+    pub fn check_control(&self) -> Result<(), Error> {
+        if self.config.lan_control {
+            Ok(())
+        } else {
+            Err(unsupported())
+        }
+    }
+
+    pub async fn ready(&self) -> Result<(), Error> {
+        let status = self.snapshot().await;
+        let telemetry = self.state.borrow();
+        if status.detail.as_deref() != Some("IDLE")
+            || status.state != PrinterState::Idle
+            || telemetry.fields.get("print_error").and_then(Value::as_u64) != Some(0)
+            || !telemetry
+                .state_received
+                .is_some_and(|t| t.elapsed() < self.fresh)
+            || !telemetry
+                .error_received
+                .is_some_and(|t| t.elapsed() < self.fresh)
+        {
+            return Err(Error::Refused("Bambu readiness is unknown or the printer is busy. Read fresh idle status before starting.".into()));
+        }
+        Ok(())
+    }
+
+    /// A command connection is discarded after any transport error, with no reconnect or retry.
+    pub async fn command(
+        &self,
+        mut payload: Value,
+        name: &str,
+        expected: &str,
+        identity: Option<&str>,
+    ) -> Result<(), Error> {
+        self.check_control()?;
+        let sequence = self
+            .sequence
+            .fetch_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |n| n.checked_add(1),
+            )
+            .map_err(|_| Error::Unavailable)?
+            .to_string();
+        let print = payload
+            .get_mut("print")
+            .and_then(Value::as_object_mut)
+            .ok_or_else(|| {
+                Error::Refused("Cannot build the Bambu command. Review the start profile.".into())
+            })?;
+        print.insert("sequence_id".into(), Value::String(sequence.clone()));
+        let command = print
+            .get("command")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let serial = self.config.serial.as_deref().unwrap_or_default();
+        let mut options = self.options.clone();
+        options.set_client_id(format!(
+            "control-{}",
+            crate::new_job_id().map_err(Error::Failed)?
+        ));
+        let (client, mut events) = AsyncClient::new(options, 8);
+        let mut telemetry = self.state.borrow().clone();
+        telemetry.state_received = None;
+        if command == "project_file" {
+            telemetry.job_received = None;
+        }
+        let operation = async {
+            let mut sent = false;
+            loop {
+                match events.poll().await.map_err(|_| Error::Refused("Command reply was lost. Read status to reconcile the job; do not repeat Start.".into()))? {
+                    Event::Incoming(Incoming::ConnAck(_)) => client.subscribe(format!("device/{serial}/report"), QoS::AtMostOnce).await.map_err(|_| Error::Unavailable)?,
+                    Event::Incoming(Incoming::SubAck(_)) if !sent => {
+                        sent = true;
+                        client.publish(format!("device/{serial}/request"), QoS::AtLeastOnce, false, payload.to_string()).await.map_err(|_| Error::Unavailable)?;
+                    }
+                    Event::Incoming(Incoming::Publish(p)) if sent && !p.retain && p.topic == format!("device/{serial}/report") => {
+                        let value: Value = serde_json::from_slice(&p.payload).unwrap_or(Value::Null);
+                        if value.pointer("/print/sequence_id").and_then(Value::as_str) == Some(&sequence)
+                            && value.pointer("/print/command").and_then(Value::as_str) == Some(&command)
+                            && value.pointer("/print/result").and_then(Value::as_str).is_some_and(|s| !s.eq_ignore_ascii_case("success")) {
+                            return Err(Error::Refused("Bambu rejected the command. Check authorization and LAN/Developer Mode, then read status.".into()));
+                        }
+                        telemetry.report(&p.payload);
+                        if telemetry.state_received.is_some() && telemetry.job_received.is_some()
+                            && telemetry.printer(&self.config, self.fresh).job_id.as_deref().is_some_and(|id| identity.is_none_or(|expected| id == expected))
+                            && (expected == "FAILED" || (telemetry.fields.get("print_error").and_then(Value::as_u64) == Some(0) && telemetry.error_received.is_some_and(|t| t.elapsed() < self.fresh)))
+                            && telemetry.fields.get("subtask_name").and_then(Value::as_str) == Some(name)
+                            && telemetry.fields.get("gcode_state").and_then(Value::as_str).is_some_and(|s| s == expected || (expected == "RUNNING" && s == "PREPARE")) {
+                            telemetry.terminal |= self.state.borrow().terminal;
+                            self.state.send_replace(telemetry);
+                            return Ok(());
+                        }
+                    }
+                    _ => (),
+                }
+            }
+        };
+        tokio::time::timeout(DEADLINE, operation).await.map_err(|_| Error::Refused("Command is not confirmed. Check authorization and read status to reconcile the job. Start will not be repeated.".into()))?
+    }
+
     pub fn new(config: crate::config::Printer, oneshot: bool) -> Result<Self, String> {
         validate(&config)?;
         let mut options = MqttOptions::new(
@@ -372,6 +543,14 @@ impl Client {
             oneshot,
             fresh: FRESH,
             pacing: PACING,
+            sequence: std::sync::atomic::AtomicU64::new(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_err(|_| "Cannot establish a Bambu command sequence.")?
+                    .as_millis()
+                    .try_into()
+                    .map_err(|_| "Cannot establish a Bambu command sequence.")?,
+            ),
         })
     }
     pub async fn snapshot(&self) -> Printer {

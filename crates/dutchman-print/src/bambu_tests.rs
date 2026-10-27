@@ -79,6 +79,73 @@ async fn full_state_deltas_states_missing_values_and_stale() {
     assert_eq!(fake.connections.load(Ordering::SeqCst), 1);
     assert_eq!(fake.requests.load(Ordering::SeqCst), 1);
 }
+
+#[tokio::test]
+async fn upload_refuses_unknown_errors_busy_unknown_and_stale_status() {
+    let fake = Fake::new().await;
+    let mut c = client(&fake, false);
+    c.config.lan_control = true;
+    c.snapshot().await;
+    // The fixture's first report omits print_error, so readiness is unknown.
+    assert!(c
+        .upload("test.gcode.3mf", b"x")
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("readiness"));
+    for wire in ["RUNNING", "PAUSE", "FINISH", "FAILED", "NEW_STATE"] {
+        fake.reports
+            .send(json!({"print":{"gcode_state":wire,"print_error":0}}))
+            .unwrap();
+        let expected = match wire {
+            "RUNNING" => PrinterState::Printing,
+            "PAUSE" => PrinterState::Paused,
+            "FINISH" => PrinterState::Idle,
+            _ => PrinterState::Error,
+        };
+        state(&c, expected, wire).await;
+        assert!(c
+            .upload("test.gcode.3mf", b"x")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("readiness"));
+    }
+    fake.reports
+        .send(json!({"print":{"gcode_state":"IDLE","print_error":42}}))
+        .unwrap();
+    state(&c, PrinterState::Error, "IDLE").await;
+    assert!(c
+        .upload("test.gcode.3mf", b"x")
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("readiness"));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(c
+        .upload("test.gcode.3mf", b"x")
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("readiness"));
+    fake.reports
+        .send(json!({"print":{"gcode_state":"IDLE","print_error":0}}))
+        .unwrap();
+    state(&c, PrinterState::Idle, "IDLE").await;
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Heater-only deltas must not make an old idle state safe for uploading.
+    fake.reports
+        .send(json!({"print":{"bed_temper":61}}))
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert_eq!(c.snapshot().await.state, PrinterState::Offline);
+    assert!(c
+        .upload("test.gcode.3mf", b"x")
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("readiness"));
+}
 #[tokio::test]
 async fn reconnect_resets_baseline_and_paces_requests() {
     let fake = Fake::new().await;
@@ -211,6 +278,9 @@ async fn configuration_requires_explicit_trust_and_private_credentials() {
     );
     let mut p = good.clone();
     p.port = Some(0);
+    assert!(validate(&p).is_err());
+    let mut p = good.clone();
+    p.ftps_port = Some(0);
     assert!(validate(&p).is_err());
     for port in ["-1", "65536", "'8883'"] {
         let text = format!("id='test'\nname='Test'\nmodel='Synthetic'\nport={port}\n");
