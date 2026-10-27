@@ -260,7 +260,9 @@ mod tests {
         assert_eq!(procedural.len(), 1, "{procedural:?}");
         assert!(!procedural[0].contains("~copy"));
         let curves = ids("curves");
-        assert!(curves.iter().any(|id| *id == procedural[0].replace(":construction", ":basis")));
+        assert!(curves
+            .iter()
+            .any(|id| *id == procedural[0].replace(":construction", ":basis")));
         assert!(!curves.iter().any(|id| id.contains("~copy")));
     }
 
