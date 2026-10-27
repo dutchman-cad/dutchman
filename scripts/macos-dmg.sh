@@ -52,6 +52,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
 <dict>
   <key>CFBundleName</key><string>Dutchman Convert</string>
   <key>CFBundleDisplayName</key><string>Dutchman Convert</string>
+  <key>LSHasLocalizedDisplayName</key><true/>
   <key>CFBundleIdentifier</key><string>io.github.dutchman-cad.dutchman</string>
   <key>CFBundleExecutable</key><string>Dutchman</string>
   <key>CFBundleIconFile</key><string>Dutchman</string>
@@ -67,6 +68,16 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 plutil -lint "$app/Contents/Info.plist"
+# Launchpad and the Dock cut names past about 15 characters, so the app is shown as Dutchman.
+# macOS shows a localized name only while the bundle's file name matches CFBundleName, so the
+# file stays Dutchman Convert.app and the short name is its English localization (the one
+# every language falls back to). Finder shows it too.
+mkdir -p "$app/Contents/Resources/en.lproj"
+cat > "$app/Contents/Resources/en.lproj/InfoPlist.strings" <<'STRINGS'
+CFBundleName = "Dutchman";
+CFBundleDisplayName = "Dutchman";
+STRINGS
+plutil -lint "$app/Contents/Resources/en.lproj/InfoPlist.strings"
 
 # Ad hoc: the helpers first, then the bundle, which seals them with the app.
 for program in dutchman dutchman-mcp; do
@@ -80,15 +91,16 @@ ln -s /Applications "$stage/Applications"
 cat > "$stage/Read me first.txt" <<'NOTE'
 Dutchman Convert, part of Dutchman CAD, converts native CAD designs into SolidCraft designs.
 
-Install: drag Dutchman Convert.app onto Applications.
+Install: drag Dutchman Convert.app onto Applications. Launchpad, the Dock and Finder show it as
+Dutchman.
 
 Opening it the first time
 -------------------------
 Dutchman Convert is not signed with an Apple Developer ID, so the first time you open it macOS
-shows "Dutchman Convert" Not Opened ("Apple could not verify ... is free of malware"). Click Done, then:
+shows "Dutchman" Not Opened ("Apple could not verify ... is free of malware"). Click Done, then:
 
 1. Open System Settings > Privacy & Security.
-2. Scroll down to Security, where it says "Dutchman Convert" was blocked to protect your Mac.
+2. Scroll down to Security, where it says "Dutchman" was blocked to protect your Mac.
 3. Click Open Anyway, enter your password, and click Open Anyway once more.
 
 macOS remembers this; Dutchman Convert opens normally from then on.

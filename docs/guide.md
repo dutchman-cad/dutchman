@@ -88,19 +88,20 @@ Convert.app** (named **Dutchman.app** in 0.1.5 and earlier), for Apple silicon a
 alike, with the `dutchman` and `dutchman-mcp` commands inside it.
 
 1. Open the disk image and drag **Dutchman Convert** onto **Applications**.
-2. Open Dutchman Convert from Applications.
+2. Open it from Applications or Launchpad, where it is shown as **Dutchman** (the file is
+   `Dutchman Convert.app`).
 
 #### Opening the app the first time
 
 Dutchman Convert is not signed with an Apple Developer ID, so the first time you open it macOS
-stops it with this box (shown here for a release that named the app Dutchman):
+stops it with this box:
 
 <img alt="The macOS box: “Dutchman” Not Opened. Apple could not verify “Dutchman” is free of malware that may harm your Mac or compromise your privacy. Buttons: Move to Trash, Done." src="images/macos-not-opened.png" width="260">
 
 Click **Done**, not Move to Trash, then:
 
 1. Open **System Settings** › **Privacy & Security**.
-2. Scroll down to **Security**. It says “Dutchman Convert” was blocked to protect your Mac.
+2. Scroll down to **Security**. It says “Dutchman” was blocked to protect your Mac.
 3. Click **Open Anyway**, enter your password, then click **Open Anyway** in the box that
    follows.
 
