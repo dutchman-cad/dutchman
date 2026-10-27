@@ -38,7 +38,7 @@ their versions. An installed Pilot receives its arguments unchanged, taking prec
 the built-in Pilot. Without it, builds with the default `pilot` feature use the built-in
 Pilot; other missing tools print their installation link and exit 1.
 
-`dutchman printers` and `dutchman print FILE --printer ID` run the [Print companion](print.md),
+`dutchman printers` and `dutchman print FILE --printer ID` run [Dutchman Print](https://github.com/dutchman-cad/print),
 `dutchman-print`, when it is installed.
 
 Pilot-only installations can ship the small `dutchman-launcher` binary renamed to `dutchman`.
