@@ -63,6 +63,20 @@ pub(crate) fn shown(model: &Model) -> Result<Option<(Model, usize)>, String> {
         .flat_map(|rows| listed(Some(rows)))
         .filter_map(|row| Some((row.get("id").and_then(Value::as_str)?, row)))
         .collect();
+    // A procedural construction names the curve or surface it constructs, not the other way
+    // round: reaching the carrier reaches its construction (a trimmed curve's basis, say).
+    let mut constructions: std::collections::BTreeMap<&str, Vec<&Value>> =
+        std::collections::BTreeMap::new();
+    for (arena, field) in [
+        ("procedural_curves", "curve"),
+        ("procedural_surfaces", "surface"),
+    ] {
+        for row in listed(wire.get(arena)) {
+            if let Some(carrier) = row.get(field).and_then(Value::as_str) {
+                constructions.entry(carrier).or_default().push(row);
+            }
+        }
+    }
     // The geometry the shown bodies reach; the rest of the geometry is the hidden bodies'.
     let mut reached: BTreeSet<String> = BTreeSet::new();
     let mut queue: Vec<&Value> = shown_rows;
@@ -73,6 +87,13 @@ pub(crate) fn shown(model: &Model) -> Result<Option<(Model, usize)>, String> {
             if geometry.contains(reference) && reached.insert(reference.to_owned()) {
                 if let Some(next) = rows.get(reference) {
                     queue.push(next);
+                }
+                for construction in constructions.get(reference).into_iter().flatten() {
+                    if let Some(id) = construction.get("id").and_then(Value::as_str) {
+                        if reached.insert(id.to_owned()) {
+                            queue.push(construction);
+                        }
+                    }
                 }
             }
         }
@@ -187,6 +208,60 @@ mod tests {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
             ..part
         }
+    }
+
+    #[test]
+    fn a_shown_curve_keeps_its_construction_and_basis() {
+        let model = two_cubes(Some(false));
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let m = wire["model"].as_object_mut().unwrap();
+        // A subset construction of one shown and one hidden edge curve, each over a basis curve
+        // of its own: the construction names the curve, nothing names the construction.
+        let mut constructions = Vec::new();
+        let mut bases = Vec::new();
+        for hidden in [false, true] {
+            let edge = m["edges"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|e| e["id"].as_str().unwrap().ends_with("~copy") == hidden)
+                .unwrap()
+                .clone();
+            let curve = edge["carrier"]["curve"].as_str().unwrap().to_owned();
+            let mut basis = m["curves"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|c| c["id"] == json!(curve))
+                .unwrap()
+                .clone();
+            basis["id"] = json!(format!("{curve}:basis"));
+            bases.push(basis);
+            constructions.push(json!({
+                "id": format!("{curve}:construction"), "curve": curve,
+                "definition": {"kind": "subset", "source": format!("{curve}:basis"),
+                    "parameter_range": edge["carrier"]["param_range"], "sense": true}}));
+        }
+        m["curves"].as_array_mut().unwrap().extend(bases);
+        m.insert("procedural_curves".to_owned(), json!(constructions));
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        };
+        let (shown, _) = shown(&model).unwrap().unwrap();
+        let kept = serde_json::to_value(&shown.ir).unwrap();
+        let ids = |arena: &str| -> Vec<String> {
+            listed(kept["model"].get(arena))
+                .iter()
+                .filter_map(|row| row["id"].as_str().map(str::to_owned))
+                .collect()
+        };
+        let procedural = ids("procedural_curves");
+        assert_eq!(procedural.len(), 1, "{procedural:?}");
+        assert!(!procedural[0].contains("~copy"));
+        let curves = ids("curves");
+        assert!(curves.iter().any(|id| *id == procedural[0].replace(":construction", ":basis")));
+        assert!(!curves.iter().any(|id| id.contains("~copy")));
     }
 
     #[test]
