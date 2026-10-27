@@ -21,6 +21,11 @@ current reader status alongside what Dutchman converts.
 | Feature history from the Keywords XML: extrusions with their operation, extent and depth; sketches; suppression state; many features only as `native` records. | Mapped where every feature maps, else flattened with the first blocker named (below). |
 | Sketch geometry from the ResolvedFeatures records: lines, arcs, circles, ellipses, splines, coincidences, with a resolved plane. | Read only through a sketch feature that binds it (below). |
 
+Parts read by 0.1.5 that 0.2.0 to 0.2.2 read empty, with fewer bodies, or failing cadmpeg's
+edge checks read again since 0.2.3: cadmpeg no longer lets bytes inside other
+Parasolid records hide or refuse a part's bodies, and keeps the range of arcs stored past the
+seam.
+
 ## Upstream gaps, in the order they block history
 
 Found by running Dutchman's history mapper on what the codec decodes from cadmpeg's published
