@@ -8,6 +8,63 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
+## 0.2.2 (2026-10-26)
+
+### Known issue
+
+- Some SolidWorks parts that 0.1.5 read still decode empty, fail cadmpeg's edge checks, or come
+  through with fewer bodies (reported as losses, not as a clean conversion); a fix is in
+  progress in cadmpeg. If 0.1.5 worked better for a part, keep using it for that part for now.
+
+### History
+
+- Merged designs that reuse a parameter name keep their own references: an expression follows
+  the parameters it depends on to their new names instead of naming another design's
+  parameter of the same name. Such renames are reported as information, and only names
+  SolidCraft cannot use are reported as changed.
+- The SolidCraft replay check allows for the error in SolidCraft's measuring mesh, which grows
+  with each body's area and size, and also compares body areas. Curved parts such as lofts and
+  revolves that rebuild exactly are now verified instead of flattened.
+
+### Assemblies
+
+- A design's own component that holds no bodies and no other components is placed as an empty
+  component, when every body of the design belongs to a component, instead of the whole design
+  converting as stored geometry.
+- A joint between two parts inside one copy of a component placed more than once is converted
+  once, as that component's own joint, instead of being left out. A joint from such a part to
+  something outside its copy holds the whole copy, with a note.
+- A joint to a part inside a design inserted into a component, which Fusion names by the
+  part's key alone, joins that part instead of the component that holds it.
+- A component that is empty in the source is written as an empty component, so the joints to
+  it are kept.
+
+### Desktop app
+
+- On macOS the app is shown as **Dutchman** in Launchpad, the Dock, Finder and the menu bar, so
+  Launchpad no longer cuts its name short. Its file stays `Dutchman Convert.app`.
+
+### Command line and install
+
+- On macOS, `brew install --cask dutchman-cad/tap/dutchman-convert` installs the Dutchman
+  Convert app in Applications.
+- Homebrew installs pour a ready-made bottle on macOS and Linux, so they no longer need Xcode
+  or current Command Line Tools.
+- Dutchman Web can link converted designs directly to the SolidCraft web app with
+  `--solidcraft` (`DUTCHMAN_WEB_SOLIDCRAFT`), using a same-origin path. Cards show
+  **Open in SolidCraft**, and API outputs include `open`; FreeCAD macros keep only their download links.
+- `dutchman-web --output-dir <dir>` also saves each converted design in a folder, such as a
+  mounted network share, keeping its uploaded folders and name and numbering it rather than
+  replace a file already there. Each result says where its design was saved.
+- `dutchman-web --base-path /dutchman` serves every page and API route under that path, so it
+  can share one address with other services behind a reverse proxy.
+
+### Docs
+
+- Add a Compose example for SolidCraft, Dutchman Web, and a watched NAS inbox on one origin.
+- The release and nightly workflows download only Dutchman's own archives, so the container
+  image's build record no longer stops the draft release.
+
 ## 0.2.1 (2026-10-25)
 
 ### Known issue
