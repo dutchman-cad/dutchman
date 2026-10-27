@@ -6469,6 +6469,15 @@ fn blends_refuse_missing_foreign_or_ambiguous_input_geometry() {
     check(
         cli,
         |m| {
+            m["features"][2]["definition"]["groups"][0]["edges"] = json!({
+                "kind": "resolved", "value": {
+                    "edges": ["synthetic:cube:edge#8"], "native": "synthetic base selection"}})
+        },
+        "not proven members of an earlier stored feature result",
+    );
+    check(
+        cli,
+        |m| {
             m["features"][2]["definition"]["groups"][0]["edges"] =
                 json!({"kind": "native", "value": "feature-property:93"})
         },

@@ -47,6 +47,7 @@ pub(crate) fn shown(model: &Model) -> Result<Option<(Model, usize)>, String> {
         .get_mut("model")
         .and_then(Value::as_object_mut)
         .ok_or("the model is malformed")?;
+    crate::input_edges::preserve(wire, &model.ir);
     let shown_rows: Vec<&Value> = listed(wire.get("bodies"))
         .iter()
         .filter(|body| body.get("visible").and_then(Value::as_bool) != Some(false))
@@ -199,6 +200,68 @@ mod tests {
         assert_eq!(shown.ir.model.faces.len(), 6);
         assert_eq!(shown.ir.model.edges.len(), 12);
         assert_eq!(shown.ir.model.bodies[0].id, model.ir.model.bodies[0].id);
+    }
+
+    #[test]
+    fn blends_keep_their_stored_base_edges_when_hidden_geometry_is_removed() {
+        for kind in ["fillet", "chamfer"] {
+            let mut model = two_cubes(Some(false));
+            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            // The stored base is elsewhere: its sample cannot come from the visible cube.
+            for (arena, path) in [
+                ("points", "/position/x"),
+                ("curves", "/geometry/origin/x"),
+                ("surfaces", "/geometry/origin/x"),
+            ] {
+                for row in wire["model"][arena].as_array_mut().unwrap() {
+                    if row["id"].as_str().unwrap().ends_with("~copy") {
+                        let x = row.pointer_mut(path).unwrap();
+                        *x = json!(x.as_f64().unwrap() + 30.0);
+                    }
+                }
+            }
+            let body = wire["model"]["bodies"][1]["id"].clone();
+            let edge = wire["model"]["edges"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|edge| edge["id"].as_str().unwrap().ends_with("~copy"))
+                .unwrap()["id"]
+                .clone();
+            let dimension = if kind == "fillet" {
+                json!({"radius": {"kind": "constant", "radius": 0.5}})
+            } else {
+                json!({"spec": {"kind": "distance", "distance": 0.5}})
+            };
+            let mut group = dimension;
+            group["edges"] = json!({"kind": "resolved", "value": {
+                "edges": [edge], "native": "synthetic base selection"}});
+            wire["model"]["features"] = json!([
+                {"id": "test:model:feature#base", "ordinal": 0, "outputs": [body], "suppressed": false,
+                    "definition": {"definition": "native", "kind": "synthetic"}},
+                {"id": "test:model:feature#blend", "ordinal": 1, "dependencies": ["test:model:feature#base"], "suppressed": false,
+                    "definition": {"definition": kind, "groups": [group]}}
+            ]);
+            model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+            let (shown, _) = shown(&model).unwrap().unwrap();
+            assert_eq!(shown.ir.model.bodies.len(), 1);
+            assert!(shown
+                .ir
+                .model
+                .edges
+                .iter()
+                .all(|e| e.id.as_str() != edge.as_str().unwrap()));
+            let kept = serde_json::to_value(&shown.ir).unwrap();
+            let selection = &kept["model"]["features"][1]["definition"]["groups"][0]["edges"];
+            assert_eq!(selection["kind"], "historical");
+            let state = &kept["model"]["feature_input_topologies"][0];
+            assert_eq!(state["input_of"], "test:model:feature#blend");
+            assert_eq!(state["edges"], json!([edge]));
+            assert_eq!(state["edge_geometry"].as_array().unwrap().len(), 1);
+            assert!(state["edge_geometry"][0]["interior"].is_object());
+            assert!(state["edge_geometry"][0]["interior"]["x"].as_f64().unwrap() >= 30.0);
+            assert!(state["edge_geometry"][0]["tangent"].is_object());
+        }
     }
 
     #[test]

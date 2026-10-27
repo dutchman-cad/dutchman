@@ -1,4 +1,5 @@
-//! Blends picked exclusively from their own historical input-edge geometry, on the body
+//! Blends picked exclusively from their own historical input-edge geometry, including
+//! stored base-feature edges preserved by the core before hidden shapes are removed, on the body
 //! SolidCraft rebuilds from the history before the blend, never on the final body.
 //!
 //! Mapping keeps each selected input edge ([`Pending`]); once SolidCraft has replayed the
@@ -139,6 +140,9 @@ pub(super) fn map(
         }
         Some("historical_partial") => {
             return Err("some of its edges are not resolved in its input topology".to_owned())
+        }
+        Some("resolved") => {
+            return Err("its resolved edges are not proven members of an earlier stored feature result; that edge selection is not supported yet".to_owned())
         }
         _ => return Err("blends require edges from their own feature input topology; edges of the final body are not supported yet".to_owned()),
     };

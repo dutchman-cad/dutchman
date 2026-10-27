@@ -16,11 +16,21 @@ feature's intermediate shape as a body of its own and could turn revolved faces 
 - **Components**, when cadmpeg says which bodies each owns, as for a Fusion design.
 - **Grounded joints** hold their part fixed to the design where it is stored, as a rigid
   joint to the design; the assembly's revolute and slider joints keep their motion.
-- **Feature history**, when every feature maps: sketches, pads, and simple, counterbored and
-  countersunk holes, replayed and checked in SolidCraft like a Fusion history. Fillets,
-  chamfers, thicknesses (shells), counterbores or countersinks with a drill point, and
+- **Feature history**, when every feature maps: sketches, pads, simple, counterbored and
+  countersunk holes, constant-radius fillets, and equal-distance chamfers, replayed and
+  checked in SolidCraft like a Fusion history. Thicknesses (shells), counterbores or
+  countersinks with a drill point, and
   revolutions short of a full turn are not mapped yet; a document holding one converts as
   geometry, and the report names the first feature that stopped it.
+
+Fillets and chamfers need resolved named edges of their base feature's stored shape,
+before the blend.
+Dutchman preserves those edges when it removes the hidden intermediate shapes. It accepts
+straight edges and open circular arcs only when their midpoint identifies exactly one edge
+on SolidCraft's replay at that step, with matching ends and length. An ambiguous pick, a
+missing base shape, a closed edge, or another curve keeps the history flattened, with the
+reason reported. This requires a SolidCraft CLI to replay the history; `--no-verify` cannot
+prove blend edges. Final-body edge numbers are never substituted for base-feature edges.
 
 ## Building with FreeCAD
 

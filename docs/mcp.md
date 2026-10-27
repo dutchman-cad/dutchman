@@ -106,6 +106,10 @@ The CLI and desktop volunteer invitation is absent from MCP and `--json` output.
 For `inspect`, `ok: true` means the file was read. Check `conversion.possible` and
 `conversion.reason` before converting: inspection can succeed even when conversion cannot.
 
+FreeCAD fillets and chamfers use their base feature's stored edges only when the earlier
+result and each pick on SolidCraft's replay are proven. Otherwise `history.features[].reason`
+says why the edge selection is refused, and conversion keeps the original geometry.
+
 For sweeps, `history.features[].reason` identifies unsupported corner transitions, section
 interpolation, tangent-path extension, or simplification. Paths and guide rails may select
 ordered sketch curves or a whole sketch with one non-construction curve. A blocked sweep

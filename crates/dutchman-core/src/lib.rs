@@ -10,6 +10,7 @@ mod decode;
 mod error;
 mod format;
 mod hidden;
+mod input_edges;
 mod locate;
 mod names;
 pub mod placement;

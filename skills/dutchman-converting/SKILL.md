@@ -200,8 +200,10 @@ multi-piece elliptical arcs, unbounded conics, other weighted/nonuniform splines
 solved outlines still prevent the sketch's history from mapping.
 
 Constant-radius fillets and equal-setback chamfers map when the feature's own input edge
-geometry proves which edge each one acts on (currently after one extrusion of a convex
-polygon); otherwise the report names why the blend was refused.
+geometry proves which edge each one acts on in SolidCraft's replay before the blend.
+FreeCAD can supply that geometry from an earlier base feature's stored shape, including
+when its intermediate body is hidden. Unproven source membership or an ambiguous replay
+pick keeps the history flattened, with the reason reported. `--no-verify` cannot prove blends.
 
 Body mirror patterns and join/cut/intersect body combines (optionally keeping the tool
 bodies) can keep editable history; their bodies must be named by earlier mapped features.
