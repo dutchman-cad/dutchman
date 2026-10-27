@@ -86,11 +86,11 @@ docker compose up -d --build
 ```
 
 This updates Caddy within its pinned 2.x minor and Dutchman to its newest
-`nightly`. SolidCraft stays at the commit pinned in `compose.yaml`; change that pin
-to update it, then rebuild. The example uses Dutchman's `nightly` image because
-the options it relies on (`--base-path`, `--output-dir`, `--solidcraft`) arrive
-after 0.2.1; once a release includes them, set both Dutchman images to `latest` or
-that version.
+release. SolidCraft stays at the commit pinned in `compose.yaml`; change that pin
+to update it, then rebuild. The example needs Dutchman 0.2.2 or later for
+`--base-path`, `--output-dir` and `--solidcraft`. To hold Dutchman at one version,
+set both Dutchman images to that version instead of `latest`; for builds of
+`main`, use `nightly`.
 
 The SolidCraft web image is not publicly pullable yet
 ([#2878](https://github.com/tangency-labs/solidcraft/issues/2878)). This example
