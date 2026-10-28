@@ -8,6 +8,60 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
+## 0.2.3 (2026-10-28)
+
+### Formats
+
+- FreeCAD parts no longer lose faces bounded by trimmed elliptical (or other trimmed) edges:
+  leaving out hidden intermediate shapes kept the edge's curve but dropped the construction
+  and full curve it is cut from, so the edge, its loop and its face were left out of the
+  geometry.
+
+### History
+
+- FreeCAD fillets and chamfers can use edges of their base feature's stored shape, with
+  each edge proven on SolidCraft's replay before the blend. Hidden intermediate shapes
+  remain left out of the converted geometry.
+
+### Assemblies
+
+- A Fusion joint from a part inside one copy of a component placed more than once is left out
+  when another joint already holds that copy itself to the same occurrence, as a rigid group
+  holding both stores. It held the copy a second time, with another frame, so one of the two
+  joints could not hold.
+- A Fusion joint between a component and a part inside it, as each rigid group stores one for
+  every member, moves the inner part and keeps the component where the design places it.
+  Inserted designs anchoring their own rigid groups were moved to meet their parts, losing
+  their placement in the assembly.
+
+### cadmpeg
+
+- The cadmpeg pin moves from `fb1cd0a` to `a5ccc9d`. SolidWorks parts that 0.1.5 read and 0.2.0
+  to 0.2.2 read empty, with fewer bodies, or failing cadmpeg's edge checks read again: bytes
+  inside other records no longer hide or refuse a part's bodies, arcs stored past the seam keep
+  their range, and solid snapshots stored with features are no longer read as sketches. Fusion
+  reads rigid groups and their joints in full, with members mated aligned, and binds joint
+  operands in other designs, in nested components and in merged member designs to the exact
+  occurrence; places designs inserted at the top of an assembly at their current pose, not
+  where they were first inserted; reads construction planes from their solved placement, typed
+  local component occurrences, qualified and legacy external placement frames, edge flanges
+  that meet at a corner, localized hole scopes, and through-all hole extents with drill tips;
+  shares one definition for each merged external design; and reads fillet face groups, sketches
+  placed on entities, parameters with detached owners, and pipe scopes. Inventor projects
+  attached plates with their bends, sheet-metal corners that change nothing, mirrors about a
+  work plane, single moves and rotations of bodies, and more revolves. NX reads change streams
+  against their embedded schema. FreeCAD applies part and link placements once and counts a
+  shell as closed when each edge is used as often each way. STEP output recovers edge curves a
+  model leaves out, keeps the faces it can bound as surfaces when a body cannot be written
+  whole, writes solids as advanced B-rep representations, and leaves a collapsed edge without a
+  curve out of its loop.
+
+### Known issue
+
+- A very large Fusion assembly can need more than 24 GB of memory to convert
+  ([#227](https://github.com/dutchman-cad/dutchman/issues/227)); on a machine with less, the
+  system stops the conversion before it writes anything.
+
 ## 0.2.2 (2026-10-26)
 
 ### Known issue
