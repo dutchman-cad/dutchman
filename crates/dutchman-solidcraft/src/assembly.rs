@@ -116,7 +116,22 @@ pub(crate) fn write(
     if let (false, Some(fields)) = (joints.is_empty(), doc.as_object_mut()) {
         fields.insert("assembly".to_owned(), json!({"joints": joints}));
     }
-    let hidden_occurrences = builder.hidden_paths();
+    let (hidden_occurrences, left_shown) = hidden_paths(
+        &builder.occurrences,
+        &builder.placements,
+        &builder.hidden,
+        MAX_HIDDEN_PATHS,
+    );
+    if left_shown != 0 {
+        builder.report.push(
+            Severity::Degraded,
+            "visibility",
+            format!(
+                "{left_shown} or more placement(s) the source hides are left shown: hidden \
+                 placements are written up to {MAX_HIDDEN_PATHS}"
+            ),
+        );
+    }
     if !hidden_occurrences.is_empty() {
         builder.report.push(
             Severity::Info,
@@ -141,6 +156,64 @@ pub(crate) fn write(
         .report
         .set_outcome(outcome(&builder.histories, builder.outcomes));
     builder.container.finish(&doc)
+}
+
+/// Every path from the design to a hidden occurrence, as SolidCraft hides occurrences: the
+/// occurrence ids from the root down. A hidden occurrence inside a component placed more than
+/// once is hidden in each placement of it. At most `cap` paths are made; the second value
+/// counts the paths left out past it (at least that many: making them stops at the cap).
+fn hidden_paths(
+    occurrences: &[Value],
+    placements: &BTreeMap<u64, (u64, [[f64; 4]; 3])>,
+    hidden: &BTreeSet<u64>,
+    cap: usize,
+) -> (Vec<Vec<u64>>, usize) {
+    let parent_of: BTreeMap<u64, u64> = occurrences
+        .iter()
+        .filter_map(|o| Some((o.get("id")?.as_u64()?, o.get("parent")?.as_u64()?)))
+        .collect();
+    let mut paths = Vec::new();
+    let mut left = 0usize;
+    for &id in hidden {
+        // Paths from the root to `id`, built upwards: each placement of the component the
+        // occurrence sits in leads one level out.
+        let mut partial = vec![vec![id]];
+        for _ in 0..=occurrences.len() {
+            let mut next = Vec::new();
+            for path in partial {
+                let Some(&parent) = path.first().and_then(|first| parent_of.get(first)) else {
+                    continue;
+                };
+                if parent == 0 {
+                    if paths.len() < cap {
+                        paths.push(path);
+                    } else {
+                        left += 1;
+                    }
+                    continue;
+                }
+                for (&outer, &(component, _)) in placements {
+                    if component == parent && !path.contains(&outer) {
+                        let mut longer = vec![outer];
+                        longer.extend(&path);
+                        next.push(longer);
+                    }
+                }
+            }
+            if next.is_empty() {
+                break;
+            }
+            // Past the cap, the paths still being made are left out too.
+            if paths.len() + next.len() > cap.saturating_mul(2) {
+                left += next.len();
+                break;
+            }
+            partial = next;
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    (paths, left)
 }
 
 /// What writing an assembly would do with its parts' histories, without restating geometry,
@@ -277,52 +350,6 @@ impl Builder<'_> {
         let id = self.next_id;
         self.next_id = self.next_id.saturating_add(1);
         id
-    }
-
-    /// Every path from the design to a hidden occurrence, as SolidCraft hides occurrences:
-    /// the occurrence ids from the root down. A hidden occurrence inside a component placed
-    /// more than once is hidden in each placement of it.
-    fn hidden_paths(&self) -> Vec<Vec<u64>> {
-        let parent_of: BTreeMap<u64, u64> = self
-            .occurrences
-            .iter()
-            .filter_map(|o| Some((o.get("id")?.as_u64()?, o.get("parent")?.as_u64()?)))
-            .collect();
-        let mut paths = Vec::new();
-        for &id in &self.hidden {
-            // Paths from the root to `id`, built upwards: each placement of the component
-            // the occurrence sits in leads one level out.
-            let mut partial = vec![vec![id]];
-            let mut done = Vec::new();
-            for _ in 0..=self.occurrences.len() {
-                let mut next = Vec::new();
-                for path in partial {
-                    let Some(&parent) = path.first().and_then(|first| parent_of.get(first)) else {
-                        continue;
-                    };
-                    if parent == 0 {
-                        done.push(path);
-                        continue;
-                    }
-                    for (&outer, &(component, _)) in &self.placements {
-                        if component == parent && !path.contains(&outer) {
-                            let mut longer = vec![outer];
-                            longer.extend(&path);
-                            next.push(longer);
-                        }
-                    }
-                }
-                if next.is_empty() || done.len() + next.len() > MAX_HIDDEN_PATHS {
-                    break;
-                }
-                partial = next;
-            }
-            paths.extend(done);
-        }
-        paths.sort();
-        paths.dedup();
-        paths.truncate(MAX_HIDDEN_PATHS);
-        paths
     }
 
     /// Adds `assembly`'s parts as components beneath component `parent` (0: the root), and its
@@ -804,5 +831,39 @@ fn prefix(name: &str) -> String {
         cleaned
     } else {
         format!("c_{cleaned}")
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
+mod hidden_tests {
+    use super::*;
+
+    #[test]
+    fn hidden_paths_past_the_cap_are_counted_as_left_shown() {
+        // Component 10 is placed by occurrences 1 and 2 at the root, and holds hidden 3.
+        let occurrences = vec![
+            json!({"id": 1, "parent": 0, "component": 10}),
+            json!({"id": 2, "parent": 0, "component": 10}),
+            json!({"id": 3, "parent": 10, "component": 20}),
+        ];
+        let identity = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+        ];
+        let placements: BTreeMap<u64, (u64, [[f64; 4]; 3])> = [
+            (1, (10, identity)),
+            (2, (10, identity)),
+            (3, (20, identity)),
+        ]
+        .into();
+        let hidden = BTreeSet::from([3]);
+        let (paths, left) = hidden_paths(&occurrences, &placements, &hidden, 8);
+        assert_eq!(paths, [vec![1, 3], vec![2, 3]]);
+        assert_eq!(left, 0);
+        let (paths, left) = hidden_paths(&occurrences, &placements, &hidden, 1);
+        assert_eq!(paths.len(), 1);
+        assert_eq!(left, 1);
     }
 }
