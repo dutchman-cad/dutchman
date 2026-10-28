@@ -93,6 +93,14 @@ When SolidCraft has a quarantine attribute without the user-approved flag on mac
 and try again; the history stays `unverified`. A geometry check that cannot run records
 the same guidance in its `not checked` loss message.
 
+Stored geometry (`history.features[].kind: "stored_geometry"`) becomes a mapped base-body
+Import feature. When the mapped features are only stored geometry, `mode` is `"import"`
+and `verification.status` is `"not_applicable"`, with reason “This part holds an imported
+solid; there is no feature history to bring over”. The same message appears in `losses`
+with level `"Info"`; nothing was dropped. Later mappable features keep the usual history
+mode and verification. The desktop app shows the same Info message from this report.
+These use existing fields in the schema; `inspect` reports the same stored-only outcome.
+
 For FreeCAD fillets and chamfers, `history.features[].reason` reports missing stored input
 edge geometry or a failed replay proof. Resolved edges without proven membership in an
 earlier stored feature result are refused. This uses the existing feature status and reason

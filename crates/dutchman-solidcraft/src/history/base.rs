@@ -1,4 +1,4 @@
-//! Base features: bodies a Fusion timeline holds as they are, without the steps that made
+//! Base features and stored geometry: bodies a timeline holds without the steps that made
 //! them (modelled directly, or imported), as SolidCraft Import features at their place in the
 //! timeline, so the features after them keep their history.
 //!
@@ -7,11 +7,15 @@
 
 use serde_json::{json, Value};
 
-use dutchman_core::{Model, Report};
+use dutchman_core::{Model, Report, Severity};
 
-use super::{name, Context, History};
+use super::{describe, name, Context, History};
 use crate::container::Container;
 use crate::step;
+
+/// Stored solids have no construction recipe to lose.
+pub(crate) const STORED_SOLID: &str =
+    "This part holds an imported solid; there is no feature history to bring over";
 
 /// Where a mapped base feature keeps the source bodies it imports, until they are restated.
 const BODIES: &str = "_bodies";
@@ -29,6 +33,26 @@ pub(super) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         .and_then(Value::as_array)
         .map(|ids| ids.iter().filter_map(Value::as_str).collect())
         .unwrap_or_default();
+    import(feature, &ids, ctx)
+}
+
+/// Stored geometry names its retained bodies in the feature's outputs, not its operation.
+pub(super) fn stored(
+    feature: &Value,
+    ctx: &mut Context,
+    report: &mut Report,
+) -> Result<Value, String> {
+    let ids: Vec<&str> = feature
+        .get("outputs")
+        .and_then(Value::as_array)
+        .map(|ids| ids.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    let mapped = import(feature, &ids, ctx)?;
+    report.push(Severity::Info, describe(feature), STORED_SOLID);
+    Ok(mapped)
+}
+
+fn import(feature: &Value, ids: &[&str], ctx: &mut Context) -> Result<Value, String> {
     if ids.is_empty() {
         return Err("it holds no bodies".to_owned());
     }

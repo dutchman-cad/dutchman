@@ -19,6 +19,12 @@ It comes in every release archive and with `cargo install` (see the [guide](guid
 It speaks JSON-RPC over stdio, one message per line, and takes no arguments: the client starts
 it and talks to it.
 
+A part that holds an imported solid becomes a base-body Import feature at its place in the
+timeline. Later features keep editable history when they map. Stored geometry has no recipe
+to lose: the report says, at Info level, “This part holds an imported solid; there is no
+feature history to bring over”. A part made only of stored geometry is geometry without
+history, with no flattened-history warning.
+
 Sheet-metal history follows the same mapping limits in the [guide](guide.md) as the CLI:
 base flanges and full-edge flanges on unchanged rectangular base sheets map when their own
 input-edge geometry proves each pick. Unsupported flange dimensions or selections, and hems,

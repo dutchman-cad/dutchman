@@ -148,6 +148,14 @@ impl SolidCraftWriter {
         self.plan_blends(&mut mapping);
         let undecoded = no_decoded_history(&mapping.features);
         match mapping.result {
+            Ok(_) if only_stored_geometry(&mapping.features) => {
+                report.append(history_report);
+                Outcome {
+                    mode: Mode::Import,
+                    check: Check::NotApplicable(history::base::STORED_SOLID.to_owned()),
+                    features: mapping.features,
+                }
+            }
             Ok(_) => {
                 report.append(history_report);
                 Outcome {
@@ -306,6 +314,14 @@ fn sheet_bodies(model: &Model) -> usize {
         .iter()
         .filter(|body| matches!(body.kind, BodyKind::Sheet | BodyKind::General))
         .count()
+}
+
+/// Whether the mapped timeline only retains bodies without a construction recipe.
+fn only_stored_geometry(features: &[FeatureOutcome]) -> bool {
+    features.iter().any(|f| f.status == FeatureStatus::Mapped)
+        && features
+            .iter()
+            .all(|f| f.status != FeatureStatus::Mapped || f.kind == "stored_geometry")
 }
 
 /// Why a design has no history to write, when cadmpeg decodes none of its features: every one
@@ -560,6 +576,16 @@ impl Writer for SolidCraftWriter {
                         self.import_design(model, &step, Some(&mapping.references), report)?,
                         outcome,
                     )
+                }
+                (Ok(history), _) if only_stored_geometry(&mapping.features) => {
+                    report.append(history_report);
+                    let written = self.history_design(model, history, &step, Live::History)?;
+                    let outcome = Outcome {
+                        mode: Mode::Import,
+                        check: Check::NotApplicable(history::base::STORED_SOLID.to_owned()),
+                        features: mapping.features.clone(),
+                    };
+                    (written, outcome)
                 }
                 (Ok(history), _) => {
                     let written = self.history_design(model, history, &step, Live::History)?;

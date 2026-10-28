@@ -668,6 +668,30 @@ mod tests {
     }
 
     #[test]
+    fn stored_geometry_reports_an_import_and_an_info_message() {
+        let message =
+            "This part holds an imported solid; there is no feature history to bring over";
+        let mut report = Report::default();
+        report.push(Severity::Info, "feature \"Stored solid\"", message);
+        report.set_outcome(Outcome {
+            mode: Mode::Import,
+            check: Check::NotApplicable(message.to_owned()),
+            features: vec![feature("stored_geometry", FeatureStatus::Mapped)],
+        });
+        let out = Value::Object(success(CONVERT, json!({}), &report));
+        assert_eq!(out["mode"], "import");
+        assert_eq!(
+            out["verification"],
+            json!({"status": "not_applicable", "reason": message})
+        );
+        assert_eq!(out["history"]["mapped"], 1);
+        assert_eq!(out["history"]["features"][0]["status"], "mapped");
+        assert_eq!(out["losses"][0]["level"], "Info");
+        assert_eq!(out["losses"][0]["message"], message);
+        assert_eq!(crate::present::outcome(&out), "Geometry without history.");
+    }
+
+    #[test]
     fn a_written_history_reports_its_features_and_check() {
         let mut report = Report::default();
         report.set_outcome(Outcome {
