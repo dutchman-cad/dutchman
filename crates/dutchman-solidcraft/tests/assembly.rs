@@ -211,6 +211,7 @@ fn root_bodies_and_sketches_share_a_folder_only_when_contiguous() {
             placement.part = 1 - own_index;
         }
         assembly.placements.push(Placement {
+            hidden: false,
             name: None,
             part: own_index,
             transform: dutchman_core::placement::IDENTITY,
