@@ -511,6 +511,31 @@ pub fn losses(report: &Report) -> Value {
 }
 
 // Test helpers outside `#[test]` functions are not covered by clippy.toml's test allowances.
+/// A progress event goes to stderr as one JSON line; stdout keeps its final report.
+pub fn progress(input: &Path, event: dutchman_core::ProgressEvent) -> Value {
+    json!({
+        "schema": "dutchman.progress/1", "input": self::input(input),
+        "stage": event.stage.id(), "elapsed_ms": event.elapsed_ms,
+        "designs_read": event.designs_read, "designs_total": event.designs_total,
+        "heartbeat": event.heartbeat,
+    })
+}
+
+pub(crate) fn parse_progress(value: &Value) -> Option<dutchman_core::ProgressEvent> {
+    if value.get("schema")?.as_str()? != "dutchman.progress/1" {
+        return None;
+    }
+    Some(dutchman_core::ProgressEvent {
+        stage: dutchman_core::Stage::ALL
+            .into_iter()
+            .find(|stage| Some(stage.id()) == value.get("stage").and_then(Value::as_str))?,
+        elapsed_ms: value.get("elapsed_ms")?.as_u64()?,
+        designs_read: value.get("designs_read")?.as_u64()?,
+        designs_total: value.get("designs_total")?.as_u64(),
+        heartbeat: value.get("heartbeat")?.as_bool()?,
+    })
+}
+
 #[cfg(test)]
 #[allow(clippy::indexing_slicing)]
 mod tests {

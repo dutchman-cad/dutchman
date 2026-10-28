@@ -26,6 +26,15 @@ to lose: the report says, at Info level, “This part holds an imported solid; t
 feature history to bring over”. A part made only of stored geometry is geometry without
 history, with no flattened-history warning.
 
+For `convert`, `convert-all`, `inspect`, and `watch`, progress goes to stderr: stage and
+design updates plus a still-working heartbeat every five seconds with elapsed time. `--json`
+makes these `dutchman.progress/1` JSON lines; parse stdout as the final report (or the
+existing watch-event stream). `--quiet` suppresses progress. Desktop file cards show the same
+information, with a determinate bar when the design total is known. Fusion `.f3z` member
+counts are not available yet, so their updates show stage and elapsed time without a
+percentage. MCP and web conversions return only their final reports; no progress stream is
+available.
+
 ## Ground rules
 
 - **The user's designs stay on the user's machine.** Never upload, paste, attach or send a

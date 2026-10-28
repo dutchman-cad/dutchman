@@ -23,6 +23,7 @@ pub struct Row {
     pub input: PathBuf,
     pub output: Option<PathBuf>,
     pub status: Status,
+    pub progress: Option<dutchman_core::ProgressEvent>,
     /// Its `dutchman.convert/1` report, once it has one.
     pub report: Option<Value>,
     /// The job that converts it; none for an input that could not be planned.
@@ -253,12 +254,14 @@ impl App {
                             output: None,
                             status: Status::Failed,
                             report: Some(report),
+                            progress: None,
                             job: None,
                         })
                         .chain(jobs.into_iter().map(|job| Row {
                             input: job.input.clone(),
                             output: Some(job.output.clone()),
                             status: Status::Waiting,
+                            progress: None,
                             report: None,
                             job: Some(job),
                         }))
@@ -267,6 +270,12 @@ impl App {
                 Message::Progress(Event::Started(index)) => {
                     if let Some(row) = self.rows.get_mut(self.offset + index) {
                         row.status = Status::Converting;
+                        row.progress = None;
+                    }
+                }
+                Message::Progress(Event::Progress(index, event)) => {
+                    if let Some(row) = self.rows.get_mut(self.offset + index) {
+                        row.progress = Some(event);
                     }
                 }
                 Message::Progress(Event::Finished(index, report)) => {
@@ -750,9 +759,6 @@ fn row_ui(
     egui::Sides::new().shrink_left().truncate().show(
         ui,
         |ui| {
-            if row.status == Status::Converting {
-                ui.add(egui::Spinner::new().size(14.0).color(p.lantern));
-            }
             ui.label(RichText::new(word).heading().color(colour));
             ui.add(egui::Label::new(RichText::new(&view.name).heading()).truncate())
                 .on_hover_text(display(&row.input));
@@ -785,6 +791,23 @@ fn row_ui(
             }
         },
     );
+    if row.status == Status::Converting {
+        if let Some(event) = row.progress {
+            ui.label(event.to_string());
+            if let Some(total) = event.designs_total.filter(|total| *total > 0) {
+                ui.add(
+                    egui::ProgressBar::new(
+                        (event.designs_read as f32 / total as f32).clamp(0.0, 1.0),
+                    )
+                    .desired_width(200.0),
+                );
+            } else {
+                ui.add(egui::Spinner::new().size(14.0).color(p.lantern));
+            }
+        } else {
+            ui.add(egui::Spinner::new().size(14.0).color(p.lantern));
+        }
+    }
     if let Some(status) = &view.capability {
         ui.label(status);
     }
@@ -996,6 +1019,7 @@ mod tests {
                     Status::Failed
                 },
                 report: Some(report),
+                progress: None,
                 job: None,
             })
             .collect();
@@ -1059,6 +1083,37 @@ mod tests {
                     .count();
                 assert_eq!(changed, 0, "result list pixels changed");
             }
+        }
+    }
+
+    #[test]
+    fn converting_cards_show_stage_counts_and_elapsed_time() {
+        use egui_kittest::kittest::Queryable;
+        for total in [Some(4), None] {
+            let event = dutchman_core::ProgressEvent {
+                stage: dutchman_core::Stage::Decode,
+                elapsed_ms: 15_000,
+                designs_read: 2,
+                designs_total: total,
+                heartbeat: true,
+            };
+            let row = Row {
+                input: PathBuf::from("assembly.f3z"),
+                output: None,
+                status: Status::Converting,
+                progress: Some(event),
+                report: None,
+                job: None,
+            };
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size(egui::vec2(1200.0, 400.0))
+                .build_ui(|ui| {
+                    theme::install(ui.ctx());
+                    let p = *theme::palette(ui);
+                    row_ui(ui, &p, 0, &row, &row.view(), true, false);
+                });
+            harness.run_steps(2);
+            assert!(harness.query_by_label(&event.to_string()).is_some());
         }
     }
 

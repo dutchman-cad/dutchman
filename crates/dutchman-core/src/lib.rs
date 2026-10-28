@@ -14,6 +14,7 @@ mod input_edges;
 mod locate;
 mod names;
 pub mod placement;
+mod progress;
 mod report;
 
 use std::path::Path;
@@ -25,6 +26,7 @@ pub use assembly::{
 pub use error::{Error, FILE_DID_NOT_CONVERT, RELEASES};
 pub use format::Format;
 pub use locate::{PartSearch, MAX_SEARCHED};
+pub use progress::{Progress, ProgressEvent};
 
 /// The neutral model every conversion passes through.
 #[derive(Clone, Debug)]
@@ -83,12 +85,46 @@ pub fn read_in(
     search: &PartSearch,
     report: &mut Report,
 ) -> Result<Model, Error> {
+    read_with_progress(format, input, search, report, None)
+}
+
+/// Reads with coarse progress, including each separate assembly part file.
+pub fn read_with_progress(
+    format: Format,
+    input: &Path,
+    search: &PartSearch,
+    report: &mut Report,
+    progress: Option<&Progress<'_>>,
+) -> Result<Model, Error> {
+    if !format.is_assembly() && format != Format::FusionMultiDocument {
+        if let Some(progress) = progress {
+            progress.designs_total(1);
+        }
+    }
+    let read = std::sync::Mutex::new(std::collections::BTreeSet::new());
     let finder = locate::Finder::new(search);
     let mut model = assembly::read(
         format,
         input,
         report,
-        &decode_file,
+        &|format, path, report| {
+            let model = decode_file(format, path, report, progress)?;
+            // The codec owns Fusion archive members; do not count the whole archive as one.
+            if format != Format::FusionMultiDocument {
+                if let Some(progress) = progress {
+                    let first = read.lock().is_ok_and(|mut read| {
+                        read.insert(path.canonicalize().unwrap_or_else(|_| path.to_path_buf()))
+                    });
+                    if first {
+                        progress.design_read();
+                    }
+                    if format.is_assembly() {
+                        progress.stage(Stage::Input);
+                    }
+                }
+            }
+            Ok(model)
+        },
         &finder,
         &mut Vec::new(),
     )?;
@@ -138,9 +174,17 @@ pub fn with_bodies(model: &Model, bodies: &[&str], name: String) -> Result<Model
 }
 
 /// Decodes one file, without reading the parts an assembly places.
-fn decode_file(format: Format, input: &Path, report: &mut Report) -> Result<Model, Error> {
+fn decode_file(
+    format: Format,
+    input: &Path,
+    report: &mut Report,
+    progress: Option<&Progress<'_>>,
+) -> Result<Model, Error> {
     if !format.can_convert() {
         return Err(Error::NotSupportedYet { format });
+    }
+    if let Some(progress) = progress {
+        progress.stage(Stage::Input);
     }
     names::saw_path(input, report);
     check_input(input)?;
@@ -148,7 +192,10 @@ fn decode_file(format: Format, input: &Path, report: &mut Report) -> Result<Mode
         path: input.to_path_buf(),
         source,
     })?;
-    let model = decode::decode(format, input, &bytes, report)?;
+    if let Some(progress) = progress {
+        progress.stage(Stage::Decode);
+    }
+    let model = decode::decode_with_progress(format, input, &bytes, report, progress)?;
     names::saw_model(&model, report);
     if format != Format::FreeCadDocument {
         return Ok(model);
@@ -215,7 +262,48 @@ pub fn convert_traced(
     search: &PartSearch,
     on_stage: &mut dyn FnMut(Stage),
 ) -> Result<Report, Error> {
-    on_stage(Stage::Input);
+    convert_impl(input, output, writer, replace, search, on_stage, None)
+}
+
+/// Converts with stage, document, and elapsed progress and a five-second heartbeat.
+pub fn convert_with_progress(
+    input: &Path,
+    output: &Path,
+    writer: &dyn Writer,
+    replace: bool,
+    search: &PartSearch,
+    progress: &Progress<'_>,
+) -> Result<Report, Error> {
+    progress.run(|| {
+        convert_impl(
+            input,
+            output,
+            writer,
+            replace,
+            search,
+            &mut |_| {},
+            Some(progress),
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn convert_impl(
+    input: &Path,
+    output: &Path,
+    writer: &dyn Writer,
+    replace: bool,
+    search: &PartSearch,
+    on_stage: &mut dyn FnMut(Stage),
+    progress: Option<&Progress<'_>>,
+) -> Result<Report, Error> {
+    let mut stage = |stage| {
+        on_stage(stage);
+        if let Some(progress) = progress {
+            progress.stage(stage);
+        }
+    };
+    stage(Stage::Input);
     check_output(output, writer)?;
     if !replace && output.exists() {
         return Err(Error::OutputExists {
@@ -227,14 +315,16 @@ pub fn convert_traced(
     })?;
 
     let mut report = Report::default();
-    on_stage(Stage::Decode);
-    let model = read_in(format, input, search, &mut report)?;
+    if progress.is_none() {
+        stage(Stage::Decode);
+    }
+    let model = read_with_progress(format, input, search, &mut report, progress)?;
 
     // Encode in memory so a failed conversion never leaves a partial file behind.
     let mut bytes = Vec::new();
-    on_stage(Stage::Map);
+    stage(Stage::Map);
     writer.write(&model, &mut bytes, &mut report)?;
-    on_stage(Stage::Write);
+    stage(Stage::Write);
     write_output(output, &bytes, replace)?;
     Ok(report)
 }

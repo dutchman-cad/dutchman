@@ -324,7 +324,7 @@ editable feature history. Check the result in SolidCraft as [below](#open-the-re
 
 The exit code is 0, and the first line, on stdout, says what was written where: here the
 geometry, as this file has no feature history (else `editable history, verified in SolidCraft`
-or `editable history, unverified`). The lines on stderr are the loss report, explained
+or `editable history, unverified`). After progress updates, the lines on stderr are the loss report, explained
 [below](#reading-the-loss-report). Long notes are cut to their first sentence, marked `…`;
 `--verbose` prints them whole. An explicitly named existing output file is
 replaced (`--no-clobber` keeps it, and the conversion fails instead), and nothing is written
@@ -364,7 +364,8 @@ dutchman convert --json generated_unit_cube.f3d cube.solidcraft
 | `--no-clobber` | Do not replace an existing `.solidcraft` file: that file's conversion fails instead. By default it is replaced. |
 | `--project DIR` | The project folder an Inventor assembly's part files are searched in when they are not at their stored paths. Default: the nearest folder above the assembly holding an `.ipj`, else two folders up. See [Finding the part files](inventor.md#finding-the-part-files). |
 | `--search DIR` | Another folder to search for part files the project folder does not hold, such as a shared library. May be given more than once. |
-| `--json` | One JSON report on stdout instead of the text report. |
+| `--json` | One final JSON report on stdout, with progress JSON lines on stderr. |
+| `--quiet` | Hide conversion progress and the volunteer invitation. |
 | `--verbose` | Print every loss, each note in full. Without it, a file with more than 12 losses is summarised by component (below), and long notes are cut to their first sentence. The JSON report always has them all in full. |
 | `--log FILE` | Also write the whole text report, every loss in full, grouped by component, to `FILE`. |
 
@@ -395,6 +396,27 @@ fail and why. Then comes each feature of the history
 with its status (`mapped`, `not_needed`, `left_out` or `blocked`, with the reason for a
 blocked one), and the loss report. `inspect --json` prints the same as a
 `dutchman.inspect/1` report.
+
+### Progress during conversion
+
+`convert`, `convert-all`, `inspect`, and `watch` show the current stage, designs read, and
+elapsed seconds on stderr. A terminal gets one updating line; redirected stderr gets a line at
+each stage or design completion and a still-working line every five seconds. `--quiet`
+suppresses progress. With `--json`, stderr contains `dutchman.progress/1` JSON lines; stdout
+stays one final report (or the existing watch-event stream for `watch`). Elapsed time starts
+with each file, including a separate assembly's part files.
+
+The desktop app shows these updates on each converting file's card. When the design total
+is known it shows a determinate bar for designs read; otherwise it keeps a spinner alongside
+the stage and elapsed time. The bar measures reading designs, not the remaining conversion time.
+Stage ids are `input` (opening the input and finding part files), `decode` (reading geometry and history), `project`
+(checking the decoded model), `map` (building and checking the output design), and `write`
+(saving the output). A model-check fallback can return to `decode` to read geometry alone.
+A heartbeat confirms the worker is running; it does not measure decoder activity.
+
+Fusion `.f3z` archives are decoded in one call. Their member counts are not available yet;
+no percentage is estimated. Separate assembly part files report completions as they are read,
+with an unknown total while parts are discovered. These updates do not change the final report.
 
 ## Convert a whole folder: convert-all
 
@@ -530,7 +552,7 @@ kept; choose another output path (or `--force` for a single file) to replace one
 After the results, a refused conversion (except IGES) or a history that did not fully map
 prints one invitation naming programs and linking to [test-file recipes](https://dutchman-cad.github.io/fixtures/)
 and `/volunteer` in [Discord](https://discord.gg/yTcseBEdeu). `convert --quiet` and
-`convert-all --quiet` hide that invitation. `--json` contains only the report. The desktop
+`convert-all --quiet` hide that invitation. `--json` stdout contains only the report; progress JSON lines go to stderr. The desktop
 app shows the same status beside each file and one invitation under the results, with
 clickable links.
 Got a file that converts wrong? Drop it, with its STEP export, in a DM to Dutchy in our Discord.

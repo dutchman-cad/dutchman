@@ -249,8 +249,8 @@ form from an already anonymous report. No UI types or I/O enter this module.
   `map` and `write` (Dutchman; cadmpeg's STEP restatement within writing), `solidcraft`. The
   reports name the upstream project from it, so a report reaches the code that can fix it.
 - **`convert-all`** converts each file in a child process (the same program, started with a
-  worker argument), which prints the file's report and marks each stage on stderr as it
-  begins. The parent stops a child past its time or memory limit, and reports the stage it had
+  worker argument), which prints the file's report and sends progress JSON lines on stderr
+  at each stage, document completion, and five-second heartbeat. The parent stops a child past its time or memory limit, and reports the stage it had
   reached. A journal of finished files lets a stopped run carry on, and `anon` turns the
   batch's reports into one with no names in it.
 - The CLI prints losses to stderr and exits 0 on success, 1 on a conversion error, 2 on a
@@ -332,3 +332,14 @@ The experimental FreeCAD writer also retains the longest mapped history prefix a
 mapped sketches when a later feature cannot be rebuilt. They remain hidden references in
 **Rebuilt history (partial)** beside the final embedded STEP body; only an exact prefix
 match can replace that final shape. The SolidCraft writer still requires complete history.
+
+## Conversion progress
+
+`dutchman-core::Progress` accepts a `Send + Sync` callback, serializes coarse snapshots,
+and holds document counts in atomics. `convert_with_progress` runs a five-second timer for
+the conversion and joins it before returning. `read_with_progress` reports input, decode,
+and model-check stages, and separate document completions; callers using it directly own
+the timer (`Progress::run`). There is no per-entity reporting. Fusion `.f3z` member decoding
+is internal to cadmpeg, whose current API exposes neither member completion nor a total.
+The shared batch events forward progress to the desktop worker; isolated CLI workers use
+JSON lines on stderr. The CLI formats these separately from its unchanged final reports.

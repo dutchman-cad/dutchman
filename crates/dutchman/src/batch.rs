@@ -52,6 +52,8 @@ pub struct Job {
 pub enum Event {
     /// The job at this index started converting.
     Started(usize),
+    /// A stage, document count, or heartbeat for this job.
+    Progress(usize, dutchman_core::ProgressEvent),
     /// The job at this index finished, with its `dutchman.convert/1` report.
     Finished(usize, Value),
 }
@@ -107,6 +109,17 @@ pub fn convert_all(
     options: &ConvertOptions,
     settings: &Settings,
 ) -> Result<Value, String> {
+    convert_all_with_progress(inputs, out_dir, options, settings, &|_, _| {})
+}
+
+/// Converts a batch, forwarding progress for each input without changing its reports.
+pub fn convert_all_with_progress(
+    inputs: &[PathBuf],
+    out_dir: &Path,
+    options: &ConvertOptions,
+    settings: &Settings,
+    on_progress: &(dyn Fn(&Path, dutchman_core::ProgressEvent) + Send + Sync),
+) -> Result<Value, String> {
     let Plan {
         jobs: mut work,
         problems,
@@ -133,9 +146,19 @@ pub fn convert_all(
     let journal_error: Mutex<Option<String>> = Mutex::new(None);
     let writer = options.writer();
     let journal_lock = Mutex::new(journal.take());
-    let convert = |job: &Job| match &settings.worker {
-        Some(program) => convert_isolated_job(program, job, options, &settings.limits, None),
-        None => convert_job(job, &writer),
+    let convert = |job: &Job, _: usize| {
+        let callback = |event| on_progress(&job.input, event);
+        match &settings.worker {
+            Some(program) => convert_isolated_job_with_progress(
+                program,
+                job,
+                options,
+                &settings.limits,
+                None,
+                &callback,
+            ),
+            None => convert_job_with_progress(job, &writer, &callback),
+        }
     };
     run_with(
         &pending,
@@ -577,8 +600,12 @@ pub fn run_each(
         work,
         workers,
         stop,
-        |job| convert_job(job, writer),
-        on_event,
+        |job, index| {
+            convert_job_with_progress(job, writer, &|event| {
+                on_event(Event::Progress(index, event))
+            })
+        },
+        &on_event,
     );
 }
 
@@ -588,7 +615,7 @@ fn run_with(
     work: &[Job],
     workers: usize,
     stop: &AtomicBool,
-    convert: impl Fn(&Job) -> Value + Sync,
+    convert: impl Fn(&Job, usize) -> Value + Sync,
     on_event: impl Fn(Event) + Sync,
 ) {
     let next = AtomicUsize::new(0);
@@ -602,7 +629,7 @@ fn run_with(
                 let Some(job) = work.get(index) else { break };
                 on_event(Event::Started(index));
                 let started = Instant::now();
-                let mut report = convert(job);
+                let mut report = convert(job, index);
                 if let Some(fields) = report.as_object_mut() {
                     let elapsed = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
                     fields.insert("elapsed_ms".to_owned(), json!(elapsed));
@@ -709,6 +736,24 @@ pub fn convert_job(job: &Job, writer: &(dyn Writer + Sync)) -> Value {
     }
 }
 
+fn convert_job_with_progress(
+    job: &Job,
+    writer: &(dyn Writer + Sync),
+    on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
+) -> Value {
+    match make_folder(job) {
+        Some(failure) => failure,
+        None => crate::convert_with_progress(
+            &job.input,
+            &job.output,
+            writer,
+            job.replace,
+            &job.search,
+            on_progress,
+        ),
+    }
+}
+
 /// Converts one job through the batch worker, making its destination folder first.
 pub fn convert_isolated_job(
     program: &Path,
@@ -717,9 +762,22 @@ pub fn convert_isolated_job(
     limits: &Limits,
     stop: Option<&AtomicBool>,
 ) -> Value {
+    convert_isolated_job_with_progress(program, job, options, limits, stop, &|_| {})
+}
+
+/// Converts one isolated job while forwarding coarse progress snapshots.
+pub fn convert_isolated_job_with_progress(
+    program: &Path,
+    job: &Job,
+    options: &ConvertOptions,
+    limits: &Limits,
+    stop: Option<&AtomicBool>,
+    on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
+) -> Value {
     let started = Instant::now();
-    let mut report = make_folder(job)
-        .unwrap_or_else(|| worker::convert_isolated_until(program, job, options, limits, stop));
+    let mut report = make_folder(job).unwrap_or_else(|| {
+        worker::convert_isolated_with_progress(program, job, options, limits, stop, on_progress)
+    });
     if let Some(fields) = report.as_object_mut() {
         fields.insert(
             "elapsed_ms".into(),

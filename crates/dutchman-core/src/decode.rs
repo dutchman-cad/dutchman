@@ -60,16 +60,17 @@ fn policy() -> DecodePolicy {
 ///
 /// cadmpeg is third-party code run on hostile input, so a panic inside it is caught and
 /// returned as [`Error::Decode`] instead of taking the process down.
-pub(crate) fn decode(
+pub(crate) fn decode_with_progress(
     format: Format,
     path: &Path,
     bytes: &[u8],
     report: &mut Report,
+    progress: Option<&crate::Progress<'_>>,
 ) -> Result<Model, Error> {
     let codec_id = format.codec_id().ok_or(Error::NotSupportedYet { format })?;
     catch_unwind(AssertUnwindSafe(|| {
         with_fallback(report, |depth, report| {
-            decode_unguarded(format, codec_id, path, bytes, depth, report)
+            decode_unguarded(format, codec_id, path, bytes, depth, report, progress)
         })
     }))
     .unwrap_or_else(|_| {
@@ -136,6 +137,7 @@ fn with_fallback(
 /// How a failure of cadmpeg's checks begins.
 const CHECKS: &str = "cadmpeg's model of it fails its checks ";
 
+#[allow(clippy::too_many_arguments)]
 fn decode_unguarded(
     format: Format,
     codec_id: &str,
@@ -143,12 +145,16 @@ fn decode_unguarded(
     bytes: &[u8],
     depth: DecodeDepth,
     report: &mut Report,
+    progress: Option<&crate::Progress<'_>>,
 ) -> Result<Model, Failed> {
     let other = |err: Error| Failed::Other(err);
     let policy = policy();
     let catalog = InputCatalog::with_builtins();
     let codec = select_codec(&catalog, &policy, format, codec_id, bytes).map_err(other)?;
 
+    if let Some(progress) = progress {
+        progress.stage(Stage::Decode);
+    }
     let options = DecodeOptions { depth, policy };
     let decoded = codec
         .decode(&mut Cursor::new(bytes), &options)
@@ -164,6 +170,9 @@ fn decode_unguarded(
     }
     report.extend_from_cadmpeg(&decode_report.losses);
 
+    if let Some(progress) = progress {
+        progress.stage(Stage::Project);
+    }
     validate_decoded(&mut ir, depth, &policy, bytes.len() as u64, report)?;
 
     Ok(Model {

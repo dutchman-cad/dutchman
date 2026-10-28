@@ -87,13 +87,15 @@ pub fn run_if_worker() -> Option<ExitCode> {
         }
     };
     let writer = parsed.options.writer();
-    let report = match dutchman_core::convert_traced(
+    let callback = |event| eprintln!("{}", json::progress(&parsed.input, event));
+    let progress = dutchman_core::Progress::new(&callback);
+    let report = match dutchman_core::convert_with_progress(
         &parsed.input,
         &parsed.output,
         &writer,
         !parsed.options.no_clobber,
         &parsed.options.part_search(),
-        &mut |stage| eprintln!("{STAGE_MARK}{}", stage.id()),
+        &progress,
     ) {
         Ok(report) => crate::convert_success(&parsed.input, &parsed.output, &report),
         Err(err) => json::error(CONVERT, json::input(&parsed.input), &err),
@@ -179,6 +181,18 @@ pub fn convert_isolated_until(
     limits: &Limits,
     shutdown: Option<&std::sync::atomic::AtomicBool>,
 ) -> Value {
+    convert_isolated_with_progress(program, job, options, limits, shutdown, &|_| {})
+}
+
+/// Converts in a child and forwards its coarse progress, including heartbeats.
+pub fn convert_isolated_with_progress(
+    program: &Path,
+    job: &Job,
+    options: &ConvertOptions,
+    limits: &Limits,
+    shutdown: Option<&std::sync::atomic::AtomicBool>,
+    on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
+) -> Value {
     let mut options = options.clone();
     options.no_clobber = !job.replace;
     let mut command = Command::new(program);
@@ -213,66 +227,68 @@ pub fn convert_isolated_until(
             )
         }
     };
-    let stage = Arc::new(Mutex::new(Stage::Input));
-    let stdout = child.stdout.take().map(|out| {
-        std::thread::spawn(move || {
-            let mut text = String::new();
-            let _ = out.take(MAX_REPORT_BYTES).read_to_string(&mut text);
-            text
-        })
-    });
-    let stderr = child.stderr.take().map(|err| {
-        let stage = Arc::clone(&stage);
-        std::thread::spawn(move || follow_stages(err, &stage))
-    });
+    std::thread::scope(|scope| {
+        let stage = Arc::new(Mutex::new(Stage::Input));
+        let stdout = child.stdout.take().map(|out| {
+            std::thread::spawn(move || {
+                let mut text = String::new();
+                let _ = out.take(MAX_REPORT_BYTES).read_to_string(&mut text);
+                text
+            })
+        });
+        let stderr = child.stderr.take().map(|err| {
+            let stage = Arc::clone(&stage);
+            scope.spawn(move || follow_stages(err, &stage, on_progress))
+        });
 
-    let stopped = supervise(&mut child, limits, shutdown);
-    let text = stdout
-        .and_then(|reader| reader.join().ok())
-        .unwrap_or_default();
-    if let Some(reader) = stderr {
-        let _ = reader.join();
-    }
-    let at = stage.lock().map_or(Stage::Input, |stage| *stage);
-    let fail = |message: String| {
-        if at == Stage::Write {
-            // Stopped while writing: what is there is not a whole design.
-            let _ = std::fs::remove_file(&job.output);
+        let stopped = supervise(&mut child, limits, shutdown);
+        let text = stdout
+            .and_then(|reader| reader.join().ok())
+            .unwrap_or_default();
+        if let Some(reader) = stderr {
+            let _ = reader.join();
         }
-        json::failure_at(
-            CONVERT,
-            json::input(&job.input),
-            &message,
-            at,
-            upstream_of(at),
-        )
-    };
-    match stopped {
-        Stopped::Exited(status) => match serde_json::from_str::<Value>(text.trim()) {
-            Ok(report) if report.is_object() => report,
-            _ => fail(format!(
-                "the converter stopped unexpectedly while at the {} stage ({status})",
+        let at = stage.lock().map_or(Stage::Input, |stage| *stage);
+        let fail = |message: String| {
+            if at == Stage::Write {
+                // Stopped while writing: what is there is not a whole design.
+                let _ = std::fs::remove_file(&job.output);
+            }
+            json::failure_at(
+                CONVERT,
+                json::input(&job.input),
+                &message,
+                at,
+                upstream_of(at),
+            )
+        };
+        match stopped {
+            Stopped::Exited(status) => match serde_json::from_str::<Value>(text.trim()) {
+                Ok(report) if report.is_object() => report,
+                _ => fail(format!(
+                    "the converter stopped unexpectedly while at the {} stage ({status})",
+                    at.id()
+                )),
+            },
+            Stopped::TimedOut => fail(format!(
+                "stopped after {} s, Dutchman's limit for one file, while at the {} stage",
+                limits.timeout.as_secs(),
                 at.id()
             )),
-        },
-        Stopped::TimedOut => fail(format!(
-            "stopped after {} s, Dutchman's limit for one file, while at the {} stage",
-            limits.timeout.as_secs(),
-            at.id()
-        )),
-        Stopped::Shutdown => fail(format!(
-            "stopped after the 30 s shutdown grace period while at the {} stage",
-            at.id()
-        )),
-        Stopped::OverMemory(bytes) => fail(format!(
+            Stopped::Shutdown => fail(format!(
+                "stopped after the 30 s shutdown grace period while at the {} stage",
+                at.id()
+            )),
+            Stopped::OverMemory(bytes) => fail(format!(
             "stopped when it held {} MB, over Dutchman's limit of {} MB for one file, while at \
              the {} stage",
             bytes >> 20,
             limits.max_memory.unwrap_or(0) >> 20,
             at.id()
         )),
-        Stopped::Lost(err) => fail(format!("lost track of the converter: {err}")),
-    }
+            Stopped::Lost(err) => fail(format!("lost track of the converter: {err}")),
+        }
+    })
 }
 
 /// The project whose code a stage runs, when it is not Dutchman's own.
@@ -285,10 +301,25 @@ fn upstream_of(stage: Stage) -> Option<&'static str> {
 }
 
 /// Records each stage the child marks on `stream` in `stage`, until the stream ends.
-fn follow_stages(stream: impl Read, stage: &Mutex<Stage>) {
+fn follow_stages(
+    stream: impl Read,
+    stage: &Mutex<Stage>,
+    on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
+) {
     use std::io::BufRead;
     for line in std::io::BufReader::new(stream).lines() {
         let Ok(line) = line else { break };
+        if let Some(event) = serde_json::from_str::<Value>(&line)
+            .ok()
+            .as_ref()
+            .and_then(json::parse_progress)
+        {
+            if let Ok(mut stage) = stage.lock() {
+                *stage = event.stage;
+            }
+            on_progress(event);
+            continue;
+        }
         let Some(id) = line.strip_prefix(STAGE_MARK) else {
             continue;
         };

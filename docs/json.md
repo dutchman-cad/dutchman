@@ -10,11 +10,40 @@ the output beside the input from `--to`. An existing derived output is kept with
 choose `-o PATH` or use `--force` to replace it. `--force` conflicts with `--no-clobber`.
 Explicit outputs retain their replacement behaviour. MCP output paths remain required.
 
-`dutchman convert --json` and `dutchman inspect --json` print one JSON object on stdout and
-nothing on stderr. The `dutchman-mcp` server's tools return the same objects, as structured
+`dutchman convert --json` and `dutchman inspect --json` print one JSON object on stdout. During reading and conversion, progress JSON lines are written to
+stderr unless `--quiet` is set. The `dutchman-mcp` server's tools return the same objects, as structured
 content and as text, with `isError` set when `ok` is false. The schema is named in `schema`. Within a schema version, fields are only
 added: none is renamed, retyped or removed. A change that would break a reader gets a new
 version (`dutchman.convert/2`).
+
+## `dutchman.progress/1`
+
+`convert --json`, `convert-all --json`, `inspect --json`, and `watch --json` write progress
+as one JSON object per line on stderr.
+Stdout remains the existing final report (or watch-event stream), with no progress objects
+embedded or appended.
+`--quiet` suppresses progress. Stage changes and design completions emit events immediately;
+a running read or conversion also emits a heartbeat every five seconds. Events are ordered per file;
+files in a batch may interleave. No completion event is promised after a process is stopped.
+
+```json
+{"schema":"dutchman.progress/1","input":{"path":"part.f3d","format":"fusion_archive"},"stage":"decode","elapsed_ms":5000,"designs_read":0,"designs_total":1,"heartbeat":true}
+```
+
+`input` uses the same input object as the final report. `stage` is the current stage id:
+`input`, `decode`, `project`, `map`, `write`, or `solidcraft`. The current conversion pipeline
+includes output building and verification in `map`; inspection planning also uses `map`.
+`elapsed_ms` is an integer duration since this file's conversion began. `designs_read` counts
+successfully read unique documents, including assembly documents, rather than placements or
+entities. `designs_total` is an integer when known, otherwise `null`. `heartbeat` is true for
+timer updates and false for stage or count changes. A geometry-only retry does not count the
+same document twice. Counts describe reading only, not the percentage of total conversion time.
+
+The current cadmpeg API owns the Fusion `.f3z` member loop: its counts remain zero and `null`
+respectively, even when the archive finishes reading. Separate assembly files report their
+completed documents with an unknown total. A heartbeat says the worker is running, without
+claiming that the decoder completed more work. Final report schemas remain unchanged.
+MCP and the web app return their final reports without a progress stream.
 
 ## Exit codes
 

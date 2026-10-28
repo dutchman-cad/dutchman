@@ -57,6 +57,20 @@ fn nested_conversion_hash_restart_and_changed_content() {
     );
     assert_eq!(events(&first)[0]["event"], "converted");
     assert_eq!(events(&first)[0]["schema"], "dutchman.watch-event/1");
+    assert!(events(&first)
+        .iter()
+        .all(|event| event["schema"] == "dutchman.watch-event/1"));
+    let progress: Vec<serde_json::Value> = std::str::from_utf8(&first.stderr)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(!progress.is_empty());
+    assert!(progress
+        .iter()
+        .all(|event| event["schema"] == "dutchman.progress/1"));
+    assert_eq!(progress.last().unwrap()["designs_read"], 1);
+    assert_eq!(progress.last().unwrap()["stage"], "write");
     let report: serde_json::Value =
         serde_json::from_slice(&std::fs::read(out.join("nested/cube.report.json")).unwrap())
             .unwrap();

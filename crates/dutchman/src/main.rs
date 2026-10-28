@@ -27,7 +27,7 @@ struct Cli {
     /// Print each loss note in full (the text reports cut them to their first sentence).
     #[arg(long, global = true)]
     verbose: bool,
-    /// Hide the volunteer invitation after conversion results.
+    /// Hide conversion progress and the volunteer invitation after conversion results.
     #[arg(long, global = true)]
     quiet: bool,
 }
@@ -204,7 +204,7 @@ fn main() -> ExitCode {
     let verbose = cli.verbose;
     let quiet = cli.quiet;
     match cli.command {
-        Command::Watch(command) => match dutchman::watch::run(command) {
+        Command::Watch(command) => match dutchman::watch::run_with_progress(command, quiet) {
             Ok(true) => ExitCode::SUCCESS,
             Ok(false) => ExitCode::FAILURE,
             Err(err) => {
@@ -326,13 +326,22 @@ fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            let report = match batch::convert_all(&inputs, &out_dir, &options, &settings) {
+            let progress = dutchman::progress::StderrProgress::new(quiet, json);
+            let report = match batch::convert_all_with_progress(
+                &inputs,
+                &out_dir,
+                &options,
+                &settings,
+                &|input, event| progress.report(input, event),
+            ) {
                 Ok(report) => report,
                 Err(err) => {
+                    progress.finish();
                     eprintln!("dutchman: {err}");
                     return ExitCode::FAILURE;
                 }
             };
+            progress.finish();
             if json {
                 print_json(&report);
             } else {
@@ -391,6 +400,7 @@ fn main() -> ExitCode {
             },
             json,
             verbose,
+            quiet,
         ),
         Command::Formats { json } => {
             if json {
@@ -432,13 +442,16 @@ fn convert(
             println!("{status}");
         }
     }
-    let report = dutchman::convert(
+    let progress = dutchman::progress::StderrProgress::new(quiet, as_json);
+    let report = dutchman::convert_with_progress(
         input,
         output,
         &options.writer(),
         !options.no_clobber,
         &options.part_search(),
+        &|event| progress.report(input, event),
     );
+    progress.finish();
     if let Some(log) = log {
         let text = json::full_log(&report, &batch::line(&report));
         if let Err(err) = std::fs::write(log, text) {
@@ -481,8 +494,18 @@ fn convert(
     exit(&report)
 }
 
-fn inspect(input: &Path, search: &dutchman::PartSearch, as_json: bool, verbose: bool) -> ExitCode {
-    let inspection = match dutchman::inspect(input, search) {
+fn inspect(
+    input: &Path,
+    search: &dutchman::PartSearch,
+    as_json: bool,
+    verbose: bool,
+    quiet: bool,
+) -> ExitCode {
+    let progress = dutchman::progress::StderrProgress::new(quiet, as_json);
+    let result =
+        dutchman::inspect_with_progress(input, search, &|event| progress.report(input, event));
+    progress.finish();
+    let inspection = match result {
         Ok(inspection) => inspection,
         Err(err) => {
             if as_json {
