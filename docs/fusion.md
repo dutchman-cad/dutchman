@@ -54,7 +54,9 @@ transform, and each component as a product definition.
   written once, through the first copy, as SolidCraft solves joints between repeated parts in
   the first placement's frame, and every copy follows. A joint from a part inside one copy to
   something outside that copy cannot hold the part alone, so it holds the whole copy where the
-  part is, and the report says so. A part inside a design inserted into a component, which
+  part is, and the report says so; when another joint already holds that copy itself to the
+  same occurrence, as a rigid group holding both does, the part's joint is left out instead.
+  A part inside a design inserted into a component, which
   Fusion names by its key alone, is found inside that component. A component empty in its
   source becomes an empty SolidCraft component, so the joints to it are kept. A joint is left
   out, and reported as Dropped (`joints`), when it is of another kind, joins a component to

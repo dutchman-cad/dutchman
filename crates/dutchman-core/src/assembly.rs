@@ -879,7 +879,32 @@ fn joints(
     // first.
     let mut copied: Vec<bool> = Vec::new();
     let mut notes = Vec::new();
-    for (index, row) in rows.iter().enumerate() {
+    let resolved: Vec<_> = rows
+        .iter()
+        .map(|row| joint(row, paths, worlds, inserted))
+        .collect();
+    let lifted = |changed: &Option<String>| {
+        changed
+            .as_deref()
+            .is_some_and(|text| text.starts_with(WHOLE_COPY))
+    };
+    // The joints that join two occurrences as they are, not through a whole copy.
+    let direct: Vec<(usize, Vec<usize>, Vec<usize>)> = resolved
+        .iter()
+        .enumerate()
+        .filter_map(|(index, result)| match result {
+            Ok((joint, changed, _)) if !lifted(changed) => {
+                Some((index, joint.a.clone(), joint.b.clone()))
+            }
+            _ => None,
+        })
+        .collect();
+    let joined_directly = |joint: &Joint| {
+        direct
+            .iter()
+            .find(|(_, a, b)| (*a == joint.a && *b == joint.b) || (*a == joint.b && *b == joint.a))
+    };
+    for (index, (row, result)) in rows.iter().zip(resolved).enumerate() {
         let family = family(row);
         let mut note = |text: String| {
             notes.push(JointNote {
@@ -887,7 +912,17 @@ fn joints(
                 family: family.clone(),
             });
         };
-        match joint(row, paths, worlds, inserted) {
+        match result {
+            // A joint from a part inside a copy would hold the whole copy; when another joint
+            // already joins that copy itself to the same occurrence, it holds the copy, and
+            // the part is where the copy puts it.
+            Ok((joint, changed, _)) if lifted(&changed) && joined_directly(&joint).is_some() => {
+                let holder = joined_directly(&joint).map_or(0, |(other, _, _)| other + 1);
+                note(format!(
+                    "it is left out: the copy of the component placed more than once that its \
+                     part is in is held by joint {holder} itself"
+                ));
+            }
             Ok((joint, changed, copy)) => {
                 // A component's own joint is stored again in each copy of the component; the
                 // copies hold one component, so they are one joint of it.
@@ -2192,6 +2227,44 @@ mod tests {
             &compose(&block, &joint.frame_b),
             &compose(&compose(&frame, &joint.frame_a), &joint.meeting())
         ));
+    }
+
+    #[test]
+    fn a_copy_held_by_its_own_joint_is_not_held_again_through_a_part_inside_it() {
+        // A rigid group holding a frame placed twice, and a block inside that frame, to the
+        // design: the frame's own joint holds it, and the block's joint, which could only hold
+        // the whole frame, is left out instead of holding it a second time.
+        let model = nested(
+            false,
+            Some(json!([
+                placed(0, "frame", root(), 0.0),
+                placed(1, "frame", root(), 100.0),
+                placed(2, "block", inside(0), 30.0),
+                placed(3, "block", inside(1), 30.0),
+            ])),
+        );
+        let fixed = json!({"kind": "fixed"});
+        let model = with_joints(
+            model,
+            json!([
+                joint(1, fixed.clone(), connector(None), connector(Some((3, &[])))),
+                joint(2, fixed, connector(None), connector(Some((1, &[])))),
+            ]),
+        );
+        let (assembly, left_out) = local_components(&model).unwrap().unwrap();
+        let sides: Vec<_> = assembly
+            .joints
+            .iter()
+            .map(|j| (j.a.clone(), j.b.clone()))
+            .collect();
+        assert_eq!(sides, [(vec![], vec![1])]);
+        assert_eq!(
+            left_out,
+            [
+                "joint 1: it is left out: the copy of the component placed more than once that \
+              its part is in is held by joint 2 itself"
+            ]
+        );
     }
 
     #[test]
