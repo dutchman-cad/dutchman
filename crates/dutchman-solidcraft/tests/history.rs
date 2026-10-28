@@ -1649,8 +1649,8 @@ fn with_param(bytes: &[u8], name: &str, expr: &str) -> Vec<u8> {
     out.finish().unwrap().into_inner()
 }
 
-/// SolidCraft's body volumes for a design.
-fn volumes(cli: &Path, design: &[u8]) -> Vec<f64> {
+/// SolidCraft's evaluation of a design, requiring every timeline feature to succeed.
+fn evaluated(cli: &Path, design: &[u8]) -> Value {
     let dir = tempfile::tempdir().unwrap();
     let input = dir.path().join("design.solidcraft");
     let output = dir.path().join("eval.json");
@@ -1667,7 +1667,12 @@ fn volumes(cli: &Path, design: &[u8]) -> Vec<f64> {
     for entry in result["timeline"].as_array().unwrap() {
         assert!(entry["error"].is_null(), "{entry}");
     }
-    result["bodies"]
+    result
+}
+
+/// SolidCraft's body volumes for a design.
+fn volumes(cli: &Path, design: &[u8]) -> Vec<f64> {
+    evaluated(cli, design)["bodies"]
         .as_array()
         .unwrap()
         .iter()
@@ -6905,4 +6910,113 @@ fn blends_keep_multiple_picks_and_refuse_repeated_geometry_and_weighted_groups()
         };
         assert!(history_line(&report).contains(reason), "{report:?}");
     }
+}
+
+#[test]
+fn signed_axis_dimensions_keep_their_expression_and_drive_positive_magnitudes() {
+    for (kind, edge, axis) in [
+        ("horizontal_distance", 1, "x"),
+        ("vertical_distance", 2, "y"),
+    ] {
+        let mut model = cube_with_history(10.0, first_profile(), None);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let m = &mut wire["model"];
+        let id = format!("f3d:model:sketch-entity#{edge}");
+        m["sketch_constraints"][4]["definition"] = json!({
+            "kind": kind,
+            "first": {"kind": "end", "entity": id},
+            "second": {"kind": "start", "entity": id},
+            "parameter": "f3d:model:parameter#2",
+        });
+        m["sketch_entities"].as_array_mut().unwrap().push(entity(
+            5,
+            json!({"kind": "point", "position": {"u": 0.0, "v": 0.0}}),
+        ));
+        m["sketch_constraints"].as_array_mut().unwrap().push(json!({
+            "id": "f3d:model:sketch-constraint#9", "sketch": SKETCH,
+            "definition": {"kind": "fixed", "entity": "f3d:model:sketch-entity#5"},
+        }));
+        m["parameters"][1]["expression"] = json!("-span");
+        m["parameters"][1]["value"]["value"] = json!(-10.0);
+        m["parameters"][1]["dependencies"] = json!(["f3d:model:parameter#3"]);
+        m["parameters"].as_array_mut().unwrap().push(json!({
+            "id": "f3d:model:parameter#3", "name": "span", "expression": "10 mm",
+            "value": {"kind": "length", "value": 10.0},
+        }));
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (document, _) = convert(&model, &SolidCraftWriter::new());
+        let dimension = &document["features"][0]["sketch"]["constraints"][4];
+        assert_eq!(dimension["type"], format!("distance_{axis}"));
+        assert_eq!(dimension["value"], 10.0);
+        assert_eq!(dimension["p"], if edge == 1 { 2 } else { 3 });
+        assert_eq!(dimension["q"], if edge == 1 { 1 } else { 2 });
+        assert_ne!(dimension["param"], "side");
+        let params = document["params"].as_array().unwrap();
+        assert_eq!(
+            params.iter().find(|p| p["name"] == "side").unwrap()["expr"],
+            "-span"
+        );
+        assert_eq!(
+            params
+                .iter()
+                .find(|p| p["name"] == dimension["param"])
+                .unwrap()["expr"],
+            "-(side)"
+        );
+        let Some(cli) = solidcraft() else { continue };
+        let (bytes, _) = written(&model);
+        assert_eq!(volumes(&cli, &bytes), [1000.0]);
+        let edited = evaluated(&cli, &with_param(&bytes, "span", "20 mm"));
+        assert_eq!(edited["bodies"][0]["volume_mm3"], 4000.0);
+        assert_eq!(edited["bodies"][0]["bbox"]["min"], json!([0.0, 0.0, 0.0]));
+        assert_eq!(
+            edited["bodies"][0]["bbox"]["max"],
+            json!([20.0, 20.0, 10.0])
+        );
+    }
+}
+
+#[test]
+fn freecad_cc0_negative_distance_replays_without_flattening() {
+    let input = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/P09a.FCStd");
+    let model = dutchman_core::read(
+        dutchman_core::Format::FreeCadDocument,
+        &input,
+        &mut Report::default(),
+    )
+    .unwrap();
+    let (document, _) = convert(&model, &SolidCraftWriter::new());
+    let sketch = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == "Sketch001")
+        .unwrap();
+    let constraints = sketch["sketch"]["constraints"].as_array().unwrap();
+    let dimension = constraints
+        .iter()
+        .find(|c| c["type"] == "distance_x")
+        .unwrap();
+    assert_eq!(dimension["value"], 2.5);
+    let magnitude = document["params"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == dimension["param"])
+        .unwrap();
+    assert_eq!(magnitude["expr"], "-(Constraint9)");
+    let Some(cli) = solidcraft() else { return };
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::With(cli.clone())),
+    );
+    assert!(
+        history_line(&report).contains("verified against the original"),
+        "{}",
+        history_line(&report)
+    );
+    let (bytes, _) = written(&model);
+    let actual = volumes(&cli, &bytes);
+    assert_eq!(actual.len(), 1);
+    assert!((actual[0] - 6250.0).abs() < 1e-6);
 }

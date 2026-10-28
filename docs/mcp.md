@@ -31,6 +31,10 @@ input-edge geometry proves each pick. Unsupported flange dimensions or selection
 appear as the first blocked feature's reason; the conversion keeps the geometry. K-factor and
 relief use the target rule defaults because CADIR does not supply them.
 
+FreeCAD signed horizontal and vertical sketch distances convert to positive dimension
+magnitudes at their solved positions. Their signed parameters and expressions remain
+available; a dependent magnitude parameter drives each negative distance in SolidCraft.
+
 ## Set up a client
 
 ### Claude Code

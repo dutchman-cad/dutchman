@@ -661,6 +661,10 @@ cadmpeg; in `--json` it is the `code` field, which scripts can match on.
 
 ## Feature history and the SolidCraft check
 
+FreeCAD signed horizontal and vertical sketch distances convert to positive dimension
+magnitudes at their solved positions. Their signed parameters and expressions remain
+available; a dependent magnitude parameter drives each negative distance in SolidCraft.
+
 Constant-radius fillets and equal-setback chamfers keep editable history when their own
 feature input topology supplies edge midpoints, tangents and endpoints, and each midpoint
 can be proven to pick exactly one edge of the pre-feature body, whatever history builds it.

@@ -257,6 +257,10 @@ SolidCraft can import". `geometry` counts what was read, whether or not it can b
 `verification.status` `unverified`. Both reports look at every feature, so every `blocked` one
 is listed; `verification.reason` names the first.
 
+Signed horizontal and vertical sketch distances that map to positive magnitudes retain
+their constraints and expression dependencies without a constraint-loss message. Report
+fields and verification statuses are unchanged.
+
 Sketch constraint losses keep the existing report fields and schema. Their `message`
 counts source constraints, for example `2 of 2 constraints not carried (angle difference:
 solver scalar identities have no sketch entity binding, scalar equality: solver scalar

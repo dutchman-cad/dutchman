@@ -34,6 +34,10 @@ missing base shape, a closed edge, or another curve keeps the history flattened,
 reason reported. This requires a SolidCraft CLI to replay the history; `--no-verify` cannot
 prove blend edges. Final-body edge numbers are never substituted for base-feature edges.
 
+FreeCAD signed horizontal and vertical sketch distances convert to positive dimension
+magnitudes at their solved positions. Their signed parameters and expressions remain
+available; a dependent magnitude parameter drives each negative distance in SolidCraft.
+
 ## Building with FreeCAD
 
 FreeCAD support is the `freecad` cargo feature of `dutchman` and `dutchman-gui`, on by

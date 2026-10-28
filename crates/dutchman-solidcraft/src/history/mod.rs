@@ -429,6 +429,7 @@ fn map_into(
             }
         }
     }
+    params::unsigned_dimensions(references, &ctx);
     references.next_id = ctx.next_id;
     if let Some(reason) = blocked {
         return Err(reason);
@@ -437,6 +438,7 @@ fn map_into(
         return Err("no feature in the history builds geometry".to_owned());
     }
     history.params = params;
+    params::unsigned_dimensions(&mut history, &ctx);
     history.looks = std::mem::take(&mut ctx.looks);
     let (face_looks, unplaced) = faces::looks(&ctx);
     history.face_looks = face_looks;
@@ -495,6 +497,8 @@ pub(crate) fn sketches(model: &Model, report: &mut Report) -> (History, usize) {
             Err(_) => left_out += 1,
         }
     }
+    kept.params = params;
+    params::unsigned_dimensions(&mut kept, &ctx);
     let used = kept
         .features
         .iter()
@@ -504,7 +508,7 @@ pub(crate) fn sketches(model: &Model, report: &mut Report) -> (History, usize) {
         .filter_map(|constraint| constraint.get("param").and_then(Value::as_str))
         .map(str::to_owned)
         .collect();
-    kept.params = params::needed(params, used);
+    kept.params = params::needed(kept.params, used);
     // Only the notes about parameters the sketches keep.
     let names: Vec<&str> = kept
         .params
