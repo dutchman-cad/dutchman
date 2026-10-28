@@ -314,6 +314,11 @@ geometry for reference, with no features built on them. Its losses include one I
 `sketches: kept N sketches for reference`, with `; M left out` if any were omitted. Body
 verification is unchanged. `import_only` continues to write geometry alone.
 
+SolidCraft assemblies with multiple top-level designs group each design's features in a
+uniquely named timeline folder, keeping feature order and leaving joints outside folders.
+Each folder added is listed in an Info loss with subject `timeline folders` and message
+`"Name": N feature(s) grouped`. Parts and assemblies with one top-level design get no folders.
+
 ### FreeCAD output (experimental)
 
 `convert` and `convert_all` accept `to: "freecad"` (default: `"solidcraft"`). For example:

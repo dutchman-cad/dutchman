@@ -34,6 +34,7 @@ fn placed_twice() -> Model {
         source_file: Some("pair.iam".to_owned()),
         source_step: None,
         assembly: Some(Assembly {
+            own_part: None,
             joints: Vec::new(),
             left_out: Vec::new(),
             held: Vec::new(),
@@ -64,6 +65,182 @@ fn written(model: &Model) -> (Vec<u8>, Report) {
         .write(model, &mut bytes, &mut report)
         .unwrap();
     (bytes, report)
+}
+
+fn document(bytes: &[u8]) -> Value {
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap()
+}
+
+#[test]
+fn folders_hold_each_top_designs_features_including_nested_parts() {
+    let model = nested();
+    let (bytes, report) = written(&model);
+    let doc = document(&bytes);
+    let groups = doc["timeline_groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0]["name"], doc["components"][0]["name"]);
+    assert_eq!(groups[1]["name"], doc["components"][2]["name"]);
+    assert_eq!(groups[0]["features"], serde_json::json!([3]));
+    assert_eq!(groups[1]["features"], serde_json::json!([7]));
+    assert!(groups.iter().all(|group| group["parent"].is_null()));
+    assert_eq!(doc["next_id"], 13);
+    assert_eq!(groups[0]["id"], 11);
+    assert_eq!(groups[1]["id"], 12);
+    let notes: Vec<_> = report
+        .losses()
+        .iter()
+        .filter(|note| note.subject == "timeline folders")
+        .collect();
+    assert_eq!(notes.len(), 2);
+    assert!(notes
+        .iter()
+        .all(|note| note.severity == dutchman_core::Severity::Info));
+    assert_eq!(notes[0].detail, "\"pair\": 1 feature(s) grouped");
+    if let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) {
+        assert_eq!(evaluate(&cli, &bytes).len(), 5);
+    }
+}
+
+#[test]
+fn a_single_part_or_one_top_design_has_no_folders() {
+    let model = placed_twice();
+    let mut own = with_sketches();
+    own.assembly.as_mut().unwrap().own_part = Some(0);
+    for model in [
+        &model,
+        &model.assembly.as_ref().unwrap().parts[0],
+        &with_components(true),
+        &own,
+    ] {
+        let (bytes, report) = written(model);
+        assert!(document(&bytes).get("timeline_groups").is_none());
+        assert!(!report
+            .losses()
+            .iter()
+            .any(|note| note.subject == "timeline folders"));
+    }
+}
+
+#[test]
+fn root_features_get_a_unique_folder_and_joints_stay_out() {
+    let mut model = with_sketches();
+    model.name = "Block".to_owned();
+    let assembly = model.assembly.as_mut().unwrap();
+    assembly.joints.push(dutchman_core::Joint {
+        a: vec![0],
+        b: vec![1],
+        frame_a: dutchman_core::placement::IDENTITY,
+        frame_b: dutchman_core::placement::IDENTITY,
+        suppressed: false,
+        motion: dutchman_core::Motion::Rigid,
+        flip: true,
+    });
+    let (bytes, _) = written(&model);
+    let doc = document(&bytes);
+    let groups = doc["timeline_groups"].as_array().unwrap();
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0]["name"], "Block");
+    assert_eq!(groups[1]["name"], "Block (2)");
+    let grouped: Vec<_> = groups
+        .iter()
+        .flat_map(|g| g["features"].as_array().unwrap())
+        .collect();
+    let features: Vec<_> = doc["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| &f["id"])
+        .collect();
+    assert_eq!(grouped, features, "all features stay in timeline order");
+    assert!(!grouped.contains(&&doc["assembly"]["joints"][0]["id"]));
+    assert_eq!(groups[1]["features"], doc["visibility"]["hidden_sketches"]);
+    if let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) {
+        assert_eq!(evaluate(&cli, &bytes).len(), 2);
+    }
+}
+
+#[test]
+fn folders_keep_mapped_history_and_its_suppressed_original() {
+    let mut model = placed_twice();
+    let assembly = model.assembly.as_mut().unwrap();
+    let mut part = assembly.parts[0].clone();
+    let mut wire = serde_json::to_value(&part.ir).unwrap();
+    wire["model"]["features"] = serde_json::json!([{
+        "id": "f3d:model:feature#1", "ordinal": 0, "name": "Ball", "suppressed": false,
+        "outputs": [wire["model"]["bodies"][0]["id"]],
+        "definition": {"definition": "sphere", "center": {"x": 5.0, "y": 5.0, "z": 5.0},
+                       "radius": 5.0, "op": "new_body"},
+    }]);
+    part.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    assembly.parts.push(part);
+    assembly.placements[1].part = 1;
+    let (bytes, _) = written(&model);
+    let doc = document(&bytes);
+    let features = doc["features"].as_array().unwrap();
+    assert_eq!(features.len(), 3);
+    assert_eq!(features[0]["type"], "import");
+    assert_eq!(features[1]["type"], "sphere");
+    assert_eq!(features[1]["name"], "Ball");
+    assert_eq!(features[2]["name"], "Original geometry (imported)");
+    assert_eq!(features[2]["suppressed"], true);
+    assert_eq!(doc["timeline_groups"][0]["name"], "synthetic_cube");
+    assert_eq!(doc["timeline_groups"][1]["name"], "synthetic_cube (2)");
+    assert_eq!(
+        doc["timeline_groups"][1]["features"],
+        serde_json::json!([features[1]["id"], features[2]["id"]])
+    );
+    if let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) {
+        assert_eq!(evaluate(&cli, &bytes).len(), 2);
+    }
+}
+
+#[test]
+fn root_bodies_and_sketches_share_a_folder_only_when_contiguous() {
+    for own_first in [false, true] {
+        let mut model = with_sketches();
+        let assembly = model.assembly.as_mut().unwrap();
+        let mut own = assembly.parts[0].clone();
+        own.name = model.name.clone();
+        let own_index = if own_first { 0 } else { 1 };
+        assembly.parts.insert(own_index, own);
+        assembly.own_part = Some(own_index);
+        for placement in &mut assembly.placements {
+            placement.part = 1 - own_index;
+        }
+        assembly.placements.push(Placement {
+            name: None,
+            part: own_index,
+            transform: dutchman_core::placement::IDENTITY,
+        });
+        let (bytes, _) = written(&model);
+        let doc = document(&bytes);
+        let groups = doc["timeline_groups"].as_array().unwrap();
+        assert_eq!(groups.len(), if own_first { 3 } else { 2 });
+        if own_first {
+            assert_eq!(groups[0]["name"], "blocks");
+            assert_eq!(groups[2]["name"], "blocks (2)");
+            assert_eq!(groups[0]["features"].as_array().unwrap().len(), 1);
+            assert_eq!(groups[2]["features"], doc["visibility"]["hidden_sketches"]);
+        } else {
+            assert_eq!(groups[1]["name"], "blocks");
+            assert_eq!(groups[1]["features"].as_array().unwrap().len(), 2);
+        }
+        let ids: Vec<_> = groups
+            .iter()
+            .flat_map(|g| g["features"].as_array().unwrap())
+            .collect();
+        let timeline: Vec<_> = doc["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| &f["id"])
+            .collect();
+        assert_eq!(ids, timeline);
+        if let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) {
+            assert_eq!(evaluate(&cli, &bytes).len(), 3);
+        }
+    }
 }
 
 #[test]
@@ -242,6 +419,7 @@ fn nested() -> Model {
         source_file: Some("top.iam".to_owned()),
         source_step: None,
         assembly: Some(Assembly {
+            own_part: None,
             joints: Vec::new(),
             left_out: Vec::new(),
             held: Vec::new(),

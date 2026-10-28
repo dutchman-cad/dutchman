@@ -748,6 +748,14 @@ reports `sketches: kept N sketches in the design itself, for reference`. cadmpeg
 which component a sketch belongs to, so a component's sketch stays where it was drawn and
 does not move with the component.
 
+Assemblies with multiple top-level designs put each design's features in a uniquely named
+timeline folder, including the root's own features when present. Feature order stays the
+same, and joints stay outside folders. Each folder added produces an Info note with subject
+`timeline folders`: `"Name": N feature(s) grouped`. Parts and assemblies with one top-level
+design get no folders.
+Root-owned bodies and adjacent root reference sketches share a folder. If another design's
+features separate them, they use numbered folders so timeline order stays unchanged.
+
 When the design is written as geometry, the same `solidcraft-cli` opens it too. Faces it
 cannot mesh, bodies inside out, solids without volume, and timeline errors still produce a
 `Degraded: geometry: …` loss, such as
@@ -756,7 +764,8 @@ Look over those bodies in SolidCraft before relying on them. SolidCraft can merg
 share a surface, so a face-count difference alone produces no loss. The history comparison
 uses area and volume, so an open-shell warning there produces no loss when they agree.
 Geometry-only output has no source measurements to compare against, so a solid it opens as
-an open shell is still reported. Sheets remain exempt from volume and closed-shell checks. `--no-verify` skips these checks too.
+an open shell is still reported. Sheets remain exempt from volume and closed-shell checks.
+`--no-verify` skips these checks too.
 
 ## Open the result in SolidCraft
 

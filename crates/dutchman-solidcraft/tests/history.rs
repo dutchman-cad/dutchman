@@ -3203,6 +3203,7 @@ fn assembly_of_histories() -> Model {
         source_file: Some("pair.iam".to_owned()),
         source_step: None,
         assembly: Some(dutchman_core::Assembly {
+            own_part: None,
             joints: Vec::new(),
             left_out: Vec::new(),
             held: Vec::new(),

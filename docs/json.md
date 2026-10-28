@@ -280,6 +280,12 @@ omitted. Only mapped sketches with resolved planes are retained, hidden after th
 they do not change the body comparison or the report's `mode` and verification status.
 `--import-only` continues to omit sketches.
 
+Assembly timeline folders are reported as Info losses with subject `timeline folders`,
+`code: null`, and message `"Name": N feature(s) grouped`, one per folder added. Assemblies
+with multiple top-level designs group each design's features, including the root's own
+features when present; joints remain outside folders, and feature order is unchanged.
+Parts and assemblies with one top-level design have no folders and no such notes.
+
 ### FreeCAD macro output (experimental)
 
 For `convert --to freecad` (MCP `to: "freecad"`), `output.format` is

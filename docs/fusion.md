@@ -15,6 +15,13 @@ pin is bumped.
 
 ## Components
 
+Assemblies with multiple top-level designs group each design's features into a uniquely
+named timeline folder, including the root design's own features when present, while keeping
+feature order and leaving joints outside folders; a single part or one top-level design
+gets no folders.
+Features of one design separated by another design's features use numbered folders to
+preserve timeline order.
+
 A Fusion design can define components and place them, several times over (a copy and paste
 of a component places it twice). cadmpeg gives each placement as a local occurrence with its
 transform, and each component as a product definition.
