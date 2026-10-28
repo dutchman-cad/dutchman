@@ -15,7 +15,7 @@ current reader status alongside what Dutchman converts.
 |---|---|
 | The part B-rep, from the file's Parasolid body streams: analytic and NURBS carriers, offset and blend surfaces where they resolve, the active configuration's bodies. | Converts it: restated as STEP, written as SolidCraft's import container, like Fusion and Inventor. The body is named after the file. |
 | No geometry (no Parasolid stream yields a body). | Stops: "no geometry could be read". |
-| Bodies that do not form a solid or a surface (for example a lone triangle face). | Stops: "the model has no solids or surfaces SolidCraft can import". |
+| Bodies with no face whose bounds can be written (for example a lone face whose edges have no curve). | Stops: "the model has no solids or surfaces SolidCraft can import". Faces that can be bounded convert as surfaces, with the rest reported. |
 | Losses: an unverified SolidWorks version, configurations inferred from geometry, opaque carriers, derived body hierarchy. | Printed as Degraded, with cadmpeg's loss code. |
 | Parameters, with their expressions (`Depth = 12.5mm`). | Mapped to SolidCraft parameters when the history maps. |
 | Feature history from the Keywords XML: extrusions with their operation, extent and depth; sketches; suppression state; many features only as `native` records. | Mapped where every feature maps, else flattened with the first blocker named (below). |
