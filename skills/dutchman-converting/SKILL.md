@@ -204,6 +204,10 @@ dutchman convert-all --json --out-dir /abs/converted /abs/project
 
 Exit codes: 0 converted, 1 could not convert (report has `ok: false`), 2 usage error.
 
+FreeCAD signed horizontal and vertical sketch distances convert to positive dimension
+magnitudes at their solved positions. Their signed parameters and expressions remain
+available; a dependent magnitude parameter drives each negative distance in SolidCraft.
+
 When a sketch reports `constraints not carried`, translate the count and reason as lost
 editability: the solved geometry remains exact. Coordinate, intersection, coradial,
 endpoint tangency, curvature, point symmetry, regular polygon, and repeated dimensions can

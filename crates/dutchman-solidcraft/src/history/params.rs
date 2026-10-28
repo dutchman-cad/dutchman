@@ -114,6 +114,68 @@ pub(crate) fn map(
     (out, written)
 }
 
+/// Axis dimensions in SolidCraft measure magnitudes. Keep a signed source parameter
+/// unchanged for its other uses, and drive the magnitude with its negation on the
+/// negative branch. The solved points retain which side of the axis they occupy.
+pub(super) fn unsigned_dimensions(history: &mut super::History, ctx: &super::Context<'_>) {
+    let negative: BTreeSet<&str> = ctx
+        .arena("parameters")
+        .iter()
+        .filter(|row| {
+            row.pointer("/value/kind").and_then(Value::as_str) == Some("length")
+                && row
+                    .pointer("/value/value")
+                    .and_then(Value::as_f64)
+                    .is_some_and(|value| value < 0.0)
+        })
+        .filter_map(|row| row.get("id").and_then(Value::as_str))
+        .filter_map(|id| ctx.params.get(id).map(String::as_str))
+        .collect();
+    let mut names: BTreeSet<String> = history
+        .params
+        .iter()
+        .filter_map(|row| row.get("name").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect();
+    let mut magnitudes = BTreeMap::new();
+    for feature in &mut history.features {
+        let Some(constraints) = feature
+            .pointer_mut("/sketch/constraints")
+            .and_then(Value::as_array_mut)
+        else {
+            continue;
+        };
+        for constraint in constraints {
+            if !matches!(
+                constraint.get("type").and_then(Value::as_str),
+                Some("distance_x" | "distance_y")
+            ) {
+                continue;
+            }
+            let Some(source) = constraint.get("param").and_then(Value::as_str) else {
+                continue;
+            };
+            if !negative.contains(source) {
+                continue;
+            }
+            let magnitude = magnitudes.entry(source.to_owned()).or_insert_with(|| {
+                let name = usable_name(&format!("{source}_magnitude"), &names);
+                names.insert(name.clone());
+                history.params.push(json!({
+                    "name": name,
+                    "expr": format!("-({source})"),
+                    "unit": "mm",
+                    "model": true,
+                }));
+                name
+            });
+            if let Some(fields) = constraint.as_object_mut() {
+                fields.insert("param".to_owned(), json!(magnitude));
+            }
+        }
+    }
+}
+
 /// `parameter`'s expression with each parameter it names written as that parameter is
 /// written: its own dependencies first (`by_id`), then any parameter that alone has the name
 /// (`by_name`). `Err` with the name when the expression names a parameter that is not a
@@ -557,5 +619,48 @@ mod map_tests {
             renamed.detail,
             "renamed to p_pi: SolidCraft cannot use that name"
         );
+    }
+
+    #[test]
+    fn signed_dimensions_share_a_magnitude_without_renaming_source_parameters() {
+        let wire =
+            json!({"parameters": [{"id": "negative", "value": {"kind": "length", "value": -3.0}}]});
+        let mut ctx = super::super::Context::new(&wire);
+        ctx.params
+            .insert("negative".to_owned(), "offset".to_owned());
+        let mut history = super::super::History {
+            params: vec![
+                json!({"name": "offset", "expr": "-width", "unit": "mm", "model": true}),
+                json!({"name": "width", "expr": "3 mm", "unit": "mm", "model": false}),
+                json!({"name": "offset_magnitude", "expr": "7 mm", "unit": "mm", "model": false}),
+            ],
+            features: vec![json!({"sketch": {"constraints": [
+                {"type": "distance_x", "p": 1, "q": 0, "value": 3.0, "param": "offset"},
+                {"type": "distance_y", "p": 2, "q": 0, "value": 3.0, "param": "offset", "driven": true},
+                {"type": "length", "l": 0, "value": 3.0, "param": "offset"},
+                {"type": "distance_x", "p": 0, "q": 3, "value": 3.0, "param": "width"}
+            ]}})],
+            ..Default::default()
+        };
+        unsigned_dimensions(&mut history, &ctx);
+        assert_eq!(history.params.len(), 4);
+        assert_eq!(history.params[0]["expr"], "-width");
+        assert_eq!(history.params[3]["name"], "offset_magnitude_2");
+        assert_eq!(history.params[3]["expr"], "-(offset)");
+        let constraints = &history.features[0]["sketch"]["constraints"];
+        assert_eq!(constraints[0]["param"], "offset_magnitude_2");
+        assert_eq!(constraints[1]["param"], "offset_magnitude_2");
+        assert_eq!(constraints[1]["driven"], true);
+        assert_eq!(constraints[0]["p"], 1);
+        assert_eq!(constraints[0]["q"], 0);
+        assert_eq!(constraints[2]["param"], "offset");
+        assert_eq!(constraints[3]["param"], "width");
+        let kept = needed(
+            history.params,
+            BTreeSet::from(["offset_magnitude_2".to_owned()]),
+        );
+        assert_eq!(kept.len(), 3);
+        assert_eq!(kept[0]["name"], "offset");
+        assert_eq!(kept[1]["name"], "width");
     }
 }
