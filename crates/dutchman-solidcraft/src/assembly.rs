@@ -251,7 +251,7 @@ fn plan_parts(
         }
         let file = part.source_file.as_deref().unwrap_or(&part.name);
         let mut part_report = Report::default();
-        let mut mapping = history::map(part, &mut part_report);
+        let mut mapping = history::map(part, &mut part_report, writer.resolved_version());
         writer.plan_blends(&mut mapping);
         features.extend(mapping.features.iter().cloned().map(|mut feature| {
             feature.name = Some(format!("{file}: {}", feature.name.unwrap_or_default()));
@@ -675,7 +675,7 @@ impl Builder<'_> {
             return Ok(false);
         }
         let mut part_report = Report::default();
-        let mut mapping = history::map(part, &mut part_report);
+        let mut mapping = history::map(part, &mut part_report, self.writer.resolved_version());
         if let Ok(history) = &mut mapping.result {
             if let Err(why) = history::base::restate(history, part) {
                 mapping.result = Err(why);
@@ -706,7 +706,7 @@ impl Builder<'_> {
         let written = self
             .writer
             .history_design(part, &history, step, Live::History)?;
-        let summary = format!("{} of {} features mapped", history.mapped, history.total);
+        let summary = self.writer.history_summary(&history);
         let check = match self.writer.check(part, &history, step, &written)? {
             verify::Outcome::Matches => {
                 self.report.push(

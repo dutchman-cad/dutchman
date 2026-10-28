@@ -32,7 +32,10 @@ DUTCHMAN_WEB_PASSWORD=choose-one dutchman-web --listen 0.0.0.0:8080
 
 It checks histories in SolidCraft when it finds `solidcraft-cli`, as the command does
 ([Feature history](guide.md#feature-history-and-the-solidcraft-check)): set `SOLIDCRAFT_CLI` to
-its path, or put it on the server's `PATH`.
+its path, or put it on the server's `PATH`. The form's **Target SolidCraft version**
+accepts x.y.z, at least 0.18.2. Leave it empty to target the found CLI's version, else
+0.18.2. FreeCAD helix history needs a target of 0.25.1 or newer; older targets preserve
+the original geometry and report the required version.
 
 ## Settings
 

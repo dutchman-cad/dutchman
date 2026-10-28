@@ -201,6 +201,10 @@ fn option_properties() -> Map<String, Value> {
             "type": "boolean",
             "description": "Replace an existing .solidcraft file at the output (default true). When false, an existing file is left alone and that file's conversion fails, saying so.",
         },
+        "solidcraft_version": {
+            "type": "string",
+            "description": "Target SolidCraft release (x.y.z, at least 0.18.2). Defaults to the verification CLI version, else 0.18.2."
+        },
         "verify_timeout": {
             "type": "integer",
             "minimum": 1,
@@ -353,11 +357,12 @@ fn count(arguments: &Arguments, key: &str) -> Result<Option<NonZeroUsize>, Strin
     }
 }
 
-const OPTIONS: [&str; 8] = [
+const OPTIONS: [&str; 9] = [
     "to",
     "import_only",
     "verify",
     "solidcraft",
+    "solidcraft_version",
     "verify_timeout",
     "overwrite",
     "project",
@@ -397,6 +402,22 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
         Some("freecad") => crate::OutputFormat::Freecad,
         _ => return Err("to must be solidcraft or freecad".to_owned()),
     };
+    let solidcraft_version = match arguments.get("solidcraft_version") {
+        None | Some(Value::Null) => {
+            let verification = solidcraft
+                .as_ref()
+                .map_or(dutchman_solidcraft::Verification::Auto, |cli| {
+                    dutchman_solidcraft::Verification::With(cli.clone())
+                });
+            Some(dutchman_solidcraft::SolidCraftVersion::detected(
+                &verification,
+            ))
+        }
+        Some(Value::String(version)) => Some(version.parse()?),
+        Some(_) => {
+            return Err("solidcraft_version must be a version string such as 0.25.1".to_owned())
+        }
+    };
     Ok(ConvertOptions {
         to,
         verify: false,
@@ -405,6 +426,7 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
         no_verify: !flag(arguments, "verify", true)?,
         no_clobber: !flag(arguments, "overwrite", true)?,
         solidcraft,
+        solidcraft_version,
         verify_timeout: count(arguments, "verify_timeout")?
             .map_or(defaults.verify_timeout, |n| n.get() as u64),
         project: search.project,
@@ -690,6 +712,37 @@ mod tests {
 #[cfg(test)]
 mod freecad_output_tests {
     use super::*;
+
+    #[test]
+    fn solidcraft_target_option_is_validated_and_forwarded() {
+        for version in ["0.18.2", "0.25.1"] {
+            let arguments = json!({"solidcraft_version": version, "verify": false});
+            let parsed = options(arguments.as_object().unwrap()).unwrap();
+            assert_eq!(parsed.solidcraft_version.unwrap().to_string(), version);
+            assert!(parsed.to_args().windows(2).any(|pair| {
+                pair.first()
+                    .is_some_and(|arg| arg == "--solidcraft-version")
+                    && pair.get(1).is_some_and(|arg| arg == version)
+            }));
+        }
+        for value in [json!("0.18.1"), json!("bad"), json!(25)] {
+            let arguments = json!({"solidcraft_version": value});
+            assert!(options(arguments.as_object().unwrap()).is_err());
+        }
+        let tools = tools();
+        for name in ["convert", "convert_all"] {
+            let tool = tools
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|tool| tool["name"] == name)
+                .unwrap();
+            assert_eq!(
+                tool["inputSchema"]["properties"]["solidcraft_version"]["type"],
+                "string"
+            );
+        }
+    }
 
     #[test]
     fn output_selection_is_validated_and_forwarded_to_workers() {

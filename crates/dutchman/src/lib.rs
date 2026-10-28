@@ -20,7 +20,7 @@ use std::time::Duration;
 
 pub use dutchman_core::PartSearch;
 use dutchman_core::{Error, Format, Model, Report, Writer};
-use dutchman_solidcraft::{SolidCraftWriter, Verification, DEFAULT_TIMEOUT};
+use dutchman_solidcraft::{SolidCraftVersion, SolidCraftWriter, Verification, DEFAULT_TIMEOUT};
 use serde_json::{json, Value};
 
 /// The format written by a conversion; independent of FreeCAD input support.
@@ -88,6 +88,10 @@ pub struct ConvertOptions {
     /// installed SolidCraft app).
     #[arg(long, value_name = "PATH", conflicts_with = "no_verify")]
     pub solidcraft: Option<PathBuf>,
+    /// Target SolidCraft release (x.y.z, at least 0.18.2). Defaults to the verification
+    /// CLI's version, else 0.18.2; with --no-verify, defaults to 0.18.2.
+    #[arg(long, value_name = "x.y.z")]
+    pub solidcraft_version: Option<SolidCraftVersion>,
     /// Write history without checking it in SolidCraft.
     #[arg(long)]
     pub no_verify: bool,
@@ -120,6 +124,7 @@ impl Default for ConvertOptions {
             to: OutputFormat::default(),
             import_only: false,
             solidcraft: None,
+            solidcraft_version: None,
             no_verify: false,
             verify: false,
             freecad_timeout: 300,
@@ -156,6 +161,7 @@ impl ConvertOptions {
                 SolidCraftWriter::new()
                     .import_only(self.import_only)
                     .verification(self.verification())
+                    .target_version(self.solidcraft_version)
                     .timeout(Duration::from_secs(self.verify_timeout)),
             ),
             OutputFormat::Freecad | OutputFormat::Fcstd => {

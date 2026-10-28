@@ -84,6 +84,65 @@ pub fn find_cli(verification: &Verification) -> Result<PathBuf, String> {
 /// The oldest SolidCraft Dutchman's output is checked with, and opens in.
 pub const OLDEST_SOLIDCRAFT: [u64; 3] = [0, 18, 2];
 
+/// A supported SolidCraft target release.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct SolidCraftVersion([u64; 3]);
+
+impl SolidCraftVersion {
+    /// First release with sketch-profile coils and entry-recess drill points.
+    pub const V0_25_1: Self = Self([0, 25, 1]);
+
+    /// The found verification CLI's release, or the compatibility floor.
+    pub fn detected(verification: &Verification) -> Self {
+        solidcraft_version(verification)
+            .and_then(|line| parse_version(&line))
+            .filter(|version| *version >= OLDEST_SOLIDCRAFT)
+            .map(Self)
+            .unwrap_or_default()
+    }
+}
+
+impl Default for SolidCraftVersion {
+    fn default() -> Self {
+        Self(OLDEST_SOLIDCRAFT)
+    }
+}
+
+impl std::fmt::Display for SolidCraftVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Self([major, minor, patch]) = self;
+        write!(f, "{major}.{minor}.{patch}")
+    }
+}
+
+impl std::str::FromStr for SolidCraftVersion {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let malformed = || {
+            "SolidCraft version must be three whole numbers: x.y.z (for example, 0.25.1)".to_owned()
+        };
+        let mut parts = value.split('.');
+        let mut version = [0; 3];
+        for number in &mut version {
+            let part = parts.next().ok_or_else(malformed)?;
+            if part.is_empty() || !part.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(malformed());
+            }
+            *number = part.parse().map_err(|_| malformed())?;
+        }
+        if parts.next().is_some() {
+            return Err(malformed());
+        }
+        if version < OLDEST_SOLIDCRAFT {
+            return Err(
+                "target needs SolidCraft 0.18.2 or newer; choose a supported version".to_owned(),
+            );
+        }
+        Ok(Self(version))
+    }
+}
+
 /// Why no SolidCraft CLI checks a design.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum NoCli {
@@ -1411,6 +1470,50 @@ mod cli_tests {
         assert_eq!(parse_version("solidcraft-cli v0.18"), Some([0, 18, 0]));
         assert_eq!(parse_version("solidcraft-cli 1.2.3-beta"), Some([1, 2, 3]));
         assert_eq!(parse_version("no version here"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn target_defaults_to_the_verification_cli_or_the_floor() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        for version in ["0.18.2", "0.20.0", "0.25.1", "nonsense", "0.17.0"] {
+            let cli = dir.path().join(version);
+            std::fs::write(
+                &cli,
+                format!("#!/bin/sh\necho 'solidcraft-cli {version}'\n"),
+            )
+            .unwrap();
+            std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let verification = Verification::With(cli);
+            let expected = version.parse().unwrap_or_default();
+            assert_eq!(SolidCraftVersion::detected(&verification), expected);
+            assert_eq!(
+                crate::SolidCraftWriter::new()
+                    .verification(verification)
+                    .resolved_version(),
+                expected
+            );
+        }
+        assert_eq!(
+            crate::SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .resolved_version(),
+            SolidCraftVersion::default()
+        );
+        assert_eq!(
+            crate::SolidCraftWriter::new()
+                .verification(Verification::With(dir.path().join("missing")))
+                .resolved_version(),
+            SolidCraftVersion::default()
+        );
+        assert_eq!(
+            crate::SolidCraftWriter::new()
+                .verification(Verification::Off)
+                .target_version(Some(SolidCraftVersion::V0_25_1))
+                .resolved_version(),
+            SolidCraftVersion::V0_25_1
+        );
     }
 
     #[cfg(unix)]

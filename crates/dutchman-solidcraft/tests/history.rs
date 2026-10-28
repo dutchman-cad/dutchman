@@ -1748,7 +1748,11 @@ fn changed_ring(change: impl FnOnce(&mut Value)) -> Model {
 fn written(model: &Model) -> (Vec<u8>, Report) {
     written_with(
         model,
-        &SolidCraftWriter::new().verification(Verification::Off),
+        &SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .target_version(Some(dutchman_solidcraft::SolidCraftVersion::detected(
+                &Verification::Auto,
+            ))),
     )
 }
 
@@ -1794,6 +1798,43 @@ fn helical_history(change: impl FnOnce(&mut Value)) -> Model {
     model
 }
 
+fn helix_cli() -> Option<PathBuf> {
+    let cli = solidcraft()?;
+    let version =
+        dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone()));
+    if version < dutchman_solidcraft::SolidCraftVersion::V0_25_1 {
+        eprintln!("skipped: sketch-profile coils need SolidCraft 0.25.1 or newer");
+        return None;
+    }
+    Some(cli)
+}
+
+#[test]
+fn helical_sweeps_block_history_for_the_compatibility_floor() {
+    let (document, report) = convert(
+        &helical_history(|_| {}),
+        &SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .target_version(Some(dutchman_solidcraft::SolidCraftVersion::default())),
+    );
+    assert_eq!(
+        types(&document).first(),
+        Some(&("import".to_owned(), false))
+    );
+    let reason = report
+        .outcome()
+        .unwrap()
+        .features
+        .iter()
+        .find(|feature| feature.kind == "helical_sweep")
+        .unwrap()
+        .reason
+        .as_deref()
+        .unwrap();
+    assert_eq!(reason, "needs SolidCraft 0.25.1 or newer (target 0.18.2)");
+    assert!(history_line(&report).contains(reason));
+}
+
 #[test]
 fn helical_sweeps_keep_the_profile_axis_law_hand_and_operation() {
     for (law, pitch, turns) in [
@@ -1811,11 +1852,14 @@ fn helical_sweeps_keep_the_profile_axis_law_hand_and_operation() {
                         d["construction"]["reversed"] = json!(reversed);
                         d["construction"]["left_handed"] = json!(left);
                     });
-                    let (document, _) = convert(
+                    let (document, report) = convert(
                         &model,
-                        &SolidCraftWriter::new().verification(Verification::Off),
+                        &SolidCraftWriter::new()
+                            .verification(Verification::Off)
+                            .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_25_1)),
                     );
                     let coil = &document["features"][1];
+                    assert!(history_line(&report).contains("target SolidCraft 0.25.1"));
                     assert_eq!(coil["type"], "coil");
                     assert_eq!(coil["sketch"], document["features"][0]["id"]);
                     assert_eq!(coil["profiles"], json!({"type": "all"}));
@@ -1842,14 +1886,16 @@ fn conical_helical_sweeps_name_the_missing_solidcraft_option() {
     });
     let (_, report) = convert(
         &model,
-        &SolidCraftWriter::new().verification(Verification::Off),
+        &SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_25_1)),
     );
     assert!(history_line(&report).contains("no radial growth or cone angle"));
 }
 
 #[test]
 fn helical_turn_parameters_drive_the_replayed_coil() {
-    let Some(cli) = solidcraft() else { return };
+    let Some(cli) = helix_cli() else { return };
     let model = helical_history(|d| d["construction"]["law"] = json!("pitch_turns_angle"));
     let bytes = written(&model).0;
     let full = volumes(&cli, &bytes);
@@ -1864,7 +1910,7 @@ fn helical_turn_parameters_drive_the_replayed_coil() {
 
 #[test]
 fn helical_handedness_and_reversal_replay_on_the_correct_side_of_the_axis() {
-    let Some(cli) = solidcraft() else { return };
+    let Some(cli) = helix_cli() else { return };
     for reversed in [false, true] {
         for left in [false, true] {
             let model = helical_history(|d| {
@@ -1895,7 +1941,9 @@ fn freecad_f13a_keeps_its_helix_and_replays_at_the_recipe_volume() {
     .unwrap();
     let (document, report) = convert(
         &model,
-        &SolidCraftWriter::new().verification(Verification::Off),
+        &SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_25_1)),
     );
     assert!(
         history_line(&report).starts_with("4 of 4 features mapped"),
@@ -1909,7 +1957,7 @@ fn freecad_f13a_keeps_its_helix_and_replays_at_the_recipe_volume() {
         .find(|f| f["type"] == "coil")
         .unwrap();
     assert_eq!(coil["axis"], json!([0.0, 0.0, 1.0]));
-    let Some(cli) = solidcraft() else { return };
+    let Some(cli) = helix_cli() else { return };
     let (bytes, report) = written_with(
         &model,
         &SolidCraftWriter::new().verification(Verification::With(cli.clone())),
@@ -2430,8 +2478,39 @@ fn a_plain_drilled_form_keeps_its_angle_and_shoulder_depth() {
 }
 
 #[test]
-fn solidcraft_entry_recesses_ignore_tip_angle() {
+fn entry_recesses_write_flat_tips_only_for_new_targets() {
+    for version in ["0.18.2", "0.25.1"] {
+        for form in [
+            json!({"kind": "counterbore", "diameter": 8.0, "depth": 2.0}),
+            json!({"kind": "countersink", "diameter": 8.0, "angle": std::f64::consts::FRAC_PI_2}),
+            json!({"kind": "chamfer", "diameter": 8.0, "angle": std::f64::consts::FRAC_PI_2}),
+        ] {
+            let model = holed_cube(4.0, |hole| {
+                hole["shape"]["construction"]["kind"] = form;
+                hole["extent"] = json!({"kind": "blind", "length": 6.0});
+                hole["bottom"] = json!({"kind": "flat"});
+            });
+            let (document, _) = convert(
+                &model,
+                &SolidCraftWriter::new()
+                    .verification(Verification::Off)
+                    .target_version(Some(version.parse().unwrap())),
+            );
+            let tip = &document["features"][3]["hole"]["tip_angle"];
+            if version == "0.25.1" {
+                assert_eq!(tip, "180");
+            } else {
+                assert!(tip.is_null());
+            }
+        }
+    }
+}
+
+#[test]
+fn solidcraft_entry_recess_tip_angles_follow_the_target_release() {
     let Some(cli) = solidcraft() else { return };
+    let modern = dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone()))
+        >= dutchman_solidcraft::SolidCraftVersion::V0_25_1;
     let dir = tempfile::tempdir().unwrap();
     let bore = std::f64::consts::PI * 4.0;
     for (kind, extra) in [
@@ -2442,7 +2521,7 @@ fn solidcraft_entry_recesses_ignore_tip_angle() {
         ),
     ] {
         let mut previous = None;
-        for tip in [None, Some("90"), Some("118")] {
+        for tip in [None, Some("90"), Some("118"), Some("180")] {
             let mut params = json!({"position": [5, 5, 10], "direction": [0, 0, -1],
                 "diameter": "4 mm", "depth": "6 mm", "type": kind,
                 "cb_diameter": "8 mm", "cb_depth": "2 mm",
@@ -2459,15 +2538,28 @@ fn solidcraft_entry_recesses_ignore_tip_angle() {
             let measured = blend_measurement(&cli, &input, &dir.path().join("eval.json"));
             let volume = measured["volume_mm3"].as_f64().unwrap();
             let flat = 1000.0 - bore * 6.0 - extra;
+            let point = if modern {
+                tip.map_or(0.0, |angle| {
+                    std::f64::consts::PI * 8.0
+                        / (3.0 * (angle.parse::<f64>().unwrap().to_radians() / 2.0).tan())
+                })
+            } else {
+                0.0
+            };
+            let expected = flat - point;
             // Tessellated volumes have a small error, well below either missing cone.
             assert!(
-                (volume - flat).abs() < 0.05,
-                "{kind} {tip:?}: {volume} vs {flat}"
+                (volume - expected).abs() < 0.05,
+                "{kind} {tip:?}: {volume} vs {expected}"
             );
-            if let Some(previous) = previous {
-                assert_eq!(volume, previous, "{kind} {tip:?}");
+            if !modern || tip == Some("180") {
+                if let Some(previous) = previous {
+                    assert_eq!(volume, previous, "{kind} {tip:?}");
+                }
             }
-            previous = Some(volume);
+            if tip.is_none() {
+                previous = Some(volume);
+            }
         }
     }
 }

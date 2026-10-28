@@ -506,6 +506,24 @@ async fn convert_in(
                     .map_err(|message| Problem::new(StatusCode::BAD_REQUEST, message))?;
                 }
             }
+            Some("solidcraft_version") => {
+                let version = field.text().await.map_err(|_| {
+                    Problem::new(
+                        StatusCode::BAD_REQUEST,
+                        "Enter a SolidCraft target version such as 0.25.1.",
+                    )
+                })?;
+                options.solidcraft_version = if version.trim().is_empty() {
+                    None
+                } else {
+                    Some(
+                        version
+                            .trim()
+                            .parse()
+                            .map_err(|message| Problem::new(StatusCode::BAD_REQUEST, message))?,
+                    )
+                };
+            }
             Some("import_only") => {
                 options.import_only = field.text().await.is_ok_and(|v| v == "true" || v == "on");
             }
