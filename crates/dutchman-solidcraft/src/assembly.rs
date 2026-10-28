@@ -47,6 +47,8 @@ pub(crate) fn write(
         outcomes: Vec::new(),
         inner: BTreeMap::new(),
         placements: BTreeMap::new(),
+        groups: Vec::new(),
+        own_group: None,
     };
     let top = builder.assembly(assembly, 0)?;
     builder.hold(&assembly.held, &top);
@@ -56,7 +58,26 @@ pub(crate) fn write(
             "none of the assembly's parts has geometry SolidCraft can import".to_owned(),
         ));
     }
+    let start = builder.features.len();
     let hidden = builder.sketches(model);
+    if builder.features.len() > start {
+        let own = builder
+            .own_group
+            .and_then(|index| builder.groups.get_mut(index));
+        match own {
+            Some((_, range)) if range.end == start => range.end = builder.features.len(),
+            _ => {
+                let base = builder
+                    .own_group
+                    .and_then(|index| builder.groups.get(index))
+                    .map(|(name, _)| name.clone())
+                    .unwrap_or_else(|| component_name(&model.name));
+                let name = builder.unique(base);
+                builder.groups.push((name, start..builder.features.len()));
+            }
+        }
+    }
+    let groups = builder.timeline_groups();
     history::base::store(&mut builder.features, &mut builder.container)?;
     let mut doc = json!({
         "format": FORMAT,
@@ -69,6 +90,9 @@ pub(crate) fn write(
         "features": builder.features,
     });
     let mut appearances = serde_json::Map::new();
+    if let (false, Some(fields)) = (groups.is_empty(), doc.as_object_mut()) {
+        fields.insert("timeline_groups".to_owned(), json!(groups));
+    }
     if !builder.looks.is_empty() {
         appearances.insert("bodies".to_owned(), json!(builder.looks));
     }
@@ -218,6 +242,9 @@ struct Builder<'r> {
     inner: BTreeMap<u64, Vec<Option<u64>>>,
     /// Each occurrence's component and placement in its parent.
     placements: BTreeMap<u64, (u64, [[f64; 4]; 3])>,
+    /// Each root design's contiguous feature range, including its nested components.
+    groups: Vec<(String, std::ops::Range<usize>)>,
+    own_group: Option<usize>,
 }
 
 impl Builder<'_> {
@@ -231,8 +258,18 @@ impl Builder<'_> {
     /// placements as occurrences inside it; returns the occurrence each placement became.
     fn assembly(&mut self, assembly: &Assembly, parent: u64) -> Result<Vec<Option<u64>>, Error> {
         let mut components = Vec::with_capacity(assembly.parts.len());
-        for part in &assembly.parts {
-            components.push(self.part(part, parent)?);
+        for (index, part) in assembly.parts.iter().enumerate() {
+            let start = self.features.len();
+            let component = self.part(part, parent)?;
+            if parent == 0 {
+                if let Some((_, name)) = &component {
+                    if assembly.own_part == Some(index) {
+                        self.own_group = Some(self.groups.len());
+                    }
+                    self.groups.push((name.clone(), start..self.features.len()));
+                }
+            }
+            components.push(component);
         }
         let mut occurrences = Vec::with_capacity(assembly.placements.len());
         for placement in &assembly.placements {
@@ -259,6 +296,33 @@ impl Builder<'_> {
             occurrences.push(Some(id));
         }
         Ok(occurrences)
+    }
+
+    fn timeline_groups(&mut self) -> Vec<Value> {
+        if self.groups.len() < 2 {
+            return Vec::new();
+        }
+        let mut groups = Vec::new();
+        for (name, range) in std::mem::take(&mut self.groups) {
+            let features: Vec<Value> = self
+                .features
+                .get(range)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|feature| feature.get("id").cloned())
+                .collect();
+            if features.is_empty() {
+                continue;
+            }
+            let id = self.id();
+            self.report.push(
+                Severity::Info,
+                "timeline folders",
+                format!("\"{name}\": {} feature(s) grouped", features.len()),
+            );
+            groups.push(json!({"id": id, "name": name, "features": features, "parent": null}));
+        }
+        groups
     }
 
     /// The joints, as SolidCraft rigid joints written as built: each holds its two

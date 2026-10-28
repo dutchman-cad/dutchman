@@ -394,6 +394,7 @@ fn assembly_occurrences_keep_nested_placements_and_independent_bodies() {
     };
     let assembly = Model {
         assembly: Some(dutchman_core::Assembly {
+            own_part: None,
             parts: vec![part.clone()],
             placements: vec![placement.clone(), placement],
             joints: Vec::new(),
@@ -460,6 +461,7 @@ fn joint_model() -> Model {
     Model {
         name: "Hinge".to_owned(),
         assembly: Some(dutchman_core::Assembly {
+            own_part: None,
             parts: vec![part.clone()],
             placements: vec![
                 dutchman_core::Placement {
@@ -1075,6 +1077,7 @@ fn nested_model() -> Model {
     let sub = Model {
         name: "Arm".to_owned(),
         assembly: Some(dutchman_core::Assembly {
+            own_part: None,
             parts: vec![part.clone()],
             placements: vec![
                 placement("Lower", 0, at(10.0)),
@@ -1090,6 +1093,7 @@ fn nested_model() -> Model {
     Model {
         name: "Nested".to_owned(),
         assembly: Some(dutchman_core::Assembly {
+            own_part: None,
             parts: vec![part.clone(), sub],
             placements: vec![
                 placement("Base", 0, IDENTITY),

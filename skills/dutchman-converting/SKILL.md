@@ -157,6 +157,10 @@ Never remove or change the quarantine attribute.
   the history did not map or did not match, so the design keeps the imported shape and any
   mapped sketches with resolved planes, hidden for reference with no features built on them.
   An Info `sketches` line counts sketches kept and, when applicable, left out.
+- Assemblies with multiple top-level designs group each design's features in uniquely named
+  timeline folders, keeping feature order and leaving joints outside folders. Each folder
+  added has an Info `timeline folders` note: `"Name": N feature(s) grouped`. Parts and
+  assemblies with one top-level design get no folders.
 - Open the design and look at it: `solidcraft-cli eval /abs/path/design.solidcraft`, or with
   SolidCraft's MCP server, start it on the design (`solidcraft-cli mcp --in
   /abs/path/design.solidcraft`) and call `measure`.

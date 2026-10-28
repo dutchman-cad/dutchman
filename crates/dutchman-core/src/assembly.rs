@@ -32,6 +32,8 @@ const RIGID: f64 = 1e-9;
 /// An assembly's parts and where they are placed.
 #[derive(Clone, Debug)]
 pub struct Assembly {
+    /// The part holding the design's own loose bodies, when it has any, by index in `parts`.
+    pub own_part: Option<usize>,
     /// Each part, read from its own file, in the order first placed. A sub-assembly is a part
     /// whose model has an assembly of its own.
     pub parts: Vec<Model>,
@@ -445,6 +447,7 @@ pub(crate) fn resolve(
         ));
     }
     Ok(Assembly {
+        own_part: None,
         parts,
         placements,
         joints: Vec::new(),
@@ -603,14 +606,17 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
     let inserted = inserted_designs(&occurrences);
     let (joints, mut left_out) = joints(arena("assembly_joints"), &tree.paths, &worlds, &inserted);
 
-    if !loose.is_empty() {
+    let own_part = if !loose.is_empty() {
         parts.push(only(model, &document, &loose, model.name.clone())?);
         placements.push(Placement {
             name: None,
             part: parts.len() - 1,
             transform: IDENTITY,
         });
-    }
+        Some(parts.len() - 1)
+    } else {
+        None
+    };
     // A design's root component is held by what holds the design: the document, or the
     // occurrence that inserts it. cadmpeg names its occurrence `root-…`.
     let mut held: Vec<Vec<usize>> = tree
@@ -631,6 +637,7 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
         .map(|(_, located)| located.path.clone())
         .collect();
     let mut assembly = Assembly {
+        own_part,
         parts,
         placements,
         joints,
@@ -1530,7 +1537,7 @@ impl<'a> Tree<'a> {
             let placed = self.placements(&inner, shared);
             self.open.pop();
             let mut placements = placed?;
-            if !bodies.is_empty() {
+            let own_part = if !bodies.is_empty() {
                 let own = only(self.model, self.document, &bodies, format!("{name} bodies"))?;
                 self.parts.push(own);
                 placements.push(Placement {
@@ -1538,11 +1545,15 @@ impl<'a> Tree<'a> {
                     part: self.parts.len() - 1,
                     transform: IDENTITY,
                 });
-            }
+                Some(self.parts.len() - 1)
+            } else {
+                None
+            };
             let parts = std::mem::replace(&mut self.parts, outer);
             self.built = outer_built;
             let mut holder = only(self.model, self.document, &[], name)?;
             holder.assembly = Some(Assembly {
+                own_part,
                 parts,
                 placements,
                 joints: Vec::new(),
@@ -1898,6 +1909,7 @@ mod tests {
         assert_eq!(sub.parts.len(), 1);
         assert_eq!(sub.placements.len(), 2);
         let completeness = Assembly::completeness(&Assembly {
+            own_part: None,
             parts: assembly.parts.clone(),
             placements: assembly.placements.clone(),
             joints: Vec::new(),
@@ -2161,6 +2173,7 @@ mod tests {
     #[test]
     fn components_that_own_their_bodies_become_an_assembly() {
         let assembly = local_assembly(&with_components(true)).unwrap().unwrap();
+        assert_eq!(assembly.own_part, None);
         assert_eq!(assembly.parts.len(), 1);
         let part = &assembly.parts[0];
         assert_eq!(part.name, "Block");
@@ -2169,6 +2182,25 @@ mod tests {
         assert!(part.ir.model.occurrences.is_empty());
         assert_eq!(assembly.placements.len(), 2);
         assert_eq!(assembly.placements[1].transform[0][3], 30.0);
+    }
+
+    #[test]
+    fn the_designs_own_loose_bodies_keep_their_part_identity() {
+        let model = with_components(true);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut loose = wire["model"]["bodies"][0].clone();
+        loose["id"] = json!("synthetic:cube:body#loose");
+        wire["model"]["bodies"].as_array_mut().unwrap().push(loose);
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        };
+        let assembly = local_assembly(&model).unwrap().unwrap();
+        assert_eq!(assembly.own_part, Some(1));
+        assert_eq!(assembly.parts[1].name, model.name);
+        assert_eq!(assembly.parts[1].ir.model.bodies.len(), 1);
+        assert_eq!(assembly.placements[2].part, 1);
+        assert_eq!(assembly.placements[2].transform, IDENTITY);
     }
 
     #[test]
@@ -3207,6 +3239,7 @@ mod tests {
         let assembly = local_assembly(&nested(true, None)).unwrap().unwrap();
         let inner = assembly.parts[0].assembly.as_ref().unwrap();
         assert_eq!(inner.parts.len(), 2);
+        assert_eq!(inner.own_part, Some(1));
         assert_eq!(inner.parts[1].name, "Frame bodies");
         assert_eq!(inner.placements.len(), 3);
         assert_eq!(inner.placements[2].part, 1);
