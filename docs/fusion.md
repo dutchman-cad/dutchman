@@ -42,7 +42,10 @@ transform, and each component as a product definition.
   part where it was before its joints were solved, so Dutchman places joined parts where their
   joints put them: from the design's own root, each joint places the part at its other end; a
   joint neither of whose parts is placed yet moves its first part to its second, as Fusion
-  moves the first part picked for a joint. A part two joints would place differently is reported,
+  moves the first part picked for a joint. Of a joint between a component and a part inside it,
+  as a rigid group holds its members to its first, the inner part moves and the component keeps
+  its own placement; a component holding a part already placed is never moved, as that would
+  move the part. A part two joints would place differently is reported,
   and SolidCraft reports the conflict when it solves. A joint to the design's root component
   holds its occurrence to the design. Fusion joint motion converts from Dutchman 0.1.5 on
   (before it, every Fusion joint was fixed). A revolute limit on one side only is left out,
