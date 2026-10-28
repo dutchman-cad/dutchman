@@ -135,8 +135,8 @@ With 0.1.5 or earlier, write `/Applications/Dutchman.app` in these commands inst
 
 ### From a release archive
 
-Each [release](https://github.com/dutchman-cad/dutchman/releases) has one archive per
-platform. Each archive holds `dutchman` (the command), `dutchman-mcp` (the
+Each [release](https://github.com/dutchman-cad/dutchman/releases) has archives for the
+platforms below. Each archive holds `dutchman` (the command), `dutchman-mcp` (the
 [MCP server](mcp.md)), `dutchman-gui` (the desktop app, from 0.1.1 on), `LICENSE`, `NOTICE`,
 `README.md` and the font licences, with a `.sha256` file beside it.
 
@@ -144,9 +144,13 @@ platform. Each archive holds `dutchman` (the command), `dutchman-mcp` (the
 |---|---|
 | Linux, x86_64 | `dutchman-VERSION-x86_64-unknown-linux-gnu.tar.gz` |
 | Linux, ARM64 | `dutchman-VERSION-aarch64-unknown-linux-gnu.tar.gz` |
-| macOS, Apple silicon | `dutchman-VERSION-aarch64-apple-darwin.tar.gz` |
-| macOS, Intel | `dutchman-VERSION-x86_64-apple-darwin.tar.gz` |
+| macOS, Apple silicon or Intel | `dutchman-VERSION-macos-universal.tar.gz` |
+| macOS, Apple silicon (per-chip archive) | `dutchman-VERSION-aarch64-apple-darwin.tar.gz` |
+| macOS, Intel (per-chip archive) | `dutchman-VERSION-x86_64-apple-darwin.tar.gz` |
 | Windows, x86_64 | `dutchman-VERSION-x86_64-pc-windows-msvc.zip` |
+
+The universal macOS archive runs on both Apple silicon and Intel. Per-chip archives remain
+available for Homebrew and other installations that select a processor.
 
 Download the archive and its `.sha256` file, check one against the other, then unpack it and
 put the programs on your `PATH`. On Linux x86_64, for release 0.1.5 (set `VERSION` and the

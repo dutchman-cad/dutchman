@@ -36,6 +36,39 @@ class ReleaseNotes(unittest.TestCase):
         expected = (Path(__file__).parent / "fixtures/v0.2.0-body.md").read_bytes()
         self.assertEqual(self.run_generator("0.2.0"), expected)
 
+    def test_download_choices(self):
+        body = self.run_generator("0.2.0").decode()
+        mac_rows = [line for line in body.splitlines() if line.startswith("| Mac")]
+        self.assertEqual(len(mac_rows), 2)
+        for label, extension in [
+            ("Mac (any Mac): the desktop app", "dmg"),
+            ("Mac command line (any Mac)", "tar.gz"),
+        ]:
+            name = f"dutchman-0.2.0-macos-universal.{extension}"
+            url = f"{RELEASE_NOTES.REPO}/releases/download/v0.2.0/{name}"
+            self.assertIn(f"| {label} | [{name}]({url}) | [SHA-256]({url}.sha256) |", mac_rows)
+        self.assertNotIn("apple-darwin", body)
+        self.assertNotIn("Not sure which Mac", body)
+
+        # The currently published README keeps its existing downloads until release day.
+        from downloads import END, START, table
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertEqual(readme.split(START, 1)[1].split(END, 1)[0], "\n" + table("latest"))
+        other_rows = [line for line in table("0.2.0").splitlines()
+                      if line.startswith(("| Linux", "| Windows"))]
+        self.assertEqual([line for line in body.splitlines()
+                          if line.startswith(("| Linux", "| Windows"))], other_rows)
+
+    def test_nightly_download_choices(self):
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "scripts/downloads.py"), "nightly"],
+            capture_output=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertIn(b"dutchman-nightly-macos-universal.tar.gz.sha256", result.stdout)
+        self.assertNotIn(b"apple-darwin", result.stdout)
+        self.assertNotIn(b"Not sure which Mac", result.stdout)
+
     def test_required_content(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
