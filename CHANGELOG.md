@@ -33,10 +33,25 @@ Unreleased changes live in [changelog.d/](changelog.d/).
   every member, moves the inner part and keeps the component where the design places it.
   Inserted designs anchoring their own rigid groups were moved to meet their parts, losing
   their placement in the assembly.
+- A Fusion joint between a copy of a component placed more than once and a part inside that
+  copy is the component's own joint, written through its first copy like the part. It joined
+  the copy to the first copy's part, so every later copy moved onto the first.
+- Joints that reach nothing placed, such as a design placed where it is stored that holds its
+  parts in a rigid group, are placed from the outermost occurrence they join, which stays
+  where the file puts it. They started from whichever joint came first, so a part-to-part
+  joint could fix both parts where they were stored and leave the design's own joints
+  unmet.
+- A joint that moves a component leaves the parts inside it that other joints already placed
+  where those joints put them. In a Fusion rigid group listing a design's parts before the
+  component holding them, the later joint moved the parts away from the earlier ones.
+- Fusion components the file places at the pose it shows them in stay there: their joints
+  are checked where they are instead of moving them back to where they were inserted. A
+  printer assembly's linear carriages, idler washers, and electronics now open where the
+  design shows them.
 
 ### cadmpeg
 
-- The cadmpeg pin moves from `fb1cd0a` to `a5ccc9d`. SolidWorks parts that 0.1.5 read and 0.2.0
+- The cadmpeg pin moves from `fb1cd0a` to `e06fa52`. SolidWorks parts that 0.1.5 read and 0.2.0
   to 0.2.2 read empty, with fewer bodies, or failing cadmpeg's edge checks read again: bytes
   inside other records no longer hide or refuse a part's bodies, arcs stored past the seam keep
   their range, and solid snapshots stored with features are no longer read as sketches. Fusion
@@ -49,12 +64,19 @@ Unreleased changes live in [changelog.d/](changelog.d/).
   shares one definition for each merged external design; and reads fillet face groups, sketches
   placed on entities, parameters with detached owners, and pipe scopes. Inventor projects
   attached plates with their bends, sheet-metal corners that change nothing, mirrors about a
-  work plane, single moves and rotations of bodies, and more revolves. NX reads change streams
-  against their embedded schema. FreeCAD applies part and link placements once and counts a
-  shell as closed when each edge is used as often each way. STEP output recovers edge curves a
-  model leaves out, keeps the faces it can bound as surfaces when a body cannot be written
-  whole, writes solids as advanced B-rep representations, and leaves a collapsed edge without a
-  curve out of its loop.
+  work plane, single moves and rotations of bodies (which Dutchman reports as not mapped yet),
+  and more revolves. NX reads change streams against their embedded schema. FreeCAD applies
+  part and link placements once and counts a shell as closed when each edge is used as often
+  each way. STEP output recovers edge curves a model leaves out, keeps the faces it can bound
+  as surfaces when a body cannot be written whole, writes solids as advanced B-rep
+  representations, and leaves a collapsed edge without a curve out of its loop. Fusion also
+  places local occurrences at the root of a design, and external occurrences, at the pose the
+  design shows them in, from the records that store that pose, instead of where they were
+  inserted; when those records disagree, the ones that list the most owners decide. Inventor
+  rectangular feature patterns with fixed spacing, in one or two directions, convert as
+  SolidCraft rectangular patterns; Combine is read as a Boolean of bodies, which Dutchman
+  reports as not mapped yet. SolidWorks parts that fall back to their display meshes keep them,
+  and report that the meshes carry no exact geometry.
 
 ### Known issue
 
