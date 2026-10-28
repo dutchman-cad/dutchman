@@ -722,7 +722,7 @@ across are counted in a `Degraded` sketch loss with a specific reason; they neve
 themselves flatten a sketch whose solved geometry maps.
 
 A converted history is checked by replaying it in `solidcraft-cli` and comparing the bodies
-and their volumes with the original. The result is in the `history:` line of the report, and
+and their area and volume with the original, within the measuring mesh tolerances. The result is in the `history:` line of the report, and
 in `verification.status` in `--json`:
 
 | Status | Meaning |
@@ -742,14 +742,15 @@ reports `sketches: kept N sketches in the design itself, for reference`. cadmpeg
 which component a sketch belongs to, so a component's sketch stays where it was drawn and
 does not move with the component.
 
-When the design is written as geometry, the same `solidcraft-cli` opens it too. If SolidCraft
-shows fewer faces than the source model has, or warns about it (for example faces it cannot
-mesh), the report says so as `Degraded: geometry: …`, such as
-`Degraded: geometry: SolidCraft opens 3 of the 6 faces converted: 3 faces are missing there; solid 'unit cube': 3 face(s) could not be meshed and are not shown`.
-The geometry was written whole; SolidCraft does not show all of it. Look over those bodies in
-SolidCraft before relying on them. When SolidCraft says why, the reason follows (faces it
-cannot mesh, open shells, bodies inside out). `--no-verify`
-skips this check too.
+When the design is written as geometry, the same `solidcraft-cli` opens it too. Faces it
+cannot mesh, bodies inside out, solids without volume, and timeline errors still produce a
+`Degraded: geometry: …` loss, such as
+`Degraded: geometry: solid 'unit cube': 3 face(s) could not be meshed and are not shown`.
+Look over those bodies in SolidCraft before relying on them. SolidCraft can merge faces that
+share a surface, so a face-count difference alone produces no loss. The history comparison
+uses area and volume, so an open-shell warning there produces no loss when they agree.
+Geometry-only output has no source measurements to compare against, so a solid it opens as
+an open shell is still reported. Sheets remain exempt from volume and closed-shell checks. `--no-verify` skips these checks too.
 
 ## Open the result in SolidCraft
 
@@ -767,8 +768,9 @@ solidcraft-cli eval cube.solidcraft
 ```
 
 Check that `body_count` is what you expect, that no `timeline` entry has an `error` or a
-`warning`, and that each body's `volume_mm3` and `bbox` match the original design. An AI
-agent can do the same through SolidCraft's MCP server: open the design with
+meshing warning, and compare each body's `area_mm2` and `volume_mm3` with the original design
+within the measuring mesh tolerances. A face-count difference alone does not establish a
+defect. An AI agent can do the same through SolidCraft's MCP server: open the design with
 `solidcraft-cli mcp --in cube.solidcraft` and call its `measure` tool.
 
 ## Troubleshooting

@@ -71,6 +71,15 @@ report schemas and field names are unchanged.
 | `names` | Every name the conversion met, sorted: the paths and folders it read from, and the names the design gives its parts, components, bodies, features, sketches, parameters and properties. For tools that take names out of a report before it is shared (the anonymous report does); absent when there were none. |
 | `losses` | What did not survive intact. `level` is `Info` (no effect on geometry), `Degraded` (carried in a weaker form) or `Dropped` (left out). `code` is cadmpeg's stable loss code when cadmpeg reported it, else `null`; `subject` says what was affected; `message` is for people. `stage` and `upstream` say where it arose (below). |
 
+SolidCraft history verification compares body count, area, and volume, using the measuring
+mesh tolerances. A face-count difference (SolidCraft can merge faces on one surface) produces
+no geometry loss, nor does an open-shell warning when area and volume agree. Geometry-only
+output has no independent source measurements; evaluation errors, unmeshable faces, solids
+without volume, solids opened as open shells, and bodies inside out still produce `Degraded` losses with subject `geometry` and stage `solidcraft`.
+Sheets remain exempt from volume and closed-shell checks. The GUI, CLI, web app, and MCP
+present these same losses; `verification.status` continues to describe history, and the
+schema is unchanged.
+
 IGES (`.igs`, `.iges`) is recognised as `input.format: "iges"` and refused before decoding
 in conversion, inspection, batch results and MCP reports. Its `error.message` is
 `Dutchman doesn't convert IGES yet: open it in SolidCraft directly (File > Import).`,

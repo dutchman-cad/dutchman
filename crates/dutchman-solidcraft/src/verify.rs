@@ -406,21 +406,17 @@ const OPEN_BODY: &str = "imported as an open body";
 /// What SolidCraft shows of geometry written as an import.
 #[derive(Debug, PartialEq)]
 pub(crate) enum Shown {
-    /// Every face, with no warning.
+    /// Geometry with no measured defect or meshing warning.
     Whole,
-    /// Less than the model holds, or with warnings; what.
+    /// A measured defect, evaluation failure, or meshing warning; what.
     Short(String),
     /// The check could not be made; why.
     Unchecked(String),
 }
 
-/// Evaluates `design`, written as an import of a model with `faces` faces, and says whether
-/// SolidCraft shows all of it.
 /// What a design written as geometry holds, to compare with what SolidCraft shows of it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Expected {
-    /// Its faces; 0 when not counted.
-    pub faces: usize,
     /// Its solid bodies, each of which should have a volume; 0 when not counted.
     pub solids: usize,
     /// Its sheet bodies: open by design, so neither a volume nor an open shell is a fault.
@@ -452,36 +448,24 @@ pub(crate) fn check_import(
 
 fn shown(eval: &Eval, expected: Expected) -> Shown {
     let mut problems: Vec<String> = eval.errors.clone();
-    let faces = expected.faces;
-    match eval.faces {
-        Some(shown) if shown < faces as u64 => {
-            let missing = faces as u64 - shown;
-            let (missing_s, are) = if missing == 1 {
-                ("", "is")
-            } else {
-                ("s", "are")
-            };
-            problems.insert(
-                0,
-                format!(
-                    "SolidCraft opens {shown} of the {faces} faces converted: {missing} \
-                     face{missing_s} {are} missing there"
-                ),
-            );
-        }
-        _ => {}
-    }
     problems.extend(volume_problems(&eval.volumes(), expected));
-    // SolidCraft warns of every open shell; the design's sheets are open by design.
+    // SolidCraft merges faces that share a surface, so the face count is no measure. An import
+    // has no original area or volume to compare, so an open shell is still a fault, except for
+    // the design's sheets, which are open by design. SolidCraft may join several warnings.
     let mut sheets = expected.sheets;
-    problems.extend(eval.warnings.iter().filter_map(|warning| {
-        if sheets > 0 && warning.contains(OPEN_BODY) {
-            sheets -= 1;
-            None
-        } else {
-            Some(warning.clone())
-        }
-    }));
+    problems.extend(
+        eval.warnings
+            .iter()
+            .flat_map(|warning| warning.split("; "))
+            .filter_map(|part| {
+                if sheets > 0 && part.contains(OPEN_BODY) && !part.contains("could not be meshed") {
+                    sheets -= 1;
+                    None
+                } else {
+                    Some(part.to_owned())
+                }
+            }),
+    );
     if problems.is_empty() {
         Shown::Whole
     } else {
@@ -554,8 +538,6 @@ struct Measured {
 struct Eval {
     bodies: Vec<Measured>,
     errors: Vec<String>,
-    /// The faces SolidCraft shows across every body, when it says.
-    faces: Option<u64>,
     /// Warnings on timeline features, such as faces that could not be meshed.
     warnings: Vec<String>,
 }
@@ -865,7 +847,7 @@ fn wait(
     }
 }
 
-/// The bodies, face count and timeline errors and warnings in a SolidCraft `eval` result.
+/// The bodies and timeline errors and warnings in a SolidCraft `eval` result.
 fn parse(value: &Value) -> Result<Eval, String> {
     let bodies = value
         .get("bodies")
@@ -914,11 +896,9 @@ fn parse(value: &Value) -> Result<Eval, String> {
         .filter_map(|entry| entry.get("warning").and_then(Value::as_str))
         .map(str::to_owned)
         .collect();
-    let faces = value.pointer("/total/faces").and_then(Value::as_u64);
     Ok(Eval {
         bodies,
         errors,
-        faces,
         warnings,
     })
 }
@@ -1070,30 +1050,71 @@ mod tests {
     }
 
     #[test]
-    fn an_import_shows_whole_unless_faces_are_missing_or_warned_about() {
+    fn an_import_shows_whole_unless_measures_differ_or_faces_cannot_mesh() {
         let eval = |faces: u64, warning: Option<&str>| {
             parse(&serde_json::json!({
-                "bodies": [{"volume_mm3": 1000.0}],
+                "bodies": [{"volume_mm3": 1000.0, "area_mm2": 600.0}],
                 "timeline": [{"name": "cube", "error": null, "warning": warning}],
                 "total": {"faces": faces},
             }))
             .unwrap()
         };
         let six = Expected {
-            faces: 6,
             solids: 1,
             sheets: 0,
         };
         assert_eq!(shown(&eval(6, None), six), Shown::Whole);
+        let original = eval(6, None);
+        for faces in [3, 6, 10] {
+            let merged = eval(faces, None);
+            assert_eq!(
+                match_bodies(&merged.bodies, &original.bodies),
+                Outcome::Matches
+            );
+            assert_eq!(shown(&merged, six), Shown::Whole);
+        }
+        let open = "solid 'cube': imported as an open body (the shell is not closed)";
+        let merged = eval(3, Some(open));
+        assert_eq!(
+            match_bodies(&merged.bodies, &original.bodies),
+            Outcome::Matches
+        );
+        // An import has nothing to compare the measures with, so an open solid is a fault.
+        assert_eq!(shown(&merged, six), Shown::Short(open.to_owned()));
+        // Except for as many open shells as the design has sheets.
+        let one_sheet = Expected {
+            solids: 1,
+            sheets: 1,
+        };
+        assert_eq!(shown(&merged, one_sheet), Shown::Whole);
+        for (volume, area, measure) in [(900.0, 600.0, "volume"), (1000.0, 500.0, "area")] {
+            let mut missing = eval(3, Some(open));
+            missing.bodies = body(volume, area, 17.32);
+            assert!(matches!(
+                match_bodies(&missing.bodies, &original.bodies),
+                Outcome::Differs(why) if why.contains(measure)
+            ));
+        }
         assert_eq!(
             shown(
                 &eval(3, Some("solid 'cube': 3 face(s) could not be meshed")),
                 six
             ),
-            Shown::Short(
-                "SolidCraft opens 3 of the 6 faces converted: 3 faces are missing there; solid 'cube': 3 face(s) could not be meshed"
-                    .to_owned()
-            )
+            Shown::Short("solid 'cube': 3 face(s) could not be meshed".to_owned())
+        );
+        let combined = format!("{open}; solid 'cube': 3 face(s) could not be meshed");
+        assert_eq!(
+            shown(&eval(3, Some(&combined)), one_sheet),
+            Shown::Short("solid 'cube': 3 face(s) could not be meshed".to_owned())
+        );
+        assert_eq!(
+            shown(&eval(3, Some(&combined)), six),
+            Shown::Short(combined.clone())
+        );
+        let combined = format!("{open}, 3 face(s) could not be meshed");
+        assert_eq!(
+            shown(&eval(3, Some(&combined)), six),
+            Shown::Short(combined)
         );
         assert!(matches!(shown(&eval(6, Some("odd")), six), Shown::Short(_)));
     }
@@ -1103,11 +1124,9 @@ mod tests {
         let eval = |volumes: &[f64]| Eval {
             bodies: volumes_of(volumes),
             errors: Vec::new(),
-            faces: None,
             warnings: Vec::new(),
         };
         let two = Expected {
-            faces: 0,
             solids: 2,
             sheets: 0,
         };
@@ -1273,6 +1292,36 @@ mod cli_tests {
     }
 
     #[test]
+    fn merged_faces_and_open_shells_do_not_hide_a_measured_difference() {
+        let measured = |faces, volume, area, warning| {
+            let value = serde_json::json!({
+                "bodies": [{
+                    "volume_mm3": volume, "area_mm2": area,
+                    "bbox": {"min": [0, 0, 0], "max": [10, 10, 10]}
+                }],
+                "timeline": [{"warning": warning}],
+                "total": {"faces": faces}
+            });
+            format!("echo '{value}'")
+        };
+        let original = measured(14, 1000.0, 600.0, "");
+        let open = "solid #1: imported as an open body (the shell is not closed)";
+        // The small measurement differences are within the existing mesh tolerances.
+        let merged = measured(10, 1000.01, 600.01, open);
+        assert_eq!(
+            run(&by_design(&original, &merged), DEFAULT_TIMEOUT),
+            Outcome::Matches
+        );
+        for (volume, area, measure) in [(900.0, 600.0, "volume"), (1000.0, 500.0, "area")] {
+            let missing = measured(10, volume, area, open);
+            assert!(matches!(
+                run(&by_design(&original, &missing), DEFAULT_TIMEOUT),
+                Outcome::Differs(why) if why.contains(measure)
+            ));
+        }
+    }
+
+    #[test]
     fn a_different_volume_differs() {
         let script = by_design(&eval(1000.0, "null"), &eval(900.0, "null"));
         assert!(matches!(run(&script, DEFAULT_TIMEOUT), Outcome::Differs(_)));
@@ -1322,7 +1371,6 @@ mod cli_tests {
             DEFAULT_TIMEOUT,
             b"design",
             Expected {
-                faces: 6,
                 solids: 0,
                 sheets: 0,
             },
@@ -1337,9 +1385,7 @@ mod cli_tests {
         let short = "echo '{\"bodies\":[{\"volume_mm3\":3.3}],\"timeline\":[{\"name\":\"cube\",\"error\":null,\"warning\":\"3 face(s) could not be meshed\"}],\"total\":{\"faces\":3}}'";
         assert_eq!(
             import_check(short),
-            Shown::Short(
-                "SolidCraft opens 3 of the 6 faces converted: 3 faces are missing there; 3 face(s) could not be meshed".to_owned()
-            )
+            Shown::Short("3 face(s) could not be meshed".to_owned())
         );
         assert!(matches!(import_check("exit 3"), Shown::Short(_)));
         assert!(matches!(import_check("echo nonsense"), Shown::Unchecked(_)));
@@ -1407,13 +1453,11 @@ mod cli_tests {
         let eval = |volumes: &[f64], warnings: &[&str]| Eval {
             bodies: super::tests::volumes_of(volumes),
             errors: Vec::new(),
-            faces: None,
             warnings: warnings.iter().map(|w| (*w).to_owned()).collect(),
         };
         let open = "solid #6704: imported as an open body (the shell is not closed)";
         // A solid and a sheet disk, which SolidCraft gives a negative volume and calls open.
         let one_sheet = Expected {
-            faces: 0,
             solids: 1,
             sheets: 1,
         };

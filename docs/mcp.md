@@ -206,6 +206,14 @@ Convert one file:
     {"level":"Info","code":null,"subject":"history","message":"flattened: the design carries no feature history"}]}}}
 ```
 
+SolidCraft history checks compare area and volume within the measuring mesh tolerances.
+Face-count differences alone produce no geometry loss, nor do open-shell warnings when area
+and volume agree. Evaluation errors, unmeshable faces, bodies inside out, solids without
+volume, and solids that geometry-only output opens as open shells are still reported;
+sheets remain exempt from volume and closed-shell checks. Geometry-only output has no
+independent source measurements. These use the existing report fields described in
+[JSON reports](json.md).
+
 If cadmpeg's model fails its checks, the reader retries after removing history, sketches,
 parameters and associated design records, including parameter links on joints. Geometry and
 assembly structure still undergo validation. A successful retry reports a `Degraded` loss

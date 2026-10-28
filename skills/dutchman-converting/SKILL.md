@@ -146,8 +146,8 @@ try again. Dutchman checks whether the quarantine attribute has the user-approve
 Never remove or change the quarantine attribute.
 
 - `verification.status` `verified`: SolidCraft replayed the history and it matches the
-  original. `unverified`: written without that check (the reason says why, usually no
-  `solidcraft-cli` was found); mention that the history has not been checked. `flattened`:
+  original in area and volume within the measuring mesh tolerances. `unverified`: written
+  without that check (the reason says why, usually no `solidcraft-cli` was found); mention that the history has not been checked. `flattened`:
   the history did not map or did not match, so the design keeps the imported shape and any
   mapped sketches with resolved planes, hidden for reference with no features built on them.
   An Info `sketches` line counts sketches kept and, when applicable, left out.
@@ -155,10 +155,14 @@ Never remove or change the quarantine attribute.
   SolidCraft's MCP server, start it on the design (`solidcraft-cli mcp --in
   /abs/path/design.solidcraft`) and call `measure`.
 - Check `body_count` against `geometry.bodies` from `inspect`, that no timeline entry has an
-  `error` or `warning`, and that volumes and bounding boxes are plausible for the part (ask
+  `error` or meshing warning, and that area and volume are plausible for the part (ask
   the user for a known dimension if you have nothing to compare with).
-- If something is off, say exactly what ("SolidCraft shows 1 body, but 3 of its 6 faces
-  could not be shown"), and don't claim the conversion is fine.
+- A face-count difference alone does not establish a defect: SolidCraft can merge faces on
+  one surface. Geometry-only output has no independent source measurements; timeline
+  errors, unmeshable faces, bodies inside out, solids without volume, and solids opened as
+  open shells still matter. Sheets remain exempt from volume and closed-shell checks.
+- If something is off, say exactly what ("SolidCraft could not mesh 3 faces"), and don't
+  claim the conversion is fine.
 
 ## 5. Explain the loss report
 
