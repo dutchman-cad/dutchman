@@ -71,3 +71,15 @@ At the current cadmpeg pin, P08b's neutral pattern uses -Y for the saved Z axis 
 mapping, and replay after correcting only the neutral axis must refuse the seven-hole
 result by volume. A separate neutral model with the recipe's axis and eight distinct
 locations verifies the expected volume. The native fixture itself is never modified.
+
+## CC0 FreeCAD partial-history fixture
+
+`F16b.FCStd` is recipe F16, variant b (SubShapeBinder and two padded bodies), authored
+with FreeCAD 0.21.2, build 33771, from the cad-fixture-recipes CC0 recipe set, booklet 1.23.
+It is dedicated to the public domain under CC0-1.0. It contains two final solids with a
+combined volume of 9000 mm³. The first Pad precedes the unresolved binder; its sketch and
+extrusion, and the later resolved sketch, exercise partial history conversion.
+
+The end-to-end test requires `dutchman-core/freecad`. Workspace tests enable it through the
+CLI; a standalone adapter test can pass `--features dutchman-core/freecad`. Set
+`SOLIDCRAFT_CLI` to check replay and body visibility too.

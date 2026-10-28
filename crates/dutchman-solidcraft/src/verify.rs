@@ -429,6 +429,22 @@ pub(crate) fn compare(
     match_bodies(&replayed.bodies, &expected.bodies)
 }
 
+/// Checks that retained features replay, without comparing an unfinished body to the final one.
+pub(crate) fn replay(cli: &Path, timeout: Duration, design: &[u8]) -> Outcome {
+    let dir = match tempfile::tempdir() {
+        Ok(dir) => dir,
+        Err(err) => return Outcome::Unverified(format!("no scratch folder: {err}")),
+    };
+    match evaluate(cli, timeout, dir.path(), "prefix", design) {
+        Ok(Evaluation::Done(eval)) => match eval.errors.first() {
+            Some(why) => Outcome::Differs(why.clone()),
+            None => Outcome::Matches,
+        },
+        Ok(Evaluation::Failed(why)) => Outcome::Differs(why),
+        Err(why) => Outcome::Unverified(why),
+    }
+}
+
 /// What is wrong with a design's body `volumes` in SolidCraft, for a design with
 /// `bodies.solids` solid bodies (0: not counted): bodies inside out, and solids without a volume.
 ///

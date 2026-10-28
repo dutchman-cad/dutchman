@@ -2,8 +2,9 @@
 //!
 //! When every feature of the model's history maps onto SolidCraft features, the design is
 //! that history, followed by the original geometry as a suppressed import; the history is
-//! checked against the original in SolidCraft's own CLI when one is available, and dropped if
-//! it does not match. Otherwise the design is exactly what SolidCraft saves when it imports a
+//! checked against the original in SolidCraft's own CLI when one is available. A blocked or
+//! differing history keeps its editable prefix hidden beside the visible original. Without
+//! a body-building prefix, the design is what SolidCraft saves when it imports a
 //! STEP file: a design container holding one component, one occurrence of it, and a
 //! non-parametric `import` feature whose geometry is STEP text (cadmpeg's restatement of the
 //! model). The adapter writes the container itself rather than linking SolidCraft's crates,
@@ -170,6 +171,18 @@ impl SolidCraftWriter {
         self.plan_blends(&mut mapping);
         let undecoded = no_decoded_history(&mapping.features);
         match mapping.result {
+            Ok(ref history) if history.stop.is_some() => {
+                report.append(history_report);
+                report.push(Severity::Degraded, HISTORY, partial_summary(history));
+                Outcome {
+                    mode: Mode::PartialHistory,
+                    check: Check::Partial(format!(
+                        "{}; prefix unverified: inspect writes nothing",
+                        partial_summary(history)
+                    )),
+                    features: mapping.features,
+                }
+            }
             Ok(_) if only_stored_geometry(&mapping.features) => {
                 report.append(history_report);
                 Outcome {
@@ -186,21 +199,30 @@ impl SolidCraftWriter {
                     features: mapping.features,
                 }
             }
-            Err(reason) if mapping.features.is_empty() => Outcome {
-                mode: Mode::Import,
-                check: Check::NotApplicable(reason),
-                features: Vec::new(),
-            },
-            Err(_) if undecoded.is_some() => Outcome {
-                mode: Mode::Import,
-                check: Check::NotApplicable(undecoded.unwrap_or_default()),
-                features: mapping.features,
-            },
-            Err(reason) => Outcome {
-                mode: Mode::Import,
-                check: Check::Flattened(reason),
-                features: mapping.features,
-            },
+            Err(reason) if mapping.features.is_empty() => {
+                report.append(history_report);
+                Outcome {
+                    mode: Mode::Import,
+                    check: Check::NotApplicable(reason),
+                    features: Vec::new(),
+                }
+            }
+            Err(_) if undecoded.is_some() => {
+                report.append(history_report);
+                Outcome {
+                    mode: Mode::Import,
+                    check: Check::NotApplicable(undecoded.unwrap_or_default()),
+                    features: mapping.features,
+                }
+            }
+            Err(reason) => {
+                report.append(history_report);
+                Outcome {
+                    mode: Mode::Import,
+                    check: Check::Flattened(reason),
+                    features: mapping.features,
+                }
+            }
         }
     }
 
@@ -295,6 +317,160 @@ impl SolidCraftWriter {
         }
     }
 
+    /// Keeps the largest replayable prefix we can identify from SolidCraft's first error.
+    /// A shape mismatch alone cannot identify a bad operation: retain the mapped timeline
+    /// for correction, hidden beside the original, and say it differs.
+    fn partial(
+        &self,
+        model: &Model,
+        mapping: &mut history::Mapping,
+        step: &str,
+        why: Option<String>,
+    ) -> Result<Check, Error> {
+        if let Some(why) = why {
+            let error = why
+                .strip_prefix("replay differs (")
+                .and_then(|s| s.strip_suffix(')'))
+                .unwrap_or(&why);
+            let identified = self.stop_replay(mapping, error);
+            if let (false, Ok(history)) = (identified, &mut mapping.result) {
+                history.stop = Some(why);
+            }
+        }
+        let cli = verify::usable_cli(&self.verification);
+        let started = std::time::Instant::now();
+        for _ in 0..64 {
+            let Ok(history) = &mapping.result else { break };
+            let summary = partial_summary(history);
+            let cli = match &cli {
+                Ok(cli) => cli,
+                Err(why) => {
+                    return Ok(Check::Partial(format!(
+                        "{summary}; prefix unverified: {why}"
+                    )))
+                }
+            };
+            let Some(remaining) = self.timeout.checked_sub(started.elapsed()) else {
+                return Ok(Check::Partial(format!(
+                    "{summary}; prefix unverified: replay timed out"
+                )));
+            };
+            let design = self.history_design(model, history, step, Live::History)?;
+            match verify::replay(cli, remaining, &design) {
+                verify::Outcome::Matches => return Ok(Check::Partial(format!("{summary}; retained features replay in SolidCraft; the full history is not verified"))),
+                verify::Outcome::Unverified(why) => return Ok(Check::Partial(format!("{summary}; prefix unverified: {why}"))),
+                verify::Outcome::Differs(why) => {
+                    if !self.stop_replay(mapping, &why) {
+                        mapping.result = Err(format!("cannot replay retained history: {why}"));
+                        break;
+                    }
+                }
+            }
+        }
+        if mapping.result.is_ok() {
+            mapping.result = Err("retained history exceeded the replay repair limit".to_owned());
+        }
+        Ok(Check::Flattened("no replayable prefix remains".to_owned()))
+    }
+
+    fn stop_replay(&self, mapping: &mut history::Mapping, why: &str) -> bool {
+        let Ok(history) = &mut mapping.result else {
+            return false;
+        };
+        let failed = history
+            .features
+            .iter()
+            .enumerate()
+            .find(|(_, feature)| {
+                feature
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| why.starts_with(&format!("feature \"{name}\" failed:")))
+            })
+            .map(|(at, _)| at);
+        if let Some(at) = failed {
+            let source = history
+                .features
+                .get(at)
+                .and_then(|f| f.get("id"))
+                .and_then(Value::as_u64)
+                .and_then(|id| history.sources.get(&id))
+                .copied();
+            let mut repaired = false;
+            let mut dropped = 0usize;
+            if history
+                .features
+                .get(at)
+                .and_then(|f| f.get("type"))
+                .and_then(Value::as_str)
+                == Some("sketch")
+            {
+                // Retry the solved geometry without constraints before giving up its sketch.
+                if let Some(constraints) = history
+                    .features
+                    .get_mut(at)
+                    .and_then(|f| f.get_mut("sketch"))
+                    .and_then(|s| s.get_mut("constraints"))
+                    .and_then(Value::as_array_mut)
+                    .filter(|constraints| !constraints.is_empty())
+                {
+                    dropped = constraints.len();
+                    constraints.clear();
+                    repaired = true;
+                }
+                if repaired {
+                    if let Some(sketch) = history.features.get(at) {
+                        if let Some(reference) = mapping
+                            .references
+                            .features
+                            .iter_mut()
+                            .find(|f| f.get("id") == sketch.get("id"))
+                        {
+                            *reference = sketch.clone();
+                        }
+                    }
+                    if let Some(feature) =
+                        source.and_then(|source| mapping.features.get_mut(source))
+                    {
+                        feature.reason = Some(format!("{} not carried after replay failed: {why}; its solved geometry is retained", count(dropped, "constraint", "constraints")));
+                    }
+                } else {
+                    let removed = history.features.remove(at);
+                    mapping
+                        .references
+                        .features
+                        .retain(|feature| feature.get("id") != removed.get("id"));
+                    if let Some(feature) =
+                        source.and_then(|source| mapping.features.get_mut(source))
+                    {
+                        feature.status = FeatureStatus::Blocked;
+                        feature.reason = Some(why.to_owned());
+                    }
+                }
+            }
+            if let Some(source) = source {
+                history::shorten(mapping, source, why.to_owned());
+            } else {
+                let detail = if repaired {
+                    format!(
+                        "a sketch's {} not carried after replay failed: {why}",
+                        count(dropped, "constraint", "constraints")
+                    )
+                } else {
+                    format!("a sketch was left out: {why}")
+                };
+                history.stop = Some(match history.stop.take() {
+                    Some(stop) => format!("{stop}; {detail}"),
+                    None => detail,
+                });
+            }
+            true
+        } else {
+            history.stop = Some(why.to_owned());
+            false
+        }
+    }
+
     fn check(
         &self,
         model: &Model,
@@ -326,6 +502,40 @@ impl SolidCraftWriter {
             result => result,
         })
     }
+}
+
+fn report_sketches(features: &[FeatureOutcome], report: &mut Report) {
+    for feature in features.iter().filter(|f| {
+        f.kind == "sketch" && (f.status == FeatureStatus::Blocked || f.reason.is_some())
+    }) {
+        report.push(
+            Severity::Degraded,
+            format!(
+                "sketch \"{}\"",
+                feature.name.as_deref().unwrap_or("Unnamed")
+            ),
+            if feature.status == FeatureStatus::Blocked {
+                format!(
+                    "sketch left out: {}",
+                    feature
+                        .reason
+                        .as_deref()
+                        .unwrap_or("its geometry is not resolved")
+                )
+            } else {
+                feature.reason.clone().unwrap_or_default()
+            },
+        );
+    }
+}
+
+fn partial_summary(history: &history::History) -> String {
+    format!(
+        "history stopped at {} ({} of {} features kept); the rest is the imported final shape",
+        history.stop.as_deref().unwrap_or("a replay difference"),
+        history.mapped,
+        history.total
+    )
 }
 
 /// How many sheet bodies an assembly places, through its sub-assemblies, each as often as it
@@ -587,6 +797,27 @@ impl Writer for SolidCraftWriter {
                 }
             }
             self.prove_blends(model, &mut mapping, &step)?;
+            let mut checked = None;
+            if let Ok(history) = &mapping.result {
+                if history.stop.is_none() && !only_stored_geometry(&mapping.features) {
+                    let written = self.history_design(model, history, &step, Live::History)?;
+                    checked = Some(self.check(model, history, &step, &written)?);
+                }
+            }
+            let partial_check = if let Some(verify::Outcome::Differs(why)) = &checked {
+                Some(self.partial(
+                    model,
+                    &mut mapping,
+                    &step,
+                    Some(format!("replay differs ({why})")),
+                )?)
+            } else if mapping.result.as_ref().is_ok_and(|h| h.stop.is_some()) {
+                Some(self.partial(model, &mut mapping, &step, None)?)
+            } else {
+                None
+            };
+
+            report_sketches(&mapping.features, report);
             let flat = |reason: String| Outcome {
                 mode: Mode::Import,
                 check: Check::Flattened(reason),
@@ -595,6 +826,7 @@ impl Writer for SolidCraftWriter {
             let helper_notes = history::helper_notes(&history_report);
             let written = match (&mapping.result, no_decoded_history(&mapping.features)) {
                 (Err(_), Some(why)) => {
+                    report.append(history_report);
                     report.push(Severity::Info, HISTORY, format!("not written: {why}"));
                     let outcome = Outcome {
                         mode: Mode::Import,
@@ -607,6 +839,7 @@ impl Writer for SolidCraftWriter {
                     )
                 }
                 (Err(reason), None) => {
+                    report.append(history_report);
                     report.push(Severity::Info, HISTORY, format!("flattened: {reason}"));
                     let outcome = if mapping.features.is_empty() {
                         Outcome {
@@ -620,6 +853,27 @@ impl Writer for SolidCraftWriter {
                     (
                         self.import_design(model, &step, Some(&mapping.references), report)?,
                         outcome,
+                    )
+                }
+                (Ok(history), _) if history.stop.is_some() => {
+                    report.append(history_report);
+                    let check =
+                        partial_check.unwrap_or_else(|| Check::Partial(partial_summary(history)));
+                    if let Check::Partial(message) = &check {
+                        report.push(Severity::Degraded, HISTORY, message);
+                    }
+                    let written = self.history_design(model, history, &step, Live::Partial)?;
+                    // Check the visible original separately: hidden editable bodies also
+                    // appear in SolidCraft's numerical eval result.
+                    let original = self.history_design(model, history, &step, Live::Original)?;
+                    self.check_import(model, &original, report);
+                    (
+                        written,
+                        Outcome {
+                            mode: Mode::PartialHistory,
+                            check,
+                            features: mapping.features.clone(),
+                        },
                     )
                 }
                 (Ok(history), _) if only_stored_geometry(&mapping.features) => {
@@ -640,7 +894,7 @@ impl Writer for SolidCraftWriter {
                         check,
                         features: mapping.features.clone(),
                     };
-                    match self.check(model, history, &step, &written)? {
+                    match checked.unwrap_or(verify::Outcome::Unverified("not checked".to_owned())) {
                         verify::Outcome::Matches => {
                             report.append(history_report);
                             report.push(
@@ -661,6 +915,7 @@ impl Writer for SolidCraftWriter {
                             (written, written_as(Check::Unverified(why)))
                         }
                         verify::Outcome::Differs(why) => {
+                            report.append(helper_notes);
                             let reason = format!("replay differs ({why})");
                             report.push(Severity::Info, HISTORY, format!("flattened: {reason}"));
                             (
@@ -676,9 +931,6 @@ impl Writer for SolidCraftWriter {
                     }
                 }
             };
-            if written.1.mode == Mode::Import {
-                report.append(helper_notes);
-            }
             written
         };
         if outcome.mode == Mode::Import {
@@ -709,7 +961,10 @@ pub fn mapped_history(model: &Model, report: &mut Report) -> MappedHistory {
         Err("only a SolidCraft design is replayed to find them".to_owned())
     });
     MappedHistory {
-        features: mapping.result.map(|history| history.features),
+        features: mapping.result.and_then(|history| match history.stop {
+            Some(why) => Err(why),
+            None => Ok(history.features),
+        }),
         sketches: mapping.references.features,
         outcomes: mapping.features,
     }

@@ -91,8 +91,8 @@ report schemas and field names are unchanged.
 | `input.words` | Reader status: `reads geometry`, `opens, no geometry yet`, `recognised, not read yet`, or `open it in SolidCraft directly` (IGES); `null` for an unknown format. Present on successes and failures, including batch results and MCP reports. The conversion's history and verification describe what this file kept. |
 | `input.program`, `input.extension` | Program or format family, and the input's actual suffix without a dot, used for status text (`prt.12` for a numbered save). Unknown programs are `null`. |
 | `output.format` | The SolidCraft design format written. |
-| `mode` | `history`: editable feature history, with the original geometry kept beside it, suppressed. `import`: the geometry alone. |
-| `verification.status` | `verified`: the history was replayed in SolidCraft, or the FreeCAD output was measured, and matches the original. `differs`: a FreeCAD rebuild differs or restored STEP (`reason` names the part). `unverified`: the history was written without that check (`reason` says why: no `solidcraft-cli`, a timeout, `--no-verify`). `flattened`: the design has a history but it was not written (`reason`: the first feature that does not map, or `replay differs (…)`). `not_applicable`: there was no history to write (none in the source, or none cadmpeg decodes: every feature is kept in its native form), or `--import-only`. |
+| `mode` | `history`: editable feature history, with the original geometry kept beside it, suppressed. `partial_history`: retained editable features in a hidden component and the visible imported final shape. `import`: geometry, possibly with reference sketches. |
+| `verification.status` | `verified`: the history was replayed in SolidCraft, or the FreeCAD output was measured, and matches the original. `differs`: a FreeCAD rebuild differs or restored STEP (`reason` names the part). `unverified`: the history was written without that check (`reason` says why: no `solidcraft-cli`, a timeout, `--no-verify`). `partial`: only partial history is retained; `reason` names the blocker, gives kept/total source feature counts, and states whether retained features replayed or remain unverified. This never claims the full history matches the original. `flattened`: no body-building prefix was retained (`reason`: the blocker or replay failure). `not_applicable`: there was no history to write (none in the source, or none cadmpeg decodes: every feature is kept in its native form), or `--import-only`. |
 | `history.features` | Every source feature in timeline order. `status`: `mapped`, `not_needed` (the target needs no feature, e.g. a principal datum plane or an unused construction helper), `left_out` (suppressed in the source), `blocked` (does not map; `reason` says why). |
 | `history.mapped`, `history.total` | Mapped or not-needed features, out of all but left-out ones. |
 | `completeness` | For an assembly: how much of it was placed. `placed` and `placements` count every placement the assembly and its placed sub-assemblies record, a sub-assembly's as often as it is placed. `left_out` lists those not placed by cause, most first: `file` (the file placed, or `null`), `reason`, `stage` and `count`. Absent for a single part. |
@@ -286,7 +286,7 @@ unclassified `.prt` files are recognised without readers. Reader status does not
 that a particular file will convert or that every feature will map.
 `--quiet` suppresses only the text volunteer invitation after a conversion run; JSON
 reports contain neither that invitation nor status prose outside the report.
-The invitation appears once for programs with `ok: false`, `verification.status: "flattened"`,
+The invitation appears once for programs with `ok: false`, `verification.status: "flattened"` or `"partial"`,
 or `history.mapped < history.total`, except IGES, and offers test-file recipes and private help
 in Discord.
 
@@ -303,8 +303,8 @@ The same fields as `convert` except `output` (with `completeness` for an assembl
   "input": {"path": "part.f3d", "format": "fusion_archive", "format_name": "Fusion archive (.f3d)"},
   "geometry": {"bodies": 1, "faces": 6},
   "conversion": {"possible": true, "reason": null},
-  "mode": "import",
-  "verification": {"status": "flattened", "reason": "feature \"Shell1\": shell waits on input face geometry"},
+  "mode": "partial_history",
+  "verification": {"status": "partial", "reason": "history stopped at feature \"Shell1\": shell waits on input face geometry (2 of 3 features kept); the rest is the imported final shape; prefix unverified: inspect writes nothing"},
   "history": {"mapped": 2, "total": 3, "features": [ … ]},
   "losses": [ … ]
 }
@@ -315,8 +315,14 @@ why, for example a design whose only geometry is a sketch: "the model has no sol
 SolidCraft can import". `geometry` counts what was read, whether or not it can be written.
 
 `inspect` writes nothing and runs no SolidCraft, so a history that would be written reports
-`verification.status` `unverified`. Both reports look at every feature, so every `blocked` one
-is listed; `verification.reason` names the first.
+`verification.status` `unverified`, or `partial` when mapping identifies a retained prefix
+(the reason states that the prefix is unverified). Both reports look at every feature;
+`blocked` includes operations after the first blocker, and `verification.reason` names the
+first blocker.
+
+Sketches that fail replay are retried without constraints and reported at `Degraded` level;
+their mapped feature reason records that loss. If the solved geometry still cannot replay,
+the sketch is left out and reported as `blocked`.
 
 Signed horizontal and vertical sketch distances that map to positive magnitudes retain
 their constraints and expression dependencies without a constraint-loss message. Report
@@ -353,7 +359,7 @@ Shells and drafts are refused, since their faces are known only on the final bod
 the feature has already removed or tilted them; they wait on input face geometry.
 Replacing a source shape with its mirror is not supported yet: SolidCraft's mirror keeps
 the original. Cosmetic threads lack a resolved standard and pitch in CADIR, so assigning
-SolidCraft's ISO metric designation would invent thread data; these remain flattened.
+SolidCraft's ISO metric designation would invent thread data; these stop the editable prefix.
 
 When a design falls back to imported geometry, a single Info loss with subject `sketches`
 reports `kept N sketches for reference`, followed by `; M left out` when any sketches were
@@ -456,3 +462,19 @@ resolved in its dependent sketch, pattern, or datum also has status `not_needed`
 that cannot be resolved keep status `blocked` and a specific `reason`. These statuses
 measure mapping eligibility; `mode` and `verification` still determine whether history
 was written and replayed successfully.
+
+Partial history adds `mode: "partial_history"` and `verification.status: "partial"` within the
+existing schema; existing values retain their meanings. `history.mapped` counts retained
+source features marked `mapped` or `not_needed`, not mapping eligibility after the blocker.
+Later body-building features have status `blocked` and a reason saying they follow the
+blocker. Resolved later sketches can still be `mapped`. Counts exclude suppressed features.
+Orphan sketches without source feature rows are retained but do not increase source feature
+counts. An assembly with partial component history also reports `partial_history` / `partial`;
+the reason identifies each affected part. Hidden bodies are included in SolidCraft's numeric
+evaluation, so evaluating the whole saved design is not a visible-body comparison.
+
+Assembly visibility reports count source-hidden placements separately from retained
+editable history. An Info `visibility` note, `N editable-history component placement(s)
+are placed hidden`, counts the latter across repeated and nested placements. Both use
+the same bounded hidden-occurrence paths; a Degraded note reports paths left shown
+past the 4096-path limit.

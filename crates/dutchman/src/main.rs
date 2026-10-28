@@ -538,6 +538,9 @@ fn inspect(
     if let Some(outcome) = inspection.report.outcome() {
         match (&inspection.conversion, &outcome.mode, &outcome.check) {
             (Err(reason), _, _) => println!("would write: nothing; converting it fails: {reason}"),
+            (Ok(()), Mode::PartialHistory, _) => {
+                println!("would write: partial editable history and the imported final shape")
+            }
             (Ok(()), Mode::History, _) => println!("would write: editable history"),
             (Ok(()), Mode::Import, Check::Flattened(reason) | Check::NotApplicable(reason)) => {
                 println!("would write: geometry without history ({reason})");

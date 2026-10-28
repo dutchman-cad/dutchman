@@ -205,22 +205,26 @@ pub struct Outcome {
 /// The form a design was written in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
+    /// An editable prefix and sketches, hidden beside the visible original geometry.
+    PartialHistory,
     /// Editable feature history, with the original geometry kept beside it.
     History,
-    /// The geometry alone, without history.
+    /// Imported geometry without body-building history, possibly with reference sketches.
     Import,
 }
 
 /// What became of the history's check, with the reason where there is one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Check {
+    /// Only part of the history is retained; the reason states its replay check.
+    Partial(String),
     /// The replayed history matched the original geometry.
     Verified,
     /// A rebuilt result differs from its source; original geometry is retained.
     Differs(String),
     /// The history was written without being checked.
     Unverified(String),
-    /// No history was written: it did not map, or its replay did not match.
+    /// No body-building prefix was retained: it did not map or could not replay.
     Flattened(String),
     /// There was no history to write, or it was not asked for.
     NotApplicable(String),
@@ -248,7 +252,7 @@ pub enum FeatureStatus {
     NotNeeded,
     /// It was suppressed in the source and left out.
     LeftOut,
-    /// It does not map, so the history cannot be written.
+    /// It stops body-building history, or follows the first blocking feature.
     Blocked,
 }
 

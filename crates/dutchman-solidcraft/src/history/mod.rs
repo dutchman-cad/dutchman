@@ -1,8 +1,7 @@
 //! The model's feature history, as SolidCraft parametric features.
 //!
-//! History is all or nothing: CADIR keeps only the final B-rep, so a history that stops part
-//! way cannot be finished with an imported body. Either every active feature maps, or the
-//! design is written as one import with mapped sketches hidden for reference.
+//! Mapping stops body-building history at its first blocker, retaining independent sketches.
+//! The writer keeps this editable prefix hidden beside an import of the final B-rep.
 //!
 //! The mapping reads the model in CADIR's documented JSON form (`docs/cad-ir.md` in cadmpeg),
 //! the stable contract cadmpeg publishes, rather than its Rust accessors. It knows the wire
@@ -40,6 +39,10 @@ const IR_VERSIONS: [&str; 5] = ["6", "7", "8", "9", "10"];
 /// A replayable history: SolidCraft parameters and features in timeline order.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct History {
+    /// Why the editable timeline stops before the source ends.
+    pub(crate) stop: Option<String>,
+    /// The source row that emitted each feature, including auxiliary features.
+    pub(crate) sources: BTreeMap<u64, usize>,
     pub(crate) params: Vec<Value>,
     pub(crate) features: Vec<Value>,
     /// The looks of the bodies the history makes, by body name.
@@ -413,9 +416,7 @@ fn map_into(
     ctx.target_version = target_version;
     ctx.params = param_names;
     let mut features: Vec<&Value> = ctx.arena("features").iter().collect();
-    if features.is_empty() {
-        return Err("the design carries no feature history".to_owned());
-    }
+    let no_timeline = features.is_empty();
     features.sort_by_key(|feature| feature.get("ordinal").and_then(Value::as_u64));
 
     let mut history = History::default();
@@ -440,6 +441,22 @@ fn map_into(
             continue;
         }
         history.total += 1;
+        let definition = operation(feature);
+        let structural = matches!(
+            definition.get("definition").and_then(Value::as_str),
+            Some("datum_principal_plane" | "tree_node" | "insert_component" | "assembly_joint")
+        ) || helpers::is_helper(feature);
+        if blocked.is_some() && kind(feature) != "sketch" && !structural {
+            out.push(outcome(
+                FeatureStatus::Blocked,
+                Some(
+                    "after the first blocking feature; kept in the imported final shape".to_owned(),
+                ),
+            ));
+            continue;
+        }
+        let builds = ctx.builds;
+        let before = history.features.len();
         let blends = ctx.blends.len();
         match map_feature(feature, &mut ctx, report, &mut history.features) {
             Ok(Mapped::Nothing) => {
@@ -467,19 +484,67 @@ fn map_into(
                 }
             }
             Err(reason) => {
+                ctx.builds = builds;
+                history.features.truncate(before);
+                ctx.blends.truncate(blends);
                 blocked.get_or_insert_with(|| format!("{}: {reason}", describe(feature)));
                 out.push(outcome(FeatureStatus::Blocked, Some(reason)));
             }
         }
+        for emitted in history.features.iter().skip(before) {
+            if let Some(id) = emitted.get("id").and_then(Value::as_u64) {
+                history.sources.insert(id, out.len().saturating_sub(1));
+            }
+        }
+    }
+    // Some decoders supply sketches without timeline rows. Their resolved frames are
+    // independent of replayed topology; unresolved attachments are refused by sketch::map.
+    let bound: std::collections::BTreeSet<&str> = ctx
+        .arena("features")
+        .iter()
+        .filter_map(|feature| {
+            operation(feature)
+                .pointer("/sketch/sketch")
+                .and_then(Value::as_str)
+        })
+        .collect();
+    for sketch in ctx.arena("sketches") {
+        let Some(id) = sketch.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        if bound.contains(id) {
+            continue;
+        }
+        let feature = serde_json::json!({"name": sketch.get("name")});
+        let definition = serde_json::json!({"sketch": {"space": "planar", "sketch": id}});
+        match sketch::map(&feature, &definition, &mut ctx, report) {
+            Ok(mut mapped) => {
+                let name = ctx.unique_name(&mapped, &history.features);
+                if let Some(fields) = mapped.as_object_mut() {
+                    fields.insert("name".to_owned(), Value::String(name));
+                }
+                references.features.push(mapped.clone());
+                history.features.push(mapped);
+            }
+            Err(why) => report.push(
+                Severity::Degraded,
+                describe(&feature),
+                format!("sketch left out: {why}"),
+            ),
+        }
     }
     params::unsigned_dimensions(references, &ctx);
     references.next_id = ctx.next_id;
-    if let Some(reason) = blocked {
-        return Err(reason);
-    }
     if !ctx.builds {
-        return Err("no feature in the history builds geometry".to_owned());
+        return Err(blocked.unwrap_or_else(|| {
+            if no_timeline {
+                "the design carries no feature history".to_owned()
+            } else {
+                "no feature in the history builds geometry".to_owned()
+            }
+        }));
     }
+    history.stop = blocked;
     history.params = params;
     params::unsigned_dimensions(&mut history, &ctx);
     history.looks = std::mem::take(&mut ctx.looks);
@@ -646,11 +711,59 @@ pub(crate) fn prove_blends(
                     outcome.status = FeatureStatus::Blocked;
                     outcome.reason = Some(reason.clone());
                 }
-                first.get_or_insert_with(|| format!("{}: {reason}", pending.subject));
+                first.get_or_insert_with(|| {
+                    (pending.outcome, format!("{}: {reason}", pending.subject))
+                });
             }
         }
     }
-    if let Some(reason) = first {
+    if let Some((source, reason)) = first {
+        shorten(mapping, source, reason);
+    }
+}
+
+/// Keeps the prefix before a failed source feature, plus independently placed sketches.
+pub(crate) fn shorten(mapping: &mut Mapping, source: usize, reason: String) {
+    let first_blocker = mapping
+        .features
+        .iter()
+        .position(|f| f.status == FeatureStatus::Blocked);
+    let Ok(history) = &mut mapping.result else {
+        return;
+    };
+    history.features.retain(|feature| {
+        feature.get("type").and_then(Value::as_str) == Some("sketch")
+            || feature
+                .get("id")
+                .and_then(Value::as_u64)
+                .and_then(|id| history.sources.get(&id))
+                .is_some_and(|row| *row < source)
+    });
+    for feature in mapping.features.iter_mut().skip(source) {
+        if feature.status == FeatureStatus::Mapped && feature.kind != "sketch" {
+            feature.status = FeatureStatus::Blocked;
+            feature.reason = Some(reason.clone());
+        }
+    }
+    history.mapped = mapping
+        .features
+        .iter()
+        .filter(|feature| {
+            matches!(
+                feature.status,
+                FeatureStatus::Mapped | FeatureStatus::NotNeeded
+            )
+        })
+        .count();
+    if first_blocker.is_none_or(|first| source <= first) {
+        history.stop = Some(reason.clone());
+    }
+    history.blends.clear();
+    if history
+        .features
+        .iter()
+        .all(|f| f.get("type").and_then(Value::as_str) == Some("sketch"))
+    {
         mapping.result = Err(reason);
     }
 }

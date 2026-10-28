@@ -97,6 +97,8 @@ pub(crate) fn column_major(rows: &[[f64; 4]; 3]) -> [[f64; 4]; 4] {
 pub(crate) enum Live {
     /// The replayed history, as the design is written.
     History,
+    /// Editable history in a hidden component; the final original remains visible.
+    Partial,
     /// The original geometry, with the history suppressed: what the replay is checked against.
     Original,
 }
@@ -122,6 +124,13 @@ pub(crate) fn history_design(
     step_blob: &str,
     live: Live,
 ) -> Value {
+    let mut history = history.clone();
+    let component = history.next_id;
+    let occurrence = component.saturating_add(1);
+    if live == Live::Partial {
+        history.relocate(0, component, "", &mut Default::default());
+        history.next_id = occurrence.saturating_add(1);
+    }
     let mut features = history.features.clone();
     if live == Live::Original {
         for feature in &mut features {
@@ -151,6 +160,23 @@ pub(crate) fn history_design(
         fields.insert(
             "sheet".to_owned(),
             json!({"active": first.get("name"), "rules": history.sheet_rules}),
+        );
+    }
+    if let (Live::Partial, Some(fields)) = (live, doc.as_object_mut()) {
+        fields.insert(
+            "components".to_owned(),
+            json!([{"id": component, "name": "Editable history (partial)", "parent": 0}]),
+        );
+        fields.insert("occurrences".to_owned(), json!([{"id": occurrence, "name": "Editable history (partial):1", "component": component, "parent": 0, "grounded": true, "transform": IDENTITY}]));
+        let sketches: Vec<Value> = history
+            .features
+            .iter()
+            .filter(|f| f.get("type").and_then(Value::as_str) == Some("sketch"))
+            .filter_map(|f| f.get("id").cloned())
+            .collect();
+        fields.insert(
+            "visibility".to_owned(),
+            json!({"hidden_occurrences": [[occurrence]], "hidden_sketches": sketches}),
         );
     }
     let has_looks = !history.looks.is_empty() || !history.face_looks.is_empty();
@@ -299,6 +325,8 @@ mod history_tests {
             mapped: 2,
             total: 2,
             blends: Vec::new(),
+            stop: None,
+            sources: Default::default(),
         }
     }
 

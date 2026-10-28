@@ -18,7 +18,7 @@ current reader status alongside what Dutchman converts.
 | Bodies with no face whose bounds can be written (for example a lone face whose edges have no curve). | Stops: "the model has no solids or surfaces SolidCraft can import". Faces that can be bounded convert as surfaces, with the rest reported. |
 | Losses: an unverified SolidWorks version, configurations inferred from geometry, opaque carriers, derived body hierarchy. | Printed as Degraded, with cadmpeg's loss code. |
 | Parameters, with their expressions (`Depth = 12.5mm`). | Mapped to SolidCraft parameters when the history maps. |
-| Feature history from the Keywords XML: extrusions with their operation, extent and depth; sketches; suppression state; many features only as `native` records. | Mapped where every feature maps, else flattened with the first blocker named (below). |
+| Feature history from the Keywords XML: extrusions with their operation, extent and depth; sketches; suppression state; many features only as `native` records. | Keeps editable features before the first blocker and resolved sketches, hidden beside the imported final shape; the report names the blocker (below). Without a body-building prefix, keeps reference sketches beside the import. |
 | Sketch geometry from the ResolvedFeatures records: lines, arcs, circles, ellipses, splines, coincidences, with a resolved plane. | Read only through a sketch feature that binds it (below). |
 
 Parts read by 0.1.5 that 0.2.0 to 0.2.2 read empty, with fewer bodies, or failing cadmpeg's
@@ -50,8 +50,9 @@ SolidWorks fixtures (`dutchman inspect --json`).
    so these need typed historical or generated references first. The same gap holds for
    Fusion and Inventor.
 
-A design whose sketches carry no sketch feature at all (only feature-input sketches) has, to
-Dutchman, no feature history: it converts as geometry, and its sketches are not carried.
+Resolved planar sketches are kept for reference even without matching timeline rows or
+feature history. The original geometry remains visible; unavailable sketch geometry or
+placement is reported.
 
 ## Assemblies (`.sldasm`)
 
