@@ -11,7 +11,9 @@ feature's intermediate shape as a body of its own and could turn revolved faces 
 - **Geometry**, written as a SolidCraft import and checked in SolidCraft like any other.
   Only the bodies FreeCAD shows convert: a body cadmpeg marks hidden (`visible: false`, as it
   marks the shape of each step inside a PartDesign Body) is left out, with the geometry only
-  it uses, and the report says how many were (`Info`). A document that hides every body
+  it uses, and the report says how many were (`Info`). A curve or surface the shown bodies use
+  keeps its construction, such as the full ellipse a trimmed elliptical edge is cut from, even
+  when that construction is stored with a hidden step. A document that hides every body
   converts all of them, as stored.
 - **Components**, when cadmpeg says which bodies each owns, as for a Fusion design.
 - **Grounded joints** hold their part fixed to the design where it is stored, as a rigid
