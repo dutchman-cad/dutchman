@@ -97,28 +97,63 @@ jobs:
             dist/${{ env.ARCHIVE }}.sha256
           retention-days: 30
 
-  # Both Mac targets on one Apple silicon runner (Intel cross-compiled), then the disk image.
-  macos:
+  # Each Mac target gets an Apple silicon runner; Intel stays cross-compiled.
+  macos-build:
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-apple-darwin, x86_64-apple-darwin]
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: ${{ matrix.target }}
+      # Share each target's release dependencies with main's nightly, including tag runs.
       - uses: Swatinem/rust-cache@v2
-      - run: |
-          for target in aarch64-apple-darwin x86_64-apple-darwin; do
-            cargo build --release --locked -p dutchman -p dutchman-gui --target "$target"
-          done
+        with:
+          shared-key: macos-release-${{ matrix.target }}
+      - name: Build archive programs
+        run: cargo build --release --locked -p dutchman -p dutchman-gui --target ${{ matrix.target }}
       - name: Package
         run: |
           version=$(cargo metadata --format-version 1 --no-deps \
             | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "dutchman"))')
-          scripts/package-archive.sh aarch64-apple-darwin "dutchman-${version}-aarch64-apple-darwin" "v$version"
-          SKIP_RUN=1 scripts/package-archive.sh x86_64-apple-darwin "dutchman-${version}-x86_64-apple-darwin" "v$version"
-          dmg="dutchman-${version}-macos-universal.dmg"
+          if [[ '${{ matrix.target }}' == x86_64-apple-darwin ]]; then
+            export SKIP_RUN=1
+          fi
+          archive=$(scripts/package-archive.sh ${{ matrix.target }} "dutchman-${version}-${{ matrix.target }}" "v$version")
+          echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-archive-${{ matrix.target }}
+          path: |
+            dist/${{ env.ARCHIVE }}
+            dist/${{ env.ARCHIVE }}.sha256
+          retention-days: 30
+
+  # Reuse the checked archives for lipo and the disk image; no second Rust build.
+  macos:
+    needs: macos-build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: macos-archive-*
+          path: dist
+          merge-multiple: true
+      - name: Package
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          name="dutchman-${version}"
+          for target in aarch64-apple-darwin x86_64-apple-darwin; do
+            archive="${name}-${target}.tar.gz"
+            (cd dist && shasum -a 256 -c "$archive.sha256" && tar xzf "$archive")
+          done
+          dmg="${name}-macos-universal.dmg"
           scripts/macos-dmg.sh "$version" "$version" \
-            target/aarch64-apple-darwin/release target/x86_64-apple-darwin/release "dist/$dmg"
+            "dist/${name}-aarch64-apple-darwin" "dist/${name}-x86_64-apple-darwin" "dist/$dmg"
           (cd dist && shasum -a 256 "$dmg" > "$dmg.sha256")
           echo "VERSION=$version" >> "$GITHUB_ENV"
       - uses: actions/upload-artifact@v4
