@@ -644,49 +644,6 @@ fn unit(value: Option<&ParameterValue>) -> &'static str {
         Some(ParameterValue::Angle(_)) => "deg",
         _ => "",
     }
-
-    #[test]
-    fn signed_dimensions_share_a_magnitude_without_renaming_source_parameters() {
-        let wire =
-            json!({"parameters": [{"id": "negative", "value": {"kind": "length", "value": -3.0}}]});
-        let mut ctx = super::super::Context::new(&wire);
-        ctx.params
-            .insert("negative".to_owned(), "offset".to_owned());
-        let mut history = super::super::History {
-            params: vec![
-                json!({"name": "offset", "expr": "-width", "unit": "mm", "model": true}),
-                json!({"name": "width", "expr": "3 mm", "unit": "mm", "model": false}),
-                json!({"name": "offset_magnitude", "expr": "7 mm", "unit": "mm", "model": false}),
-            ],
-            features: vec![json!({"sketch": {"constraints": [
-                {"type": "distance_x", "p": 1, "q": 0, "value": 3.0, "param": "offset"},
-                {"type": "distance_y", "p": 2, "q": 0, "value": 3.0, "param": "offset", "driven": true},
-                {"type": "length", "l": 0, "value": 3.0, "param": "offset"},
-                {"type": "distance_x", "p": 0, "q": 3, "value": 3.0, "param": "width"}
-            ]}})],
-            ..Default::default()
-        };
-        unsigned_dimensions(&mut history, &ctx);
-        assert_eq!(history.params.len(), 4);
-        assert_eq!(history.params[0]["expr"], "-width");
-        assert_eq!(history.params[3]["name"], "offset_magnitude_2");
-        assert_eq!(history.params[3]["expr"], "-(offset)");
-        let constraints = &history.features[0]["sketch"]["constraints"];
-        assert_eq!(constraints[0]["param"], "offset_magnitude_2");
-        assert_eq!(constraints[1]["param"], "offset_magnitude_2");
-        assert_eq!(constraints[1]["driven"], true);
-        assert_eq!(constraints[0]["p"], 1);
-        assert_eq!(constraints[0]["q"], 0);
-        assert_eq!(constraints[2]["param"], "offset");
-        assert_eq!(constraints[3]["param"], "width");
-        let kept = needed(
-            history.params,
-            BTreeSet::from(["offset_magnitude_2".to_owned()]),
-        );
-        assert_eq!(kept.len(), 3);
-        assert_eq!(kept[0]["name"], "offset");
-        assert_eq!(kept[1]["name"], "width");
-    }
 }
 
 /// The value as a SolidCraft expression: lengths in millimetres, angles in degrees.
@@ -1270,5 +1227,48 @@ mod map_tests {
         assert_eq!(params[1]["name"], "width_2");
         assert_eq!(params[1]["expr"], "width * 2");
         assert!(report.losses().iter().all(|l| l.severity == Severity::Info));
+    }
+
+    #[test]
+    fn signed_dimensions_share_a_magnitude_without_renaming_source_parameters() {
+        let wire =
+            json!({"parameters": [{"id": "negative", "value": {"kind": "length", "value": -3.0}}]});
+        let mut ctx = super::super::Context::new(&wire);
+        ctx.params
+            .insert("negative".to_owned(), "offset".to_owned());
+        let mut history = super::super::History {
+            params: vec![
+                json!({"name": "offset", "expr": "-width", "unit": "mm", "model": true}),
+                json!({"name": "width", "expr": "3 mm", "unit": "mm", "model": false}),
+                json!({"name": "offset_magnitude", "expr": "7 mm", "unit": "mm", "model": false}),
+            ],
+            features: vec![json!({"sketch": {"constraints": [
+                {"type": "distance_x", "p": 1, "q": 0, "value": 3.0, "param": "offset"},
+                {"type": "distance_y", "p": 2, "q": 0, "value": 3.0, "param": "offset", "driven": true},
+                {"type": "length", "l": 0, "value": 3.0, "param": "offset"},
+                {"type": "distance_x", "p": 0, "q": 3, "value": 3.0, "param": "width"}
+            ]}})],
+            ..Default::default()
+        };
+        unsigned_dimensions(&mut history, &ctx);
+        assert_eq!(history.params.len(), 4);
+        assert_eq!(history.params[0]["expr"], "-width");
+        assert_eq!(history.params[3]["name"], "offset_magnitude_2");
+        assert_eq!(history.params[3]["expr"], "-(offset)");
+        let constraints = &history.features[0]["sketch"]["constraints"];
+        assert_eq!(constraints[0]["param"], "offset_magnitude_2");
+        assert_eq!(constraints[1]["param"], "offset_magnitude_2");
+        assert_eq!(constraints[1]["driven"], true);
+        assert_eq!(constraints[0]["p"], 1);
+        assert_eq!(constraints[0]["q"], 0);
+        assert_eq!(constraints[2]["param"], "offset");
+        assert_eq!(constraints[3]["param"], "width");
+        let kept = needed(
+            history.params,
+            BTreeSet::from(["offset_magnitude_2".to_owned()]),
+        );
+        assert_eq!(kept.len(), 3);
+        assert_eq!(kept[0]["name"], "offset");
+        assert_eq!(kept[1]["name"], "width");
     }
 }
