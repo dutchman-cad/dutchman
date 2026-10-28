@@ -4,9 +4,11 @@
     scripts/downloads.py <version>            print it, for the release notes
     scripts/downloads.py <version> README.md  replace the table between the README's markers
     scripts/downloads.py nightly              print it for the nightly pre-release
+    scripts/downloads.py latest README.md     the README's table: version-less files of the latest
+                                              published release (releases/latest/download/...)
 
-The README's table names the release it was last written for; the tests check it names the
-workspace's version.
+The README's table uses `latest`, so it never names a release before that release is published;
+each release also uploads version-less copies of its files for it. The tests check the README.
 """
 
 import sys
@@ -30,22 +32,24 @@ PLATFORMS = [
 
 def table(version: str) -> str:
     if version == "nightly":
-        tag, stem = "nightly", "dutchman-nightly"
+        base, stem = f"{REPO}/releases/download/nightly", "dutchman-nightly"
+    elif version == "latest":
+        base, stem = f"{REPO}/releases/latest/download", "dutchman"
     else:
-        tag, stem = f"v{version}", f"dutchman-{version}"
+        base, stem = f"{REPO}/releases/download/v{version}", f"dutchman-{version}"
     rows = [
         "| Your computer | Download | Checksum |",
         "|---|---|---|",
     ]
-    if version == "nightly" or tuple(int(n) for n in version.split(".")[:3]) >= DMG_SINCE:
+    if version in ("nightly", "latest") or tuple(int(n) for n in version.split(".")[:3]) >= DMG_SINCE:
         name = f"{stem}-macos-universal.dmg"
-        url = f"{REPO}/releases/download/{tag}/{name}"
+        url = f"{base}/{name}"
         rows.append(
             f"| Mac, the desktop app (Apple silicon or Intel) | [{name}]({url}) | [SHA-256]({url}.sha256) |"
         )
     for who, target, ext in PLATFORMS:
         name = f"{stem}-{target}.{ext}"
-        url = f"{REPO}/releases/download/{tag}/{name}"
+        url = f"{base}/{name}"
         rows.append(f"| {who} | [{name}]({url}) | [SHA-256]({url}.sha256) |")
     rows.append("")
     rows.append(

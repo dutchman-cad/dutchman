@@ -6,9 +6,10 @@ A release is cut from `main` once CI is green there.
    `CHANGELOG.md` entry (use `--date YYYY-MM-DD` to override today). Review it, add any known
    issue, and stage the deleted fragments. Set the workspace `version` in `Cargo.toml`, along
    with the `version` of the `dutchman-core` and `dutchman-solidcraft` workspace dependencies.
-   Run `cargo build` so `Cargo.lock` follows, and
-   `scripts/downloads.py X.Y.Z README.md` so the README's download table links the new
-   archives (a test checks it does). Write `release-notes/X.Y.Z.md`: one intro paragraph,
+   Run `cargo build` so `Cargo.lock` follows. Leave the README's download table alone: it
+   links the latest published release's version-less files (`releases/latest/download/`),
+   which the release build uploads beside the versioned ones, so it follows a release only
+   once that release is published (a test checks the table). Write `release-notes/X.Y.Z.md`: one intro paragraph,
    then `## What's new` with at most 7 bullets, each with a bold lead phrase. Use plain
    words and Oxford commas; describe the highlights rather than copying the CHANGELOG.
    Add `## Known issue` if needed. Images are kept for milestones, such as a design that now
