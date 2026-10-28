@@ -643,7 +643,9 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
 /// of joined parts may be where they were before the joints were solved. The design itself
 /// stays put; from it, each joint places the side not yet placed. A joint neither of whose
 /// sides is placed yet keeps its second side and moves its first to it, as Fusion moves the
-/// first part picked for a joint to the second. A joint whose two sides were both placed
+/// first part picked for a joint to the second. Of a joint between an occurrence and one
+/// inside it, the inner one moves, and an occurrence holding one already placed is never
+/// moved, as moving it would move what it holds. A joint whose two sides were both placed
 /// already is left for SolidCraft to check, with a note when they do not meet. A revolute or
 /// slider joint whose parts already turn or slide on its axis where they are placed holds
 /// them there instead, at the value their placements give it.
@@ -682,7 +684,24 @@ fn place_by_joints(assembly: &mut Assembly) -> Vec<String> {
             continue;
         }
         let reach = compose(&compose(&a, &joint.frame_a), &joint.meeting());
-        match (fixed.contains(&joint.a), fixed.contains(&joint.b)) {
+        // An occurrence holds the ones inside it, so moving it to meet one of them moves that
+        // one too: of a joint between an occurrence and one inside it, the inner one moves.
+        let inside = |outer: &[usize], inner: &[usize]| {
+            outer.len() < inner.len() && inner.starts_with(outer)
+        };
+        let (a_holds_b, b_holds_a) = (inside(&joint.a, &joint.b), inside(&joint.b, &joint.a));
+        if a_holds_b && !fixed.contains(&joint.b) {
+            fixed.insert(joint.a.clone());
+        }
+        let (a_fixed, b_fixed) = (fixed.contains(&joint.a), fixed.contains(&joint.b));
+        // Never move an occurrence that holds a placed one: check the joint instead.
+        let (a_fixed, b_fixed) =
+            if (a_fixed && !b_fixed && b_holds_a) || (b_fixed && !a_fixed && a_holds_b) {
+                (true, true)
+            } else {
+                (a_fixed, b_fixed)
+            };
+        match (a_fixed, b_fixed) {
             (true, true) => {
                 let b_frame = compose(&b, &joint.frame_b);
                 if !same(&b_frame, &reach) {
@@ -2149,6 +2168,30 @@ mod tests {
 
     fn near(a: &Placement3x4, b: &Placement3x4) -> bool {
         same(a, b)
+    }
+
+    #[test]
+    fn a_joint_from_an_occurrence_to_one_inside_it_moves_the_inner_one() {
+        // The frame (stored at x = 100) joined rigidly to block 2 inside it, the frame's side
+        // first, as a rigid group holds its members to its first: the frame keeps its stored
+        // placement and block 2 moves to meet it. Moving the frame would move block 2 with it.
+        let row = joint(
+            1,
+            json!({"kind": "fixed"}),
+            connector_at(0, &[], at([5.0, 0.0, 0.0], 0.0)),
+            connector_at(2, &[], at([0.0, 0.0, 0.0], 0.0)),
+        );
+        let model = with_joints(nested(false, None), json!([row]));
+        let (assembly, _) = local_components(&model).unwrap().unwrap();
+        let joint = &assembly.joints[0];
+        assert_eq!((joint.a.clone(), joint.b.clone()), (vec![0], vec![0, 1]));
+        let frame = world_at(&assembly, &[0]).unwrap();
+        assert!(near(&frame, &at([100.0, 0.0, 0.0], 0.0)), "{frame:?}");
+        let block = world_at(&assembly, &[0, 1]).unwrap();
+        assert!(near(
+            &compose(&block, &joint.frame_b),
+            &compose(&compose(&frame, &joint.frame_a), &joint.meeting())
+        ));
     }
 
     #[test]
