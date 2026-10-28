@@ -1,7 +1,8 @@
 # Test fixtures
 
 Every file here is a synthetic test input from cadmpeg (<https://github.com/cadmpeg/cadmpeg>,
-Apache-2.0; the FreeCAD documents, from its donated corpus, are CC0-1.0). None is a real design.
+Apache-2.0; its donated FreeCAD corpus is CC0-1.0), or a CC0 CAD Fixture Recipes model.
+None is a real design.
 
 | File | What it is | Where it came from |
 |---|---|---|
@@ -16,6 +17,15 @@ Apache-2.0; the FreeCAD documents, from its donated corpus, are CC0-1.0). None i
 | `core_design_product.FCStd` | A FreeCAD document: exact geometry (five bodies, 22 faces), persistent names, sketch constraints, design properties, a product link and a spreadsheet. | Copied unchanged from cadmpeg's corpus, `corpus/freecad_fcstd/fixtures/` at `main` `377eb82352dd`: authored in FreeCAD 1.1.1 by the cadmpeg project and dedicated CC0-1.0 (`corpus/manifest.toml`, SHA-256 `69c6aa00…989ba`). |
 | `design_history.FCStd` | A FreeCAD PartDesign Body with constrained sketches, an additive Pad, a subtractive Pocket and an edge Fillet. | As above (SHA-256 `c71da85e…ea0d7`). |
 | `product_assembly.FCStd` | A FreeCAD Assembly with groups, nested, array and external occurrences, grounding, and a limited revolute joint. | As above (SHA-256 `b8e0e92c…d8340`). |
+
+`freecad-1.1.4-A01/` contains unchanged CC0-1.0 CAD Fixture Recipes booklet 1.30 files,
+authored in FreeCAD 1.1.4 (`generated/freecad-1.1.4/manifest.json`):
+
+| File | Recipe and purpose | SHA-256 |
+|---|---|---|
+| `A01a.FCStd` | A01a: Assembly workbench links to two sibling part documents, with P01a grounded and P02a translated 70 mm along X. | `2538b7c90010aafaecb78df2f948b9994871f76d6f6d21e457ae5527e473b153` |
+| `P01a.FCStd` | P01a: box, 6000 mm³; bounds (-10, -15, 0) to (10, 15, 10) mm. | `a306278dd58bb7abb306463887db3df3c032278109358718c5ad3c8b5c103f64` |
+| `P02a.FCStd` | P02a: turned part, 62831.8530718 mm³; bounds after A01a placement (40, -30, 0) to (100, 30, 40) mm. | `1a3fbd0781d5468290fcbbba4509c0cd7009286e40b0c257f06d935e0ca0bd82` |
 
 The three cubes hold `cadmpeg_ir::examples::unit_cube()`, the 10 mm example cube, as fixed in
 cadmpeg PR #257 (`main` `f816fb00fb54`): before it, the example's face loops ran clockwise

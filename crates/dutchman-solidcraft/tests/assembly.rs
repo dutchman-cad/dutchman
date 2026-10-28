@@ -1364,3 +1364,48 @@ fn flattened_parts_keep_helper_info_once_per_part() {
     assert_eq!(notes[0].severity, dutchman_core::Severity::Info);
     assert!(notes[0].subject.contains("Unused point"));
 }
+
+#[test]
+fn freecad_external_body_links_replay_at_the_recipe_volumes_and_bounds() {
+    if !Format::FreeCadDocument.can_convert() {
+        return;
+    }
+    let input = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../dutchman-core/tests/fixtures/freecad-1.1.4-A01/A01a.FCStd");
+    let model = read(Format::FreeCadDocument, &input, &mut Report::default()).unwrap();
+    let (bytes, _) = written(&model);
+    let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) else {
+        return;
+    };
+    let mut bodies = evaluate(&cli, &bytes);
+    assert_eq!(bodies.len(), 2);
+    bodies.sort_by(|a, b| {
+        a["bbox"]["min"][0]
+            .as_f64()
+            .unwrap()
+            .total_cmp(&b["bbox"]["min"][0].as_f64().unwrap())
+    });
+    // CC0 recipe A01a, FreeCAD 1.1.4 manifest.json (0.01 mm, 1e-4 relative volume).
+    for (body, volume, low, high) in [
+        (&bodies[0], 6000.0, [-10.0, -15.0, 0.0], [10.0, 15.0, 10.0]),
+        (
+            &bodies[1],
+            62831.8530718,
+            [40.0, -30.0, 0.0],
+            [100.0, 30.0, 40.0],
+        ),
+    ] {
+        let actual = body["volume_mm3"].as_f64().unwrap();
+        assert!((actual - volume).abs() <= volume * 1e-4, "{body}");
+        for (axis, (low, high)) in low.into_iter().zip(high).enumerate() {
+            assert!(
+                (body["bbox"]["min"][axis].as_f64().unwrap() - low).abs() <= 0.01,
+                "{body}"
+            );
+            assert!(
+                (body["bbox"]["max"][axis].as_f64().unwrap() - high).abs() <= 0.01,
+                "{body}"
+            );
+        }
+    }
+}

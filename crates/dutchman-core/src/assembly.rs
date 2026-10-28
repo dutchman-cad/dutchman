@@ -6,6 +6,8 @@
 //! it, so a part is looked for at that path, then by its file name next to the assembly. Each
 //! part file is read once, however often it is placed.
 
+mod freecad;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -257,7 +259,7 @@ pub(crate) fn read(
     open: &mut Vec<PathBuf>,
 ) -> Result<Model, Error> {
     let mut model = decode(format, input, report)?;
-    if format.is_assembly() {
+    if format.is_assembly() || format == Format::FreeCadDocument {
         let key = input.canonicalize().unwrap_or_else(|_| input.to_path_buf());
         if open.contains(&key) {
             return Err(Error::Assembly(
@@ -270,9 +272,13 @@ pub(crate) fn read(
             )));
         }
         open.push(key);
-        let resolved = resolve(&model, input, report, decode, finder, open);
+        let resolved = if format == Format::FreeCadDocument {
+            freecad::resolve(&model, input, report, decode, finder, open)
+        } else {
+            resolve(&model, input, report, decode, finder, open).map(Some)
+        };
         open.pop();
-        model.assembly = Some(resolved?);
+        model.assembly = resolved?;
     }
     Ok(model)
 }
@@ -528,6 +534,15 @@ pub fn local_assembly(model: &Model) -> Result<Option<Assembly>, String> {
 
 /// [`local_assembly`], with why each joint left out was.
 fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, String> {
+    local_components_with(model, &BTreeMap::new())
+}
+
+type ExternalParts = BTreeMap<String, Result<(usize, std::rc::Rc<Model>), LeftOut>>;
+
+fn local_components_with(
+    model: &Model,
+    external: &ExternalParts,
+) -> Result<Option<(Assembly, Vec<String>)>, String> {
     let document = serde_json::to_value(&model.ir).map_err(|err| err.to_string())?;
     let wire = document.get("model").unwrap_or(&Value::Null);
     let arena = |name: &str| {
@@ -551,7 +566,13 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
         .iter()
         .filter(|row| match scope(row) {
             Some("local") => true,
-            Some("external") => holds_local(row),
+            Some("external") => {
+                holds_local(row)
+                    || row
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .is_some_and(|id| external.contains_key(id))
+            }
             _ => false,
         })
         .collect();
@@ -596,6 +617,9 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
         .filter(|id| !owned.contains(id))
         .collect();
     let mut tree = Tree {
+        external,
+        external_built: BTreeMap::new(),
+        left_out: Vec::new(),
         all_owned: loose.is_empty(),
         model,
         document: &document,
@@ -655,7 +679,7 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
         parts,
         placements,
         joints,
-        left_out: Vec::new(),
+        left_out: tree.left_out,
         held,
         joint_notes: Vec::new(),
     };
@@ -1385,6 +1409,9 @@ struct Located {
 
 /// A design's occurrence tree, turned into parts and sub-assemblies one definition at a time.
 struct Tree<'a> {
+    external: &'a ExternalParts,
+    external_built: BTreeMap<usize, usize>,
+    left_out: Vec<LeftOut>,
     model: &'a Model,
     document: &'a Value,
     definitions: BTreeMap<&'a str, &'a Value>,
@@ -1417,7 +1444,14 @@ impl<'a> Tree<'a> {
     ) -> Result<Vec<Placement>, String> {
         let definition = |row: &Value| definition_key(row).map(str::to_owned);
         let mut placements = Vec::with_capacity(occurrences.len());
-        for (index, occurrence) in occurrences.iter().enumerate() {
+        for occurrence in occurrences {
+            let id = occurrence.get("id").and_then(Value::as_str).unwrap_or("");
+            if let Some(Err(left)) = self.external.get(id) {
+                self.left_out.push(left.clone());
+                self.placed += 1;
+                continue;
+            }
+            let index = placements.len();
             let copies = occurrences
                 .iter()
                 .filter(|other| definition(other) == definition(occurrence))
@@ -1487,6 +1521,16 @@ impl<'a> Tree<'a> {
     /// placed inside it, those as a sub-assembly beside them. `shared` is for the components
     /// inside it, as for [`Tree::placements`].
     fn part(&mut self, occurrence: &'a Value, shared: Option<usize>) -> Result<usize, String> {
+        let id = occurrence.get("id").and_then(Value::as_str).unwrap_or("");
+        if let Some(Ok((key, model))) = self.external.get(id) {
+            if let Some(part) = self.external_built.get(key) {
+                return Ok(*part);
+            }
+            self.parts.push(model.as_ref().clone());
+            let part = self.parts.len() - 1;
+            self.external_built.insert(*key, part);
+            return Ok(part);
+        }
         let definition =
             definition_key(occurrence).ok_or("a component placement names no component")?;
         let id = occurrence.get("id").and_then(Value::as_str).unwrap_or("");
@@ -1495,11 +1539,19 @@ impl<'a> Tree<'a> {
         let signature = inner
             .iter()
             .map(|child| {
-                let definition = child
-                    .pointer("/prototype/definition")
+                let definition = match child
+                    .get("id")
                     .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_owned();
+                    .and_then(|id| self.external.get(id))
+                {
+                    Some(Ok((key, _))) => format!("external:{key}"),
+                    Some(Err(_)) => definition_key(child).unwrap_or("").to_owned(),
+                    None => child
+                        .pointer("/prototype/definition")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_owned(),
+                };
                 transform(child).map(|t| (definition, t))
             })
             .collect::<Result<Vec<_>, _>>()?;
@@ -1550,8 +1602,10 @@ impl<'a> Tree<'a> {
             }
         } else {
             // A sub-assembly: the components inside it, and its own bodies at its origin.
+            let outer_left_out = std::mem::take(&mut self.left_out);
             let outer = std::mem::take(&mut self.parts);
             let outer_built = std::mem::take(&mut self.built);
+            let outer_external = std::mem::take(&mut self.external_built);
             self.open.push(id);
             let placed = self.placements(&inner, shared);
             self.open.pop();
@@ -1572,13 +1626,14 @@ impl<'a> Tree<'a> {
             };
             let parts = std::mem::replace(&mut self.parts, outer);
             self.built = outer_built;
+            self.external_built = outer_external;
             let mut holder = only(self.model, self.document, &[], name)?;
             holder.assembly = Some(Assembly {
                 own_part,
                 parts,
                 placements,
                 joints: Vec::new(),
-                left_out: Vec::new(),
+                left_out: std::mem::replace(&mut self.left_out, outer_left_out),
                 held: Vec::new(),
                 joint_notes: Vec::new(),
             });

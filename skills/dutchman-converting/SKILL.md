@@ -253,6 +253,12 @@ retry retains geometry and assembly structure, validates them, and reports a `De
 `history` loss explaining that parameters were left out and naming the original check failure.
 Duplicate parameter names cannot block this geometry-only validation.
 
+FreeCAD assemblies may hold only external `App::Link` references. Keep their sibling
+`.FCStd` parts beside the assembly, or supply `project` and `search` folders. Missing links
+are named losses in `completeness.left_out`; the remaining components still convert.
+Link arrays place each element once. Grounding fixes the part, and unsupported assembly
+joints are reported while stored placements are retained.
+
 ### FreeCAD output (experimental)
 
 When FreeCAD is the requested destination, pass `to: "freecad"` to `convert` or
