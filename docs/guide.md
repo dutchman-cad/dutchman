@@ -760,6 +760,14 @@ driving count or span parameters are not supported yet. Constraints that cannot 
 across are counted in a `Degraded` sketch loss with a specific reason; they never by
 themselves flatten a sketch whose solved geometry maps.
 
+FreeCAD numeric spreadsheet cells and supported formulas become parameters, with aliases
+or names such as `Sheet_A1`. Qualified object properties bind to their resolved parameters;
+renaming keeps those links. Text cells are omitted silently, and unused numeric cells get
+an `Info` note. Unsupported functions, conditionals, ambiguous references, and cycles retain
+available scalar values with a specific reason. See [FreeCAD expressions](freecad.md#spreadsheet-parameters-and-expressions)
+for decoder limitations, including named sketch constraint bindings. Verification checks
+the initial geometry; check geometry again after changing a parameter.
+
 A converted history is checked by replaying it in `solidcraft-cli` and comparing the bodies
 and their area and volume with the original, within the measuring mesh tolerances. The result is in the `history:` line of the report, and
 in `verification.status` in `--json`:

@@ -7098,3 +7098,123 @@ fn helper_info_survives_mapping_and_replay_fallbacks() {
         }
     }
 }
+
+/// CC0 recipe geometry with the named sketch binding restored in the neutral model.
+/// cadmpeg currently exposes the spreadsheet and pad formulas but omits the named
+/// sketch constraint expression. This isolates the writer's contract from that decoder gap.
+fn recipe_with_neutral_sheet_binding(recipe: &str, sheet: &str, alias: &str) -> Model {
+    let input = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+        "tests/fixtures/recipe-{recipe}-freecad-0.21.2.FCStd"
+    ));
+    let mut model = dutchman_core::read(
+        dutchman_core::Format::FreeCadDocument,
+        &input,
+        &mut Report::default(),
+    )
+    .unwrap();
+    let cell = model
+        .ir
+        .model
+        .parameters
+        .iter()
+        .find(|p| p.name == alias)
+        .unwrap()
+        .id
+        .clone();
+    let dimension = model
+        .ir
+        .model
+        .parameters
+        .iter_mut()
+        .find(|p| {
+            p.properties
+                .get("source_name")
+                .is_some_and(|name| name == "width")
+        })
+        .unwrap();
+    dimension.expression = format!("{sheet}.{alias}");
+    dimension.dependencies = vec![cell].try_into().unwrap();
+    model
+}
+
+#[test]
+fn a_cc0_sheet_edit_drives_geometry_with_a_synthetic_neutral_sketch_binding() {
+    let Some(cli) = solidcraft() else { return };
+    let (recipe, sheet, alias, edit, expected) = ("N11a", "Dimensions", "w", "45 mm", 9000.0);
+    let model = recipe_with_neutral_sheet_binding(recipe, sheet, alias);
+    let (bytes, report) = written_with(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::With(cli.clone())),
+    );
+    assert_eq!(
+        report.outcome().unwrap().check,
+        Check::Verified,
+        "{recipe}: {:?}",
+        report.losses()
+    );
+    assert_eq!(volumes(&cli, &bytes), [6000.0], "{recipe}");
+    let actual = volumes(&cli, &with_param(&bytes, alias, edit));
+    assert_eq!(actual.len(), 1, "{recipe}");
+    assert!(
+        (actual[0] - expected).abs() < 0.01,
+        "{recipe}: {actual:?}, expected {expected}"
+    );
+}
+
+#[test]
+fn spreadsheet_function_expressions_evaluate_in_solidcraft() {
+    let Some(cli) = solidcraft() else { return };
+    let mut model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    // The sketch's side parameter drives two dimensions, so doubling it quadruples volume.
+    let side = wire["model"]["parameters"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|p| p["name"] == "side")
+        .unwrap();
+    side["expression"] =
+        json!("min(max(20 mm, abs(-30 mm)), sqrt(400) * 1 mm) * sin(30) + 0 * pi * 1 mm");
+    side.as_object_mut().unwrap().remove("value");
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let bytes = written(&model).0;
+    let initial = volumes(&cli, &bytes);
+    assert_eq!(initial.len(), 1);
+    assert!((initial[0] - 1000.0).abs() < 0.01, "{initial:?}");
+    let grown = with_param(&bytes, "side", "max(20 mm, 1 in)");
+    let actual = volumes(&cli, &grown);
+    assert_eq!(actual.len(), 1);
+    assert!((actual[0] - 25.4 * 25.4 * 10.0).abs() < 0.01, "{actual:?}");
+}
+
+#[test]
+fn cc0_spreadsheet_formulas_keep_their_decoded_parameter_dependencies() {
+    let input = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/recipe-P12a-freecad-0.21.2.FCStd");
+    let model = dutchman_core::read(
+        dutchman_core::Format::FreeCadDocument,
+        &input,
+        &mut Report::default(),
+    )
+    .unwrap();
+    let (doc, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let params = doc["params"].as_array().unwrap();
+    assert!(params
+        .iter()
+        .any(|p| p["name"] == "plate_w" && p["expr"] == "20 mm" && p["model"] == false));
+    assert!(params
+        .iter()
+        .any(|p| p["name"] == "Length" && p["expr"] == "plate_w / 2"));
+    assert!(!params.iter().any(|p| p["name"] == "A1"));
+    assert!(
+        !report
+            .losses()
+            .iter()
+            .any(|loss| loss.subject.starts_with("parameter ") && loss.severity != Severity::Info),
+        "{:?}",
+        report.losses()
+    );
+}

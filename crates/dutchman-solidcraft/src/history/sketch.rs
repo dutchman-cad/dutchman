@@ -1205,8 +1205,7 @@ mod tests {
         .unwrap();
         let wire = serde_json::to_value(&model.ir.model).unwrap();
         let mut ctx = Context::new(&wire);
-        ctx.params =
-            super::super::params::map(&model.ir.model.parameters, &mut Report::default()).1;
+        ctx.params = super::super::params::map(&model, &mut Report::default()).1;
         let feature = ctx.arena("features").first().unwrap();
         let sketch = map(
             feature,

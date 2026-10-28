@@ -6,6 +6,9 @@ use cadmpeg_ir::features::{DesignParameter, ParameterValue};
 use dutchman_core::{Report, Severity};
 use serde_json::{json, Value};
 
+mod expression;
+use expression::validate;
+
 /// Units SolidCraft's expressions accept.
 const UNITS: [&str; 14] = [
     "mm", "cm", "m", "um", "µm", "in", "inch", "ft", "yd", "km", "mil", "nm", "deg", "rad",
@@ -20,6 +23,8 @@ const FUNCTIONS: [&str; 23] = [
 /// Constants SolidCraft's expressions accept.
 const CONSTANTS: [&str; 2] = ["pi", "PI"];
 
+const MAX_EXPRESSION_BYTES: usize = 65_536;
+
 /// The model's parameters as SolidCraft `params`, in source order, and the SolidCraft name of
 /// each one written, by CADIR parameter id. A parameter renamed (a name SolidCraft cannot use,
 /// or one another parameter already has, as when merged designs each have a `d1`) is renamed in
@@ -27,23 +32,65 @@ const CONSTANTS: [&str; 2] = ["pi", "PI"];
 /// that names a parameter it cannot tell apart from another of that name, is replaced by the
 /// parameter's evaluated value.
 pub(crate) fn map(
-    parameters: &[DesignParameter],
+    model: &dutchman_core::Model,
     report: &mut Report,
 ) -> (Vec<Value>, BTreeMap<String, String>) {
+    let parameters = &model.ir.model.parameters;
+    let owners: BTreeMap<&str, &str> = model
+        .ir
+        .model
+        .features
+        .iter()
+        .filter_map(|feature| Some((feature.id.as_str(), feature.name.as_deref()?)))
+        .collect();
+    let cells: BTreeMap<&str, String> = model
+        .ir
+        .model
+        .spreadsheets
+        .iter()
+        .flat_map(|sheet| sheet.cells())
+        .map(|cell| (cell.parameter.as_str(), cell.address.a1()))
+        .collect();
     let mut ordered: Vec<&DesignParameter> = parameters.iter().collect();
     ordered.sort_by_key(|p| (p.owner.is_some(), p.ordinal));
+    // Text and empty spreadsheet cells are layout, not lost design parameters.
+    ordered.retain(|p| {
+        !cells.contains_key(p.id.as_str())
+            || !matches!(
+                p.value,
+                Some(ParameterValue::String(_)) | Some(ParameterValue::Boolean(_))
+            ) && (p
+                .expression
+                .trim_start()
+                .strip_prefix('=')
+                .is_some_and(|expr| !expr.trim_start().starts_with(['\'', '"']))
+                || p.value.as_ref().and_then(literal).is_some())
+    });
 
     let mut names = BTreeSet::new();
     let mut renamed = Vec::with_capacity(ordered.len());
     for parameter in &ordered {
-        let name = usable_name(&parameter.name, &names);
-        if name != parameter.name {
-            let (severity, why) =
-                if usable_name(&parameter.name, &BTreeSet::new()) == parameter.name {
-                    (Severity::Info, "another parameter already has that name")
-                } else {
-                    (Severity::Degraded, "SolidCraft cannot use that name")
-                };
+        let source = cells
+            .get(parameter.id.as_str())
+            .filter(|address| *address == &parameter.name || parameter.name.trim().is_empty())
+            .map(|address| {
+                parameter
+                    .owner
+                    .as_ref()
+                    .and_then(|id| owners.get(id.as_str()))
+                    .map_or_else(|| address.clone(), |owner| format!("{owner}.{address}"))
+            })
+            .unwrap_or_else(|| parameter.name.clone());
+        let name = usable_name(&source, &names);
+        report.saw(&name);
+        if name != source || source != parameter.name {
+            let (severity, why) = if source != parameter.name {
+                (Severity::Info, "spreadsheet cell name includes its sheet")
+            } else if usable_name(&source, &BTreeSet::new()) == source {
+                (Severity::Info, "another parameter already has that name")
+            } else {
+                (Severity::Degraded, "SolidCraft cannot use that name")
+            };
             report.push(
                 severity,
                 format!("parameter {}", parameter.name),
@@ -53,62 +100,55 @@ pub(crate) fn map(
         names.insert(name.clone());
         renamed.push(name);
     }
-    // Each parameter's written name by id, and by source name when only one parameter has it.
-    let by_id: BTreeMap<&str, (&str, &str)> = ordered
+    let bindings = Bindings::new(&ordered, &renamed, &owners, &cells);
+    let mut expressions: Vec<Result<String, String>> = ordered
         .iter()
-        .zip(&renamed)
-        .map(|(p, name)| (p.id.as_str(), (p.name.as_str(), name.as_str())))
+        .map(|parameter| bindings.bind(parameter))
         .collect();
-    let mut by_name: BTreeMap<&str, Option<&str>> = BTreeMap::new();
-    for (parameter, name) in ordered.iter().zip(&renamed) {
-        by_name
-            .entry(parameter.name.as_str())
-            .and_modify(|only| *only = None)
-            .or_insert(Some(name.as_str()));
-    }
-
+    let references: Vec<BTreeSet<String>> =
+        ordered.iter().map(|p| bindings.references(p)).collect();
+    let used: BTreeSet<&str> = references.iter().flatten().map(String::as_str).collect();
+    let units = settle(&ordered, &renamed, &references, &mut expressions);
     let mut out = Vec::with_capacity(ordered.len());
     let mut written = BTreeMap::new();
-    for (parameter, name) in ordered.iter().zip(&renamed) {
-        let unit = unit(parameter.value.as_ref());
-        let bound = bind(parameter, &by_id, &by_name);
-        let expression = bound
-            .as_ref()
-            .ok()
-            .filter(|expression| readable(expression, &names));
-        let expr = if let Some(expression) = expression {
-            expression.clone()
-        } else if let Some(value) = parameter.value.as_ref().and_then(literal) {
-            let why = match &bound {
-                Err(shared) => format!(": more than one parameter is named {shared}"),
-                Ok(_) => String::new(),
-            };
-            report.push(
-                Severity::Degraded,
-                format!("parameter {name}"),
-                format!(
-                    "expression `{}` kept as its value {value}{why}",
-                    parameter.expression
-                ),
-            );
-            value
-        } else {
-            report.push(
-                Severity::Dropped,
-                format!("parameter {name}"),
-                format!(
-                    "expression `{}` has no value SolidCraft can hold",
-                    parameter.expression
-                ),
-            );
-            continue;
+    for ((parameter, name), expression) in ordered.iter().zip(&renamed).zip(expressions) {
+        let expr = match expression {
+            Ok(expression) => expression,
+            Err(why) => {
+                if let Some(value) = parameter.value.as_ref().and_then(literal) {
+                    report.push(
+                        Severity::Degraded,
+                        format!("parameter {name}"),
+                        format!(
+                            "expression `{}` kept as its value {value}: {why}",
+                            parameter.expression
+                        ),
+                    );
+                    value
+                } else {
+                    report.push(
+                        Severity::Dropped,
+                        format!("parameter {name}"),
+                        format!(
+                            "expression `{}` has no value SolidCraft can hold: {why}",
+                            parameter.expression
+                        ),
+                    );
+                    continue;
+                }
+            }
         };
+        if cells.contains_key(parameter.id.as_str()) && !used.contains(parameter.id.as_str()) {
+            report.push(
+                Severity::Info,
+                format!("parameter {name}"),
+                "numeric spreadsheet cell kept as an unused parameter",
+            );
+        }
         written.insert(parameter.id.as_str().to_owned(), name.clone());
-        out.push(json!({
-            "name": name,
-            "expr": expr,
-            "unit": unit,
-            "model": parameter.owner.is_some(),
+        out.push(json!({"name": name, "expr": expr,
+            "unit": units.get(name).map_or("", String::as_str),
+            "model": parameter.owner.is_some() && !cells.contains_key(parameter.id.as_str()),
         }));
     }
     (out, written)
@@ -176,38 +216,361 @@ pub(super) fn unsigned_dimensions(history: &mut super::History, ctx: &super::Con
     }
 }
 
-/// `parameter`'s expression with each parameter it names written as that parameter is
-/// written: its own dependencies first (`by_id`), then any parameter that alone has the name
-/// (`by_name`). `Err` with the name when the expression names a parameter that is not a
-/// dependency and shares its name with another.
-fn bind(
-    parameter: &DesignParameter,
-    by_id: &BTreeMap<&str, (&str, &str)>,
-    by_name: &BTreeMap<&str, Option<&str>>,
-) -> Result<String, String> {
-    let mut renamed: BTreeMap<String, String> = parameter
-        .dependencies
+/// Remove cycles and propagate unavailable formula-only parameters through their users.
+fn settle(
+    parameters: &[&DesignParameter],
+    names: &[String],
+    references: &[BTreeSet<String>],
+    expressions: &mut [Result<String, String>],
+) -> BTreeMap<String, String> {
+    let known: BTreeSet<String> = names.iter().cloned().collect();
+    let mut units: BTreeMap<String, String> = parameters
         .iter()
-        .filter_map(|id| by_id.get(id.as_str()))
-        .map(|(source, name)| ((*source).to_owned(), (*name).to_owned()))
+        .zip(names)
+        .filter(|(p, _)| p.value.as_ref().and_then(literal).is_some())
+        .map(|(p, name)| (name.clone(), unit(p.value.as_ref()).to_owned()))
         .collect();
-    let words = parameter
-        .expression
-        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-        .filter(|word| word.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_'));
-    for word in words {
-        if renamed.contains_key(word) || reserved(word) {
-            continue;
-        }
-        match by_name.get(word) {
-            Some(Some(name)) => {
-                renamed.insert(word.to_owned(), (*name).to_owned());
+    let positions: BTreeMap<&str, usize> = parameters
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (p.id.as_str(), i))
+        .collect();
+    let mut waiting = BTreeMap::new();
+    let mut users: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+    for (i, ((p, refs), expr)) in parameters
+        .iter()
+        .zip(references)
+        .zip(expressions.iter())
+        .enumerate()
+    {
+        let refs = if expr.is_ok() {
+            refs.clone()
+        } else {
+            BTreeSet::new()
+        };
+        waiting.insert(p.id.as_str(), refs.len());
+        for id in refs {
+            if let Some((source, _)) = positions.get_key_value(id.as_str()) {
+                users.entry(source).or_default().push(i);
             }
-            Some(None) => return Err(word.to_owned()),
-            None => {}
         }
     }
-    Ok(rename_in(&parameter.expression, &renamed))
+    let mut ready: Vec<&str> = waiting
+        .iter()
+        .filter(|(_, count)| **count == 0)
+        .map(|(id, _)| *id)
+        .collect();
+    while let Some(id) = ready.pop() {
+        if let Some(i) = positions.get(id) {
+            if let (Some(p), Some(name), Some(expr), Some(refs)) = (
+                parameters.get(*i),
+                names.get(*i),
+                expressions.get_mut(*i),
+                references.get(*i),
+            ) {
+                if p.value.is_none() && expr.is_ok() {
+                    let missing = refs.iter().find_map(|id| {
+                        positions.get(id.as_str()).and_then(|i| {
+                            names
+                                .get(*i)
+                                .filter(|name| !units.contains_key(*name))
+                                .zip(parameters.get(*i))
+                        })
+                    });
+                    let inferred = if let Some((_, missing)) = missing {
+                        Err(format!(
+                            "reference to parameter {} not converted",
+                            missing.name
+                        ))
+                    } else {
+                        expr.as_ref()
+                            .map_err(Clone::clone)
+                            .and_then(|expr| expression::infer_unit(expr, &known, &units))
+                    };
+                    match inferred {
+                        Ok(unit) => {
+                            units.insert(name.clone(), unit);
+                        }
+                        Err(why) => {
+                            *expr = Err(why);
+                        }
+                    }
+                }
+            }
+        }
+        for i in users.get(id).into_iter().flatten() {
+            if let Some(p) = parameters.get(*i) {
+                if let Some(count) = waiting.get_mut(p.id.as_str()) {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        ready.push(p.id.as_str());
+                    }
+                }
+            }
+        }
+    }
+    for (p, expr) in parameters.iter().zip(expressions.iter_mut()) {
+        if waiting.get(p.id.as_str()).is_some_and(|count| *count > 0) {
+            *expr = Err("cyclic parameter dependency is not supported yet".to_owned());
+        }
+    }
+    let mut unavailable: Vec<usize> = parameters
+        .iter()
+        .zip(expressions.iter())
+        .enumerate()
+        .filter(|(_, (p, expr))| expr.is_err() && p.value.as_ref().and_then(literal).is_none())
+        .map(|(i, _)| i)
+        .collect();
+    while let Some(i) = unavailable.pop() {
+        let Some(p) = parameters.get(i) else { continue };
+        for user in users.get(p.id.as_str()).into_iter().flatten() {
+            let Some(expr) = expressions.get_mut(*user).filter(|expr| expr.is_ok()) else {
+                continue;
+            };
+            *expr = Err(format!("reference to parameter {} not converted", p.name));
+            if parameters
+                .get(*user)
+                .is_some_and(|p| p.value.as_ref().and_then(literal).is_none())
+            {
+                unavailable.push(*user);
+            }
+        }
+    }
+    units
+}
+
+struct Bindings<'a> {
+    parameters: BTreeMap<&'a str, (&'a DesignParameter, &'a str)>,
+    aliases: BTreeMap<(Option<&'a str>, String), BTreeSet<&'a str>>,
+    names: BTreeSet<String>,
+    objects: BTreeSet<String>,
+}
+
+impl<'a> Bindings<'a> {
+    fn new(
+        parameters: &[&'a DesignParameter],
+        names: &'a [String],
+        owners: &BTreeMap<&str, &str>,
+        cells: &BTreeMap<&str, String>,
+    ) -> Self {
+        let mut out = Self {
+            parameters: BTreeMap::new(),
+            aliases: BTreeMap::new(),
+            names: names.iter().cloned().collect(),
+            objects: owners.values().map(|name| (*name).to_owned()).collect(),
+        };
+        for (p, name) in parameters.iter().zip(names) {
+            out.parameters.insert(p.id.as_str(), (p, name));
+            let owner = p.owner.as_ref().map(|id| id.as_str());
+            let mut aliases = BTreeSet::from([p.name.clone()]);
+            for key in ["source_name", "reference_name"] {
+                if let Some(source) = p.properties.get(key) {
+                    aliases.insert(source.clone());
+                }
+            }
+            if let Some(address) = cells.get(p.id.as_str()) {
+                aliases.insert(address.clone());
+            }
+            for alias in aliases {
+                let local = alias.trim_start_matches('.');
+                out.aliases
+                    .entry((owner, local.to_owned()))
+                    .or_default()
+                    .insert(p.id.as_str());
+                out.aliases
+                    .entry((None, alias.clone()))
+                    .or_default()
+                    .insert(p.id.as_str());
+                if let Some(object) = owner.and_then(|id| owners.get(id)) {
+                    out.aliases
+                        .entry((None, format!("{object}.{local}")))
+                        .or_default()
+                        .insert(p.id.as_str());
+                }
+                if let Some(label) = p.properties.get("owner_label") {
+                    out.objects.insert(format!("<<{label}>>"));
+                    out.aliases
+                        .entry((None, format!("<<{label}>>.{local}")))
+                        .or_default()
+                        .insert(p.id.as_str());
+                }
+            }
+        }
+        out
+    }
+
+    fn resolve(&self, p: &DesignParameter, word: &str) -> Result<(&'a str, &'a str), String> {
+        let owner = p.owner.as_ref().map(|id| id.as_str());
+        let local = self
+            .aliases
+            .get(&(owner, word.trim_start_matches('.').to_owned()));
+        let global = self.aliases.get(&(None, word.to_owned()));
+        let candidates = local.or(global);
+        let Some(candidates) = candidates else {
+            let separator = if word.starts_with("<<") {
+                word.find(">>.").map(|i| i + 2)
+            } else {
+                word.find('.')
+            };
+            return Err(
+                if let Some(object) = separator.and_then(|i| word.get(..i)) {
+                    if object.is_empty() || self.objects.contains(object) {
+                        format!("reference to property {word} has no converted numeric parameter")
+                    } else {
+                        format!("reference to object {object} not converted: property {word} has no parameter")
+                    }
+                } else {
+                    format!("reference to parameter {word} not converted")
+                },
+            );
+        };
+        // An explicit decoded dependency identifies the source even when a local
+        // property has the same name. Scope is the fallback when no id disambiguates it.
+        let mut matching = p
+            .dependencies
+            .iter()
+            .map(|id| id.as_str())
+            .filter(|id| candidates.contains(id) || global.is_some_and(|all| all.contains(id)));
+        let first = matching.next();
+        let id = if matching.next().is_some() {
+            None
+        } else if first.is_some() {
+            first
+        } else if candidates.len() == 1 {
+            candidates.first().copied()
+        } else {
+            None
+        };
+        let Some(id) = id else {
+            return Err(format!("more than one parameter is named {word}"));
+        };
+        let (id, (_, name)) = self
+            .parameters
+            .get_key_value(id)
+            .ok_or_else(|| format!("reference to parameter {word} not converted"))?;
+        Ok((id, name))
+    }
+
+    fn references(&self, p: &DesignParameter) -> BTreeSet<String> {
+        words(&p.expression)
+            .into_iter()
+            .filter(|(_, stop, word)| {
+                !p.expression
+                    .get(*stop..)
+                    .is_some_and(|rest| rest.trim_start().starts_with('('))
+                    && (!reserved(word)
+                        || p.dependencies.iter().any(|id| {
+                            self.parameters
+                                .get(id.as_str())
+                                .is_some_and(|(dependency, _)| dependency.name == *word)
+                        }))
+            })
+            .filter_map(|(_, _, word)| self.resolve(p, word).ok().map(|(id, _)| id.to_owned()))
+            .collect()
+    }
+
+    fn bind(&self, p: &DesignParameter) -> Result<String, String> {
+        let expression = p
+            .expression
+            .trim()
+            .strip_prefix('=')
+            .unwrap_or(p.expression.trim());
+        if expression.len() > MAX_EXPRESSION_BYTES {
+            return Err("expression exceeds 65536 bytes".to_owned());
+        }
+        let append = |out: &mut String, text: &str| -> Result<(), String> {
+            if text.len() > MAX_EXPRESSION_BYTES.saturating_sub(out.len()) {
+                return Err("rewritten expression exceeds 65536 bytes".to_owned());
+            }
+            out.push_str(text);
+            Ok(())
+        };
+        let mut out = String::with_capacity(expression.len());
+        let mut end = 0;
+        for (start, stop, word) in words(expression) {
+            append(&mut out, expression.get(end..start).unwrap_or_default())?;
+            let call = expression
+                .get(stop..)
+                .is_some_and(|rest| rest.trim_start().starts_with('('));
+            if call {
+                if !FUNCTIONS.contains(&word) {
+                    return Err(format!("unsupported function {word}"));
+                }
+                append(&mut out, word)?;
+            } else if reserved(word)
+                && !p.dependencies.iter().any(|id| {
+                    self.parameters
+                        .get(id.as_str())
+                        .is_some_and(|(dependency, _)| dependency.name == word)
+                })
+            {
+                append(&mut out, word)?;
+            } else {
+                append(&mut out, self.resolve(p, word)?.1)?;
+            }
+            end = stop;
+        }
+        append(&mut out, expression.get(end..).unwrap_or_default())?;
+        if out.contains('?') || out.contains(':') {
+            return Err("conditional expressions are not supported yet".to_owned());
+        }
+        validate(&out, &self.names)?;
+        Ok(out)
+    }
+}
+
+/// Whole identifiers, including qualified properties and label references. Numeric
+/// exponents are consumed with their number, so `1e-3` never names a parameter `e`.
+fn words(expression: &str) -> Vec<(usize, usize, &str)> {
+    let mut out = Vec::new();
+    let mut chars = expression.char_indices().peekable();
+    while let Some((start, c)) = chars.next() {
+        if c.is_ascii_digit() || c == '.' && chars.peek().is_some_and(|(_, c)| c.is_ascii_digit()) {
+            while chars
+                .peek()
+                .is_some_and(|(_, c)| c.is_ascii_digit() || *c == '.')
+            {
+                chars.next();
+            }
+            if chars.peek().is_some_and(|(_, c)| *c == 'e' || *c == 'E') {
+                chars.next();
+                if chars.peek().is_some_and(|(_, c)| *c == '-' || *c == '+') {
+                    chars.next();
+                }
+                while chars.peek().is_some_and(|(_, c)| c.is_ascii_digit()) {
+                    chars.next();
+                }
+            }
+            continue;
+        }
+        if !(c.is_alphabetic()
+            || c == '_'
+            || c == '.'
+            || c == '<' && chars.peek().is_some_and(|(_, c)| *c == '<'))
+        {
+            continue;
+        }
+        if c == '<' {
+            chars.next();
+            while let Some((_, c)) = chars.next() {
+                if c == '>' && chars.peek().is_some_and(|(_, c)| *c == '>') {
+                    chars.next();
+                    break;
+                }
+            }
+        }
+        while chars
+            .peek()
+            .is_some_and(|(_, c)| c.is_alphanumeric() || *c == '_' || *c == '.')
+        {
+            chars.next();
+        }
+        let stop = chars.peek().map_or(expression.len(), |(i, _)| *i);
+        if let Some(word) = expression.get(start..stop) {
+            out.push((start, stop, word));
+        }
+    }
+    out
 }
 
 /// `expression` with each parameter name in `renamed` replaced by its new name; numbers, units,
@@ -281,6 +644,49 @@ fn unit(value: Option<&ParameterValue>) -> &'static str {
         Some(ParameterValue::Angle(_)) => "deg",
         _ => "",
     }
+
+    #[test]
+    fn signed_dimensions_share_a_magnitude_without_renaming_source_parameters() {
+        let wire =
+            json!({"parameters": [{"id": "negative", "value": {"kind": "length", "value": -3.0}}]});
+        let mut ctx = super::super::Context::new(&wire);
+        ctx.params
+            .insert("negative".to_owned(), "offset".to_owned());
+        let mut history = super::super::History {
+            params: vec![
+                json!({"name": "offset", "expr": "-width", "unit": "mm", "model": true}),
+                json!({"name": "width", "expr": "3 mm", "unit": "mm", "model": false}),
+                json!({"name": "offset_magnitude", "expr": "7 mm", "unit": "mm", "model": false}),
+            ],
+            features: vec![json!({"sketch": {"constraints": [
+                {"type": "distance_x", "p": 1, "q": 0, "value": 3.0, "param": "offset"},
+                {"type": "distance_y", "p": 2, "q": 0, "value": 3.0, "param": "offset", "driven": true},
+                {"type": "length", "l": 0, "value": 3.0, "param": "offset"},
+                {"type": "distance_x", "p": 0, "q": 3, "value": 3.0, "param": "width"}
+            ]}})],
+            ..Default::default()
+        };
+        unsigned_dimensions(&mut history, &ctx);
+        assert_eq!(history.params.len(), 4);
+        assert_eq!(history.params[0]["expr"], "-width");
+        assert_eq!(history.params[3]["name"], "offset_magnitude_2");
+        assert_eq!(history.params[3]["expr"], "-(offset)");
+        let constraints = &history.features[0]["sketch"]["constraints"];
+        assert_eq!(constraints[0]["param"], "offset_magnitude_2");
+        assert_eq!(constraints[1]["param"], "offset_magnitude_2");
+        assert_eq!(constraints[1]["driven"], true);
+        assert_eq!(constraints[0]["p"], 1);
+        assert_eq!(constraints[0]["q"], 0);
+        assert_eq!(constraints[2]["param"], "offset");
+        assert_eq!(constraints[3]["param"], "width");
+        let kept = needed(
+            history.params,
+            BTreeSet::from(["offset_magnitude_2".to_owned()]),
+        );
+        assert_eq!(kept.len(), 3);
+        assert_eq!(kept[0]["name"], "offset");
+        assert_eq!(kept[1]["name"], "width");
+    }
 }
 
 /// The value as a SolidCraft expression: lengths in millimetres, angles in degrees.
@@ -326,72 +732,9 @@ fn reserved(word: &str) -> bool {
 
 /// Whether SolidCraft reads `expression` as the source meant it: numbers, the arithmetic
 /// operators, parentheses, and words that are units, functions, constants or `names`.
+#[cfg(test)]
 fn readable(expression: &str, names: &BTreeSet<String>) -> bool {
-    let chars: Vec<char> = expression.chars().collect();
-    let mut depth = 0usize;
-    let mut i = 0usize;
-    let mut tokens = 0usize;
-    while let Some(&c) = chars.get(i) {
-        if c.is_whitespace() {
-            i += 1;
-        } else if c.is_ascii_digit() || c == '.' {
-            while chars
-                .get(i)
-                .is_some_and(|c| c.is_ascii_digit() || *c == '.')
-            {
-                i += 1;
-            }
-            if chars.get(i).is_some_and(|c| *c == 'e' || *c == 'E') {
-                let sign = chars.get(i + 1).is_some_and(|c| *c == '-' || *c == '+');
-                let first = if sign { i + 2 } else { i + 1 };
-                if chars.get(first).is_some_and(char::is_ascii_digit) {
-                    i = first;
-                    while chars.get(i).is_some_and(char::is_ascii_digit) {
-                        i += 1;
-                    }
-                }
-            }
-            tokens += 1;
-        } else if c.is_ascii_alphabetic() || c == '_' {
-            let start = i;
-            while chars
-                .get(i)
-                .is_some_and(|c| c.is_ascii_alphanumeric() || *c == '_')
-            {
-                i += 1;
-            }
-            let word: String = chars.get(start..i).unwrap_or_default().iter().collect();
-            let known = UNITS.contains(&word.as_str())
-                || CONSTANTS.contains(&word.as_str())
-                || names.contains(&word)
-                || (FUNCTIONS.contains(&word.as_str()) && next_is_paren(&chars, i));
-            if !known {
-                return false;
-            }
-            tokens += 1;
-        } else if "+-*/^,".contains(c) {
-            i += 1;
-        } else if c == '(' {
-            depth += 1;
-            i += 1;
-        } else if c == ')' {
-            let Some(d) = depth.checked_sub(1) else {
-                return false;
-            };
-            depth = d;
-            i += 1;
-        } else {
-            return false;
-        }
-    }
-    depth == 0 && tokens > 0
-}
-
-fn next_is_paren(chars: &[char], mut i: usize) -> bool {
-    while chars.get(i).is_some_and(|c| c.is_whitespace()) {
-        i += 1;
-    }
-    chars.get(i) == Some(&'(')
+    validate(expression, names).is_ok()
 }
 
 #[cfg(test)]
@@ -413,6 +756,7 @@ mod tests {
             "30 deg",
             "1.5e-3 m",
             "pi * 2",
+            "min(1, 2, 3)",
         ] {
             assert!(readable(ok, &known), "{ok}");
         }
@@ -429,6 +773,12 @@ mod tests {
             "if(width > 2; 1; 2)",
             "sqrt",
             "10 mm # note",
+            "1.2.3 mm",
+            "1e- mm",
+            "width +",
+            "sqrt(1, 2)",
+            "pow(2)",
+            "1 mm 2 mm",
         ] {
             assert!(!readable(bad, &known), "{bad}");
         }
@@ -479,6 +829,9 @@ mod map_tests {
             "expression": expression,
             "value": value,
         });
+        if row["value"].is_null() {
+            row.as_object_mut().unwrap().remove("value");
+        }
         if owned {
             row["owner"] = json!("f3d:model:feature#1");
         }
@@ -525,7 +878,7 @@ mod map_tests {
         ]);
         let model = with(cube(), features, parameters);
         let mut report = Report::default();
-        let (params, names) = map(&model.ir.model.parameters, &mut report);
+        let (params, names) = map(&model, &mut report);
         assert_eq!(
             names.get("f3d:model:parameter#2").map(String::as_str),
             Some("d1")
@@ -565,7 +918,7 @@ mod map_tests {
         ]);
         let model = with(cube(), json!([]), parameters);
         let mut report = Report::default();
-        let (params, names) = map(&model.ir.model.parameters, &mut report);
+        let (params, names) = map(&model, &mut report);
         let expr = |name: &str| {
             params
                 .iter()
@@ -610,7 +963,7 @@ mod map_tests {
         ]);
         let model = with(cube(), json!([]), parameters);
         let mut report = Report::default();
-        let (params, _) = map(&model.ir.model.parameters, &mut report);
+        let (params, _) = map(&model, &mut report);
         assert_eq!(params[0]["name"], "p_pi");
         assert_eq!(params[1]["expr"], "p_pi * 3");
         let renamed = &report.losses()[0];
@@ -620,47 +973,302 @@ mod map_tests {
             "renamed to p_pi: SolidCraft cannot use that name"
         );
     }
+    fn sheets(parameters: Value) -> dutchman_core::Model {
+        let features = json!([
+            crate::testing::feature(
+                1,
+                0,
+                "Sheet",
+                json!({"definition": "datum_principal_plane", "plane": "top"})
+            ),
+            crate::testing::feature(
+                2,
+                1,
+                "Pad",
+                json!({"definition": "datum_principal_plane", "plane": "top"})
+            ),
+        ]);
+        let model = with(cube(), features, parameters);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let cells: Vec<_> = model
+            .ir
+            .model
+            .parameters
+            .iter()
+            .filter(|p| p.owner.as_ref().map(|id| id.as_str()) == Some("f3d:model:feature#1"))
+            .enumerate()
+            .map(|(i, p)| json!({"address": format!("A{}", i+1), "parameter": p.id}))
+            .collect();
+        wire["model"]["spreadsheets"] = json!([{
+            "id": "f3d:model:spreadsheet#1", "feature": "f3d:model:feature#1", "cells": cells,
+        }]);
+        dutchman_core::Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        }
+    }
 
     #[test]
-    fn signed_dimensions_share_a_magnitude_without_renaming_source_parameters() {
-        let wire =
-            json!({"parameters": [{"id": "negative", "value": {"kind": "length", "value": -3.0}}]});
-        let mut ctx = super::super::Context::new(&wire);
-        ctx.params
-            .insert("negative".to_owned(), "offset".to_owned());
-        let mut history = super::super::History {
-            params: vec![
-                json!({"name": "offset", "expr": "-width", "unit": "mm", "model": true}),
-                json!({"name": "width", "expr": "3 mm", "unit": "mm", "model": false}),
-                json!({"name": "offset_magnitude", "expr": "7 mm", "unit": "mm", "model": false}),
-            ],
-            features: vec![json!({"sketch": {"constraints": [
-                {"type": "distance_x", "p": 1, "q": 0, "value": 3.0, "param": "offset"},
-                {"type": "distance_y", "p": 2, "q": 0, "value": 3.0, "param": "offset", "driven": true},
-                {"type": "length", "l": 0, "value": 3.0, "param": "offset"},
-                {"type": "distance_x", "p": 0, "q": 3, "value": 3.0, "param": "width"}
-            ]}})],
-            ..Default::default()
-        };
-        unsigned_dimensions(&mut history, &ctx);
-        assert_eq!(history.params.len(), 4);
-        assert_eq!(history.params[0]["expr"], "-width");
-        assert_eq!(history.params[3]["name"], "offset_magnitude_2");
-        assert_eq!(history.params[3]["expr"], "-(offset)");
-        let constraints = &history.features[0]["sketch"]["constraints"];
-        assert_eq!(constraints[0]["param"], "offset_magnitude_2");
-        assert_eq!(constraints[1]["param"], "offset_magnitude_2");
-        assert_eq!(constraints[1]["driven"], true);
-        assert_eq!(constraints[0]["p"], 1);
-        assert_eq!(constraints[0]["q"], 0);
-        assert_eq!(constraints[2]["param"], "offset");
-        assert_eq!(constraints[3]["param"], "width");
-        let kept = needed(
-            history.params,
-            BTreeSet::from(["offset_magnitude_2".to_owned()]),
+    fn qualified_sheet_references_keep_aliases_and_formula_only_cells_live() {
+        let length = |v: f64| json!({"kind": "length", "value": v});
+        let mut depth = parameter(
+            4,
+            "Length",
+            "Sheet.width / 2 + Sheet.A2",
+            length(20.0),
+            true,
         );
-        assert_eq!(kept.len(), 3);
-        assert_eq!(kept[0]["name"], "offset");
-        assert_eq!(kept[1]["name"], "width");
+        depth["owner"] = json!("f3d:model:feature#2");
+        let model = sheets(json!([
+            parameter(1, "width", "=20 mm", length(20.0), true),
+            parameter(2, "A2", "=width / 2", Value::Null, true),
+            parameter(
+                3,
+                "label",
+                "'Width",
+                json!({"kind": "string", "value": "Width"}),
+                true
+            ),
+            depth,
+        ]));
+        let mut report = Report::default();
+        let (params, names) = map(&model, &mut report);
+        assert_eq!(
+            params
+                .iter()
+                .map(|p| (&p["name"], &p["expr"]))
+                .collect::<Vec<_>>(),
+            vec![
+                (&json!("width"), &json!("20 mm")),
+                (&json!("Sheet_A2"), &json!("width / 2")),
+                (&json!("Length"), &json!("width / 2 + Sheet_A2"))
+            ]
+        );
+        assert_eq!(params[0]["model"], false);
+        assert_eq!(params[1]["unit"], "mm");
+        assert!(report.names().contains("Sheet_A2"));
+        assert!(!names.contains_key("f3d:model:parameter#3"));
+        assert!(
+            report
+                .losses()
+                .iter()
+                .all(|loss| loss.severity == Severity::Info),
+            "{:?}",
+            report.losses()
+        );
+    }
+
+    #[test]
+    fn qualified_properties_do_not_bind_to_an_unrelated_global_name() {
+        let length = json!({"kind": "length", "value": 10.0});
+        let model = sheets(json!([
+            parameter(1, "width", "=10 mm", length.clone(), true),
+            parameter(2, "result", "Other.width / 2", length, true),
+        ]));
+        let mut report = Report::default();
+        let (params, _) = map(&model, &mut report);
+        assert_eq!(params[1]["expr"], "10 mm");
+        assert!(report.losses().iter().any(|loss| loss
+            .detail
+            .contains("reference to object Other not converted")));
+    }
+
+    #[test]
+    fn function_and_conditional_losses_name_the_gap() {
+        let model = with(
+            cube(),
+            json!([]),
+            json!([
+                parameter(
+                    1,
+                    "w",
+                    "cbrt(8)",
+                    json!({"kind": "real", "value": 2.0}),
+                    false
+                ),
+                parameter(
+                    2,
+                    "h",
+                    "1 > 0 ? 3 : 4",
+                    json!({"kind": "real", "value": 3.0}),
+                    false
+                ),
+                parameter(
+                    3,
+                    "r",
+                    "sqrt(4) + abs(-1) + min(2, 3) + max(2, 3) + sin(30) + pi",
+                    Value::Null,
+                    false
+                ),
+            ]),
+        );
+        let mut report = Report::default();
+        let (params, _) = map(&model, &mut report);
+        assert_eq!(params[0]["expr"], "2");
+        assert_eq!(params[1]["expr"], "3");
+        assert_eq!(
+            params[2]["expr"],
+            "sqrt(4) + abs(-1) + min(2, 3) + max(2, 3) + sin(30) + pi"
+        );
+        assert!(report.losses()[0]
+            .detail
+            .ends_with("unsupported function cbrt"));
+        assert!(report.losses()[1]
+            .detail
+            .ends_with("conditional expressions are not supported yet"));
+    }
+
+    #[test]
+    fn unavailable_formula_only_dependencies_are_not_written_as_dangling_references() {
+        let model = sheets(json!([
+            parameter(1, "a", "=cbrt(8)", Value::Null, true),
+            parameter(2, "b", "=a * 2", Value::Null, true),
+            parameter(
+                3,
+                "c",
+                "=b * 2",
+                json!({"kind": "real", "value": 8.0}),
+                true
+            ),
+        ]));
+        let mut report = Report::default();
+        let (params, names) = map(&model, &mut report);
+        assert_eq!(params.len(), 1);
+        assert_eq!(params[0]["expr"], "8");
+        assert_eq!(names.len(), 1);
+        assert_eq!(
+            report
+                .losses()
+                .iter()
+                .filter(|l| l.severity == Severity::Dropped)
+                .count(),
+            2
+        );
+        assert!(report
+            .losses()
+            .iter()
+            .any(|l| l.detail.ends_with("reference to parameter b not converted")));
+    }
+
+    #[test]
+    fn cyclic_formulas_use_values_without_leaving_a_live_cycle() {
+        let value = json!({"kind": "real", "value": 1.0});
+        let model = with(
+            cube(),
+            json!([]),
+            json!([
+                parameter(1, "a", "b + 1", value.clone(), false),
+                parameter(2, "b", "a - 1", value, false),
+            ]),
+        );
+        let mut report = Report::default();
+        let (params, _) = map(&model, &mut report);
+        assert!(params.iter().all(|p| p["expr"] == "1"));
+        assert!(report
+            .losses()
+            .iter()
+            .all(|l| l.detail.contains("cyclic parameter dependency")));
+    }
+    #[test]
+    fn label_references_require_explicit_label_identity() {
+        let value = json!({"kind": "length", "value": 12.0});
+        let mut width = parameter(1, "width", "=12 mm", value.clone(), true);
+        width["properties"] = json!({"owner_label": "Plate dimensions"});
+        let mut depth = parameter(
+            2,
+            "Length",
+            "<<Plate dimensions>>.width / 2",
+            value.clone(),
+            true,
+        );
+        depth["owner"] = json!("f3d:model:feature#2");
+        let model = sheets(json!([
+            width,
+            depth,
+            parameter(3, "unresolved", "<<Sheet>>.width", value, true),
+        ]));
+        let mut report = Report::default();
+        let (params, _) = map(&model, &mut report);
+        assert_eq!(params[1]["expr"], "width / 2");
+        assert_eq!(params[2]["expr"], "12 mm");
+        assert!(report.losses().iter().any(|l| l
+            .detail
+            .contains("reference to object <<Sheet>> not converted")));
+    }
+
+    #[test]
+    fn property_paths_resolve_only_in_their_decoded_owner_scope() {
+        let value = json!({"kind": "length", "value": 12.0});
+        let mut width = parameter(1, "Constraint10", "12 mm", value.clone(), true);
+        width["properties"] =
+            json!({"reference_name": "Constraints.width", "source_name": "width"});
+        let model = sheets(json!([
+            width,
+            parameter(2, "offset", "-.Constraints.width / 2", value.clone(), true),
+            parameter(3, "cross", "Sheet.Constraints.width / 2", value, true),
+        ]));
+        let mut report = Report::default();
+        let (params, _) = map(&model, &mut report);
+        assert_eq!(params[1]["expr"], "-Constraint10 / 2");
+        assert_eq!(params[2]["expr"], "Constraint10 / 2");
+        assert!(report.losses().iter().all(|l| l.severity == Severity::Info));
+    }
+    #[test]
+    fn text_and_empty_cells_are_silent() {
+        let model = sheets(json!([
+            parameter(
+                1,
+                "caption",
+                "'Width",
+                json!({"kind": "string", "value": "Width"}),
+                true
+            ),
+            parameter(2, "other", "Height", Value::Null, true),
+            parameter(3, "text_formula", "='caption'", Value::Null, true),
+            parameter(4, "empty", "", Value::Null, true),
+        ]));
+        let mut report = Report::default();
+        let (params, names) = map(&model, &mut report);
+        assert!(params.is_empty());
+        assert!(names.is_empty());
+        assert!(report.losses().is_empty());
+    }
+    #[test]
+    fn feature_property_references_keep_their_owner_identity() {
+        let value = json!({"kind": "length", "value": 10.0});
+        let mut depth = parameter(2, "Length", "Sheet.width / 2", value.clone(), true);
+        depth["owner"] = json!("f3d:model:feature#2");
+        let model = sheets(json!([
+            parameter(1, "width", "=20 mm", value.clone(), true),
+            depth,
+            parameter(3, "result", "Pad.Length * 2", value, true),
+        ]));
+        let mut report = Report::default();
+        let (params, _) = map(&model, &mut report);
+        assert_eq!(params[1]["expr"], "width / 2");
+        assert_eq!(params[2]["expr"], "Length * 2");
+        assert!(report.losses().iter().all(|l| l.severity == Severity::Info));
+    }
+    #[test]
+    fn explicit_dependencies_take_precedence_over_a_shadowing_local_name() {
+        let value = json!({"kind": "length", "value": 10.0});
+        let model = with(
+            cube(),
+            json!([crate::testing::feature(
+                1,
+                0,
+                "Feature",
+                json!({"definition": "datum_principal_plane", "plane": "top"})
+            )]),
+            json!([
+                parameter(1, "width", "10 mm", value.clone(), false),
+                depending(parameter(2, "width", "width * 2", value, true), &[1]),
+            ]),
+        );
+        let mut report = Report::default();
+        let (params, _) = map(&model, &mut report);
+        assert_eq!(params[1]["name"], "width_2");
+        assert_eq!(params[1]["expr"], "width * 2");
+        assert!(report.losses().iter().all(|l| l.severity == Severity::Info));
     }
 }

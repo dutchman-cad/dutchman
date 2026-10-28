@@ -226,6 +226,16 @@ up to one turn, rational quadratic Béziers, and equal-weight rational splines m
 multi-piece elliptical arcs, unbounded conics, other weighted/nonuniform splines, and text without
 solved outlines still prevent the sketch's history from mapping.
 
+FreeCAD numeric spreadsheet cells and supported formulas can remain editable parameters.
+Qualified object properties bind through decoded parameter identities; renaming preserves
+links. Text cells are omitted silently, and unused numeric cells get `Info` notes.
+A value-only expression loss gives a specific cause: unsupported function or conditional,
+unresolved or ambiguous reference, cycle, or unsupported syntax. A verified initial shape
+does not certify edit behavior. The current decoder omits named sketch constraint bindings
+such as `.Constraints.width`; their dimensions stay at their evaluated values. Object-label
+references require decoded label identities. Check geometry after editing parameters; see
+[FreeCAD expressions](../../docs/freecad.md#spreadsheet-parameters-and-expressions).
+
 Constant-radius fillets and equal-setback chamfers map when the feature's own input edge
 geometry proves which edge each one acts on in SolidCraft's replay before the blend.
 Unused FreeCAD binders and datum helpers are `not_needed`, with the Info note

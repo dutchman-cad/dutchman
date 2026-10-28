@@ -51,6 +51,31 @@ FreeCAD signed horizontal and vertical sketch distances convert to positive dime
 magnitudes at their solved positions. Their signed parameters and expressions remain
 available; a dependent magnitude parameter drives each negative distance in SolidCraft.
 
+## Spreadsheet parameters and expressions
+
+Numeric spreadsheet cells become editable SolidCraft parameters. Aliases keep their names;
+unaliased cells include their sheet name, with punctuation replaced by underscores
+(`Sheet.A1` becomes `Sheet_A1`). Formula cells can remain live without a saved evaluated
+value. Text and empty cells are omitted silently. An unused numeric cell is retained with
+an `Info` note; the spreadsheet grid and formatting are not reproduced.
+
+Expressions such as `Parameters.plate_w / 2` bind to the parameter owned by the named
+object, including cell addresses and aliases. Renamed parameters remain linked through
+formulas. Length units such as `mm` and `in`, angles in `deg`, arithmetic, `pi`, and supported
+functions such as `min`, `max`, `abs`, `sqrt`, and degree-based trigonometry remain live.
+Unsupported functions, conditionals (`? :`), unresolved or ambiguous references, and cycles
+use the saved scalar value when available, with a specific reason. A formula with neither
+a supported expression nor a scalar value is dropped with that reason.
+
+Only bindings supplied by the decoder can be restored. Named sketch constraint bindings
+saved as `.Constraints.width` are not projected by the current decoder; their dimensions
+retain their evaluated values. Non-sketch feature dimensions such as pad depth are fixed
+scalars in the current neutral model, without parameter links to their geometry inputs;
+a live formula in the parameter table alone cannot drive those dimensions. Object-label
+references also need an unambiguous decoded label identity. A verified initial volume checks the saved shape; it does not prove that
+all source dependencies remain editable. Check the resulting geometry after editing a
+parameter. A flattened design retains only parameters needed by its reference sketches.
+
 ## Building with FreeCAD
 
 FreeCAD support is the `freecad` cargo feature of `dutchman` and `dutchman-gui`, on by

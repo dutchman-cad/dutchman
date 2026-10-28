@@ -155,6 +155,16 @@ Sheet-metal edge flanges with proven input-edge picks and supported dimensions r
 report the form or developed length SolidCraft cannot express. A blocked history falls back
 to geometry. These use the existing report fields; no schema fields change.
 
+Renamed parameter names are included in `names` so anonymous reports can remove them.
+Parameter expression fallbacks use the existing `losses` records: `subject` is
+`parameter <written name>`, `level` is `Degraded` when a scalar value is retained, and
+`Dropped` when neither expression nor scalar value can be written. The message names the
+unsupported function, conditional, unresolved or ambiguous reference, cycle, or syntax
+limitation. Spreadsheet text and empty cells produce no parameter loss; unused numeric
+cells produce an `Info` note. These are mapping observations, not additional schema fields.
+`verification.status: verified` compares initial geometry and does not certify that every
+source expression was decoded or that edits reproduce the source design's dependencies.
+
 A failure carries `"ok": false`, `input` and `error`, and exits 1:
 
 ```json
