@@ -36,8 +36,11 @@ A release is cut from `main` once CI is green there.
    The workflow also runs on demand (`gh workflow run release-build.yml`) and for a pull
    request that changes the packaging, but those runs keep only workflow artifacts and
    do not create a draft. It does not run for every push to `main`.
-   Pushed `vX.Y.Z` tags also publish `ghcr.io/dutchman-cad/dutchman:X.Y.Z` and `:latest`,
-   using the checksum-verified Linux archives, with no second Rust build. On-demand and
+   Publishing the release (not the tag or the draft) runs `Release image`
+   (`release-image.yml`), which publishes `ghcr.io/dutchman-cad/dutchman:X.Y.Z` and `:latest`
+   from the published release's checksum-verified Linux archives, with no second Rust build;
+   a draft never reaches the registry. To republish a release's image, run it on demand with
+   that tag (`gh workflow run release-image.yml -f tag=vX.Y.Z`). On-demand and
    packaging pull-request runs build both image architectures without logging in or pushing.
 4. crates.io: releases ship as GitHub release archives only, until the core API settles. The
    crates.io `dutchman` crate stays the 0.0.1 placeholder. When crates are published, the
