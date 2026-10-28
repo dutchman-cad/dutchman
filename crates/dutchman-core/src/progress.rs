@@ -87,12 +87,10 @@ impl<'a> Progress<'a> {
             if let Some(next) = next {
                 *stage = next;
             }
+            // Counted under the lock, so a load and a store cannot lose a completion.
             if completed {
-                let _ = self
-                    .read
-                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| {
-                        Some(n.saturating_add(1))
-                    });
+                let read = self.read.load(Ordering::Relaxed);
+                self.read.store(read.saturating_add(1), Ordering::Relaxed);
             }
             let total = self.total.load(Ordering::Relaxed);
             (self.callback)(ProgressEvent {
