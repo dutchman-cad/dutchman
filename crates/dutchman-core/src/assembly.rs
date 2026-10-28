@@ -621,6 +621,15 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
         .collect();
     held.sort();
     held.dedup();
+    // Occurrences the file places at the pose it shows them in: their joints are checked
+    // where they are, not solved again.
+    let posed_ids = source_posed(&document);
+    let posed: BTreeSet<Vec<usize>> = tree
+        .paths
+        .iter()
+        .filter(|(id, _)| posed_ids.contains(**id))
+        .map(|(_, located)| located.path.clone())
+        .collect();
     let mut assembly = Assembly {
         parts,
         placements,
@@ -630,7 +639,7 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
         joint_notes: Vec::new(),
     };
     left_out.extend(
-        place_by_joints(&mut assembly)
+        place_by_joints(&mut assembly, &posed)
             .into_iter()
             .map(|text| JointNote { text, family: None }),
     );
@@ -639,9 +648,47 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
     Ok(Some((assembly, texts)))
 }
 
+/// The occurrences cadmpeg places at the pose the file shows them in, which a Fusion design
+/// stores for some occurrences beside their placements: an external occurrence with a
+/// current pose or with poses of the occurrences inside it, and a local occurrence with a
+/// current pose. Read from cadmpeg's Fusion records by the occurrences' native references.
+fn source_posed(document: &Value) -> BTreeSet<String> {
+    let records = |name: &str| {
+        document
+            .pointer(&format!("/native/f3d/{name}"))
+            .and_then(Value::as_array)
+            .map_or(&[][..], Vec::as_slice)
+    };
+    let posed_refs: BTreeSet<&str> = records("xref_references")
+        .iter()
+        .chain(records("design_component_occurrences"))
+        .filter(|row| {
+            row.get("current_pose").is_some_and(|pose| !pose.is_null())
+                || row
+                    .get("contained_poses")
+                    .and_then(Value::as_array)
+                    .is_some_and(|poses| !poses.is_empty())
+        })
+        .filter_map(|row| row.get("id")?.as_str())
+        .collect();
+    document
+        .pointer("/model/occurrences")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice)
+        .iter()
+        .filter(|row| {
+            row.get("native_ref")
+                .and_then(Value::as_str)
+                .is_some_and(|native| posed_refs.contains(native))
+        })
+        .filter_map(|row| Some(row.get("id")?.as_str()?.to_owned()))
+        .collect()
+}
+
 /// Places the parts the joints join where the joints put them, as cadmpeg's own placements
-/// of joined parts may be where they were before the joints were solved. The design itself
-/// stays put; from it, each joint places the side not yet placed. A joint neither of whose
+/// of joined parts may be where they were before the joints were solved; the occurrences
+/// the file places at the pose it shows them in (`posed`) are placed already. The design
+/// itself stays put; from it, each joint places the side not yet placed. A joint neither of whose
 /// sides is placed yet keeps its second side and moves its first to it, as Fusion moves the
 /// first part picked for a joint to the second; of joints that reach nothing placed, the
 /// outermost occurrence they join stays put and places the rest. Of a joint between an occurrence and one
@@ -651,10 +698,11 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
 /// already is left for SolidCraft to check, with a note when they do not meet. A revolute or
 /// slider joint whose parts already turn or slide on its axis where they are placed holds
 /// them there instead, at the value their placements give it.
-fn place_by_joints(assembly: &mut Assembly) -> Vec<String> {
+fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec<String> {
     let joints = assembly.joints.clone();
     let mut notes = Vec::new();
     let mut fixed: BTreeSet<Vec<usize>> = BTreeSet::from([Vec::new()]);
+    fixed.extend(posed.iter().cloned());
     let mut pending: Vec<usize> = (0..joints.len()).collect();
     let reaching = |pending: &[usize], fixed: &BTreeSet<Vec<usize>>| {
         pending.iter().position(|&i| {
@@ -2333,7 +2381,7 @@ mod tests {
             joint.flip = flip;
             let mut fresh = local_components(&nested(false, None)).unwrap().unwrap().0;
             fresh.joints = vec![joint];
-            let notes = place_by_joints(&mut fresh);
+            let notes = place_by_joints(&mut fresh, &BTreeSet::new());
             assert!(notes.is_empty(), "{notes:?}");
             world_at(&fresh, &[0, 1]).unwrap()
         };
@@ -2503,6 +2551,49 @@ mod tests {
         assert!(near(&frame, &at([20.0, 0.0, 0.0], 0.0)), "{frame:?}");
         let block = world_at(&assembly, &[0, 1]).unwrap();
         assert!(near(&block, &at([50.0, 0.0, 0.0], 0.0)), "{block:?}");
+    }
+
+    #[test]
+    fn an_occurrence_the_file_poses_is_checked_by_its_joint_not_moved() {
+        // The frame (stored at x = 100) has a current pose in cadmpeg's records; a joint to
+        // the design that would put it at x = 20 is checked and reported, and the frame stays.
+        let mut frame = placed(0, "frame", root(), 100.0);
+        frame["native_ref"] = json!("f3d:Design/BulkStream.dat:design-component-occurrence#7");
+        let model = nested(
+            false,
+            Some(json!([
+                frame,
+                placed(1, "block", inside(0), 0.0),
+                placed(2, "block", inside(0), 30.0),
+            ])),
+        );
+        let fixed = json!({"kind": "fixed"});
+        let joints = json!([joint(
+            1,
+            fixed,
+            connector(None),
+            connector_at(0, &[], facing(at([-20.0, 0.0, 0.0], 0.0)))
+        )]);
+        let mut wire =
+            serde_json::to_value(&with_joints(model.clone(), joints.clone()).ir).unwrap();
+        wire["native"]["f3d"]["design_component_occurrences"] = json!([
+            {"id": "f3d:Design/BulkStream.dat:design-component-occurrence#7",
+             "current_pose": {"carrier_record_index": 9}},
+        ]);
+        let posed = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model.clone()
+        };
+        let (assembly, notes) = local_components(&posed).unwrap().unwrap();
+        let frame = world_at(&assembly, &[0]).unwrap();
+        assert!(near(&frame, &at([100.0, 0.0, 0.0], 0.0)), "{frame:?}");
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        // Without the pose the same joint places the frame.
+        let (assembly, _) = local_components(&with_joints(model, joints))
+            .unwrap()
+            .unwrap();
+        let frame = world_at(&assembly, &[0]).unwrap();
+        assert!(near(&frame, &at([20.0, 0.0, 0.0], 0.0)), "{frame:?}");
     }
 
     #[test]
