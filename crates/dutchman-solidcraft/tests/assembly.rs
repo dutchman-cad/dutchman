@@ -1340,3 +1340,27 @@ fn placed_twice_shows_nothing_hidden() -> bool {
         .and_then(|v| v.get("hidden_occurrences"))
         .is_none()
 }
+
+#[test]
+fn flattened_parts_keep_helper_info_once_per_part() {
+    let mut model = placed_twice();
+    let part = &mut model.assembly.as_mut().unwrap().parts[0];
+    let mut wire = serde_json::to_value(&part.ir).unwrap();
+    wire["model"]["features"] = serde_json::json!([
+        {"id": "test:model:feature#helper", "ordinal": 0, "name": "Unused point",
+            "suppressed": false, "definition": {"definition": "datum_point",
+                "position": {"x": 0.0, "y": 0.0, "z": 0.0}}},
+        {"id": "test:model:feature#later", "ordinal": 1, "name": "Later",
+            "suppressed": false, "definition": {"definition": "native", "kind": "Mystery"}}
+    ]);
+    part.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (_, report) = written(&model);
+    let notes: Vec<_> = report
+        .losses()
+        .iter()
+        .filter(|loss| loss.detail == "helper not converted: nothing uses it")
+        .collect();
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].severity, dutchman_core::Severity::Info);
+    assert!(notes[0].subject.contains("Unused point"));
+}

@@ -50,6 +50,15 @@ pub use report::{
     Severity, Stage,
 };
 
+/// Whether a source-native CADIR operation identifies a construction binder. Keep native
+/// type recognition in the core, so writers need only handle the neutral helper role.
+pub fn is_native_binder(kind: &str) -> bool {
+    matches!(
+        kind,
+        "PartDesign::SubShapeBinder" | "PartDesign::ShapeBinder"
+    )
+}
+
 /// The largest input file Dutchman will open, in bytes. Native CAD files beyond this are
 /// rejected up front rather than read into memory.
 pub const MAX_INPUT_BYTES: u64 = 1 << 30;
@@ -156,15 +165,14 @@ fn decode_file(format: Format, input: &Path, report: &mut Report) -> Result<Mode
     match hidden::shown(&model) {
         Ok(None) => Ok(model),
         Ok(Some((shown, hidden))) => {
-            report.push(
-                Severity::Info,
-                "bodies",
-                format!(
-                    "{hidden} hidden {} (the shapes of a Body's steps) not converted: \
-                     FreeCAD shows only the Body's own shape",
-                    if hidden == 1 { "body" } else { "bodies" }
-                ),
-            );
+            if hidden > 0 {
+                let body = if hidden == 1 { "body" } else { "bodies" };
+                report.push(
+                    Severity::Info,
+                    "bodies",
+                    format!("{hidden} hidden {body} not converted: FreeCAD hides them or a container above them"),
+                );
+            }
             Ok(shown)
         }
         Err(why) => {

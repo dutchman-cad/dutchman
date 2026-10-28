@@ -25,6 +25,19 @@ feature's intermediate shape as a body of its own and could turn revolved faces 
   revolutions short of a full turn are not mapped yet; a document holding one converts as
   geometry, and the report names the first feature that stopped it.
 
+Hidden container visibility takes precedence over a child's own shown flag, including
+nested Parts, groups, and PartDesign Bodies. A body hidden only by its source container can still supply a separately shown occurrence.
+
+Unused binders and datum helpers do not block feature history. They are reported as
+`not_needed`, with an Info note: `helper not converted: nothing uses it`. Suppressed later
+features do not count as consumers. A used datum point or coordinate system needs no
+separate feature when the dependent sketch carries its resolved plane or a pattern carries
+resolved axes. Resolved datum constructions can carry earlier helpers in the same way.
+Other uses keep the history flattened with a specific placement reason.
+A simple binder over a resolved construction plane can likewise be carried in its attached
+sketches. A binder used by a later feature remains a blocker when its source geometry
+reference is not resolved; the report says `a binder used by a later feature is not mapped yet`.
+
 Fillets and chamfers need resolved named edges of their base feature's stored shape,
 before the blend.
 Dutchman preserves those edges when it removes the hidden intermediate shapes. It accepts

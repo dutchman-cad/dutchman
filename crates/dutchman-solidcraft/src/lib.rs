@@ -548,7 +548,8 @@ impl Writer for SolidCraftWriter {
                 check: Check::Flattened(reason),
                 features: mapping.features.clone(),
             };
-            match (&mapping.result, no_decoded_history(&mapping.features)) {
+            let helper_notes = history::helper_notes(&history_report);
+            let written = match (&mapping.result, no_decoded_history(&mapping.features)) {
                 (Err(_), Some(why)) => {
                     report.push(Severity::Info, HISTORY, format!("not written: {why}"));
                     let outcome = Outcome {
@@ -631,7 +632,11 @@ impl Writer for SolidCraftWriter {
                         }
                     }
                 }
+            };
+            if written.1.mode == Mode::Import {
+                report.append(helper_notes);
             }
+            written
         };
         if outcome.mode == Mode::Import {
             self.check_import(model, &bytes, report);

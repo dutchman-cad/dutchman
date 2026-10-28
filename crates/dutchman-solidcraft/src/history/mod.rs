@@ -14,6 +14,7 @@ mod constraints;
 mod crossing;
 mod extrude;
 mod faces;
+mod helpers;
 mod hole;
 mod loft;
 mod modify;
@@ -342,6 +343,22 @@ pub(crate) struct Mapping {
     pub(crate) references: History,
 }
 
+/// Helper decisions remain useful even when other features flatten the history.
+pub(crate) fn helper_notes(report: &Report) -> Report {
+    let mut kept = Report::default();
+    for loss in report.losses().iter().filter(|loss| {
+        loss.severity == Severity::Info && loss.detail.starts_with("helper not converted:")
+    }) {
+        kept.push_at(
+            loss.stage,
+            loss.severity,
+            loss.subject.clone(),
+            loss.detail.clone(),
+        );
+    }
+    kept
+}
+
 /// Maps the model's history, or says why it cannot be replayed. Losses of a history that is
 /// written go to `report`.
 pub(crate) fn map(model: &Model, report: &mut Report) -> Mapping {
@@ -634,6 +651,9 @@ fn map_feature(
     report: &mut Report,
     preceding: &mut Vec<Value>,
 ) -> Result<Mapped, String> {
+    if helpers::is_helper(feature) {
+        return helpers::map(feature, ctx, report);
+    }
     let definition = operation(feature);
     match definition.get("definition").and_then(Value::as_str) {
         // A folder, a PartDesign Body or another node that orders the tree and builds nothing.

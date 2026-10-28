@@ -219,6 +219,13 @@ solved outlines still prevent the sketch's history from mapping.
 
 Constant-radius fillets and equal-setback chamfers map when the feature's own input edge
 geometry proves which edge each one acts on in SolidCraft's replay before the blend.
+Unused FreeCAD binders and datum helpers are `not_needed`, with the Info note
+`helper not converted: nothing uses it`. Used datum points and coordinate systems can be
+carried by resolved sketch placements, pattern axes, or another resolved datum. A used helper without the required
+resolved placement or binder source geometry remains a blocker, with its reason in the report.
+These Info notes remain when another feature or a replay mismatch flattens the history.
+A body inside a hidden container is hidden even when its own flag says it is shown.
+
 FreeCAD can supply that geometry from an earlier base feature's stored shape, including
 when its intermediate body is hidden. Unproven source membership or an ambiguous replay
 pick keeps the history flattened, with the reason reported. `--no-verify` cannot prove blends.
