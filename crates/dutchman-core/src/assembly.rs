@@ -228,6 +228,18 @@ pub struct Placement {
     pub part: usize,
     /// Its placement in the assembly: a rigid transform, row-major 3 × 4, in millimetres.
     pub transform: [[f64; 4]; 3],
+    /// Whether the source hides it: the occurrence is hidden, or every body of the part it
+    /// places is. It is placed all the same, and the writer keeps it hidden.
+    pub hidden: bool,
+}
+
+/// Whether every body of a part is one its source hides: a part of hidden bodies alone is
+/// placed hidden. A part with any body shown is shown whole.
+fn all_hidden(part: &Model) -> bool {
+    let bodies = &part.ir.model.bodies;
+    part.assembly.is_none()
+        && !bodies.is_empty()
+        && bodies.iter().all(|body| body.visible == Some(false))
 }
 
 /// Decodes one file, without reading the parts an assembly places.
@@ -409,6 +421,7 @@ pub(crate) fn resolve(
         };
         match transform(occurrence) {
             Ok(transform) => placements.push(Placement {
+                hidden: false,
                 name,
                 part,
                 transform,
@@ -609,6 +622,7 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
     let own_part = if !loose.is_empty() {
         parts.push(only(model, &document, &loose, model.name.clone())?);
         placements.push(Placement {
+            hidden: parts.last().is_some_and(all_hidden),
             name: None,
             part: parts.len() - 1,
             transform: IDENTITY,
@@ -1427,7 +1441,12 @@ impl<'a> Tree<'a> {
             let part = self.part(occurrence, inner);
             self.path.pop();
             self.placed += 1;
+            let hidden = occurrence.get("visible").and_then(Value::as_bool) == Some(false)
+                || part
+                    .as_ref()
+                    .is_ok_and(|part| self.parts.get(*part).is_some_and(all_hidden));
             placements.push(Placement {
+                hidden,
                 name: occurrence
                     .get("name")
                     .and_then(Value::as_str)
@@ -1539,8 +1558,10 @@ impl<'a> Tree<'a> {
             let mut placements = placed?;
             let own_part = if !bodies.is_empty() {
                 let own = only(self.model, self.document, &bodies, format!("{name} bodies"))?;
+                let hidden = all_hidden(&own);
                 self.parts.push(own);
                 placements.push(Placement {
+                    hidden,
                     name: None,
                     part: self.parts.len() - 1,
                     transform: IDENTITY,
@@ -3196,6 +3217,49 @@ mod tests {
 
     fn inside(key: u32) -> Value {
         json!({"kind": "occurrence", "occurrence": format!("f3d:model:occurrence#{key}")})
+    }
+
+    #[test]
+    fn placements_the_source_hides_are_placed_hidden() {
+        // Block 2 is a hidden occurrence; the frame and block 1 are shown.
+        let mut hidden_block = placed(2, "block", inside(0), 30.0);
+        hidden_block["visible"] = json!(false);
+        let model = nested(
+            false,
+            Some(json!([
+                placed(0, "frame", root(), 100.0),
+                placed(1, "block", inside(0), 0.0),
+                hidden_block,
+            ])),
+        );
+        let assembly = local_assembly(&model).unwrap().unwrap();
+        let frame = assembly.parts[assembly.placements[0].part]
+            .assembly
+            .as_ref()
+            .unwrap();
+        let hidden: Vec<bool> = frame.placements.iter().map(|p| p.hidden).collect();
+        assert_eq!(hidden, [false, true]);
+        assert!(!assembly.placements[0].hidden);
+
+        // When the block's only body is hidden, every placement of it is hidden; the part
+        // is placed all the same, so its geometry stays in the design.
+        let mut wire = serde_json::to_value(&nested(false, None).ir).unwrap();
+        wire["model"]["bodies"][0]["visible"] = json!(false);
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..nested(false, None)
+        };
+        let assembly = local_assembly(&model).unwrap().unwrap();
+        let frame = assembly.parts[assembly.placements[0].part]
+            .assembly
+            .as_ref()
+            .unwrap();
+        assert_eq!(frame.placements.len(), 2);
+        assert!(frame.placements.iter().all(|p| p.hidden));
+        assert!(frame
+            .parts
+            .iter()
+            .all(|part| !part.ir.model.bodies.is_empty()));
     }
 
     #[test]

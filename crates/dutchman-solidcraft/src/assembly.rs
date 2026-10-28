@@ -9,6 +9,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+/// Most hidden-occurrence paths written: a hidden occurrence deep inside components placed
+/// many times can be reached many ways.
+const MAX_HIDDEN_PATHS: usize = 4096;
+
 use dutchman_core::placement::{compose, IDENTITY};
 use dutchman_core::{Assembly, Joint, Motion};
 use dutchman_core::{Check, Error, FeatureOutcome, Mode, Model, Outcome, Report, Severity, Stage};
@@ -49,6 +53,7 @@ pub(crate) fn write(
         placements: BTreeMap::new(),
         groups: Vec::new(),
         own_group: None,
+        hidden: BTreeSet::new(),
     };
     let top = builder.assembly(assembly, 0)?;
     builder.hold(&assembly.held, &top);
@@ -111,8 +116,26 @@ pub(crate) fn write(
     if let (false, Some(fields)) = (joints.is_empty(), doc.as_object_mut()) {
         fields.insert("assembly".to_owned(), json!({"joints": joints}));
     }
-    if let (false, Some(fields)) = (hidden.is_empty(), doc.as_object_mut()) {
-        fields.insert("visibility".to_owned(), json!({"hidden_sketches": hidden}));
+    let hidden_occurrences = builder.hidden_paths();
+    if !hidden_occurrences.is_empty() {
+        builder.report.push(
+            Severity::Info,
+            "visibility",
+            format!(
+                "{} component placement(s) the source hides are placed hidden",
+                hidden_occurrences.len()
+            ),
+        );
+    }
+    let mut visibility = serde_json::Map::new();
+    if !hidden.is_empty() {
+        visibility.insert("hidden_sketches".to_owned(), json!(hidden));
+    }
+    if !hidden_occurrences.is_empty() {
+        visibility.insert("hidden_occurrences".to_owned(), json!(hidden_occurrences));
+    }
+    if let (false, Some(fields)) = (visibility.is_empty(), doc.as_object_mut()) {
+        fields.insert("visibility".to_owned(), Value::Object(visibility));
     }
     builder
         .report
@@ -245,6 +268,8 @@ struct Builder<'r> {
     /// Each root design's contiguous feature range, including its nested components.
     groups: Vec<(String, std::ops::Range<usize>)>,
     own_group: Option<usize>,
+    /// The occurrences whose source placement is hidden.
+    hidden: BTreeSet<u64>,
 }
 
 impl Builder<'_> {
@@ -252,6 +277,52 @@ impl Builder<'_> {
         let id = self.next_id;
         self.next_id = self.next_id.saturating_add(1);
         id
+    }
+
+    /// Every path from the design to a hidden occurrence, as SolidCraft hides occurrences:
+    /// the occurrence ids from the root down. A hidden occurrence inside a component placed
+    /// more than once is hidden in each placement of it.
+    fn hidden_paths(&self) -> Vec<Vec<u64>> {
+        let parent_of: BTreeMap<u64, u64> = self
+            .occurrences
+            .iter()
+            .filter_map(|o| Some((o.get("id")?.as_u64()?, o.get("parent")?.as_u64()?)))
+            .collect();
+        let mut paths = Vec::new();
+        for &id in &self.hidden {
+            // Paths from the root to `id`, built upwards: each placement of the component
+            // the occurrence sits in leads one level out.
+            let mut partial = vec![vec![id]];
+            let mut done = Vec::new();
+            for _ in 0..=self.occurrences.len() {
+                let mut next = Vec::new();
+                for path in partial {
+                    let Some(&parent) = path.first().and_then(|first| parent_of.get(first)) else {
+                        continue;
+                    };
+                    if parent == 0 {
+                        done.push(path);
+                        continue;
+                    }
+                    for (&outer, &(component, _)) in &self.placements {
+                        if component == parent && !path.contains(&outer) {
+                            let mut longer = vec![outer];
+                            longer.extend(&path);
+                            next.push(longer);
+                        }
+                    }
+                }
+                if next.is_empty() || done.len() + next.len() > MAX_HIDDEN_PATHS {
+                    break;
+                }
+                partial = next;
+            }
+            paths.extend(done);
+        }
+        paths.sort();
+        paths.dedup();
+        paths.truncate(MAX_HIDDEN_PATHS);
+        paths
     }
 
     /// Adds `assembly`'s parts as components beneath component `parent` (0: the root), and its
@@ -293,6 +364,9 @@ impl Builder<'_> {
                 "transform": column_major(&placement.transform),
             }));
             self.placements.insert(id, (component, placement.transform));
+            if placement.hidden {
+                self.hidden.insert(id);
+            }
             occurrences.push(Some(id));
         }
         Ok(occurrences)

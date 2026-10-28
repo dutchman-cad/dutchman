@@ -384,6 +384,7 @@ fn sketch_constraints_keep_their_evaluated_dimensions() {
 fn assembly_occurrences_keep_nested_placements_and_independent_bodies() {
     let part = model("pad");
     let placement = dutchman_core::Placement {
+        hidden: false,
         name: Some("Placed part".to_owned()),
         part: 0,
         transform: [
@@ -465,11 +466,13 @@ fn joint_model() -> Model {
             parts: vec![part.clone()],
             placements: vec![
                 dutchman_core::Placement {
+                    hidden: false,
                     name: Some("Base".to_owned()),
                     part: 0,
                     transform: IDENTITY,
                 },
                 dutchman_core::Placement {
+                    hidden: false,
                     name: Some("Arm".to_owned()),
                     part: 0,
                     transform: placed,
@@ -1061,6 +1064,7 @@ fn nested_model() -> Model {
         [0.0, 0.0, -1.0, 0.0],
     ];
     let placement = |name: &str, part: usize, transform| dutchman_core::Placement {
+        hidden: false,
         name: Some(name.to_owned()),
         part,
         transform,

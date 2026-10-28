@@ -42,11 +42,13 @@ fn placed_twice() -> Model {
             parts: vec![part.clone()],
             placements: vec![
                 Placement {
+                    hidden: false,
                     name: None,
                     part: 0,
                     transform: at(0.0),
                 },
                 Placement {
+                    hidden: false,
                     name: Some("Moved".to_owned()),
                     part: 0,
                     transform: at(30.0),
@@ -427,16 +429,19 @@ fn nested() -> Model {
             parts: vec![pair, cube.clone()],
             placements: vec![
                 Placement {
+                    hidden: false,
                     name: None,
                     part: 0,
                     transform: at(0.0, 0.0),
                 },
                 Placement {
+                    hidden: false,
                     name: None,
                     part: 0,
                     transform: at(0.0, 50.0),
                 },
                 Placement {
+                    hidden: false,
                     name: None,
                     part: 1,
                     transform: at(100.0, 0.0),
@@ -1274,4 +1279,63 @@ fn a_joined_part_is_placed_where_its_joint_puts_it_not_where_it_was_stored() {
         .collect();
     starts.sort_by(f64::total_cmp);
     assert_eq!(starts, [0.0, 30.0]);
+}
+
+fn document_of(model: &Model) -> Value {
+    let (bytes, _) = written(model);
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut text = String::new();
+    archive
+        .by_name("document.json")
+        .unwrap()
+        .read_to_string(&mut text)
+        .unwrap();
+    serde_json::from_str(&text).unwrap()
+}
+
+#[test]
+fn a_placement_the_source_hides_is_written_hidden() {
+    // The second cube is hidden in the source: it is still placed, and hidden.
+    let mut model = placed_twice();
+    if let Some(assembly) = &mut model.assembly {
+        assembly.placements[1].hidden = true;
+    }
+    let document = document_of(&model);
+    let moved = document["occurrences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["name"] == "Moved")
+        .unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    assert_eq!(document["occurrences"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        document["visibility"]["hidden_occurrences"],
+        serde_json::json!([[moved]])
+    );
+
+    // Inside a sub-assembly placed twice, it is hidden in each placement of it.
+    let mut outer = placed_twice();
+    if let Some(assembly) = &mut outer.assembly {
+        let mut inner = model.clone();
+        inner.name = "pair".to_owned();
+        assembly.parts = vec![inner];
+    }
+    let document = document_of(&outer);
+    let hidden = document["visibility"]["hidden_occurrences"]
+        .as_array()
+        .unwrap();
+    assert_eq!(hidden.len(), 2, "{hidden:?}");
+    assert!(hidden
+        .iter()
+        .all(|path| path.as_array().unwrap().len() == 2));
+    assert!(placed_twice_shows_nothing_hidden());
+}
+
+fn placed_twice_shows_nothing_hidden() -> bool {
+    document_of(&placed_twice())
+        .get("visibility")
+        .and_then(|v| v.get("hidden_occurrences"))
+        .is_none()
 }

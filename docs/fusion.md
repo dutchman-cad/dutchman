@@ -41,6 +41,11 @@ transform, and each component as a product definition.
   hold the same components in the same places each time; when it does not, or when a placement
   is inside an occurrence the design does not place, the design converts as stored and the
   report says why.
+- **Hidden components and bodies** stay hidden: a placement whose occurrence the design hides,
+  or whose part holds only bodies the design hides (a design's own body hidden beside its
+  components, say), is written as a SolidCraft occurrence hidden in every placement of what
+  holds it. Its geometry is still converted and can be shown again in SolidCraft. A part with
+  shown and hidden bodies is shown whole.
 - **Joints** between components become SolidCraft joints: fixed ones rigid (their offset kept),
   revolute ones turning about the connector's z axis with their limits, slider ones along it.
   Each connector frame is in its own part, as cadmpeg gives it, which is how SolidCraft takes
