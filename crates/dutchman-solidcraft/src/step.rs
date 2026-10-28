@@ -45,20 +45,30 @@ pub(crate) fn restatable(model: &Model) -> Result<(), Error> {
 
 /// cadmpeg's plan for restating the model as STEP, refused when it carries no geometry.
 fn plan(model: &Model) -> Result<cadmpeg_ir::codec::write::ExportPlan, Error> {
-    // With no bodies at all, cadmpeg plans an empty file rather than saying so.
-    if model.ir.model.bodies.is_empty() {
+    // With no bodies at all, cadmpeg plans an empty file rather than saying so. Without a face,
+    // cadmpeg writes what is left (wire edges, points), none of it a solid or a surface.
+    if model.ir.model.bodies.is_empty() || model.ir.model.faces.is_empty() {
         return Err(no_geometry());
     }
     let input = EncodeInput::new(&model.ir, model.fidelity.as_ref());
     let plan = build_encoder(Format::Step)
         .plan(input, TargetRequest::Explicit(SCHEMA))
         .map_err(|err| Error::Restate(format!("cannot restate the model as STEP: {err}")))?;
-    if plan
-        .report()
-        .losses
+    let losses = &plan.report().losses;
+    if losses
         .iter()
         .any(|loss| loss.code.to_string() == "step/export.no-exportable-solids")
     {
+        return Err(no_geometry());
+    }
+    // cadmpeg keeps what survives of a body whose faces cannot be bounded (its edges as wires,
+    // its vertices as points) and says so once per face: when that is every face, nothing it
+    // writes is a solid or a surface.
+    let unbounded = losses
+        .iter()
+        .filter(|loss| loss.code.to_string() == "step/topology.face-no-writable-bounds")
+        .count();
+    if unbounded >= model.ir.model.faces.len() {
         return Err(no_geometry());
     }
     Ok(plan)
