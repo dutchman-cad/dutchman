@@ -643,7 +643,8 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
 /// of joined parts may be where they were before the joints were solved. The design itself
 /// stays put; from it, each joint places the side not yet placed. A joint neither of whose
 /// sides is placed yet keeps its second side and moves its first to it, as Fusion moves the
-/// first part picked for a joint to the second. Of a joint between an occurrence and one
+/// first part picked for a joint to the second; of joints that reach nothing placed, the
+/// outermost occurrence they join stays put and places the rest. Of a joint between an occurrence and one
 /// inside it, the inner one moves, and an occurrence holding one already placed is never
 /// moved, as moving it would move what it holds. A joint whose two sides were both placed
 /// already is left for SolidCraft to check, with a note when they do not meet. A revolute or
@@ -654,15 +655,28 @@ fn place_by_joints(assembly: &mut Assembly) -> Vec<String> {
     let mut notes = Vec::new();
     let mut fixed: BTreeSet<Vec<usize>> = BTreeSet::from([Vec::new()]);
     let mut pending: Vec<usize> = (0..joints.len()).collect();
+    let reaching = |pending: &[usize], fixed: &BTreeSet<Vec<usize>>| {
+        pending.iter().position(|&i| {
+            joints
+                .get(i)
+                .is_some_and(|j| fixed.contains(&j.a) || fixed.contains(&j.b))
+        })
+    };
     while !pending.is_empty() {
-        let next = pending
-            .iter()
-            .position(|&i| {
-                joints
-                    .get(i)
-                    .is_some_and(|j| fixed.contains(&j.a) || fixed.contains(&j.b))
-            })
-            .unwrap_or(0);
+        // Joints that reach nothing placed join parts only to each other: their outermost
+        // occurrence (of a joint's two, its second) stays where the file puts it, and they
+        // are placed from it, so a design placed by its stored pose holds its parts there.
+        if reaching(&pending, &fixed).is_none() {
+            let outermost = pending
+                .iter()
+                .filter_map(|&i| joints.get(i))
+                .flat_map(|j| [&j.b, &j.a])
+                .min_by_key(|path| path.len());
+            if let Some(outermost) = outermost {
+                fixed.insert(outermost.clone());
+            }
+        }
+        let next = reaching(&pending, &fixed).unwrap_or(0);
         let index = pending.remove(next);
         let Some(joint) = joints.get(index) else {
             continue;
@@ -1045,6 +1059,19 @@ fn joint(
     }
     if let Some((holder, at)) = whole_copy(&b, &a) {
         (b, b_at, lifted) = (holder, at, true);
+    }
+    // A joint between a copy and a part inside it is the component's own, as its part is:
+    // the copy is written through the first copy too.
+    let holder = |copy: &Located, part: &Located| {
+        let depth = part.shared?;
+        (copy.own.len() == depth && part.own.starts_with(&copy.own))
+            .then(|| part.path.get(..depth).map(<[usize]>::to_vec))
+            .flatten()
+    };
+    if let Some(path) = holder(&a, &b) {
+        a.path = path;
+    } else if let Some(path) = holder(&b, &a) {
+        b.path = path;
     }
     for depth in [a.shared, b.shared].into_iter().flatten() {
         if a.own.get(..depth) != b.own.get(..depth) {
@@ -2344,6 +2371,86 @@ mod tests {
         assert!(!frame_aligned(&json!({"operands": {"arity": "pair"}})));
         // Only the operands carry the sense: a stray top-level field is not read.
         assert!(!frame_aligned(&json!({"frame_sense": "aligned"})));
+    }
+
+    #[test]
+    fn a_copys_joint_to_a_part_inside_it_is_the_components_own() {
+        // A frame placed twice (x = 0 and x = 100), each copy's rigid group holding its
+        // block: the second copy's joint is the component's own, written through the first
+        // copy, so it is one joint with the first's and the second copy stays at x = 100.
+        let model = nested(
+            false,
+            Some(json!([
+                placed(0, "frame", root(), 0.0),
+                placed(1, "frame", root(), 100.0),
+                placed(2, "block", inside(0), 30.0),
+                placed(3, "block", inside(1), 30.0),
+            ])),
+        );
+        let fixed = json!({"kind": "fixed"});
+        let model = with_joints(
+            model,
+            json!([
+                joint(
+                    1,
+                    fixed.clone(),
+                    connector(Some((0, &[]))),
+                    connector(Some((2, &[])))
+                ),
+                joint(
+                    2,
+                    fixed,
+                    connector(Some((1, &[]))),
+                    connector(Some((3, &[])))
+                ),
+            ]),
+        );
+        let (assembly, _) = local_components(&model).unwrap().unwrap();
+        let sides: Vec<_> = assembly
+            .joints
+            .iter()
+            .map(|j| (j.a.clone(), j.b.clone()))
+            .collect();
+        assert_eq!(sides, [(vec![0], vec![0, 0])]);
+        let second = world_at(&assembly, &[1]).unwrap();
+        assert!(near(&second, &at([100.0, 0.0, 0.0], 0.0)), "{second:?}");
+    }
+
+    #[test]
+    fn joints_that_reach_nothing_placed_are_placed_from_their_outermost_occurrence() {
+        // The frame (stored at x = 100) holds block 2 rigidly, and block 2 holds block 1 at
+        // its own origin; nothing joins them to the design. The block-to-block joint comes
+        // first, yet the frame stays where it is stored and both blocks move to it.
+        let fixed = json!({"kind": "fixed"});
+        let model = with_joints(
+            nested(false, None),
+            json!([
+                joint(
+                    1,
+                    fixed.clone(),
+                    connector_at(1, &[], IDENTITY),
+                    connector_at(2, &[], IDENTITY)
+                ),
+                joint(
+                    2,
+                    fixed,
+                    connector_at(0, &[], at([5.0, 0.0, 0.0], 0.0)),
+                    connector_at(2, &[], IDENTITY)
+                ),
+            ]),
+        );
+        let (assembly, notes) = local_components(&model).unwrap().unwrap();
+        assert!(notes.is_empty(), "{notes:?}");
+        let frame = world_at(&assembly, &[0]).unwrap();
+        assert!(near(&frame, &at([100.0, 0.0, 0.0], 0.0)), "{frame:?}");
+        // Block 2 faces the frame, and block 1 faces block 2.
+        let block_2 = world_at(&assembly, &[0, 1]).unwrap();
+        assert!(
+            near(&block_2, &facing(at([105.0, 0.0, 0.0], 0.0))),
+            "{block_2:?}"
+        );
+        let block_1 = world_at(&assembly, &[0, 0]).unwrap();
+        assert!(near(&block_1, &at([105.0, 0.0, 0.0], 0.0)), "{block_1:?}");
     }
 
     #[test]

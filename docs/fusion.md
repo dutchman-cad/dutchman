@@ -42,7 +42,8 @@ transform, and each component as a product definition.
   part where it was before its joints were solved, so Dutchman places joined parts where their
   joints put them: from the design's own root, each joint places the part at its other end; a
   joint neither of whose parts is placed yet moves its first part to its second, as Fusion
-  moves the first part picked for a joint. Of a joint between a component and a part inside it,
+  moves the first part picked for a joint; joints that reach nothing placed start from the
+  outermost occurrence they join, which stays where the file puts it. Of a joint between a component and a part inside it,
   as a rigid group holds its members to its first, the inner part moves and the component keeps
   its own placement; a component holding a part already placed is never moved, as that would
   move the part. A part two joints would place differently is reported,
@@ -52,7 +53,8 @@ transform, and each component as a product definition.
   and the report says so. A component placed more than once is held once in the SolidCraft
   design, so a joint between two parts inside one copy of it is that component's own: it is
   written once, through the first copy, as SolidCraft solves joints between repeated parts in
-  the first placement's frame, and every copy follows. A joint from a part inside one copy to
+  the first placement's frame, and every copy follows; so is a joint between a copy and a
+  part inside that copy. A joint from a part inside one copy to
   something outside that copy cannot hold the part alone, so it holds the whole copy where the
   part is, and the report says so; when another joint already holds that copy itself to the
   same occurrence, as a rigid group holding both does, the part's joint is left out instead.
