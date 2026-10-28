@@ -618,6 +618,14 @@ Connect SolidCraft to `http://127.0.0.1:11500/v1`. Install SolidCraft separately
 `dutchman pilot --help` lists Pilot's commands; `dutchman pilot model --help` lists the
 model proxy's options. The default `pilot` Cargo feature includes this command.
 
+Constant-radius FreeCAD AdditiveHelix and SubtractiveHelix features keep editable history
+as sketch-profile coils in SolidCraft 0.25.1 or newer. The profile, axis, pitch/height/turn
+law, handedness, reversed travel, and Boolean operation carry across. Available feature
+parameter bindings drive dimensions; dimensions without bindings keep their resolved
+values with a Degraded loss. Spreadsheet expressions follow the usual value fallback.
+Conical helices and flat spirals remain unsupported because SolidCraft's coil has no
+cone-angle or radial-growth option. Replay verification applies as for other features.
+
 ## Reading the loss report
 
 An assembly's conversion first says how complete it is, under the line saying what was

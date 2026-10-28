@@ -257,6 +257,13 @@ Replacing a source shape with its mirror is not supported yet: SolidCraft's mirr
 the original. Cosmetic threads lack a resolved standard and pitch in CADIR, so assigning
 SolidCraft's ISO metric designation would invent thread data; these remain flattened.
 
+Constant-radius helical sweeps (FreeCAD AdditiveHelix and SubtractiveHelix) keep their
+sketch profile, axis, pitch/height/turn law, handedness, reversed travel, and Boolean
+operation as sketch-profile coils, requiring SolidCraft 0.25.1 or newer. Feature parameter
+bindings drive dimensions when available; otherwise their resolved values are kept.
+Conical helices and spirals remain blocked because SolidCraft's coil has no cone-angle
+or radial-growth option. Check replay verification as for other mapped history.
+
 When cadmpeg's model fails its checks, Dutchman retries after removing history, sketches,
 parameters and associated design records, including parameter links on joints. A successful
 retry retains geometry and assembly structure, validates them, and reports a `Degraded`

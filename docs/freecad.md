@@ -87,6 +87,15 @@ references also need an unambiguous decoded label identity. A verified initial v
 all source dependencies remain editable. Check the resulting geometry after editing a
 parameter. A flattened design retains only parameters needed by its reference sketches.
 
+Constant-radius AdditiveHelix and SubtractiveHelix features keep their sketch profile,
+axis, pitch/height/turn law, handedness, reversed direction, and join/cut operation as
+sketch-profile coils (requires SolidCraft 0.25.1 or newer). Resolved feature parameter
+bindings drive the coil dimensions; dimensions without bindings keep their values.
+Spreadsheet parameters follow the usual expression/value fallback. Conical helices and
+flat spirals are not supported yet: SolidCraft's sketch-profile coil has no cone angle or
+radial growth. Replay verification still applies, including fallback when a profile or
+Boolean operation cannot rebuild.
+
 ## Building with FreeCAD
 
 FreeCAD support is the `freecad` cargo feature of `dutchman` and `dutchman-gui`, on by

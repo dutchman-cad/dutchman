@@ -145,6 +145,12 @@ interpolation, tangent-path extension, or simplification. Paths and guide rails 
 ordered sketch curves or a whole sketch with one non-construction curve. A blocked sweep
 keeps the original geometry when converted.
 
+Constant-radius helical sweeps, including FreeCAD AdditiveHelix and SubtractiveHelix,
+map to sketch-profile coils in SolidCraft 0.25.1 or newer. Pitch/height/turn laws,
+handedness, axis, reversed travel, and Boolean operation carry across. Feature parameter
+bindings are retained when available, otherwise dimensions use resolved values. Conical
+and spiral sweeps report the missing SolidCraft cone-angle/radial-growth option.
+
 Hole history keeps chamfered entries and tapped holes (the bore and an ISO metric thread
 label); thread details it can't keep are `Degraded` losses. Unsupported hole forms,
 placements, and ends appear in `history.features[].reason`, and conversion keeps the

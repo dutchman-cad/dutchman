@@ -1752,6 +1752,177 @@ fn written(model: &Model) -> (Vec<u8>, Report) {
     )
 }
 
+fn helical_history(change: impl FnOnce(&mut Value)) -> Model {
+    let mut model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    m["sketch_constraints"] = json!([]);
+    m["sketch_entities"] = json!([entity(
+        1,
+        json!({
+            "kind": "circle", "center": {"u": 10.0, "v": 0.0}, "radius": 1.0
+        })
+    )]);
+    m["sketches"][0]["profiles"] = json!([[{"entity": "f3d:model:sketch-entity#1"}]]);
+    m["sketches"][0]["placement"]["frame"] = json!({
+        "origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+        "normal": {"x": 0.0, "y": -0.9968486721503291, "z": -0.0793266968436579},
+        "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0}
+    });
+    m["parameters"] = json!([
+        {"id": "f3d:model:parameter#1", "owner": "f3d:model:feature#2", "name": "Pitch",
+         "expression": "5 mm", "value": {"kind": "length", "value": 5.0}},
+        {"id": "f3d:model:parameter#2", "owner": "f3d:model:feature#2", "name": "Height",
+         "expression": "20 mm", "value": {"kind": "length", "value": 20.0}},
+        {"id": "f3d:model:parameter#3", "owner": "f3d:model:feature#2", "name": "Turns",
+         "expression": "4", "value": {"kind": "real", "value": 4.0}}
+    ]);
+    m["features"][1]["definition"] = json!({
+        "definition": "post_process", "refine": true, "fuzzy_tolerance": {"kind": "kernel_default"},
+        "operation": {"definition": "helical_sweep", "op": "join", "construction": {
+            "profile": {"kind": "sketch", "value": SKETCH},
+            "axis_origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "axis_direction": {"x": 1e-16, "y": -1e-16, "z": 1.0},
+            "law": "pitch_height_angle", "pitch": 5.0,
+            "travel": {"kind": "axial", "height": 20.0}, "turns": 4.0,
+            "cone_angle": 0.0, "left_handed": false, "reversed": false,
+            "tolerance": 0.0001, "allow_multi_profile_faces": false
+        }}
+    });
+    change(&mut m["features"][1]["definition"]["operation"]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn helical_sweeps_keep_the_profile_axis_law_hand_and_operation() {
+    for (law, pitch, turns) in [
+        ("pitch_height_angle", "Pitch", "(Height) / (Pitch)"),
+        ("pitch_turns_angle", "Pitch", "Turns"),
+        ("height_turns_angle", "(Height) / (Turns)", "Turns"),
+        ("height_turns_growth", "(Height) / (Turns)", "Turns"),
+    ] {
+        for op in ["join", "cut", "intersect"] {
+            for reversed in [false, true] {
+                for left in [false, true] {
+                    let model = helical_history(|d| {
+                        d["op"] = json!(op);
+                        d["construction"]["law"] = json!(law);
+                        d["construction"]["reversed"] = json!(reversed);
+                        d["construction"]["left_handed"] = json!(left);
+                    });
+                    let (document, _) = convert(
+                        &model,
+                        &SolidCraftWriter::new().verification(Verification::Off),
+                    );
+                    let coil = &document["features"][1];
+                    assert_eq!(coil["type"], "coil");
+                    assert_eq!(coil["sketch"], document["features"][0]["id"]);
+                    assert_eq!(coil["profiles"], json!({"type": "all"}));
+                    assert_eq!(
+                        coil["axis"],
+                        json!([0.0, 0.0, if reversed { -1.0 } else { 1.0 }])
+                    );
+                    assert_eq!(coil["pitch"], pitch);
+                    assert_eq!(coil["turns"], turns);
+                    assert_eq!(coil["clockwise"], left);
+                    assert_eq!(coil["operation"], op);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn conical_helical_sweeps_name_the_missing_solidcraft_option() {
+    let model = helical_history(|d| {
+        d["construction"]["cone_angle"] = json!(0.1);
+        d["construction"]["travel"] =
+            json!({"kind": "conical", "height": 20.0, "radial_growth": 0.5});
+    });
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).contains("no radial growth or cone angle"));
+}
+
+#[test]
+fn helical_turn_parameters_drive_the_replayed_coil() {
+    let Some(cli) = solidcraft() else { return };
+    let model = helical_history(|d| d["construction"]["law"] = json!("pitch_turns_angle"));
+    let bytes = written(&model).0;
+    let full = volumes(&cli, &bytes);
+    let half = volumes(&cli, &with_param(&bytes, "Turns", "2"));
+    assert_eq!(full.len(), 1);
+    assert_eq!(half.len(), 1);
+    assert!(
+        (full[0] / half[0] - 2.0).abs() < 1e-3,
+        "{full:?} / {half:?}"
+    );
+}
+
+#[test]
+fn helical_handedness_and_reversal_replay_on_the_correct_side_of_the_axis() {
+    let Some(cli) = solidcraft() else { return };
+    for reversed in [false, true] {
+        for left in [false, true] {
+            let model = helical_history(|d| {
+                d["construction"]["law"] = json!("pitch_turns_angle");
+                d["construction"]["left_handed"] = json!(left);
+                d["construction"]["reversed"] = json!(reversed);
+            });
+            let bytes = with_param(&written(&model).0, "Turns", "0.25");
+            let measurement = evaluated(&cli, &bytes);
+            let center = &measurement["bodies"][0]["center_of_mass"];
+            let y = center[1].as_f64().unwrap();
+            let z = center[2].as_f64().unwrap();
+            assert_eq!(y.is_sign_negative(), left != reversed, "{measurement}");
+            assert_eq!(z.is_sign_negative(), reversed, "{measurement}");
+        }
+    }
+}
+
+#[test]
+fn freecad_f13a_keeps_its_helix_and_replays_at_the_recipe_volume() {
+    let input =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/F13a-freecad-1.1.4.FCStd");
+    let model = dutchman_core::read(
+        dutchman_core::Format::FreeCadDocument,
+        &input,
+        &mut Report::default(),
+    )
+    .unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("4 of 4 features mapped"),
+        "{}",
+        history_line(&report)
+    );
+    let coil = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["type"] == "coil")
+        .unwrap();
+    assert_eq!(coil["axis"], json!([0.0, 0.0, 1.0]));
+    let Some(cli) = solidcraft() else { return };
+    let (bytes, report) = written_with(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::With(cli.clone())),
+    );
+    assert_eq!(report.outcome().unwrap().mode, Mode::History);
+    assert_eq!(report.outcome().unwrap().check, Check::Verified);
+    let volume = volumes(&cli, &bytes);
+    assert_eq!(volume.len(), 1);
+    // The existing replay bound is area times mesh chord (5e-5 of the body's size).
+    let allowed = 1590.4 * 5e-5 * 22.0;
+    assert!((volume[0] - 792.06459406).abs() <= allowed, "{volume:?}");
+}
+
 fn written_with(model: &Model, writer: &SolidCraftWriter) -> (Vec<u8>, Report) {
     let mut report = Report::default();
     let mut bytes = Vec::new();

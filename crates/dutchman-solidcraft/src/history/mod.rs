@@ -14,6 +14,7 @@ mod constraints;
 mod crossing;
 mod extrude;
 mod faces;
+mod helix;
 mod helpers;
 mod hole;
 mod loft;
@@ -668,6 +669,7 @@ fn map_feature(
         Some("sphere") => primitive::sphere(feature, definition, ctx).map(Mapped::Feature),
         Some("torus") => primitive::torus(feature, definition, ctx).map(Mapped::Feature),
         Some("coil") => primitive::coil(feature, definition, ctx).map(Mapped::Feature),
+        Some("helical_sweep") => helix::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some(kind @ ("block" | "primitive")) => Err(primitive::unplaced(kind)),
         // Their faces are picked on the final body, where the feature itself has already
         // removed or tilted them; mapping waits until CADIR carries the input faces.
