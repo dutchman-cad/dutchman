@@ -90,6 +90,7 @@ impl Run {
                 batch::run_each(&[job], &writer, 1, &flag, |event| {
                     send(Message::Progress(match event {
                         Event::Started(_) => Event::Started(index),
+                        Event::Progress(_, event) => Event::Progress(index, event),
                         Event::Finished(_, report) => Event::Finished(index, report),
                     }));
                 });
@@ -195,6 +196,51 @@ pub enum Pick {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn conversion_worker_forwards_counts_before_the_final_report() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../dutchman-core/tests/fixtures/generated_unit_cube.f3d");
+        let (send, receive) = std::sync::mpsc::channel();
+        let options = ConvertOptions {
+            verify: false,
+            ..ConvertOptions::default()
+        };
+        let _run = Run::start(
+            vec![input],
+            dir.path().to_path_buf(),
+            &options,
+            send,
+            egui::Context::default(),
+        );
+        let mut events = Vec::new();
+        let mut finished = false;
+        loop {
+            match receive
+                .recv_timeout(std::time::Duration::from_secs(20))
+                .unwrap()
+            {
+                Message::Progress(Event::Progress(index, event)) => {
+                    assert_eq!(index, 0);
+                    assert!(!finished);
+                    events.push(event);
+                }
+                Message::Progress(Event::Finished(index, report)) => {
+                    assert_eq!(index, 0);
+                    assert_eq!(report["ok"], true);
+                    finished = true;
+                }
+                Message::Done => break,
+                _ => {}
+            }
+        }
+        assert!(finished);
+        let last = events.last().unwrap();
+        assert_eq!(last.designs_read, 1);
+        assert_eq!(last.designs_total, Some(1));
+        assert_eq!(last.stage, dutchman_core::Stage::Write);
+    }
 
     #[test]
     fn iges_in_a_folder_returns_the_shared_refusal_to_the_window() {

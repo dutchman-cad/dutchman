@@ -157,7 +157,7 @@ fn iges_is_refused_before_decoding_in_text_and_json() {
                     assert_eq!(report["error"]["stage"], "decode");
                     assert_eq!(report["error"]["upstream"], serde_json::Value::Null);
                 } else {
-                    assert_eq!(stderr, format!("dutchman: {reason}\n"));
+                    assert_text_error_with_progress(&out, &input, &format!("dutchman: {reason}"));
                     if command == "convert" {
                         assert_eq!(
                             stdout,
@@ -282,12 +282,12 @@ fn an_unreadable_archive_suggests_recovery_in_text_and_json() {
     );
     let json = dutchman(&["convert", "--json", args[0], args[1]]);
     assert_eq!(json.status.code(), Some(1));
-    assert!(json.stderr.is_empty());
+    assert_progress_json(&json);
     let report = json_of(&json);
     assert_eq!(report["error"]["stage"], "decode");
     assert_eq!(report["error"]["upstream"], "cadmpeg");
     let message = report["error"]["message"].as_str().unwrap();
-    assert_eq!(stderr.trim(), format!("dutchman: {message}"));
+    assert_text_error_with_progress(&text, &input, &format!("dutchman: {message}"));
     assert!(!output.exists());
 }
 
@@ -398,7 +398,7 @@ fn convert_json_reports_what_was_written() {
         output.to_str().unwrap(),
     ]);
     assert_eq!(out.status.code(), Some(0));
-    assert!(out.stderr.is_empty(), "nothing but JSON is printed");
+    assert_progress_json(&out);
     let report = json_of(&out);
     assert_eq!(report["schema"], "dutchman.convert/1");
     assert_eq!(report["ok"], true);
@@ -1631,4 +1631,136 @@ fn numbered_default_outputs_use_the_base_name_and_keep_existing_files() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("bracket.solidcraft already exists"));
     assert_eq!(std::fs::read(output).unwrap(), b"keep this design");
     assert!(!dir.path().join("bracket.prt.solidcraft").exists());
+}
+
+fn assert_text_error_with_progress(out: &Output, input: &std::path::Path, expected: &str) {
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let mut lines: Vec<_> = stderr.lines().collect();
+    assert_eq!(lines.pop(), Some(expected));
+    assert!(!lines.is_empty());
+    let prefix = format!("{}: ", input.display());
+    for line in lines {
+        assert!(line.starts_with(&prefix), "unexpected stderr line: {line}");
+        assert!(
+            line.contains(" s elapsed"),
+            "unexpected stderr line: {line}"
+        );
+    }
+}
+
+fn assert_progress_json(out: &Output) -> Vec<serde_json::Value> {
+    let text = std::str::from_utf8(&out.stderr).unwrap();
+    let events: Vec<serde_json::Value> = text
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert!(!events.is_empty());
+    for event in &events {
+        assert_eq!(event["schema"], "dutchman.progress/1");
+        assert!(event["elapsed_ms"].is_u64());
+        assert!(event["designs_read"].is_u64());
+        assert!(event["heartbeat"].is_boolean());
+    }
+    assert!(events
+        .windows(2)
+        .all(|pair| pair[0]["elapsed_ms"].as_u64() <= pair[1]["elapsed_ms"].as_u64()));
+    events
+}
+
+#[test]
+fn conversion_progress_stays_on_stderr_and_quiet_suppresses_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("progress.solidcraft");
+    for batch in [false, true] {
+        for json in [false, true] {
+            for quiet in [false, true] {
+                let mut args = vec![if batch { "convert-all" } else { "convert" }, "--no-verify"];
+                if json {
+                    args.push("--json");
+                }
+                if quiet {
+                    args.push("--quiet");
+                }
+                let input = fixture("generated_unit_cube.f3d");
+                args.push(&input);
+                if batch {
+                    args.push("--out-dir");
+                }
+                args.push(if batch {
+                    dir.path().to_str().unwrap()
+                } else {
+                    output.to_str().unwrap()
+                });
+                let out = dutchman(&args);
+                assert_eq!(
+                    out.status.code(),
+                    Some(0),
+                    "{}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                assert!(!stdout.contains("s elapsed"));
+                assert!(!stdout.contains("dutchman.progress/1"));
+                if quiet {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    assert!(!stderr.contains("s elapsed"));
+                    assert!(!stderr.contains("dutchman.progress/1"));
+                    if json {
+                        assert!(out.stderr.is_empty());
+                    }
+                } else if json {
+                    let events = assert_progress_json(&out);
+                    assert!(events.iter().any(|event| event["stage"] == "decode"));
+                    assert!(events.iter().any(|event| event["stage"] == "project"));
+                    let last = events.last().unwrap();
+                    assert_eq!(last["stage"], "write");
+                    assert_eq!(last["designs_read"], 1);
+                    assert_eq!(last["designs_total"], 1);
+                } else {
+                    let stderr = String::from_utf8_lossy(&out.stderr);
+                    assert!(stderr.contains("1 of 1 designs read"));
+                    assert!(stderr.contains("s elapsed"));
+                    assert!(!stderr.contains('\r'));
+                    assert!(!stderr.contains('\x1b'));
+                }
+                if json {
+                    let report = json_of(&out);
+                    assert_eq!(report["ok"], true);
+                    assert_eq!(
+                        report["schema"],
+                        if batch {
+                            "dutchman.convert-all/1"
+                        } else {
+                            "dutchman.convert/1"
+                        }
+                    );
+                    assert!(report.get("heartbeat").is_none());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn inspection_progress_leaves_the_final_json_report_on_stdout() {
+    for quiet in [false, true] {
+        let input = fixture("generated_unit_cube.f3d");
+        let mut args = vec!["inspect", "--json", &input];
+        if quiet {
+            args.push("--quiet");
+        }
+        let out = dutchman(&args);
+        assert_eq!(out.status.code(), Some(0));
+        let report = json_of(&out);
+        assert_eq!(report["schema"], "dutchman.inspect/1");
+        assert_eq!(report["ok"], true);
+        assert!(report.get("heartbeat").is_none());
+        if quiet {
+            assert!(out.stderr.is_empty());
+        } else {
+            let events = assert_progress_json(&out);
+            assert_eq!(events.last().unwrap()["designs_read"], 1);
+            assert_eq!(events.last().unwrap()["stage"], "map");
+        }
+    }
 }

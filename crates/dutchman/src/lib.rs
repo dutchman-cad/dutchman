@@ -11,6 +11,7 @@ pub mod issue;
 pub mod json;
 pub mod mcp;
 pub mod present;
+pub mod progress;
 pub mod watch;
 pub mod worker;
 
@@ -185,6 +186,22 @@ pub fn convert(
     }
 }
 
+/// Converts with ordered progress snapshots and a five-second heartbeat.
+pub fn convert_with_progress(
+    input: &Path,
+    output: &Path,
+    writer: &dyn Writer,
+    replace: bool,
+    search: &PartSearch,
+    on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
+) -> Value {
+    let progress = dutchman_core::Progress::new(on_progress);
+    match dutchman_core::convert_with_progress(input, output, writer, replace, search, &progress) {
+        Ok(report) => convert_success(input, output, &report),
+        Err(err) => json::error(json::CONVERT, json::input(input), &err),
+    }
+}
+
 /// The `dutchman.convert/1` report of a conversion that succeeded.
 pub fn convert_success(input: &Path, output: &Path, report: &Report) -> Value {
     let mut out = json::success(json::CONVERT, json::input(input), report);
@@ -226,11 +243,35 @@ pub struct Inspection {
 /// Reads `input`, looking for an assembly's part files as `search` says, and works out what
 /// converting it would do, without writing anything.
 pub fn inspect(input: &Path, search: &PartSearch) -> Result<Inspection, Error> {
+    inspect_inner(input, search, None)
+}
+
+/// Inspects with read progress and a five-second heartbeat.
+pub fn inspect_with_progress(
+    input: &Path,
+    search: &PartSearch,
+    on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
+) -> Result<Inspection, Error> {
+    let progress = dutchman_core::Progress::new(on_progress);
+    progress.run(|| inspect_inner(input, search, Some(&progress)))
+}
+
+fn inspect_inner(
+    input: &Path,
+    search: &PartSearch,
+    progress: Option<&dutchman_core::Progress<'_>>,
+) -> Result<Inspection, Error> {
+    if let Some(progress) = progress {
+        progress.stage(dutchman_core::Stage::Input);
+    }
     let mut report = Report::default();
     let format = Format::from_path(input).ok_or_else(|| Error::UnknownFormat {
         path: input.to_path_buf(),
     })?;
-    let model = dutchman_core::read_in(format, input, search, &mut report)?;
+    let model = dutchman_core::read_with_progress(format, input, search, &mut report, progress)?;
+    if let Some(progress) = progress {
+        progress.stage(dutchman_core::Stage::Map);
+    }
     let writer = SolidCraftWriter::new();
     let conversion = writer.convertible(&model);
     let outcome = writer.plan(&model, &mut report);

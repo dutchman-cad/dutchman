@@ -22,6 +22,12 @@ With no output given, Dutchman writes beside the input and won't replace a file 
 already there unless you pass `--force`. `dutchman convert --help` lists every option, and
 [Getting started](docs/guide.md) walks through a first conversion.
 
+Conversions show their stage and elapsed time, with a still-working update every five seconds.
+The desktop app shows design counts and a progress bar when the reader knows the total.
+`convert`, `convert-all`, `inspect`, and `watch` write progress to stderr; `--quiet` hides it.
+With `--json`, progress is JSON lines on stderr and stdout keeps its existing report format. Fusion `.f3z` member
+counts are not available yet; their progress shows stage and elapsed time.
+
 ## Install
 
 With [Homebrew](https://brew.sh) on macOS or Linux:
@@ -102,8 +108,8 @@ Written as a SolidCraft design (.solidcraft), or, experimental, as a FreeCAD reb
 
 After a refused conversion (except IGES) or a history that did not fully map, Dutchman points
 to the same [fixtures recipes](https://dutchman-cad.github.io/fixtures/) and `/volunteer` in
-[Discord](https://discord.gg/yTcseBEdeu); `--quiet` hides that, and `--json` prints only the
-report. For a file that converts wrong, DM it to Dutchy with its STEP export.
+[Discord](https://discord.gg/yTcseBEdeu); `--quiet` hides that, and `--json` keeps the final
+report on stdout. For a file that converts wrong, DM it to Dutchy with its STEP export.
 
 A part that holds an imported solid becomes a base-body Import feature at its place in the
 timeline. Later features keep editable history when they map. Stored geometry has no recipe

@@ -95,5 +95,9 @@ transform, and each component as a product definition.
 
 `.f3z` multi-document archives (a design with the designs it references) convert like `.f3d`:
 cadmpeg merges the referenced designs into the root design with their placements, as
-components. No public `.f3z` with references exists to test against yet; a single design
-saved as `.f3z` is tested.
+components.
+
+While reading an `.f3z`, Dutchman shows the current stage and elapsed time with a five-second
+still-working heartbeat. cadmpeg decodes all members in one call without exposing member
+completions, so design counts and a determinate reading bar are not available yet for `.f3z`.
+A single `.f3d` reports one design when its read succeeds.

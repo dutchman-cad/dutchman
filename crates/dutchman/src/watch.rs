@@ -112,6 +112,12 @@ fn atomic_json(path: &Path, value: &Value) -> Result<(), String> {
 
 /// Runs until a signal requests shutdown, or until the single scan has finished.
 pub fn run(command: Command) -> Result<bool, String> {
+    run_with_progress(command, true)
+}
+
+/// Runs with conversion progress on stderr, unless `quiet` is set.
+pub fn run_with_progress(command: Command, quiet: bool) -> Result<bool, String> {
+    let progress = Arc::new(crate::progress::StderrProgress::new(quiet, command.json));
     let stop = Arc::new(AtomicBool::new(false));
     let signal = Arc::clone(&stop);
     ctrlc::set_handler(move || signal.store(true, Ordering::Relaxed))
@@ -142,7 +148,15 @@ pub fn run(command: Command) -> Result<bool, String> {
     {
         return Err("watch state does not match this inbox; choose another output folder".into());
     }
-    run_loop(&command, &inbox, &out, &state_path, &mut state, stop)
+    run_loop(
+        &command,
+        &inbox,
+        &out,
+        &state_path,
+        &mut state,
+        stop,
+        &progress,
+    )
 }
 
 struct Pending {
@@ -166,6 +180,7 @@ fn run_loop(
     state_path: &Path,
     state: &mut Value,
     stop: Arc<AtomicBool>,
+    progress: &Arc<crate::progress::StderrProgress>,
 ) -> Result<bool, String> {
     let settings = batch::Settings {
         jobs: command.jobs,
@@ -433,9 +448,17 @@ fn run_loop(
             let stop = Arc::clone(&stop);
             running += 1;
             children.threads.retain(|thread| !thread.is_finished());
+            let progress = Arc::clone(progress);
             children.threads.push(std::thread::spawn(move || {
-                let report =
-                    batch::convert_isolated_job(&program, &job, &options, &limits, Some(&stop));
+                let report = batch::convert_isolated_job_with_progress(
+                    &program,
+                    &job,
+                    &options,
+                    &limits,
+                    Some(&stop),
+                    &|event| progress.report(&job.input, event),
+                );
+                progress.finish();
                 let _ = sender.send(Finished {
                     pending,
                     stage,

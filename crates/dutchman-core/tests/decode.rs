@@ -319,3 +319,54 @@ fn iges_is_recognised_and_refused_before_opening_the_file() {
     assert!(!Format::Iges.can_convert());
     assert!(!Format::supported_names().contains("IGES"));
 }
+
+#[test]
+fn progress_counts_successful_documents_and_preserves_read_results() {
+    use dutchman_core::{read_with_progress, PartSearch, Progress, Stage};
+    use std::sync::Mutex;
+    let events = Mutex::new(Vec::new());
+    let callback = |event| events.lock().unwrap().push(event);
+    let progress = Progress::new(&callback);
+    let model = read_with_progress(
+        Format::FusionArchive,
+        &fixture("generated_unit_cube.f3d"),
+        &PartSearch::default(),
+        &mut Report::default(),
+        Some(&progress),
+    )
+    .unwrap();
+    assert_eq!(model.ir.model.bodies.len(), 1);
+    let events = events.into_inner().unwrap();
+    assert_eq!(events.last().unwrap().designs_read, 1);
+    assert_eq!(events.last().unwrap().designs_total, Some(1));
+    let decode = events
+        .iter()
+        .position(|event| event.stage == Stage::Decode)
+        .unwrap();
+    let project = events
+        .iter()
+        .position(|event| event.stage == Stage::Project)
+        .unwrap();
+    assert!(decode < project);
+    assert!(events
+        .iter()
+        .take(project)
+        .all(|event| event.designs_read == 0));
+
+    let events = Mutex::new(Vec::new());
+    let callback = |event| events.lock().unwrap().push(event);
+    let progress = Progress::new(&callback);
+    assert!(read_with_progress(
+        Format::FusionArchive,
+        &fixture("container_metadata_only.f3d"),
+        &PartSearch::default(),
+        &mut Report::default(),
+        Some(&progress),
+    )
+    .is_err());
+    assert!(events
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|event| event.designs_read == 0));
+}

@@ -5,7 +5,8 @@ that can reach it, without installing Dutchman on each computer. Drop design fil
 of a project folder, on the page and press **Convert**. Each file gets a card saying whether it
 converted, what was written (editable history or geometry), which features did not map, and its
 losses as Info, Degraded or Dropped, with a link to download its design. **Download all** gets
-every design in one zip.
+every design in one zip. The page waits for the final results; it does not stream conversion
+stages, design counts, or elapsed-time heartbeats.
 
 It converts exactly as `dutchman convert-all` does, each file in a process of its own, stopped
 when it runs past its time or memory limit. Uploads and designs stay on the server, and are

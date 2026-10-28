@@ -35,6 +35,14 @@ FreeCAD signed horizontal and vertical sketch distances convert to positive dime
 magnitudes at their solved positions. Their signed parameters and expressions remain
 available; a dependent magnitude parameter drives each negative distance in SolidCraft.
 
+CLI progress is separate from tool results: `convert --json`, `convert-all --json`, `inspect
+--json`, and `watch --json` emit `dutchman.progress/1` JSON lines on stderr while keeping the
+final report or watch-event stream on stdout (`--quiet` hides progress). The MCP server has no
+progress notification mechanism and continues to return only the final report. The web app also
+has no streaming conversion progress mechanism. Desktop file cards show stage, elapsed time,
+and five-second heartbeats, with design counts and a determinate bar when the total is known.
+Fusion `.f3z` member counts are not available yet.
+
 ## Set up a client
 
 ### Claude Code
