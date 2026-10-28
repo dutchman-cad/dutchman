@@ -20,6 +20,12 @@ they are connected (`inspect`, `convert`, `convert_all`, `formats`); otherwise r
 `dutchman` command with `--json`. Both return the same reports, described in Dutchman's
 `docs/json.md`.
 
+A part that holds an imported solid becomes a base-body Import feature at its place in the
+timeline. Later features keep editable history when they map. Stored geometry has no recipe
+to lose: the report says, at Info level, “This part holds an imported solid; there is no
+feature history to bring over”. A part made only of stored geometry is geometry without
+history, with no flattened-history warning.
+
 ## Ground rules
 
 - **The user's designs stay on the user's machine.** Never upload, paste, attach or send a

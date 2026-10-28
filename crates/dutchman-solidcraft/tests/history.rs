@@ -4415,6 +4415,120 @@ fn based_cube() -> Model {
     model
 }
 
+/// Synthetic stored geometry uses the same cube body as the base-feature tests.
+fn stored_cube(with_hole: bool) -> Model {
+    let mut model = based_cube();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let body = wire["model"]["bodies"][0]["id"].clone();
+    let features = wire["model"]["features"].as_array_mut().unwrap();
+    if !with_hole {
+        features.retain(|feature| feature["ordinal"] == 0);
+    }
+    let base = features.iter_mut().find(|f| f["ordinal"] == 0).unwrap();
+    base["definition"] = json!({"definition": "stored_geometry"});
+    base["outputs"] = json!([body]);
+    base["name"] = json!("Stored solid");
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+const STORED_SOLID_MESSAGE: &str =
+    "This part holds an imported solid; there is no feature history to bring over";
+
+#[test]
+fn stored_geometry_alone_becomes_an_import_without_lost_history() {
+    let model = stored_cube(false);
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    let (document, report) = convert(&model, &writer);
+    assert_eq!(
+        types(&document),
+        [("import".to_owned(), false), ("import".to_owned(), true)]
+    );
+    let base = &document["features"][0];
+    assert_eq!(base["name"], "Stored solid");
+    assert!(base.get("_step").is_none() && base.get("_bodies").is_none());
+    let (bytes, _) = written_with(&model, &writer);
+    let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut step = String::new();
+    archive
+        .by_name(base["step_blob"].as_str().unwrap())
+        .unwrap()
+        .read_to_string(&mut step)
+        .unwrap();
+    assert!(step.contains("MANIFOLD_SOLID_BREP"), "{step}");
+    let outcome = report.outcome().unwrap();
+    assert_eq!(outcome.mode, Mode::Import);
+    assert_eq!(
+        outcome.check,
+        Check::NotApplicable(STORED_SOLID_MESSAGE.to_owned())
+    );
+    assert_eq!(outcome.features.len(), 1);
+    assert_eq!(
+        outcome.features[0].status,
+        dutchman_core::FeatureStatus::Mapped
+    );
+    assert!(report
+        .losses()
+        .iter()
+        .any(|loss| loss.severity == Severity::Info && loss.detail == STORED_SOLID_MESSAGE));
+    assert!(report
+        .losses()
+        .iter()
+        .all(|loss| !loss.detail.contains("not mapped yet") && !loss.detail.contains("flattened")));
+    let mut planned = Report::default();
+    assert_eq!(writer.plan(&model, &mut planned), *outcome);
+    assert!(planned
+        .losses()
+        .iter()
+        .any(|loss| loss.detail == STORED_SOLID_MESSAGE));
+}
+
+#[test]
+fn stored_geometry_without_bodies_is_refused_specifically() {
+    let mut model = stored_cube(false);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"][0]["outputs"] = json!([]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).contains("it holds no bodies"));
+    assert!(!history_line(&report).contains("not mapped yet"));
+    assert!(report
+        .losses()
+        .iter()
+        .all(|loss| loss.detail != STORED_SOLID_MESSAGE));
+}
+
+#[test]
+fn stored_geometry_keeps_the_features_after_it() {
+    let (document, report) = convert(
+        &stored_cube(true),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_eq!(
+        types(&document),
+        [
+            ("import".to_owned(), false),
+            ("sketch".to_owned(), false),
+            ("hole".to_owned(), false),
+            ("import".to_owned(), true),
+        ]
+    );
+    assert!(document["features"][0]["step_blob"].as_str().is_some());
+    assert_eq!(report.outcome().unwrap().mode, Mode::History);
+    assert!(history_line(&report).starts_with("3 of 3 features mapped"));
+    assert!(report
+        .losses()
+        .iter()
+        .any(|loss| loss.severity == Severity::Info && loss.detail == STORED_SOLID_MESSAGE));
+    assert!(report
+        .losses()
+        .iter()
+        .all(|loss| !loss.detail.contains("not mapped yet") && !loss.detail.contains("flattened")));
+}
+
 #[test]
 fn a_base_feature_is_imported_where_it_stands_in_the_timeline() {
     let (document, report) = convert(

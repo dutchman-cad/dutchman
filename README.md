@@ -105,6 +105,12 @@ to the same [fixtures recipes](https://dutchman-cad.github.io/fixtures/) and `/v
 [Discord](https://discord.gg/yTcseBEdeu); `--quiet` hides that, and `--json` prints only the
 report. For a file that converts wrong, DM it to Dutchy with its STEP export.
 
+A part that holds an imported solid becomes a base-body Import feature at its place in the
+timeline. Later features keep editable history when they map. Stored geometry has no recipe
+to lose: the report says, at Info level, “This part holds an imported solid; there is no
+feature history to bring over”. A part made only of stored geometry is geometry without
+history, with no flattened-history warning.
+
 - When every feature in a design's history maps onto SolidCraft, the SolidCraft design keeps
   that history, editable, with the original geometry kept beside it. If `solidcraft-cli` is
   installed, Dutchman replays the history in it and compares area and volume with the

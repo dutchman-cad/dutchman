@@ -240,6 +240,12 @@ server and used from any browser. [Dutchman Web](web.md) says how to run it.
 
 ### SolidCraft (optional, recommended)
 
+A part that holds an imported solid becomes a base-body Import feature at its place in the
+timeline. Later features keep editable history when they map. Stored geometry has no recipe
+to lose: the report says, at Info level, “This part holds an imported solid; there is no
+feature history to bring over”. A part made only of stored geometry is geometry without
+history, with no flattened-history warning.
+
 When a design's feature history converts, Dutchman checks it by replaying it in SolidCraft's
 command-line tool, `solidcraft-cli`, which comes with every
 [SolidCraft release](https://github.com/tangency-labs/solidcraft/releases). Installing the
