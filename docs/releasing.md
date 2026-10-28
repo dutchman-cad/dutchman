@@ -25,9 +25,11 @@ A release is cut from `main` once CI is green there.
 3. Pushing the tag runs the `Release builds` workflow. It builds each platform's archive
    (`scripts/package-archive.sh`: `dutchman`, `dutchman-mcp` and `dutchman-gui`, plus `dutchman-web` on Linux, with LICENSE,
    NOTICE, README and a SHA-256), and the macOS disk image (`scripts/macos-dmg.sh`:
-   Dutchman Convert.app, universal, signed ad hoc), as workflow artifacts; both Mac targets build on
-   one Apple silicon runner. After all builds succeed, the workflow checks every SHA-256
-   and creates a draft GitHub release from `release-notes/X.Y.Z.md`, with the archives and
+   Dutchman Convert.app, universal, signed ad hoc), as workflow artifacts. The two Mac targets
+   build in parallel on separate Apple silicon runners (Intel is cross-compiled). A small
+   packaging job checks and unpacks both archives, then uses their binaries to build the
+   universal app with `lipo` and make the disk image, without compiling again. After all builds
+   succeed, the workflow checks every SHA-256 and creates a draft GitHub release from `release-notes/X.Y.Z.md`, with the archives and
    checksums attached. It fails if a release for that tag already exists. A maintainer
    verifies the body and downloads, then publishes the release. Before publishing, check
    that the draft shows tag `vX.Y.Z`, not `untagged-…`.
@@ -85,6 +87,13 @@ leak check on a real library before merging it. A fix merged on cadmpeg's `main`
 pinned commit reaches users through the nightly channel: the `nightly` pre-release, rebuilt
 each day from Dutchman's `main` against cadmpeg's `main` (`scripts/use-cadmpeg-main.sh`, see
 `.github/workflows/nightly.yml`). The stable release after the pin moves carries it.
+
+Nightly and release macOS builds use the same release profile, target triples, packages, and
+default features, with one shared Rust cache key per target (`macos-release-<target>`).
+Main's nightly saves caches that tag builds can restore. The nightly restores the cache before
+updating cadmpeg so its key reflects the same pinned manifests as a release from that commit;
+Cargo still rebuilds dependencies changed by the nightly update. A different Rust toolchain,
+changed dependencies, or an absent cache can still require a cold build.
 
 All cadmpeg crates, including cadmpeg-registry, come directly from the pinned git revision.
 `scripts/use-cadmpeg-main.sh <sha>` updates the dependencies and checks their lockfile sources.
