@@ -18,6 +18,8 @@ State as of the cadmpeg commit Dutchman pins (see `Cargo.toml`).
 | Extrude, hole, constant-radius fillet, equal-distance chamfer, when every property, dimension and selection resolves. | Extrude: mapped when cadmpeg resolves its profile to sketch profiles or regions, blind or through all; an extrude to a face or to the next face is not mapped yet. Holes map where their placement resolves (until cadmpeg gives a hole's drill direction rather than its sketch's normal, a hole replays outside the part: verification catches it and the part converts as exact geometry); constant-radius fillets and equal-setback chamfers map with proven feature input edge geometry (see guide.md). |
 | Mirror of features about a work plane. | Mapped as a SolidCraft mirror pattern of those features about that plane. |
 | Rectangular pattern of features with fixed spacing, in one or two directions. | Mapped as a SolidCraft rectangular pattern of those features. |
+| Combine of bodies (cut, join, or intersect), with its target and tool bodies as native references. | Not mapped yet: reported as "its bodies are not resolved" until Dutchman can name the bodies earlier features made. |
+| Move, Move Body, and Rotate of whole bodies (`move_body`). | Not mapped yet, and reported. |
 | Features the codec keeps in native form (`native`). | Not mapped; a part whose every feature is native has no history Dutchman can write. |
 | Suppression and dependency state: unresolved (`suppressed` absent). | Features are treated as active; a replay that differs is caught by verification and flattened. |
 | Product name: none for the root product definition. | cadmpeg's STEP writer then names the product by its id (`inventor:document:product#root`), which SolidCraft shows as the body name. |
