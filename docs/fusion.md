@@ -43,12 +43,14 @@ transform, and each component as a product definition.
   joints put them: from the design's own root, each joint places the part at its other end; a
   joint neither of whose parts is placed yet moves its first part to its second, as Fusion
   moves the first part picked for a joint; joints that reach nothing placed start from the
-  outermost occurrence they join, which stays where the file puts it. Of a joint between a component and a part inside it,
-  as a rigid group holds its members to its first, the inner part moves and the component keeps
-  its own placement; a component holding a part already placed is never moved, as that would
+  outermost occurrence they join, which stays where the file puts it. Of a joint between a
+  component and a part inside it, as a rigid group holds its members to its first, the inner
+  part moves and the component keeps its own placement; a component holding a part already placed is never moved, as that would
   move the part, and a component a joint moves leaves the parts inside it that other joints
-  placed already where they are. A part two joints would place differently is reported,
-  and SolidCraft reports the conflict when it solves. A joint to the design's root component
+  placed already where they are. A component the file stores at the pose it shows it in starts
+  placed: its joints are checked there instead of moving it back to where it was inserted. A
+  part two joints would place differently is reported, and SolidCraft reports the conflict when
+  it solves. A joint to the design's root component
   holds its occurrence to the design. Fusion joint motion converts from Dutchman 0.1.5 on
   (before it, every Fusion joint was fixed). A revolute limit on one side only is left out,
   and the report says so. A component placed more than once is held once in the SolidCraft
