@@ -702,6 +702,13 @@ splits into pieces, closed edges and other curves are refused. Equal two-distanc
 reference-face ordering and are refused specifically. Variable fillets lack a proven
 chain direction. Final-body edge selections never stand in for input geometry.
 
+Unused FreeCAD binders and datum helpers are `not_needed`, with the Info note
+`helper not converted: nothing uses it`. Used datum points and coordinate systems can be
+carried by resolved sketch placements, pattern axes, or another resolved datum. A used helper without the required
+resolved placement or binder source geometry remains a blocker, with its reason in the report.
+These Info notes remain when another feature or a replay mismatch flattens the history.
+A body inside a hidden container is hidden even when its own flag says it is shown.
+
 FreeCAD fillets and chamfers can supply input edges from their base feature's stored shape.
 Those edges must belong to one hidden result of an earlier dependency, and still pass the
 same replay proof. A resolved selection without that proven earlier result is refused.

@@ -3,7 +3,7 @@
 //! and shows only the last; cadmpeg marks the others `visible: false`. They are not parts of
 //! the design, so they are left out rather than converted as bodies of their own.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;
 
@@ -34,15 +34,29 @@ const BREP: [&str; 15] = [
 ];
 
 /// `model` without its hidden bodies and the geometry only they reach, with how many were
-/// left out; `None` when it hides none, or nothing but hidden bodies (then what it hides is
-/// all there is, so it converts as stored). History, structure and parameters are kept.
+/// left out; `None` when visibility is unchanged, or nothing but hidden bodies remain
+/// (then it converts as stored). Ancestor visibility is propagated to occurrences; history,
+/// structure and parameters are kept.
 pub(crate) fn shown(model: &Model) -> Result<Option<(Model, usize)>, String> {
     let bodies = &model.ir.model.bodies;
-    let hidden = bodies.iter().filter(|b| b.visible == Some(false)).count();
-    if hidden == 0 || hidden == bodies.len() {
+    let mut document = serde_json::to_value(&model.ir).map_err(|err| err.to_string())?;
+    // FreeCAD hides what a hidden container holds. Other formats say each body's and each
+    // occurrence's own visibility, and the assembly writer keeps hidden occurrences hidden.
+    let freecad = document.pointer("/native/fcstd").is_some();
+    let visibility_changed = freecad && propagate_visibility(&mut document);
+    let hidden_ids = if freecad {
+        hidden_bodies(&document)
+    } else {
+        listed(document.pointer("/model/bodies"))
+            .iter()
+            .filter(|body| body.get("visible").and_then(Value::as_bool) == Some(false))
+            .filter_map(|body| body.get("id").and_then(Value::as_str).map(str::to_owned))
+            .collect()
+    };
+    let hidden = hidden_ids.len();
+    if (hidden == 0 && !visibility_changed) || hidden == bodies.len() {
         return Ok(None);
     }
-    let mut document = serde_json::to_value(&model.ir).map_err(|err| err.to_string())?;
     let wire = document
         .get_mut("model")
         .and_then(Value::as_object_mut)
@@ -50,7 +64,9 @@ pub(crate) fn shown(model: &Model) -> Result<Option<(Model, usize)>, String> {
     crate::input_edges::preserve(wire, &model.ir);
     let shown_rows: Vec<&Value> = listed(wire.get("bodies"))
         .iter()
-        .filter(|body| body.get("visible").and_then(Value::as_bool) != Some(false))
+        .filter(|body| {
+            !hidden_ids.contains(body.get("id").and_then(Value::as_str).unwrap_or_default())
+        })
         .collect();
     let geometry: BTreeSet<&str> = wire
         .iter()
@@ -110,7 +126,7 @@ pub(crate) fn shown(model: &Model) -> Result<Option<(Model, usize)>, String> {
         values.retain(|row| {
             let id = row.get("id").and_then(Value::as_str).unwrap_or_default();
             if arena == "bodies" {
-                row.get("visible").and_then(Value::as_bool) != Some(false)
+                !hidden_ids.contains(id)
             } else {
                 !unreached.contains(id)
             }
@@ -133,6 +149,229 @@ pub(crate) fn shown(model: &Model) -> Result<Option<(Model, usize)>, String> {
         },
         hidden,
     )))
+}
+
+/// A definition used in any shown occurrence remains available. A hidden occurrence hides
+/// its descendants, even when their own visibility is explicitly true.
+fn hidden_bodies(document: &Value) -> BTreeSet<String> {
+    let model = document.get("model").unwrap_or(&Value::Null);
+    let mut hidden: BTreeSet<String> = listed(model.get("bodies"))
+        .iter()
+        .filter(|body| body.get("visible").and_then(Value::as_bool) == Some(false))
+        .filter_map(|body| body.get("id").and_then(Value::as_str).map(str::to_owned))
+        .collect();
+    let concealed_objects = hidden_objects(document);
+    let mut inherited = BTreeSet::new();
+    for feature in listed(model.get("features")) {
+        if feature
+            .get("native_ref")
+            .and_then(Value::as_str)
+            .is_some_and(|id| concealed_objects.contains(id))
+        {
+            inherited.extend(
+                listed(feature.get("outputs"))
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned),
+            );
+        }
+    }
+    let occurrences = listed(model.get("occurrences"));
+    let concealed = concealed_occurrences(model, &concealed_objects);
+    let mut shown_definitions = BTreeSet::new();
+    let mut hidden_definitions = BTreeSet::new();
+    for occurrence in occurrences {
+        let Some(definition) = occurrence
+            .pointer("/prototype/definition")
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        if occurrence
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| concealed.contains(id))
+        {
+            hidden_definitions.insert(definition);
+        } else {
+            shown_definitions.insert(definition);
+        }
+    }
+    for definition in listed(model.get("product_definitions")) {
+        if definition
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| hidden_definitions.contains(id) && !shown_definitions.contains(id))
+        {
+            hidden.extend(
+                listed(definition.get("bodies"))
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned),
+            );
+        }
+    }
+    let shown_bodies: BTreeSet<&str> = listed(model.get("product_definitions"))
+        .iter()
+        .filter(|definition| {
+            definition
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| shown_definitions.contains(id))
+        })
+        .flat_map(|definition| listed(definition.get("bodies")))
+        .filter_map(Value::as_str)
+        .collect();
+    hidden.extend(
+        inherited
+            .into_iter()
+            .filter(|id| !shown_bodies.contains(id.as_str())),
+    );
+    let bodies: BTreeSet<&str> = listed(model.get("bodies"))
+        .iter()
+        .filter_map(|body| body.get("id").and_then(Value::as_str))
+        .collect();
+    hidden.retain(|id| bodies.contains(id.as_str()));
+    hidden
+}
+
+fn concealed_occurrences<'a>(
+    model: &'a Value,
+    concealed_objects: &BTreeSet<&str>,
+) -> BTreeSet<&'a str> {
+    let occurrences = listed(model.get("occurrences"));
+    let mut children: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    let mut concealed = BTreeSet::new();
+    let mut queue = Vec::new();
+    for occurrence in occurrences {
+        let Some(id) = occurrence.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        if let Some(parent) = occurrence
+            .pointer("/parent/occurrence")
+            .and_then(Value::as_str)
+        {
+            children.entry(parent).or_default().push(id);
+        }
+        if occurrence.get("visible").and_then(Value::as_bool) == Some(false)
+            || occurrence
+                .get("native_ref")
+                .and_then(Value::as_str)
+                .is_some_and(|id| concealed_objects.contains(id))
+        {
+            queue.push(id);
+        }
+    }
+    while let Some(id) = queue.pop() {
+        if concealed.insert(id) {
+            queue.extend(children.get(id).into_iter().flatten().copied());
+        }
+    }
+    concealed
+}
+
+fn propagate_visibility(document: &mut Value) -> bool {
+    let objects = hidden_objects(document);
+    let concealed: BTreeSet<String> =
+        concealed_occurrences(document.get("model").unwrap_or(&Value::Null), &objects)
+            .into_iter()
+            .map(str::to_owned)
+            .collect();
+    let Some(occurrences) = document
+        .pointer_mut("/model/occurrences")
+        .and_then(Value::as_array_mut)
+    else {
+        return false;
+    };
+    let mut changed = false;
+    for occurrence in occurrences {
+        if occurrence
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| concealed.contains(id))
+            && occurrence.get("visible").and_then(Value::as_bool) != Some(false)
+        {
+            if let Some(fields) = occurrence.as_object_mut() {
+                fields.insert("visible".to_owned(), Value::Bool(false));
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
+/// cadmpeg retains decoded container membership and GUI properties even for a container
+/// with no shape. Use those records, never source XML, to propagate visibility to its shapes.
+fn hidden_objects(document: &Value) -> BTreeSet<&str> {
+    let native = document.pointer("/native/fcstd").unwrap_or(&Value::Null);
+    let providers: BTreeMap<&str, &str> = listed(native.get("gui_view_providers"))
+        .iter()
+        .filter_map(|row| Some((row.get("id")?.as_str()?, row.get("object")?.as_str()?)))
+        .collect();
+    let mut visibility = BTreeMap::new();
+    for (arena, gui) in [("properties", false), ("gui_properties", true)] {
+        for property in listed(native.get(arena)) {
+            if property.get("name").and_then(Value::as_str) != Some("Visibility")
+                || property.get("type_name").and_then(Value::as_str) != Some("App::PropertyBool")
+            {
+                continue;
+            }
+            let owner = property.get("owner").and_then(Value::as_str);
+            let owner = if gui {
+                owner.and_then(|id| providers.get(id).copied())
+            } else {
+                owner
+            };
+            let value = listed(property.get("values"))
+                .iter()
+                .find(|value| value.get("tag").and_then(Value::as_str) == Some("Bool"))
+                .and_then(|value| value.pointer("/attributes/value"))
+                .and_then(Value::as_str);
+            if let (Some(owner), Some(value @ ("true" | "false" | "0" | "1"))) = (owner, value) {
+                visibility.insert(owner, matches!(value, "true" | "1"));
+            }
+        }
+    }
+    let containers: BTreeSet<&str> = listed(native.get("objects"))
+        .iter()
+        .filter(|row| {
+            matches!(
+                row.get("type_name").and_then(Value::as_str),
+                Some("PartDesign::Body" | "App::Part" | "App::DocumentObjectGroup")
+            )
+        })
+        .filter_map(|row| row.get("id").and_then(Value::as_str))
+        .collect();
+    let mut children: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for property in listed(native.get("properties")) {
+        let Some(owner) = property
+            .get("owner")
+            .and_then(Value::as_str)
+            .filter(|id| containers.contains(id))
+        else {
+            continue;
+        };
+        if property.get("name").and_then(Value::as_str) == Some("Group") {
+            for link in listed(property.get("links")) {
+                if link.get("document").is_none_or(Value::is_null) {
+                    if let Some(child) = link.get("object").and_then(Value::as_str) {
+                        children.entry(owner).or_default().push(child);
+                    }
+                }
+            }
+        }
+    }
+    let mut hidden = BTreeSet::new();
+    let mut queue: Vec<&str> = visibility
+        .into_iter()
+        .filter_map(|(id, visible)| (!visible).then_some(id))
+        .collect();
+    while let Some(id) = queue.pop() {
+        if hidden.insert(id) {
+            queue.extend(children.get(id).into_iter().flatten().copied());
+        }
+    }
+    hidden
 }
 
 fn listed(value: Option<&Value>) -> &[Value] {
@@ -208,6 +447,136 @@ mod tests {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
             ..part
         }
+    }
+
+    #[test]
+    fn decoded_container_membership_propagates_gui_visibility() {
+        let document = json!({"native": {"fcstd": {
+            "objects": [{"id": "Part", "type_name": "App::Part"},
+                {"id": "Body", "type_name": "PartDesign::Body"}],
+            "gui_view_providers": [{"id": "part-view", "object": "Part"},
+                {"id": "body-view", "object": "Body"}, {"id": "pad-view", "object": "Pad"}],
+            "gui_properties": [
+                {"owner": "part-view", "name": "Visibility", "type_name": "App::PropertyBool", "values": [{"tag": "Bool", "attributes": {"value": "false"}}]},
+                {"owner": "body-view", "name": "Visibility", "type_name": "App::PropertyBool", "values": [{"tag": "Bool", "attributes": {"value": "true"}}]},
+                {"owner": "pad-view", "name": "Visibility", "type_name": "App::PropertyBool", "values": [{"tag": "Bool", "attributes": {"value": "true"}}]}],
+            "properties": [
+                {"owner": "Part", "name": "Visibility", "type_name": "App::PropertyBool", "values": [{"tag": "Bool", "attributes": {"value": "false"}}]},
+                {"owner": "Part", "name": "Group", "links": [{"object": "Body"}]},
+                {"owner": "Body", "name": "Group", "links": [{"object": "Pad"}]}]
+        }}});
+        assert_eq!(
+            hidden_objects(&document),
+            BTreeSet::from(["Part", "Body", "Pad"])
+        );
+        let mut own_visibility = document.clone();
+        own_visibility["native"]["fcstd"]["gui_properties"][0]["values"][0]["attributes"]
+            ["value"] = json!("true");
+        assert!(hidden_objects(&own_visibility).is_empty());
+        // A cycle is bounded by visited identities rather than the number of paths.
+        let mut cycle = document;
+        cycle["native"]["fcstd"]["properties"][2]["links"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"object": "Part"}));
+        assert_eq!(hidden_objects(&cycle).len(), 3);
+    }
+
+    #[test]
+    fn a_shown_link_keeps_geometry_hidden_in_the_source_container() {
+        let document = json!({"model": {
+            "bodies": [{"id": "b", "visible": true}],
+            "features": [{"native_ref": "Body", "outputs": ["b"]}],
+            "product_definitions": [{"id": "part", "kind": "part", "bodies": ["b"]}],
+            "occurrences": [
+                {"id": "source", "prototype": {"definition": "part"}, "native_ref": "Body"},
+                {"id": "link", "prototype": {"definition": "part"}, "native_ref": "Link"}]
+        }, "native": {"fcstd": {
+            "objects": [{"id": "Part", "type_name": "App::Part"}],
+            "properties": [
+                {"owner": "Part", "name": "Visibility", "type_name": "App::PropertyBool", "values": [{"tag": "Bool", "attributes": {"value": "false"}}]},
+                {"owner": "Part", "name": "Group", "links": [{"object": "Body"}]}]
+        }}});
+        assert!(hidden_bodies(&document).is_empty());
+        let mut shown_link = document.clone();
+        assert!(propagate_visibility(&mut shown_link));
+        assert_eq!(
+            shown_link["model"]["occurrences"][0]["visible"],
+            json!(false)
+        );
+        assert!(shown_link["model"]["occurrences"][1]
+            .get("visible")
+            .is_none());
+        assert!(hidden_bodies(&shown_link).is_empty());
+        let mut without_link = document;
+        let _ = without_link["model"]["occurrences"]
+            .as_array_mut()
+            .unwrap()
+            .pop();
+        assert_eq!(
+            hidden_bodies(&without_link),
+            BTreeSet::from(["b".to_owned()])
+        );
+    }
+
+    #[test]
+    fn hidden_ancestors_override_visible_children_but_shown_instances_survive() {
+        let mut model = two_cubes(Some(true));
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let second = wire["model"]["bodies"][1]["id"].clone();
+        wire["model"]["product_definitions"] = json!([
+            {"id": "test:model:component#container", "kind": "group"},
+            {"id": "test:model:component#nested", "kind": "group"},
+            {"id": "test:model:component#part", "kind": "part", "bodies": [second]},
+        ]);
+        let occurrence = |id: &str, definition: &str, parent: Value, visible: bool| {
+            json!({
+            "id": id, "prototype": {"scope": "local", "definition": definition},
+            "parent": parent, "ordinal": 0, "transform": crate::placement::IDENTITY,
+            "scale": [1, 1, 1], "visible": visible})
+        };
+        wire["model"]["occurrences"] = json!([
+            occurrence(
+                "test:model:occurrence#container",
+                "test:model:component#container",
+                json!({"kind": "root"}),
+                false
+            ),
+            occurrence(
+                "test:model:occurrence#nested",
+                "test:model:component#nested",
+                json!({"kind": "occurrence", "occurrence": "test:model:occurrence#container"}),
+                true
+            ),
+            occurrence(
+                "test:model:occurrence#part",
+                "test:model:component#part",
+                json!({"kind": "occurrence", "occurrence": "test:model:occurrence#nested"}),
+                true
+            ),
+        ]);
+        // The filtering policy consumes the neutral occurrence graph, including deeply nested
+        // containers. Keep this independent of source-format visibility projection.
+        assert!(hidden_bodies(&wire).contains(second.as_str().unwrap()));
+        wire["model"]["occurrences"]
+            .as_array_mut()
+            .unwrap()
+            .push(occurrence(
+                "test:model:occurrence#shown",
+                "test:model:component#part",
+                json!({"kind": "root"}),
+                true,
+            ));
+        assert!(!hidden_bodies(&wire).contains(second.as_str().unwrap()));
+        let _ = wire["model"]["occurrences"].as_array_mut().unwrap().pop();
+        // Other formats state each occurrence's own visibility, so nothing is propagated.
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        assert!(shown(&model).unwrap().is_none());
+        wire["native"]["fcstd"] = json!({});
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (shown, count) = shown(&model).unwrap().unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(shown.ir.model.bodies.len(), 1);
     }
 
     #[test]

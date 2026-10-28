@@ -124,6 +124,10 @@ geometry as an Import named "Original geometry (imported)", **suppressed**, at t
 timeline. The replayed history is the live result; the original is there to compare with and
 to fall back on, so a history design is never worse than an import design.
 
+Unused construction helpers need no target feature. Later active consumers carry resolved
+datum frames in sketches, pattern axes, and later datum constructions; unresolved helper
+uses remain blockers.
+
 History is all or nothing. CADIR keeps only the final B-rep, so a history that stops part way
 cannot be finished with an imported body: the first feature that does not map (or a history
 with no feature that builds geometry) flattens the design to the import design, and the

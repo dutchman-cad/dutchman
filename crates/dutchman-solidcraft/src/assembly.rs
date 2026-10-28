@@ -257,6 +257,9 @@ fn plan_parts(
             feature.name = Some(format!("{file}: {}", feature.name.unwrap_or_default()));
             feature
         }));
+        if mapping.result.is_err() {
+            report.append_prefixed(history::helper_notes(&part_report), file);
+        }
         match mapping.result {
             Ok(_) => {
                 report.append_prefixed(part_report, file);
@@ -687,6 +690,8 @@ impl Builder<'_> {
         let mut history = match mapping.result {
             Ok(history) => history,
             Err(reason) => {
+                self.report
+                    .append_prefixed(history::helper_notes(&part_report), &file);
                 if !mapping.features.is_empty() {
                     self.report.push(
                         Severity::Info,
@@ -721,6 +726,8 @@ impl Builder<'_> {
                 Check::Unverified(why)
             }
             verify::Outcome::Differs(why) => {
+                self.report
+                    .append_prefixed(history::helper_notes(&part_report), &file);
                 let reason = format!("replay differs ({why})");
                 self.report.push(
                     Severity::Info,

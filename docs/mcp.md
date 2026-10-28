@@ -124,6 +124,13 @@ The CLI and desktop volunteer invitation is absent from MCP and `--json` output.
 For `inspect`, `ok: true` means the file was read. Check `conversion.possible` and
 `conversion.reason` before converting: inspection can succeed even when conversion cannot.
 
+Unused FreeCAD binders and datum helpers are `not_needed`, with the Info note
+`helper not converted: nothing uses it`. Used datum points and coordinate systems can be
+carried by resolved sketch placements, pattern axes, or another resolved datum. A used helper without the required
+resolved placement or binder source geometry remains a blocker, with its reason in the report.
+These Info notes remain when another feature or a replay mismatch flattens the history.
+A body inside a hidden container is hidden even when its own flag says it is shown.
+
 FreeCAD fillets and chamfers use their base feature's stored edges only when the earlier
 result and each pick on SolidCraft's replay are proven. Otherwise `history.features[].reason`
 says why the edge selection is refused, and conversion keeps the original geometry.

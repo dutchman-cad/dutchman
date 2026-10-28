@@ -93,7 +93,7 @@ report schemas and field names are unchanged.
 | `output.format` | The SolidCraft design format written. |
 | `mode` | `history`: editable feature history, with the original geometry kept beside it, suppressed. `import`: the geometry alone. |
 | `verification.status` | `verified`: the history was replayed in SolidCraft, or the FreeCAD output was measured, and matches the original. `differs`: a FreeCAD rebuild differs or restored STEP (`reason` names the part). `unverified`: the history was written without that check (`reason` says why: no `solidcraft-cli`, a timeout, `--no-verify`). `flattened`: the design has a history but it was not written (`reason`: the first feature that does not map, or `replay differs (…)`). `not_applicable`: there was no history to write (none in the source, or none cadmpeg decodes: every feature is kept in its native form), or `--import-only`. |
-| `history.features` | Every source feature in timeline order. `status`: `mapped`, `not_needed` (the target needs no feature, e.g. a principal datum plane), `left_out` (suppressed in the source), `blocked` (does not map; `reason` says why). |
+| `history.features` | Every source feature in timeline order. `status`: `mapped`, `not_needed` (the target needs no feature, e.g. a principal datum plane or an unused construction helper), `left_out` (suppressed in the source), `blocked` (does not map; `reason` says why). |
 | `history.mapped`, `history.total` | Mapped or not-needed features, out of all but left-out ones. |
 | `completeness` | For an assembly: how much of it was placed. `placed` and `placements` count every placement the assembly and its placed sub-assemblies record, a sub-assembly's as often as it is placed. `left_out` lists those not placed by cause, most first: `file` (the file placed, or `null`), `reason`, `stage` and `count`. Absent for a single part. |
 | `joints` | For an assembly whose joints were written: how many of each kind, `{"revolute": 5, "rigid": 1}` (kinds `revolute`, `slider`, `rigid`). Grounded joints count as `rigid`, fixing their occurrence to the design at its stored placement. Absent when none were. |
@@ -400,3 +400,11 @@ identity, `files` mapping relative paths to SHA-256 hashes to `{ "outcome": ... 
 The ownership input is relative to the inbox; numbered `.prt.N` saves share the base `.prt`
 owner. Outputs belonging to another input are protected. It is not a conversion report.
 Watcher events and state contain paths; keep them private like batch journals.
+
+Unused construction helpers have `history.features[].status: "not_needed"` and an Info
+loss `helper not converted: nothing uses it`. Helper Info notes remain present when another
+feature or a replay mismatch flattens the history. A used datum whose placement is already
+resolved in its dependent sketch, pattern, or datum also has status `not_needed`. Used helpers
+that cannot be resolved keep status `blocked` and a specific `reason`. These statuses
+measure mapping eligibility; `mode` and `verification` still determine whether history
+was written and replayed successfully.

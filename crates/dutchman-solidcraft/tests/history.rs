@@ -6978,6 +6978,51 @@ fn signed_axis_dimensions_keep_their_expression_and_drive_positive_magnitudes() 
 }
 
 #[test]
+fn used_datum_helpers_keep_the_resolved_dependent_sketch_and_replay() {
+    let base = cube_with_history(10.0, first_profile(), None);
+    for definition in [
+        json!({"definition": "datum_point", "position": {"x": 0.0, "y": 0.0, "z": 0.0}}),
+        json!({"definition": "datum_coordinate_system", "frame": {
+            "origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "x_axis": {"x": 1.0, "y": 0.0, "z": 0.0},
+            "y_axis": {"x": 0.0, "y": 1.0, "z": 0.0},
+            "z_axis": {"x": 0.0, "y": 0.0, "z": 1.0}}}),
+    ] {
+        let mut wire = serde_json::to_value(&base.ir).unwrap();
+        let features = wire["model"]["features"].as_array_mut().unwrap();
+        for feature in features.iter_mut() {
+            feature["ordinal"] = json!(feature["ordinal"].as_u64().unwrap() + 1);
+        }
+        features[0]["dependencies"] = json!(["f3d:model:feature#datum"]);
+        features.insert(
+            0,
+            json!({"id": "f3d:model:feature#datum", "ordinal": 0,
+            "name": "Attachment", "suppressed": false, "definition": definition}),
+        );
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..base.clone()
+        };
+        let (document, report) = convert(&model, &SolidCraftWriter::default());
+        assert_eq!(
+            types(&document),
+            [
+                ("sketch".to_owned(), false),
+                ("extrude".to_owned(), false),
+                ("import".to_owned(), true)
+            ]
+        );
+        assert!(report
+            .losses()
+            .iter()
+            .any(|loss| loss.detail.contains("its resolved placement is carried")));
+        if std::env::var_os(CLI_ENV).is_some() {
+            assert_eq!(report.outcome().unwrap().check, Check::Verified);
+        }
+    }
+}
+
+#[test]
 fn freecad_cc0_negative_distance_replays_without_flattening() {
     let input = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/P09a.FCStd");
     let model = dutchman_core::read(
@@ -7020,4 +7065,36 @@ fn freecad_cc0_negative_distance_replays_without_flattening() {
     let actual = volumes(&cli, &bytes);
     assert_eq!(actual.len(), 1);
     assert!((actual[0] - 6250.0).abs() < 1e-6);
+}
+
+#[test]
+fn helper_info_survives_mapping_and_replay_fallbacks() {
+    for blocked in [true, false] {
+        let base = cube_with_history(if blocked { 10.0 } else { 20.0 }, first_profile(), None);
+        let mut wire = serde_json::to_value(&base.ir).unwrap();
+        let features = wire["model"]["features"].as_array_mut().unwrap();
+        features.push(json!({"id": "f3d:model:feature#unused", "ordinal": 2,
+            "name": "Unused point", "suppressed": false, "definition": {
+                "definition": "datum_point", "position": {"x": 0.0, "y": 0.0, "z": 0.0}}}));
+        if blocked {
+            features.push(json!({"id": "f3d:model:feature#unknown", "ordinal": 3,
+                "name": "Later", "suppressed": false, "definition": {"definition": "native", "kind": "Mystery"}}));
+        }
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..base
+        };
+        let (_, report) = convert(&model, &SolidCraftWriter::default());
+        assert!(report
+            .losses()
+            .iter()
+            .any(|loss| loss.severity == Severity::Info
+                && loss.detail == "helper not converted: nothing uses it"));
+        if blocked || std::env::var_os(CLI_ENV).is_some() {
+            assert!(matches!(
+                report.outcome().unwrap().check,
+                Check::Flattened(_)
+            ));
+        }
+    }
 }
