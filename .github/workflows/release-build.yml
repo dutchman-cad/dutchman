@@ -176,6 +176,15 @@ jobs:
               exit 1
             fi
           done
+          # Version-less copies, so the README's releases/latest/download links always name the
+          # latest published release (dutchman-<version>-<target> -> dutchman-<target>).
+          version="${GITHUB_REF_NAME#v}"
+          for file in dutchman-"$version"-*; do
+            [[ "$file" == *.sha256 ]] && continue
+            latest="dutchman-${file#dutchman-"$version"-}"
+            cp "$file" "$latest"
+            sha256sum "$latest" > "$latest.sha256"
+          done
       - name: Create draft release
         shell: bash
         run: |
