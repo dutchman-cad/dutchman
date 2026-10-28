@@ -646,7 +646,8 @@ fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, St
 /// first part picked for a joint to the second; of joints that reach nothing placed, the
 /// outermost occurrence they join stays put and places the rest. Of a joint between an occurrence and one
 /// inside it, the inner one moves, and an occurrence holding one already placed is never
-/// moved, as moving it would move what it holds. A joint whose two sides were both placed
+/// moved, as moving it would move what it holds; an occurrence a joint moves leaves the ones
+/// inside it that other joints placed already where they are. A joint whose two sides were both placed
 /// already is left for SolidCraft to check, with a note when they do not meet. A revolute or
 /// slider joint whose parts already turn or slide on its axis where they are placed holds
 /// them there instead, at the value their placements give it.
@@ -727,8 +728,9 @@ fn place_by_joints(assembly: &mut Assembly) -> Vec<String> {
                 }
             }
             (true, false) => {
-                set_world_at(
+                move_keeping_placed(
                     assembly,
+                    &fixed,
                     &joint.b,
                     &compose(&reach, &inverse(&joint.frame_b)),
                 );
@@ -740,7 +742,7 @@ fn place_by_joints(assembly: &mut Assembly) -> Vec<String> {
                     &compose(&compose(&b, &joint.frame_b), &inverse(&joint.meeting())),
                     &inverse(&joint.frame_a),
                 );
-                set_world_at(assembly, &joint.a, &at);
+                move_keeping_placed(assembly, &fixed, &joint.a, &at);
                 fixed.insert(joint.a.clone());
                 fixed.insert(joint.b.clone());
             }
@@ -822,6 +824,26 @@ fn world_at(assembly: &Assembly, path: &[usize]) -> Option<Placement3x4> {
         }
     }
     Some(world)
+}
+
+/// Moves the occurrence `path` leads to so that it is at `world`, keeping each occurrence
+/// inside it that another joint placed already where that joint put it.
+fn move_keeping_placed(
+    assembly: &mut Assembly,
+    fixed: &BTreeSet<Vec<usize>>,
+    path: &[usize],
+    world: &Placement3x4,
+) {
+    // Outer before inner, as the set orders a path before those that extend it.
+    let inside: Vec<(&Vec<usize>, Placement3x4)> = fixed
+        .iter()
+        .filter(|placed| placed.len() > path.len() && placed.starts_with(path))
+        .filter_map(|placed| Some((placed, world_at(assembly, placed)?)))
+        .collect();
+    set_world_at(assembly, path, world);
+    for (placed, at) in inside {
+        set_world_at(assembly, placed, &at);
+    }
 }
 
 /// Moves the occurrence a placement path leads to so that it is at `world`.
@@ -2451,6 +2473,36 @@ mod tests {
         );
         let block_1 = world_at(&assembly, &[0, 0]).unwrap();
         assert!(near(&block_1, &at([105.0, 0.0, 0.0], 0.0)), "{block_1:?}");
+    }
+
+    #[test]
+    fn a_part_placed_inside_an_occurrence_stays_when_a_later_joint_moves_the_occurrence() {
+        // The design holds block 2 (inside the frame) at x = 50, then the frame at x = 20:
+        // moving the frame leaves block 2 where its own joint put it.
+        let fixed = json!({"kind": "fixed"});
+        let model = with_joints(
+            nested(false, None),
+            json!([
+                joint(
+                    1,
+                    fixed.clone(),
+                    connector(None),
+                    connector_at(2, &[], facing(at([-50.0, 0.0, 0.0], 0.0)))
+                ),
+                joint(
+                    2,
+                    fixed,
+                    connector(None),
+                    connector_at(0, &[], facing(at([-20.0, 0.0, 0.0], 0.0)))
+                ),
+            ]),
+        );
+        let (assembly, notes) = local_components(&model).unwrap().unwrap();
+        assert!(notes.is_empty(), "{notes:?}");
+        let frame = world_at(&assembly, &[0]).unwrap();
+        assert!(near(&frame, &at([20.0, 0.0, 0.0], 0.0)), "{frame:?}");
+        let block = world_at(&assembly, &[0, 1]).unwrap();
+        assert!(near(&block, &at([50.0, 0.0, 0.0], 0.0)), "{block:?}");
     }
 
     #[test]
