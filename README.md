@@ -57,6 +57,7 @@ below, or run it in [Docker](docs/docker.md) (`docker pull ghcr.io/dutchman-cad/
 | Windows, 64-bit | [dutchman-0.2.2-x86_64-pc-windows-msvc.zip](https://github.com/dutchman-cad/dutchman/releases/download/v0.2.2/dutchman-0.2.2-x86_64-pc-windows-msvc.zip) | [SHA-256](https://github.com/dutchman-cad/dutchman/releases/download/v0.2.2/dutchman-0.2.2-x86_64-pc-windows-msvc.zip.sha256) |
 | Linux, x86_64 | [dutchman-0.2.2-x86_64-unknown-linux-gnu.tar.gz](https://github.com/dutchman-cad/dutchman/releases/download/v0.2.2/dutchman-0.2.2-x86_64-unknown-linux-gnu.tar.gz) | [SHA-256](https://github.com/dutchman-cad/dutchman/releases/download/v0.2.2/dutchman-0.2.2-x86_64-unknown-linux-gnu.tar.gz.sha256) |
 | Linux, ARM 64-bit (aarch64) | [dutchman-0.2.2-aarch64-unknown-linux-gnu.tar.gz](https://github.com/dutchman-cad/dutchman/releases/download/v0.2.2/dutchman-0.2.2-aarch64-unknown-linux-gnu.tar.gz) | [SHA-256](https://github.com/dutchman-cad/dutchman/releases/download/v0.2.2/dutchman-0.2.2-aarch64-unknown-linux-gnu.tar.gz.sha256) |
+| Docker, any computer that runs Docker | [Run Dutchman in Docker](https://github.com/dutchman-cad/dutchman/blob/main/docs/docker.md) | Not applicable |
 
 Not sure which Mac you have? Apple menu › **About This Mac**: a chip named Apple M… is Apple silicon; a processor named Intel… is Intel.
 <!-- /downloads -->
