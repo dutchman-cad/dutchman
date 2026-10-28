@@ -269,7 +269,6 @@ impl SolidCraftWriter {
             written,
             &original,
             verify::Expected {
-                faces: 0,
                 solids: solid_bodies(model),
                 sheets: sheet_bodies(model),
             },
@@ -394,7 +393,6 @@ impl SolidCraftWriter {
     /// that is wrong but opens would otherwise go unnoticed.
     fn check_import(&self, model: &Model, design: &[u8], report: &mut Report) {
         let expected = verify::Expected {
-            faces: model.ir.model.faces.len(),
             solids: solid_bodies(model),
             sheets: sheet_bodies(model),
         };

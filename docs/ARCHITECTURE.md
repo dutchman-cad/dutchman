@@ -211,11 +211,13 @@ replay flattens the design (`flattened: replay differs`). When no CLI is found (
 when it times out (`--verify-timeout`, default 120 s), or with `--no-verify`, the history is
 written and reported unverified. `--import-only` always writes the import design.
 
-Geometry written as an import is opened in the same CLI. When SolidCraft shows fewer faces
-than the model holds, refuses the design, or warns on its timeline (faces it cannot mesh), the
-report gets a `Degraded` `geometry` line saying so, since geometry that opens but is wrong would
-otherwise go unnoticed. An assembly is checked for warnings only, as its parts are placed any
-number of times.
+Geometry written as an import is opened in the same CLI. A refusal, timeline errors, faces
+it cannot mesh, bodies inside out, or solids without volume produce a `Degraded` `geometry`
+loss, as does a solid it opens as an open shell (sheets aside). Face counts are not compared:
+SolidCraft merges faces that share a surface. Area and volume comparisons use the history and
+original evaluations above, where an open-shell warning alone produces no loss; geometry-only
+output has no independent source measurements.
+An assembly is checked for warnings and bodies inside out, with sheets exempt as for parts.
 
 Sheet-metal edge flanges select only from their own input topology. Midpoints, tangents, and
 end vertices must match unique perimeter edges of an unchanged rectangular base sheet,

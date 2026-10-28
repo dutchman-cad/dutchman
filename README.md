@@ -107,8 +107,9 @@ report. For a file that converts wrong, DM it to Dutchy with its STEP export.
 
 - When every feature in a design's history maps onto SolidCraft, the SolidCraft design keeps
   that history, editable, with the original geometry kept beside it. If `solidcraft-cli` is
-  installed, Dutchman replays the history in it and checks it against the original before
-  keeping it. What maps, most of it from Fusion:
+  installed, Dutchman replays the history in it and compares area and volume with the
+  original before keeping it. A face-count difference (SolidCraft merges faces that share a
+  surface) or an open-shell warning alone does not fail that comparison. What maps, most of it from Fusion:
   - sketches: lines, arcs, circles, conics, splines, and many constraints and dimensions;
   - extrudes and revolves, with their end forms;
   - holes: counterbores, countersinks, chamfered entries, and thread labels on tapped holes;
