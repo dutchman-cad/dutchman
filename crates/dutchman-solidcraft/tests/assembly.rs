@@ -163,6 +163,40 @@ fn root_features_get_a_unique_folder_and_joints_stay_out() {
 }
 
 #[test]
+fn each_parts_history_is_reported() {
+    // The cube with a mapped sphere history beside the cube with none.
+    let mut model = placed_twice();
+    let assembly = model.assembly.as_mut().unwrap();
+    let mut part = assembly.parts[0].clone();
+    part.name = "Ball".to_owned();
+    let mut wire = serde_json::to_value(&part.ir).unwrap();
+    wire["model"]["features"] = serde_json::json!([{
+        "id": "f3d:model:feature#1", "ordinal": 0, "name": "Ball", "suppressed": false,
+        "outputs": [wire["model"]["bodies"][0]["id"]],
+        "definition": {"definition": "sphere", "center": {"x": 5.0, "y": 5.0, "z": 5.0},
+                       "radius": 5.0, "op": "new_body"},
+    }]);
+    part.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    assembly.parts.push(part);
+    assembly.placements[1].part = 1;
+    let (_, report) = written(&model);
+    let parts = report.parts();
+    assert_eq!(parts.len(), 2);
+    assert_eq!(parts[0].name, "synthetic_cube");
+    assert!(matches!(
+        parts[0].check,
+        dutchman_core::Check::NotApplicable(_)
+    ));
+    assert_eq!((parts[0].mapped, parts[0].total), (0, 0));
+    assert_eq!(parts[1].name, "Ball");
+    assert!(matches!(
+        parts[1].check,
+        dutchman_core::Check::Unverified(_)
+    ));
+    assert_eq!((parts[1].mapped, parts[1].total), (1, 1));
+}
+
+#[test]
 fn folders_keep_mapped_history_and_its_suppressed_original() {
     let mut model = placed_twice();
     let assembly = model.assembly.as_mut().unwrap();

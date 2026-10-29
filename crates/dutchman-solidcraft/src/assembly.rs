@@ -15,7 +15,10 @@ const MAX_HIDDEN_PATHS: usize = 4096;
 
 use dutchman_core::placement::{compose, IDENTITY};
 use dutchman_core::{Assembly, Joint, Motion};
-use dutchman_core::{Check, Error, FeatureOutcome, Mode, Model, Outcome, Report, Severity, Stage};
+use dutchman_core::{
+    Check, Error, FeatureOutcome, FeatureStatus, Mode, Model, Outcome, PartHistory, Report,
+    Severity, Stage,
+};
 use serde_json::{json, Value};
 
 use crate::container::Container;
@@ -277,6 +280,14 @@ fn plan_parts(
             feature.name = Some(format!("{file}: {}", feature.name.unwrap_or_default()));
             feature
         }));
+        let check = match &mapping.result {
+            Ok(history) if history.stop.is_some() => {
+                Check::Partial(crate::partial_summary(history))
+            }
+            Ok(_) => Check::Unverified("not checked: inspect writes nothing".to_owned()),
+            Err(reason) => unwritten(&mapping.features, reason.clone()),
+        };
+        report.push_part(part_history(part, &mapping.features, check));
         match mapping.result {
             Ok(ref history) if history.stop.is_some() => {
                 report.append_prefixed(part_report, file);
@@ -307,6 +318,32 @@ fn plan_parts(
             }
             Err(_) => report.append_prefixed(part_report, file),
         }
+    }
+}
+
+/// What became of `part`'s history, from its features and its check.
+fn part_history(part: &Model, features: &[FeatureOutcome], check: Check) -> PartHistory {
+    let counted = features
+        .iter()
+        .filter(|f| f.status != FeatureStatus::LeftOut);
+    PartHistory {
+        name: part.name.clone(),
+        check,
+        mapped: counted
+            .clone()
+            .filter(|f| matches!(f.status, FeatureStatus::Mapped | FeatureStatus::NotNeeded))
+            .count(),
+        total: counted.count(),
+    }
+}
+
+/// The check of a part whose history was not written for `reason`: flattened when it has
+/// source features, else none applies.
+fn unwritten(features: &[FeatureOutcome], reason: String) -> Check {
+    if features.is_empty() {
+        Check::NotApplicable(reason)
+    } else {
+        Check::Flattened(reason)
     }
 }
 
@@ -767,7 +804,7 @@ impl Builder<'_> {
                         HISTORY,
                         format!("{file}: flattened: {reason}"),
                     );
-                    self.histories.push(Check::Flattened(reason));
+                    self.histories.push(Check::Flattened(reason.clone()));
                 }
                 let mut references = mapping.references;
                 let kept = references.features.len();
@@ -799,6 +836,11 @@ impl Builder<'_> {
                     part_report.push(Severity::Info, "sketches", detail);
                 }
                 self.report.append_prefixed(part_report, &file);
+                self.report.push_part(part_history(
+                    part,
+                    &mapping.features,
+                    unwritten(&mapping.features, reason),
+                ));
                 return Ok(false);
             }
         };
@@ -837,6 +879,11 @@ impl Builder<'_> {
                         HISTORY,
                         format!("{file}: flattened: {reason}"),
                     );
+                    self.report.push_part(part_history(
+                        part,
+                        &mapping.features,
+                        Check::Flattened(reason.clone()),
+                    ));
                     self.histories.push(Check::Flattened(reason));
                     return Ok(false);
                 }
@@ -881,6 +928,8 @@ impl Builder<'_> {
         }
         self.looks.append(&mut history.looks);
         self.face_looks.append(&mut history.face_looks);
+        self.report
+            .push_part(part_history(part, &mapping.features, check.clone()));
         self.histories.push(check);
         Ok(!partial)
     }

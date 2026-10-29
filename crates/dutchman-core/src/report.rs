@@ -144,6 +144,7 @@ const MAX_NAMES: usize = 100_000;
 pub struct Report {
     losses: Vec<Loss>,
     outcome: Option<Outcome>,
+    parts: Vec<PartHistory>,
     completeness: Option<Completeness>,
     joints: std::collections::BTreeMap<String, u64>,
     names: std::collections::BTreeSet<String>,
@@ -228,6 +229,20 @@ pub enum Check {
     Flattened(String),
     /// There was no history to write, or it was not asked for.
     NotApplicable(String),
+}
+
+/// What became of one assembly part's history.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PartHistory {
+    /// The part's name.
+    pub name: String,
+    /// What became of its history: as for a whole design, with `NotApplicable` when it has
+    /// no source features.
+    pub check: Check,
+    /// Its source features that mapped or need no feature, and all it has, suppressed ones
+    /// not counted.
+    pub mapped: usize,
+    pub total: usize,
 }
 
 /// What became of one source feature.
@@ -352,6 +367,16 @@ impl Report {
     /// What the writer made of the design, when it said.
     pub fn outcome(&self) -> Option<&Outcome> {
         self.outcome.as_ref()
+    }
+
+    /// Records what became of one assembly part's history.
+    pub fn push_part(&mut self, part: PartHistory) {
+        self.parts.push(part);
+    }
+
+    /// What became of each assembly part's history, in the order they were written.
+    pub fn parts(&self) -> &[PartHistory] {
+        &self.parts
     }
 
     /// Records how much of the assembly was placed.
