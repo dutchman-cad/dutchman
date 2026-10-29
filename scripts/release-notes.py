@@ -52,7 +52,7 @@ def body(version: str, root: Path = ROOT) -> str:
         raise ValueError(f"CHANGELOG.md: add a dated entry for {version} before releasing.")
     anchor = re.sub(r"[^\w -]", "", entry.group(1).lower()).replace(" ", "-")
     return (
-        f"{notes}\n\n## Download\n\n{table(version)}\n"
+        f"{notes}\n\n## Download\n\n{table(version, universal_macos=True)}\n"
         "Or install with Homebrew (`brew install dutchman-cad/tap/dutchman`) or Scoop "
         "(`scoop bucket add dutchman-cad https://github.com/dutchman-cad/scoop-bucket`, "
         "then `scoop install dutchman-cad/dutchman`).\n\n"

@@ -15,6 +15,7 @@ on:
     paths:
       - .github/workflows/release-build.yml
       - scripts/package-archive.sh
+      - scripts/package-universal.sh
       - scripts/macos-dmg.sh
       - scripts/archive-readme.py
       - scripts/downloads.py
@@ -132,7 +133,7 @@ jobs:
             dist/${{ env.ARCHIVE }}.sha256
           retention-days: 30
 
-  # Reuse the checked archives for lipo and the disk image; no second Rust build.
+  # Reuse the checked archives for the universal archive and disk image; no second Rust build.
   macos:
     needs: macos-build
     runs-on: macos-latest
@@ -151,6 +152,8 @@ jobs:
             archive="${name}-${target}.tar.gz"
             (cd dist && shasum -a 256 -c "$archive.sha256" && tar xzf "$archive")
           done
+          scripts/package-universal.sh "${name}-macos-universal" "v$version" \
+            "dist/${name}-aarch64-apple-darwin" "dist/${name}-x86_64-apple-darwin"
           dmg="${name}-macos-universal.dmg"
           scripts/macos-dmg.sh "$version" "$version" \
             "dist/${name}-aarch64-apple-darwin" "dist/${name}-x86_64-apple-darwin" "dist/$dmg"

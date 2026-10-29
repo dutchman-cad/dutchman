@@ -28,7 +28,10 @@ A release is cut from `main` once CI is green there.
    Dutchman Convert.app, universal, signed ad hoc), as workflow artifacts. The two Mac targets
    build in parallel on separate Apple silicon runners (Intel is cross-compiled). A small
    packaging job checks and unpacks both archives, then uses their binaries to build the
-   universal app with `lipo` and make the disk image, without compiling again. After all builds
+   universal app with `lipo` and make the disk image, without compiling again. It also makes
+   `dutchman-X.Y.Z-macos-universal.tar.gz` with universal `dutchman`, `dutchman-mcp`, and
+   `dutchman-gui` binaries, using the same archive layout and checksum format as the per-chip
+   archives. The per-chip Mac archives remain release assets for Homebrew. After all builds
    succeed, the workflow checks every SHA-256 and creates a draft GitHub release from `release-notes/X.Y.Z.md`, with the archives and
    checksums attached. It fails if a release for that tag already exists. A maintainer
    verifies the body and downloads, then publishes the release. Before publishing, check
@@ -50,6 +53,13 @@ A release is cut from `main` once CI is green there.
    `cargo publish --dry-run -p <crate>` before each.
 
 ## Packaging
+
+Release and nightly Mac downloads offer a universal `.dmg` for the desktop app and a
+universal `.tar.gz` for the command line. Both run on Apple silicon and Intel. Stable
+releases also attach version-less copies, including `dutchman-macos-universal.tar.gz`
+and its `.sha256`. Only after a release containing that archive is published, switch
+`scripts/downloads.py`'s `latest` table to the universal archive and regenerate the README
+download table with `python3 scripts/downloads.py latest README.md`.
 
 Linux release and nightly archives include `dutchman-web`; it needs no desktop libraries.
 Windows and macOS archives currently leave it out: native builds of the web server have not
