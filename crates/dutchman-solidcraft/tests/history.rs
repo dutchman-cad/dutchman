@@ -3953,7 +3953,8 @@ fn compatibility_floor_blocks_composite_chains_but_keeps_single_stages() {
             ..patterned(layout)
         };
         let (_, report) = convert(&model, &writer);
-        assert_eq!(report.outcome().unwrap().mode, Mode::Import);
+        // The features before the gated later pattern stay as partial history.
+        assert_eq!(report.outcome().unwrap().mode, Mode::PartialHistory);
         assert!(history_line(&report).contains("needs SolidCraft 0.25.1 or newer (target 0.18.2)"));
         let (_, report) = convert(&model, &composite_writer());
         assert_eq!(report.outcome().unwrap().mode, Mode::History);
