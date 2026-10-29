@@ -331,7 +331,8 @@ When a design's feature history converts, Dutchman checks it by replaying it in 
 command-line tool, `solidcraft-cli`, which comes with every
 [SolidCraft release](https://github.com/tangency-labs/solidcraft/releases). Installing the
 SolidCraft app is enough: Dutchman finds the tool inside it (on macOS, the newest
-`SolidCraft*.app` in `/Applications` or `~/Applications`; on Windows, `Program Files\SolidCraft`).
+`SolidCraft*.app` in `/Applications` or `~/Applications`; on Windows, `Program Files\SolidCraft`, else the install folder the installer recorded in the
+registry).
 `--solidcraft PATH`, `SOLIDCRAFT_CLI`, or `solidcraft-cli` on your `PATH` come first. The
 desktop app says which one it checks with. Without one, conversions still work; a converted
 history is marked unverified.
@@ -485,7 +486,7 @@ dutchman convert --json generated_unit_cube.f3d cube.solidcraft
 | `--no-memory-check` | Bypass the memory refusal and Standard's history budget. |
 | `--yes` | Never prompt to switch presets; refuse an over-budget conversion with exit 2. |
 | `--import-only` | Leave feature history out; keep geometry and the preset's reference sketches. |
-| `--solidcraft PATH` | The `solidcraft-cli` that checks a converted history. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`). |
+| `--solidcraft PATH` | The `solidcraft-cli` that checks a converted history. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`, else the install folder recorded in the registry). |
 | `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the found CLI's version, even with `--no-verify`, else the newest known at build time (currently 0.26.1). |
 | `--no-verify` | Write the history without checking it in SolidCraft. Cannot be combined with `--solidcraft`. |
 | `--verify-timeout SECONDS` | How long each SolidCraft check may run before the history is written unverified. Default 120. |

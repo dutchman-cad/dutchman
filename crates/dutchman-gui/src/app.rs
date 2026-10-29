@@ -918,7 +918,7 @@ impl App {
                     }
                     Err(dutchman_solidcraft::NoCli::NotFound(_)) => format!(
                         "No SolidCraft found, so history is written unchecked: install SolidCraft, \
-                         or set {} to its solidcraft-cli.",
+                         or set {} to the full path of its solidcraft-cli.",
                         dutchman_solidcraft::CLI_ENV
                     ),
                 };
