@@ -2393,7 +2393,11 @@ fn counterbores_and_countersinks_keep_their_entry_dimensions() {
         ] {
             for blind in [false, true] {
                 let mut expected = expected.clone();
-                if version == "0.25.1" {
+                if version
+                    .parse::<dutchman_solidcraft::SolidCraftVersion>()
+                    .unwrap()
+                    >= dutchman_solidcraft::SolidCraftVersion::V0_22_1
+                {
                     expected["tip_angle"] = json!("180");
                 }
                 let model = holed_cube(4.0, |hole| {
@@ -2497,7 +2501,7 @@ fn a_plain_drilled_form_keeps_its_angle_and_shoulder_depth() {
 
 #[test]
 fn entry_recesses_write_flat_tips_only_for_new_targets() {
-    for version in ["0.18.2", "0.25.1"] {
+    for version in ["0.18.2", "0.22.0", "0.22.1", "0.25.1"] {
         for form in [
             json!({"kind": "counterbore", "diameter": 8.0, "depth": 2.0}),
             json!({"kind": "countersink", "diameter": 8.0, "angle": std::f64::consts::FRAC_PI_2}),
@@ -2515,7 +2519,11 @@ fn entry_recesses_write_flat_tips_only_for_new_targets() {
                     .target_version(Some(version.parse().unwrap())),
             );
             let tip = &document["features"][3]["hole"]["tip_angle"];
-            if version == "0.25.1" {
+            if version
+                .parse::<dutchman_solidcraft::SolidCraftVersion>()
+                .unwrap()
+                >= dutchman_solidcraft::SolidCraftVersion::V0_22_1
+            {
                 assert_eq!(tip, "180");
             } else {
                 assert!(tip.is_null());
@@ -2528,10 +2536,10 @@ fn entry_recesses_write_flat_tips_only_for_new_targets() {
 fn solidcraft_entry_recess_tip_angles_follow_the_target_release() {
     let Some(cli) = solidcraft() else { return };
     let modern = dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone()))
-        >= dutchman_solidcraft::SolidCraftVersion::V0_25_1;
+        >= dutchman_solidcraft::SolidCraftVersion::V0_22_1;
     let dir = tempfile::tempdir().unwrap();
     let bore = std::f64::consts::PI * 4.0;
-    // Older releases ignore the angle; 0.25.1 cuts a cone unless the tip is flat.
+    // Older releases ignore the angle; 0.22.1 and newer cut a cone unless the tip is flat.
     for (kind, extra) in [
         ("counterbore", std::f64::consts::PI * 12.0 * 2.0),
         (
@@ -7924,7 +7932,11 @@ fn partial_entry_recesses_keep_the_target_in_parts_and_assemblies() {
                     .find(|feature| feature["type"] == "hole")
                     .unwrap();
                 let tip = &hole["hole"]["tip_angle"];
-                if version == "0.25.1" {
+                if version
+                    .parse::<dutchman_solidcraft::SolidCraftVersion>()
+                    .unwrap()
+                    >= dutchman_solidcraft::SolidCraftVersion::V0_22_1
+                {
                     assert_eq!(tip, "180");
                 } else {
                     assert!(tip.is_null());

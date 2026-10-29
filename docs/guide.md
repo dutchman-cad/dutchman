@@ -753,7 +753,7 @@ across; the report lists them as Degraded. Taper, exit treatments, modeled threa
 recesses combined with drill points are not supported yet, and the report names the option.
 For a counterbore, countersink, or chamfered entry with a drill point, the reason is
 "SolidCraft holes take a drill point only on a plain drilled hole": SolidCraft 0.21.0 ignores
-`tip_angle` on counterbores and countersinks. SolidCraft 0.25.1 supports those drill
+`tip_angle` on counterbores and countersinks. SolidCraft 0.22.1 and newer support those drill
 points, but Dutchman retains this limit for compatibility with older releases. Conversion keeps the original geometry.
 
 When every feature in a design's history maps onto SolidCraft (sketches, extrudes, revolves,

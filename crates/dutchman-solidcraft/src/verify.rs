@@ -96,7 +96,10 @@ pub const WINDOW_OLDEST: [u64; 3] = [0, 23, 0];
 pub struct SolidCraftVersion([u64; 3]);
 
 impl SolidCraftVersion {
-    /// First release with sketch-profile coils and entry-recess drill points.
+    /// First release that applies a drill-point angle on counterbores and countersinks.
+    pub const V0_22_1: Self = Self([0, 22, 1]);
+
+    /// First release with sketch-profile coils.
     pub const V0_25_1: Self = Self([0, 25, 1]);
 
     /// The found CLI's release (even with verification off), else the built-in newest.

@@ -156,8 +156,8 @@ CLI's version is used, even with `--no-verify`, else the newest release known at
 time (currently 0.25.1). The supported rolling 14-day window is currently 0.23.0–0.25.1;
 older targets down to 0.18.2 retain the existing feature simplifications.
 When a written coil or flat entry-recess tip uses the newer mapping, the history line
-includes `target SolidCraft 0.25.1` (with the actual target). No new report fields are added. Counterbore and countersink holes use an explicit flat tip
-for targets 0.25.1 or newer, retaining the source's flat bottom.
+includes the actual target, such as `target SolidCraft 0.25.1`. No new report fields are added. Counterbore and countersink holes use an explicit flat tip
+for targets 0.22.1 or newer, retaining the source's flat bottom.
 
 Conical and spiral helices report
 `conical and spiral helical sweeps are not supported yet: SolidCraft's sketch-profile coil

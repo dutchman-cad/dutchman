@@ -182,7 +182,7 @@ label); thread details it can't keep are `Degraded` losses. Unsupported hole for
 placements, and ends appear in `history.features[].reason`, and conversion keeps the
 geometry when the history can't map.
 Entry recesses with drill points report "SolidCraft holes take a drill point only on a
-plain drilled hole"; SolidCraft 0.21.0 ignores `tip_angle` on counterbores and countersinks. SolidCraft 0.25.1 supports those drill
+plain drilled hole"; SolidCraft 0.21.0 ignores `tip_angle` on counterbores and countersinks. SolidCraft 0.22.1 and newer support those drill
 points, but Dutchman retains this limit for compatibility with older releases.
 
 | Tool | Arguments | Returns | Writes |

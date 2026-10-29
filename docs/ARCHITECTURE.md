@@ -118,7 +118,7 @@ older targets down to the floor remain accepted with the existing feature gates.
 CLI's `--solidcraft-version x.y.z` selects a target on `convert`, `convert-all`, and `watch`.
 Sketch-profile helical sweeps require a target of 0.25.1 or newer; older targets block them
 and preserve the original geometry. Entry-recess holes write an explicit flat tip for
-0.25.1 and newer targets, where SolidCraft applies their drill-point angle.
+0.22.1 and newer targets, where SolidCraft applies their drill-point angle.
 
 Checks: an end-to-end test converts a synthetic `.f3d` and compares the container layout and
 `document.json` with a golden file; a non-blocking CI job opens the result in a released
