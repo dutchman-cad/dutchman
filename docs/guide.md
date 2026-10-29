@@ -150,7 +150,8 @@ platforms below. Each archive holds `dutchman` (the command), `dutchman-mcp` (th
 | Windows, x86_64 | `dutchman-VERSION-x86_64-pc-windows-msvc.zip` |
 
 The universal macOS archive runs on both Apple silicon and Intel. Per-chip archives remain
-available for Homebrew and other installations that select a processor.
+available for Homebrew and other installations that select a processor. The README's download
+table links the latest release's universal archive and disk image.
 
 Download the archive and its `.sha256` file, check one against the other, then unpack it and
 put the programs on your `PATH`. On Linux x86_64, for release 0.1.5 (set `VERSION` and the

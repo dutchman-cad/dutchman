@@ -8,9 +8,7 @@
                                               published release (releases/latest/download/...)
 
 The README's table uses `latest`, so it never names a release before that release is published;
-each release also uploads version-less copies of its files for it. Until a release with the
-universal Mac command-line archive is published, `latest` retains the per-chip Mac rows.
-The tests check the README.
+each release also uploads version-less copies of its files for it. The tests check the README.
 """
 
 import sys
@@ -24,15 +22,14 @@ DMG_SINCE = (0, 1, 3)
 
 # (who it is for, target, archive extension)
 PLATFORMS = [
-    ("Mac with Apple silicon (M1 or later)", "aarch64-apple-darwin", "tar.gz"),
-    ("Mac with an Intel processor", "x86_64-apple-darwin", "tar.gz"),
+    ("Mac command line (any Mac)", "macos-universal", "tar.gz"),
     ("Windows, 64-bit", "x86_64-pc-windows-msvc", "zip"),
     ("Linux, x86_64", "x86_64-unknown-linux-gnu", "tar.gz"),
     ("Linux, ARM 64-bit (aarch64)", "aarch64-unknown-linux-gnu", "tar.gz"),
 ]
 
 
-def table(version: str, *, universal_macos: bool = False) -> str:
+def table(version: str) -> str:
     if version == "nightly":
         base, stem = f"{REPO}/releases/download/nightly", "dutchman-nightly"
     elif version == "latest":
@@ -46,22 +43,11 @@ def table(version: str, *, universal_macos: bool = False) -> str:
     if version in ("nightly", "latest") or tuple(int(n) for n in version.split(".")[:3]) >= DMG_SINCE:
         name = f"{stem}-macos-universal.dmg"
         url = f"{base}/{name}"
-        who = ("Mac (any Mac): the desktop app" if universal_macos
-               else "Mac, the desktop app (Apple silicon or Intel)")
-        rows.append(f"| {who} | [{name}]({url}) | [SHA-256]({url}.sha256) |")
-    platforms = PLATFORMS
-    if universal_macos:
-        platforms = [("Mac command line (any Mac)", "macos-universal", "tar.gz")] + PLATFORMS[2:]
-    for who, target, ext in platforms:
+        rows.append(f"| Mac (any Mac): the desktop app | [{name}]({url}) | [SHA-256]({url}.sha256) |")
+    for who, target, ext in PLATFORMS:
         name = f"{stem}-{target}.{ext}"
         url = f"{base}/{name}"
         rows.append(f"| {who} | [{name}]({url}) | [SHA-256]({url}.sha256) |")
-    if not universal_macos:
-        rows.append("")
-        rows.append(
-            "Not sure which Mac you have? Apple menu › **About This Mac**: a chip named Apple M… is "
-            "Apple silicon; a processor named Intel… is Intel."
-        )
     return "\n".join(rows) + "\n"
 
 
@@ -69,8 +55,7 @@ def main() -> int:
     if len(sys.argv) not in (2, 3):
         print(__doc__.strip(), file=sys.stderr)
         return 2
-    # Keep latest/README on published assets until a universal CLI release is published.
-    block = table(sys.argv[1], universal_macos=sys.argv[1] != "latest")
+    block = table(sys.argv[1])
     if len(sys.argv) == 2:
         sys.stdout.write(block)
         return 0

@@ -17,8 +17,7 @@ fn the_readme_links_the_latest_published_downloads() {
     );
     for target in [
         "macos-universal.dmg",
-        "aarch64-apple-darwin.tar.gz",
-        "x86_64-apple-darwin.tar.gz",
+        "macos-universal.tar.gz",
         "x86_64-pc-windows-msvc.zip",
         "x86_64-unknown-linux-gnu.tar.gz",
         "aarch64-unknown-linux-gnu.tar.gz",
