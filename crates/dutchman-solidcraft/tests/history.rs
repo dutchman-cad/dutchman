@@ -3909,7 +3909,8 @@ fn compatibility_floor_blocks_composite_chains_but_keeps_single_stages() {
             &patterned(json!({"kind": "composite", "stages": stages})),
             &writer,
         );
-        assert_eq!(report.outcome().unwrap().mode, Mode::Import);
+        // The extrusion before the blocked pattern stays as partial history.
+        assert_eq!(report.outcome().unwrap().mode, Mode::PartialHistory);
         let feature = report
             .outcome()
             .unwrap()
@@ -4001,7 +4002,17 @@ fn composite_mirror_chains_refuse_unrepresentable_stages_and_excessive_products(
         "{}",
         history_line(&report)
     );
-    assert_reference_sketches(&document, 1);
+    // The sketch and extrusion before the refused pattern stay as partial history beside
+    // the imported final shape.
+    assert_eq!(report.outcome().unwrap().mode, Mode::PartialHistory);
+    assert_eq!(
+        types(&document),
+        [
+            ("sketch".to_owned(), false),
+            ("extrude".to_owned(), false),
+            ("import".to_owned(), false)
+        ]
+    );
     let model = pattern_seeds(
         patterned(json!({"kind": "composite", "stages": [mirror, mirror]})),
         json!([{"kind": "bodies", "value": {"kind": "bodies", "value": ["synthetic:cube:body#0"]}}]),
