@@ -176,10 +176,12 @@ history, with no flattened-history warning.
   original shape. Without a body-building prefix, the design keeps imported geometry and
   hidden reference sketches.
 - Assemblies keep their components and placements. Fusion and FreeCAD assemblies keep their
-  joints too (revolute, slider, and rigid), with their grounded parts held where they are;
-  a joint that conflicts with the placements is kept suppressed, so no part moves when
-  SolidCraft opens the design. Inventor assemblies place their parts, without joints. Sketches in the assembly's own file
-  are kept, hidden, for reference.
+  joints too (revolute, slider, and rigid), with their grounded parts held where they are.
+  Fusion components keep their current poses, including child placements used to resolve an
+  inserted design's pose. A joint that conflicts with the placements
+  is kept suppressed, so no part moves when SolidCraft opens the design. Inventor assemblies
+  place their parts, without joints. Sketches in the assembly's own file are kept, hidden, for
+  reference.
 - FreeCAD output is experimental: `--to freecad` writes a self-contained rebuild macro,
   `--to fcstd` runs FreeCAD headlessly to save a native `.FCStd` document and checks its
   solids against the original, and `--to freecad --verify` runs the same check on a macro.
