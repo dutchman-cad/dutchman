@@ -3839,10 +3839,7 @@ fn composite_mirrors_multiply_the_previous_instance_set_in_order() {
         ),
     ] {
         let model = patterned(json!({"kind": "composite", "stages": stages}));
-        let (document, report) = convert(
-            &model,
-            &SolidCraftWriter::new().verification(Verification::Off),
-        );
+        let (document, report) = convert(&model, &composite_writer());
         assert!(history_line(&report).starts_with("3 of 3 features mapped"));
         assert_eq!(document["features"][2]["features"], json!(["Block"]));
         assert_eq!(
@@ -3850,8 +3847,8 @@ fn composite_mirrors_multiply_the_previous_instance_set_in_order() {
             json!(["Block", "Copies stage 1"])
         );
         assert_eq!(document["features"][3]["name"], "Copies");
-        if let Some(cli) = solidcraft() {
-            let design = written(&model).0;
+        if let Some(cli) = composite_cli() {
+            let design = written_with(&model, &composite_writer()).0;
             let v = volumes(&cli, &design);
             assert_eq!(v.len(), 6);
             assert!((v.iter().sum::<f64>() - 6000.0).abs() < 1e-6);
@@ -3862,6 +3859,92 @@ fn composite_mirrors_multiply_the_previous_instance_set_in_order() {
             x.sort_by(f64::total_cmp);
             assert_eq!(x, expected);
         }
+    }
+}
+
+fn composite_writer() -> SolidCraftWriter {
+    SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_25_1))
+}
+
+fn composite_cli() -> Option<PathBuf> {
+    let cli = solidcraft()?;
+    let version =
+        dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone()));
+    if version < dutchman_solidcraft::SolidCraftVersion::V0_25_1 {
+        eprintln!("skipped: composite chains need SolidCraft 0.25.1 or newer");
+        return None;
+    }
+    Some(cli)
+}
+
+#[test]
+fn compatibility_floor_blocks_composite_chains_but_keeps_single_stages() {
+    let mirror = json!({"kind": "mirror",
+        "plane_origin": {"x": 20.0, "y": 0.0, "z": 0.0},
+        "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}});
+    let linear = json!({"kind": "linear",
+        "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 60.0, "count": 3});
+    let writer = SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some("0.18.2".parse().unwrap()));
+    for stages in [
+        json!([{"pattern": mirror}, {"pattern": linear}]),
+        json!([{"pattern": linear}, {"pattern": mirror}]),
+        json!([{"pattern": mirror}, {"pattern": mirror}]),
+    ] {
+        let (document, report) = convert(
+            &patterned(json!({"kind": "composite", "stages": stages})),
+            &writer,
+        );
+        assert_eq!(report.outcome().unwrap().mode, Mode::Import);
+        let feature = report
+            .outcome()
+            .unwrap()
+            .features
+            .iter()
+            .find(|feature| feature.kind == "pattern")
+            .unwrap();
+        assert_eq!(
+            feature.reason.as_deref(),
+            Some("needs SolidCraft 0.25.1 or newer (target 0.18.2)")
+        );
+        assert!(history_line(&report).contains(feature.reason.as_deref().unwrap()));
+        assert!(!types(&document)
+            .iter()
+            .any(|(kind, _)| kind == "mirror" || kind == "pattern"));
+    }
+    for layout in [
+        mirror.clone(),
+        linear.clone(),
+        json!({"kind": "composite", "stages": [{"pattern": mirror}]}),
+        json!({"kind": "composite", "stages": [{"pattern": linear}]}),
+    ] {
+        let (document, report) = convert(&patterned(layout.clone()), &writer);
+        assert_eq!(report.outcome().unwrap().mode, Mode::History);
+        assert!(types(&document)
+            .iter()
+            .any(|(kind, _)| kind == "mirror" || kind == "pattern"));
+        let mut wire = serde_json::to_value(&patterned(layout.clone()).ir).unwrap();
+        wire["model"]["features"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+            "id": "f3d:model:feature#4", "ordinal": 3, "name": "Later copies", "suppressed": false,
+            "definition": {"definition": "pattern",
+                "seeds": [{"kind": "feature", "value": "f3d:model:feature#3"}],
+                "pattern": {"kind": "mirror", "plane_origin": {"x": 0.0, "y": 20.0, "z": 0.0},
+                    "plane_normal": {"x": 0.0, "y": 1.0, "z": 0.0}}}}));
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..patterned(layout)
+        };
+        let (_, report) = convert(&model, &writer);
+        assert_eq!(report.outcome().unwrap().mode, Mode::Import);
+        assert!(history_line(&report).contains("needs SolidCraft 0.25.1 or newer (target 0.18.2)"));
+        let (_, report) = convert(&model, &composite_writer());
+        assert_eq!(report.outcome().unwrap().mode, Mode::History);
     }
 }
 
@@ -3883,13 +3966,10 @@ fn composite_mirrors_chain_multiple_reflections_and_circular_copies() {
         (json!([circular, mirror]), 6),
     ] {
         let model = patterned(json!({"kind": "composite", "stages": stages}));
-        let (_, report) = convert(
-            &model,
-            &SolidCraftWriter::new().verification(Verification::Off),
-        );
+        let (_, report) = convert(&model, &composite_writer());
         assert!(history_line(&report).starts_with("3 of 3 features mapped"));
-        if let Some(cli) = solidcraft() {
-            let v = volumes(&cli, &written(&model).0);
+        if let Some(cli) = composite_cli() {
+            let v = volumes(&cli, &written_with(&model, &composite_writer()).0);
             assert_eq!(v.len(), count);
             assert!((v.iter().sum::<f64>() - count as f64 * 1000.0).abs() < 1e-5);
         }
@@ -3904,10 +3984,7 @@ fn composite_mirror_chains_refuse_unrepresentable_stages_and_excessive_products(
     let model = patterned(json!({"kind": "composite", "stages": [mirror,
         {"pattern": {"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0},
             "spacing": 20.0, "count": 5001}}]}));
-    let (document, report) = convert(
-        &model,
-        &SolidCraftWriter::new().verification(Verification::Off),
-    );
+    let (document, report) = convert(&model, &composite_writer());
     assert!(
         history_line(&report).contains("more than 10000 instances"),
         "{}",
@@ -3918,10 +3995,7 @@ fn composite_mirror_chains_refuse_unrepresentable_stages_and_excessive_products(
         patterned(json!({"kind": "composite", "stages": [mirror, mirror]})),
         json!([{"kind": "bodies", "value": {"kind": "bodies", "value": ["synthetic:cube:body#0"]}}]),
     );
-    let (_, report) = convert(
-        &model,
-        &SolidCraftWriter::new().verification(Verification::Off),
-    );
+    let (_, report) = convert(&model, &composite_writer());
     assert!(history_line(&report).contains("intermediate copies have no mapped body names"));
 }
 
@@ -3945,10 +4019,7 @@ fn later_patterns_can_select_a_whole_composite_mirror_result() {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..model
     };
-    let (document, report) = convert(
-        &model,
-        &SolidCraftWriter::new().verification(Verification::Off),
-    );
+    let (document, report) = convert(&model, &composite_writer());
     assert!(history_line(&report).starts_with("4 of 4 features mapped"));
     assert_eq!(document["features"][2]["name"], "Copies stage 1 (2)");
     assert_eq!(document["features"][4]["name"], "Copies (2)");
@@ -3956,8 +4027,8 @@ fn later_patterns_can_select_a_whole_composite_mirror_result() {
         document["features"][4]["features"],
         json!(["Block", "Copies stage 1 (2)", "Copies"])
     );
-    if let Some(cli) = solidcraft() {
-        let v = volumes(&cli, &written(&model).0);
+    if let Some(cli) = composite_cli() {
+        let v = volumes(&cli, &written_with(&model, &composite_writer()).0);
         assert_eq!(v.len(), 12);
         assert!((v.iter().sum::<f64>() - 12000.0).abs() < 1e-6);
     }
@@ -3979,6 +4050,7 @@ fn unfinished_pattern_replays_keep_the_original_geometry() {
             &patterned(layout),
             &SolidCraftWriter::new()
                 .verification(Verification::With(cli.clone()))
+                .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_25_1))
                 .timeout(std::time::Duration::ZERO),
         );
         assert_eq!(report.outcome().unwrap().mode, Mode::Import);
@@ -3999,6 +4071,11 @@ fn cc0_freecad_mirror_and_full_turn_match_recipe_volumes() {
         ("freecad-1.1.4/S13c.FCStd", 10, 11660.70799341),
         ("P08b.FCStd", 6, 13006.19358586),
     ] {
+        let cli = if file == "P08b.FCStd" {
+            solidcraft()
+        } else {
+            composite_cli()
+        };
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures")
             .join(file);
@@ -4008,10 +4085,7 @@ fn cc0_freecad_mirror_and_full_turn_match_recipe_volumes() {
             &mut Report::default(),
         )
         .unwrap();
-        let (document, report) = convert(
-            &model,
-            &SolidCraftWriter::new().verification(Verification::Off),
-        );
+        let (document, report) = convert(&model, &composite_writer());
         assert!(
             history_line(&report).starts_with(&format!("{count} of {count} features mapped")),
             "{file}: {}",
@@ -4039,7 +4113,7 @@ fn cc0_freecad_mirror_and_full_turn_match_recipe_volumes() {
                         json!({"x": 0.0, "y": 0.0, "z": 1.0});
                 }
             }
-            if let Some(cli) = solidcraft() {
+            if let Some(cli) = cli.clone() {
                 let axis_only = Model {
                     ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
                     ..model.clone()
@@ -4069,10 +4143,12 @@ fn cc0_freecad_mirror_and_full_turn_match_recipe_volumes() {
         } else {
             model
         };
-        if let Some(cli) = solidcraft() {
+        if let Some(cli) = cli {
             let (design, report) = written_with(
                 &model,
-                &SolidCraftWriter::new().verification(Verification::With(cli.clone())),
+                &SolidCraftWriter::new()
+                    .verification(Verification::With(cli.clone()))
+                    .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_25_1)),
             );
             assert_eq!(
                 report.outcome().unwrap().mode,

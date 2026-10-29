@@ -181,8 +181,9 @@ entry recesses combined with drill points, exit treatments, taper, and modeled t
 patterns of earlier features or named bodies, linear in one or
 two directions, circular over a partial span or all the way round, or at fixed spacing along
 planar sketch curves; regular explicit offsets and angles, and pairs of linear composite
-stages; ordered chains of feature-pattern stages containing mirrors, each repeating the
-previous instance set (at most 32 stages), with at most 10,000 instances per pattern or chain;
+stages; ordered chains of feature-pattern stages containing mirrors (target SolidCraft
+0.25.1 or newer), each repeating the previous instance set (at most 32 stages), with at most
+10,000 instances per pattern or chain;
 mirrors of earlier features across a
 plane; and body mirror patterns and body combines (join, cut or intersect, optionally keeping
 the tools) of bodies named by earlier features. Shells and drafts wait on input face geometry

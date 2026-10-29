@@ -781,6 +781,9 @@ around an axis, or at fixed spacing along curves of an earlier planar sketch. Ex
 linear offsets and circular angles map when their intervals are equal; two linear composite
 stages map to a rectangular grid. Composite feature patterns containing resolved mirrors
 map to an ordered chain: each stage repeats the preceding stage's entire instance set.
+Chained stages require a target of SolidCraft 0.25.1 or newer; older targets report
+`needs SolidCraft 0.25.1 or newer` and keep the original geometry. Single-stage mirrors
+and patterns still map on every supported target.
 Full-turn circular angles that repeat the seed endpoint keep only the distinct locations.
 Composite mirror chains allow up to 32 stages; patterns are limited to 10,000 instances,
 including the product of the counts in a chain. For mirror chains and repeated full-turn

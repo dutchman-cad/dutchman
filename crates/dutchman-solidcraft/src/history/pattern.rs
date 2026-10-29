@@ -86,6 +86,18 @@ pub(crate) fn map(
     if !features.is_empty() && !bodies.is_empty() {
         return Err("patterns mixing feature and body seeds are not supported yet: SolidCraft requires one seed kind".to_owned());
     }
+    // Older SolidCraft cannot use a pattern or mirror feature as a feature seed.
+    if preceding.iter().any(|mapped| {
+        matches!(
+            mapped.get("type").and_then(Value::as_str),
+            Some("pattern" | "mirror")
+        ) && mapped
+            .get("name")
+            .and_then(Value::as_str)
+            .is_some_and(|name| features.iter().any(|seed| seed == name))
+    }) {
+        require_chain_version(ctx)?;
+    }
     let pattern = definition.get("pattern");
     if pattern.and_then(|p| p.get("kind")).and_then(Value::as_str) == Some("composite")
         && pattern
@@ -159,6 +171,9 @@ fn chain(
     if stages.len() > 32 {
         return Err("composite patterns with more than 32 stages are not supported yet".to_owned());
     }
+    if stages.len() > 1 {
+        require_chain_version(ctx)?;
+    }
     let mut mapped = Vec::with_capacity(stages.len());
     let mut instances = 1_u64;
     for (index, stage) in stages.iter().enumerate() {
@@ -217,6 +232,17 @@ fn chain(
     ctx.builds = true;
     ctx.pattern_replay_required = true;
     Ok(last)
+}
+
+fn require_chain_version(ctx: &Context) -> Result<(), String> {
+    let minimum = crate::SolidCraftVersion::V0_25_1;
+    if ctx.target_version < minimum {
+        return Err(format!(
+            "needs SolidCraft {minimum} or newer (target {})",
+            ctx.target_version
+        ));
+    }
+    Ok(())
 }
 
 fn repeated_endpoint(pattern: Option<&Value>) -> bool {
@@ -610,6 +636,7 @@ mod tests {
         ] {
             let wire = Value::Null;
             let mut ctx = Context::new(&wire);
+            ctx.target_version = crate::SolidCraftVersion::V0_25_1;
             let mut preceding = vec![json!({"name": "Earlier"})];
             let result = chain(
                 &json!({"id": "composite", "name": "Copies"}),

@@ -354,7 +354,10 @@ off, or having no usable CLI, still writes unverified history.
 
 Composite feature patterns containing resolved mirrors can map to several ordered timeline
 features while retaining one result per source feature in the history report. Each stage
-repeats the previous instance set. A full-turn circular pattern with a repeated seed endpoint
+repeats the previous instance set. Chained stages require a target of SolidCraft 0.25.1
+or newer; older targets report `needs SolidCraft 0.25.1 or newer` and keep the original
+geometry. Single-stage mirrors and patterns still map on every supported target.
+A full-turn circular pattern with a repeated seed endpoint
 keeps each distinct location once. Replay differences still flatten the history and report
 why; body-seeded composite mirrors and unresolved planes remain unsupported.
 

@@ -49,7 +49,11 @@ A simple binder over a resolved construction plane can likewise be carried in it
 sketches. A binder used by a later feature remains a blocker when its source geometry
 reference is not resolved; the report says `a binder used by a later feature is not mapped yet`.
 
-MultiTransforms containing resolved mirrors keep their stage order as a chain of SolidCraft
+MultiTransforms containing resolved mirrors require a target of SolidCraft 0.25.1 or newer
+when a stage patterns or mirrors an earlier stage. Older targets report
+`needs SolidCraft 0.25.1 or newer` and keep the original geometry. Single-stage mirrors
+and patterns still map on every supported target. These MultiTransforms keep their stage
+order as a chain of SolidCraft
 mirror and pattern features. Each stage repeats the complete instance set from the previous
 stage. Full-turn polar patterns with a repeated seed endpoint keep every distinct location
 once. Replay checks body count, volume, and area against the stored original; a chain that
