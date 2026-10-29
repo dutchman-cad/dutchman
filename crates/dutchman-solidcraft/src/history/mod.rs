@@ -855,6 +855,7 @@ fn map_feature(
         }
         Some("sheet_metal_hem") => Err(sheet::hem_refusal(definition)),
         Some("stored_geometry") => base::stored(feature, ctx, report).map(Mapped::Feature),
+        Some("base_feature") if base::holds_none(definition) => Ok(Mapped::Nothing),
         Some("base_feature") => base::map(feature, definition, ctx).map(Mapped::Feature),
         // A placed datum plane: what is sketched on it carries the same frame of its own.
         Some("datum_plane") if definition.get("frame").is_some_and(Value::is_object) => {
