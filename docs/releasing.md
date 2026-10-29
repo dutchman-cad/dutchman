@@ -2,10 +2,11 @@
 
 A release is cut from `main` once CI is green there.
 
-1. Refresh the SolidCraft window alongside the cadmpeg pin. Dutchman targets the newest
-   SolidCraft plus releases published in the last 14 days. From SolidCraft's release dates,
-   choose the oldest release still in that window and the newest release, then run
-   `scripts/solidcraft-window.sh 0.23.0 0.25.1` (oldest, newest). It downloads the release
+1. Refresh the SolidCraft window alongside the cadmpeg pin. WINDOW_OLDEST is the oldest
+   SolidCraft release published in the 14 days before the tag, never below OLDEST_SOLIDCRAFT;
+   NEWEST_SOLIDCRAFT is the newest release at tag time. From SolidCraft's release dates,
+   choose both, then run `scripts/solidcraft-window.sh <oldest> <newest>` (for example
+   `scripts/solidcraft-window.sh 0.18.2 0.26.0`). It downloads the release
    checksum files and prints both constants and the exact Linux archive URLs and CI entries;
    it fails rather than inventing a checksum. Set `NEWEST_SOLIDCRAFT` and `WINDOW_OLDEST`
    in `crates/dutchman-solidcraft/src/verify.rs`, replace the two entries in the

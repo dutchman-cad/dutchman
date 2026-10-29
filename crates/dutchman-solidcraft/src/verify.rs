@@ -85,11 +85,11 @@ pub fn find_cli(verification: &Verification) -> Result<PathBuf, String> {
 pub const OLDEST_SOLIDCRAFT: [u64; 3] = [0, 18, 2];
 
 /// The newest release known at build time; update with the release checklist.
-pub const NEWEST_SOLIDCRAFT: [u64; 3] = [0, 25, 1];
+pub const NEWEST_SOLIDCRAFT: [u64; 3] = [0, 26, 0];
 
-/// The oldest release in the rolling window: newest plus releases from the last 14 days.
-/// Update alongside NEWEST_SOLIDCRAFT and the CI roundtrip pins at release time.
-pub const WINDOW_OLDEST: [u64; 3] = [0, 23, 0];
+/// The oldest SolidCraft release published in the 14 days before the tag, never below
+/// OLDEST_SOLIDCRAFT. Update alongside NEWEST_SOLIDCRAFT and the CI roundtrip pins at release time.
+pub const WINDOW_OLDEST: [u64; 3] = [0, 18, 2];
 
 /// An accepted SolidCraft target release.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
