@@ -93,7 +93,12 @@ pub fn fill(report: &Value, anonymous: &Value) -> Issue {
         ("stage", stage.join(", ")),
     ];
     let without = url(&fields);
-    fields.push(("report-anon", anonymous_report.clone()));
+    // Compact in the link, where every newline and indent costs encoded bytes; the copy to
+    // paste stays readable.
+    fields.push((
+        "report-anon",
+        serde_json::to_string(anonymous).unwrap_or_default(),
+    ));
     let with = url(&fields);
     let report_in_url = with.len() <= MAX_URL;
     Issue {
@@ -207,8 +212,11 @@ mod tests {
         let happened = query(&issue.url, "what-happened").unwrap();
         assert!(happened.contains("malformed container"), "{happened}");
         let pasted = query(&issue.url, "report-anon").unwrap();
-        assert_eq!(pasted, issue.anonymous_report);
         let anonymous: Value = serde_json::from_str(&pasted).unwrap();
+        assert_eq!(
+            anonymous,
+            serde_json::from_str::<Value>(&issue.anonymous_report).unwrap()
+        );
         assert_eq!(anonymous["schema"], anon::SCHEMA);
         assert_eq!(anonymous["errors"][0]["stage"], "decode");
         for text in [&issue.url, &issue.anonymous_report, &happened] {
