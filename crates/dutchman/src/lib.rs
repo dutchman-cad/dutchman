@@ -6,6 +6,7 @@
 
 pub mod anon;
 pub mod batch;
+pub mod choices;
 pub mod dxf;
 pub mod formats;
 pub mod issue;
@@ -87,9 +88,22 @@ pub struct ConvertOptions {
     /// or partial TechDraw DXF pages (convert command only).
     #[arg(long, value_enum, default_value = "solidcraft")]
     pub to: OutputFormat,
+    /// What to keep: fast (the shape only), standard (history, sketches and joints, with an
+    /// assembly's history left out when it would not fit in free memory) or full.
+    #[arg(long, value_enum, default_value = "standard")]
+    pub preset: choices::Preset,
     /// Write the geometry as one non-parametric import, never the feature history.
-    #[arg(long)]
+    #[arg(long, alias = "no-history")]
     pub import_only: bool,
+    /// Leave sketches out.
+    #[arg(long)]
+    pub no_sketches: bool,
+    /// Leave assembly joints out.
+    #[arg(long)]
+    pub no_joints: bool,
+    /// Convert even when the estimate says the conversion will not fit in free memory.
+    #[arg(long)]
+    pub no_memory_check: bool,
     /// The SolidCraft CLI that checks a written history against the original geometry
     /// (default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an
     /// installed SolidCraft app).
@@ -131,7 +145,11 @@ impl Default for ConvertOptions {
     fn default() -> Self {
         Self {
             to: OutputFormat::default(),
+            preset: choices::Preset::default(),
             import_only: false,
+            no_sketches: false,
+            no_joints: false,
+            no_memory_check: false,
             solidcraft: None,
             solidcraft_version: None,
             no_verify: false,
@@ -153,6 +171,15 @@ impl ConvertOptions {
             (false, Some(path)) => Verification::With(path.clone()),
             (false, None) => Verification::Auto,
         }
+    }
+
+    /// What these options keep: their preset, narrowed by the per-choice switches.
+    pub fn choices(&self) -> choices::Choices {
+        let mut choices = choices::Choices::of(self.preset);
+        choices.history &= !self.import_only;
+        choices.sketches &= !self.no_sketches;
+        choices.joints &= !self.no_joints;
+        choices
     }
 
     /// Where these options say to look for an assembly's part files.
