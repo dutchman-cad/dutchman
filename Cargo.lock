@@ -1362,6 +1362,7 @@ dependencies = [
  "clap",
  "ctrlc",
  "dutchman-core",
+ "dutchman-dxf",
  "dutchman-freecad",
  "dutchman-launcher",
  "dutchman-pilot",
@@ -1384,6 +1385,14 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "zip",
+]
+
+[[package]]
+name = "dutchman-dxf"
+version = "0.2.4"
+dependencies = [
+ "cadmpeg-ir",
+ "dutchman-core",
 ]
 
 [[package]]

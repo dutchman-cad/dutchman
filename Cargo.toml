@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/dutchman-launcher", "crates/dutchman", "crates/dutchman-core", "crates/dutchman-gui", "crates/dutchman-freecad", "crates/dutchman-solidcraft", "crates/dutchman-web", "crates/dutchman-serve"]
+members = ["crates/dutchman-dxf", "crates/dutchman-launcher", "crates/dutchman", "crates/dutchman-core", "crates/dutchman-gui", "crates/dutchman-freecad", "crates/dutchman-solidcraft", "crates/dutchman-web", "crates/dutchman-serve"]
 
 [workspace.package]
 version = "0.2.4"
@@ -16,6 +16,7 @@ dutchman-launcher = { path = "crates/dutchman-launcher", version = "0.2.1" }
 dutchman = { path = "crates/dutchman", version = "0.2.1", default-features = false }
 dutchman-core = { path = "crates/dutchman-core", version = "0.2.4", default-features = false }
 dutchman-solidcraft = { path = "crates/dutchman-solidcraft", version = "0.2.4", default-features = false }
+dutchman-dxf = { path = "crates/dutchman-dxf", version = "0.2.4" }
 dutchman-freecad = { path = "crates/dutchman-freecad", version = "0.2.1", default-features = false }
 clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 dutchman-pilot = { git = "https://github.com/dutchman-cad/pilot", rev = "a91cadeeaadf22b343e936c38f9dd4fc007dcfc3" }

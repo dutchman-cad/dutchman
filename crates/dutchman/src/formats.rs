@@ -57,6 +57,7 @@ pub fn text() -> String {
             converts(format)
         ));
     }
+    out.push_str("\nFreeCAD TechDraw → DXF  drawings: page curves, dimension labels, annotations, and templates; unsupported content reported as Dropped\n");
     out.push_str("\nWritten as a SolidCraft design (.solidcraft), or, experimental, as a FreeCAD rebuild macro (.FCMacro, --to freecad)\n");
     out
 }
@@ -75,5 +76,5 @@ pub fn json() -> Value {
             })
         })
         .collect();
-    json!({"schema": SCHEMA, "ok": true, "formats": formats})
+    json!({"schema": SCHEMA, "ok": true, "formats": formats, "drawings": [{"input": Format::FreeCadDocument.id(), "name": "FreeCAD TechDraw", "output": "dxf", "converts": "page curves, dimension labels, annotations, and templates; unsupported content reported as Dropped"}]})
 }

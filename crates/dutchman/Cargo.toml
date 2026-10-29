@@ -32,6 +32,7 @@ aho-corasick.workspace = true
 clap = { workspace = true, features = ["suggestions"] }
 dutchman-launcher.workspace = true
 dutchman-core.workspace = true
+dutchman-dxf.workspace = true
 dutchman-freecad.workspace = true
 dutchman-pilot = { workspace = true, optional = true }
 dutchman-solidcraft.workspace = true

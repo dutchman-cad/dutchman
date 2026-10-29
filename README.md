@@ -126,6 +126,8 @@ STEP (.step, .stp)  reads geometry  L8  converts: geometry through STEP; solids 
 IGES (.igs, .iges)  open it in SolidCraft directly  L9  not yet: SolidCraft imports IGES itself (File > Import)
 Creo or NX part (.prt)  recognised, not read yet  not yet: nothing yet; reading geometry is not supported yet
 
+FreeCAD TechDraw → DXF  drawings: page curves, dimension labels, annotations, and templates; unsupported content reported as Dropped
+
 Written as a SolidCraft design (.solidcraft), or, experimental, as a FreeCAD rebuild macro (.FCMacro, --to freecad)
 ```
 <!-- /formats -->
@@ -172,7 +174,7 @@ history, with no flattened-history warning.
   solids against the original, and `--to freecad --verify` runs the same check on a macro.
 - Every conversion lists what it could not carry across, as Info, Degraded or Dropped.
 
-The output is a SolidCraft design. `--to freecad` writes a FreeCAD rebuild macro (`.FCMacro`)
+By default, the output is a SolidCraft design. `--to freecad` writes a FreeCAD rebuild macro (`.FCMacro`)
 instead. It rebuilds the mapped history in FreeCAD, keeps the original geometry, and rebuilds
 an assembly's joints (fixed, revolute, slider, cylindrical, ball, and more, through
 sub-assemblies too) in the Assembly workbench, with its grounded parts. When a later feature
@@ -357,3 +359,21 @@ identifies it as `dutchman launcher <version>`. Install Dutchman Convert for con
 ## Licence
 
 Licensed under the [Apache License, Version 2.0](LICENSE).
+
+### FreeCAD TechDraw drawing output
+
+`dutchman convert part.FCStd --to dxf` writes `part-PageName.dxf` for each
+TechDraw page beside the input. `--page NAME` selects a page by its FreeCAD object
+name. Use `-o existing-directory` for per-page files there, or `-o drawing.dxf`
+with `--page` for an exact filename; without `--page`, that path is the filename
+base (`drawing-PageName.dxf`). Default files require `--force` to replace;
+explicit outputs replace unless `--no-clobber` is given.
+
+DXF output keeps neutral view curves, positioned annotation text, dimension labels,
+template frames, and resolved title-block text in millimetres at 1:1 page scale.
+Dimensions keep verified measurements or replacement text. Neutral linear and
+radial anchor pairs generate non-associative lines and open arrows; dimensions
+without usable anchors keep labels only. Missing curves, unresolved dimensions, and unsupported presentation are
+reported per page. `--json` lists entity counts and losses.
+See [FreeCAD drawing coverage](docs/freecad.md#techdraw-to-dxf). DXF is available
+through `convert`; batch, desktop, web and MCP drawing conversion are not supported yet.

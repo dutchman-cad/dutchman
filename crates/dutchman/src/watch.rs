@@ -118,6 +118,12 @@ pub fn run(command: Command) -> Result<bool, String> {
 /// Runs with conversion progress on stderr, unless `quiet` is set.
 pub fn run_with_progress(command: Command, quiet: bool) -> Result<bool, String> {
     let progress = Arc::new(crate::progress::StderrProgress::new(quiet, command.json));
+    if command.options.to == crate::OutputFormat::Dxf {
+        return Err(
+            "DXF page output uses dutchman convert --to dxf; batch and watch are not supported yet"
+                .into(),
+        );
+    }
     let stop = Arc::new(AtomicBool::new(false));
     let signal = Arc::clone(&stop);
     ctrlc::set_handler(move || signal.store(true, Ordering::Relaxed))

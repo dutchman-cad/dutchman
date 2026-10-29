@@ -366,3 +366,23 @@ the timer (`Progress::run`). There is no per-entity reporting. Fusion `.f3z` mem
 is internal to cadmpeg, whose current API exposes neither member completion nor a total.
 The shared batch events forward progress to the desktop worker; isolated CLI workers use
 JSON lines on stderr. The CLI formats these separately from its unchanged final reports.
+
+
+
+## Drawing output
+
+`dutchman-dxf` maps the neutral drawing and semantic annotation arenas to one
+ASCII R2000 DXF per page. It depends on `dutchman-core` and `cadmpeg-ir` only and
+has no native-format parser. Its entity encoder accepts page-space geometry;
+missing typed geometry is reported rather than projected from 3D bodies or read
+from native caches. Sheet sizes, template primitives, resolved template text, view
+curves, and verified dimension values come from neutral IR fields. See [freecad.md](freecad.md#techdraw-to-dxf).
+
+`dutchman-core::read_drawings` uses the existing input limits, codec detector,
+full decode, validation and panic guard. It requires no 3D body and does not
+retry at geometry depth, which would remove the drawing arenas. The existing
+model conversion geometry gate remains unchanged. `dutchman::dxf` plans and
+encodes all selected pages, checks output paths, then writes them and builds
+per-page results through `json.rs`. This multiple-file operation has its own
+entry point because the existing `Writer` seam writes one byte stream. Batch
+and MCP drawing conversion are not supported yet.
