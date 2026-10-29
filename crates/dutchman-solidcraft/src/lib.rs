@@ -498,7 +498,7 @@ impl Writer for SolidCraftWriter {
                 .map_err(|err| Error::Encode(format!("cannot write the design: {err}")));
         }
         if parameters_only(model) {
-            let (params, _) = history::params::map(&model.ir.model.parameters, report);
+            let (params, _) = history::params::map(model, report);
             report.push(
                 Severity::Info,
                 GEOMETRY,

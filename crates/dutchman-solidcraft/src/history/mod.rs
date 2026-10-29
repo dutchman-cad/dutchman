@@ -382,7 +382,7 @@ fn map_into(
         serde_json::to_value(&model.ir).map_err(|err| format!("cannot read the model: {err}"))?;
     check_version(&document)?;
     let wire = document.get("model").cloned().unwrap_or(Value::Null);
-    let (params, param_names) = params::map(&model.ir.model.parameters, report);
+    let (params, param_names) = params::map(model, report);
     references.params = params.clone();
     let mut ctx = Context::new(&wire);
     ctx.params = param_names;
@@ -491,7 +491,7 @@ pub(crate) fn sketches(model: &Model, report: &mut Report) -> (History, usize) {
     };
     let wire = document.get("model").cloned().unwrap_or(Value::Null);
     let mut param_notes = Report::default();
-    let (params, param_names) = params::map(&model.ir.model.parameters, &mut param_notes);
+    let (params, param_names) = params::map(model, &mut param_notes);
     let mut ctx = Context::new(&wire);
     ctx.params = param_names;
     let mut left_out = 0;

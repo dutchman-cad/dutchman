@@ -27,3 +27,17 @@ saved by FreeCAD with that type. No other design files are used.
 The hidden-container regression also derives from F16b in memory: it adds a hidden
 `App::Part` containing the first Body, while leaving the Body and Pad's own visibility
 flags unchanged. This checks ancestor visibility without needing another saved fixture.
+
+## FreeCAD parameter fixtures
+
+These synthetic documents come from CAD Fixture Recipes v1.30, generated with FreeCAD
+0.21.2. The recipes and their generated files are dedicated to the public domain under
+CC0-1.0. No third-party design files are included.
+
+| File | Recipe | Source volume | Parameter edit and expected volume |
+|---|---|---|---|
+| `recipe-P12a-freecad-0.21.2.FCStd` | P12a, spreadsheet-driven plate width and pad depth | 6000 mm³ | `plate_w`: 20 → 25 mm; 9375 mm³ (P12b) |
+| `recipe-N11a-freecad-0.21.2.FCStd` | N11a, spreadsheet alias driving sketch width | 6000 mm³ | `w`: 30 → 45 mm; 9000 mm³ (N11b) |
+
+The volumes and edits are recorded in the generated set's `manifest.json`. Both files
+exercise named sketch constraint expressions as well as spreadsheet parameters.

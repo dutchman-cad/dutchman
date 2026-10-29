@@ -289,6 +289,15 @@ still converted and each has its own report (shortened here):
     {"ok":true,"input":{"path":"/home/me/designs/project/sub/synthetic_cube.ipt", …},"output":{"path":"/home/me/designs/converted/sub/synthetic_cube.solidcraft", …},"mode":"import", …}]}}}
 ```
 
+FreeCAD conversions retain numeric spreadsheet cells and supported formulas as parameters,
+resolving qualified object properties to parameter names. Text cells are omitted silently;
+unused numeric cells produce `Info` notes. Expression fallback losses name the cause,
+such as an unsupported function or an unresolved reference. The CLI and MCP use the same
+losses and verification fields. Verification compares the initial geometry; it cannot
+certify source dependencies that the decoder did not expose. See
+[FreeCAD expressions](freecad.md#spreadsheet-parameters-and-expressions) before relying on
+parameter edits, particularly named sketch constraint expressions and object-label references.
+
 ## Safety
 
 - **Everything stays on your machine.** The server reads and writes local files only and
