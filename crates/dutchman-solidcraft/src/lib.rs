@@ -307,7 +307,7 @@ impl SolidCraftWriter {
             Err(why) => return Ok(verify::Outcome::Unverified(why.to_string())),
         };
         let original = self.history_design(model, history, step, Live::Original)?;
-        Ok(verify::compare(
+        let result = verify::compare(
             &cli,
             self.timeout,
             written,
@@ -316,7 +316,15 @@ impl SolidCraftWriter {
                 solids: solid_bodies(model),
                 sheets: sheet_bodies(model),
             },
-        ))
+        );
+        Ok(match result {
+            verify::Outcome::Unverified(why) if history.pattern_replay_required => {
+                verify::Outcome::Differs(format!(
+                    "the pattern instance set could not be verified: {why}"
+                ))
+            }
+            result => result,
+        })
     }
 }
 

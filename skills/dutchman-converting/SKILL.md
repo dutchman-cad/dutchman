@@ -254,6 +254,22 @@ FreeCAD can supply that geometry from an earlier base feature's stored shape, in
 when its intermediate body is hidden. Unproven source membership or an ambiguous replay
 pick keeps the history flattened, with the reason reported. `--no-verify` cannot prove blends.
 
+Whole-sketch hole placements exclude construction entities; explicit entity selections
+can still use construction points or circle centres.
+
+For mirror-containing composite patterns and repeated full-turn endpoints, an attempted
+replay that cannot finish keeps the original geometry and reports why. Turning verification
+off, or having no usable CLI, still writes unverified history.
+
+Composite feature patterns containing resolved mirrors can map to several ordered timeline
+features while retaining one result per source feature in the history report. Each stage
+repeats the previous instance set. Chained stages require a target of SolidCraft 0.25.1
+or newer; older targets report `needs SolidCraft 0.25.1 or newer` and keep the original
+geometry. Single-stage mirrors and patterns still map on every supported target.
+A full-turn circular pattern with a repeated seed endpoint
+keeps each distinct location once. Replay differences still flatten the history and report
+why; body-seeded composite mirrors and unresolved planes remain unsupported.
+
 Body mirror patterns and join/cut/intersect body combines (optionally keeping the tool
 bodies) can keep editable history; their bodies must be named by earlier mapped features.
 Shells and drafts are refused, since their faces are known only on the final body, where

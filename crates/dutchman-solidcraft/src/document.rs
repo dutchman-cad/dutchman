@@ -295,6 +295,7 @@ mod history_tests {
             face_looks: Vec::new(),
             sheet_rules: Vec::new(),
             next_id: 3,
+            pattern_replay_required: false,
             mapped: 2,
             total: 2,
             blends: Vec::new(),

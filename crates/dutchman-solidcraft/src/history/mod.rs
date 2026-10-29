@@ -52,6 +52,8 @@ pub(crate) struct History {
     pub(crate) sheet_rules: Vec<Value>,
     /// The id the next feature after the history takes.
     pub(crate) next_id: u64,
+    /// New pattern instance sets must fall back if an attempted replay cannot finish.
+    pub(crate) pattern_replay_required: bool,
     /// Source features that became SolidCraft features or needed none.
     pub(crate) mapped: usize,
     /// Active source features.
@@ -249,6 +251,9 @@ struct Context<'a> {
     looks: BTreeMap<String, Value>,
     /// The timeline name each mapped source feature took, by CADIR feature id.
     feature_names: BTreeMap<String, String>,
+    /// All features making a composite pattern's instance set, including its seeds.
+    pattern_features: BTreeMap<String, Vec<String>>,
+    pattern_replay_required: bool,
     /// The source bodies the history makes under their own names: (CADIR body id, name).
     named_bodies: Vec<(String, String)>,
     /// Whether a feature that builds geometry has been mapped.
@@ -269,6 +274,8 @@ impl<'a> Context<'a> {
             sketches: BTreeMap::new(),
             looks: BTreeMap::new(),
             feature_names: BTreeMap::new(),
+            pattern_features: BTreeMap::new(),
+            pattern_replay_required: false,
             named_bodies: Vec::new(),
             builds: false,
             sheet_rules: Vec::new(),
@@ -278,7 +285,11 @@ impl<'a> Context<'a> {
 
     /// The timeline name `feature` keeps: its own, numbered when an earlier feature has it,
     /// since SolidCraft refers to features by name.
-    fn unique_name(&self, feature: &Value, preceding: &[Value]) -> String {
+    fn unique_name<'b>(
+        &self,
+        feature: &Value,
+        preceding: impl Iterator<Item = &'b Value> + Clone,
+    ) -> String {
         let base = feature
             .get("name")
             .and_then(Value::as_str)
@@ -287,7 +298,7 @@ impl<'a> Context<'a> {
         let taken = |name: &str| {
             self.feature_names.values().any(|known| known == name)
                 || preceding
-                    .iter()
+                    .clone()
                     .any(|feature| feature.get("name").and_then(Value::as_str) == Some(name))
         };
         let mut name = base.clone();
@@ -440,7 +451,7 @@ fn map_into(
                 if mapped.get("type").and_then(Value::as_str) == Some("sketch") {
                     references.features.push(mapped.clone());
                 }
-                let name = ctx.unique_name(&mapped, &history.features);
+                let name = ctx.unique_name(&mapped, history.features.iter());
                 if let Some(fields) = mapped.as_object_mut() {
                     fields.insert("name".to_owned(), Value::String(name.clone()));
                 }
@@ -487,6 +498,7 @@ fn map_into(
         .map(|(thickness, name)| sheet::rule(name, *thickness))
         .collect();
     history.next_id = ctx.next_id;
+    history.pattern_replay_required = ctx.pattern_replay_required;
     history.blends = std::mem::take(&mut ctx.blends);
     Ok(history)
 }
@@ -520,7 +532,7 @@ pub(crate) fn sketches(model: &Model, report: &mut Report) -> (History, usize) {
         match sketch::map(&feature, &definition, &mut ctx, &mut notes) {
             Ok(mut mapped) => {
                 report.append(notes);
-                let name = ctx.unique_name(&mapped, &kept.features);
+                let name = ctx.unique_name(&mapped, kept.features.iter());
                 if let Some(fields) = mapped.as_object_mut() {
                     fields.insert("name".to_owned(), Value::String(name));
                 }
@@ -717,7 +729,7 @@ fn map_feature(
         {
             modify::mirror(feature, definition, ctx).map(Mapped::Feature)
         }
-        Some("pattern") => pattern::map(feature, definition, ctx).map(Mapped::Feature),
+        Some("pattern") => pattern::map(feature, definition, ctx, preceding).map(Mapped::Feature),
         Some("fillet" | "chamfer") => {
             blend::map(feature, definition, ctx, report).map(Mapped::Feature)
         }

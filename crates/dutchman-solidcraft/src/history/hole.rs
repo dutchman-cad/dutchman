@@ -459,7 +459,22 @@ fn placement(
             .collect::<Result<BTreeSet<_>, _>>()?;
         Some(selected)
     } else {
-        None
+        // Construction references become hole locations only when explicitly selected.
+        let construction: BTreeSet<&str> = ctx
+            .arena("sketch_entities")
+            .iter()
+            .filter(|entity| entity.get("sketch").and_then(Value::as_str) == Some(sketch_id))
+            .filter(|entity| entity.get("construction").and_then(Value::as_bool) == Some(true))
+            .filter_map(|entity| entity.get("id").and_then(Value::as_str))
+            .collect();
+        Some(
+            sketch
+                .shapes
+                .keys()
+                .map(String::as_str)
+                .filter(|id| !construction.contains(id))
+                .collect(),
+        )
     };
     let locations = locations(sketch, definition.get("profile_filter"), selected.as_ref())?;
     let first = locations
@@ -916,6 +931,24 @@ mod tests {
         assert_eq!(out["points"]["ids"], json!(["p1", "p2"]));
         let none = mapped(&hole(json!({"profile_filter": "arcs"}))).unwrap_err();
         assert_eq!(none, "its sketch has no points to drill at");
+    }
+
+    #[test]
+    fn construction_locations_require_an_explicit_selection() {
+        for (entity, expected) in [("point", "p1"), ("circle", "p2")] {
+            let model = json!({"sketch_entities": [
+                {"id": entity, "sketch": "s", "construction": true}]});
+            let mut ctx = Context::new(&model);
+            ctx.sketches.insert("s".to_owned(), sketch());
+            let definition = hole(json!({"profile_filter": "all"}));
+            let feature = json!({"name": "Hole"});
+            let implicit = map(&feature, &definition, &mut ctx, &mut Report::default()).unwrap();
+            assert_eq!(implicit["points"]["ids"], json!([expected]));
+            let explicit = hole(json!({"profile_filter": "all", "profile": {
+                "kind": "sketch_entities", "value": {"sketch": "s", "entities": ["circle", "point"]}}}));
+            let explicit = map(&feature, &explicit, &mut ctx, &mut Report::default()).unwrap();
+            assert_eq!(explicit["points"]["ids"], json!(["p1", "p2"]));
+        }
     }
 
     #[test]
