@@ -88,8 +88,10 @@ pub struct ConvertOptions {
     /// installed SolidCraft app).
     #[arg(long, value_name = "PATH", conflicts_with = "no_verify")]
     pub solidcraft: Option<PathBuf>,
-    /// Target SolidCraft release (x.y.z, at least 0.18.2). Defaults to the verification
-    /// CLI's version, else 0.18.2; with --no-verify, defaults to 0.18.2.
+    /// Made for the current SolidCraft (any release from the last two weeks); older
+    /// versions get simplified features, or pass --solidcraft-version x.y.z (at least
+    /// 0.18.2). Defaults to the found CLI's version, else the newest known at build time,
+    /// even with --no-verify.
     #[arg(long, value_name = "x.y.z")]
     pub solidcraft_version: Option<SolidCraftVersion>,
     /// Write history without checking it in SolidCraft.

@@ -18,9 +18,11 @@ dutchman part.f3d out.solidcraft
 dutchman convert part.f3d out.solidcraft
 ```
 
-SolidCraft output targets the verification CLI's version when found, else 0.18.2.
-Use `--solidcraft-version 0.25.1` on `convert`, `convert-all`, or `watch` to choose a
-release (at least 0.18.2). With `--no-verify` and no explicit version, the target is 0.18.2.
+Dutchman is made for the current SolidCraft (any release from the last two weeks);
+older versions get simplified features, or pass `--solidcraft-version x.y.z` on
+`convert`, `convert-all`, or `watch` (at least 0.18.2).
+The target defaults to the found CLI's version, even with `--no-verify`, else the
+newest release known at build time (currently 0.25.1). The current window is 0.23.0–0.25.1.
 Constant-radius FreeCAD helices keep editable sketch-profile coils only for targets
 0.25.1 or newer; older targets preserve the original geometry and report the version needed.
 Designs open in their target release and newer releases.

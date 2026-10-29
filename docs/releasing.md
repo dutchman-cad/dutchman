@@ -2,7 +2,19 @@
 
 A release is cut from `main` once CI is green there.
 
-1. Run `python3 scripts/changelog.py release X.Y.Z` to assemble the fragments into a dated
+1. Refresh the SolidCraft window alongside the cadmpeg pin. Dutchman targets the newest
+   SolidCraft plus releases published in the last 14 days. From SolidCraft's release dates,
+   choose the oldest release still in that window and the newest release, then run
+   `scripts/solidcraft-window.sh 0.23.0 0.25.1` (oldest, newest). It downloads the release
+   checksum files and prints both constants and the exact Linux archive URLs and CI entries;
+   it fails rather than inventing a checksum. Set `NEWEST_SOLIDCRAFT` and `WINDOW_OLDEST`
+   in `crates/dutchman-solidcraft/src/verify.rs`, replace the two entries in the
+   `solidcraft-roundtrip` matrix in `.github/workflows/ci.yml`, and update the current
+   versions in the README and docs. Keep `OLDEST_SOLIDCRAFT` at 0.18.2 as the oldest accepted
+   explicit target. Run the target-version tests and roundtrip checks at both window bounds.
+   Release notes include: "Made for the current SolidCraft (any release from the last two
+   weeks); older versions get simplified features, or pass --solidcraft-version."
+2. Run `python3 scripts/changelog.py release X.Y.Z` to assemble the fragments into a dated
    `CHANGELOG.md` entry (use `--date YYYY-MM-DD` to override today). Review it, add any known
    issue, and stage the deleted fragments. Set the workspace `version` in `Cargo.toml`, along
    with the `version` of the `dutchman-core` and `dutchman-solidcraft` workspace dependencies.
@@ -21,8 +33,8 @@ A release is cut from `main` once CI is green there.
    Preview the full body with
    `python3 scripts/release-notes.py X.Y.Z`; it adds the downloads, install commands, and
    a link to the dated CHANGELOG entry at the tag.
-2. Merge that, then tag the merge commit `vX.Y.Z` and push the tag.
-3. Pushing the tag runs the `Release builds` workflow. It builds each platform's archive
+3. Merge that, then tag the merge commit `vX.Y.Z` and push the tag.
+4. Pushing the tag runs the `Release builds` workflow. It builds each platform's archive
    (`scripts/package-archive.sh`: `dutchman`, `dutchman-mcp` and `dutchman-gui`, plus `dutchman-web` on Linux, with LICENSE,
    NOTICE, README and a SHA-256), and the macOS disk image (`scripts/macos-dmg.sh`:
    Dutchman Convert.app, universal, signed ad hoc), as workflow artifacts. The two Mac targets
@@ -45,7 +57,7 @@ A release is cut from `main` once CI is green there.
    a draft never reaches the registry. To republish a release's image, run it on demand with
    that tag (`gh workflow run release-image.yml -f tag=vX.Y.Z`). On-demand and
    packaging pull-request runs build both image architectures without logging in or pushing.
-4. crates.io: releases ship as GitHub release archives only, until the core API settles. The
+5. crates.io: releases ship as GitHub release archives only, until the core API settles. The
    crates.io `dutchman` crate stays the 0.0.1 placeholder. When crates are published, the
    order matters: `dutchman` depends on `dutchman-core` and `dutchman-solidcraft`, so those go
    first (`cargo publish -p dutchman-core`, then `-p dutchman-solidcraft`, then `-p dutchman`).

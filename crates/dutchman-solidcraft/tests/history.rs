@@ -1825,7 +1825,7 @@ fn helical_sweeps_block_history_for_the_compatibility_floor() {
         &helical_history(|_| {}),
         &SolidCraftWriter::new()
             .verification(Verification::Off)
-            .target_version(Some(dutchman_solidcraft::SolidCraftVersion::default())),
+            .target_version(Some("0.18.2".parse().unwrap())),
     );
     assert_eq!(
         types(&document).first(),
@@ -2374,49 +2374,61 @@ fn a_simple_hole_at_a_sketch_circle_becomes_a_solidcraft_hole() {
 
 #[test]
 fn counterbores_and_countersinks_keep_their_entry_dimensions() {
-    for (form, expected) in [
-        (
-            json!({"kind": "counterbore", "diameter": 8.0, "depth": 2.0}),
-            json!({"type": "counterbore", "cb_diameter": "8 mm", "cb_depth": "2 mm"}),
-        ),
-        (
-            json!({"kind": "countersink", "diameter": 8.0,
+    for version in ["0.18.2", "0.25.1"] {
+        for (form, expected) in [
+            (
+                json!({"kind": "counterbore", "diameter": 8.0, "depth": 2.0}),
+                json!({"type": "counterbore", "cb_diameter": "8 mm", "cb_depth": "2 mm"}),
+            ),
+            (
+                json!({"kind": "countersink", "diameter": 8.0,
                 "angle": std::f64::consts::FRAC_PI_2}),
-            json!({"type": "countersink", "cs_diameter": "8 mm", "cs_angle": "90"}),
-        ),
-        (
-            json!({"kind": "chamfer", "diameter": 8.0,
+                json!({"type": "countersink", "cs_diameter": "8 mm", "cs_angle": "90"}),
+            ),
+            (
+                json!({"kind": "chamfer", "diameter": 8.0,
                 "angle": std::f64::consts::FRAC_PI_2}),
-            json!({"type": "countersink", "cs_diameter": "8 mm", "cs_angle": "90"}),
-        ),
-    ] {
-        for blind in [false, true] {
-            let model = holed_cube(4.0, |hole| {
-                hole["shape"]["construction"]["kind"] = form.clone();
-                if blind {
-                    hole["extent"] = json!({"kind": "blind", "length": 6.0});
-                    hole["bottom"] = json!({"kind": "flat"});
+                json!({"type": "countersink", "cs_diameter": "8 mm", "cs_angle": "90"}),
+            ),
+        ] {
+            for blind in [false, true] {
+                let mut expected = expected.clone();
+                if version
+                    .parse::<dutchman_solidcraft::SolidCraftVersion>()
+                    .unwrap()
+                    >= dutchman_solidcraft::SolidCraftVersion::V0_22_1
+                {
+                    expected["tip_angle"] = json!("180");
                 }
-            });
-            let (document, report) = convert(
-                &model,
-                &SolidCraftWriter::new().verification(Verification::Off),
-            );
-            assert!(
-                history_line(&report).starts_with("4 of 4 features mapped"),
-                "{}",
-                history_line(&report)
-            );
-            let hole = &document["features"][3];
-            assert_eq!(hole["hole"], expected);
-            assert_eq!(hole["diameter"], "4 mm");
-            assert_eq!(hole["position"], json!([5.0, 5.0, 10.0]));
-            assert_eq!(hole["direction"], json!([0.0, 0.0, -1.0]));
-            assert_eq!(hole["points"]["sketch"], document["features"][2]["id"]);
-            if blind {
-                assert_eq!(hole["depth"], "6 mm");
-            } else {
-                assert!(hole.get("depth").is_none());
+                let model = holed_cube(4.0, |hole| {
+                    hole["shape"]["construction"]["kind"] = form.clone();
+                    if blind {
+                        hole["extent"] = json!({"kind": "blind", "length": 6.0});
+                        hole["bottom"] = json!({"kind": "flat"});
+                    }
+                });
+                let (document, report) = convert(
+                    &model,
+                    &SolidCraftWriter::new()
+                        .verification(Verification::Off)
+                        .target_version(Some(version.parse().unwrap())),
+                );
+                assert!(
+                    history_line(&report).starts_with("4 of 4 features mapped"),
+                    "{}",
+                    history_line(&report)
+                );
+                let hole = &document["features"][3];
+                assert_eq!(hole["hole"], expected);
+                assert_eq!(hole["diameter"], "4 mm");
+                assert_eq!(hole["position"], json!([5.0, 5.0, 10.0]));
+                assert_eq!(hole["direction"], json!([0.0, 0.0, -1.0]));
+                assert_eq!(hole["points"]["sketch"], document["features"][2]["id"]);
+                if blind {
+                    assert_eq!(hole["depth"], "6 mm");
+                } else {
+                    assert!(hole.get("depth").is_none());
+                }
             }
         }
     }
@@ -2489,7 +2501,7 @@ fn a_plain_drilled_form_keeps_its_angle_and_shoulder_depth() {
 
 #[test]
 fn entry_recesses_write_flat_tips_only_for_new_targets() {
-    for version in ["0.18.2", "0.25.1"] {
+    for version in ["0.18.2", "0.22.0", "0.22.1", "0.25.1"] {
         for form in [
             json!({"kind": "counterbore", "diameter": 8.0, "depth": 2.0}),
             json!({"kind": "countersink", "diameter": 8.0, "angle": std::f64::consts::FRAC_PI_2}),
@@ -2507,7 +2519,11 @@ fn entry_recesses_write_flat_tips_only_for_new_targets() {
                     .target_version(Some(version.parse().unwrap())),
             );
             let tip = &document["features"][3]["hole"]["tip_angle"];
-            if version == "0.25.1" {
+            if version
+                .parse::<dutchman_solidcraft::SolidCraftVersion>()
+                .unwrap()
+                >= dutchman_solidcraft::SolidCraftVersion::V0_22_1
+            {
                 assert_eq!(tip, "180");
             } else {
                 assert!(tip.is_null());
@@ -2520,10 +2536,10 @@ fn entry_recesses_write_flat_tips_only_for_new_targets() {
 fn solidcraft_entry_recess_tip_angles_follow_the_target_release() {
     let Some(cli) = solidcraft() else { return };
     let modern = dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone()))
-        >= dutchman_solidcraft::SolidCraftVersion::V0_25_1;
+        >= dutchman_solidcraft::SolidCraftVersion::V0_22_1;
     let dir = tempfile::tempdir().unwrap();
     let bore = std::f64::consts::PI * 4.0;
-    // Older releases ignore the angle; 0.25.1 cuts a cone unless the tip is flat.
+    // Older releases ignore the angle; 0.22.1 and newer cut a cone unless the tip is flat.
     for (kind, extra) in [
         ("counterbore", std::f64::consts::PI * 12.0 * 2.0),
         (
@@ -7916,7 +7932,11 @@ fn partial_entry_recesses_keep_the_target_in_parts_and_assemblies() {
                     .find(|feature| feature["type"] == "hole")
                     .unwrap();
                 let tip = &hole["hole"]["tip_angle"];
-                if version == "0.25.1" {
+                if version
+                    .parse::<dutchman_solidcraft::SolidCraftVersion>()
+                    .unwrap()
+                    >= dutchman_solidcraft::SolidCraftVersion::V0_22_1
+                {
                     assert_eq!(tip, "180");
                 } else {
                     assert!(tip.is_null());

@@ -126,8 +126,9 @@ Constant-radius AdditiveHelix and SubtractiveHelix features keep their sketch pr
 axis, pitch/height/turn law, handedness, reversed direction, and join/cut operation as
 sketch-profile coils when the target is SolidCraft 0.25.1 or newer. Choose a target with
 `--solidcraft-version x.y.z` on `convert`, `convert-all`, or `watch` (at least 0.18.2).
-The default is the found verification CLI's version, else 0.18.2; with `--no-verify` it
-defaults to 0.18.2. Older targets block the helix with
+The default is the found CLI's version, even with `--no-verify`, else the newest release
+known at build time (currently 0.25.1). The rolling 14-day window is currently
+0.23.0–0.25.1. Older targets block the helix with
 `needs SolidCraft 0.25.1 or newer` and the target version, preserving the original
 geometry. Resolved feature parameter
 bindings drive the coil dimensions; dimensions without bindings keep their values.

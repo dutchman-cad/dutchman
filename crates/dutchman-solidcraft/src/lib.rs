@@ -31,7 +31,7 @@ use serde_json::Value;
 
 pub use verify::{
     find_cli, solidcraft_version, usable_cli, NoCli, SolidCraftVersion, Verification, CLI_ENV,
-    DEFAULT_TIMEOUT, OLDEST_SOLIDCRAFT, VOLUME_TOLERANCE,
+    DEFAULT_TIMEOUT, NEWEST_SOLIDCRAFT, OLDEST_SOLIDCRAFT, VOLUME_TOLERANCE, WINDOW_OLDEST,
 };
 
 use document::Live;
@@ -77,8 +77,8 @@ impl SolidCraftWriter {
         SolidCraftWriter::default()
     }
 
-    /// Target this SolidCraft release, or detect the verification CLI's version when absent.
-    /// Without a known CLI version (including verification off), use SolidCraft 0.18.2.
+    /// Target this SolidCraft release, or detect the installed CLI's version when absent.
+    /// Without a known CLI version, use the newest release known at build time.
     pub fn target_version(mut self, version: Option<SolidCraftVersion>) -> Self {
         self.target_version = version;
         self

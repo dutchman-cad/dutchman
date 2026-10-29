@@ -170,9 +170,10 @@ Constant-radius helical sweeps, including FreeCAD AdditiveHelix and SubtractiveH
 map to sketch-profile coils when targeting SolidCraft 0.25.1 or newer. Older targets block
 the helix with `needs SolidCraft 0.25.1 or newer` and the target version, preserving the
 original geometry. The CLI equivalent is `--solidcraft-version x.y.z` on `convert`,
-`convert-all`, and `watch` (default: found verification CLI version, else 0.18.2; with
-`--no-verify`, defaults to 0.18.2). Pitch/height/turn laws,
-handedness, axis, reversed travel, and Boolean operation carry across. Feature parameter
+`convert-all`, and `watch` (default: found CLI version, even with `--no-verify`, else
+the newest release known at build time, currently 0.25.1). The rolling 14-day window
+is currently 0.23.0–0.25.1; older targets down to 0.18.2 get simplified features.
+Pitch/height/turn laws, handedness, axis, reversed travel, and Boolean operation carry across. Feature parameter
 bindings are retained when available, otherwise dimensions use resolved values. Conical
 and spiral sweeps report the missing SolidCraft cone-angle/radial-growth option.
 
@@ -181,7 +182,7 @@ label); thread details it can't keep are `Degraded` losses. Unsupported hole for
 placements, and ends appear in `history.features[].reason`, and conversion keeps the
 geometry when the history can't map.
 Entry recesses with drill points report "SolidCraft holes take a drill point only on a
-plain drilled hole"; SolidCraft 0.21.0 ignores `tip_angle` on counterbores and countersinks. SolidCraft 0.25.1 supports those drill
+plain drilled hole"; SolidCraft 0.21.0 ignores `tip_angle` on counterbores and countersinks. SolidCraft 0.22.1 and newer support those drill
 points, but Dutchman retains this limit for compatibility with older releases.
 
 | Tool | Arguments | Returns | Writes |
@@ -210,7 +211,7 @@ The formats report includes each reader's status and cadmpeg's published headlin
 | `import_only` | boolean | Write the geometry as one non-parametric import, never the feature history. |
 | `verify` | boolean | Check a converted history in SolidCraft. Default `true`; skipped, and the history marked unverified, when no `solidcraft-cli` is found. |
 | `solidcraft` | string | Path of `solidcraft-cli` for the check. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`). |
-| `solidcraft_version` | string | Target release as x.y.z, at least 0.18.2. Default: the found verification CLI's version, else 0.18.2, including when `verify` is false. |
+| `solidcraft_version` | string | Target release as x.y.z, at least 0.18.2. Default: the found CLI's version, else the newest known at build time (currently 0.25.1), including when `verify` is false. |
 | `verify_timeout` | integer, at least 1 | Seconds each SolidCraft check may run before the history is written unverified. Default 120. |
 | `overwrite` | boolean | Replace an existing `.solidcraft` file (default true). When false, an existing file is left alone and that file's conversion fails with "already exists". |
 | `project` | string | Absolute path of the project folder an assembly's part files are searched in when they are not at their stored paths. Default: the nearest folder above the assembly holding an Inventor `.ipj`, else two folders up; for `convert_all`, each folder given. See [Finding the part files](inventor.md#finding-the-part-files). |
