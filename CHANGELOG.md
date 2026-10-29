@@ -8,6 +8,96 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
+## 0.2.4 (2026-10-29)
+
+### History
+
+- FreeCAD MultiTransforms containing mirrors keep editable history as ordered mirror and
+  pattern features when replay matches the original, targeting SolidCraft 0.25.1 or newer.
+  Older targets keep the original geometry with `needs SolidCraft 0.25.1 or newer`
+  for chained stages; single-stage mirrors and patterns remain available.
+  Full-turn circular patterns omit a
+  repeated seed endpoint while retaining every distinct instance.
+  An unfinished replay check keeps the original geometry for these patterns.
+- Whole-sketch hole placements exclude construction geometry, so reference origin points
+  do not create extra holes. Explicit entity selections retain construction locations.
+- Constant-radius FreeCAD additive and subtractive helices keep their sketch profiles,
+  axes, pitch/height/turn laws, handedness, and reversed travel as editable coils when
+  targeting SolidCraft 0.25.1 or newer. Older targets preserve the original geometry and
+  report the required version. Conical helices and spirals report the missing coil option.
+- Choose the target release with `--solidcraft-version x.y.z` on `convert`, `convert-all`,
+  or `watch`, or `solidcraft_version` in MCP. The default is the found verification CLI's
+  version, else 0.18.2; with `--no-verify`, it defaults to 0.18.2. Targets below 0.18.2 are
+  refused. Counterbore and countersink holes retain flat bottoms on newer targets too.
+- Skip unused FreeCAD binders and datum helpers with an Info note. Carry used datum
+  placements through resolved sketches, pattern axes, and datums, and explain unresolved uses.
+  Keep helper Info notes when another feature or replay check flattens the history.
+- Respect hidden FreeCAD containers when filtering bodies, including children marked shown.
+- Preserve supported spreadsheet formulas and qualified parameter references as live SolidCraft
+  expressions. Omit text cells silently, identify unused numeric cells, and report specific
+  reasons when expressions must retain their evaluated values.
+- FreeCAD sketches with negative horizontal or vertical distances replay with positive
+  dimension magnitudes, preserving their solved positions and signed parameter expressions.
+- Keep editable features before the first blocking feature, plus resolved sketches, hidden
+  beside the visible imported final shape. Reports name the blocker, count retained features,
+  and distinguish partial replay from verification of the full history.
+- Retain a replayable timeline for correction when its final shape differs from the source.
+- Retry sketches that fail replay without constraints, retaining their solved geometry and
+  reporting the lost constraints.
+- Keep resolved reference sketches in parts and assemblies even when no body-building
+  feature or source timeline can be retained.
+- Convert stored geometry as an imported base body, keeping later mappable features.
+  Report imported solids as Info, without a flattened-history warning when no recipe exists.
+
+### Assemblies
+
+- Convert FreeCAD assemblies that link Bodies and Parts in other `.FCStd` documents, finding
+  siblings first and reporting missing parts by name. Keep grounding and supported joints.
+- Place FreeCAD link-array elements once, without duplicate LinkElement occurrences.
+- Fusion components and bodies the design hides open hidden in SolidCraft: a hidden occurrence,
+  or one whose part holds only hidden bodies, is placed hidden instead of shown, and can be
+  shown again there. A part with shown and hidden bodies is still shown whole.
+- Group each top-level design's features into a named timeline folder when an assembly
+  contains multiple designs, keeping feature order and leaving joints outside folders.
+
+### Desktop app
+
+- **Report this on GitHub** opens for signed-in GitHub users again. A long filled-in link made
+  GitHub answer "406 Not Acceptable"; the link now stays under 4,000 characters, a report that
+  does not fit is copied for you to paste, and a very long error message is shortened in the
+  form (the anonymous report keeps all of it).
+
+### Reports
+
+- A design whose faces SolidCraft merges (faces that share one surface) is no longer reported
+  as missing faces. The history check compares area and volume, so an open-shell warning
+  there is no fault when they agree; unmeshable faces, bodies inside out, solids without
+  volume, and solids that geometry-only output opens as open shells are still reported.
+- Reads and conversions show their stage, designs read when available, and elapsed time, with a
+  still-working heartbeat every five seconds. Desktop cards show a reading progress bar
+  when the design total is known. CLI progress goes to stderr, as JSON lines with `--json`,
+  and is hidden by `--quiet`; stdout keeps its final report. Fusion `.f3z` member counts
+  are not available yet.
+
+### cadmpeg
+
+- The cadmpeg pin moves from `e06fa52` to `2e01486`. Fusion designs whose sweeps or rotational
+  supports failed cadmpeg's model checks convert now. Inventor holes are drilled the way the
+  hole points (they used to replay outside the part and fall back to exact geometry), browser
+  work planes are read as datum planes, and a split of a solid is read and reported as not
+  mapped yet. SolidWorks parts keep their stored face senses.
+
+### Docs
+
+- The container image (`ghcr.io/dutchman-cad/dutchman:X.Y.Z` and `:latest`) is published when a
+  release is published, from that release's own archives, instead of when its tag is pushed,
+  so a draft release never reaches the registry.
+- Build macOS release and nightly targets in parallel, reuse their checked archives for the
+  universal disk image, and share per-target Rust caches between nightly and release builds.
+- Mac command-line downloads include one universal archive for Apple silicon and Intel.
+  Release notes link it alongside the universal desktop disk image; per-chip archives
+  remain available for Homebrew.
+
 ## 0.2.3 (2026-10-28)
 
 ### Formats
