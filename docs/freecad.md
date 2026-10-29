@@ -16,8 +16,19 @@ feature's intermediate shape as a body of its own and could turn revolved faces 
   when that construction is stored with a hidden step. A document that hides every body
   converts all of them, as stored.
 - **Components**, when cadmpeg says which bodies each owns, as for a Fusion design.
+  External `App::Link` references to Bodies and Parts in other `.FCStd` documents convert
+  as geometry in component occurrences at their stored placements, including assemblies with
+  no geometry in the assembly document itself. Link arrays place each element once.
+  Dutchman looks for the referenced file beside the assembly first, then uses the shared
+  [project and search folders](inventor.md#finding-the-part-files) (`--project`, `--search`).
+  A missing or unreadable linked file is left out and reported by name; the other components
+  still convert. Cyclic links are left out and reported, with nesting limited to 32 levels.
+  Links that name only a document identifier, or select subelements, are not supported yet.
 - **Grounded joints** hold their part fixed to the design where it is stored, as a rigid
   joint to the design; the assembly's revolute and slider joints keep their motion.
+  Assembly-workbench joints use the same mapping as Fusion joints when cadmpeg resolves
+  their operands and frames. Joints that cannot be carried are reported; the parts keep
+  their stored placements.
 - **Feature history**, when every feature maps: sketches, pads, simple, counterbored and
   countersunk holes, constant-radius fillets, and equal-distance chamfers, replayed and
   checked in SolidCraft like a Fusion history. Thicknesses (shells), counterbores or

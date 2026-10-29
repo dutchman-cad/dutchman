@@ -131,6 +131,11 @@ resolved placement or binder source geometry remains a blocker, with its reason 
 These Info notes remain when another feature or a replay mismatch flattens the history.
 A body inside a hidden container is hidden even when its own flag says it is shown.
 
+FreeCAD external Body and Part links are resolved beside the assembly first, then through
+`project` and `search`. A missing linked `.FCStd` file is left out and named in losses and
+`completeness.left_out`; available components still convert. Link arrays place each element
+once. Grounding and supported Assembly-workbench joints map like other assembly joints.
+
 FreeCAD fillets and chamfers use their base feature's stored edges only when the earlier
 result and each pick on SolidCraft's replay are proven. Otherwise `history.features[].reason`
 says why the edge selection is refused, and conversion keeps the original geometry.

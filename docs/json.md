@@ -130,6 +130,12 @@ with level `"Info"`; nothing was dropped. Later mappable features keep the usual
 mode and verification. The desktop app shows the same Info message from this report.
 These use existing fields in the schema; `inspect` reports the same stored-only outcome.
 
+FreeCAD external links use the existing assembly fields: missing or unreadable referenced
+`.FCStd` files appear in `completeness.left_out` with `file`, `reason`, `stage`, and `count`,
+and in `losses`. Available linked Bodies and Parts convert as placed components; link-array
+elements count once. Grounded parts appear as rigid joints, and unsupported joints have
+loss notes while stored placements are retained. No report schema fields are added.
+
 For FreeCAD fillets and chamfers, `history.features[].reason` reports missing stored input
 edge geometry or a failed replay proof. Resolved edges without proven membership in an
 earlier stored feature result are refused. This uses the existing feature status and reason

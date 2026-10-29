@@ -195,6 +195,20 @@ impl Finder {
             .ok_or_else(|| self.not_found(root))
     }
 
+    /// FreeCAD links prefer the copy beside the assembly before relocated stored paths.
+    pub(crate) fn sibling_first(&self, stored: &str, folder: &Path) -> Result<Found, NotFound> {
+        let (_, components) = split(stored);
+        if let Some(file) = components.last() {
+            if let Some(path) = resolve(&absolute(folder), &[*file]) {
+                return Ok(Found {
+                    path,
+                    ambiguous: None,
+                });
+            }
+        }
+        self.locate(stored, folder)
+    }
+
     fn not_found(&self, root: &Path) -> NotFound {
         let named = self.project.get().map_or(&[][..], |p| p.named.as_slice());
         NotFound {
@@ -452,7 +466,11 @@ impl Index {
                     if depth < MAX_SEARCH_DEPTH && !name.starts_with('.') && name != "oldversions" {
                         folders.push((entry.path(), depth + 1));
                     }
-                } else if kind.is_file() && (name.ends_with(".ipt") || name.ends_with(".iam")) {
+                } else if kind.is_file()
+                    && (name.ends_with(".ipt")
+                        || name.ends_with(".iam")
+                        || name.ends_with(".fcstd"))
+                {
                     index.by_name.entry(name).or_default().push(entry.path());
                 }
             }

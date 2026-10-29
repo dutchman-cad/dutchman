@@ -162,7 +162,10 @@ fn decode_unguarded(
         .map_err(other)?;
     let (mut ir, decode_report, fidelity) = decoded.into_parts();
     // An assembly's geometry is in its parts' files, read afterwards.
-    if !decode_report.geometry_transferred() && !format.is_assembly() {
+    if !decode_report.geometry_transferred()
+        && !format.is_assembly()
+        && !(format == Format::FreeCadDocument && !ir.model.occurrences.is_empty())
+    {
         return Err(other(Error::Decode(format!(
             "no geometry could be read from this {} file",
             format.name()
