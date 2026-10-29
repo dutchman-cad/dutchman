@@ -45,6 +45,9 @@ pub enum Error {
     /// The input is in a known format but its contents could not be decoded.
     #[error("cannot read this design: {0}")]
     Decode(String),
+    /// The conversion exceeds the selected memory budget.
+    #[error("{0}")]
+    MemoryBudget(String),
     /// The model could not be encoded into the target format.
     #[error("cannot convert this design: {0}")]
     Encode(String),
@@ -64,7 +67,8 @@ impl Error {
     /// Where in the conversion it stopped.
     pub fn stage(&self) -> Stage {
         match self {
-            Error::Io { .. }
+            Error::MemoryBudget(_)
+            | Error::Io { .. }
             | Error::NotAFile { .. }
             | Error::TooLarge { .. }
             | Error::UnknownFormat { .. }

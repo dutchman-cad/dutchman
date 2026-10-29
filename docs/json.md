@@ -8,7 +8,7 @@ and JSON reports described here retain their existing schemas.
 The full CLI also accepts `dutchman part.f3d` (or `dutchman convert part.f3d`) and derives
 the output beside the input from `--to`. An existing derived output is kept with exit 2;
 choose `-o PATH` or use `--force` to replace it. `--force` conflicts with `--no-clobber`.
-Explicit outputs retain their replacement behaviour. MCP output paths remain required.
+Explicit outputs retain their replacement behaviour. MCP output paths remain required except for `convert` with `dry_run: true`.
 
 `dutchman convert --json` and `dutchman inspect --json` print one JSON object on stdout. During reading and conversion, progress JSON lines are written to
 stderr unless `--quiet` is set. The `dutchman-mcp` server's tools return the same objects, as structured
@@ -57,7 +57,24 @@ report schemas and field names are unchanged.
 |---|---|
 | 0 | The design was converted (`convert`) or read (`inspect`). Losses do not change this. |
 | 1 | It could not be: unsupported or unreadable input, no geometry, an output that could not be written. With `--json`, the report has `"ok": false`. |
-| 2 | A usage error (unknown option, missing argument). clap's usage text is printed on stderr; there is no JSON. |
+| 2 | A usage error (unknown option, missing argument), or a memory-budget refusal. Usage errors print clap text on stderr. Memory refusals with `--json` return a failure report with `estimate` and `choices`. |
+
+## MCP conversion pre-read
+
+`convert` with `dry_run: true` returns `ok: true`, `estimate`, `choices` (as below),
+and `fits`, without decoding or writing. `output` is optional. `fits` is a boolean
+when both the estimate and available memory are known, otherwise `null`. A dry run
+returns `fits: false` for an over-budget estimate instead of attempting conversion.
+Standard's pre-read may budget an assembly-capable input without history; the actual
+conversion confirms that it is an assembly before dropping history. The dry run does
+not promise that decoding or conversion will succeed. `no_memory_check` permits a run
+without changing the physical-memory comparison in `fits`.
+
+
+Memory refusals from `convert` or `convert_all` carry the matching schema, `ok: false`,
+the offending `input`, `error`, `estimate`, and `choices`. A batch refuses before writing
+its designs when a pre-read exceeds the budget; it also includes that file's refusal in
+`results` with `converted: 0` and `failed: 1`.
 
 ## `dutchman.convert/1`
 
@@ -67,6 +84,8 @@ report schemas and field names are unchanged.
   "ok": true,
   "input": {"path": "part.f3d", "format": "fusion_archive", "format_name": "Fusion archive (.f3d)"},
   "output": {"path": "part.solidcraft", "format": "solidcraft/23"},
+  "estimate": {"peak_bytes": 1200000000, "seconds": 90, "band": 0.5},
+  "choices": {"preset": "standard", "history": true, "sketches": true, "joints": true},
   "mode": "history",
   "verification": {"status": "verified", "reason": null},
   "history": {
@@ -87,13 +106,15 @@ report schemas and field names are unchanged.
 | Field | Meaning |
 |---|---|
 | `ok` | `true` when the design was written. |
+| `estimate` | Quick pre-read estimate, including on memory refusals: `peak_bytes` and `seconds` are unsigned integers; `band` is the relative error band (`0.5` means ±50%). `null` when unavailable. No design is decoded; a Fusion archive's designs are read one at a time for their own directories. Calibrated on measured conversions (see guide.md). |
+| `choices` | Selected `preset` (`fast`, `standard`, or `full`) and effective `history`, `sketches`, and `joints` booleans after narrowing. `history` is false when Standard leaves assembly history out to fit memory. These describe requested retention, not proof that every feature maps. FreeCAD output honours history only. |
 | `input.format` | `fusion_archive`, `fusion_multi_document`, `inventor_part`, `inventor_assembly`, `solidworks_part`, `solidworks_assembly`, `freecad_document`, `catia_part`, `creo_part`, `nx_part`, `creo_view`, `rhino`, `acis`, `step`, `iges`, `unclassified_part`, or `null` for an unknown extension. `format_name` is the same for people. Creo and NX share `.prt` and are distinguished by contents; inconclusive contents give `unclassified_part`. |
 | `input.words` | Reader status: `reads geometry`, `opens, no geometry yet`, `recognised, not read yet`, or `open it in SolidCraft directly` (IGES); `null` for an unknown format. Present on successes and failures, including batch results and MCP reports. The conversion's history and verification describe what this file kept. |
 | `input.program`, `input.extension` | Program or format family, and the input's actual suffix without a dot, used for status text (`prt.12` for a numbered save). Unknown programs are `null`. |
 | `output.format` | The SolidCraft design format written. |
 | `mode` | `history`: editable feature history, with the original geometry kept beside it, suppressed. `partial_history`: retained editable features in a hidden component and the visible imported final shape. `import`: geometry, possibly with reference sketches. |
 | `verification.status` | `verified`: the history was replayed in SolidCraft, or the FreeCAD output was measured, and matches the original. `differs`: a FreeCAD rebuild differs or restored STEP (`reason` names the part). `unverified`: the history was written without that check (`reason` says why: no `solidcraft-cli`, a timeout, `--no-verify`). `partial`: only partial history is retained; `reason` names the blocker, gives kept/total source feature counts, and states whether retained features replayed or remain unverified. This never claims the full history matches the original. `flattened`: no body-building prefix was retained (`reason`: the blocker or replay failure). `not_applicable`: there was no history to write (none in the source, or none cadmpeg decodes: every feature is kept in its native form), or `--import-only`. |
-| `history.features` | Every source feature in timeline order. `status`: `mapped`, `not_needed` (the target needs no feature, e.g. a principal datum plane or an unused construction helper), `left_out` (suppressed in the source), `blocked` (does not map; `reason` says why). |
+| `history.features` | Every source feature in timeline order. `status`: `mapped`, `not_needed` (the target needs no feature, e.g. a principal datum plane or an unused construction helper), `left_out` (suppressed in the source, or a reference sketch omitted by choice), `blocked` (does not map; `reason` says why). |
 | `history.mapped`, `history.total` | Mapped or not-needed features, out of all but left-out ones. |
 | `history.parts` | For an assembly written as SolidCraft components: each part's history, in the order written. `name`; `status` and `reason` as in `verification` (`not_applicable` when the part has no source features, else `flattened` with its first blocker, `partial`, `unverified` or `verified`); `mapped` and `total` as in `history`. A part placed several times is listed once. Absent for a single part. |
 | `completeness` | For an assembly: how much of it was placed. `placed` and `placements` count every placement the assembly and its placed sub-assemblies record, a sub-assembly's as often as it is placed. `left_out` lists those not placed by cause, most first: `file` (the file placed, or `null`), `reason`, `stage` and `count`. Absent for a single part. |
@@ -368,7 +389,8 @@ When a design falls back to imported geometry, a single Info loss with subject `
 reports `kept N sketches for reference`, followed by `; M left out` when any sketches were
 omitted. Only mapped sketches with resolved planes are retained, hidden after the import;
 they do not change the body comparison or the report's `mode` and verification status.
-`--import-only` continues to omit sketches.
+`--import-only` leaves out history while retaining reference sketches when the preset
+keeps sketches. Use `--no-sketches` as well, or `--preset fast`, for geometry alone.
 
 Assembly timeline folders are reported as Info losses with subject `timeline folders`,
 `code: null`, and message `"Name": N feature(s) grouped`, one per folder added. Assemblies

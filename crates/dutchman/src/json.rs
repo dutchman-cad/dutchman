@@ -589,6 +589,74 @@ pub fn drawing_success(input_path: &Path, pages: &[Value], report: &Report) -> V
     Value::Object(out)
 }
 
+/// A memory refusal, with a per-file result as well when a batch was stopped before writing.
+pub fn memory_failure(
+    schema: &str,
+    path: &Path,
+    options: &crate::ConvertOptions,
+    message: &str,
+) -> Value {
+    let mut report = failure(CONVERT, input(path), message);
+    conversion_choices(&mut report, path, options);
+    if schema == crate::batch::SCHEMA {
+        let single = report.clone();
+        if let Some(fields) = report.as_object_mut() {
+            fields.insert("schema".to_owned(), json!(schema));
+            fields.insert("converted".to_owned(), json!(0));
+            fields.insert("failed".to_owned(), json!(1));
+            fields.insert("skipped".to_owned(), json!(0));
+            fields.insert("skipped_by_extension".to_owned(), json!({}));
+            fields.insert("skipped_revisions".to_owned(), json!([]));
+            fields.insert("resumed".to_owned(), json!(0));
+            fields.insert("results".to_owned(), json!([single]));
+        }
+    }
+    report
+}
+
+/// Add the pre-read estimate and choices, including Standard's actual history decision.
+pub fn conversion_choices(report: &mut Value, input: &Path, options: &crate::ConvertOptions) {
+    let mut choices = options.choices();
+    if report
+        .get("losses")
+        .and_then(Value::as_array)
+        .is_some_and(|losses| {
+            losses.iter().any(|loss| {
+                loss.get("subject").and_then(Value::as_str) == Some("history")
+                    && loss
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .is_some_and(|detail| {
+                            detail
+                                .starts_with("feature history left out: this assembly needs about ")
+                        })
+            })
+        })
+    {
+        choices.history = false;
+    }
+    if let Some(fields) = report.as_object_mut() {
+        fields.insert(
+            "estimate".to_owned(),
+            estimate(crate::choices::estimate(input, &choices)),
+        );
+        fields.insert("choices".to_owned(), choice_values(options.preset, choices));
+    }
+}
+
+/// The shared estimate representation; null means it could not be pre-read.
+pub fn estimate(estimate: Option<crate::choices::Estimate>) -> Value {
+    estimate.map_or(
+        Value::Null,
+        |e| json!({"peak_bytes": e.peak_bytes, "seconds": e.seconds, "band": e.band}),
+    )
+}
+
+/// The selected preset and its effective narrowed choices.
+pub fn choice_values(preset: crate::choices::Preset, choices: crate::choices::Choices) -> Value {
+    json!({"preset": preset.name(), "history": choices.history, "sketches": choices.sketches, "joints": choices.joints})
+}
+
 #[cfg(test)]
 #[allow(clippy::indexing_slicing)]
 mod tests {

@@ -1578,6 +1578,14 @@ fn import_only_never_writes_history() {
     let model = cube_with_history(10.0, first_profile(), None);
     let (document, report) = convert(&model, &SolidCraftWriter::new().import_only(true));
     assert_eq!(history_line(&report), "not written (--import-only)");
+    assert_eq!(
+        types(&document),
+        [("import".to_owned(), false), ("sketch".to_owned(), false)]
+    );
+    let (document, _) = convert(
+        &model,
+        &SolidCraftWriter::new().import_only(true).sketches(false),
+    );
     assert_eq!(types(&document), [("import".to_owned(), false)]);
 }
 
@@ -3504,6 +3512,7 @@ fn assembly_of_histories() -> Model {
             left_out: Vec::new(),
             held: Vec::new(),
             joint_notes: Vec::new(),
+            stored_placements: Vec::new(),
             parts: vec![part("First"), part("Second")],
             placements: vec![placed(0, 0.0), placed(1, 30.0), placed(1, 60.0)],
         }),
@@ -8735,4 +8744,43 @@ fn cc0_spreadsheet_formulas_keep_their_decoded_parameter_dependencies() {
         "{:?}",
         report.losses()
     );
+}
+
+#[test]
+fn sketch_choice_keeps_required_profiles_but_not_reference_sketches() {
+    let writer = SolidCraftWriter::new()
+        .sketches(false)
+        .verification(Verification::Off);
+    for before_blocker in [false, true] {
+        let mut model = partial_history_model();
+        if before_blocker {
+            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            wire["model"]["features"][1]["ordinal"] = json!(2);
+            wire["model"]["features"][2]["ordinal"] = json!(3);
+            model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        }
+        let (document, report) = convert(&model, &writer);
+        assert_partial(&document, &report, 1);
+        assert_eq!(
+            types(&document),
+            [
+                ("sketch".to_owned(), false),
+                ("extrude".to_owned(), false),
+                ("import".to_owned(), false)
+            ]
+        );
+    }
+    for model in [loft_history(10.0, |_| {}), sweep_history(|_| {})] {
+        let (document, _) = convert(&model, &writer);
+        assert_eq!(
+            document["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|f| f["type"] == "sketch")
+                .count(),
+            2,
+            "section, profile and path sketches stay"
+        );
+    }
 }

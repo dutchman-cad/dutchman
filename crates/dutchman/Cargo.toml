@@ -39,6 +39,7 @@ dutchman-solidcraft.workspace = true
 getrandom.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+zip.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true

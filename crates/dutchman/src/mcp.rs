@@ -185,9 +185,14 @@ fn result(report: &Value) -> Value {
 fn option_properties() -> Map<String, Value> {
     let properties = json!({
         "to": {"type": "string", "enum": ["solidcraft", "freecad"], "default": "solidcraft", "description": "Output format: SolidCraft design or self-contained FreeCAD rebuild macro."},
+        "preset": {"type": "string", "enum": ["fast", "standard", "full"], "default": "standard", "description": "Fast keeps shape only; Standard keeps history, sketches and joints but budgets assembly history; Full never drops history for memory."},
+        "history": {"type": "boolean", "default": true, "description": "Keep feature history when the preset allows it; false narrows the preset like import_only."},
+        "sketches": {"type": "boolean", "default": true, "description": "Keep reference sketches when the preset allows it. Sketches needed by retained history stay."},
+        "joints": {"type": "boolean", "default": true, "description": "Keep assembly joints when the preset allows it; false keeps stored placements."},
+        "no_memory_check": {"type": "boolean", "default": false, "description": "Run even when estimated peak memory exceeds available memory; also disables Standard's history budget."},
         "import_only": {
             "type": "boolean",
-            "description": "Write the geometry as one non-parametric import, never the feature history.",
+            "description": "Leave feature history out; keep geometry and the preset's reference sketches.",
         },
         "verify": {
             "type": "boolean",
@@ -243,6 +248,7 @@ fn tools() -> Value {
     });
     let mut convert = option_properties();
     convert.insert("input".to_owned(), input.clone());
+    convert.insert("dry_run".to_owned(), json!({"type": "boolean", "default": false, "description": "Return estimate, choices and fits from a quick pre-read, without decoding or writing. Output is optional."}));
     convert.insert(
         "output".to_owned(),
         json!({"type": "string", "description": "Absolute path of the .solidcraft or .FCMacro file to write, matching to. An existing file there is replaced, unless overwrite is false. Nothing else is written."}),
@@ -294,7 +300,7 @@ fn tools() -> Value {
             "name": "convert",
             "title": "Convert a CAD file",
             "description": "Convert one native CAD file into a SolidCraft design or FreeCAD macro (to: freecad). If a feature blocks mapping or replay differs, SolidCraft keeps the editable prefix and resolved sketches hidden beside the visible original shape. Parts without body-building history keep resolved reference sketches. Returns the dutchman.convert/1 report: the mode written, the history check, each feature's status and every loss.",
-            "inputSchema": {"type": "object", "properties": convert, "required": ["input", "output"], "additionalProperties": false},
+            "inputSchema": {"type": "object", "properties": convert, "required": ["input"], "anyOf": [{"required": ["output"]}, {"required": ["dry_run"], "properties": {"dry_run": {"const": true}}}], "additionalProperties": false},
         },
         {
             "name": "inspect",
@@ -357,7 +363,12 @@ fn count(arguments: &Arguments, key: &str) -> Result<Option<NonZeroUsize>, Strin
     }
 }
 
-const OPTIONS: [&str; 9] = [
+const OPTIONS: [&str; 14] = [
+    "preset",
+    "history",
+    "sketches",
+    "joints",
+    "no_memory_check",
     "to",
     "import_only",
     "verify",
@@ -403,30 +414,32 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
         _ => return Err("to must be solidcraft or freecad".to_owned()),
     };
     let solidcraft_version = match arguments.get("solidcraft_version") {
-        None | Some(Value::Null) => {
-            let verification = solidcraft
-                .as_ref()
-                .map_or(dutchman_solidcraft::Verification::Auto, |cli| {
-                    dutchman_solidcraft::Verification::With(cli.clone())
-                });
-            Some(dutchman_solidcraft::SolidCraftVersion::detected(
-                &verification,
-            ))
-        }
+        None | Some(Value::Null) => None,
         Some(Value::String(version)) => Some(version.parse()?),
         Some(_) => {
             return Err("solidcraft_version must be a version string such as 0.25.1".to_owned())
         }
     };
+    let import_only = flag(arguments, "import_only", false)?;
+    let history = flag(arguments, "history", true)?;
     Ok(ConvertOptions {
         to,
         verify: false,
         freecad_timeout: 300,
-        preset: defaults.preset,
-        import_only: flag(arguments, "import_only", false)?,
-        no_sketches: false,
-        no_joints: false,
-        no_memory_check: false,
+        preset: match arguments.get("preset") {
+            None => defaults.preset,
+            Some(Value::String(name)) => match name.as_str() {
+                "fast" => crate::choices::Preset::Fast,
+                "standard" => crate::choices::Preset::Standard,
+                "full" => crate::choices::Preset::Full,
+                _ => return Err("preset must be fast, standard or full".to_owned()),
+            },
+            Some(_) => return Err("preset must be fast, standard or full".to_owned()),
+        },
+        import_only: import_only || !history,
+        no_sketches: !flag(arguments, "sketches", true)?,
+        no_joints: !flag(arguments, "joints", true)?,
+        no_memory_check: flag(arguments, "no_memory_check", false)?,
         no_verify: !flag(arguments, "verify", true)?,
         no_clobber: !flag(arguments, "overwrite", true)?,
         solidcraft,
@@ -439,15 +452,39 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
 }
 
 fn convert(arguments: &Arguments) -> Result<Value, String> {
-    only(arguments, &[&["input", "output"][..], &OPTIONS].concat())?;
-    let (input, output) = (path(arguments, "input")?, path(arguments, "output")?);
+    only(
+        arguments,
+        &[&["input", "output", "dry_run"][..], &OPTIONS].concat(),
+    )?;
+    let input = path(arguments, "input")?;
     let options = options(arguments)?;
-    Ok(crate::convert(
+    if flag(arguments, "dry_run", false)? {
+        let mut choices = options.choices();
+        let full = crate::choices::estimate(&input, &choices);
+        let available = crate::choices::available_memory();
+        let check = crate::choices::memory_check(&input, &options);
+        let estimate = match check {
+            crate::choices::MemoryCheck::Ok(estimate) => estimate,
+            crate::choices::MemoryCheck::TooBig { estimate, .. } => Some(estimate),
+        };
+        if estimate != full {
+            choices.history = false;
+        }
+        return Ok(json!({
+            "ok": true,
+            "estimate": crate::json::estimate(estimate),
+            "choices": crate::json::choice_values(options.preset, choices),
+            "fits": estimate.zip(available).map(|(e, free)| e.peak_bytes <= free),
+        }));
+    }
+    let output = path(arguments, "output")?;
+    Ok(crate::convert_options_with_progress(
         &input,
         &output,
-        &options.writer(),
+        &options,
         !options.no_clobber,
         &options.part_search(),
+        &|_| {},
     ))
 }
 
