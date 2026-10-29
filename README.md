@@ -22,7 +22,7 @@ Dutchman is made for the current SolidCraft (any release from the last two weeks
 older versions get simplified features, or pass `--solidcraft-version x.y.z` on
 `convert`, `convert-all`, or `watch` (at least 0.18.2).
 The target defaults to the found CLI's version, even with `--no-verify`, else the
-newest release known at build time (currently 0.26.0). The current window is 0.18.2–0.26.0.
+newest release known at build time (currently 0.26.1). The current window is 0.18.2–0.26.1.
 Constant-radius FreeCAD helices keep editable sketch-profile coils only for targets
 0.25.1 or newer; older targets preserve the original geometry and report the version needed.
 Designs open in their target release and newer releases.
