@@ -195,7 +195,7 @@ pub fn read_with_progress(
 /// `name`; why it cannot stand alone, else.
 pub fn with_bodies(model: &Model, bodies: &[&str], name: String) -> Result<Model, String> {
     let document = serde_json::to_value(&model.ir).map_err(|err| err.to_string())?;
-    assembly::only(model, &document, bodies, name)
+    assembly::geometry_only(model, &document, bodies, name)
 }
 
 /// Decodes one file, without reading the parts an assembly places.

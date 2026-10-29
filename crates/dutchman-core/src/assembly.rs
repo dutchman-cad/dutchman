@@ -1715,12 +1715,40 @@ fn name_of(definition: &Value) -> Option<&str> {
         .filter(|name| !name.trim().is_empty())
 }
 
-/// `model` reduced to `bodies` and the geometry they reach, named `name`.
+/// `model` reduced to `bodies`, the geometry they reach and the history that builds them,
+/// named `name`. When that history does not stand alone without the rest of the design, the
+/// part keeps only its geometry.
 pub(crate) fn only(
     model: &Model,
     document: &Value,
     bodies: &[&str],
     name: String,
+) -> Result<Model, String> {
+    match slice(model, document, bodies, name.clone(), true) {
+        Ok(part) => Ok(part),
+        Err(_) => slice(model, document, bodies, name, false),
+    }
+}
+
+/// `model` reduced to `bodies` and the geometry they reach, named `name`.
+pub(crate) fn geometry_only(
+    model: &Model,
+    document: &Value,
+    bodies: &[&str],
+    name: String,
+) -> Result<Model, String> {
+    slice(model, document, bodies, name, false)
+}
+
+/// [`only`] with its `history` or [`geometry_only`] without. A feature is the part's when
+/// it makes one of `bodies` or builds a sketch the part's component owns; the features those
+/// depend on come with them, except a feature that makes only other bodies.
+fn slice(
+    model: &Model,
+    document: &Value,
+    bodies: &[&str],
+    name: String,
+    history: bool,
 ) -> Result<Model, String> {
     let wire = document
         .get("model")
@@ -1742,15 +1770,64 @@ pub(crate) fn only(
             queue.push(body);
         }
     }
+    let ours = |ids: Option<&Value>| {
+        ids.and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .any(|id| bodies.contains(&id))
+    };
+    // A feature that makes bodies, none of them the part's, belongs to another part.
+    let foreign = |row: &Value| {
+        row.get("outputs")
+            .and_then(Value::as_array)
+            .is_some_and(|ids| !ids.is_empty())
+            && !ours(row.get("outputs"))
+    };
+    // Each sketch's features: a profile reaches its sketch, not the feature that builds it.
+    let mut binders: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    if history && !bodies.is_empty() {
+        let features = wire.get("features").and_then(Value::as_array);
+        for row in features.map_or(&[][..], Vec::as_slice) {
+            let Some(id) = row.get("id").and_then(Value::as_str) else {
+                continue;
+            };
+            if let Some(sketch) = sketched(row) {
+                binders.entry(sketch).or_default().push(id);
+            }
+            if ours(row.get("outputs")) && keep.insert(id, ()).is_none() {
+                queue.push(id);
+            }
+        }
+        let definitions = wire.get("product_definitions").and_then(Value::as_array);
+        for definition in definitions.map_or(&[][..], Vec::as_slice) {
+            if !ours(definition.get("bodies")) {
+                continue;
+            }
+            let sketches = definition.get("sketches").and_then(Value::as_array);
+            for sketch in sketches.map_or(&[][..], Vec::as_slice) {
+                if let Some(id) = sketch.as_str() {
+                    if rows.contains_key(id) && keep.insert(id, ()).is_none() {
+                        queue.push(id);
+                    }
+                }
+            }
+        }
+    }
     while let Some(id) = queue.pop() {
-        let Some((_, row)) = rows.get(id) else {
+        let Some((arena, row)) = rows.get(id) else {
             continue;
         };
         let mut refs = Vec::new();
         strings(row, &mut refs);
+        if history && *arena == "sketches" {
+            refs.extend(binders.get(id).into_iter().flatten().copied());
+        }
         for reference in refs {
-            if let Some((arena, _)) = rows.get(reference) {
-                if !NOT_GEOMETRY.contains(arena) && keep.insert(reference, ()).is_none() {
+            if let Some((arena, row)) = rows.get(reference) {
+                let follow = !NOT_GEOMETRY.contains(arena)
+                    || (history && !bodies.is_empty() && *arena == "features" && !foreign(row));
+                if follow && keep.insert(reference, ()).is_none() {
                     queue.push(reference);
                 }
             }
@@ -1789,6 +1866,12 @@ pub(crate) fn only(
         assembly: None,
         source_step: None,
     })
+}
+
+/// The sketch a feature builds, when it builds one.
+fn sketched(row: &Value) -> Option<&str> {
+    row.pointer("/definition/sketch/sketch")
+        .and_then(Value::as_str)
 }
 
 /// Every string inside `value`.
@@ -2286,6 +2369,97 @@ mod tests {
             err,
             "cadmpeg does not say which bodies belong to component Block"
         );
+    }
+
+    /// A Fusion fixture's sketch, its sketch feature and its body, split between component
+    /// `Block` (the body, and the sketch when `owns_sketch`) and `Other` (a copy of the body),
+    /// with a feature on that sketch that makes only the copy.
+    fn with_history(owns_sketch: bool) -> Model {
+        let part = crate::read(
+            Format::FusionArchive,
+            &fixture("design_sketch_constraints.f3d"),
+            &mut Report::default(),
+        )
+        .unwrap();
+        let mut wire = serde_json::to_value(&part.ir).unwrap();
+        let body = wire["model"]["bodies"][0]["id"].clone();
+        let sketch = wire["model"]["sketches"][0]["id"].clone();
+        let mut copy = wire["model"]["bodies"][0].clone();
+        copy["id"] = json!("synthetic:copy:body#copy");
+        wire["model"]["bodies"].as_array_mut().unwrap().push(copy);
+        let mut other = wire["model"]["features"][0].clone();
+        other["id"] = json!("synthetic:copy:feature#other");
+        other["outputs"] = json!(["synthetic:copy:body#copy"]);
+        wire["model"]["features"]
+            .as_array_mut()
+            .unwrap()
+            .push(other);
+        let sketches = if owns_sketch {
+            json!([sketch])
+        } else {
+            json!([])
+        };
+        wire["model"]["product_definitions"] = json!([
+            {"id": "f3d:model:component#block", "kind": "part", "label": "Block", "bodies": [body], "sketches": sketches},
+            {"id": "f3d:model:component#other", "kind": "part", "label": "Other", "bodies": ["synthetic:copy:body#copy"]},
+        ]);
+        wire["model"]["occurrences"] = json!([
+            placed(0, "block", root(), 0.0),
+            placed(1, "other", root(), 30.0),
+        ]);
+        Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..part
+        }
+    }
+
+    fn feature_ids(part: &Model) -> Vec<String> {
+        let wire = serde_json::to_value(&part.ir).unwrap();
+        wire["model"]["features"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|row| row["id"].as_str().map(str::to_owned))
+            .collect()
+    }
+
+    #[test]
+    fn a_component_keeps_the_history_that_builds_it() {
+        let assembly = local_assembly(&with_history(true)).unwrap().unwrap();
+        let block = &assembly.parts[0];
+        assert_eq!(block.name, "Block");
+        // Its sketch, and the feature that builds it, though no row of the part points at
+        // that feature; not the feature that makes the other component's body.
+        assert_eq!(block.ir.model.sketches.len(), 1);
+        let features = feature_ids(block);
+        assert_eq!(features.len(), 1);
+        assert!(!features[0].starts_with("synthetic:"));
+        assert_eq!(block.ir.model.bodies.len(), 1);
+        // The other component's feature is built on Block's sketch, so that sketch and the
+        // feature building it come along; Block's body does not.
+        let other = &assembly.parts[1];
+        assert_eq!(
+            feature_ids(other),
+            [features[0].as_str(), "synthetic:copy:feature#other"]
+        );
+        assert_eq!(other.ir.model.sketches.len(), 1);
+        assert_eq!(other.ir.model.bodies.len(), 1);
+    }
+
+    #[test]
+    fn a_component_without_its_sketch_keeps_no_history_of_it() {
+        let assembly = local_assembly(&with_history(false)).unwrap().unwrap();
+        assert!(assembly.parts[0].ir.model.sketches.is_empty());
+        assert!(feature_ids(&assembly.parts[0]).is_empty());
+    }
+
+    #[test]
+    fn a_body_restated_alone_keeps_no_history() {
+        let model = with_history(true);
+        let body = model.ir.model.bodies[0].id.to_string();
+        let part = crate::with_bodies(&model, &[body.as_str()], "Block".to_owned()).unwrap();
+        assert!(feature_ids(&part).is_empty());
+        assert!(part.ir.model.sketches.is_empty());
     }
 
     #[test]
