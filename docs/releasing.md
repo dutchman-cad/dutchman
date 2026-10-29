@@ -108,6 +108,10 @@ updating cadmpeg so its key reflects the same pinned manifests as a release from
 Cargo still rebuilds dependencies changed by the nightly update. A different Rust toolchain,
 changed dependencies, or an absent cache can still require a cold build.
 
+Regular releases build with the `release` profile: thin LTO and 16 codegen units. A major or
+stable release, starting with 0.3.0, builds with a slower, fully optimised profile instead
+(one codegen unit and fat LTO).
+
 All cadmpeg crates, including cadmpeg-registry, come directly from the pinned git revision.
 `scripts/use-cadmpeg-main.sh <sha>` updates the dependencies and checks their lockfile sources.
 
