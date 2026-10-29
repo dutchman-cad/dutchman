@@ -81,10 +81,17 @@ pub fn find_cli(verification: &Verification) -> Result<PathBuf, String> {
     }
 }
 
-/// The oldest SolidCraft Dutchman's output is checked with, and opens in.
+/// The oldest accepted SolidCraft target, retained for simplified output.
 pub const OLDEST_SOLIDCRAFT: [u64; 3] = [0, 18, 2];
 
-/// A supported SolidCraft target release.
+/// The newest release known at build time; update with the release checklist.
+pub const NEWEST_SOLIDCRAFT: [u64; 3] = [0, 25, 1];
+
+/// The oldest release in the rolling window: newest plus releases from the last 14 days.
+/// Update alongside NEWEST_SOLIDCRAFT and the CI roundtrip pins at release time.
+pub const WINDOW_OLDEST: [u64; 3] = [0, 23, 0];
+
+/// An accepted SolidCraft target release.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SolidCraftVersion([u64; 3]);
 
@@ -92,9 +99,13 @@ impl SolidCraftVersion {
     /// First release with sketch-profile coils and entry-recess drill points.
     pub const V0_25_1: Self = Self([0, 25, 1]);
 
-    /// The found verification CLI's release, or the compatibility floor.
+    /// The found CLI's release (even with verification off), else the built-in newest.
     pub fn detected(verification: &Verification) -> Self {
-        solidcraft_version(verification)
+        let detection = match verification {
+            Verification::Off => &Verification::Auto,
+            other => other,
+        };
+        solidcraft_version(detection)
             .and_then(|line| parse_version(&line))
             .filter(|version| *version >= OLDEST_SOLIDCRAFT)
             .map(Self)
@@ -104,7 +115,7 @@ impl SolidCraftVersion {
 
 impl Default for SolidCraftVersion {
     fn default() -> Self {
-        Self(OLDEST_SOLIDCRAFT)
+        Self(NEWEST_SOLIDCRAFT)
     }
 }
 
@@ -1488,9 +1499,20 @@ mod cli_tests {
         assert_eq!(parse_version("no version here"), None);
     }
 
+    #[test]
+    fn target_window_bounds_and_default_are_consistent() {
+        assert!(OLDEST_SOLIDCRAFT <= WINDOW_OLDEST);
+        assert!(WINDOW_OLDEST <= NEWEST_SOLIDCRAFT);
+        assert!(OLDEST_SOLIDCRAFT <= NEWEST_SOLIDCRAFT);
+        assert_eq!(
+            SolidCraftVersion::default(),
+            SolidCraftVersion(NEWEST_SOLIDCRAFT)
+        );
+    }
+
     #[cfg(unix)]
     #[test]
-    fn target_defaults_to_the_verification_cli_or_the_floor() {
+    fn target_defaults_to_the_found_cli_or_the_built_in_newest() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         for version in ["0.18.2", "0.20.0", "0.25.1", "nonsense", "0.17.0"] {
@@ -1502,7 +1524,9 @@ mod cli_tests {
             .unwrap();
             std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
             let verification = Verification::With(cli);
-            let expected = version.parse().unwrap_or_default();
+            let expected = version
+                .parse()
+                .unwrap_or(SolidCraftVersion(NEWEST_SOLIDCRAFT));
             assert_eq!(SolidCraftVersion::detected(&verification), expected);
             assert_eq!(
                 crate::SolidCraftWriter::new()
@@ -1515,7 +1539,7 @@ mod cli_tests {
             crate::SolidCraftWriter::new()
                 .verification(Verification::Off)
                 .resolved_version(),
-            SolidCraftVersion::default()
+            SolidCraftVersion::detected(&Verification::Auto)
         );
         assert_eq!(
             crate::SolidCraftWriter::new()

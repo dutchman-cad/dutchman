@@ -149,9 +149,10 @@ are not present in the pinned CADIR version.
   `report_key` files go to their specified paths, which may be outside it.
 - `solidcraft_version: "0.25.1"` (CLI `--solidcraft-version 0.25.1` on `convert`,
   `convert-all`, or `watch`) chooses the target release. It must be x.y.z and at least
-  0.18.2. The default is the found verification CLI's version, else 0.18.2. With
-  CLI `--no-verify` and no explicit target, the target is 0.18.2. MCP uses the found
-  CLI's version even when `verify` is false.
+  0.18.2. The default is the found CLI's version, else the newest known at build time
+  (currently 0.25.1), even with CLI `--no-verify` or MCP `verify: false`.
+  Dutchman targets the current SolidCraft with a rolling 14-day window (currently
+  0.23.0–0.25.1); older targets get simplified features with a named reason.
 - `import_only: true` when the user wants only the shape. Leave `verify` at its default.
 
 A failed conversion comes back with `ok: false` and `error.message`. The message already says

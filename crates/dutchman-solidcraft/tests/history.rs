@@ -1825,7 +1825,7 @@ fn helical_sweeps_block_history_for_the_compatibility_floor() {
         &helical_history(|_| {}),
         &SolidCraftWriter::new()
             .verification(Verification::Off)
-            .target_version(Some(dutchman_solidcraft::SolidCraftVersion::default())),
+            .target_version(Some("0.18.2".parse().unwrap())),
     );
     assert_eq!(
         types(&document).first(),
@@ -2374,49 +2374,57 @@ fn a_simple_hole_at_a_sketch_circle_becomes_a_solidcraft_hole() {
 
 #[test]
 fn counterbores_and_countersinks_keep_their_entry_dimensions() {
-    for (form, expected) in [
-        (
-            json!({"kind": "counterbore", "diameter": 8.0, "depth": 2.0}),
-            json!({"type": "counterbore", "cb_diameter": "8 mm", "cb_depth": "2 mm"}),
-        ),
-        (
-            json!({"kind": "countersink", "diameter": 8.0,
+    for version in ["0.18.2", "0.25.1"] {
+        for (form, expected) in [
+            (
+                json!({"kind": "counterbore", "diameter": 8.0, "depth": 2.0}),
+                json!({"type": "counterbore", "cb_diameter": "8 mm", "cb_depth": "2 mm"}),
+            ),
+            (
+                json!({"kind": "countersink", "diameter": 8.0,
                 "angle": std::f64::consts::FRAC_PI_2}),
-            json!({"type": "countersink", "cs_diameter": "8 mm", "cs_angle": "90"}),
-        ),
-        (
-            json!({"kind": "chamfer", "diameter": 8.0,
+                json!({"type": "countersink", "cs_diameter": "8 mm", "cs_angle": "90"}),
+            ),
+            (
+                json!({"kind": "chamfer", "diameter": 8.0,
                 "angle": std::f64::consts::FRAC_PI_2}),
-            json!({"type": "countersink", "cs_diameter": "8 mm", "cs_angle": "90"}),
-        ),
-    ] {
-        for blind in [false, true] {
-            let model = holed_cube(4.0, |hole| {
-                hole["shape"]["construction"]["kind"] = form.clone();
-                if blind {
-                    hole["extent"] = json!({"kind": "blind", "length": 6.0});
-                    hole["bottom"] = json!({"kind": "flat"});
+                json!({"type": "countersink", "cs_diameter": "8 mm", "cs_angle": "90"}),
+            ),
+        ] {
+            for blind in [false, true] {
+                let mut expected = expected.clone();
+                if version == "0.25.1" {
+                    expected["tip_angle"] = json!("180");
                 }
-            });
-            let (document, report) = convert(
-                &model,
-                &SolidCraftWriter::new().verification(Verification::Off),
-            );
-            assert!(
-                history_line(&report).starts_with("4 of 4 features mapped"),
-                "{}",
-                history_line(&report)
-            );
-            let hole = &document["features"][3];
-            assert_eq!(hole["hole"], expected);
-            assert_eq!(hole["diameter"], "4 mm");
-            assert_eq!(hole["position"], json!([5.0, 5.0, 10.0]));
-            assert_eq!(hole["direction"], json!([0.0, 0.0, -1.0]));
-            assert_eq!(hole["points"]["sketch"], document["features"][2]["id"]);
-            if blind {
-                assert_eq!(hole["depth"], "6 mm");
-            } else {
-                assert!(hole.get("depth").is_none());
+                let model = holed_cube(4.0, |hole| {
+                    hole["shape"]["construction"]["kind"] = form.clone();
+                    if blind {
+                        hole["extent"] = json!({"kind": "blind", "length": 6.0});
+                        hole["bottom"] = json!({"kind": "flat"});
+                    }
+                });
+                let (document, report) = convert(
+                    &model,
+                    &SolidCraftWriter::new()
+                        .verification(Verification::Off)
+                        .target_version(Some(version.parse().unwrap())),
+                );
+                assert!(
+                    history_line(&report).starts_with("4 of 4 features mapped"),
+                    "{}",
+                    history_line(&report)
+                );
+                let hole = &document["features"][3];
+                assert_eq!(hole["hole"], expected);
+                assert_eq!(hole["diameter"], "4 mm");
+                assert_eq!(hole["position"], json!([5.0, 5.0, 10.0]));
+                assert_eq!(hole["direction"], json!([0.0, 0.0, -1.0]));
+                assert_eq!(hole["points"]["sketch"], document["features"][2]["id"]);
+                if blind {
+                    assert_eq!(hole["depth"], "6 mm");
+                } else {
+                    assert!(hole.get("depth").is_none());
+                }
             }
         }
     }

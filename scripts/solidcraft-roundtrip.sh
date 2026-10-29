@@ -2,6 +2,8 @@
 # Converts fixtures with Dutchman and opens each result in SolidCraft's own CLI, failing when
 # SolidCraft cannot evaluate the design, a timeline feature errors, or the geometry SolidCraft
 # reads differs from what the fixture holds: total volume, face count and bounding box.
+# CI runs the newest and oldest releases in the rolling 14-day window; update pins
+# with scripts/solidcraft-window.sh (see docs/releasing.md).
 #
 #   scripts/solidcraft-roundtrip.sh <solidcraft-cli> <dutchman> <fixture>=<expected>...
 #

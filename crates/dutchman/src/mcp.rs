@@ -203,7 +203,7 @@ fn option_properties() -> Map<String, Value> {
         },
         "solidcraft_version": {
             "type": "string",
-            "description": "Target SolidCraft release (x.y.z, at least 0.18.2). Defaults to the verification CLI version, else 0.18.2."
+            "description": "Target SolidCraft release (x.y.z, at least 0.18.2). Defaults to the found CLI version, else the newest known at build time, even when verification is off."
         },
         "verify_timeout": {
             "type": "integer",

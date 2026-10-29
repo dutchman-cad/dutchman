@@ -111,8 +111,10 @@ Dutchman does not duplicate its rules.
 The adapter pins format `solidcraft/23`, the first in which an Import may name a non-STEP
 source. SolidCraft upgrades older formats on open and refuses newer ones, so a pinned older
 format provides the 0.18.2 compatibility floor. Feature mapping also respects the writer's
-target SolidCraft release: the found verification CLI's version, else 0.18.2, unless an
-explicit target is supplied. `--no-verify` without an explicit target uses 0.18.2. The
+target SolidCraft release: the found CLI's version, even with verification off, else
+`NEWEST_SOLIDCRAFT` (currently 0.25.1), unless an explicit target is supplied.
+`WINDOW_OLDEST` (currently 0.23.0) marks the oldest release in the rolling 14-day window;
+older targets down to the floor remain accepted with the existing feature gates. The
 CLI's `--solidcraft-version x.y.z` selects a target on `convert`, `convert-all`, and `watch`.
 Sketch-profile helical sweeps require a target of 0.25.1 or newer; older targets block them
 and preserve the original geometry. Entry-recess holes write an explicit flat tip for

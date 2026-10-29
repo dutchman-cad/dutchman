@@ -176,8 +176,8 @@ On Linux, launch the desktop app with `dutchman-gui` from a terminal. It needs a
 Wayland desktop session with working OpenGL. See [Troubleshooting](#troubleshooting) if no
 window appears.
 
-The target SolidCraft selector defaults to the found CLI's version, else 0.18.2, even
-when history checking is off. Choose **0.18.2 and newer** for older installations or
+The target SolidCraft selector defaults to the found CLI's version, else the built-in newest
+(currently 0.25.1), even when history checking is off. Choose **0.18.2 and newer** for older installations or
 **0.25.1 and newer** to keep supported FreeCAD helices as editable coils.
 
 The window's title shows its version, and its **Report a problem** link opens the
@@ -274,12 +274,14 @@ it says so under the check option:
 
 <img alt="Dutchman Convert with macOS's “SolidCraft” Not Opened box over it; under Check feature history in SolidCraft it reads: macOS has not yet allowed SolidCraft to run, with the steps to allow it." src="images/macos-solidcraft-blocked.png" width="450">
 
-Dutchman's default compatibility floor is **SolidCraft 0.18.2**, and conversions are tested
-with 0.18.2, 0.19.0, 0.20.0, and 0.25.1. Each design targets the verification CLI's version
-when found, else 0.18.2. Use `--solidcraft-version x.y.z` to choose a target on `convert`,
-`convert-all`, or `watch`; versions below 0.18.2 and malformed versions are refused.
-With `--no-verify` and no explicit target, the target is 0.18.2. Features that need a newer
-release block history and preserve the original geometry as for other blockers.
+Dutchman is made for the current SolidCraft (any release from the last two weeks);
+older versions get simplified features, or pass `--solidcraft-version x.y.z` on
+`convert`, `convert-all`, or `watch`. The current window is 0.23.0–0.25.1; roundtrip
+checks cover its oldest and newest releases. Each design targets the found CLI's version,
+even with `--no-verify`, else the newest release known at build time (currently 0.25.1).
+Versions below 0.18.2 and malformed versions are refused. Older targets remain accepted
+down to 0.18.2. Features that need a newer release block history with a named reason
+and preserve the original geometry as for other blockers.
 A design opens in its target release and newer releases. A `solidcraft-cli` older than
 0.18.2 is not used: the conversion says so ("… is older
 than SolidCraft 0.18.2, the oldest that opens and checks Dutchman's designs; install a newer
@@ -375,7 +377,7 @@ dutchman convert --json generated_unit_cube.f3d cube.solidcraft
 |---|---|
 | `--import-only` | Write the geometry as one non-parametric import, never the feature history. |
 | `--solidcraft PATH` | The `solidcraft-cli` that checks a converted history. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`). |
-| `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the verification CLI's version, else 0.18.2. With `--no-verify`, the default is 0.18.2. |
+| `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the found CLI's version, even with `--no-verify`, else the newest known at build time (currently 0.25.1). |
 | `--no-verify` | Write the history without checking it in SolidCraft. Cannot be combined with `--solidcraft`. |
 | `--verify-timeout SECONDS` | How long each SolidCraft check may run before the history is written unverified. Default 120. |
 | `--no-clobber` | Do not replace an existing `.solidcraft` file: that file's conversion fails instead. By default it is replaced. |
