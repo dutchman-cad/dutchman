@@ -18,7 +18,12 @@ const FULL_TURN: f64 = 1e-9;
 const MAX_INSTANCES: u64 = 10_000;
 
 /// Maps a pattern feature whose operation is `definition`.
-pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Result<Value, String> {
+pub(crate) fn map(
+    feature: &Value,
+    definition: &Value,
+    ctx: &mut Context,
+    preceding: &mut Vec<Value>,
+) -> Result<Value, String> {
     let unresolved =
         definition.pointer("/pattern/kind").and_then(Value::as_str) == Some("unresolved");
     let seeds = definition
@@ -46,7 +51,14 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
                     .feature_names
                     .get(id)
                     .ok_or("it patterns a feature that did not map")?;
-                features.push(name.clone());
+                if let Some(group) = ctx.pattern_features.get(id) {
+                    features.extend(group.iter().cloned());
+                } else {
+                    features.push(name.clone());
+                }
+                if features.len() > 10_000 {
+                    return Err("patterns with more than 10000 seeds are not supported yet".to_owned());
+                }
             }
             Some("bodies") => {
                 bodies.extend(body_seeds(seed.get("value"), ctx)?);
@@ -75,6 +87,21 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         return Err("patterns mixing feature and body seeds are not supported yet: SolidCraft requires one seed kind".to_owned());
     }
     let pattern = definition.get("pattern");
+    if pattern.and_then(|p| p.get("kind")).and_then(Value::as_str) == Some("composite")
+        && pattern
+            .and_then(|p| p.get("stages"))
+            .and_then(Value::as_array)
+            .is_some_and(|stages| {
+                stages.iter().any(|stage| {
+                    stage.pointer("/pattern/kind").and_then(Value::as_str) == Some("mirror")
+                })
+            })
+    {
+        if !bodies.is_empty() {
+            return Err("composite mirror patterns of bodies are not supported yet: intermediate copies have no mapped body names".to_owned());
+        }
+        return chain(feature, pattern, features, ctx, preceding);
+    }
     if pattern.and_then(|p| p.get("kind")).and_then(Value::as_str) == Some("mirror") {
         if !bodies.is_empty() {
             return Err("mirrors of bodies are not mapped yet".to_owned());
@@ -92,6 +119,9 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         }));
     }
     let layout = mapped_layout(pattern, ctx)?;
+    if repeated_endpoint(pattern) {
+        ctx.pattern_replay_required = true;
+    }
     let id = ctx.id();
     ctx.builds = true;
     let mut out = json!({
@@ -108,6 +138,96 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         }
     }
     Ok(out)
+}
+
+/// Each stage adds copies of the whole instance set produced so far. A pattern feature
+/// selects only its added copies, so the next stage also needs the original seed names.
+fn chain(
+    feature: &Value,
+    pattern: Option<&Value>,
+    mut features: Vec<String>,
+    ctx: &mut Context,
+    preceding: &mut Vec<Value>,
+) -> Result<Value, String> {
+    let stages = pattern
+        .and_then(|pattern| pattern.get("stages"))
+        .and_then(Value::as_array)
+        .ok_or("its pattern stages are malformed")?;
+    if stages.is_empty() {
+        return Err("its pattern stages are empty".to_owned());
+    }
+    if stages.len() > 32 {
+        return Err("composite patterns with more than 32 stages are not supported yet".to_owned());
+    }
+    let mut mapped = Vec::with_capacity(stages.len());
+    let mut instances = 1_u64;
+    for (index, stage) in stages.iter().enumerate() {
+        let pattern = stage.get("pattern");
+        let id = ctx.id();
+        let base = name(feature).unwrap_or("Pattern");
+        let (mut out, count) =
+            if pattern.and_then(|p| p.get("kind")).and_then(Value::as_str) == Some("mirror") {
+                (
+                    json!({"id": id, "type": "mirror", "suppressed": false,
+                "features": features, "plane": mirror_plane(pattern)?}),
+                    2,
+                )
+            } else {
+                let layout = mapped_layout(pattern, ctx)?;
+                let count = |field: &str| {
+                    layout
+                        .get(field)
+                        .and_then(Value::as_str)
+                        .and_then(|s| s.parse::<u64>().ok())
+                        .unwrap_or(1)
+                };
+                let count = count("count")
+                    .saturating_mul(count("count1"))
+                    .saturating_mul(count("count2"));
+                (
+                    json!({"id": id, "type": "pattern", "suppressed": false,
+                "features": features, "pattern": layout}),
+                    count,
+                )
+            };
+        instances = instances.saturating_mul(count);
+        if instances > MAX_INSTANCES || features.len() > 10_000 {
+            return Err("patterns with more than 10000 instances are not supported yet".to_owned());
+        }
+        let stage_name = if index + 1 == stages.len() {
+            base.to_owned()
+        } else {
+            format!("{base} stage {}", index + 1)
+        };
+        if let Some(fields) = out.as_object_mut() {
+            fields.insert("name".to_owned(), json!(stage_name));
+        }
+        let unique = ctx.unique_name(&out, preceding.iter().chain(mapped.iter()));
+        if let Some(fields) = out.as_object_mut() {
+            fields.insert("name".to_owned(), json!(unique));
+        }
+        features.push(unique);
+        mapped.push(out);
+    }
+    let last = mapped.pop().ok_or("its pattern stages are empty")?;
+    if let Some(id) = feature.get("id").and_then(Value::as_str) {
+        ctx.pattern_features.insert(id.to_owned(), features);
+    }
+    preceding.extend(mapped);
+    ctx.builds = true;
+    ctx.pattern_replay_required = true;
+    Ok(last)
+}
+
+fn repeated_endpoint(pattern: Option<&Value>) -> bool {
+    pattern.is_some_and(|pattern| {
+        pattern.get("kind").and_then(Value::as_str) == Some("circular_angles")
+            && pattern
+                .get("angles")
+                .and_then(Value::as_array)
+                .and_then(|angles| number(angles.last()))
+                .is_some_and(|last| (last - TAU).abs() <= FULL_TURN)
+    })
 }
 
 /// Resolve path references as well as the layout's numeric fields.
@@ -320,10 +440,12 @@ fn layout(pattern: Option<&Value>) -> Result<Value, String> {
                 "spacing": spacing, "count": count})))
         }
         Some("circular_angles") => {
-            let (count, spacing) = regular_locations(pattern.get("angles"), "circular angles")?;
+            let (mut count, spacing) = regular_locations(pattern.get("angles"), "circular angles")?;
             let span = spacing * (count.saturating_sub(1) as f64);
             if count > 1 && (span - TAU).abs() <= FULL_TURN {
-                return Err("circular patterns repeating the seed at a full turn are not supported yet: SolidCraft omits the duplicate endpoint".to_owned());
+                // The endpoint coincides with the seed. SolidCraft's full-turn layout
+                // already omits it, so retain just the distinct angular locations.
+                count -= 1;
             }
             let angle = if count == 1 || (spacing * count as f64 - TAU).abs() <= FULL_TURN {
                 TAU
@@ -467,6 +589,43 @@ mod tests {
     use super::*;
 
     #[test]
+    fn malformed_or_oversized_chains_do_not_emit_partial_features() {
+        let mirror = json!({"pattern": {"kind": "mirror",
+            "plane_origin": {"x": 20.0, "y": 0.0, "z": 0.0},
+            "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}});
+        for (stages, reason) in [
+            (json!([]), "stages are empty"),
+            (json!(vec![mirror.clone(); 33]), "more than 32 stages"),
+            (
+                json!([mirror, {"pattern": {"kind": "scale", "center": {"kind": "first_seed_centroid"},
+                "final_factor": 2.0, "count": 3}}]),
+                "progressively scaled patterns",
+            ),
+            (
+                json!([mirror, {"pattern": {"kind": "mirror",
+                "plane_origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+                "plane_normal": {"x": 0.0, "y": 0.0, "z": 0.0}}}]),
+                "mirror plane is malformed",
+            ),
+        ] {
+            let wire = Value::Null;
+            let mut ctx = Context::new(&wire);
+            let mut preceding = vec![json!({"name": "Earlier"})];
+            let result = chain(
+                &json!({"id": "composite", "name": "Copies"}),
+                Some(&json!({"stages": stages})),
+                vec!["Block".to_owned()],
+                &mut ctx,
+                &mut preceding,
+            );
+            assert!(result.unwrap_err().contains(reason));
+            assert_eq!(preceding, vec![json!({"name": "Earlier"})]);
+            assert!(ctx.pattern_features.is_empty());
+            assert!(!ctx.builds);
+        }
+    }
+
+    #[test]
     fn linear_patterns_become_rectangular() {
         let linear = json!({"kind": "linear", "direction": {"x": 2.0, "y": 0.0, "z": 0.0},
             "spacing": 20.0, "count": 3,
@@ -515,7 +674,13 @@ mod tests {
         let model = json!({});
         let reason = |definition: Value| {
             let mut ctx = Context::new(&model);
-            map(&json!({"name": "Pattern"}), &definition, &mut ctx).unwrap_err()
+            map(
+                &json!({"name": "Pattern"}),
+                &definition,
+                &mut ctx,
+                &mut Vec::new(),
+            )
+            .unwrap_err()
         };
         assert_eq!(
             reason(json!({"seeds": [], "pattern": {"kind": "unresolved", "form": "linear"}})),

@@ -107,7 +107,10 @@ pub(crate) fn map(
             }
             .ok_or("a loft point section has no resolved position")?;
             let id = ctx.id();
-            let apex_name = ctx.unique_name(&json!({"name": format!("Loft apex {id}")}), preceding);
+            let apex_name = ctx.unique_name(
+                &json!({"name": format!("Loft apex {id}")}),
+                preceding.iter(),
+            );
             apex_sketches.push(json!({
                 "id": id,
                 "name": apex_name,

@@ -773,10 +773,19 @@ angles, ends at a face, vertex or body, full-turn surface revolves, and faces bu
 the way FreeCAD's default (bullseye) face maker builds them stop the history, and the report
 names which.
 
+Whole-sketch hole placements exclude construction entities; explicit entity selections
+can still use construction points or circle centres.
+
 Patterns can repeat earlier features or named bodies in one or two linear directions,
 around an axis, or at fixed spacing along curves of an earlier planar sketch. Explicit
 linear offsets and circular angles map when their intervals are equal; two linear composite
-stages map to a rectangular grid. Patterns are limited to 10,000 instances. Nonuniform or
+stages map to a rectangular grid. Composite feature patterns containing resolved mirrors
+map to an ordered chain: each stage repeats the preceding stage's entire instance set.
+Full-turn circular angles that repeat the seed endpoint keep only the distinct locations.
+Composite mirror chains allow up to 32 stages; patterns are limited to 10,000 instances,
+including the product of the counts in a chain. For mirror chains and repeated full-turn
+endpoints, an attempted replay that cannot finish keeps the original geometry and reports
+why; turning verification off, or having no usable CLI, still writes unverified history. Nonuniform or
 skipped instances, progressive scaling, face seeds, and unresolved body or path references
 flatten the history with a specific reason. This CADIR version has no solid-pattern symmetry
 or extent fields, so Dutchman cannot recover those settings independently of the decoded

@@ -3788,6 +3788,310 @@ fn two_linear_stages_become_a_rectangular_pattern() {
     }
 }
 
+#[test]
+fn full_turn_endpoints_keep_only_distinct_instances() {
+    for (angles, count) in [
+        (vec![0.0, std::f64::consts::TAU], 1),
+        (vec![0.0, std::f64::consts::PI, std::f64::consts::TAU], 2),
+        (
+            (0..=4)
+                .map(|i| i as f64 * std::f64::consts::FRAC_PI_2)
+                .collect(),
+            4,
+        ),
+    ] {
+        let model = patterned(json!({"kind": "circular_angles",
+            "axis_origin": {"x": -20.0, "y": 0.0, "z": 0.0},
+            "axis_dir": {"x": 0.0, "y": 0.0, "z": 1.0}, "angles": angles}));
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(history_line(&report).starts_with("3 of 3 features mapped"));
+        assert_eq!(
+            document["features"][2]["pattern"]["count"],
+            count.to_string()
+        );
+        assert_eq!(document["features"][2]["pattern"]["angle"], "360 deg");
+        if let Some(cli) = solidcraft() {
+            let v = volumes(&cli, &written(&model).0);
+            assert_eq!(v.len(), count);
+            assert!((v.iter().sum::<f64>() - count as f64 * 1000.0).abs() < 1e-6);
+        }
+    }
+}
+
+#[test]
+fn composite_mirrors_multiply_the_previous_instance_set_in_order() {
+    let mirror = json!({"pattern": {"kind": "mirror",
+        "plane_origin": {"x": 20.0, "y": 0.0, "z": 0.0},
+        "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}});
+    let linear = json!({"pattern": {"kind": "linear",
+        "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 60.0, "count": 3}});
+    for (stages, expected) in [
+        (
+            json!([mirror, linear]),
+            vec![0.0, 30.0, 60.0, 90.0, 120.0, 150.0],
+        ),
+        (
+            json!([linear, mirror]),
+            vec![-90.0, -30.0, 0.0, 30.0, 60.0, 120.0],
+        ),
+    ] {
+        let model = patterned(json!({"kind": "composite", "stages": stages}));
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(history_line(&report).starts_with("3 of 3 features mapped"));
+        assert_eq!(document["features"][2]["features"], json!(["Block"]));
+        assert_eq!(
+            document["features"][3]["features"],
+            json!(["Block", "Copies stage 1"])
+        );
+        assert_eq!(document["features"][3]["name"], "Copies");
+        if let Some(cli) = solidcraft() {
+            let design = written(&model).0;
+            let v = volumes(&cli, &design);
+            assert_eq!(v.len(), 6);
+            assert!((v.iter().sum::<f64>() - 6000.0).abs() < 1e-6);
+            let mut x: Vec<f64> = bounds(&cli, &design)
+                .iter()
+                .map(|(min, _)| min[0])
+                .collect();
+            x.sort_by(f64::total_cmp);
+            assert_eq!(x, expected);
+        }
+    }
+}
+
+#[test]
+fn composite_mirrors_chain_multiple_reflections_and_circular_copies() {
+    let mirror = json!({"pattern": {"kind": "mirror",
+        "plane_origin": {"x": 20.0, "y": 0.0, "z": 0.0},
+        "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}});
+    let other = json!({"pattern": {"kind": "mirror",
+        "plane_origin": {"x": 0.0, "y": 20.0, "z": 0.0},
+        "plane_normal": {"x": 0.0, "y": 1.0, "z": 0.0}}});
+    let circular = json!({"pattern": {"kind": "circular",
+        "axis_origin": {"x": -1000.0, "y": -1000.0, "z": 0.0},
+        "axis_dir": {"x": 0.0, "y": 0.0, "z": 1.0},
+        "angle": std::f64::consts::FRAC_PI_2, "count": 3}});
+    for (stages, count) in [
+        (json!([mirror, other]), 4),
+        (json!([mirror, other, circular]), 12),
+        (json!([circular, mirror]), 6),
+    ] {
+        let model = patterned(json!({"kind": "composite", "stages": stages}));
+        let (_, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(history_line(&report).starts_with("3 of 3 features mapped"));
+        if let Some(cli) = solidcraft() {
+            let v = volumes(&cli, &written(&model).0);
+            assert_eq!(v.len(), count);
+            assert!((v.iter().sum::<f64>() - count as f64 * 1000.0).abs() < 1e-5);
+        }
+    }
+}
+
+#[test]
+fn composite_mirror_chains_refuse_unrepresentable_stages_and_excessive_products() {
+    let mirror = json!({"pattern": {"kind": "mirror",
+        "plane_origin": {"x": 20.0, "y": 0.0, "z": 0.0},
+        "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}});
+    let model = patterned(json!({"kind": "composite", "stages": [mirror,
+        {"pattern": {"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0},
+            "spacing": 20.0, "count": 5001}}]}));
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("more than 10000 instances"),
+        "{}",
+        history_line(&report)
+    );
+    assert_reference_sketches(&document, 1);
+    let model = pattern_seeds(
+        patterned(json!({"kind": "composite", "stages": [mirror, mirror]})),
+        json!([{"kind": "bodies", "value": {"kind": "bodies", "value": ["synthetic:cube:body#0"]}}]),
+    );
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).contains("intermediate copies have no mapped body names"));
+}
+
+#[test]
+fn later_patterns_can_select_a_whole_composite_mirror_result() {
+    let model = patterned(json!({"kind": "composite", "stages": [
+        {"pattern": {"kind": "mirror", "plane_origin": {"x": 20.0, "y": 0.0, "z": 0.0},
+            "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}},
+        {"pattern": {"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0},
+            "spacing": 60.0, "count": 3}}
+    ]}));
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    // Colliding source and helper names must still select the right timeline features.
+    wire["model"]["features"][0]["name"] = json!("Copies stage 1");
+    wire["model"]["features"].as_array_mut().unwrap().push(json!({
+        "id": "f3d:model:feature#4", "ordinal": 3, "name": "Copies", "suppressed": false,
+        "definition": {"definition": "pattern", "seeds": [{"kind": "feature", "value": "f3d:model:feature#3"}],
+            "pattern": {"kind": "linear", "direction": {"x": 0.0, "y": 1.0, "z": 0.0},
+                "spacing": 30.0, "count": 2}}}));
+    let model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    };
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).starts_with("4 of 4 features mapped"));
+    assert_eq!(document["features"][2]["name"], "Copies stage 1 (2)");
+    assert_eq!(document["features"][4]["name"], "Copies (2)");
+    assert_eq!(
+        document["features"][4]["features"],
+        json!(["Block", "Copies stage 1 (2)", "Copies"])
+    );
+    if let Some(cli) = solidcraft() {
+        let v = volumes(&cli, &written(&model).0);
+        assert_eq!(v.len(), 12);
+        assert!((v.iter().sum::<f64>() - 12000.0).abs() < 1e-6);
+    }
+}
+
+#[test]
+fn unfinished_pattern_replays_keep_the_original_geometry() {
+    let Some(cli) = solidcraft() else { return };
+    for layout in [
+        json!({"kind": "circular_angles", "axis_origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "axis_dir": {"x": 0.0, "y": 0.0, "z": 1.0}, "angles": [0.0, std::f64::consts::TAU]}),
+        json!({"kind": "composite", "stages": [{"pattern": {"kind": "mirror",
+            "plane_origin": {"x": 20.0, "y": 0.0, "z": 0.0},
+            "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}},
+            {"pattern": {"kind": "linear", "direction": {"x": 0.0, "y": 1.0, "z": 0.0},
+                "spacing": 30.0, "count": 2}}]}),
+    ] {
+        let (document, report) = convert(
+            &patterned(layout),
+            &SolidCraftWriter::new()
+                .verification(Verification::With(cli.clone()))
+                .timeout(std::time::Duration::ZERO),
+        );
+        assert_eq!(report.outcome().unwrap().mode, Mode::Import);
+        assert!(
+            history_line(&report).contains("pattern instance set could not be verified"),
+            "{}",
+            history_line(&report)
+        );
+        assert!(history_line(&report).contains("timed out"));
+        assert_reference_sketches(&document, 1);
+    }
+}
+
+#[test]
+fn cc0_freecad_mirror_and_full_turn_match_recipe_volumes() {
+    for (file, count, volume) in [
+        ("S13c.FCStd", 10, 11660.70799341),
+        ("freecad-1.1.4/S13c.FCStd", 10, 11660.70799341),
+        ("P08b.FCStd", 6, 13006.19358586),
+    ] {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures")
+            .join(file);
+        let model = dutchman_core::read(
+            dutchman_core::Format::FreeCadDocument,
+            &path,
+            &mut Report::default(),
+        )
+        .unwrap();
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).starts_with(&format!("{count} of {count} features mapped")),
+            "{file}: {}",
+            history_line(&report)
+        );
+        assert!(types(&document).iter().any(|(kind, _)| kind == "pattern"));
+        let model = if file == "P08b.FCStd" {
+            assert_eq!(document["features"][4]["pattern"]["count"], "7");
+            assert_eq!(document["features"][4]["pattern"]["angle"], "360 deg");
+            // The pinned decoder resolves Z_Axis as -Y and includes a duplicate endpoint
+            // where the recipe has eight distinct holes. Never repair native decoding
+            // in the mapper: expose both gaps and isolate them in this neutral test model.
+            assert!(
+                (document["features"][4]["pattern"]["axis"][1]
+                    .as_f64()
+                    .unwrap()
+                    + 1.0)
+                    .abs()
+                    < 1e-9
+            );
+            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            for feature in wire["model"]["features"].as_array_mut().unwrap() {
+                if feature["name"] == "PolarPattern" {
+                    feature["definition"]["operation"]["pattern"]["axis_dir"] =
+                        json!({"x": 0.0, "y": 0.0, "z": 1.0});
+                }
+            }
+            if let Some(cli) = solidcraft() {
+                let axis_only = Model {
+                    ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+                    ..model.clone()
+                };
+                let (_, report) = convert(
+                    &axis_only,
+                    &SolidCraftWriter::new().verification(Verification::With(cli)),
+                );
+                assert!(
+                    history_line(&report).starts_with("flattened: replay differs"),
+                    "{}",
+                    history_line(&report)
+                );
+                assert!(history_line(&report).contains("volume"));
+            }
+            for feature in wire["model"]["features"].as_array_mut().unwrap() {
+                if feature["name"] == "PolarPattern" {
+                    feature["definition"]["operation"]["pattern"]["angles"] = json!((0..8)
+                        .map(|i| i as f64 * std::f64::consts::TAU / 8.0)
+                        .collect::<Vec<_>>());
+                }
+            }
+            Model {
+                ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+                ..model
+            }
+        } else {
+            model
+        };
+        if let Some(cli) = solidcraft() {
+            let (design, report) = written_with(
+                &model,
+                &SolidCraftWriter::new().verification(Verification::With(cli.clone())),
+            );
+            assert_eq!(
+                report.outcome().unwrap().mode,
+                Mode::History,
+                "{file}: {}",
+                history_line(&report)
+            );
+            assert!(
+                history_line(&report).contains("verified against the original"),
+                "{file}: {}",
+                history_line(&report)
+            );
+            let v = volumes(&cli, &design);
+            assert_eq!(v.len(), 1);
+            assert!((v[0] - volume).abs() / volume < 1e-4, "{file}: {v:?}");
+        }
+    }
+}
+
 /// Reuse the sweep fixture's mapped path sketch, lengthened to contain three copies.
 fn path_pattern(whole_sketch: bool) -> Model {
     let mut model = sweep_history(|_| {});
@@ -3854,11 +4158,6 @@ fn pattern_refusals_identify_the_unrepresentable_option() {
             json!({"kind": "circular_angles", "axis_origin": {"x": 0.0, "y": 0.0, "z": 0.0},
             "axis_dir": {"x": 0.0, "y": 0.0, "z": 1.0}, "angles": [0.0, 0.5, 2.0]}),
             "nonuniform circular angles",
-        ),
-        (
-            json!({"kind": "circular_angles", "axis_origin": {"x": 0.0, "y": 0.0, "z": 0.0},
-            "axis_dir": {"x": 0.0, "y": 0.0, "z": 1.0}, "angles": [0.0, std::f64::consts::TAU]}),
-            "repeating the seed at a full turn",
         ),
         (
             json!({"kind": "curve_driven", "path": {"kind": "native", "value": "path"},

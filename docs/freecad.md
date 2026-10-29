@@ -49,6 +49,24 @@ A simple binder over a resolved construction plane can likewise be carried in it
 sketches. A binder used by a later feature remains a blocker when its source geometry
 reference is not resolved; the report says `a binder used by a later feature is not mapped yet`.
 
+MultiTransforms containing resolved mirrors keep their stage order as a chain of SolidCraft
+mirror and pattern features. Each stage repeats the complete instance set from the previous
+stage. Full-turn polar patterns with a repeated seed endpoint keep every distinct location
+once. Replay checks body count, volume, and area against the stored original; a chain that
+cannot reproduce it falls back to geometry with the replay reason. Unresolved mirror planes,
+body-seeded composite mirrors, and progressively scaled stages remain unsupported.
+An attempted replay that cannot finish also keeps the original geometry for these chains;
+with verification off or no usable CLI, history remains unverified.
+
+Some polar patterns referring to the document's Z axis currently receive another axis or
+an incorrect endpoint from the decoder. These do not have verified editable history yet.
+Replay differences and unfinished replay checks of repeated full-turn endpoints fall back
+to geometry, as reported. With verification off or no usable CLI, history remains unverified.
+The endpoint mapping does not repair a misdecoded axis or instance set.
+
+Whole-sketch hole placements exclude construction geometry, including reference origin
+points. Explicit entity selections can still use construction points or circle centres.
+
 Fillets and chamfers need resolved named edges of their base feature's stored shape,
 before the blend.
 Dutchman preserves those edges when it removes the hidden intermediate shapes. It accepts

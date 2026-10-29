@@ -181,7 +181,9 @@ entry recesses combined with drill points, exit treatments, taper, and modeled t
 patterns of earlier features or named bodies, linear in one or
 two directions, circular over a partial span or all the way round, or at fixed spacing along
 planar sketch curves; regular explicit offsets and angles, and pairs of linear composite
-stages, with at most 10,000 instances per pattern; mirrors of earlier features across a
+stages; ordered chains of feature-pattern stages containing mirrors, each repeating the
+previous instance set (at most 32 stages), with at most 10,000 instances per pattern or chain;
+mirrors of earlier features across a
 plane; and body mirror patterns and body combines (join, cut or intersect, optionally keeping
 the tools) of bodies named by earlier features. Shells and drafts wait on input face geometry
 (their faces are known only on the final body, which the feature has changed); cosmetic
@@ -219,7 +221,9 @@ may differ in volume by both their areas times that chord, and never less than 1
 volume is allowed; areas must agree within 1e-3. A mismatch or a feature SolidCraft cannot
 replay flattens the design (`flattened: replay differs`). When no CLI is found (`--solidcraft PATH`, else `$SOLIDCRAFT_CLI`, else `PATH`),
 when it times out (`--verify-timeout`, default 120 s), or with `--no-verify`, the history is
-written and reported unverified. `--import-only` always writes the import design.
+written and reported unverified. For ordered mirror chains and repeated full-turn endpoints,
+an attempted replay that cannot finish instead keeps the original geometry and reports why.
+`--import-only` always writes the import design.
 
 Geometry written as an import is opened in the same CLI. A refusal, timeline errors, faces
 it cannot mesh, bodies inside out, or solids without volume produce a `Degraded` `geometry`
