@@ -52,6 +52,8 @@ pub struct Assembly {
     /// Why each joint the file records was left out or changed, for the writer to report: a
     /// writer that builds that joint some other way leaves its note out.
     pub joint_notes: Vec<JointNote>,
+    /// Placements before joint solving; empty when they were not captured.
+    pub stored_placements: Vec<Placement3x4>,
 }
 
 /// Why a joint was left out or changed in [`Assembly::joints`].
@@ -78,6 +80,29 @@ pub struct LeftOut {
 }
 
 impl Assembly {
+    fn remember_placements(&mut self) {
+        if self.stored_placements.is_empty() {
+            self.stored_placements = self.placements.iter().map(|p| p.transform).collect();
+        }
+        for part in &mut self.parts {
+            if let Some(assembly) = &mut part.assembly {
+                assembly.remember_placements();
+            }
+        }
+    }
+
+    /// Restore the source placements when a writer leaves joints out by choice.
+    pub fn restore_stored_placements(&mut self) {
+        for (placement, stored) in self.placements.iter_mut().zip(&self.stored_placements) {
+            placement.transform = *stored;
+        }
+        for part in &mut self.parts {
+            if let Some(assembly) = &mut part.assembly {
+                assembly.restore_stored_placements();
+            }
+        }
+    }
+
     /// How much of the assembly is placed: its own placements and, for each placed
     /// sub-assembly, the sub-assembly's, as often as it is placed.
     pub fn completeness(&self) -> Completeness {
@@ -473,6 +498,7 @@ pub(crate) fn resolve(
         left_out,
         held: Vec::new(),
         joint_notes: Vec::new(),
+        stored_placements: Vec::new(),
     })
 }
 
@@ -682,7 +708,9 @@ fn local_components_with(
         left_out: tree.left_out,
         held,
         joint_notes: Vec::new(),
+        stored_placements: Vec::new(),
     };
+    assembly.remember_placements();
     left_out.extend(
         place_by_joints(&mut assembly, &posed)
             .into_iter()
@@ -1642,6 +1670,7 @@ impl<'a> Tree<'a> {
                 left_out: std::mem::replace(&mut self.left_out, outer_left_out),
                 held: Vec::new(),
                 joint_notes: Vec::new(),
+                stored_placements: Vec::new(),
             });
             holder
         };
@@ -2081,6 +2110,7 @@ mod tests {
             left_out: assembly.left_out.clone(),
             held: Vec::new(),
             joint_notes: Vec::new(),
+            stored_placements: Vec::new(),
         });
         assert_eq!((completeness.placed, completeness.placements()), (5, 6));
         assert_eq!(
@@ -2882,6 +2912,29 @@ mod tests {
             .unwrap();
         let frame = world_at(&assembly, &[0]).unwrap();
         assert!(near(&frame, &at([20.0, 0.0, 0.0], 0.0)), "{frame:?}");
+    }
+
+    #[test]
+    fn stored_placements_survive_joint_solving_in_nested_components() {
+        let model = with_joints(
+            nested(false, None),
+            json!([joint(
+                1,
+                json!({"kind": "revolute"}),
+                connector_at(2, &[], IDENTITY),
+                connector_at(1, &[], facing(at([10.0, 0.0, 0.0], 0.0)))
+            )]),
+        );
+        let mut assembly = local_assembly(&model).unwrap().unwrap();
+        assert!(near(
+            &world_at(&assembly, &[0, 1]).unwrap(),
+            &at([110.0, 0.0, 0.0], 0.0)
+        ));
+        assembly.restore_stored_placements();
+        assert!(near(
+            &world_at(&assembly, &[0, 1]).unwrap(),
+            &at([130.0, 0.0, 0.0], 0.0)
+        ));
     }
 
     #[test]

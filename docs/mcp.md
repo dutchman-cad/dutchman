@@ -8,7 +8,7 @@ and JSON reports described here retain their existing schemas.
 The full CLI also accepts `dutchman part.f3d` (or `dutchman convert part.f3d`) and derives
 the output beside the input from `--to`. An existing derived output is kept with exit 2;
 choose `-o PATH` or use `--force` to replace it. `--force` conflicts with `--no-clobber`.
-Explicit outputs retain their replacement behaviour. MCP output paths remain required.
+Explicit outputs retain their replacement behaviour. MCP output paths remain required except for `convert` with `dry_run: true`.
 
 `dutchman-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server. It lets
 an AI assistant convert CAD files with Dutchman on your machine: it gives the assistant four
@@ -63,6 +63,44 @@ editable history. An Info `visibility` note, `N editable-history component place
 are placed hidden`, counts the latter across repeated and nested placements. Both use
 the same bounded hidden-occurrence paths; a Degraded note reports paths left shown
 past the 4096-path limit.
+
+## Choosing what to keep and estimating cost
+
+Both `convert` and `convert_all` accept `preset` (`fast`, `standard`, or `full`, default
+`standard`), `history`, `sketches`, `joints`, and `no_memory_check`. The three retention
+booleans default to true and only narrow the preset: true cannot enable history in
+`fast`. `history: false` is also available as the existing `import_only: true`.
+Fast keeps shape only and skips the memory guard. Standard keeps history, sketches,
+and joints, leaving assembly history out when its estimate exceeds free memory and
+the history-free estimate fits. Full never drops history for memory. Reference sketches
+are controlled by `sketches`; sketches needed by retained history stay. Disabling
+joints retains stored placements and adds an Info report line. FreeCAD output honours
+history only; sketch and joint choices do not control that writer.
+
+A conversion that exceeds available memory refuses with the same message as the CLI:
+`this conversion needs about N GB and M GB are free; try --preset <lighter> (or
+--no-memory-check to run anyway)`. Set a lighter `preset`, or explicitly set
+`no_memory_check: true` to bypass the guard and Standard's history budget. Existing
+input and batch worker limits still apply. Standard's automatic history decision is
+reported as one Info line under `history`, as described in the [guide](guide.md#choosing-what-to-keep).
+
+Use `convert` with `dry_run: true` for a quick estimate without decoding or writing;
+`output` is optional:
+
+```json
+{"name":"convert","arguments":{"input":"/models/assembly.f3z","preset":"standard","dry_run":true}}
+```
+
+The result contains `ok: true`, `estimate: {peak_bytes, seconds, band}`,
+`choices: {preset, history, sketches, joints}`, and `fits` (boolean, or `null` when
+memory or the estimate is unknown). `estimate` itself can be `null`. ZIP directory
+reads are bounded and no design is decoded. The band is ±60 % for Fusion, ±40 % for
+SolidWorks and ±100 % for formats without measurements (see guide.md). A pre-read cannot confirm archive assembly structure,
+so Standard's budgeted choices are provisional until normal decoding. An over-budget
+dry run returns `fits: false`; it writes nothing and does not attempt conversion.
+Normal convert reports, including batch results, carry the same `estimate` and
+`choices` fields ([json.md](json.md)).
+
 
 ## Set up a client
 
@@ -188,8 +226,8 @@ points, but Dutchman retains this limit for compatibility with older releases.
 | Tool | Arguments | Returns | Writes |
 |---|---|---|---|
 | `inspect` | `input`, and optionally `project`, `search` | `dutchman.inspect/1` | nothing |
-| `convert` | `input`, `output`, and optionally `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `overwrite`, `project`, `search` | `dutchman.convert/1` | the `output` file |
-| `convert_all` | `inputs`, `out_dir`, and optionally `jobs`, `timeout`, `max_memory_mb`, `journal`, `report_anon`, `report_salt`, `report_key`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `overwrite`, `project`, `search` | `dutchman.convert-all/1` | designs and the default log inside `out_dir`, plus `journal`, `report_anon`, and `report_key` at their specified paths |
+| `convert` | `input`, `output` (optional for `dry_run`), and optionally `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `dry_run`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `overwrite`, `project`, `search` | `dutchman.convert/1` | the `output` file |
+| `convert_all` | `inputs`, `out_dir`, and optionally `jobs`, `timeout`, `max_memory_mb`, `journal`, `report_anon`, `report_salt`, `report_key`, `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `overwrite`, `project`, `search` | `dutchman.convert-all/1` | designs and the default log inside `out_dir`, plus `journal`, `report_anon`, and `report_key` at their specified paths |
 | `formats` | none | `dutchman.formats/1` | nothing |
 
 The formats report includes each reader's status and cadmpeg's published headline
@@ -208,7 +246,11 @@ The formats report includes each reader's status and cadmpeg's published headlin
 | `report_anon` | path | Also write the anonymous report ([`dutchman.report-anon/1`](report-anon.md)) there. The result then carries `report_anon: {"path", "salt"}`; the salt stays private. |
 | `report_salt` | 32 hex digits | The salt for the anonymous report's file ids, to get the same ids as an earlier run. |
 | `report_key` | path | Write the key from each anonymous id to its file's path there. Keep it private. |
-| `import_only` | boolean | Write the geometry as one non-parametric import, never the feature history. |
+| `preset` | string | `fast`, `standard` (default), or `full`; see [Choosing what to keep](#choosing-what-to-keep-and-estimating-cost). |
+| `history`, `sketches`, `joints` | boolean | Narrow the preset; each defaults to true. |
+| `no_memory_check` | boolean | Bypass the estimate refusal and Standard's history budget; default false. |
+| `dry_run` | boolean | `convert` only: return estimate, choices, and fits without decoding or writing; default false. `output` is optional when true. |
+| `import_only` | boolean | Leave feature history out; keep geometry and the preset's reference sketches. |
 | `verify` | boolean | Check a converted history in SolidCraft. Default `true`; skipped, and the history marked unverified, when no `solidcraft-cli` is found. |
 | `solidcraft` | string | Path of `solidcraft-cli` for the check. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`). |
 | `solidcraft_version` | string | Target release as x.y.z, at least 0.18.2. Default: the found CLI's version, else the newest known at build time (currently 0.26.0), including when `verify` is false. |
@@ -395,7 +437,8 @@ SolidCraft's ISO metric designation would invent thread data; these stop the edi
 A flattened conversion keeps mapped sketches with resolved planes hidden after the imported
 geometry for reference, with no features built on them. Its losses include one Info line,
 `sketches: kept N sketches for reference`, with `; M left out` if any were omitted. Body
-verification is unchanged. `import_only` continues to write geometry alone.
+verification is unchanged. `import_only` leaves out history and retains reference sketches when the preset keeps
+sketches. Use `sketches: false` as well, or `preset: "fast"`, for geometry alone.
 
 SolidCraft assemblies with multiple top-level designs group each design's features in a
 uniquely named timeline folder, keeping feature order and leaving joints outside folders.

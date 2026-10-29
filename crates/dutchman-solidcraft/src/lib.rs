@@ -51,6 +51,8 @@ const GEOMETRY: &str = "geometry";
 #[derive(Clone, Debug)]
 pub struct SolidCraftWriter {
     import_only: bool,
+    sketches: bool,
+    joints: bool,
     target_version: Option<SolidCraftVersion>,
     detected_version: OnceLock<SolidCraftVersion>,
     verification: Verification,
@@ -62,6 +64,8 @@ impl Default for SolidCraftWriter {
     fn default() -> Self {
         SolidCraftWriter {
             import_only: false,
+            sketches: true,
+            joints: true,
             target_version: None,
             detected_version: OnceLock::new(),
             verification: Verification::Auto,
@@ -96,6 +100,18 @@ impl SolidCraftWriter {
     /// Always write the geometry as one import, never the history.
     pub fn import_only(mut self, import_only: bool) -> Self {
         self.import_only = import_only;
+        self
+    }
+
+    /// Keep reference sketches, including those beside imported geometry.
+    pub fn sketches(mut self, enabled: bool) -> Self {
+        self.sketches = enabled;
+        self
+    }
+
+    /// Keep assembly joints and their solved placements.
+    pub fn joints(mut self, enabled: bool) -> Self {
+        self.joints = enabled;
         self
     }
 
@@ -167,7 +183,12 @@ impl SolidCraftWriter {
             };
         }
         let mut history_report = Report::default();
-        let mut mapping = history::map(model, &mut history_report, self.resolved_version());
+        let mut mapping = history::map_with_sketches(
+            model,
+            &mut history_report,
+            self.resolved_version(),
+            self.sketches,
+        );
         self.plan_blends(&mut mapping);
         let undecoded = no_decoded_history(&mapping.features);
         match mapping.result {
@@ -247,6 +268,7 @@ impl SolidCraftWriter {
         references: Option<&history::History>,
         report: &mut Report,
     ) -> Result<Vec<u8>, Error> {
+        let references = references.filter(|_| self.sketches);
         document::report_unmapped(model, references, report);
         let design = container::Container::new(step.as_bytes())?;
         let mut doc = document::import_design(model, design.step_blob());
@@ -787,10 +809,19 @@ impl Writer for SolidCraftWriter {
                 check: Check::NotApplicable("--import-only".to_owned()),
                 features: Vec::new(),
             };
-            (self.import_design(model, &step, None, report)?, outcome)
+            let references = self.sketches.then(|| history::sketches(model, report).0);
+            (
+                self.import_design(model, &step, references.as_ref(), report)?,
+                outcome,
+            )
         } else {
             let mut history_report = Report::default();
-            let mut mapping = history::map(model, &mut history_report, self.resolved_version());
+            let mut mapping = history::map_with_sketches(
+                model,
+                &mut history_report,
+                self.resolved_version(),
+                self.sketches,
+            );
             if let Ok(history) = &mut mapping.result {
                 if let Err(why) = history::base::restate(history, model) {
                     mapping.result = Err(why);

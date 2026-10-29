@@ -23,6 +23,7 @@ CAD extension selects conversion.
 
 - [Install](#install)
 - [Your first conversion](#your-first-conversion)
+- [Choosing what to keep](#choosing-what-to-keep)
 - [Look before you convert: inspect](#look-before-you-convert-inspect)
 - [Convert a whole folder: convert-all](#convert-a-whole-folder-convert-all)
 - [Watch a folder](#watch-a-folder)
@@ -47,6 +48,72 @@ Pilot-only installations can ship the small `dutchman-launcher` binary renamed t
 It runs installed tools and identifies itself as `dutchman launcher <version>` with
 `--version`. Get [Dutchman Convert](https://github.com/dutchman-cad/dutchman) for `convert`,
 `convert-all`, `watch`, `inspect` and `formats`.
+
+## Choosing what to keep
+
+`convert`, `convert-all`, and `watch` accept these presets and narrowing switches:
+
+| Preset | SolidCraft output |
+|---|---|
+| `fast` | Geometry at the stored placements; no history, reference sketches, or joints. No memory refusal. |
+| `standard` (default) | History, sketches, and joints. Assembly history is left out when its estimate exceeds free memory and the history-free estimate fits. |
+| `full` | History, sketches, and joints whenever they map; history is never left out to fit memory. |
+
+`--no-history` (also `--import-only`), `--no-sketches`, and `--no-joints` only remove
+choices from the preset. `--no-sketches` removes reference sketches, including those
+kept beside an imported shape or after a blocked history; sketches needed to replay
+retained history stay. `--no-joints` omits assembly joints and restores the source's
+stored placements. An Info line under `joints` records that choice.
+FreeCAD output (`--to freecad` or `--to fcstd`) honours the history choice only;
+the sketch and joint choices do not control that writer.
+
+```sh
+dutchman convert assembly.f3z assembly.solidcraft --preset fast
+dutchman convert part.ipt part.solidcraft --preset full --no-sketches
+dutchman convert-all project/ --out-dir converted/ --preset standard --yes
+```
+
+Text conversions show `Estimate: about N GB, about M min (±B %)` before converting,
+unless `--quiet` is set. Estimates use file size and format. For `.f3d`, `.f3z`, and
+`.FCStd`, a bounded ZIP pre-read counts members and uses their total uncompressed size; for
+Fusion archives it also reads each design's own directory, one design at a time, and never
+decodes a design. The figures are calibrated on measured conversions of Fusion assemblies and
+parts, Inventor parts, and SolidWorks parts: with history, about 40 bytes of memory per byte of
+Fusion design content and 140 per byte of SolidWorks file. The band is ±60 % for Fusion,
+±40 % for SolidWorks, and ±100 % for formats without measurements. Times do not include the
+history check in SolidCraft, which can add several minutes on a large assembly.
+Separate assembly part files are not pre-read, so their cost can be underestimated.
+An estimate is unknown for formats this build cannot convert, or when metadata cannot
+be read, including ZIP directories exceeding 10,000 members or 16 MiB, and unreadable
+archives.
+
+Available memory comes from Linux `MemAvailable`, or free and inactive pages from
+macOS `vm_stat`. It is unknown on Windows in this build. Unknown memory or an unknown
+estimate does not block a run. Estimates use decimal GB and are approximate, not
+reservations; other processes and simultaneous conversions can change available memory.
+
+Standard confirms assembly structure during the normal decode before removing history.
+An assembly-capable archive's pre-read estimate can therefore assume history off while
+a single part found inside it still refuses. When Standard removes history, one Info
+line under `history` says:
+
+```text
+feature history left out: this assembly needs about N GB with history and M GB are free; use the full preset to keep it
+```
+
+If the selected choices exceed free memory, an interactive terminal offers the next
+lighter preset and asks `y/N`; only `y` or `yes` switches. Without a terminal, with
+`--yes`, or with `--json`, the conversion refuses with exit 2 and this message:
+
+```text
+this conversion needs about N GB and M GB are free; try --preset <lighter> (or --no-memory-check to run anyway)
+```
+
+`--yes` means no interactive preset switch. It does not bypass the memory guard.
+`--no-memory-check` bypasses both the refusal and Standard's automatic history budget.
+Existing decoder input limits and batch worker memory limits still apply. Batch
+conversion checks each input; changing presets or narrowing switches also prevents a
+journal from reusing a result made with different choices.
 
 ## Install
 
@@ -380,7 +447,13 @@ dutchman convert --json generated_unit_cube.f3d cube.solidcraft
 
 | Option | What it does |
 |---|---|
-| `--import-only` | Write the geometry as one non-parametric import, never the feature history. |
+| `--preset fast`, `--preset standard`, `--preset full` | What to keep; Standard is the default. See [Choosing what to keep](#choosing-what-to-keep). |
+| `--no-history` | Leave history out; alias of `--import-only`. |
+| `--no-sketches` | Leave reference sketches out; sketches needed by retained history stay. |
+| `--no-joints` | Leave assembly joints out and retain stored placements. |
+| `--no-memory-check` | Bypass the memory refusal and Standard's history budget. |
+| `--yes` | Never prompt to switch presets; refuse an over-budget conversion with exit 2. |
+| `--import-only` | Leave feature history out; keep geometry and the preset's reference sketches. |
 | `--solidcraft PATH` | The `solidcraft-cli` that checks a converted history. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`). |
 | `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the found CLI's version, even with `--no-verify`, else the newest known at build time (currently 0.26.0). |
 | `--no-verify` | Write the history without checking it in SolidCraft. Cannot be combined with `--solidcraft`. |
@@ -852,7 +925,8 @@ past the 4096-path limit.
 
 For a flattened design, one Info line reports `sketches: kept N sketches for reference`,
 with `; M left out` when any sketches did not map or their planes did not resolve.
-`--import-only` continues to omit sketches.
+`--import-only` leaves out history while retaining reference sketches when the preset
+keeps sketches. Use `--no-sketches` as well, or `--preset fast`, for geometry alone.
 
 An assembly keeps the sketches of its own file the same way, hidden, in the design itself
 (SolidCraft's root component), with the parameters their dimensions use; one Info line

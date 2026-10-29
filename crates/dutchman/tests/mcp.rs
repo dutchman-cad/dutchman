@@ -235,3 +235,93 @@ fn iges_tools_return_the_shared_refusal_without_decoding() {
     assert!(!output.exists());
     assert!(!dir.path().join("out").join("design.solidcraft").exists());
 }
+
+#[test]
+fn dry_run_estimates_without_decoding_or_writing_and_narrows_presets() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("synthetic.ipt");
+    std::fs::write(&input, b"not a CAD design; pre-read only").unwrap();
+    let output = dir.path().join("never-written.solidcraft");
+    let mut client = Client::start();
+    for preset in ["fast", "standard", "full"] {
+        let reply = client.call(
+            "convert",
+            json!({"input": input, "output": output, "dry_run": true,
+            "preset": preset, "history": false, "sketches": false, "joints": false}),
+        );
+        assert_eq!(reply["isError"], false, "{reply}");
+        let report = &reply["structuredContent"];
+        assert!(report["estimate"]["peak_bytes"].as_u64().unwrap() > 0);
+        assert!(report["estimate"]["seconds"].as_u64().unwrap() > 0);
+        assert!(report["estimate"]["band"].as_f64().unwrap() > 0.0);
+        assert_eq!(
+            report["choices"],
+            json!({"preset": preset, "history": false, "sketches": false, "joints": false})
+        );
+        assert!(report["fits"].is_boolean() || report["fits"].is_null());
+        assert!(!output.exists());
+    }
+    let reply = client.call("convert", json!({"input": input, "dry_run": true}));
+    assert_eq!(
+        reply["isError"], false,
+        "output is optional for a dry run: {reply}"
+    );
+    let reply = client.call(
+        "convert",
+        json!({"input": input, "dry_run": true, "preset": "quick"}),
+    );
+    assert_eq!(reply["isError"], true);
+    let reply = client.call(
+        "convert",
+        json!({"input": input, "dry_run": true, "history": "no"}),
+    );
+    assert_eq!(reply["isError"], true);
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    client.finish();
+}
+
+#[test]
+fn memory_refusals_and_dry_run_share_the_estimate_without_writing() {
+    let Some(available) = dutchman::choices::available_memory() else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("synthetic.step");
+    std::fs::File::create(&input)
+        .unwrap()
+        .set_len(available.saturating_add(2_000_000_000))
+        .unwrap();
+    let output = dir.path().join("never-written.solidcraft");
+    let out_dir = dir.path().join("never-created");
+    let mut client = Client::start();
+    let preview = client.call(
+        "convert",
+        json!({"input": input, "preset": "full", "dry_run": true}),
+    );
+    assert_eq!(preview["isError"], false);
+    assert_eq!(preview["structuredContent"]["fits"], false);
+    let converted = client.call(
+        "convert",
+        json!({"input": input, "output": output, "preset": "full"}),
+    );
+    let batch = client.call(
+        "convert_all",
+        json!({"inputs": [input], "out_dir": out_dir, "preset": "full"}),
+    );
+    for reply in [&converted, &batch] {
+        assert_eq!(reply["isError"], true, "{reply}");
+        let report = &reply["structuredContent"];
+        assert!(report["error"]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("this conversion needs about "));
+        assert_eq!(report["estimate"], preview["structuredContent"]["estimate"]);
+        assert_eq!(report["choices"], preview["structuredContent"]["choices"]);
+    }
+    assert_eq!(
+        batch["structuredContent"]["results"][0]["error"],
+        batch["structuredContent"]["error"]
+    );
+    assert!(!output.exists() && !out_dir.exists());
+    client.finish();
+}

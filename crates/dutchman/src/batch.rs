@@ -134,6 +134,13 @@ pub fn convert_all_with_progress(
         skipped_revisions,
     } = plan(inputs, out_dir);
     prepare(&mut work, options);
+    for job in &work {
+        if let Some(message) = crate::choices::memory_check(&job.input, options).refusal() {
+            return Ok(report::memory_failure(
+                SCHEMA, &job.input, options, &message,
+            ));
+        }
+    }
     let mut journal = match &settings.journal {
         Some(path) => Some(Journal::open(path)?),
         None => None,
@@ -141,7 +148,23 @@ pub fn convert_all_with_progress(
     // Files the journal already records are not converted again.
     let mut results: Vec<Option<Value>> = work
         .iter()
-        .map(|job| journal.as_ref().and_then(|j| j.recorded(job)))
+        .map(|job| {
+            journal
+                .as_ref()
+                .and_then(|j| j.recorded(job))
+                .filter(|report| {
+                    let mut choices = options.choices();
+                    let full = crate::choices::estimate(&job.input, &choices);
+                    if let crate::choices::MemoryCheck::Ok(estimate) =
+                        crate::choices::memory_check(&job.input, options)
+                    {
+                        if estimate != full {
+                            choices.history = false;
+                        }
+                    }
+                    report.get("choices") == Some(&report::choice_values(options.preset, choices))
+                })
+        })
         .collect();
     let resumed = results.iter().flatten().count();
     let todo: Vec<usize> = (0..work.len())
@@ -150,7 +173,6 @@ pub fn convert_all_with_progress(
     let pending: Vec<Job> = todo.iter().filter_map(|&i| work.get(i).cloned()).collect();
     let fresh: Mutex<Vec<Option<Value>>> = Mutex::new(vec![None; pending.len()]);
     let journal_error: Mutex<Option<String>> = Mutex::new(None);
-    let writer = options.writer();
     let journal_lock = Mutex::new(journal.take());
     let convert = |job: &Job, _: usize| {
         let callback = |event| on_progress(&job.input, event);
@@ -163,7 +185,7 @@ pub fn convert_all_with_progress(
                 None,
                 &callback,
             ),
-            None => convert_job_with_progress(job, &writer, &callback),
+            None => convert_options_job_with_progress(job, options, &callback),
         }
     };
     run_with(
@@ -605,10 +627,11 @@ fn unique(path: PathBuf, taken: &mut BTreeSet<PathBuf>) -> PathBuf {
 }
 
 /// Converts every job with `workers` threads, telling `on_event` as each starts and finishes.
+/// Writers from `ConvertOptions::writer` prepare each input's estimate and memory budget.
 /// Once `stop` is set, no further job starts; those already converting finish.
 pub fn run_each(
     work: &[Job],
-    writer: &(dyn Writer + Sync),
+    writer: &crate::OutputWriter,
     workers: usize,
     stop: &AtomicBool,
     on_event: impl Fn(Event) + Sync,
@@ -618,9 +641,13 @@ pub fn run_each(
         workers,
         stop,
         |job, index| {
-            convert_job_with_progress(job, writer, &|event| {
-                on_event(Event::Progress(index, event))
-            })
+            let callback = |event| on_event(Event::Progress(index, event));
+            match writer {
+                crate::OutputWriter::Configured { options, .. } => {
+                    convert_options_job_with_progress(job, options, &callback)
+                }
+                _ => convert_job_with_progress(job, writer, &callback),
+            }
         },
         &on_event,
     );
@@ -753,6 +780,27 @@ pub fn convert_job(job: &Job, writer: &(dyn Writer + Sync)) -> Value {
     }
 }
 
+fn convert_options_job_with_progress(
+    job: &Job,
+    options: &ConvertOptions,
+    on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
+) -> Value {
+    if let Some(message) = crate::choices::memory_check(&job.input, options).refusal() {
+        return report::memory_failure(report::CONVERT, &job.input, options, &message);
+    }
+    match make_folder(job) {
+        Some(failure) => failure,
+        None => crate::convert_options_with_progress(
+            &job.input,
+            &job.output,
+            options,
+            job.replace,
+            &job.search,
+            on_progress,
+        ),
+    }
+}
+
 fn convert_job_with_progress(
     job: &Job,
     writer: &(dyn Writer + Sync),
@@ -792,9 +840,13 @@ pub fn convert_isolated_job_with_progress(
     on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
 ) -> Value {
     let started = Instant::now();
+    if let Some(message) = crate::choices::memory_check(&job.input, options).refusal() {
+        return report::memory_failure(report::CONVERT, &job.input, options, &message);
+    }
     let mut report = make_folder(job).unwrap_or_else(|| {
         worker::convert_isolated_with_progress(program, job, options, limits, stop, on_progress)
     });
+    report::conversion_choices(&mut report, &job.input, options);
     if let Some(fields) = report.as_object_mut() {
         fields.insert(
             "elapsed_ms".into(),

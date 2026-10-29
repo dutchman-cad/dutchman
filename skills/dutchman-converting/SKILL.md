@@ -55,6 +55,36 @@ are placed hidden`, counts the latter across repeated and nested placements. Bot
 the same bounded hidden-occurrence paths; a Degraded note reports paths left shown
 past the 4096-path limit.
 
+## Conversion choices and memory
+
+Use `preset: "standard"` by default. `fast` keeps geometry at stored placements,
+without history, reference sketches, or joints; `full` keeps everything that maps and
+never drops history to fit memory. Standard drops only assembly history when its
+estimate exceeds free memory and the history-free estimate fits, with one Info line
+under `history` explaining the choice. `history: false` (also `import_only: true`),
+`sketches: false`, and `joints: false` narrow any preset. Sketches needed by retained
+history stay; with joints off, stored placements stay. FreeCAD output honours history
+only, not the sketch or joint choices.
+
+Before a costly conversion, call `convert` with `dry_run: true`; omit `output` if desired.
+This pre-reads metadata and bounded ZIP directory information without decoding or
+writing. Read `estimate` (`peak_bytes`, `seconds`, `band`, or `null`), `choices`
+(`preset`, `history`, `sketches`, `joints`), and `fits` (boolean or unknown `null`).
+Estimates are calibrated on measured conversions; the band is ±60 % for Fusion, ±40 % for
+SolidWorks, ±100 % for other formats, and times leave out the SolidCraft check. Assembly parts
+stored in separate files are not pre-read, and archive assembly structure is confirmed
+only during normal decoding. A dry run does not promise that conversion will succeed.
+
+Both converting tools refuse an over-budget run with a message naming the estimate,
+free memory, and lighter preset. Prefer that lighter preset. Only use
+`no_memory_check: true` when running despite the estimate is intended; it bypasses the
+refusal and Standard's history budget, while input and batch worker limits remain.
+The CLI equivalents are `--preset`, `--no-history`, `--no-sketches`, `--no-joints`, and
+`--no-memory-check`. CLI scripts should use `--yes` to forbid interactive preset
+switches; `--yes` and `--json` refuse over-budget runs with exit 2 rather than accepting
+extra memory use. Normal JSON reports include `estimate` and effective `choices`.
+
+
 ## Ground rules
 
 - **The user's designs stay on the user's machine.** Never upload, paste, attach or send a
@@ -153,7 +183,9 @@ are not present in the pinned CADIR version.
   (currently 0.26.0), even with CLI `--no-verify` or MCP `verify: false`.
   Dutchman targets the current SolidCraft with a rolling 14-day window (currently
   0.18.2–0.26.0); older targets get simplified features with a named reason.
-- `import_only: true` when the user wants only the shape. Leave `verify` at its default.
+- `preset: "fast"` when the user wants only the shape. `history: false` (also
+  `import_only: true`) removes history while keeping the preset's reference sketches and
+  joints. Leave `verify` at its default.
 
 A failed conversion comes back with `ok: false` and `error.message`. The message already says
 what to do next; pass it on in plain words. A failed file creates no design. A mixed batch
