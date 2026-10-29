@@ -812,10 +812,16 @@ fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec
         match (a_fixed, b_fixed) {
             (true, true) => {
                 let b_frame = compose(&b, &joint.frame_b);
-                if !same(&b_frame, &reach) {
+                // SolidCraft solves the joints when it opens a design, so an active joint that
+                // cannot hold its parts would move them away from where the file places them.
+                // It is kept, suppressed, for the user to fix or turn back on.
+                if !same(&b_frame, &reach) && !joint.suppressed {
+                    if let Some(row) = assembly.joints.get_mut(index) {
+                        row.suppressed = true;
+                    }
                     notes.push(format!(
                         "joint {}: its parts are placed by other joints where it cannot hold them; \
-                         SolidCraft reports the conflict",
+                         it is kept suppressed, so they stay where the file places them",
                         index + 1
                     ));
                 }
@@ -2972,7 +2978,7 @@ mod tests {
     }
 
     #[test]
-    fn joints_that_place_a_part_two_ways_are_reported() {
+    fn joints_that_place_a_part_two_ways_are_reported_and_suppressed() {
         let rigid = json!({"kind": "fixed"});
         let model = with_joints(
             nested(false, None),
@@ -2991,9 +2997,11 @@ mod tests {
                 ),
             ]),
         );
-        let (_, notes) = local_components(&model).unwrap().unwrap();
+        let (assembly, notes) = local_components(&model).unwrap().unwrap();
         assert_eq!(notes.len(), 1, "{notes:?}");
         assert!(notes[0].starts_with("joint 2: its parts are placed by other joints"));
+        let suppressed: Vec<bool> = assembly.joints.iter().map(|j| j.suppressed).collect();
+        assert_eq!(suppressed, [false, true]);
     }
 
     fn joint(key: u32, kind: Value, a: Value, b: Value) -> Value {
