@@ -22,6 +22,17 @@ const BODIES: &str = "_bodies";
 /// Where it keeps their STEP text, until the text is stored in the container.
 const STEP: &str = "_step";
 
+/// Whether a base feature's operation `definition` resolves to no bodies at all: the source
+/// proves it holds none, so it builds nothing.
+pub(super) fn holds_none(definition: &Value) -> bool {
+    let bodies = definition.get("bodies").unwrap_or(&Value::Null);
+    bodies.get("kind").and_then(Value::as_str) == Some("resolved")
+        && bodies
+            .pointer("/value/bodies")
+            .and_then(Value::as_array)
+            .is_some_and(Vec::is_empty)
+}
+
 /// Maps a base feature whose operation is `definition`.
 pub(super) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Result<Value, String> {
     let bodies = definition.get("bodies").unwrap_or(&Value::Null);

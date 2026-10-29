@@ -257,7 +257,8 @@ A part that holds an imported solid becomes a base-body Import feature at its pl
 timeline. Later features keep editable history when they map. Stored geometry has no recipe
 to lose: the report says, at Info level, “This part holds an imported solid; there is no
 feature history to bring over”. A part made only of stored geometry is geometry without
-history, with no flattened-history warning.
+history, with no flattened-history warning. A base feature the source proves holds no bodies
+builds nothing and is reported `not_needed`.
 
 When a design's feature history converts, Dutchman checks it by replaying it in SolidCraft's
 command-line tool, `solidcraft-cli`, which comes with every

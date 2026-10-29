@@ -5270,6 +5270,49 @@ fn a_base_feature_is_imported_where_it_stands_in_the_timeline() {
 }
 
 #[test]
+fn a_base_feature_proven_to_hold_no_bodies_builds_nothing() {
+    // A second base feature the source proves empty, after the one holding the cube.
+    let mut model = based_cube();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "id": "f3d:model:feature#9",
+            "ordinal": 9,
+            "name": "Base Feature 2",
+            "suppressed": false,
+            "definition": {"definition": "base_feature",
+                "bodies": {"kind": "resolved", "value": {"bodies": [], "native": "f3d:base#2"}}},
+        }));
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("4 of 4 features mapped"),
+        "{}",
+        history_line(&report)
+    );
+    let outcome = report.outcome().unwrap();
+    let empty = outcome
+        .features
+        .iter()
+        .find(|f| f.name.as_deref() == Some("Base Feature 2"))
+        .unwrap();
+    assert_eq!(empty.status, dutchman_core::FeatureStatus::NotNeeded);
+    assert_eq!(
+        types(&document)
+            .iter()
+            .filter(|(kind, _)| kind == "import")
+            .count(),
+        2,
+        "the base body and the original geometry only"
+    );
+}
+
+#[test]
 fn solidcraft_drills_into_the_imported_base_body() {
     let Some(cli) = solidcraft() else { return };
     let bore = std::f64::consts::PI * 2.0_f64.powi(2);
