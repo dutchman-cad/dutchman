@@ -39,6 +39,7 @@ fn placed_twice() -> Model {
             left_out: Vec::new(),
             held: Vec::new(),
             joint_notes: Vec::new(),
+            stored_placements: Vec::new(),
             parts: vec![part.clone()],
             placements: vec![
                 Placement {
@@ -461,6 +462,7 @@ fn nested() -> Model {
             left_out: Vec::new(),
             held: Vec::new(),
             joint_notes: Vec::new(),
+            stored_placements: Vec::new(),
             parts: vec![pair, cube.clone()],
             placements: vec![
                 Placement {
@@ -1440,6 +1442,99 @@ fn freecad_external_body_links_replay_at_the_recipe_volumes_and_bounds() {
                 (body["bbox"]["max"][axis].as_f64().unwrap() - high).abs() <= 0.01,
                 "{body}"
             );
+        }
+    }
+}
+
+#[test]
+fn sketch_and_joint_choices_leave_only_geometry_at_stored_placements() {
+    let mut model = with_sketches();
+    let assembly = model.assembly.as_mut().unwrap();
+    assembly.stored_placements = assembly.placements.iter().map(|p| p.transform).collect();
+    let stored = assembly.placements[1].transform;
+    assembly.placements[1].transform[0][3] += 123.0;
+    assembly.joints.push(dutchman_core::Joint {
+        a: vec![0],
+        b: vec![1],
+        frame_a: dutchman_core::placement::IDENTITY,
+        frame_b: dutchman_core::placement::IDENTITY,
+        suppressed: false,
+        motion: dutchman_core::Motion::Rigid,
+        flip: true,
+    });
+    for history in [false, true] {
+        let mut bytes = Vec::new();
+        let mut report = Report::default();
+        SolidCraftWriter::new()
+            .import_only(!history)
+            .sketches(false)
+            .joints(false)
+            .verification(Verification::Off)
+            .write(&model, &mut bytes, &mut report)
+            .unwrap();
+        let doc = document(&bytes);
+        assert!(doc.get("assembly").is_none());
+        assert!(doc["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|f| f["type"] != "sketch"));
+        assert_eq!(doc["occurrences"][1]["transform"][3][0], stored[0][3]);
+        assert_eq!(
+            report
+                .losses()
+                .iter()
+                .filter(
+                    |loss| loss.subject == "joints" && loss.detail.contains("left out by choice")
+                )
+                .count(),
+            1
+        );
+        assert!(!report
+            .losses()
+            .iter()
+            .any(|loss| loss.detail.contains("for reference")));
+    }
+    let (bytes, _) = written(&model);
+    let doc = document(&bytes);
+    assert!(!doc["assembly"]["joints"].as_array().unwrap().is_empty());
+    assert!(doc["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["type"] == "sketch"));
+}
+
+#[test]
+fn reference_sketch_choice_applies_to_single_parts_and_component_parts() {
+    let mut part = with_sketches();
+    part.assembly = None;
+    for assembly in [false, true] {
+        let model = if assembly {
+            let mut model = placed_twice();
+            model.assembly.as_mut().unwrap().parts = vec![part.clone()];
+            model
+        } else {
+            part.clone()
+        };
+        for history in [false, true] {
+            for sketches in [false, true] {
+                let mut bytes = Vec::new();
+                let mut report = Report::default();
+                SolidCraftWriter::new()
+                    .import_only(!history)
+                    .sketches(sketches)
+                    .verification(Verification::Off)
+                    .write(&model, &mut bytes, &mut report)
+                    .unwrap();
+                let doc = document(&bytes);
+                let kept = doc["features"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|f| f["type"] == "sketch");
+                assert_eq!(kept, sketches, "assembly={assembly}, history={history}");
+            }
         }
     }
 }

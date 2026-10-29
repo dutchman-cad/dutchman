@@ -33,7 +33,15 @@ pub(crate) fn write(
     assembly: &Assembly,
     report: &mut Report,
 ) -> Result<Vec<u8>, Error> {
-    joint_notes(assembly, report);
+    if writer.joints {
+        joint_notes(assembly, report);
+    } else {
+        report.push(
+            Severity::Info,
+            "joints",
+            "assembly joints left out by choice; stored placements retained",
+        );
+    }
     let mut builder = Builder {
         writer,
         container: Container::empty(),
@@ -62,7 +70,11 @@ pub(crate) fn write(
     };
     let top = builder.assembly(assembly, 0)?;
     builder.hold(&assembly.held, &top);
-    let joints = builder.joints(&assembly.joints, &top);
+    let joints = if writer.joints {
+        builder.joints(&assembly.joints, &top)
+    } else {
+        Vec::new()
+    };
     if builder.features.is_empty() {
         return Err(Error::Encode(
             "none of the assembly's parts has geometry SolidCraft can import".to_owned(),
@@ -250,7 +262,15 @@ fn joint_notes(assembly: &Assembly, report: &mut Report) {
 }
 
 pub(crate) fn plan(writer: &SolidCraftWriter, assembly: &Assembly, report: &mut Report) -> Outcome {
-    joint_notes(assembly, report);
+    if writer.joints {
+        joint_notes(assembly, report);
+    } else {
+        report.push(
+            Severity::Info,
+            "joints",
+            "assembly joints left out by choice; stored placements retained",
+        );
+    }
     let mut checks = Vec::new();
     let mut features = Vec::new();
     plan_parts(writer, assembly, report, &mut checks, &mut features);
@@ -274,7 +294,12 @@ fn plan_parts(
         }
         let file = part.source_file.as_deref().unwrap_or(&part.name);
         let mut part_report = Report::default();
-        let mut mapping = history::map(part, &mut part_report, writer.resolved_version());
+        let mut mapping = history::map_with_sketches(
+            part,
+            &mut part_report,
+            writer.resolved_version(),
+            writer.sketches,
+        );
         writer.plan_blends(&mut mapping);
         features.extend(mapping.features.iter().cloned().map(|mut feature| {
             feature.name = Some(format!("{file}: {}", feature.name.unwrap_or_default()));
@@ -455,7 +480,15 @@ impl Builder<'_> {
             components.push(component);
         }
         let mut occurrences = Vec::with_capacity(assembly.placements.len());
-        for placement in &assembly.placements {
+        for (index, placement) in assembly.placements.iter().enumerate() {
+            let transform = if self.writer.joints {
+                &placement.transform
+            } else {
+                assembly
+                    .stored_placements
+                    .get(index)
+                    .unwrap_or(&placement.transform)
+            };
             let Some(Some((component, name))) = components.get(placement.part).cloned() else {
                 occurrences.push(None);
                 continue;
@@ -473,9 +506,9 @@ impl Builder<'_> {
                 "component": component,
                 "parent": parent,
                 "grounded": false,
-                "transform": column_major(&placement.transform),
+                "transform": column_major(transform),
             }));
-            self.placements.insert(id, (component, placement.transform));
+            self.placements.insert(id, (component, *transform));
             if placement.hidden {
                 self.hidden.insert(id);
             }
@@ -754,10 +787,28 @@ impl Builder<'_> {
     ) -> Result<bool, Error> {
         let file = part.source_file.as_deref().unwrap_or(&part.name).to_owned();
         if self.writer.import_only {
+            if self.writer.sketches {
+                let (mut references, _) = history::sketches(part, self.report);
+                references.relocate(self.next_id - 1, component, &prefix(name), &mut self.taken);
+                self.next_id = references.next_id;
+                self.reference_sketches.extend(
+                    references
+                        .features
+                        .iter()
+                        .filter_map(|f| f.get("id").cloned()),
+                );
+                self.features.append(&mut references.features);
+                self.params.append(&mut references.params);
+            }
             return Ok(false);
         }
         let mut part_report = Report::default();
-        let mut mapping = history::map(part, &mut part_report, self.writer.resolved_version());
+        let mut mapping = history::map_with_sketches(
+            part,
+            &mut part_report,
+            self.writer.resolved_version(),
+            self.writer.sketches,
+        );
         if let Ok(history) = &mut mapping.result {
             if let Err(why) = history::base::restate(history, part) {
                 mapping.result = Err(why);
@@ -807,6 +858,9 @@ impl Builder<'_> {
                     self.histories.push(Check::Flattened(reason.clone()));
                 }
                 let mut references = mapping.references;
+                if !self.writer.sketches {
+                    references.features.clear();
+                }
                 let kept = references.features.len();
                 let left_out = part.ir.model.sketches.len().saturating_sub(kept);
                 if kept > 0 {
@@ -826,7 +880,7 @@ impl Builder<'_> {
                     self.features.append(&mut references.features);
                     self.params.append(&mut references.params);
                 }
-                if kept > 0 || left_out > 0 {
+                if self.writer.sketches && (kept > 0 || left_out > 0) {
                     let noun = if kept == 1 { "sketch" } else { "sketches" };
                     let detail = if left_out > 0 {
                         format!("kept {kept} {noun} for reference; {left_out} left out")
@@ -939,6 +993,9 @@ impl Builder<'_> {
     /// their ids. CADIR places a sketch in model space without saying which component it
     /// belongs to, so a component's sketch is kept where it was drawn, not moved with it.
     fn sketches(&mut self, model: &Model) -> Vec<Value> {
+        if !self.writer.sketches {
+            return Vec::new();
+        }
         let (mut kept, left_out) = history::sketches(model, self.report);
         let count = kept.features.len();
         if count > 0 || left_out > 0 {

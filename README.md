@@ -52,6 +52,19 @@ timeline for correction when it replays; it does not identify which feature need
 correction. SolidCraft's numerical eval includes hidden bodies as well as the visible
 final shape.
 
+## Choosing what to keep
+
+Use `--preset fast` for shape only, `--preset standard` (the default) for history,
+sketches, and joints with assembly history limited by free memory, or `--preset full`
+to keep everything that maps. Narrow any preset with `--no-history` (also
+`--import-only`), `--no-sketches`, or `--no-joints`. Without joints, stored placements
+are retained. FreeCAD output honours the history choice only.
+
+Before conversion, Dutchman shows an approximate memory/time estimate. An over-budget
+run offers a lighter preset in a terminal, or refuses with exit 2 in scripts, with
+`--yes`, or with `--json`. `--no-memory-check` bypasses the guard and Standard's history
+budget. See [the guide](docs/guide.md#choosing-what-to-keep) for limits and examples.
+
 ## Install
 
 With [Homebrew](https://brew.sh) on macOS or Linux:
@@ -311,7 +324,7 @@ server on stdio. It gives an agent four tools, each returning the same report as
 | Tool | Arguments | Returns |
 |---|---|---|
 | `inspect` | `input` | `dutchman.inspect/1` |
-| `convert` | `input`, `output`, and optionally `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `overwrite` | `dutchman.convert/1` |
+| `convert` | `input`, `output` (optional for `dry_run`), and optionally `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `dry_run`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `overwrite` | `dutchman.convert/1` |
 | `convert_all` | `inputs` (files and folders), `out_dir`, and optionally `jobs` and the convert options | `dutchman.convert-all/1` |
 | `formats` | none | `dutchman.formats/1` |
 

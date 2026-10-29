@@ -1,9 +1,10 @@
 //! `dutchman`: the command-line converter.
 //!
 //! Exit codes: 0 when the design was converted (or inspected), 1 when it could not be, 2 for a
-//! usage error. See `docs/json.md` for the `--json` reports.
+//! usage error or memory-budget refusal. See `docs/json.md` for the `--json` reports.
 
 use std::ffi::OsString;
+use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -30,6 +31,9 @@ struct Cli {
     /// Hide conversion progress and the volunteer invitation after conversion results.
     #[arg(long, global = true)]
     quiet: bool,
+    /// Never prompt to switch presets; refuse a conversion that exceeds free memory.
+    #[arg(long, global = true)]
+    yes: bool,
 }
 
 #[derive(Subcommand)]
@@ -148,7 +152,7 @@ fn main() -> ExitCode {
         .iter()
         .enumerate()
         .skip(1)
-        .find(|(_, arg)| *arg != "--verbose" && *arg != "--quiet")
+        .find(|(_, arg)| *arg != "--verbose" && *arg != "--quiet" && *arg != "--yes")
     {
         let name = arg.to_str().unwrap_or("");
         let builtin = Cli::command()
@@ -206,6 +210,7 @@ fn main() -> ExitCode {
     };
     let verbose = cli.verbose;
     let quiet = cli.quiet;
+    let yes = cli.yes;
     match cli.command {
         Command::Watch(command) => match dutchman::watch::run_with_progress(command, quiet) {
             Ok(true) => ExitCode::SUCCESS,
@@ -327,6 +332,16 @@ fn main() -> ExitCode {
                 }
                 options.no_clobber |= !force;
             }
+            if !json {
+                if let Some(status) =
+                    json::status_line(&serde_json::json!({"input": json::input(&input)}))
+                {
+                    println!("{status}");
+                }
+            }
+            if !memory_cli(&input, &mut options, json, quiet, yes, json::CONVERT) {
+                return ExitCode::from(2);
+            }
             convert(
                 &input,
                 &output,
@@ -347,10 +362,15 @@ fn main() -> ExitCode {
             report_anon,
             report_salt,
             report_key,
-            options,
+            mut options,
             log,
             json,
         } => {
+            for job in batch::plan(&inputs, &out_dir).jobs {
+                if !memory_cli(&job.input, &mut options, json, quiet, yes, batch::SCHEMA) {
+                    return ExitCode::from(2);
+                }
+            }
             let anon = match report_salt.as_deref().map(anon::Salt::parse).transpose() {
                 Ok(salt) => report_anon.map(|path| anon::Request {
                     path,
@@ -393,6 +413,14 @@ fn main() -> ExitCode {
                 }
             };
             progress.finish();
+            if let Some(message) = report.pointer("/error/message").and_then(Value::as_str) {
+                if json {
+                    print_json(&report);
+                } else {
+                    eprintln!("dutchman: {message}");
+                }
+                return exit(&report);
+            }
             if json {
                 print_json(&report);
             } else {
@@ -479,6 +507,67 @@ fn run_tool(path: &Path, args: &[OsString]) -> ExitCode {
     }
 }
 
+fn memory_cli(
+    input: &Path,
+    options: &mut ConvertOptions,
+    as_json: bool,
+    quiet: bool,
+    yes: bool,
+    schema: &str,
+) -> bool {
+    use dutchman::choices::{self, MemoryCheck};
+    loop {
+        let check = choices::memory_check(input, options);
+        match check {
+            MemoryCheck::Ok(estimate) => {
+                if !as_json && !quiet {
+                    if let Some(estimate) = estimate {
+                        println!(
+                            "Estimate: about {:.1} GB, about {:.1} min (±{:.0} %)",
+                            choices::gb(estimate.peak_bytes),
+                            estimate.seconds as f64 / 60.0,
+                            estimate.band * 100.0
+                        );
+                    }
+                }
+                return true;
+            }
+            MemoryCheck::TooBig {
+                estimate, lighter, ..
+            } => {
+                let message = check.refusal().unwrap_or_default();
+                if !as_json && !yes && std::io::stdin().is_terminal() {
+                    if let Some(lighter) = lighter {
+                        if !quiet {
+                            println!(
+                                "Estimate: about {:.1} GB, about {:.1} min (±{:.0} %)",
+                                choices::gb(estimate.peak_bytes),
+                                estimate.seconds as f64 / 60.0,
+                                estimate.band * 100.0
+                            );
+                        }
+                        eprint!("{message}\nSwitch to --preset {}? [y/N] ", lighter.name());
+                        let _ = std::io::stderr().flush();
+                        let mut answer = String::new();
+                        if std::io::stdin().read_line(&mut answer).is_ok()
+                            && matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+                        {
+                            options.preset = lighter;
+                            continue;
+                        }
+                    }
+                }
+                if as_json {
+                    print_json(&json::memory_failure(schema, input, options, &message));
+                } else {
+                    eprintln!("dutchman: {message}");
+                }
+                return false;
+            }
+        }
+    }
+}
+
 fn convert(
     input: &Path,
     output: &Path,
@@ -488,16 +577,11 @@ fn convert(
     verbose: bool,
     quiet: bool,
 ) -> ExitCode {
-    if !as_json {
-        if let Some(status) = json::status_line(&serde_json::json!({"input": json::input(input)})) {
-            println!("{status}");
-        }
-    }
     let progress = dutchman::progress::StderrProgress::new(quiet, as_json);
-    let report = dutchman::convert_with_progress(
+    let report = dutchman::convert_options_with_progress(
         input,
         output,
-        &options.writer(),
+        options,
         !options.no_clobber,
         &options.part_search(),
         &|event| progress.report(input, event),
@@ -629,9 +713,23 @@ fn inspect(
 fn exit(report: &Value) -> ExitCode {
     if report.get("ok") == Some(&Value::Bool(true)) {
         ExitCode::SUCCESS
+    } else if memory_refusal(report)
+        || report
+            .get("results")
+            .and_then(Value::as_array)
+            .is_some_and(|results| results.iter().any(memory_refusal))
+    {
+        ExitCode::from(2)
     } else {
         ExitCode::FAILURE
     }
+}
+
+fn memory_refusal(report: &Value) -> bool {
+    report
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .is_some_and(|message| message.starts_with("this conversion needs about "))
 }
 
 fn print_json(value: &Value) {
@@ -655,6 +753,17 @@ fn print_losses(losses: &[Value], verbose: bool) {
 #[cfg(test)]
 mod output_tests {
     use super::*;
+
+    #[test]
+    fn memory_refusals_exit_two_in_single_and_batch_reports() {
+        let refusal = serde_json::json!({"ok": false, "error": {"message": "this conversion needs about 2.0 GB and 1.0 GB are free; try --preset fast (or --no-memory-check to run anyway)"}});
+        assert_eq!(exit(&refusal), ExitCode::from(2));
+        assert_eq!(
+            exit(&serde_json::json!({"ok": false, "results": [refusal]})),
+            ExitCode::from(2)
+        );
+        assert_eq!(exit(&serde_json::json!({"ok": false})), ExitCode::FAILURE);
+    }
 
     #[test]
     fn solidcraft_target_versions_parse_and_reach_workers() {

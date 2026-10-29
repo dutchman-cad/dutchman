@@ -86,20 +86,15 @@ pub fn run_if_worker() -> Option<ExitCode> {
             return Some(ExitCode::from(2));
         }
     };
-    let writer = parsed.options.writer();
     let callback = |event| eprintln!("{}", json::progress(&parsed.input, event));
-    let progress = dutchman_core::Progress::new(&callback);
-    let report = match dutchman_core::convert_with_progress(
+    let report = crate::convert_options_with_progress(
         &parsed.input,
         &parsed.output,
-        &writer,
+        &parsed.options,
         !parsed.options.no_clobber,
         &parsed.options.part_search(),
-        &progress,
-    ) {
-        Ok(report) => crate::convert_success(&parsed.input, &parsed.output, &report),
-        Err(err) => json::error(CONVERT, json::input(&parsed.input), &err),
-    };
+        &callback,
+    );
     println!("{report}");
     Some(ExitCode::SUCCESS)
 }
@@ -130,6 +125,17 @@ impl ConvertOptions {
         if self.freecad_timeout != crate::ConvertOptions::default().freecad_timeout {
             args.push("--freecad-timeout".into());
             args.push(self.freecad_timeout.to_string().into());
+        }
+        args.push("--preset".into());
+        args.push(self.preset.name().into());
+        for (enabled, flag) in [
+            (self.no_sketches, "--no-sketches"),
+            (self.no_joints, "--no-joints"),
+            (self.no_memory_check, "--no-memory-check"),
+        ] {
+            if enabled {
+                args.push(flag.into());
+            }
         }
         if self.import_only {
             args.push("--import-only".into());

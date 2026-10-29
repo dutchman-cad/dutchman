@@ -387,3 +387,18 @@ encodes all selected pages, checks output paths, then writes them and builds
 per-page results through `json.rs`. This multiple-file operation has its own
 entry point because the existing `Writer` seam writes one byte stream. Batch
 and MCP drawing conversion are not supported yet.
+
+## Conversion choices and pre-read budgeting
+
+`dutchman::choices` owns presets, the one coefficient table, metadata-only estimates,
+and the shared memory check. Format detection uses `dutchman-core::Format`; ZIP reads
+are bounded before directory allocation and do not inflate members. Front ends use
+`ConvertOptions::writer_for_input` (or `convert_options_with_progress`) to prepare
+Standard's history budget. The prepared writer confirms the decoded model is an
+assembly before choosing its history-free writer and recording the Info reason.
+`ConvertOptions::writer()` retains options in an `OutputWriter::Configured` adapter;
+`batch::run_each` prepares its inputs individually, including desktop runs and retries.
+Direct low-level writer calls apply presets and switches without a source-specific budget.
+Core assemblies retain transforms from before joint solving so a writer omitting
+joints can restore stored placements without learning the source format. SolidCraft
+controls reference sketches and joints independently; FreeCAD honours history only.

@@ -2084,3 +2084,152 @@ fn neutral_view_curves_keep_placement_visibility_and_source_layers() {
     assert!(text.contains("2\nVIEW_2_Front_COSMETIC_HIDDEN\n70\n0\n62\n7\n6\nHIDDEN\n"));
     assert!(text.contains("2\nVIEW_2_Front_CENTER\n70\n0\n62\n7\n6\nCENTER\n"));
 }
+
+#[test]
+fn memory_refusal_precedes_decode_and_returns_exit_two() {
+    let Some(available) = dutchman::choices::available_memory() else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("synthetic.step");
+    let output = dir.path().join("never-written.solidcraft");
+    // Sparse metadata is enough for the estimator; no design bytes are read or allocated.
+    std::fs::File::create(&input)
+        .unwrap()
+        .set_len(available.saturating_add(2_000_000_000))
+        .unwrap();
+    for flags in [vec!["--yes"], vec!["--json"], vec![]] {
+        let mut args = vec![
+            "convert",
+            input.to_str().unwrap(),
+            output.to_str().unwrap(),
+            "--preset",
+            "full",
+        ];
+        args.extend(flags.iter().copied());
+        let out = dutchman(&args);
+        assert_eq!(out.status.code(), Some(2), "{out:?}");
+        if flags.contains(&"--json") {
+            let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+            assert_eq!(report["ok"], false);
+            assert!(report["error"]["message"]
+                .as_str()
+                .unwrap()
+                .starts_with("this conversion needs about "));
+            assert_eq!(report["choices"]["preset"], "full");
+            assert!(report["estimate"]["peak_bytes"].as_u64().unwrap() > available);
+        } else {
+            assert!(String::from_utf8_lossy(&out.stderr)
+                .contains("try --preset standard (or --no-memory-check to run anyway)"));
+        }
+        assert!(!output.exists());
+    }
+    let batch = dutchman(&[
+        "convert-all",
+        input.to_str().unwrap(),
+        "--out-dir",
+        dir.path().join("never-created").to_str().unwrap(),
+        "--preset",
+        "full",
+        "--json",
+    ]);
+    assert_eq!(batch.status.code(), Some(2));
+    let report: serde_json::Value = serde_json::from_slice(&batch.stdout).unwrap();
+    assert_eq!(report["schema"], "dutchman.convert-all/1");
+    assert!(!dir.path().join("never-created").exists());
+    let out = dutchman(&[
+        "convert",
+        input.to_str().unwrap(),
+        output.to_str().unwrap(),
+        "--preset",
+        "full",
+        "--no-memory-check",
+        "--json",
+    ]);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "the decoder's file-size guard takes over: {out:?}"
+    );
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(!report["error"]["message"]
+        .as_str()
+        .unwrap()
+        .contains("try --preset"));
+}
+
+#[test]
+fn estimates_are_text_only_and_respect_quiet() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = PathBuf::from(fixture("synthetic_cube.ipt"));
+    let output = dir.path().join("cube.solidcraft");
+    for flags in [vec![], vec!["--quiet"], vec!["--json"]] {
+        let mut args = vec![
+            "convert",
+            input.to_str().unwrap(),
+            output.to_str().unwrap(),
+            "--no-verify",
+            "--preset",
+            "fast",
+        ];
+        args.extend(flags.iter().copied());
+        let out = dutchman(&args);
+        assert!(out.status.success(), "{out:?}");
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(
+            text.contains("Estimate: about "),
+            flags.is_empty(),
+            "{text}"
+        );
+        if flags.contains(&"--json") {
+            let report: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(
+                report["choices"],
+                serde_json::json!({"preset": "fast", "history": false, "sketches": false, "joints": false})
+            );
+        }
+    }
+}
+
+#[test]
+fn narrowing_choices_reach_batch_workers_and_invalidate_journal_reuse() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = fixture("synthetic_cube.ipt");
+    let out_dir = dir.path().join("out");
+    let journal = dir.path().join("journal.jsonl");
+    let run = |sketches: bool| {
+        let mut args = vec![
+            "convert-all",
+            &input,
+            "--out-dir",
+            out_dir.to_str().unwrap(),
+            "--journal",
+            journal.to_str().unwrap(),
+            "--preset",
+            "full",
+            "--no-history",
+            "--no-joints",
+            "--no-memory-check",
+            "--no-verify",
+            "--json",
+        ];
+        if !sketches {
+            args.push("--no-sketches");
+        }
+        json_of(&dutchman(&args))
+    };
+    let first = run(true);
+    assert_eq!(first["converted"], 1, "{first}");
+    assert_eq!(first["resumed"], 0);
+    assert_eq!(
+        first["results"][0]["choices"],
+        serde_json::json!({"preset": "full", "history": false, "sketches": true, "joints": false})
+    );
+    assert_eq!(run(true)["resumed"], 1);
+    let changed = run(false);
+    assert_eq!(
+        changed["resumed"], 0,
+        "changing a choice must reconvert: {changed}"
+    );
+    assert_eq!(changed["results"][0]["choices"]["sketches"], false);
+}

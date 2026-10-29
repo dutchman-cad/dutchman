@@ -358,6 +358,7 @@ pub(crate) struct Mapping {
     pub(crate) features: Vec<FeatureOutcome>,
     /// Mapped, resolved sketches retained even when the history cannot replay.
     pub(crate) references: History,
+    keep_sketches: bool,
 }
 
 /// Helper decisions remain useful even when other features flatten the history.
@@ -383,6 +384,15 @@ pub(crate) fn map(
     report: &mut Report,
     target_version: crate::SolidCraftVersion,
 ) -> Mapping {
+    map_with_sketches(model, report, target_version, true)
+}
+
+pub(crate) fn map_with_sketches(
+    model: &Model,
+    report: &mut Report,
+    target_version: crate::SolidCraftVersion,
+    keep_sketches: bool,
+) -> Mapping {
     let mut features_out = Vec::new();
     let mut references = History::default();
     let result = map_into(
@@ -391,12 +401,99 @@ pub(crate) fn map(
         &mut features_out,
         &mut references,
         target_version,
+        keep_sketches,
     );
-    Mapping {
+    let mut mapping = Mapping {
         result,
         features: features_out,
         references,
+        keep_sketches,
+    };
+    discard_reference_sketches(&mut mapping);
+    mapping
+}
+
+/// Keep only sketches that the retained body-building history references, transitively.
+fn discard_reference_sketches(mapping: &mut Mapping) {
+    if mapping.keep_sketches {
+        return;
     }
+    mapping.references.features.clear();
+    let Ok(history) = &mut mapping.result else {
+        return;
+    };
+    let sketches: BTreeMap<u64, &Value> = history
+        .features
+        .iter()
+        .filter(|f| f.get("type").and_then(Value::as_str) == Some("sketch"))
+        .filter_map(|f| Some((f.get("id")?.as_u64()?, f)))
+        .collect();
+    let mut pending: Vec<&Value> = history
+        .features
+        .iter()
+        .filter(|f| f.get("type").and_then(Value::as_str) != Some("sketch"))
+        .collect();
+    let mut needed = std::collections::BTreeSet::new();
+    while let Some(value) = pending.pop() {
+        match value {
+            Value::Object(fields) => {
+                for (key, value) in fields {
+                    if matches!(key.as_str(), "sketch" | "path_sketch") {
+                        if let Some(id) = value.as_u64() {
+                            if needed.insert(id) {
+                                if let Some(sketch) = sketches.get(&id) {
+                                    pending.push(sketch);
+                                }
+                            }
+                        }
+                    }
+                    if value.is_object() || value.is_array() {
+                        pending.push(value);
+                    }
+                }
+            }
+            Value::Array(values) => pending.extend(values),
+            _ => {}
+        }
+    }
+    let mut removed = Vec::new();
+    let mut retained = Vec::new();
+    for (index, feature) in std::mem::take(&mut history.features)
+        .into_iter()
+        .enumerate()
+    {
+        let id = feature.get("id").and_then(Value::as_u64);
+        if feature.get("type").and_then(Value::as_str) == Some("sketch")
+            && id.is_none_or(|id| !needed.contains(&id))
+        {
+            removed.push(index);
+            if let Some(outcome) = id
+                .and_then(|id| history.sources.get(&id))
+                .and_then(|&row| mapping.features.get_mut(row))
+            {
+                outcome.status = FeatureStatus::LeftOut;
+                outcome.reason = Some("reference sketch left out by choice".to_owned());
+            }
+        } else {
+            retained.push(feature);
+        }
+    }
+    history.features = retained;
+    for blend in &mut history.blends {
+        blend.feature = blend
+            .feature
+            .saturating_sub(removed.partition_point(|&index| index < blend.feature));
+    }
+    history.mapped = mapping
+        .features
+        .iter()
+        .filter(|f| matches!(f.status, FeatureStatus::Mapped | FeatureStatus::NotNeeded))
+        .count();
+    history.total = mapping
+        .features
+        .iter()
+        .filter(|f| f.status != FeatureStatus::LeftOut)
+        .count();
 }
 
 fn map_into(
@@ -405,6 +502,7 @@ fn map_into(
     out: &mut Vec<FeatureOutcome>,
     references: &mut History,
     target_version: crate::SolidCraftVersion,
+    keep_sketches: bool,
 ) -> Result<History, String> {
     let document =
         serde_json::to_value(&model.ir).map_err(|err| format!("cannot read the model: {err}"))?;
@@ -440,13 +538,20 @@ fn map_into(
             ));
             continue;
         }
+        if !keep_sketches && blocked.is_some() && kind(feature) == "sketch" {
+            out.push(outcome(
+                FeatureStatus::LeftOut,
+                Some("reference sketch left out by choice".to_owned()),
+            ));
+            continue;
+        }
         history.total += 1;
         let definition = operation(feature);
         let structural = matches!(
             definition.get("definition").and_then(Value::as_str),
             Some("datum_principal_plane" | "tree_node" | "insert_component" | "assembly_joint")
         ) || helpers::is_helper(feature);
-        if blocked.is_some() && kind(feature) != "sketch" && !structural {
+        if blocked.is_some() && (kind(feature) != "sketch" || !keep_sketches) && !structural {
             out.push(outcome(
                 FeatureStatus::Blocked,
                 Some(
@@ -512,7 +617,7 @@ fn map_into(
         let Some(id) = sketch.get("id").and_then(Value::as_str) else {
             continue;
         };
-        if bound.contains(id) {
+        if !keep_sketches || bound.contains(id) {
             continue;
         }
         let feature = serde_json::json!({"name": sketch.get("name")});
@@ -766,6 +871,7 @@ pub(crate) fn shorten(mapping: &mut Mapping, source: usize, reason: String) {
     {
         mapping.result = Err(reason);
     }
+    discard_reference_sketches(mapping);
 }
 
 /// Refuses a CADIR wire version the mapping does not know.
