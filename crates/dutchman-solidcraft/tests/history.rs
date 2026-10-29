@@ -4076,14 +4076,24 @@ fn unfinished_pattern_replays_keep_the_original_geometry() {
                 .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_25_1))
                 .timeout(std::time::Duration::ZERO),
         );
-        assert_eq!(report.outcome().unwrap().mode, Mode::Import);
+        // The features before the unverified pattern stay as partial history.
+        assert_eq!(report.outcome().unwrap().mode, Mode::PartialHistory);
         assert!(
             history_line(&report).contains("pattern instance set could not be verified"),
             "{}",
             history_line(&report)
         );
         assert!(history_line(&report).contains("timed out"));
-        assert_reference_sketches(&document, 1);
+        // The unverified timeline stays hidden beside the visible original shape.
+        assert_eq!(
+            types(&document),
+            [
+                ("sketch".to_owned(), false),
+                ("extrude".to_owned(), false),
+                ("pattern".to_owned(), false),
+                ("import".to_owned(), false)
+            ]
+        );
     }
 }
 
@@ -4145,8 +4155,10 @@ fn cc0_freecad_mirror_and_full_turn_match_recipe_volumes() {
                     &axis_only,
                     &SolidCraftWriter::new().verification(Verification::With(cli)),
                 );
+                // A differing replay keeps the mapped timeline as partial history.
+                assert_eq!(report.outcome().unwrap().mode, Mode::PartialHistory);
                 assert!(
-                    history_line(&report).starts_with("flattened: replay differs"),
+                    history_line(&report).contains("replay differs"),
                     "{}",
                     history_line(&report)
                 );
