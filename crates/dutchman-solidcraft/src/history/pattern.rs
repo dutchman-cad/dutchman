@@ -420,6 +420,18 @@ fn layout(pattern: Option<&Value>) -> Result<Value, String> {
             Err(format!("cadmpeg does not decode its {} pattern layout yet", form.replace('_', " ")))
         }
         Some("linear") => {
+            // SolidCraft's rectangular pattern fills its whole grid; building it would add
+            // the instances the source suppressed.
+            if let Some(omitted) = pattern
+                .get("omitted_instances")
+                .and_then(Value::as_array)
+                .filter(|omitted| !omitted.is_empty())
+            {
+                return Err(format!(
+                    "patterns that skip grid positions are not supported yet: SolidCraft's rectangular pattern fills the whole grid ({} skipped)",
+                    omitted.len()
+                ));
+            }
             let dir = v3(pattern.get("direction"))
                 .and_then(unit)
                 .ok_or("its direction is not resolved")?;
@@ -663,6 +675,14 @@ mod tests {
                    "spacing1": "20 mm", "dir2": [0.0, 1.0, 0.0], "count2": "2",
                    "spacing2": "15 mm"})
         );
+        let mut skipping = linear.clone();
+        skipping["omitted_instances"] = json!([[1, 1], [2, 0]]);
+        assert_eq!(
+            layout(Some(&skipping)).unwrap_err(),
+            "patterns that skip grid positions are not supported yet: SolidCraft's rectangular pattern fills the whole grid (2 skipped)"
+        );
+        skipping["omitted_instances"] = json!([]);
+        assert_eq!(layout(Some(&skipping)), layout(Some(&linear)));
     }
 
     #[test]

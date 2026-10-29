@@ -18,6 +18,7 @@ State as of the cadmpeg commit Dutchman pins (see `Cargo.toml`).
 | Extrude, hole, constant-radius fillet, equal-distance chamfer, when every property, dimension and selection resolves. | Extrude: mapped when cadmpeg resolves its profile to sketch profiles or regions, blind or through all; an extrude to a face or to the next face is not mapped yet. Holes map where their placement resolves, drilled the way the hole points; constant-radius fillets and equal-setback chamfers map with proven feature input edge geometry (see guide.md). |
 | Mirror of features about a work plane. | Mapped as a SolidCraft mirror pattern of those features about that plane. |
 | Rectangular pattern of features with fixed spacing, in one or two directions. | Mapped as a SolidCraft rectangular pattern of those features. |
+| Rectangular pattern with suppressed instances. | Not mapped yet: SolidCraft's rectangular pattern fills the whole grid. The report names the pattern and how many positions it skips, and the part keeps its exact geometry. |
 | Combine of bodies (cut, join, or intersect), with its target and tool bodies as native references. | Not mapped yet: reported as "its bodies are not resolved" until Dutchman can name the bodies earlier features made. |
 | Move, Move Body, and Rotate of whole bodies (`move_body`). | Not mapped yet, and reported. |
 | Split of a solid by a work plane or a surface (`split_body`). | Not mapped yet, and reported. |
