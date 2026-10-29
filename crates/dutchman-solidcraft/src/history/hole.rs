@@ -90,6 +90,19 @@ pub(crate) fn map(
         _ => return Err("a hole of this construction is not mapped yet".to_owned()),
     };
 
+    // Newer SolidCraft applies entry-recess tip angles. These source forms have
+    // flat bottoms; 180 degrees makes that explicit on those releases.
+    if ctx.target_version >= crate::SolidCraftVersion::V0_25_1
+        && matches!(
+            hole.get("type").and_then(Value::as_str),
+            Some("counterbore" | "countersink")
+        )
+    {
+        if let Some(fields) = hole.as_object_mut() {
+            fields.insert("tip_angle".to_owned(), json!("180"));
+        }
+    }
+
     let mut depth = None;
     let mut to = None;
     let extent = definition.get("extent").unwrap_or(&Value::Null);

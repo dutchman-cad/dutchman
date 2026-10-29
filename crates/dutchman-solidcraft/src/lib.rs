@@ -19,6 +19,7 @@ mod testing;
 mod verify;
 
 use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use dutchman_core::{
@@ -28,8 +29,8 @@ use dutchman_core::{
 use serde_json::Value;
 
 pub use verify::{
-    find_cli, solidcraft_version, usable_cli, NoCli, Verification, CLI_ENV, DEFAULT_TIMEOUT,
-    OLDEST_SOLIDCRAFT, VOLUME_TOLERANCE,
+    find_cli, solidcraft_version, usable_cli, NoCli, SolidCraftVersion, Verification, CLI_ENV,
+    DEFAULT_TIMEOUT, OLDEST_SOLIDCRAFT, VOLUME_TOLERANCE,
 };
 
 use document::Live;
@@ -49,6 +50,8 @@ const GEOMETRY: &str = "geometry";
 #[derive(Clone, Debug)]
 pub struct SolidCraftWriter {
     import_only: bool,
+    target_version: Option<SolidCraftVersion>,
+    detected_version: OnceLock<SolidCraftVersion>,
     verification: Verification,
     replay: Verification,
     timeout: Duration,
@@ -58,6 +61,8 @@ impl Default for SolidCraftWriter {
     fn default() -> Self {
         SolidCraftWriter {
             import_only: false,
+            target_version: None,
+            detected_version: OnceLock::new(),
             verification: Verification::Auto,
             replay: Verification::Auto,
             timeout: DEFAULT_TIMEOUT,
@@ -71,6 +76,22 @@ impl SolidCraftWriter {
         SolidCraftWriter::default()
     }
 
+    /// Target this SolidCraft release, or detect the verification CLI's version when absent.
+    /// Without a known CLI version (including verification off), use SolidCraft 0.18.2.
+    pub fn target_version(mut self, version: Option<SolidCraftVersion>) -> Self {
+        self.target_version = version;
+        self
+    }
+
+    /// The release the written features must open in.
+    pub fn resolved_version(&self) -> SolidCraftVersion {
+        self.target_version.unwrap_or_else(|| {
+            *self
+                .detected_version
+                .get_or_init(|| SolidCraftVersion::detected(&self.verification))
+        })
+    }
+
     /// Always write the geometry as one import, never the history.
     pub fn import_only(mut self, import_only: bool) -> Self {
         self.import_only = import_only;
@@ -82,6 +103,7 @@ impl SolidCraftWriter {
     pub fn verification(mut self, verification: Verification) -> Self {
         self.replay = verification.clone();
         self.verification = verification;
+        self.detected_version = OnceLock::new();
         self
     }
 
@@ -125,7 +147,7 @@ impl SolidCraftWriter {
     }
 
     /// What writing `model` would do, without restating its geometry, writing anything or
-    /// running SolidCraft: the history's mapping, as `dutchman inspect` shows it.
+    /// replaying geometry in SolidCraft: the history's mapping, as `dutchman inspect` shows it.
     pub fn plan(&self, model: &Model, report: &mut Report) -> Outcome {
         if empty_assembly(model) {
             return empty_outcome();
@@ -144,7 +166,7 @@ impl SolidCraftWriter {
             };
         }
         let mut history_report = Report::default();
-        let mut mapping = history::map(model, &mut history_report);
+        let mut mapping = history::map(model, &mut history_report, self.resolved_version());
         self.plan_blends(&mut mapping);
         let undecoded = no_decoded_history(&mapping.features);
         match mapping.result {
@@ -179,6 +201,20 @@ impl SolidCraftWriter {
                 check: Check::Flattened(reason),
                 features: mapping.features,
             },
+        }
+    }
+
+    fn history_summary(&self, history: &history::History) -> String {
+        let summary = format!("{} of {} features mapped", history.mapped, history.total);
+        let uses_target = history.features.iter().any(|feature| {
+            (feature.get("type").and_then(Value::as_str) == Some("coil")
+                && feature.get("sketch").is_some())
+                || feature.pointer("/hole/tip_angle").and_then(Value::as_str) == Some("180")
+        });
+        if uses_target {
+            format!("{summary}; target SolidCraft {}", self.resolved_version())
+        } else {
+            summary
         }
     }
 
@@ -536,7 +572,7 @@ impl Writer for SolidCraftWriter {
             (self.import_design(model, &step, None, report)?, outcome)
         } else {
             let mut history_report = Report::default();
-            let mut mapping = history::map(model, &mut history_report);
+            let mut mapping = history::map(model, &mut history_report, self.resolved_version());
             if let Ok(history) = &mut mapping.result {
                 if let Err(why) = history::base::restate(history, model) {
                     mapping.result = Err(why);
@@ -590,8 +626,7 @@ impl Writer for SolidCraftWriter {
                 }
                 (Ok(history), _) => {
                     let written = self.history_design(model, history, &step, Live::History)?;
-                    let summary =
-                        format!("{} of {} features mapped", history.mapped, history.total);
+                    let summary = self.history_summary(history);
                     let written_as = |check| Outcome {
                         mode: Mode::History,
                         check,
@@ -660,7 +695,7 @@ pub struct MappedHistory {
 
 /// Maps history without writing a container or running SolidCraft.
 pub fn mapped_history(model: &Model, report: &mut Report) -> MappedHistory {
-    let mut mapping = history::map(model, report);
+    let mut mapping = history::map(model, report, SolidCraftVersion::default());
     // Blends are proven only on SolidCraft's replay of the history before them.
     history::prove_blends(&mut mapping, |_, _| {
         Err("only a SolidCraft design is replayed to find them".to_owned())

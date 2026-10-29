@@ -14,6 +14,7 @@ mod constraints;
 mod crossing;
 mod extrude;
 mod faces;
+mod helix;
 mod helpers;
 mod hole;
 mod loft;
@@ -238,6 +239,7 @@ impl History {
 struct Context<'a> {
     /// The CADIR `model` object.
     model: &'a Value,
+    target_version: crate::SolidCraftVersion,
     next_id: u64,
     /// SolidCraft parameter names by CADIR parameter id.
     params: BTreeMap<String, String>,
@@ -261,6 +263,7 @@ impl<'a> Context<'a> {
     fn new(model: &'a Value) -> Self {
         Context {
             model,
+            target_version: crate::SolidCraftVersion::default(),
             next_id: 1,
             params: BTreeMap::new(),
             sketches: BTreeMap::new(),
@@ -361,10 +364,20 @@ pub(crate) fn helper_notes(report: &Report) -> Report {
 
 /// Maps the model's history, or says why it cannot be replayed. Losses of a history that is
 /// written go to `report`.
-pub(crate) fn map(model: &Model, report: &mut Report) -> Mapping {
+pub(crate) fn map(
+    model: &Model,
+    report: &mut Report,
+    target_version: crate::SolidCraftVersion,
+) -> Mapping {
     let mut features_out = Vec::new();
     let mut references = History::default();
-    let result = map_into(model, report, &mut features_out, &mut references);
+    let result = map_into(
+        model,
+        report,
+        &mut features_out,
+        &mut references,
+        target_version,
+    );
     Mapping {
         result,
         features: features_out,
@@ -377,6 +390,7 @@ fn map_into(
     report: &mut Report,
     out: &mut Vec<FeatureOutcome>,
     references: &mut History,
+    target_version: crate::SolidCraftVersion,
 ) -> Result<History, String> {
     let document =
         serde_json::to_value(&model.ir).map_err(|err| format!("cannot read the model: {err}"))?;
@@ -385,6 +399,7 @@ fn map_into(
     let (params, param_names) = params::map(model, report);
     references.params = params.clone();
     let mut ctx = Context::new(&wire);
+    ctx.target_version = target_version;
     ctx.params = param_names;
     let mut features: Vec<&Value> = ctx.arena("features").iter().collect();
     if features.is_empty() {
@@ -668,6 +683,7 @@ fn map_feature(
         Some("sphere") => primitive::sphere(feature, definition, ctx).map(Mapped::Feature),
         Some("torus") => primitive::torus(feature, definition, ctx).map(Mapped::Feature),
         Some("coil") => primitive::coil(feature, definition, ctx).map(Mapped::Feature),
+        Some("helical_sweep") => helix::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some(kind @ ("block" | "primitive")) => Err(primitive::unplaced(kind)),
         // Their faces are picked on the final body, where the feature itself has already
         // removed or tilted them; mapping waits until CADIR carries the input faces.
@@ -817,14 +833,26 @@ mod tests {
 
     #[test]
     fn a_model_without_history_is_flattened() {
-        let err = map(&cube(), &mut Report::default()).result.unwrap_err();
+        let err = map(
+            &cube(),
+            &mut Report::default(),
+            crate::SolidCraftVersion::default(),
+        )
+        .result
+        .unwrap_err();
         assert_eq!(err, "the design carries no feature history");
     }
 
     #[test]
     fn datum_planes_alone_build_no_geometry() {
         let model = with(cube(), json!([datum(1, 0), datum(2, 1)]), json!([]));
-        let err = map(&model, &mut Report::default()).result.unwrap_err();
+        let err = map(
+            &model,
+            &mut Report::default(),
+            crate::SolidCraftVersion::default(),
+        )
+        .result
+        .unwrap_err();
         assert_eq!(err, "no feature in the history builds geometry");
     }
 
@@ -837,7 +865,11 @@ mod tests {
             json!({"definition": "tree_node", "role": "history"}),
         );
         let model = with(cube(), json!([datum(1, 0), body]), json!([]));
-        let mapping = map(&model, &mut Report::default());
+        let mapping = map(
+            &model,
+            &mut Report::default(),
+            crate::SolidCraftVersion::default(),
+        );
         // Nothing else builds geometry here; the node itself does not stop the history.
         assert_eq!(
             mapping.result.unwrap_err(),
@@ -865,7 +897,11 @@ mod tests {
             json!({"definition": "assembly_joint", "joint": "f3d:model:joint#1"}),
         );
         let model = with(cube(), json!([datum(1, 0), insert, joint]), json!([]));
-        let mapping = map(&model, &mut Report::default());
+        let mapping = map(
+            &model,
+            &mut Report::default(),
+            crate::SolidCraftVersion::default(),
+        );
         assert_eq!(
             mapping.result.unwrap_err(),
             "no feature in the history builds geometry"
@@ -885,7 +921,11 @@ mod tests {
             json!({"definition": "datum_plane", "frame": frame}),
         );
         let model = with(cube(), json!([datum(1, 0), placed]), json!([]));
-        let mapping = map(&model, &mut Report::default());
+        let mapping = map(
+            &model,
+            &mut Report::default(),
+            crate::SolidCraftVersion::default(),
+        );
         assert_eq!(
             mapping.result.unwrap_err(),
             "no feature in the history builds geometry"
@@ -904,7 +944,13 @@ mod tests {
             json!([datum(1, 0), opaque(2, 2, "Later"), opaque(3, 1, "Earlier")]),
             json!([]),
         );
-        let err = map(&model, &mut Report::default()).result.unwrap_err();
+        let err = map(
+            &model,
+            &mut Report::default(),
+            crate::SolidCraftVersion::default(),
+        )
+        .result
+        .unwrap_err();
         assert_eq!(err, "feature \"Earlier\": native is not mapped yet");
     }
 
@@ -914,7 +960,9 @@ mod tests {
         hidden["suppressed"] = json!(true);
         let model = with(cube(), json!([datum(1, 0), hidden]), json!([]));
         let mut report = Report::default();
-        let err = map(&model, &mut report).result.unwrap_err();
+        let err = map(&model, &mut report, crate::SolidCraftVersion::default())
+            .result
+            .unwrap_err();
         assert_eq!(err, "no feature in the history builds geometry");
         let loss = report.losses().first().unwrap();
         assert_eq!(loss.subject, "feature \"Hidden\"");

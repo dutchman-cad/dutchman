@@ -41,3 +41,13 @@ CC0-1.0. No third-party design files are included.
 
 The volumes and edits are recorded in the generated set's `manifest.json`. Both files
 exercise named sketch constraint expressions as well as spreadsheet parameters.
+
+## FreeCAD helix fixture
+
+`F13a-freecad-1.1.4.FCStd` is recipe F13, variant a, from the CC0-1.0 CAD fixture
+recipes, generated with FreeCAD 1.1.4 (build 4fd3bf320d9566a27e60069fc8387448aaa3a094).
+It is a four-turn right-handed AdditiveHelix with a 5 mm pitch, a 10 mm centre radius,
+and a 2 mm circular section. The profile plane is normal to the initial helix tangent.
+The recipe's manifest measures one solid, 792.06459406 mm³. The document includes
+spreadsheet parameters. It was copied unchanged from `generated/freecad-1.1.4/F13a.FCStd`.
+This synthetic fixture is dedicated to the public domain under CC0-1.0.

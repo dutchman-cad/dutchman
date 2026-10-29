@@ -19,7 +19,7 @@ for case in "$@"; do
     input=${case%%=*} expected=${case#*=}
     name=$(basename "${input%.*}")
     output="$work/$name.solidcraft"
-    "$dutchman" convert --import-only "$input" "$output"
+    "$dutchman" convert --import-only --solidcraft "$sc" "$input" "$output"
     if ! "$sc" eval "$output" > "$work/$name.json"; then
         echo "FAIL $input: SolidCraft could not open the design" >&2
         status=1

@@ -136,6 +136,10 @@ impl ConvertOptions {
             args.push("--solidcraft".into());
             args.push(cli.clone().into_os_string());
         }
+        if let Some(version) = self.solidcraft_version {
+            args.push("--solidcraft-version".into());
+            args.push(version.to_string().into());
+        }
         if self.no_verify {
             args.push("--no-verify".into());
         }

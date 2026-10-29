@@ -172,6 +172,10 @@ On Linux, launch the desktop app with `dutchman-gui` from a terminal. It needs a
 Wayland desktop session with working OpenGL. See [Troubleshooting](#troubleshooting) if no
 window appears.
 
+The target SolidCraft selector defaults to the found CLI's version, else 0.18.2, even
+when history checking is off. Choose **0.18.2 and newer** for older installations or
+**0.25.1 and newer** to keep supported FreeCAD helices as editable coils.
+
 The window's title shows its version, and its **Report a problem** link opens the
 [A file didn't convert](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
 form. `dutchman-gui --version` and `dutchman-gui --help` print and exit without opening a
@@ -266,8 +270,14 @@ it says so under the check option:
 
 <img alt="Dutchman Convert with macOS's “SolidCraft” Not Opened box over it; under Check feature history in SolidCraft it reads: macOS has not yet allowed SolidCraft to run, with the steps to allow it." src="images/macos-solidcraft-blocked.png" width="450">
 
-Dutchman's designs open in **SolidCraft 0.18.2 or newer**, and are tested with 0.18.2, 0.19.0,
-and 0.20.0. A `solidcraft-cli` older than 0.18.2 is not used: the conversion says so ("… is older
+Dutchman's default compatibility floor is **SolidCraft 0.18.2**, and conversions are tested
+with 0.18.2, 0.19.0, 0.20.0, and 0.25.1. Each design targets the verification CLI's version
+when found, else 0.18.2. Use `--solidcraft-version x.y.z` to choose a target on `convert`,
+`convert-all`, or `watch`; versions below 0.18.2 and malformed versions are refused.
+With `--no-verify` and no explicit target, the target is 0.18.2. Features that need a newer
+release block history and preserve the original geometry as for other blockers.
+A design opens in its target release and newer releases. A `solidcraft-cli` older than
+0.18.2 is not used: the conversion says so ("… is older
 than SolidCraft 0.18.2, the oldest that opens and checks Dutchman's designs; install a newer
 SolidCraft") and writes the history unverified. SolidCraft 0.19.0 saves designs in a newer
 format that older versions do not open, so a design you save again in 0.19.0 opens in 0.19.0
@@ -361,6 +371,7 @@ dutchman convert --json generated_unit_cube.f3d cube.solidcraft
 |---|---|
 | `--import-only` | Write the geometry as one non-parametric import, never the feature history. |
 | `--solidcraft PATH` | The `solidcraft-cli` that checks a converted history. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`). |
+| `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the verification CLI's version, else 0.18.2. With `--no-verify`, the default is 0.18.2. |
 | `--no-verify` | Write the history without checking it in SolidCraft. Cannot be combined with `--solidcraft`. |
 | `--verify-timeout SECONDS` | How long each SolidCraft check may run before the history is written unverified. Default 120. |
 | `--no-clobber` | Do not replace an existing `.solidcraft` file: that file's conversion fails instead. By default it is replaced. |
@@ -513,7 +524,7 @@ output folder, with neither folder inside the other and no symbolic links in out
 Each conversion runs in the existing isolated batch worker. `--jobs` defaults to the
 machine's cores, at most 8. `--timeout` defaults to 900 seconds per file, and
 `--max-memory` to 8192 MB (0 disables the memory limit). The same conversion options as
-`convert-all` apply, including `--to`, `--import-only`, `--no-verify`, `--solidcraft`,
+`convert-all` apply, including `--to`, `--import-only`, `--no-verify`, `--solidcraft`, `--solidcraft-version`,
 `--project` and `--search`.
 
 For `parts/cube.f3d`, the default results are `parts/cube.solidcraft` and
@@ -619,6 +630,16 @@ dutchman pilot model --upstream http://localhost:11434/v1
 Connect SolidCraft to `http://127.0.0.1:11500/v1`. Install SolidCraft separately.
 `dutchman pilot --help` lists Pilot's commands; `dutchman pilot model --help` lists the
 model proxy's options. The default `pilot` Cargo feature includes this command.
+
+Constant-radius FreeCAD AdditiveHelix and SubtractiveHelix features keep editable history
+as sketch-profile coils when targeting SolidCraft 0.25.1 or newer. Older targets report
+`needs SolidCraft 0.25.1 or newer` with the target version and flatten the history. The
+profile, axis, pitch/height/turn
+law, handedness, reversed travel, and Boolean operation carry across. Available feature
+parameter bindings drive dimensions; dimensions without bindings keep their resolved
+values with a Degraded loss. Spreadsheet expressions follow the usual value fallback.
+Conical helices and flat spirals remain unsupported because SolidCraft's coil has no
+cone-angle or radial-growth option. Replay verification applies as for other features.
 
 ## Reading the loss report
 

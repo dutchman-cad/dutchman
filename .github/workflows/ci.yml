@@ -192,6 +192,8 @@ jobs:
             sha256: 1e3650237a617667f557a16e865bbf544b20ece1dec39f7c380239d7058d632d
           - version: 0.20.0
             sha256: 0c0965f8807945722780f83750c4bd3ce6544f9d827e01cad0664b28cf2a6910
+          - version: 0.25.1
+            sha256: 5e467b42530808c75e19f4993247d9ab736e700a1532e40eab2bd3da42a2db2f
     env:
       SOLIDCRAFT_VERSION: ${{ matrix.solidcraft.version }}
       SOLIDCRAFT_SHA256: ${{ matrix.solidcraft.sha256 }}

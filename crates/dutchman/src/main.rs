@@ -603,6 +603,59 @@ mod output_tests {
     use super::*;
 
     #[test]
+    fn solidcraft_target_versions_parse_and_reach_workers() {
+        for command in ["convert", "convert-all", "watch"] {
+            let mut args = vec!["dutchman", command, "in.f3d"];
+            if command != "convert" {
+                args.extend(["--out-dir", "out"]);
+            }
+            for version in ["0.18.2", "0.25.1"] {
+                let mut valid = args.clone();
+                valid.extend(["--solidcraft-version", version, "--no-verify"]);
+                let cli = Cli::try_parse_from(valid).unwrap();
+                let options = match cli.command {
+                    Command::Convert { options, .. } | Command::ConvertAll { options, .. } => {
+                        options
+                    }
+                    Command::Watch(command) => command.options,
+                    _ => panic!("expected conversion command"),
+                };
+                assert_eq!(options.solidcraft_version.unwrap().to_string(), version);
+                let mut worker = vec![
+                    std::ffi::OsString::from("dutchman"),
+                    "convert".into(),
+                    "in.f3d".into(),
+                ];
+                worker.extend(options.to_args());
+                let Command::Convert {
+                    options: forwarded, ..
+                } = Cli::try_parse_from(worker).unwrap().command
+                else {
+                    panic!("expected worker")
+                };
+                assert_eq!(forwarded.solidcraft_version, options.solidcraft_version);
+            }
+            for version in [
+                "0.18.1",
+                "0.17.9",
+                "0.25",
+                "0.25.1.0",
+                "v0.25.1",
+                "0.25.1-rc1",
+                "a.b.c",
+                "0.25.-1",
+            ] {
+                let mut malformed = args.clone();
+                malformed.extend(["--solidcraft-version", version]);
+                assert!(
+                    Cli::try_parse_from(malformed).is_err(),
+                    "{command}: {version}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn freecad_output_accepts_short_output_flag_and_positional_output() {
         for args in [
             vec![

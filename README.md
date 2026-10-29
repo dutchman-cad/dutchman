@@ -18,6 +18,13 @@ dutchman part.f3d out.solidcraft
 dutchman convert part.f3d out.solidcraft
 ```
 
+SolidCraft output targets the verification CLI's version when found, else 0.18.2.
+Use `--solidcraft-version 0.25.1` on `convert`, `convert-all`, or `watch` to choose a
+release (at least 0.18.2). With `--no-verify` and no explicit version, the target is 0.18.2.
+Constant-radius FreeCAD helices keep editable sketch-profile coils only for targets
+0.25.1 or newer; older targets preserve the original geometry and report the version needed.
+Designs open in their target release and newer releases.
+
 With no output given, Dutchman writes beside the input and won't replace a file that is
 already there unless you pass `--force`. `dutchman convert --help` lists every option, and
 [Getting started](docs/guide.md) walks through a first conversion.
@@ -286,7 +293,7 @@ server on stdio. It gives an agent four tools, each returning the same report as
 | Tool | Arguments | Returns |
 |---|---|---|
 | `inspect` | `input` | `dutchman.inspect/1` |
-| `convert` | `input`, `output`, and optionally `import_only`, `verify`, `solidcraft`, `verify_timeout`, `overwrite` | `dutchman.convert/1` |
+| `convert` | `input`, `output`, and optionally `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `overwrite` | `dutchman.convert/1` |
 | `convert_all` | `inputs` (files and folders), `out_dir`, and optionally `jobs` and the convert options | `dutchman.convert-all/1` |
 | `formats` | none | `dutchman.formats/1` |
 

@@ -147,6 +147,22 @@ For a blocked sweep, `history.features[].reason` names the unsupported option, s
 post-sweep simplification also block history. These are messages within the existing schema;
 no report fields change.
 
+A mapped `helical_sweep` becomes a sketch-profile coil only for targets 0.25.1 or newer.
+For older targets, `history.features[].reason` says
+`needs SolidCraft 0.25.1 or newer (target 0.18.2)` (with the actual target), and the history
+line explains the blocker. `--solidcraft-version x.y.z` selects the target on `convert`,
+`convert-all`, and `watch`; it must be at least 0.18.2. By default the found verification
+CLI's version is used, else 0.18.2; `--no-verify` without an explicit target uses 0.18.2.
+When a written coil or flat entry-recess tip uses the newer mapping, the history line
+includes `target SolidCraft 0.25.1` (with the actual target). No new report fields are added. Counterbore and countersink holes use an explicit flat tip
+for targets 0.25.1 or newer, retaining the source's flat bottom.
+
+Conical and spiral helices report
+`conical and spiral helical sweeps are not supported yet: SolidCraft's sketch-profile coil
+has no radial growth or cone angle` in `history.features[].reason`. Dimensions without
+feature parameter bindings produce a `Degraded` loss saying their resolved values were
+kept. These use existing schema fields.
+
 For holes, a blocked feature's `reason` names the unsupported entry form, placement, or end
 (for example, `a hole ending at the last encountered face is not mapped yet`). A tapped hole
 maps with an ISO metric thread label; thread details it can't keep are a `Degraded` loss on

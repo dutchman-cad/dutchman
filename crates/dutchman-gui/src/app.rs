@@ -62,6 +62,7 @@ pub struct App {
     has_app: bool,
     /// The SolidCraft CLI that checks histories when nothing else is chosen, if one is found.
     checker: Result<PathBuf, dutchman_solidcraft::NoCli>,
+    detected_version: dutchman_solidcraft::SolidCraftVersion,
     /// What to scroll into view on the next frame, so the results are seen without looking
     /// for them.
     reveal: Option<Reveal>,
@@ -81,10 +82,16 @@ impl App {
         theme::install(&cc.egui_ctx);
         egui_extras::install_image_loaders(&cc.egui_ctx);
         let (sender, messages) = channel();
+        let detected_version = dutchman_solidcraft::SolidCraftVersion::detected(
+            &dutchman_solidcraft::Verification::Auto,
+        );
         App {
             inputs: Vec::new(),
             out_dir: None,
-            options: ConvertOptions::default(),
+            options: ConvertOptions {
+                solidcraft_version: Some(detected_version),
+                ..ConvertOptions::default()
+            },
             rows: Vec::new(),
             offset: 0,
             run: None,
@@ -93,6 +100,7 @@ impl App {
             notice: None,
             has_app: platform::has_solidcraft_app(),
             checker: dutchman_solidcraft::usable_cli(&dutchman_solidcraft::Verification::Auto),
+            detected_version,
             reveal: None,
         }
     }
@@ -531,6 +539,35 @@ impl App {
                 {
                     self.options.no_clobber = !replace;
                 }
+                egui::ComboBox::from_id_salt("solidcraft_version")
+                    .selected_text(format!(
+                        "Target SolidCraft {}",
+                        self.options
+                            .solidcraft_version
+                            .unwrap_or(self.detected_version)
+                    ))
+                    .show_ui(ui, |ui| {
+                        for (version, label) in [
+                            (
+                                self.detected_version,
+                                format!("Found version ({})", self.detected_version),
+                            ),
+                            (
+                                dutchman_solidcraft::SolidCraftVersion::default(),
+                                "0.18.2 and newer".to_owned(),
+                            ),
+                            (
+                                dutchman_solidcraft::SolidCraftVersion::V0_25_1,
+                                "0.25.1 and newer".to_owned(),
+                            ),
+                        ] {
+                            ui.selectable_value(
+                                &mut self.options.solidcraft_version,
+                                Some(version),
+                                label,
+                            );
+                        }
+                    });
                 let mut verify = !self.options.no_verify;
                 if ui
                     .checkbox(&mut verify, "Check feature history in SolidCraft")

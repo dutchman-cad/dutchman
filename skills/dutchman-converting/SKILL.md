@@ -127,6 +127,11 @@ are not present in the pinned CADIR version.
   `results`.
   Designs and the default log go inside `out_dir`; optional `journal`, `report_anon`, and
   `report_key` files go to their specified paths, which may be outside it.
+- `solidcraft_version: "0.25.1"` (CLI `--solidcraft-version 0.25.1` on `convert`,
+  `convert-all`, or `watch`) chooses the target release. It must be x.y.z and at least
+  0.18.2. The default is the found verification CLI's version, else 0.18.2. With
+  CLI `--no-verify` and no explicit target, the target is 0.18.2. MCP uses the found
+  CLI's version even when `verify` is false.
 - `import_only: true` when the user wants only the shape. Leave `verify` at its default.
 
 A failed conversion comes back with `ok: false` and `error.message`. The message already says
@@ -256,6 +261,15 @@ the feature has already removed or tilted them; they wait on input face geometry
 Replacing a source shape with its mirror is not supported yet: SolidCraft's mirror keeps
 the original. Cosmetic threads lack a resolved standard and pitch in CADIR, so assigning
 SolidCraft's ISO metric designation would invent thread data; these remain flattened.
+
+Constant-radius helical sweeps (FreeCAD AdditiveHelix and SubtractiveHelix) keep their
+sketch profile, axis, pitch/height/turn law, handedness, reversed travel, and Boolean
+operation as sketch-profile coils only for targets SolidCraft 0.25.1 or newer. Older
+targets block the feature with `needs SolidCraft 0.25.1 or newer` and the target version,
+preserving the original geometry. Feature parameter
+bindings drive dimensions when available; otherwise their resolved values are kept.
+Conical helices and spirals remain blocked because SolidCraft's coil has no cone-angle
+or radial-growth option. Check replay verification as for other mapped history.
 
 When cadmpeg's model fails its checks, Dutchman retries after removing history, sketches,
 parameters and associated design records, including parameter links on joints. A successful
