@@ -232,6 +232,15 @@ opens the **A file didn't convert** form; a failed file's **Report this on GitHu
 filled in with the version, system, error, and an anonymous report. `dutchman-gui --version`
 and `--help` print without opening a window.
 
+Choose **Fast** for shape only and the least memory, **Standard** (the default) for history,
+sketches, and joints within the assembly history memory budget, or **Full** for everything.
+**Advanced** lets you leave feature history, sketches, or joints out; the selection then reads
+**Custom** and keeps its base preset. Choices are remembered between launches. Queued files
+show approximate memory and time when an estimate is available, with free memory shown once.
+If a file is expected to exceed free memory, choose the offered lighter preset,
+**Convert anyway** for that run, or **Cancel**. Assembly history left out by Standard is
+explained on the result card.
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/dutchman-gui-night.png">
   <img alt="The Dutchman Convert app after converting three files: two converted, one failed with its reason" src="docs/images/dutchman-gui-day.png" width="480">

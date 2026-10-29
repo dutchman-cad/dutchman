@@ -8,6 +8,7 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
 use dutchman::batch::{self, Event, Job};
+use dutchman::choices::{self, Choices, Estimate, MemoryCheck};
 use dutchman::ConvertOptions;
 use eframe::egui;
 use serde_json::Value;
@@ -17,6 +18,14 @@ use serde_json::Value;
 pub enum Message {
     /// Files and folders chosen in a dialog, for what it was opened for.
     Picked { pick: Pick, paths: Vec<PathBuf> },
+    /// Estimates for one snapshot of the queued inputs and choices.
+    Estimated {
+        generation: u64,
+        files: Vec<(PathBuf, Option<Estimate>)>,
+        available: Option<u64>,
+    },
+    /// The first file that needs a memory decision, if any.
+    MemoryChecked(Option<(PathBuf, MemoryCheck)>),
     /// A run's plan: inputs that could not be planned (as failed reports), then its jobs.
     Planned {
         problems: Vec<Value>,
@@ -104,6 +113,51 @@ impl Run {
     pub fn stop(&self) {
         self.stop.store(true, Ordering::Relaxed);
     }
+}
+
+/// Plans folders and estimates their files without blocking a frame.
+pub fn estimates(
+    inputs: Vec<PathBuf>,
+    choices: Choices,
+    generation: u64,
+    messages: Sender<Message>,
+    ctx: egui::Context,
+) {
+    std::thread::spawn(move || {
+        let plan = batch::plan(&inputs, std::path::Path::new(""));
+        let files = plan
+            .jobs
+            .into_iter()
+            .map(|job| {
+                let estimate = choices::estimate(&job.input, &choices);
+                (job.input, estimate)
+            })
+            .collect();
+        let _ = messages.send(Message::Estimated {
+            generation,
+            files,
+            available: choices::available_memory(),
+        });
+        ctx.request_repaint();
+    });
+}
+
+/// Checks every file in a run, including files inside queued folders.
+pub fn check_memory(
+    inputs: Vec<PathBuf>,
+    options: ConvertOptions,
+    messages: Sender<Message>,
+    ctx: egui::Context,
+) {
+    std::thread::spawn(move || {
+        let plan = batch::plan(&inputs, std::path::Path::new(""));
+        let warning = plan.jobs.into_iter().find_map(|job| {
+            let check = choices::memory_check(&job.input, &options);
+            matches!(check, MemoryCheck::TooBig { .. }).then_some((job.input, check))
+        });
+        let _ = messages.send(Message::MemoryChecked(warning));
+        ctx.request_repaint();
+    });
 }
 
 /// Opens a file dialog in the background and sends what was picked.
@@ -196,6 +250,34 @@ pub enum Pick {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn estimates_plan_files_in_queued_folders_off_thread() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("synthetic.f3d");
+        std::fs::write(&input, b"not a design").unwrap();
+        let (send, receive) = std::sync::mpsc::channel();
+        estimates(
+            vec![dir.path().to_path_buf()],
+            Choices::of(choices::Preset::Standard),
+            7,
+            send,
+            egui::Context::default(),
+        );
+        match receive
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap()
+        {
+            Message::Estimated {
+                generation, files, ..
+            } => {
+                assert_eq!(generation, 7);
+                assert_eq!(files.len(), 1);
+                assert_eq!(files.first().unwrap().0, input);
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+    }
 
     #[test]
     fn conversion_worker_forwards_counts_before_the_final_report() {

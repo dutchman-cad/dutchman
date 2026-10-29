@@ -416,3 +416,8 @@ resolved title-block text in millimetre page space. Unsupported content is repor
 in per-page JSON `pages` results. No page is an error. See [FreeCAD coverage](../../docs/freecad.md#techdraw-to-dxf).
 DXF conversion is not supported yet by convert-all, the MCP convert tool, desktop,
 or web. The MCP formats report includes the additive `drawings` capability list.
+
+The desktop app also offers Fast, Standard (default), and Full presets, with Advanced
+checkboxes that leave history, sketches, or joints out. It shows available estimates and
+checks memory before converting; choosing Convert anyway applies only to that run. History
+Info messages, including assembly history left out by Standard, appear on its result cards.
