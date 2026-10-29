@@ -21,7 +21,7 @@ State as of the cadmpeg commit Dutchman pins (see `Cargo.toml`).
 | Rectangular pattern with suppressed instances. | Not mapped yet: SolidCraft's rectangular pattern fills the whole grid. The report names the pattern and how many positions it skips, and the part keeps its exact geometry. |
 | Combine of bodies (cut, join, or intersect), with its target and tool bodies as native references. | Not mapped yet: reported as "its bodies are not resolved" until Dutchman can name the bodies earlier features made. |
 | Move, Move Body, and Rotate of whole bodies (`move_body`). | Not mapped yet, and reported. |
-| Split of a solid by a work plane or a surface (`split_body`). | Not mapped yet, and reported. |
+| Split of a solid by a work plane or a surface (`split_body`). | A split of one body by a placed work plane maps to a SolidCraft split. The piece on the side the plane's normal points to keeps the body's name, and the other piece gets its own. When the source's two result bodies can be told apart by side, later features select the right piece; when they cannot, a later feature selecting one is refused. A split by a surface is reported as not supported yet. |
 | Work planes in the browser, including the origin planes. | Read as datum planes; sketches on them keep their placement. |
 | Features the codec keeps in native form (`native`). | Not mapped; a part whose every feature is native has no history Dutchman can write. |
 | Suppression and dependency state: unresolved (`suppressed` absent). | Features are treated as active; verification catches a replay that differs and keeps a replayable editable prefix hidden beside the imported final shape when possible. |

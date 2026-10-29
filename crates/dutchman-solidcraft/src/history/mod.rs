@@ -815,6 +815,7 @@ fn map_feature(
         Some("shell") => Err("shell waits on input face geometry".to_owned()),
         Some("draft") => Err("draft waits on input face geometry".to_owned()),
         Some("combine") => modify::combine(feature, definition, ctx).map(Mapped::Feature),
+        Some("split_body") => modify::split(feature, definition, ctx).map(Mapped::Feature),
         Some("mirror_shape") => Err(
             "replacing a source shape with its mirror is not supported yet; SolidCraft mirrors keep the original body".to_owned(),
         ),

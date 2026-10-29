@@ -1,4 +1,4 @@
-//! Body mirror and boolean operations.
+//! Body mirror, boolean and split operations.
 //!
 //! Both act on whole bodies named by earlier mapped features, never on faces of the final
 //! body, which a later feature may already have removed or moved. Native and generated body
@@ -168,5 +168,153 @@ pub(super) fn mirror(
         ctx,
         "mirror",
         json!({"features": [], "bodies": bodies, "plane": plane, "combine": false}),
+    ))
+}
+
+/// The topology arenas a body's vertices are reached through.
+const TOPOLOGY: [&str; 8] = [
+    "regions", "shells", "faces", "loops", "coedges", "edges", "vertices", "points",
+];
+
+/// Most vertices looked at to place a body on one side of a plane.
+const VERTEX_LIMIT: usize = 100_000;
+
+/// The positions of a body's vertices, in its own frame; `None` when the body is moved by a
+/// transform of its own, or its topology does not reach its vertices.
+fn vertices(ctx: &Context, body: &str) -> Option<Vec<[f64; 3]>> {
+    let row = ctx.row("bodies", body)?;
+    if row.get("transform").is_some_and(|t| !t.is_null()) {
+        return None;
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    let mut queue = vec![row];
+    let mut points = Vec::new();
+    while let Some(row) = queue.pop() {
+        if let Some(position) = super::sketch::v3(row.get("position")) {
+            points.push(position);
+        }
+        let mut refs = Vec::new();
+        strings(row, &mut refs);
+        for id in refs {
+            if seen.len() >= VERTEX_LIMIT || !seen.insert(id) {
+                continue;
+            }
+            if let Some(next) = TOPOLOGY.iter().find_map(|arena| ctx.row(arena, id)) {
+                queue.push(next);
+            }
+        }
+    }
+    (!points.is_empty()).then_some(points)
+}
+
+/// Every string inside `value`.
+fn strings<'v>(value: &'v Value, out: &mut Vec<&'v str>) {
+    match value {
+        Value::String(s) => out.push(s),
+        Value::Array(values) => values.iter().for_each(|v| strings(v, out)),
+        Value::Object(fields) => fields.values().for_each(|v| strings(v, out)),
+        _ => {}
+    }
+}
+
+/// Which side of the plane through `origin` with `normal` a body lies on: `Some(true)` on the
+/// side the normal points to, `Some(false)` on the other, `None` when it is on both or unknown.
+fn side(ctx: &Context, body: &str, origin: [f64; 3], normal: [f64; 3]) -> Option<bool> {
+    const TOLERANCE: f64 = 1e-6;
+    let distances: Vec<f64> = vertices(ctx, body)?
+        .into_iter()
+        .map(|p| {
+            dot(
+                [p[0] - origin[0], p[1] - origin[1], p[2] - origin[2]],
+                normal,
+            )
+        })
+        .collect();
+    if distances.iter().all(|d| *d >= -TOLERANCE) && distances.iter().any(|d| *d > TOLERANCE) {
+        Some(true)
+    } else if distances.iter().all(|d| *d <= TOLERANCE) && distances.iter().any(|d| *d < -TOLERANCE)
+    {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// Splits one body by an earlier datum plane. SolidCraft keeps the body's name for the piece
+/// on the side the plane's normal points to and names the piece on the other side; the
+/// source's two result bodies are matched to them by the side their vertices lie on. When they
+/// cannot be, neither piece keeps a source identity, so a later feature selecting one is
+/// refused rather than given the wrong piece.
+pub(super) fn split(
+    source: &Value,
+    definition: &Value,
+    ctx: &mut Context,
+) -> Result<Value, String> {
+    let targets = body_names(definition.get("targets").unwrap_or(&Value::Null), ctx)?;
+    let target = match targets.as_slice() {
+        [target] => target.clone(),
+        _ => return Err("splitting several bodies at once is not supported yet".to_owned()),
+    };
+    let tool = definition.get("tool").unwrap_or(&Value::Null);
+    match tool.get("kind").and_then(Value::as_str) {
+        Some("plane") => {}
+        Some("faces") => return Err("splitting a body by faces is not supported yet".to_owned()),
+        _ => return Err("its splitting tool is not resolved".to_owned()),
+    }
+    let datum = tool
+        .pointer("/value/plane")
+        .and_then(Value::as_str)
+        .and_then(|id| ctx.row("features", id))
+        .ok_or("its splitting plane is not an earlier feature")?;
+    let frame = super::operation(datum)
+        .get("frame")
+        .ok_or("its splitting plane is not placed")?;
+    let origin = v3(frame.get("origin")).ok_or("its splitting plane is not placed")?;
+    let normal = v3(frame.get("normal"))
+        .and_then(unit)
+        .ok_or("its splitting plane is not placed")?;
+    let plane = plane(origin, normal)?;
+    let outputs: Vec<String> = source
+        .get("outputs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect();
+    let sides: Vec<Option<bool>> = outputs
+        .iter()
+        .map(|body| side(ctx, body, origin, normal))
+        .collect();
+    let kept = outputs
+        .iter()
+        .zip(&sides)
+        .find(|(_, side)| **side == Some(true));
+    let cut = outputs
+        .iter()
+        .zip(&sides)
+        .find(|(_, side)| **side == Some(false));
+    let base = cut
+        .and_then(|(body, _)| ctx.row("bodies", body))
+        .and_then(|row| row.get("name"))
+        .and_then(Value::as_str)
+        .filter(|name| !name.trim().is_empty() && *name != target)
+        .map_or_else(|| format!("{target} (split)"), str::to_owned);
+    let mut piece = base.clone();
+    let mut n = 2;
+    while ctx.named_bodies.iter().any(|(_, known)| *known == piece) {
+        piece = format!("{base} ({n})");
+        n += 1;
+    }
+    ctx.named_bodies.retain(|(_, name)| *name != target);
+    if let (2, Some((kept, _)), Some((cut, _))) = (outputs.len(), kept, cut) {
+        ctx.named_bodies.push((kept.clone(), target.clone()));
+        ctx.named_bodies.push((cut.clone(), piece.clone()));
+    }
+    Ok(feature(
+        source,
+        ctx,
+        "split",
+        json!({"body": target, "plane": plane, "body_names": [piece]}),
     ))
 }
