@@ -317,6 +317,11 @@ pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value
     out.insert("input".to_owned(), input);
     if let Some(outcome) = report.outcome() {
         out.extend(outcome_fields(outcome));
+        if !report.parts().is_empty() {
+            if let Some(history) = out.get_mut("history").and_then(Value::as_object_mut) {
+                history.insert("parts".to_owned(), part_fields(report.parts()));
+            }
+        }
     }
     if let Some(completeness) = report.completeness() {
         out.insert("completeness".to_owned(), completeness_json(completeness));
@@ -440,15 +445,37 @@ pub fn completeness_lines(report: &Value) -> Vec<String> {
     lines
 }
 
-fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
-    let (status, reason) = match &outcome.check {
+/// A check as a verification status and its reason.
+fn check_fields(check: &Check) -> (&'static str, Option<&String>) {
+    match check {
         Check::Partial(reason) => ("partial", Some(reason)),
         Check::Verified => ("verified", None),
         Check::Differs(reason) => ("differs", Some(reason)),
         Check::Unverified(reason) => ("unverified", Some(reason)),
         Check::Flattened(reason) => ("flattened", Some(reason)),
         Check::NotApplicable(reason) => ("not_applicable", Some(reason)),
-    };
+    }
+}
+
+/// Each assembly part's history: its name, how it was checked and why, and its counts.
+fn part_fields(parts: &[dutchman_core::PartHistory]) -> Value {
+    parts
+        .iter()
+        .map(|part| {
+            let (status, reason) = check_fields(&part.check);
+            json!({
+                "name": part.name,
+                "status": status,
+                "reason": reason,
+                "mapped": part.mapped,
+                "total": part.total,
+            })
+        })
+        .collect()
+}
+
+fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
+    let (status, reason) = check_fields(&outcome.check);
     let features: Vec<Value> = outcome
         .features
         .iter()
@@ -754,6 +781,48 @@ mod tests {
         assert_eq!(out["losses"][0]["level"], "Info");
         assert_eq!(out["losses"][0]["message"], message);
         assert_eq!(crate::present::outcome(&out), "Geometry without history.");
+    }
+
+    #[test]
+    fn an_assembly_reports_each_parts_history() {
+        let mut report = Report::default();
+        report.set_outcome(Outcome {
+            mode: Mode::Import,
+            check: Check::NotApplicable("no part's history was written".to_owned()),
+            features: vec![feature("extrude", FeatureStatus::Blocked)],
+        });
+        report.push_part(dutchman_core::PartHistory {
+            name: "Bracket".to_owned(),
+            check: Check::Flattened("feature \"Extrude1\": not mapped yet".to_owned()),
+            mapped: 1,
+            total: 2,
+        });
+        report.push_part(dutchman_core::PartHistory {
+            name: "Rail".to_owned(),
+            check: Check::NotApplicable("the design carries no feature history".to_owned()),
+            mapped: 0,
+            total: 0,
+        });
+        let out = Value::Object(success(CONVERT, json!({}), &report));
+        assert_eq!(
+            out["history"]["parts"],
+            json!([
+                {"name": "Bracket", "status": "flattened", "reason": "feature \"Extrude1\": not mapped yet", "mapped": 1, "total": 2},
+                {"name": "Rail", "status": "not_applicable", "reason": "the design carries no feature history", "mapped": 0, "total": 0},
+            ])
+        );
+    }
+
+    #[test]
+    fn a_single_part_reports_no_parts() {
+        let mut report = Report::default();
+        report.set_outcome(Outcome {
+            mode: Mode::History,
+            check: Check::Verified,
+            features: vec![feature("extrude", FeatureStatus::Mapped)],
+        });
+        let out = Value::Object(success(CONVERT, json!({}), &report));
+        assert!(out["history"].get("parts").is_none());
     }
 
     #[test]

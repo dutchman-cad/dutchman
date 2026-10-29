@@ -48,8 +48,8 @@ pub struct Model {
     pub source_step: Option<String>,
 }
 pub use report::{
-    Check, Completeness, FeatureOutcome, FeatureStatus, LeftOutGroup, Loss, Mode, Outcome, Report,
-    Severity, Stage,
+    Check, Completeness, FeatureOutcome, FeatureStatus, LeftOutGroup, Loss, Mode, Outcome,
+    PartHistory, Report, Severity, Stage,
 };
 
 /// Whether a source-native CADIR operation identifies a construction binder. Keep native
