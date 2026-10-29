@@ -73,3 +73,29 @@ The STEP and Rhino conversion tests generate inputs in temporary folders with th
 pinned cadmpeg encoders from `cadmpeg_ir::examples::unit_cube()`. Face names are cleared,
 as in cadmpeg's Rhino measured-geometry tests, because that writer does not carry face
 names. No generated interchange files are stored here.
+
+### FreeCAD TechDraw pages
+
+`techdraw.FCStd` (4.9 KB) and `techdraw-pages.FCStd` (2.8 KB) were made by running FreeCAD
+1.1.4 as an external program on `techdraw.py`, which uses only FreeCAD's public Python
+scripting API. They contain only authored synthetic objects: a 30 × 20 × 10 mm box, front
+(scale 2) and top views, a length dimension, a two-line annotation, and an authored SVG
+template; the second file has two pages with text and templates and no model body. No
+installed template or third-party CAD file was copied. The script writes the template itself
+and checks the dimension's 30 mm value and the template's title field before saving.
+
+Regenerate with `DUTCHMAN_FIXTURE_OUT=/path/to/output flatpak run
+--command=FreeCADCmd org.freecad.FreeCAD techdraw.py`.
+
+### Neutral TechDraw content fixtures
+
+`techdraw.FCStd`, `techdraw-pages.FCStd`,
+`cadmpeg-techdraw-views.FCStd`, `cadmpeg-techdraw-dimensions.FCStd`, and
+`cadmpeg-techdraw-variants.FCStd` are copied unchanged from cadmpeg
+`f63ba7ea67b6cbcf185534d874a0cd7f4ba1f6d6`,
+`corpus/freecad_fcstd/fixtures/techdraw*.FCStd` (excluding `techdraw_annotations`).
+They are CC0 fixtures authored by `corpus/freecad_fcstd/author_techdraw_fixture.py`
+using FreeCAD 1.1.4 through its public scripting interface (version and CC0
+dedication recorded in cadmpeg’s `corpus/manifest.toml`). The first two are byte-identical
+to the retained draft fixtures; no duplicate copies are stored. They exercise neutral template primitives,
+resolved editable text, projected curves, dimensions, and text height.

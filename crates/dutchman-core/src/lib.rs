@@ -86,6 +86,22 @@ pub fn read(format: Format, input: &Path, report: &mut Report) -> Result<Model, 
     read_in(format, input, &PartSearch::default(), report)
 }
 
+/// Reads the full drawing graph without requiring a 3D body or filtering hidden bodies.
+pub fn read_drawings(input: &Path, report: &mut Report) -> Result<Model, Error> {
+    let format = Format::from_path(input).ok_or_else(|| Error::UnknownFormat {
+        path: input.to_path_buf(),
+    })?;
+    if !format.can_convert() {
+        return Err(Error::NotSupportedYet { format });
+    }
+    check_input(input)?;
+    let bytes = std::fs::read(input).map_err(|source| Error::Io {
+        path: input.to_path_buf(),
+        source,
+    })?;
+    decode::drawings(format, input, &bytes, report)
+}
+
 /// [`read`], finding the files an assembly places as `search` says, when they are not at
 /// their stored paths.
 pub fn read_in(

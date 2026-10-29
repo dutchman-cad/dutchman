@@ -513,6 +513,7 @@ impl App {
                             dutchman::OutputFormat::Solidcraft => "SolidCraft",
                             dutchman::OutputFormat::Freecad => "FreeCAD macro (experimental)",
                             dutchman::OutputFormat::Fcstd => "FreeCAD document (experimental)",
+                            dutchman::OutputFormat::Dxf => "DXF (convert command only)",
                         })
                         .show_ui(ui, |ui| {
                             ui.selectable_value(

@@ -70,7 +70,9 @@ pub(crate) fn decode_with_progress(
     let codec_id = format.codec_id().ok_or(Error::NotSupportedYet { format })?;
     catch_unwind(AssertUnwindSafe(|| {
         with_fallback(report, |depth, report| {
-            decode_unguarded(format, codec_id, path, bytes, depth, report, progress)
+            decode_unguarded(
+                format, codec_id, path, bytes, depth, false, report, progress,
+            )
         })
     }))
     .unwrap_or_else(|_| {
@@ -78,6 +80,38 @@ pub(crate) fn decode_with_progress(
             "the {} decoder failed unexpectedly on this file",
             format.name()
         )))
+    })
+}
+
+/// Full drawing decode uses the same detector, limits, validation and panic guard. A
+/// geometry-only retry would discard the drawing graph, so its errors are returned directly.
+pub(crate) fn drawings(
+    format: Format,
+    path: &Path,
+    bytes: &[u8],
+    report: &mut Report,
+) -> Result<Model, Error> {
+    let codec_id = format.codec_id().ok_or(Error::NotSupportedYet { format })?;
+    catch_unwind(AssertUnwindSafe(|| {
+        decode_unguarded(
+            format,
+            codec_id,
+            path,
+            bytes,
+            DecodeDepth::Full,
+            true,
+            report,
+            None,
+        )
+        .map_err(|failure| match failure {
+            Failed::Checks(why) => Error::Decode(why),
+            Failed::Other(err) => err,
+        })
+    }))
+    .unwrap_or_else(|_| {
+        Err(Error::Decode(
+            "the drawing decoder failed unexpectedly on this file".into(),
+        ))
     })
 }
 
@@ -144,6 +178,7 @@ fn decode_unguarded(
     path: &Path,
     bytes: &[u8],
     depth: DecodeDepth,
+    drawings: bool,
     report: &mut Report,
     progress: Option<&crate::Progress<'_>>,
 ) -> Result<Model, Failed> {
@@ -162,7 +197,8 @@ fn decode_unguarded(
         .map_err(other)?;
     let (mut ir, decode_report, fidelity) = decoded.into_parts();
     // An assembly's geometry is in its parts' files, read afterwards.
-    if !decode_report.geometry_transferred()
+    if !drawings
+        && !decode_report.geometry_transferred()
         && !format.is_assembly()
         && !(format == Format::FreeCadDocument && !ir.model.occurrences.is_empty())
     {

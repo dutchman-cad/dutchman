@@ -42,11 +42,11 @@ enum Command {
     #[cfg(feature = "pilot")]
     #[command(name = "pilot")]
     Pilot(dutchman_pilot::cli::Command),
-    /// Convert a native CAD file into a SolidCraft design, FreeCAD macro or document.
+    /// Convert a native CAD file into a SolidCraft design, FreeCAD output or DXF pages.
     Convert {
         /// The native design file to read (for example a `.f3d`, `.ipt` or `.sldprt`).
         input: PathBuf,
-        /// The `.solidcraft`, `.FCMacro` or `.FCStd` file to write, matching --to.
+        /// The output file to write, matching --to; DXF also accepts an existing directory.
         /// Omit to write beside the input with the extension chosen by --to.
         /// An explicit output is replaced, unless --no-clobber; an existing default needs --force.
         #[arg(conflicts_with = "output_flag")]
@@ -59,6 +59,9 @@ enum Command {
         force: bool,
         #[command(flatten)]
         options: ConvertOptions,
+        /// Select one TechDraw page by object name (requires --to dxf).
+        #[arg(long, value_name = "NAME")]
+        page: Option<String>,
         /// Also write the whole text report, every loss in full, to FILE.
         #[arg(long, value_name = "FILE")]
         log: Option<PathBuf>,
@@ -250,11 +253,59 @@ fn main() -> ExitCode {
             output_flag,
             force,
             mut options,
+            page,
             log,
             json,
         } => {
             let explicit = output.or(output_flag);
+            if page.is_some() && options.to != dutchman::OutputFormat::Dxf {
+                eprintln!("dutchman: --page requires --to dxf");
+                return ExitCode::from(2);
+            }
             let derived = explicit.is_none();
+            if options.to == dutchman::OutputFormat::Dxf {
+                let output = explicit.unwrap_or_else(|| {
+                    input
+                        .parent()
+                        .filter(|p| !p.as_os_str().is_empty())
+                        .unwrap_or(Path::new("."))
+                        .to_path_buf()
+                });
+                let report = dutchman::dxf::convert(
+                    &input,
+                    &output,
+                    page.as_deref(),
+                    !options.no_clobber && (!derived || force),
+                );
+                if let Some(log) = log {
+                    if let Err(err) =
+                        std::fs::write(&log, json::full_log(&report, &batch::line(&report)))
+                    {
+                        eprintln!("dutchman: cannot write {}: {err}", log.display());
+                    }
+                }
+                if json {
+                    print_json(&report);
+                } else if let Some(message) =
+                    report.pointer("/error/message").and_then(Value::as_str)
+                {
+                    eprintln!("dutchman: {message}");
+                } else {
+                    if let Some(pages) = report.get("pages").and_then(Value::as_array) {
+                        for page in pages {
+                            println!(
+                                "Converted {} → {}",
+                                input.display(),
+                                page.get("path").and_then(Value::as_str).unwrap_or_default()
+                            );
+                        }
+                    }
+                    if let Some(losses) = report.get("losses").and_then(Value::as_array) {
+                        print_losses(losses, verbose);
+                    }
+                }
+                return exit(&report);
+            }
             let output = explicit.unwrap_or_else(|| {
                 dutchman_core::Format::part_revision(&input)
                     .map_or_else(|| input.clone(), |(part, _)| part)

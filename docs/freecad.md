@@ -196,3 +196,48 @@ preservation. Joint coverage and specific fallback cases are listed in the guide
 Headless measurement and saving use the public [topological data scripting](https://wiki.freecad.org/Topological_data_scripting)
 and [FreeCAD scripting basics](https://wiki.freecad.org/FreeCAD_Scripting_Basics) APIs:
 `Shape.Solids`, `Volume`, `BoundBox`, document `recompute()` and `saveAs()`.
+
+## TechDraw to DXF
+
+```
+dutchman convert part.FCStd --to dxf
+dutchman convert part.FCStd --to dxf --page Page -o front.dxf --json
+dutchman convert part.FCStd --to dxf -o existing-directory
+```
+
+One ASCII DXF R2000 (`AC1015`) is written per page with `$INSUNITS=4` (mm) and
+metric measurement. Names are `part-<object name>.dxf`, in source page order;
+`--page` uses the source object name, not its displayed label. Names are limited
+to 100 ASCII letters, digits, underscores and hyphens; other characters become
+underscores and collisions get numeric suffixes, also on case-insensitive systems.
+A selected page with an explicit file path uses that exact path. An unselected
+file path supplies a base: `-o drawing.dxf` writes `drawing-Page.dxf`, etc.
+An output directory must already exist. Defaults need `--force` to overwrite;
+explicit outputs replace unless `--no-clobber` is set. All pages are encoded and
+existing outputs checked before publication; an I/O failure while publishing
+multiple files can leave earlier pages written. A document without a TechDraw
+page returns a clear error. Pages without a 3D body can be exported.
+
+| Source IR | DXF and report |
+|---|---|
+| Page sheet | Millimetre page limits; page coordinates are written at 1:1. |
+| Page `Views`, collection `Group`, and template links | Determine page membership. |
+| View curves | Exact lines, circles, and arcs, scaled and rotated about the view origin. Each view has a layer; hidden curves use a HIDDEN line type, and center lines use CENTER. Cosmetic curves have separate layers. |
+| Dimension measurement, kind, replacement text, tolerances, and reference anchors | Labels on DIMENSIONS, with verified measurements in mm or degrees. Linear and radial anchor pairs generate conventional lines and open arrows; these are not the saved source layout. Angular dimensions and missing anchors keep text only, with a loss; dimensions are not associative DXF DIMENSION entities. |
+| Template primitives and resolved text | FRAME geometry and TITLE_BLOCK text, directly in page coordinates. Unpositioned editable fields are reported. |
+| Annotation text, position, and text style | One TEXT or MTEXT entity per nonempty line on ANNOTATIONS; blank line spacing is preserved. Neutral physical height is kept, with 2.5 mm as fallback and line spacing at 1.4 times height. Font family, alignment and rich styling are reported as losses. |
+| Drawing visibility, with agreed `ViewPresentation.visible` as fallback | Hidden objects are left out with Info notes; conflicting flags are Degraded; page UI visibility does not filter selected pages. Curve display visibility is separate from its hidden-line class. |
+| Unsupported objects, resources, parameters, and relationships | Specific losses; unassigned drawing objects are reported at conversion level when exporting every page. |
+
+The encoder supports LINE, ARC, CIRCLE, LWPOLYLINE, exact polynomial/rational
+SPLINE (degree 1–10 with explicit knots/control points/weights), and TEXT/MTEXT.
+Unicode text is ASCII escaped. No model projection or native/SVG parsing is done
+in Dutchman. View edges absent from the neutral model, unsupported text styling,
+and dimension decoration that cannot be carried are reported explicitly.
+Layer entity counts and losses appear in `pages` in the JSON report; decode
+losses remain at conversion level. Declared layers can be empty.
+
+The CC0 fixtures include the original synthetic pages made with
+`crates/dutchman-core/tests/fixtures/techdraw.py` and cadmpeg's documented
+TechDraw corpus. Tests read committed files and require neither FreeCAD nor a
+Python DXF reader. No CAD implementation source is used for drawing mapping.
