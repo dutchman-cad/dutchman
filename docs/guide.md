@@ -373,6 +373,37 @@ contour-flange, bend, unfold/refold, or corner-relief operations, nor K-factor o
 settings; sheet rules keep SolidCraft's defaults for those settings. The report names the
 first feature that stops the history; the original geometry is still converted.
 
+## Desktop app
+
+Open `dutchman-gui`, add design files or folders, choose an output folder, and press
+**Convert**. Convert stays visible while you scroll through settings or results. The
+**Preset** selector starts at **Standard**:
+
+- **Fast**: shape only, least memory.
+- **Standard**: history, sketches, and joints; leaves an assembly's history out if it would
+  not fit in free memory.
+- **Full**: everything, most memory.
+
+Under **Advanced**, **Feature history**, **Sketches**, and **Joints** let you leave content
+out of the selected preset. A changed checkbox makes the selector read **Custom (based on
+Standard)** or **Custom (based on Full)**. Choosing a preset again resets these switches.
+Fast already leaves all three out; choose Standard or Full to enable them. These choices
+are remembered between launches. Older `import_only` settings restore with **Feature
+history** unchecked and Standard as the base.
+
+Queued files show **about N GB, about M min** when an estimate is available. Files in queued
+folders are listed with their estimates too. **M GB free** appears once when the machine's
+free memory can be read. These are estimates, not limits or promises; an unavailable estimate
+leaves no label. Planning and estimation run in the background.
+
+Before a conversion or retry, Dutchman checks each file's estimate against free memory.
+If one is too large, a dialog names the file, estimate, free memory, and lighter preset.
+**Use Fast** or **Use Standard** selects the offered preset and checks the files again.
+**Convert anyway** skips the memory check for this run only; **Cancel** starts no conversion.
+When Fast is already selected, the dialog offers only Convert anyway and Cancel.
+When Standard leaves an assembly's history out to fit in memory, its result card shows the
+history Info message even with the full loss log collapsed. The original geometry is kept.
+
 ## Your first conversion
 
 You need a native CAD file. Dutchman has no public sample designs yet, but its tests use

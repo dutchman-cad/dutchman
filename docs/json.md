@@ -226,6 +226,10 @@ cadmpeg's cause and add recovery advice and a link to the
 Normal JSON reports contain file names and paths. For sharing, request `--report-anon FILE`
 (MCP `report_anon`) and review that file first; keep logs, journals, keys, and salts private.
 
+The desktop app shows Info messages with subject `history` directly on result cards,
+including Standard's explanation when assembly history is left out to fit in free memory.
+These are existing `losses` entries; desktop estimates and preset labels add no report fields.
+
 ### Stages
 
 Every loss, and every failure's `error`, says where in the conversion it arose, so a report of

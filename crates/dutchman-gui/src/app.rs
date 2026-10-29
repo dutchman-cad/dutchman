@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use dutchman::batch::{Event, Job};
+use dutchman::choices::{Choices, Estimate, MemoryCheck, Preset};
 use dutchman::present::FileView;
 use dutchman::{json, present, ConvertOptions};
 use eframe::egui::{
@@ -49,6 +50,14 @@ impl Row {
 /// Dutchman Convert's window.
 pub struct App {
     inputs: Vec<PathBuf>,
+    custom: bool,
+    estimate_key: Option<(Vec<PathBuf>, Choices)>,
+    estimate_generation: u64,
+    estimates: Vec<(PathBuf, Option<Estimate>)>,
+    available: Option<u64>,
+    pending: Option<PendingRun>,
+    checking_memory: bool,
+    memory_warning: Option<(PathBuf, MemoryCheck)>,
     out_dir: Option<PathBuf>,
     options: ConvertOptions,
     rows: Vec<Row>,
@@ -68,6 +77,107 @@ pub struct App {
     reveal: Option<Reveal>,
 }
 
+struct PendingRun {
+    options: ConvertOptions,
+    kind: RunKind,
+}
+
+enum RunKind {
+    Batch {
+        inputs: Vec<PathBuf>,
+        out_dir: PathBuf,
+    },
+    Retry {
+        job: Box<Job>,
+        index: usize,
+    },
+}
+
+enum MemoryAction {
+    Use(Preset),
+    Anyway,
+    Cancel,
+}
+
+impl PendingRun {
+    fn inputs(&self) -> Vec<PathBuf> {
+        match &self.kind {
+            RunKind::Batch { inputs, .. } => inputs.clone(),
+            RunKind::Retry { job, .. } => vec![job.input.clone()],
+        }
+    }
+}
+
+const SETTINGS_KEY: &str = "settings";
+
+fn preset_label(preset: Preset) -> &'static str {
+    match preset {
+        Preset::Fast => "Fast",
+        Preset::Standard => "Standard",
+        Preset::Full => "Full",
+    }
+}
+
+/// Selecting a preset clears the narrowing switches from the previous selection.
+fn select_preset(options: &mut ConvertOptions, preset: Preset) {
+    options.preset = preset;
+    options.import_only = false;
+    options.no_sketches = false;
+    options.no_joints = false;
+}
+
+fn set_choices(options: &mut ConvertOptions, history: bool, sketches: bool, joints: bool) {
+    options.import_only = !history;
+    options.no_sketches = !sketches;
+    options.no_joints = !joints;
+}
+
+/// Older settings only held import_only; keep its meaning under Standard.
+fn restore_choices(options: &mut ConvertOptions, settings: &Value) -> bool {
+    let preset = match settings.get("preset").and_then(Value::as_str) {
+        Some("fast") => Preset::Fast,
+        Some("full") => Preset::Full,
+        _ => Preset::Standard,
+    };
+    select_preset(options, preset);
+    options.import_only = settings
+        .get("import_only")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    options.no_sketches = settings
+        .get("no_sketches")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    options.no_joints = settings
+        .get("no_joints")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    settings
+        .get("custom")
+        .and_then(Value::as_bool)
+        .unwrap_or(options.import_only || options.no_sketches || options.no_joints)
+}
+
+fn saved_choices(options: &ConvertOptions, custom: bool) -> Value {
+    serde_json::json!({
+        "preset": options.preset.name(), "custom": custom,
+        "import_only": options.import_only,
+        "no_sketches": options.no_sketches, "no_joints": options.no_joints,
+    })
+}
+
+fn gigabytes(bytes: u64) -> f64 {
+    bytes as f64 / 1_000_000_000.0
+}
+
+fn estimate_text(estimate: Estimate) -> String {
+    format!(
+        "about {:.1} GB, about {} min",
+        gigabytes(estimate.peak_bytes),
+        estimate.seconds.div_ceil(60).max(1)
+    )
+}
+
 /// What to scroll into view.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Reveal {
@@ -85,13 +195,27 @@ impl App {
         let detected_version = dutchman_solidcraft::SolidCraftVersion::detected(
             &dutchman_solidcraft::Verification::Auto,
         );
+        let mut options = ConvertOptions {
+            solidcraft_version: Some(detected_version),
+            ..ConvertOptions::default()
+        };
+        let custom = cc
+            .storage
+            .and_then(|storage| storage.get_string(SETTINGS_KEY))
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            .is_some_and(|settings| restore_choices(&mut options, &settings));
         App {
             inputs: Vec::new(),
+            custom,
+            estimate_key: None,
+            estimate_generation: 0,
+            estimates: Vec::new(),
+            available: None,
+            pending: None,
+            checking_memory: false,
+            memory_warning: None,
             out_dir: None,
-            options: ConvertOptions {
-                solidcraft_version: Some(detected_version),
-                ..ConvertOptions::default()
-            },
+            options,
             rows: Vec::new(),
             offset: 0,
             run: None,
@@ -153,17 +277,14 @@ impl App {
             job.search.also.push(folder);
         }
         let job = job.clone();
-        row.status = Status::Waiting;
-        row.report = None;
-        self.refresh_blocked_checker();
-        self.notice = None;
-        self.run = Some(Run::retry(
-            job,
-            job_index,
-            &self.options,
-            self.sender.clone(),
-            ctx.clone(),
-        ));
+        self.pending = Some(PendingRun {
+            options: self.options.clone(),
+            kind: RunKind::Retry {
+                job: Box::new(job),
+                index: job_index,
+            },
+        });
+        self.check_memory(ctx);
     }
 
     /// Opens the GitHub issue form about the file of the row at `index`, filled in from its
@@ -192,7 +313,7 @@ impl App {
 
     /// Whether a run is in progress.
     pub fn running(&self) -> bool {
-        self.run.is_some()
+        self.run.is_some() || self.pending.is_some()
     }
 
     fn refresh_blocked_checker(&mut self) {
@@ -207,16 +328,140 @@ impl App {
         let Some(out_dir) = self.out_dir.clone() else {
             return;
         };
-        self.rows.clear();
-        self.offset = 0;
+        self.pending = Some(PendingRun {
+            options: self.options.clone(),
+            kind: RunKind::Batch {
+                inputs: self.inputs.clone(),
+                out_dir,
+            },
+        });
+        self.check_memory(ctx);
+    }
+
+    fn check_memory(&mut self, ctx: &egui::Context) {
+        if let Some(pending) = &self.pending {
+            self.checking_memory = true;
+            worker::check_memory(
+                pending.inputs(),
+                pending.options.clone(),
+                self.sender.clone(),
+                ctx.clone(),
+            );
+        }
+    }
+
+    fn start_checked(&mut self, ctx: &egui::Context) {
+        let Some(pending) = self.pending.take() else {
+            return;
+        };
+        self.refresh_blocked_checker();
         self.notice = None;
-        self.run = Some(Run::start(
-            self.inputs.clone(),
-            out_dir,
-            &self.options,
+        self.run = Some(match pending.kind {
+            RunKind::Batch { inputs, out_dir } => {
+                self.rows.clear();
+                self.offset = 0;
+                Run::start(
+                    inputs,
+                    out_dir,
+                    &pending.options,
+                    self.sender.clone(),
+                    ctx.clone(),
+                )
+            }
+            RunKind::Retry { job, index } => {
+                if let Some(row) = self.rows.get_mut(self.offset + index) {
+                    row.status = Status::Waiting;
+                    row.report = None;
+                }
+                Run::retry(
+                    *job,
+                    index,
+                    &pending.options,
+                    self.sender.clone(),
+                    ctx.clone(),
+                )
+            }
+        });
+    }
+
+    fn refresh_estimates(&mut self, ctx: &egui::Context) {
+        let key = (self.inputs.clone(), self.options.choices());
+        if self.estimate_key.as_ref() == Some(&key) {
+            return;
+        }
+        self.estimate_generation = self.estimate_generation.wrapping_add(1);
+        self.estimates.clear();
+        worker::estimates(
+            key.0.clone(),
+            key.1,
+            self.estimate_generation,
             self.sender.clone(),
             ctx.clone(),
-        ));
+        );
+        self.estimate_key = Some(key);
+    }
+
+    fn memory_dialog(&mut self, ctx: &egui::Context) {
+        let Some((
+            path,
+            MemoryCheck::TooBig {
+                estimate,
+                available,
+                lighter,
+            },
+        )) = self.memory_warning.clone()
+        else {
+            return;
+        };
+        let mut action = None;
+        egui::Modal::new(egui::Id::new("memory_warning")).show(ctx, |ui| {
+            ui.heading("This conversion may need more memory");
+            ui.label(format!(
+                "{}: {}; {:.1} GB free.",
+                display(&path),
+                estimate_text(estimate),
+                gigabytes(available)
+            ));
+            if let Some(preset) = lighter {
+                ui.label(format!(
+                    "Use {} to keep less and reduce memory use.",
+                    preset_label(preset)
+                ));
+                if ui.button(format!("Use {}", preset_label(preset))).clicked() {
+                    action = Some(MemoryAction::Use(preset));
+                }
+            } else {
+                ui.label("This is already the lightest preset.");
+            }
+            if ui.button("Convert anyway").clicked() {
+                action = Some(MemoryAction::Anyway);
+            }
+            if ui.button("Cancel").clicked() {
+                action = Some(MemoryAction::Cancel);
+            }
+        });
+        if let Some(action) = action {
+            self.memory_warning = None;
+            match action {
+                MemoryAction::Use(preset) => {
+                    if let Some(pending) = &mut self.pending {
+                        select_preset(&mut pending.options, preset);
+                        select_preset(&mut self.options, preset);
+                        self.custom = false;
+                    }
+                    self.check_memory(ctx);
+                }
+                MemoryAction::Anyway => {
+                    if let Some(pending) = &mut self.pending {
+                        pending.options.no_memory_check = true;
+                    }
+                    self.start_checked(ctx);
+                }
+                MemoryAction::Cancel => {
+                    self.pending = None;
+                }
+            }
+        }
     }
 
     fn picked(&mut self, pick: Pick, paths: Vec<PathBuf>, ctx: &egui::Context) {
@@ -247,6 +492,24 @@ impl App {
     fn receive(&mut self, ctx: &egui::Context) {
         while let Ok(message) = self.messages.try_recv() {
             match message {
+                Message::Estimated {
+                    generation,
+                    files,
+                    available,
+                } => {
+                    if generation == self.estimate_generation {
+                        self.estimates = files;
+                        self.available = available;
+                    }
+                }
+                Message::MemoryChecked(warning) => {
+                    self.checking_memory = false;
+                    if warning.is_some() {
+                        self.memory_warning = warning;
+                    } else {
+                        self.start_checked(ctx);
+                    }
+                }
                 Message::Picked { pick, paths } => self.picked(pick, paths, ctx),
                 Message::Planned { problems, jobs } => {
                     self.reveal = Some(Reveal::Results);
@@ -334,6 +597,7 @@ impl App {
         }
         self.receive(ctx);
         self.take_dropped_files(ctx);
+        self.refresh_estimates(ctx);
         let view = self.view();
 
         egui::TopBottomPanel::top("title")
@@ -347,6 +611,17 @@ impl App {
             )
             .show_separator_line(false)
             .show(ctx, |ui| self.title(ui));
+
+        egui::TopBottomPanel::bottom("conversion")
+            .frame(
+                Frame::new()
+                    .fill(ctx.style().visuals.panel_fill)
+                    .inner_margin(Margin::symmetric(
+                        theme::SPACE_8 as i8,
+                        theme::SPACE_4 as i8,
+                    )),
+            )
+            .show(ctx, |ui| self.actions_ui(ui, ctx, view.summary.as_deref()));
 
         egui::CentralPanel::default()
             .frame(
@@ -365,13 +640,15 @@ impl App {
                     .show(ui, |ui| {
                         self.inputs_panel(ui);
                         ui.add_space(theme::SPACE_4);
-                        self.output_panel(ui, ctx, view.summary.as_deref());
+                        self.output_panel(ui, ctx);
                         if !self.rows.is_empty() {
                             ui.add_space(theme::SPACE_8);
                             self.results(ui, &view);
                         }
                     });
             });
+        self.memory_dialog(ctx);
+        self.refresh_estimates(ctx);
     }
 
     fn title(&mut self, ui: &mut egui::Ui) {
@@ -433,6 +710,22 @@ impl App {
                         ui,
                         |ui| {
                             path_label(ui, &p, input);
+                            for (path, estimate) in &self.estimates {
+                                if path == input || path.starts_with(input) {
+                                    if let Some(estimate) = estimate {
+                                        let text = if path == input {
+                                            estimate_text(*estimate)
+                                        } else {
+                                            format!(
+                                                "{}: {}",
+                                                file_name(path),
+                                                estimate_text(*estimate)
+                                            )
+                                        };
+                                        ui.label(RichText::new(text).small().color(p.tide));
+                                    }
+                                }
+                            }
                             if let Some(format) = dutchman_core::Format::from_path(input) {
                                 let level = format
                                     .headline_level()
@@ -453,6 +746,13 @@ impl App {
                     self.inputs.remove(index);
                 }
             }
+            if let Some(available) = self.available {
+                ui.label(
+                    RichText::new(format!("{:.1} GB free", gigabytes(available)))
+                        .small()
+                        .color(p.tide),
+                );
+            }
             ui.add_space(theme::SPACE_2);
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(!self.running(), |ui| {
@@ -470,7 +770,47 @@ impl App {
         });
     }
 
-    fn output_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, summary: Option<&str>) {
+    fn choices_ui(&mut self, ui: &mut egui::Ui) {
+        let label = if self.custom {
+            format!("Custom (based on {})", preset_label(self.options.preset))
+        } else {
+            preset_label(self.options.preset).to_owned()
+        };
+        egui::ComboBox::from_label("Preset").selected_text(label).show_ui(ui, |ui| {
+            for (preset, description) in [
+                (Preset::Fast, "shape only, least memory"),
+                (Preset::Standard, "history, sketches and joints; leaves an assembly's history out if it would not fit in free memory"),
+                (Preset::Full, "everything, most memory"),
+            ] {
+                if ui.selectable_label(!self.custom && self.options.preset == preset, preset_label(preset)).clicked() {
+                    select_preset(&mut self.options, preset);
+                    self.custom = false;
+                }
+                ui.label(RichText::new(description).small());
+            }
+        });
+        egui::CollapsingHeader::new("Advanced").show(ui, |ui| {
+            let choices = self.options.choices();
+            let (mut history, mut sketches, mut joints) =
+                (choices.history, choices.sketches, choices.joints);
+            // Switches narrow the selected base; Fast has nothing further to leave out.
+            ui.add_enabled_ui(self.options.preset != Preset::Fast, |ui| {
+                let changed = ui.checkbox(&mut history, "Feature history").changed()
+                    | ui.checkbox(&mut sketches, "Sketches").changed()
+                    | ui.checkbox(&mut joints, "Joints").changed();
+                if changed {
+                    set_choices(&mut self.options, history, sketches, joints);
+                    self.custom = true;
+                }
+            })
+            .response
+            .on_disabled_hover_text(
+                "Choose Standard or Full to keep history, sketches, or joints.",
+            );
+        });
+    }
+
+    fn output_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let p = *theme::palette(ui);
         section_label(ui, &p, "Output folder");
         panel(ui, &p, false, |ui| {
@@ -500,14 +840,8 @@ impl App {
             );
             ui.add_space(theme::SPACE_2);
             ui.add_enabled_ui(!self.running(), |ui| {
-                // On the line of the geometry-only choice, so the window keeps its height and
-                // Convert stays in view.
+                self.choices_ui(ui);
                 ui.horizontal_wrapped(|ui| {
-                    ui.checkbox(
-                        &mut self.options.import_only,
-                        "Write geometry only, without feature history",
-                    );
-                    ui.add_space(theme::SPACE_4);
                     egui::ComboBox::from_label("Output format")
                         .selected_text(match self.options.to {
                             dutchman::OutputFormat::Solidcraft => "SolidCraft",
@@ -636,10 +970,19 @@ impl App {
                 }
             });
         });
-        ui.add_space(theme::SPACE_4);
+    }
+
+    fn actions_ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, summary: Option<&str>) {
+        let p = *theme::palette(ui);
         ui.horizontal(|ui| {
             if self.running() {
-                if ui.button("Stop").clicked() {
+                if self.checking_memory {
+                    ui.label("Checking memory…");
+                }
+                if ui
+                    .add_enabled(self.run.is_some(), egui::Button::new("Stop"))
+                    .clicked()
+                {
                     if let Some(run) = &self.run {
                         run.stop();
                     }
@@ -757,6 +1100,13 @@ impl App {
 }
 
 impl eframe::App for App {
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        storage.set_string(
+            SETTINGS_KEY,
+            saved_choices(&self.options, self.custom).to_string(),
+        );
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.ui(ctx);
     }
@@ -884,6 +1234,9 @@ fn row_ui(
         )
         .on_hover_text(output);
         ui.label(RichText::new(&view.outcome).color(p.ink));
+        for loss in history_info(row.report.as_ref()) {
+            ui.label(RichText::new(loss).color(p.tide));
+        }
         if let Some(summary) = &view.assembly {
             let colour = if view.incomplete { p.danger } else { p.tide };
             ui.label(RichText::new(summary).color(colour));
@@ -927,6 +1280,21 @@ fn row_ui(
         }
     }
     action
+}
+
+/// History decisions must be visible even while the full loss log is collapsed.
+fn history_info(report: Option<&Value>) -> Vec<&str> {
+    report
+        .and_then(|report| report.get("losses"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|loss| {
+            loss.get("level").and_then(Value::as_str) == Some("Info")
+                && loss.get("subject").and_then(Value::as_str) == Some("history")
+        })
+        .filter_map(|loss| loss.get("message").and_then(Value::as_str))
+        .collect()
 }
 
 /// The missing-part summary and recovery instructions.
@@ -1032,6 +1400,203 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn preset_and_advanced_choices_map_to_shared_options() {
+        let mut options = ConvertOptions::default();
+        assert_eq!(options.preset, Preset::Standard);
+        assert_eq!(options.choices(), Choices::of(Preset::Standard));
+        for preset in [Preset::Fast, Preset::Standard, Preset::Full] {
+            select_preset(&mut options, preset);
+            assert_eq!(options.choices(), Choices::of(preset));
+            for history in [true, false] {
+                for sketches in [true, false] {
+                    for joints in [true, false] {
+                        set_choices(&mut options, history, sketches, joints);
+                        assert_eq!(options.preset, preset);
+                        assert_eq!(options.import_only, !history);
+                        assert_eq!(options.no_sketches, !sketches);
+                        assert_eq!(options.no_joints, !joints);
+                        let base = Choices::of(preset);
+                        assert_eq!(
+                            options.choices(),
+                            Choices {
+                                history: base.history && history,
+                                sketches: base.sketches && sketches,
+                                joints: base.joints && joints,
+                                history_within_budget: base.history_within_budget,
+                            }
+                        );
+                    }
+                }
+            }
+        }
+        select_preset(&mut options, Preset::Standard);
+        assert_eq!(options.choices(), Choices::of(Preset::Standard));
+    }
+
+    #[test]
+    fn old_import_only_settings_restore_the_history_checkbox() {
+        for import_only in [false, true] {
+            let mut options = ConvertOptions::default();
+            let custom = restore_choices(&mut options, &json!({"import_only": import_only}));
+            assert_eq!(options.preset, Preset::Standard);
+            assert_eq!(options.choices().history, !import_only);
+            assert!(options.choices().sketches);
+            assert!(options.choices().joints);
+            assert_eq!(custom, import_only);
+        }
+        let mut options = ConvertOptions::default();
+        assert!(!restore_choices(&mut options, &json!({})));
+        select_preset(&mut options, Preset::Full);
+        set_choices(&mut options, true, false, true);
+        options.no_memory_check = true;
+        let saved = saved_choices(&options, true);
+        let mut restored = ConvertOptions::default();
+        assert!(restore_choices(&mut restored, &saved));
+        assert_eq!(restored.preset, Preset::Full);
+        assert_eq!(restored.choices(), options.choices());
+        assert!(!restored.no_memory_check);
+    }
+
+    #[test]
+    fn changing_a_checkbox_marks_custom_and_selecting_a_preset_resets_it() {
+        use egui_kittest::kittest::Queryable;
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1000.0, 1400.0))
+            .build_eframe(|cc| App::new(cc));
+        harness.run();
+        harness.get_by_label("Advanced").click();
+        harness.run();
+        harness.get_by_label("Feature history").click();
+        harness.run();
+        assert!(harness.state().custom);
+        assert!(harness.state().options.import_only);
+        assert_eq!(harness.state().options.preset, Preset::Standard);
+        harness.get_by_value("Custom (based on Standard)").click();
+        harness.run();
+        harness.get_by_label("Full").click();
+        harness.run();
+        assert!(!harness.state().custom);
+        assert_eq!(harness.state().options.choices(), Choices::of(Preset::Full));
+    }
+
+    #[test]
+    fn memory_warning_can_be_cancelled_without_starting_or_changing_options() {
+        use egui_kittest::kittest::Queryable;
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1000.0, 1400.0))
+            .build_eframe(|cc| {
+                let mut app = App::new(cc);
+                app.pending = Some(PendingRun {
+                    options: app.options.clone(),
+                    kind: RunKind::Batch {
+                        inputs: vec![],
+                        out_dir: PathBuf::from("out"),
+                    },
+                });
+                app.memory_warning = Some((
+                    PathBuf::from("synthetic.f3z"),
+                    MemoryCheck::TooBig {
+                        estimate: Estimate {
+                            peak_bytes: 8_000_000_000,
+                            seconds: 120,
+                            band: 0.3,
+                        },
+                        available: 4_000_000_000,
+                        lighter: Some(Preset::Fast),
+                    },
+                ));
+                app
+            });
+        harness.run();
+        assert!(harness
+            .query_by_label("synthetic.f3z: about 8.0 GB, about 2 min; 4.0 GB free.")
+            .is_some());
+        assert!(harness.query_by_label("Use Fast").is_some());
+        assert!(harness.query_by_label("Convert anyway").is_some());
+        harness.get_by_label("Cancel").click();
+        harness.run();
+        assert!(!harness.state().running());
+        assert!(harness.state().memory_warning.is_none());
+        assert!(!harness.state().options.no_memory_check);
+    }
+
+    #[test]
+    fn queued_estimates_ignore_old_choices_and_show_current_numbers() {
+        use egui_kittest::kittest::Queryable;
+        let input = PathBuf::from("synthetic.f3d");
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1000.0, 1400.0))
+            .build_eframe(|cc| {
+                let mut app = App::new(cc);
+                app.inputs = vec![input.clone()];
+                app.estimate_key = Some((app.inputs.clone(), app.options.choices()));
+                app.estimate_generation = 2;
+                app.sender
+                    .send(Message::Estimated {
+                        generation: 1,
+                        files: vec![(
+                            input.clone(),
+                            Some(Estimate {
+                                peak_bytes: 90_000_000_000,
+                                seconds: 60,
+                                band: 0.3,
+                            }),
+                        )],
+                        available: Some(1_000_000_000),
+                    })
+                    .unwrap();
+                app.sender
+                    .send(Message::Estimated {
+                        generation: 2,
+                        files: vec![(
+                            input.clone(),
+                            Some(Estimate {
+                                peak_bytes: 2_500_000_000,
+                                seconds: 121,
+                                band: 0.3,
+                            }),
+                        )],
+                        available: Some(4_000_000_000),
+                    })
+                    .unwrap();
+                app
+            });
+        harness.run();
+        assert!(harness
+            .query_by_label("about 2.5 GB, about 3 min")
+            .is_some());
+        assert!(harness.query_by_label("4.0 GB free").is_some());
+        assert!(harness
+            .query_by_label("about 90.0 GB, about 1 min")
+            .is_none());
+    }
+
+    #[test]
+    fn history_budget_note_is_visible_with_losses_collapsed() {
+        use egui_kittest::kittest::Queryable;
+        let message = "feature history left out: this assembly needs about 8 GB with history and 4 GB are free; use the full preset to keep it";
+        let row = Row {
+            input: PathBuf::from("synthetic.f3z"),
+            output: Some(PathBuf::from("out.solidcraft")),
+            status: Status::Converted,
+            progress: None,
+            job: None,
+            report: Some(json!({"ok": true, "mode": "import", "losses": [
+                {"level": "Info", "subject": "history", "message": message}
+            ]})),
+        };
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1000.0, 600.0))
+            .build_ui(|ui| {
+                theme::install(ui.ctx());
+                let p = *theme::palette(ui);
+                row_ui(ui, &p, 0, &row, &row.view(), true, false);
+            });
+        harness.run();
+        assert!(harness.query_by_label(message).is_some());
+    }
 
     #[test]
     fn result_list_uses_shared_strings() {
