@@ -4084,15 +4084,22 @@ fn unfinished_pattern_replays_keep_the_original_geometry() {
             history_line(&report)
         );
         assert!(history_line(&report).contains("timed out"));
-        // The unverified timeline stays hidden beside the visible original shape.
+        // The unverified timeline (sketch, extrusion, then the pattern's mirror or pattern
+        // stages) stays hidden beside the visible original shape.
+        let kinds: Vec<String> = types(&document).into_iter().map(|(kind, _)| kind).collect();
+        assert_eq!(kinds[..2], ["sketch", "extrude"], "{kinds:?}");
         assert_eq!(
-            types(&document),
-            [
-                ("sketch".to_owned(), false),
-                ("extrude".to_owned(), false),
-                ("pattern".to_owned(), false),
-                ("import".to_owned(), false)
-            ]
+            kinds.last().map(String::as_str),
+            Some("import"),
+            "{kinds:?}"
+        );
+        let stages = &kinds[2..kinds.len() - 1];
+        assert!(!stages.is_empty(), "{kinds:?}");
+        assert!(
+            stages
+                .iter()
+                .all(|kind| kind == "mirror" || kind == "pattern"),
+            "{kinds:?}"
         );
     }
 }
