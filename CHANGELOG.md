@@ -8,6 +8,42 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
+## 0.2.5 (2026-10-30)
+
+### Formats
+
+- Convert FreeCAD TechDraw pages to DXF with `convert --to dxf`, one file per page,
+  or select a page with `--page NAME`. Keep neutral view curves, visible and hidden
+  line types, dimension labels and measurements, annotations, template frames, and
+  resolved title-block text in millimetre page space. Report unsupported content
+  and entity counts per page in JSON.
+
+### Command line and install
+
+- Target the installed SolidCraft release, even with verification off, or the newest release
+  known at build time (currently 0.26.0). Dutchman is made for releases from the last two
+  weeks, currently 0.18.2–0.26.0 (the window never starts below 0.18.2, the oldest accepted
+  target). Features a target cannot open keep the original geometry with a named reason.
+- Counterbores and countersinks write their explicit flat tip for targets 0.22.1 and newer,
+  the first SolidCraft release that applies a drill-point angle to them.
+
+### cadmpeg
+
+- The cadmpeg pin moves from `2e01486` to `1923e49`. Fusion components own the bodies their
+  body containers hold, and operation-table poses apply the same way to every occurrence of a
+  definition, so assemblies are placed closer to the design. Inventor derived parts read their
+  stored bodies, positional two-section lofts are read, and rectangular patterns keep their
+  suppressed instances as skipped grid positions. SolidWorks parts with unusual edge topology
+  are refused rather than read wrong.
+- A rectangular pattern that skips grid positions is not mapped yet: SolidCraft's rectangular
+  pattern fills the whole grid. The report names the pattern and how many positions it skips,
+  and the part keeps its exact geometry.
+
+### Docs
+
+- The README's download table links the universal Mac command-line archive for Apple silicon
+  and Intel, beside the universal desktop disk image, now that a release carries it.
+
 ## 0.2.4 (2026-10-29)
 
 ### History
