@@ -30,6 +30,12 @@ transform, and each component as a product definition.
   one per component, holding only that component's bodies as an import, one occurrence per
   placement, and the design's own loose bodies as one more component at the origin. This works
   for any format whose CADIR says which bodies a component owns.
+- **Each component keeps its own history:** the features that make its bodies, the sketches
+  it owns with the features that build them, and the features those depend on. A feature that
+  makes only another component's bodies stays with that component. The component's history is
+  then mapped and checked like a single part's; when it does not map, the component keeps its
+  bodies as an import and the report names its first blocker. When cadmpeg links no feature to a
+  component's bodies, it has no history to map.
 - **When it does not,** the design converts as stored and the report says so (Degraded,
   `components`): the geometry is written once, so a placement whose geometry the file does
   not store separately is not shown.
