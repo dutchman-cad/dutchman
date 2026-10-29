@@ -6831,6 +6831,152 @@ fn combined_spheres(operation: &str, keep_tools: bool) -> Model {
     }
 }
 
+/// The example cube split by a datum plane at `x` across X, then `after` (if any). The split's
+/// result bodies are the cube and, when `shifted`, a copy of it moved 10 mm along X: on either
+/// side of a plane through the cube's +X face.
+fn split_cube(x: f64, shifted: bool, after: Option<Value>) -> Model {
+    let base = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let model = &mut wire["model"];
+    let mut outputs = vec![json!("synthetic:cube:body#0")];
+    if shifted {
+        for arena in [
+            "points", "vertices", "curves", "edges", "coedges", "loops", "surfaces", "faces",
+            "shells", "regions", "bodies",
+        ] {
+            let text = serde_json::to_string(&model[arena]).unwrap();
+            let mut rows: Vec<Value> =
+                serde_json::from_str(&text.replace("synthetic:cube:", "synthetic:piece:")).unwrap();
+            if arena == "points" {
+                for row in &mut rows {
+                    let moved = row["position"]["x"].as_f64().unwrap() + 10.0;
+                    row["position"]["x"] = json!(moved);
+                }
+            }
+            model[arena].as_array_mut().unwrap().extend(rows);
+        }
+        outputs.insert(0, json!("synthetic:piece:body#0"));
+    }
+    let frame = json!({"origin": {"x": x, "y": 0.0, "z": 0.0},
+        "normal": {"x": 1.0, "y": 0.0, "z": 0.0}, "u_axis": {"x": 0.0, "y": 1.0, "z": 0.0}});
+    let features = model["features"].as_array_mut().unwrap();
+    features.extend([
+        json!({"id": "f3d:model:feature#3", "ordinal": 2, "name": "Cutting plane",
+            "suppressed": false, "definition": {"definition": "datum_plane", "frame": frame}}),
+        json!({"id": "f3d:model:feature#4", "ordinal": 3, "name": "Split",
+            "suppressed": false, "outputs": outputs,
+            "definition": {"definition": "split_body", "targets": cube_body(),
+                "tool": {"kind": "plane", "value": {"plane": "f3d:model:feature#3"}}}}),
+    ]);
+    if let Some(definition) = after {
+        features.push(
+            json!({"id": "f3d:model:feature#5", "ordinal": 4, "name": "After",
+            "suppressed": false, "definition": definition}),
+        );
+    }
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    }
+}
+
+/// The largest X any of the example cube's points has.
+fn cube_right(model: &Model) -> f64 {
+    let wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["points"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|p| p["position"]["x"].as_f64())
+        .fold(f64::MIN, f64::max)
+}
+
+#[test]
+fn a_body_split_by_a_datum_plane_keeps_each_piece_named() {
+    let right = cube_right(&split_cube(0.0, false, None));
+    // The moved copy lies on the side the normal points to and keeps the cube's name; the
+    // cube itself, behind the plane, becomes the new piece. A mirror after the split names
+    // the cube's body, so it mirrors the new piece.
+    let mirror = json!({"definition": "pattern",
+        "seeds": [{"kind": "bodies", "value": cube_body()}],
+        "pattern": {"kind": "mirror", "plane_origin": {"x": 40.0, "y": 0.0, "z": 0.0},
+            "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}});
+    let (document, report) = convert(
+        &split_cube(right, true, Some(mirror)),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let made = document["features"][1]["body_names"][0].as_str().unwrap();
+    let split = &document["features"][2];
+    assert_eq!(split["type"], "split", "{}", history_line(&report));
+    assert_eq!(split["name"], "Split");
+    assert_eq!(split["body"], made);
+    assert_eq!(split["plane"]["type"], "custom");
+    assert_eq!(split["plane"]["plane"]["origin"], json!([right, 0.0, 0.0]));
+    let piece = split["body_names"][0].as_str().unwrap();
+    assert_ne!(piece, made);
+    let mirror = &document["features"][3];
+    assert_eq!(mirror["type"], "mirror", "{}", history_line(&report));
+    assert_eq!(mirror["bodies"], json!([piece]));
+}
+
+#[test]
+fn split_pieces_that_cannot_be_told_apart_are_not_selected_later() {
+    // The plane cuts through the cube, so its vertices lie on both sides: neither piece keeps
+    // the cube's identity, and a later feature selecting it stops the history.
+    let model = split_cube(0.0, false, None);
+    let middle = cube_right(&model) - 5.0;
+    let mirror = json!({"definition": "pattern",
+        "seeds": [{"kind": "bodies", "value": cube_body()}],
+        "pattern": {"kind": "mirror", "plane_origin": {"x": 40.0, "y": 0.0, "z": 0.0},
+            "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}});
+    let (document, report) = convert(
+        &split_cube(middle, false, Some(mirror)),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_eq!(document["features"][2]["type"], "split");
+    assert!(
+        history_line(&report).contains("it selects a body that an earlier feature has not named"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn splitting_by_faces_is_refused_by_name() {
+    let mut model = split_cube(0.0, false, None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let split = wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|f| f["name"] == "Split")
+        .unwrap();
+    split["definition"]["tool"] = json!({"kind": "faces", "value": cube_faces(&["top"])});
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("splitting a body by faces is not supported yet"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn solidcraft_splits_the_body_in_two() {
+    let Some(cli) = solidcraft() else { return };
+    let model = split_cube(0.0, false, None);
+    let middle = cube_right(&model) - 4.0;
+    let got = volumes(&cli, &written(&split_cube(middle, false, None)).0);
+    assert_eq!(got.len(), 2, "{got:?}");
+    let mut got = got;
+    got.sort_by(f64::total_cmp);
+    assert!((got[0] - 400.0).abs() < 1.0, "{got:?}");
+    assert!((got[1] - 600.0).abs() < 1.0, "{got:?}");
+}
+
 #[test]
 fn booleans_map_target_tools_operation_and_retention() {
     for operation in ["join", "cut", "intersect"] {
