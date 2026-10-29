@@ -751,13 +751,15 @@ across; the report lists them as Degraded. Taper, exit treatments, modeled threa
 recesses combined with drill points are not supported yet, and the report names the option.
 For a counterbore, countersink, or chamfered entry with a drill point, the reason is
 "SolidCraft holes take a drill point only on a plain drilled hole": SolidCraft 0.21.0 ignores
-`tip_angle` on counterbores and countersinks. Conversion keeps the original geometry.
+`tip_angle` on counterbores and countersinks. SolidCraft 0.25.1 supports those drill
+points, but Dutchman retains this limit for compatibility with older releases. Conversion keeps the original geometry.
 
 When every feature in a design's history maps onto SolidCraft (sketches, extrudes, revolves,
 patterns, body mirrors, and body booleans so far), the design keeps that history, editable, with
 the original geometry kept beside it as a suppressed import named "Original geometry
-(imported)". Otherwise the design is the geometry alone, and the report says which feature
-stopped the history.
+(imported)". At a blocking feature, the design keeps the earlier editable features and
+resolved sketches hidden beside the visible imported final shape. The report names the
+blocker and counts the retained features.
 
 Sweeps accept ordered sketch curves, or a whole sketch containing a single non-construction
 curve, for their path and optional guide rail. Taper, explicit right or round corners,
@@ -790,7 +792,7 @@ including the product of the counts in a chain. For mirror chains and repeated f
 endpoints, an attempted replay that cannot finish keeps the original geometry and reports
 why; turning verification off, or having no usable CLI, still writes unverified history. Nonuniform or
 skipped instances, progressive scaling, face seeds, and unresolved body or path references
-flatten the history with a specific reason. This CADIR version has no solid-pattern symmetry
+stop editable body-building history with a specific reason. This CADIR version has no solid-pattern symmetry
 or extent fields, so Dutchman cannot recover those settings independently of the decoded
 spacing and locations.
 
@@ -820,8 +822,24 @@ in `verification.status` in `--json`:
 |---|---|
 | `verified` | The history replays in SolidCraft and matches the original. |
 | `unverified` | The history was written without the check: no `solidcraft-cli` was found, it timed out, or `--no-verify`. The reason is given. |
-| `flattened` | The design has a history, but it was not written: a feature does not map, or the replay differs from the original. The design keeps the imported geometry and any mapped sketches with resolved planes, hidden for reference, with no features built on them. |
+| `partial` | An editable prefix and resolved sketches are retained in a hidden component. The imported final shape is visible. The reason names the blocker, counts kept features, and says whether retained features replayed; this does not verify the full history. |
+| `flattened` | No body-building prefix could be retained. The design keeps the imported geometry and mapped sketches with resolved planes, hidden for reference. |
 | `not_applicable` | There was no history to write, or `--import-only`. |
+
+For partial history, show **Editable history (partial)** in the browser to continue editing
+its body. Hide the imported final shape when working on that prefix. Later body-building
+features are omitted; sketches whose planes or external geometry cannot resolve are reported.
+A sketch that fails replay is retried without constraints, with the loss reported. If its
+solved geometry still cannot replay, it is left out and reported. A replay error can shorten
+the prefix further. If replay runs but the final shape differs,
+the mapped timeline is kept hidden for correction because the differing feature is unknown.
+`solidcraft-cli eval` measures hidden bodies too, so its body count includes both results.
+
+Assembly visibility reports count source-hidden placements separately from retained
+editable history. An Info `visibility` note, `N editable-history component placement(s)
+are placed hidden`, counts the latter across repeated and nested placements. Both use
+the same bounded hidden-occurrence paths; a Degraded note reports paths left shown
+past the 4096-path limit.
 
 For a flattened design, one Info line reports `sketches: kept N sketches for reference`,
 with `; M left out` when any sketches did not map or their planes did not resolve.
@@ -917,7 +935,7 @@ and requested reports.
 | `missing.f3d: No such file or directory (os error 2)` | Check the path. |
 | `part.f3d: the file is … bytes, over Dutchman's 1073741824-byte limit` | Dutchman opens files up to 1 GiB. |
 | `history: …; unverified: …` | Not an error: the history was written without the SolidCraft check. Install `solidcraft-cli`, or point `--solidcraft` or `SOLIDCRAFT_CLI` at it, and convert again. |
-| `history: flattened: replay differs (…)` | Not an error: the history did not rebuild the same shape in SolidCraft, so the geometry was written instead. `--no-verify` keeps the history, unchecked. |
+| `history: flattened: replay differs (…)` | Not an error: the history did not rebuild the same shape in SolidCraft. A retained editable timeline is hidden beside the imported final shape when possible. `--no-verify` keeps the history, unchecked. |
 
 ## FreeCAD output (experimental)
 

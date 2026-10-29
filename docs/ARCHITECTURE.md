@@ -134,13 +134,13 @@ Unused construction helpers need no target feature. Later active consumers carry
 datum frames in sketches, pattern axes, and later datum constructions; unresolved helper
 uses remain blockers.
 
-History is all or nothing. CADIR keeps only the final B-rep, so a history that stops part way
-cannot be finished with an imported body: the first feature that does not map (or a history
-with no feature that builds geometry) flattens the design to the import design, and the
-report says why (`history: flattened: …`). Mapped sketches with resolved planes follow the
-import as hidden reference sketches, in source order, with no body-building features. Their
-dimension parameters remain available. The same applies when replay verification flattens
-a design; body comparison is unchanged. Suppressed source features are left out and
+At the first blocking feature, the editable timeline stops. Earlier features and
+independently resolved sketches are kept in a hidden component, followed by the original
+final geometry as a visible Import. The original is a separate result, not an
+intermediate body on which later features could safely continue: CADIR supplies final
+geometry only. The report names the blocker and counts retained source features. If no
+body-building prefix exists, the import keeps resolved sketches for reference as before.
+Suppressed source features are left out and
 reported. Mapped today: principal datum planes; planar sketches (points, lines, circles, arcs,
 whole ellipses, elliptical arcs up to one turn (multi-piece curves require whole-sketch selection), bounded parabolas and hyperbolas, rational quadratic Béziers, clamped uniform B-splines (including equal-weight rational curves), reference lines, at their solved positions) with their constraints and dimensions, each
 dimension linked to its parameter (a constraint that does not map is dropped and reported,
@@ -219,12 +219,18 @@ runs `solidcraft-cli eval` on the design as written and on a copy with the histo
 and the original live, and compares body count, volumes and areas. SolidCraft measures from
 a mesh whose chords keep within 5e-5 of a body's size of its faces, so two meshes of one shape
 may differ in volume by both their areas times that chord, and never less than 1e-4 of the
-volume is allowed; areas must agree within 1e-3. A mismatch or a feature SolidCraft cannot
-replay flattens the design (`flattened: replay differs`). When no CLI is found (`--solidcraft PATH`, else `$SOLIDCRAFT_CLI`, else `PATH`),
-when it times out (`--verify-timeout`, default 120 s), or with `--no-verify`, the history is
-written and reported unverified. For ordered mirror chains and repeated full-turn endpoints,
-an attempted replay that cannot finish instead keeps the original geometry and reports why.
-`--import-only` always writes the import design.
+volume is allowed; areas must agree within 1e-3. A mismatch retains the editable
+timeline hidden beside the visible original final shape (`partial_history`, verification
+`partial`). A replay error that identifies a feature shortens the prefix before that
+feature; a final volume or area difference alone cannot identify a bad step, so the
+mapped timeline stays available for correction. Retained features are replayed
+separately from the original, without claiming that the unfinished result matches the
+source. If no editable prefix remains, the design falls back to the import with
+reference sketches. When no CLI is found (`--solidcraft PATH`, else `$SOLIDCRAFT_CLI`,
+else `PATH`), when it times out (`--verify-timeout`, default 120 s), or with
+`--no-verify`, the history is written and reported unverified. For ordered mirror chains
+and repeated full-turn endpoints, an attempted replay that cannot finish instead keeps the
+original geometry and reports why. `--import-only` always writes the import design.
 
 Geometry written as an import is opened in the same CLI. A refusal, timeline errors, faces
 it cannot mesh, bodies inside out, or solids without volume produce a `Degraded` `geometry`

@@ -430,6 +430,12 @@ pub fn outcome(report: &Value) -> String {
         report.pointer("/history/total").and_then(Value::as_u64),
     );
     match field("/mode") {
+        Some("partial_history") => match counts {
+            (Some(m), Some(t)) => format!(
+                "Partial editable history, {m} of {t} features kept; imported final shape visible."
+            ),
+            _ => "Partial editable history; imported final shape visible.".to_owned(),
+        },
         Some("history") => {
             let check = match (field("/verification/status"), field("/verification/reason")) {
                 (Some("verified"), _) => {

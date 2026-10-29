@@ -29,11 +29,26 @@ With no output given, Dutchman writes beside the input and won't replace a file 
 already there unless you pass `--force`. `dutchman convert --help` lists every option, and
 [Getting started](docs/guide.md) walks through a first conversion.
 
-Conversions show their stage and elapsed time, with a still-working update every five seconds.
-The desktop app shows design counts and a progress bar when the reader knows the total.
-`convert`, `convert-all`, `inspect`, and `watch` write progress to stderr; `--quiet` hides it.
-With `--json`, progress is JSON lines on stderr and stdout keeps its existing report format. Fusion `.f3z` member
-counts are not available yet; their progress shows stage and elapsed time.
+Conversions show their stage and elapsed time, with a still-working update every five
+seconds. The desktop app shows design counts and a progress bar when the reader knows
+the total. `convert`, `convert-all`, `inspect`, and `watch` write progress to stderr;
+`--quiet` hides it. With `--json`, progress is JSON lines on stderr and stdout keeps its
+existing report format. Fusion `.f3z` member counts are not available yet; their
+progress shows stage and elapsed time.
+
+When a feature blocks SolidCraft history conversion, earlier editable features and
+resolved sketches are kept in a hidden **Editable history (partial)** component. The
+original final shape remains visible as an Import after the kept history. Show the
+hidden component to continue editing it. The report names the blocker and counts
+retained source features; `mode: partial_history` and verification `partial` distinguish
+this from full verified history. The reason says whether retained features replayed or
+remain unverified. Later sketches with unresolved planes or external geometry are
+reported and left out. A sketch that fails replay is retried without constraints, with
+the loss reported. If there is no body-building prefix, resolved sketches remain hidden
+beside the imported shape for reference. A final shape mismatch preserves the mapped
+timeline for correction when it replays; it does not identify which feature needs
+correction. SolidCraft's numerical eval includes hidden bodies as well as the visible
+final shape.
 
 ## Install
 
@@ -143,8 +158,9 @@ history, with no flattened-history warning.
 
   [Feature history](docs/guide.md#feature-history-and-the-solidcraft-check) in the guide has
   the detail, and what stops a history.
-- Otherwise the design converts as solid geometry without history. Sketches that map, on
-  planes that resolve, are kept with it, hidden, for reference.
+- A blocker keeps the editable prefix and resolved sketches hidden beside the visible
+  original shape. Without a body-building prefix, the design keeps imported geometry and
+  hidden reference sketches.
 - Assemblies keep their components and placements. Fusion and FreeCAD assemblies keep their
   joints too (revolute, slider, and rigid), with their grounded parts held where they are;
   Inventor assemblies place their parts, without joints. Sketches in the assembly's own file

@@ -191,7 +191,7 @@ fn option_properties() -> Map<String, Value> {
         },
         "verify": {
             "type": "boolean",
-            "description": "Check a written history against the original geometry in SolidCraft (default true; skipped, and the history marked unverified, when no SolidCraft CLI is found).",
+            "description": "Replay retained history in SolidCraft and compare a complete history with the original geometry (default true; the report says when no SolidCraft CLI is available).",
         },
         "solidcraft": {
             "type": "string",
@@ -293,7 +293,7 @@ fn tools() -> Value {
         {
             "name": "convert",
             "title": "Convert a CAD file",
-            "description": "Convert one native CAD file into a SolidCraft design or FreeCAD macro (to: freecad), with its feature history when every feature maps, else its geometry. Returns the dutchman.convert/1 report: the mode written, the history check, each feature's status and every loss.",
+            "description": "Convert one native CAD file into a SolidCraft design or FreeCAD macro (to: freecad). If a feature blocks mapping or replay differs, SolidCraft keeps the editable prefix and resolved sketches hidden beside the visible original shape. Parts without body-building history keep resolved reference sketches. Returns the dutchman.convert/1 report: the mode written, the history check, each feature's status and every loss.",
             "inputSchema": {"type": "object", "properties": convert, "required": ["input", "output"], "additionalProperties": false},
         },
         {

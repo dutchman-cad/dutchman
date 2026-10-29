@@ -27,13 +27,33 @@ feature history to bring over”. A part made only of stored geometry is geometr
 history, with no flattened-history warning.
 
 For `convert`, `convert-all`, `inspect`, and `watch`, progress goes to stderr: stage and
-design updates plus a still-working heartbeat every five seconds with elapsed time. `--json`
-makes these `dutchman.progress/1` JSON lines; parse stdout as the final report (or the
-existing watch-event stream). `--quiet` suppresses progress. Desktop file cards show the same
-information, with a determinate bar when the design total is known. Fusion `.f3z` member
-counts are not available yet, so their updates show stage and elapsed time without a
-percentage. MCP and web conversions return only their final reports; no progress stream is
-available.
+design updates plus a still-working heartbeat every five seconds with elapsed time.
+`--json` makes these `dutchman.progress/1` JSON lines; parse stdout as the final report
+(or the existing watch-event stream). `--quiet` suppresses progress. Desktop file cards
+show the same information, with a determinate bar when the design total is known. Fusion
+`.f3z` member counts are not available yet, so their updates show stage and elapsed time
+without a percentage. MCP and web conversions return only their final reports; no
+progress stream is available.
+
+When a feature blocks SolidCraft history conversion, earlier editable features and
+resolved sketches are kept in a hidden **Editable history (partial)** component. The
+original final shape remains visible as an Import after the kept history. Show the
+hidden component to continue editing it. The report names the blocker and counts
+retained source features; `mode: partial_history` and verification `partial` distinguish
+this from full verified history. The reason says whether retained features replayed or
+remain unverified. Later sketches with unresolved planes or external geometry are
+reported and left out. A sketch that fails replay is retried without constraints, with
+the loss reported. If there is no body-building prefix, resolved sketches remain hidden
+beside the imported shape for reference. A final shape mismatch preserves the mapped
+timeline for correction when it replays; it does not identify which feature needs
+correction. SolidCraft's numerical eval includes hidden bodies as well as the visible
+final shape.
+
+Assembly visibility reports count source-hidden placements separately from retained
+editable history. An Info `visibility` note, `N editable-history component placement(s)
+are placed hidden`, counts the latter across repeated and nested placements. Both use
+the same bounded hidden-occurrence paths; a Degraded note reports paths left shown
+past the 4096-path limit.
 
 ## Ground rules
 
@@ -167,8 +187,11 @@ Never remove or change the quarantine attribute.
 
 - `verification.status` `verified`: SolidCraft replayed the history and it matches the
   original in area and volume within the measuring mesh tolerances. `unverified`: written
-  without that check (the reason says why, usually no `solidcraft-cli` was found); mention that the history has not been checked. `flattened`:
-  the history did not map or did not match, so the design keeps the imported shape and any
+  without that check (the reason says why, usually no `solidcraft-cli` was found); mention
+  that the history has not been checked. `partial`: an editable prefix and resolved
+  sketches are hidden beside the visible imported shape; the reason says whether retained
+  features replayed. `flattened`: no body-building prefix could be retained, so the design
+  keeps the imported shape and any
   mapped sketches with resolved planes, hidden for reference with no features built on them.
   An Info `sketches` line counts sketches kept and, when applicable, left out.
 - Assemblies with multiple top-level designs group each design's features in uniquely named
@@ -178,8 +201,12 @@ Never remove or change the quarantine attribute.
 - Open the design and look at it: `solidcraft-cli eval /abs/path/design.solidcraft`, or with
   SolidCraft's MCP server, start it on the design (`solidcraft-cli mcp --in
   /abs/path/design.solidcraft`) and call `measure`.
-- Check `body_count` against `geometry.bodies` from `inspect`, that no timeline entry has an
-  `error` or meshing warning, and that area and volume are plausible for the part (ask
+- For partial history, use SolidCraft's `document.inspect` to check each body's `visible`
+  flag; numerical `eval` includes hidden editable bodies in its body count and totals.
+  Compare the visible bodies with the source's final bodies.
+- For full history or an import, check `body_count` against `geometry.bodies` from
+  `inspect`, that no timeline entry has an `error` or meshing warning, and that area
+  and volume are plausible for the part (ask
   the user for a known dimension if you have nothing to compare with).
 - A face-count difference alone does not establish a defect: SolidCraft can merge faces on
   one surface. Geometry-only output has no independent source measurements; timeline
@@ -252,7 +279,9 @@ A body inside a hidden container is hidden even when its own flag says it is sho
 
 FreeCAD can supply that geometry from an earlier base feature's stored shape, including
 when its intermediate body is hidden. Unproven source membership or an ambiguous replay
-pick keeps the history flattened, with the reason reported. `--no-verify` cannot prove blends.
+pick stops body-building history before the blend, with the reason reported. Earlier editable
+features and resolved sketches remain hidden beside the imported final shape when possible.
+`--no-verify` cannot prove blends.
 
 Whole-sketch hole placements exclude construction entities; explicit entity selections
 can still use construction points or circle centres.
@@ -276,7 +305,7 @@ Shells and drafts are refused, since their faces are known only on the final bod
 the feature has already removed or tilted them; they wait on input face geometry.
 Replacing a source shape with its mirror is not supported yet: SolidCraft's mirror keeps
 the original. Cosmetic threads lack a resolved standard and pitch in CADIR, so assigning
-SolidCraft's ISO metric designation would invent thread data; these remain flattened.
+SolidCraft's ISO metric designation would invent thread data; these stop the editable prefix.
 
 Constant-radius helical sweeps (FreeCAD AdditiveHelix and SubtractiveHelix) keep their
 sketch profile, axis, pitch/height/turn law, handedness, reversed travel, and Boolean

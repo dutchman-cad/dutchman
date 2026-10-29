@@ -54,6 +54,8 @@ pub(crate) fn write(
         groups: Vec::new(),
         own_group: None,
         hidden: BTreeSet::new(),
+        partial_hidden: BTreeSet::new(),
+        reference_sketches: Vec::new(),
     };
     let top = builder.assembly(assembly, 0)?;
     builder.hold(&assembly.held, &top);
@@ -64,7 +66,8 @@ pub(crate) fn write(
         ));
     }
     let start = builder.features.len();
-    let hidden = builder.sketches(model);
+    let mut hidden = builder.sketches(model);
+    hidden.append(&mut builder.reference_sketches);
     if builder.features.len() > start {
         let own = builder
             .own_group
@@ -123,23 +126,40 @@ pub(crate) fn write(
         MAX_HIDDEN_PATHS,
     );
     if left_shown != 0 {
+        let kind = if builder.partial_hidden.is_empty() {
+            "placement(s) the source hides"
+        } else {
+            "source-hidden or editable-history placement(s)"
+        };
         builder.report.push(
             Severity::Degraded,
             "visibility",
             format!(
-                "{left_shown} or more placement(s) the source hides are left shown: hidden \
+                "{left_shown} or more {kind} are left shown: hidden \
                  placements are written up to {MAX_HIDDEN_PATHS}"
             ),
         );
     }
-    if !hidden_occurrences.is_empty() {
+    let partial_count = hidden_occurrences
+        .iter()
+        .filter(|path| {
+            path.last()
+                .is_some_and(|id| builder.partial_hidden.contains(id))
+        })
+        .count();
+    let source_count = hidden_occurrences.len().saturating_sub(partial_count);
+    if source_count != 0 {
         builder.report.push(
             Severity::Info,
             "visibility",
-            format!(
-                "{} component placement(s) the source hides are placed hidden",
-                hidden_occurrences.len()
-            ),
+            format!("{source_count} component placement(s) the source hides are placed hidden"),
+        );
+    }
+    if partial_count != 0 {
+        builder.report.push(
+            Severity::Info,
+            "visibility",
+            format!("{partial_count} editable-history component placement(s) are placed hidden"),
         );
     }
     let mut visibility = serde_json::Map::new();
@@ -257,10 +277,19 @@ fn plan_parts(
             feature.name = Some(format!("{file}: {}", feature.name.unwrap_or_default()));
             feature
         }));
-        if mapping.result.is_err() {
-            report.append_prefixed(history::helper_notes(&part_report), file);
-        }
         match mapping.result {
+            Ok(ref history) if history.stop.is_some() => {
+                report.append_prefixed(part_report, file);
+                report.push(
+                    Severity::Degraded,
+                    HISTORY,
+                    format!("{file}: {}", crate::partial_summary(history)),
+                );
+                checks.push(Check::Partial(format!(
+                    "{file}: {}; prefix unverified: inspect writes nothing",
+                    crate::partial_summary(history)
+                )));
+            }
             Ok(_) => {
                 report.append_prefixed(part_report, file);
                 checks.push(Check::Unverified(
@@ -268,6 +297,7 @@ fn plan_parts(
                 ));
             }
             Err(reason) if !mapping.features.is_empty() => {
+                report.append_prefixed(part_report, file);
                 report.push(
                     Severity::Info,
                     HISTORY,
@@ -275,7 +305,7 @@ fn plan_parts(
                 );
                 checks.push(Check::Flattened(reason));
             }
-            Err(_) => {}
+            Err(_) => report.append_prefixed(part_report, file),
         }
     }
 }
@@ -286,7 +316,17 @@ fn outcome(histories: &[Check], features: Vec<FeatureOutcome>) -> Outcome {
         .iter()
         .filter(|check| matches!(check, Check::Verified | Check::Unverified(_)))
         .collect();
-    let check = if written.is_empty() {
+    let partial: Vec<&str> = histories
+        .iter()
+        .filter_map(|check| match check {
+            Check::Partial(why) => Some(why.as_str()),
+            Check::Flattened(why) if !written.is_empty() => Some(why.as_str()),
+            _ => None,
+        })
+        .collect();
+    let check = if !partial.is_empty() {
+        Check::Partial(partial.join("; "))
+    } else if written.is_empty() {
         Check::NotApplicable(
             "no part's history was written; the parts are placed as geometry".to_owned(),
         )
@@ -296,7 +336,9 @@ fn outcome(histories: &[Check], features: Vec<FeatureOutcome>) -> Outcome {
         Check::Unverified("not every part's history was checked in SolidCraft".to_owned())
     };
     Outcome {
-        mode: if written.is_empty() {
+        mode: if !partial.is_empty() {
+            Mode::PartialHistory
+        } else if written.is_empty() {
             Mode::Import
         } else {
             Mode::History
@@ -344,8 +386,11 @@ struct Builder<'r> {
     /// Each root design's contiguous feature range, including its nested components.
     groups: Vec<(String, std::ops::Range<usize>)>,
     own_group: Option<usize>,
-    /// The occurrences whose source placement is hidden.
+    /// The occurrences to hide, including retained partial history.
     hidden: BTreeSet<u64>,
+    /// Retained-history occurrences, distinguished from source-hidden placements in notes.
+    partial_hidden: BTreeSet<u64>,
+    reference_sketches: Vec<Value>,
 }
 
 impl Builder<'_> {
@@ -682,6 +727,32 @@ impl Builder<'_> {
             }
         }
         self.writer.prove_blends(part, &mut mapping, step)?;
+        let checked = if let Ok(history) = &mapping.result {
+            if history.stop.is_some() {
+                None
+            } else {
+                let written = self
+                    .writer
+                    .history_design(part, history, step, Live::History)?;
+                Some(self.writer.check(part, history, step, &written)?)
+            }
+        } else {
+            None
+        };
+        let partial_check = if let Some(verify::Outcome::Differs(why)) = &checked {
+            Some(self.writer.partial(
+                part,
+                &mut mapping,
+                step,
+                Some(format!("replay differs ({why})")),
+            )?)
+        } else if mapping.result.as_ref().is_ok_and(|h| h.stop.is_some()) {
+            Some(self.writer.partial(part, &mut mapping, step, None)?)
+        } else {
+            None
+        };
+
+        crate::report_sketches(&mapping.features, &mut part_report);
         self.outcomes
             .extend(mapping.features.iter().cloned().map(|mut feature| {
                 feature.name = Some(format!("{file}: {}", feature.name.unwrap_or_default()));
@@ -690,8 +761,6 @@ impl Builder<'_> {
         let mut history = match mapping.result {
             Ok(history) => history,
             Err(reason) => {
-                self.report
-                    .append_prefixed(history::helper_notes(&part_report), &file);
                 if !mapping.features.is_empty() {
                     self.report.push(
                         Severity::Info,
@@ -700,45 +769,102 @@ impl Builder<'_> {
                     );
                     self.histories.push(Check::Flattened(reason));
                 }
+                let mut references = mapping.references;
+                let kept = references.features.len();
+                let left_out = part.ir.model.sketches.len().saturating_sub(kept);
+                if kept > 0 {
+                    references.relocate(
+                        self.next_id - 1,
+                        component,
+                        &prefix(name),
+                        &mut self.taken,
+                    );
+                    self.next_id = references.next_id;
+                    self.reference_sketches.extend(
+                        references
+                            .features
+                            .iter()
+                            .filter_map(|f| f.get("id").cloned()),
+                    );
+                    self.features.append(&mut references.features);
+                    self.params.append(&mut references.params);
+                }
+                if kept > 0 || left_out > 0 {
+                    let noun = if kept == 1 { "sketch" } else { "sketches" };
+                    let detail = if left_out > 0 {
+                        format!("kept {kept} {noun} for reference; {left_out} left out")
+                    } else {
+                        format!("kept {kept} {noun} for reference")
+                    };
+                    part_report.push(Severity::Info, "sketches", detail);
+                }
+                self.report.append_prefixed(part_report, &file);
                 return Ok(false);
             }
         };
-        let written = self
-            .writer
-            .history_design(part, &history, step, Live::History)?;
         let summary = self.writer.history_summary(&history);
-        let check = match self.writer.check(part, &history, step, &written)? {
-            verify::Outcome::Matches => {
-                self.report.push(
-                    Severity::Info,
-                    HISTORY,
-                    format!("{file}: {summary}; verified against the original in SolidCraft"),
-                );
-                Check::Verified
-            }
-            verify::Outcome::Unverified(why) => {
-                self.report.push_at(
-                    Stage::SolidCraft,
-                    Severity::Info,
-                    HISTORY,
-                    format!("{file}: {summary}; unverified: {why}"),
-                );
-                Check::Unverified(why)
-            }
-            verify::Outcome::Differs(why) => {
+        let check = if let Some(check) = partial_check {
+            if let Check::Partial(why) = &check {
                 self.report
-                    .append_prefixed(history::helper_notes(&part_report), &file);
-                let reason = format!("replay differs ({why})");
-                self.report.push(
-                    Severity::Info,
-                    HISTORY,
-                    format!("{file}: flattened: {reason}"),
-                );
-                self.histories.push(Check::Flattened(reason));
-                return Ok(false);
+                    .push(Severity::Degraded, HISTORY, format!("{file}: {why}"));
+            }
+            check
+        } else {
+            match checked.unwrap_or(verify::Outcome::Unverified("not checked".to_owned())) {
+                verify::Outcome::Matches => {
+                    self.report.push(
+                        Severity::Info,
+                        HISTORY,
+                        format!("{file}: {summary}; verified against the original in SolidCraft"),
+                    );
+                    Check::Verified
+                }
+                verify::Outcome::Unverified(why) => {
+                    self.report.push_at(
+                        Stage::SolidCraft,
+                        Severity::Info,
+                        HISTORY,
+                        format!("{file}: {summary}; unverified: {why}"),
+                    );
+                    Check::Unverified(why)
+                }
+                verify::Outcome::Differs(why) => {
+                    self.report
+                        .append_prefixed(history::helper_notes(&part_report), &file);
+                    let reason = format!("replay differs ({why})");
+                    self.report.push(
+                        Severity::Info,
+                        HISTORY,
+                        format!("{file}: flattened: {reason}"),
+                    );
+                    self.histories.push(Check::Flattened(reason));
+                    return Ok(false);
+                }
             }
         };
+        let partial = history.stop.is_some();
+        if partial {
+            let original = self
+                .writer
+                .history_design(part, &history, step, Live::Original)?;
+            self.writer.check_import(part, &original, &mut part_report);
+        }
         self.report.append_prefixed(part_report, &file);
+        let component = if partial {
+            let child = self.id();
+            let occurrence = self.id();
+            self.components.push(
+                json!({"id": child, "name": "Editable history (partial)", "parent": component}),
+            );
+            self.occurrences.push(json!({"id": occurrence, "name": "Editable history (partial):1", "component": child, "parent": component, "grounded": true, "transform": column_major(&IDENTITY)}));
+            // The prefix belongs to the part definition; each placement inherits its hide.
+            self.placements.insert(occurrence, (child, IDENTITY));
+            self.hidden.insert(occurrence);
+            self.partial_hidden.insert(occurrence);
+            child
+        } else {
+            component
+        };
         history.relocate(self.next_id - 1, component, &prefix(name), &mut self.taken);
         history.rename_bodies(name, &mut self.bodies);
         self.next_id = history.next_id;
@@ -756,7 +882,7 @@ impl Builder<'_> {
         self.looks.append(&mut history.looks);
         self.face_looks.append(&mut history.face_looks);
         self.histories.push(check);
-        Ok(true)
+        Ok(!partial)
     }
 
     /// Adds the sketches of the assembly's own file, those that map, to the design itself

@@ -51,10 +51,12 @@ pub fn fixtures_pitch<'a>(reports: impl IntoIterator<Item = &'a Value>) -> Optio
             continue;
         }
         if report.get("ok").and_then(Value::as_bool) == Some(false)
-            || report
-                .pointer("/verification/status")
-                .and_then(Value::as_str)
-                == Some("flattened")
+            || matches!(
+                report
+                    .pointer("/verification/status")
+                    .and_then(Value::as_str),
+                Some("flattened" | "partial")
+            )
             || report
                 .pointer("/history/mapped")
                 .and_then(Value::as_u64)
@@ -440,6 +442,7 @@ pub fn completeness_lines(report: &Value) -> Vec<String> {
 
 fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
     let (status, reason) = match &outcome.check {
+        Check::Partial(reason) => ("partial", Some(reason)),
         Check::Verified => ("verified", None),
         Check::Differs(reason) => ("differs", Some(reason)),
         Check::Unverified(reason) => ("unverified", Some(reason)),
@@ -474,6 +477,7 @@ fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
     out.insert(
         "mode".to_owned(),
         json!(match outcome.mode {
+            Mode::PartialHistory => "partial_history",
             Mode::History => "history",
             Mode::Import => "import",
         }),
@@ -542,6 +546,20 @@ mod tests {
     use dutchman_core::FeatureOutcome;
 
     use super::*;
+
+    #[test]
+    fn partial_history_is_distinct_from_full_verification() {
+        let fields = outcome_fields(&Outcome {
+            mode: Mode::PartialHistory,
+            check: Check::Partial("2 of 3 features kept; retained features replay".to_owned()),
+            features: Vec::new(),
+        });
+        assert_eq!(fields.get("mode"), Some(&json!("partial_history")));
+        assert_eq!(
+            fields.get("verification").and_then(|v| v.get("status")),
+            Some(&json!("partial"))
+        );
+    }
 
     #[test]
     fn the_invitation_names_programs_once_when_conversion_fails_or_history_does_not_map() {

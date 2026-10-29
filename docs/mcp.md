@@ -35,13 +35,34 @@ FreeCAD signed horizontal and vertical sketch distances convert to positive dime
 magnitudes at their solved positions. Their signed parameters and expressions remain
 available; a dependent magnitude parameter drives each negative distance in SolidCraft.
 
-CLI progress is separate from tool results: `convert --json`, `convert-all --json`, `inspect
---json`, and `watch --json` emit `dutchman.progress/1` JSON lines on stderr while keeping the
-final report or watch-event stream on stdout (`--quiet` hides progress). The MCP server has no
-progress notification mechanism and continues to return only the final report. The web app also
-has no streaming conversion progress mechanism. Desktop file cards show stage, elapsed time,
-and five-second heartbeats, with design counts and a determinate bar when the total is known.
-Fusion `.f3z` member counts are not available yet.
+CLI progress is separate from tool results: `convert --json`, `convert-all --json`,
+`inspect --json`, and `watch --json` emit `dutchman.progress/1` JSON lines on stderr
+while keeping the final report or watch-event stream on stdout (`--quiet` hides
+progress). The MCP server has no progress notification mechanism and continues to return
+only the final report. The web app also has no streaming conversion progress mechanism.
+Desktop file cards show stage, elapsed time, and five-second heartbeats, with design
+counts and a determinate bar when the total is known. Fusion `.f3z` member counts are
+not available yet.
+
+When a feature blocks SolidCraft history conversion, earlier editable features and
+resolved sketches are kept in a hidden **Editable history (partial)** component. The
+original final shape remains visible as an Import after the kept history. Show the
+hidden component to continue editing it. The report names the blocker and counts
+retained source features; `mode: partial_history` and verification `partial` distinguish
+this from full verified history. The reason says whether retained features replayed or
+remain unverified. Later sketches with unresolved planes or external geometry are
+reported and left out. A sketch that fails replay is retried without constraints, with
+the loss reported. If there is no body-building prefix, resolved sketches remain hidden
+beside the imported shape for reference. A final shape mismatch preserves the mapped
+timeline for correction when it replays; it does not identify which feature needs
+correction. SolidCraft's numerical eval includes hidden bodies as well as the visible
+final shape.
+
+Assembly visibility reports count source-hidden placements separately from retained
+editable history. An Info `visibility` note, `N editable-history component placement(s)
+are placed hidden`, counts the latter across repeated and nested placements. Both use
+the same bounded hidden-occurrence paths; a Degraded note reports paths left shown
+past the 4096-path limit.
 
 ## Set up a client
 
@@ -160,7 +181,8 @@ label); thread details it can't keep are `Degraded` losses. Unsupported hole for
 placements, and ends appear in `history.features[].reason`, and conversion keeps the
 geometry when the history can't map.
 Entry recesses with drill points report "SolidCraft holes take a drill point only on a
-plain drilled hole"; SolidCraft 0.21.0 ignores `tip_angle` on counterbores and countersinks.
+plain drilled hole"; SolidCraft 0.21.0 ignores `tip_angle` on counterbores and countersinks. SolidCraft 0.25.1 supports those drill
+points, but Dutchman retains this limit for compatibility with older releases.
 
 | Tool | Arguments | Returns | Writes |
 |---|---|---|---|
@@ -367,7 +389,7 @@ Shells and drafts are refused, since their faces are known only on the final bod
 the feature has already removed or tilted them; they wait on input face geometry.
 Replacing a source shape with its mirror is not supported yet: SolidCraft's mirror keeps
 the original. Cosmetic threads lack a resolved standard and pitch in CADIR, so assigning
-SolidCraft's ISO metric designation would invent thread data; these remain flattened.
+SolidCraft's ISO metric designation would invent thread data; these stop the editable prefix.
 
 A flattened conversion keeps mapped sketches with resolved planes hidden after the imported
 geometry for reference, with no features built on them. Its losses include one Info line,

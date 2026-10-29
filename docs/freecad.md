@@ -6,6 +6,19 @@ three-part assembly) come out at FreeCAD's volume. Before 0.1.5 FreeCAD document
 in the nightly builds only: cadmpeg 0.6.3 stored some faces as replicas of curves, kept each
 feature's intermediate shape as a body of its own and could turn revolved faces inwards.
 
+When a feature blocks SolidCraft history conversion, earlier editable features and resolved
+sketches are kept in a hidden **Editable history (partial)** component. The original final
+shape remains visible as an Import after the kept history. Show the hidden component to
+continue editing it. The report names the blocker and counts retained source features;
+`mode: partial_history` and verification `partial` distinguish this from full verified
+history. The reason says whether retained features replayed or remain unverified. Later
+sketches with unresolved planes or external geometry are reported and left out. A sketch
+that fails replay is retried without constraints, with the loss reported. If there is
+no body-building prefix, resolved sketches remain hidden beside the imported shape for
+reference. A final shape mismatch preserves the mapped timeline for correction when it
+replays; it does not identify which feature needs correction. SolidCraft's numerical eval
+includes hidden bodies as well as the visible final shape.
+
 ## What converts
 
 - **Geometry**, written as a SolidCraft import and checked in SolidCraft like any other.
@@ -76,7 +89,7 @@ before the blend.
 Dutchman preserves those edges when it removes the hidden intermediate shapes. It accepts
 straight edges and open circular arcs only when their midpoint identifies exactly one edge
 on SolidCraft's replay at that step, with matching ends and length. An ambiguous pick, a
-missing base shape, a closed edge, or another curve keeps the history flattened, with the
+missing base shape, a closed edge, or another curve stops the editable prefix, with the
 reason reported. This requires a SolidCraft CLI to replay the history; `--no-verify` cannot
 prove blend edges. Final-body edge numbers are never substituted for base-feature edges.
 
