@@ -307,7 +307,8 @@ and synthetic files from cadmpeg's public test suite (provenance in
   turning direction; more blend inputs once their pre-feature topology can be proven.
 - **Components**: designs that define and place their own components (Fusion) convert as
   SolidCraft components when cadmpeg says which bodies each owns, components inside components
-  as sub-assemblies; see fusion.md.
+  as sub-assemblies; see fusion.md. Each component's part model is cut from the decoded
+  document without copying its model or native records, which hold most of a large archive.
 - **Assemblies**: Inventor assemblies, with their sub-assemblies, convert as placed geometry
   (each file read once per assembly, one SolidCraft component per part or sub-assembly, one
   occurrence per placement; see inventor.md). Each part keeps its own feature history when it

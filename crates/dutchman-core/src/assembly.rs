@@ -1854,11 +1854,17 @@ fn slice(
             .collect();
         reduced.insert(arena.clone(), Value::Array(kept));
     }
-    let mut part = document.clone();
-    if let Some(fields) = part.as_object_mut() {
-        fields.insert("model".to_owned(), Value::Object(reduced));
-        fields.remove("native");
-    }
+    // The document's other fields, without copying its model or native records: those are
+    // the bulk of a large archive, and each part would otherwise copy them once.
+    let mut fields: serde_json::Map<String, Value> = document
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter(|(key, _)| key.as_str() != "model" && key.as_str() != "native")
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    fields.insert("model".to_owned(), Value::Object(reduced));
+    let part = Value::Object(fields);
     // cadmpeg is third-party code; a panic in it is a reason, not a crash.
     let text = part.to_string();
     let ir = std::panic::catch_unwind(|| cadmpeg_ir::CadIr::from_json(&text))
