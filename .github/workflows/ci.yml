@@ -188,8 +188,8 @@ jobs:
         solidcraft:
           - version: 0.18.2
             sha256: 9d0c922ac72204f34ad22ca7a171be78016ab002e304ace3c07d34d187d830ff
-          - version: 0.26.0
-            sha256: fdf7fd44d2868e93bc1c0c77f09148151db35f716a9a29e5a4666110ccebe1d4
+          - version: 0.26.1
+            sha256: 5399d29fde71d98f646d3a03d0ad7ffe5f37e8ea4c4766b7701d1718fe4d0a87
     env:
       SOLIDCRAFT_VERSION: ${{ matrix.solidcraft.version }}
       SOLIDCRAFT_SHA256: ${{ matrix.solidcraft.sha256 }}
