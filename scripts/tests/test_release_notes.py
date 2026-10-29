@@ -50,7 +50,7 @@ class ReleaseNotes(unittest.TestCase):
         self.assertNotIn("apple-darwin", body)
         self.assertNotIn("Not sure which Mac", body)
 
-        # The currently published README keeps its existing downloads until release day.
+        # The README links the latest release's version-less copies of the same files.
         from downloads import END, START, table
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertEqual(readme.split(START, 1)[1].split(END, 1)[0], "\n" + table("latest"))

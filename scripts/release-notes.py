@@ -55,7 +55,7 @@ def body(version: str, root: Path = ROOT) -> str:
         f"{notes}\n\n"
         "Made for the current SolidCraft (any release from the last two weeks); older "
         "versions get simplified features, or pass `--solidcraft-version`.\n\n"
-        f"## Download\n\n{table(version, universal_macos=True)}\n"
+        f"## Download\n\n{table(version)}\n"
         "Or install with Homebrew (`brew install dutchman-cad/tap/dutchman`) or Scoop "
         "(`scoop bucket add dutchman-cad https://github.com/dutchman-cad/scoop-bucket`, "
         "then `scoop install dutchman-cad/dutchman`).\n\n"
