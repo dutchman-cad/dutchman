@@ -519,7 +519,7 @@ fn map_into(
         let definition = serde_json::json!({"sketch": {"space": "planar", "sketch": id}});
         match sketch::map(&feature, &definition, &mut ctx, report) {
             Ok(mut mapped) => {
-                let name = ctx.unique_name(&mapped, &history.features);
+                let name = ctx.unique_name(&mapped, history.features.iter());
                 if let Some(fields) = mapped.as_object_mut() {
                     fields.insert("name".to_owned(), Value::String(name));
                 }
