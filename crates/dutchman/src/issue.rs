@@ -14,10 +14,14 @@ use crate::anon;
 pub const NEW_ISSUE: &str =
     "https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml";
 
-/// The longest link the form is opened with. Browsers and GitHub take longer ones, but some
-/// systems cut a link handed to the browser near 8 KB; past this, the anonymous report is
-/// left for the reporter to paste.
-pub const MAX_URL: usize = 7_500;
+/// The longest link the form is opened with. GitHub refuses a long link to a signed-in
+/// reader (406 Not Acceptable) well before 8 KB, as the session's cookies count too; past
+/// this, the anonymous report is left for the reporter to paste.
+pub const MAX_URL: usize = 4_000;
+
+/// The most of the error message the link carries; the whole message is in the anonymous
+/// report.
+const MAX_MESSAGE: usize = 1_000;
 
 /// The issue to file about the file `report` (a `dutchman.convert/1` report) is of.
 #[derive(Clone, Debug, PartialEq)]
@@ -58,6 +62,13 @@ pub fn fill(report: &Value, anonymous: &Value) -> Issue {
             .and_then(Value::as_str)
     };
     let happened = match field("message") {
+        Some(message) if message.chars().count() > MAX_MESSAGE => {
+            let start: String = message.chars().take(MAX_MESSAGE).collect();
+            format!(
+                "The conversion failed with this message (shortened; the anonymous report \
+                 has all of it):\n\n{start}…"
+            )
+        }
         Some(message) => format!("The conversion failed with this message:\n\n{message}"),
         None => "The conversion failed.".to_owned(),
     };
@@ -82,7 +93,12 @@ pub fn fill(report: &Value, anonymous: &Value) -> Issue {
         ("stage", stage.join(", ")),
     ];
     let without = url(&fields);
-    fields.push(("report-anon", anonymous_report.clone()));
+    // Compact in the link, where every newline and indent costs encoded bytes; the copy to
+    // paste stays readable.
+    fields.push((
+        "report-anon",
+        serde_json::to_string(anonymous).unwrap_or_default(),
+    ));
     let with = url(&fields);
     let report_in_url = with.len() <= MAX_URL;
     Issue {
@@ -196,8 +212,11 @@ mod tests {
         let happened = query(&issue.url, "what-happened").unwrap();
         assert!(happened.contains("malformed container"), "{happened}");
         let pasted = query(&issue.url, "report-anon").unwrap();
-        assert_eq!(pasted, issue.anonymous_report);
         let anonymous: Value = serde_json::from_str(&pasted).unwrap();
+        assert_eq!(
+            anonymous,
+            serde_json::from_str::<Value>(&issue.anonymous_report).unwrap()
+        );
         assert_eq!(anonymous["schema"], anon::SCHEMA);
         assert_eq!(anonymous["errors"][0]["stage"], "decode");
         for text in [&issue.url, &issue.anonymous_report, &happened] {
@@ -215,6 +234,17 @@ mod tests {
         assert!(issue.url.len() <= MAX_URL);
         assert!(query(&issue.url, "report-anon").is_none());
         assert!(issue.anonymous_report.contains("xxxx"));
+    }
+
+    #[test]
+    fn a_long_error_message_is_shortened_in_the_link() {
+        let message = "y".repeat(MAX_URL * 2);
+        let long = json!({"errors": [{"message": message, "stage": "decode"}]});
+        let issue = fill(&failed(), &long);
+        assert!(issue.url.len() <= MAX_URL, "{}", issue.url.len());
+        let happened = query(&issue.url, "what-happened").unwrap();
+        assert!(happened.contains("shortened"), "{happened}");
+        assert!(issue.anonymous_report.contains(&message));
     }
 
     #[test]
