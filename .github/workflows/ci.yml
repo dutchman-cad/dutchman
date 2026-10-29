@@ -186,10 +186,10 @@ jobs:
       fail-fast: false
       matrix:
         solidcraft:
-          - version: 0.23.0
-            sha256: 819d5de0943146968bf963f174f2fd371b4f41e6c5c8646afce691bc6bd0ea5e
-          - version: 0.25.1
-            sha256: 5e467b42530808c75e19f4993247d9ab736e700a1532e40eab2bd3da42a2db2f
+          - version: 0.18.2
+            sha256: 9d0c922ac72204f34ad22ca7a171be78016ab002e304ace3c07d34d187d830ff
+          - version: 0.26.0
+            sha256: fdf7fd44d2868e93bc1c0c77f09148151db35f716a9a29e5a4666110ccebe1d4
     env:
       SOLIDCRAFT_VERSION: ${{ matrix.solidcraft.version }}
       SOLIDCRAFT_SHA256: ${{ matrix.solidcraft.sha256 }}
