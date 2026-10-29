@@ -164,7 +164,8 @@ history, with no flattened-history warning.
   hidden reference sketches.
 - Assemblies keep their components and placements. Fusion and FreeCAD assemblies keep their
   joints too (revolute, slider, and rigid), with their grounded parts held where they are;
-  Inventor assemblies place their parts, without joints. Sketches in the assembly's own file
+  a joint that conflicts with the placements is kept suppressed, so no part moves when
+  SolidCraft opens the design. Inventor assemblies place their parts, without joints. Sketches in the assembly's own file
   are kept, hidden, for reference.
 - FreeCAD output is experimental: `--to freecad` writes a self-contained rebuild macro,
   `--to fcstd` runs FreeCAD headlessly to save a native `.FCStd` document and checks its
