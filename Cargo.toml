@@ -48,7 +48,9 @@ indexing_slicing = "deny"
 
 # Release builds keep panic = "unwind" (the default): a panic inside cadmpeg is caught and
 # reported as an error, which aborting would turn into a crash.
+# Sixteen codegen units build the macOS release in about half the time of one (two cold
+# GitHub runs each), with the same archive sizes and no slower conversion.
 [profile.release]
 lto = "thin"
-codegen-units = 1
+codegen-units = 16
 strip = true

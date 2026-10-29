@@ -42,7 +42,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Two compile jobs on Linux keep the release links (thin LTO, one codegen unit)
+          # Two compile jobs on Linux keep the release links (thin LTO, 16 codegen units)
           # within the runner's memory; with more, the x86_64 runner was lost mid-build.
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
