@@ -457,8 +457,8 @@ SolidCraft conversion reports include `solidcraft.target` and `solidcraft.found`
 when no CLI version is available), even with verification disabled. Standard decides
 whether history fits before decoding, for both parts and assemblies; an accepted
 history-free budget cannot turn into a memory refusal after decode. Default diagnostic
-log filenames use UTC. Windows and macOS heartbeat resources are null when no safe
-process-resource API is available under the workspace's unsafe-code ban.
+log filenames use UTC. Heartbeats record process memory and CPU time on Linux, Windows and
+macOS.
 
 With an explicit target and verification off, Dutchman uses only cached CLI versions for
 `solidcraft.found`; null can mean not checked. Version probes run at most once per resolved
