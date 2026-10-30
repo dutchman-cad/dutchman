@@ -75,10 +75,10 @@ pub(super) fn profile(profile: Option<&Value>, ctx: &Context) -> Result<(String,
                     .into_iter()
                     .map(|hole| canonical_loop(hole, mapped))
                     .collect();
-                json!({"type": "whole_boundaries", "profiles": [{
+                sorted_whole(json!({"type": "whole_boundaries", "profiles": [{
                     "outer": canonical_loop(boundary, mapped),
                     "holes": holes,
-                }]})
+                }]}))
             } else {
                 return Err(format!(
                     "a profile cadmpeg does not resolve, in a sketch of {count} profiles, is not \
@@ -89,6 +89,43 @@ pub(super) fn profile(profile: Option<&Value>, ctx: &Context) -> Result<(String,
         other => return Err(format!("{other} profiles are not mapped yet")),
     };
     Ok((sketch.to_owned(), selection))
+}
+
+/// A whole-boundary selection in the form every SolidCraft release validates when it loads a
+/// design: each boundary's curve ids in ascending order, and its holes in ascending order. The
+/// identity SolidCraft matches is the set of curves in each loop, so sorting changes no match;
+/// a hole list out of order (`c10` sorts before `c2`) is refused as damaged by 0.18.2 to 0.22.1.
+fn sorted_whole(mut selection: Value) -> Value {
+    let sort = |boundary: &mut Value| {
+        if let Some(ids) = boundary.as_array_mut() {
+            ids.sort_by(|a, b| a.as_str().cmp(&b.as_str()));
+        }
+    };
+    let profiles = selection
+        .get_mut("profiles")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten();
+    for profile in profiles {
+        if let Some(outer) = profile.get_mut("outer") {
+            sort(outer);
+        }
+        if let Some(holes) = profile.get_mut("holes").and_then(Value::as_array_mut) {
+            holes.iter_mut().for_each(sort);
+            holes.sort_by(|a, b| {
+                let ids = |v: &Value| -> Vec<String> {
+                    v.as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                };
+                ids(a).cmp(&ids(b))
+            });
+        }
+    }
+    selection
 }
 
 /// A whole boundary as SolidCraft lists the loops it finds itself, which is the only order it
@@ -491,7 +528,9 @@ fn regions(
     if trimmed {
         curves(outers)
     } else {
-        Ok(json!({"type": "whole_boundaries", "profiles": whole}))
+        Ok(sorted_whole(
+            json!({"type": "whole_boundaries", "profiles": whole}),
+        ))
     }
 }
 
