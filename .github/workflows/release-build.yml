@@ -4,8 +4,10 @@ name: Release builds
 # platform and keeps the archives as workflow artifacts, with a macOS disk image holding
 # Dutchman Convert.app for Apple silicon and Intel. Runs for a release tag, on demand, and
 # for a pull request that changes the packaging; never for every push to main, as the
-# account runs few macOS jobs at once. A pushed tag also creates a draft release; the
-# container image is published only when the release is (release-image.yml).
+# account runs few macOS jobs at once. Release notes alone do not trigger it: ci.yml's
+# release-notes job checks them, and the tag build after a release PR builds every platform
+# anyway, so a release PR no longer builds them all twice. A pushed tag also creates a draft
+# release; the container image is published only when the release is (release-image.yml).
 
 on:
   push:
@@ -19,8 +21,6 @@ on:
       - scripts/macos-dmg.sh
       - scripts/archive-readme.py
       - scripts/downloads.py
-      - scripts/release-notes.py
-      - release-notes/**
       - crates/dutchman-gui/assets/Dutchman.icns
       - assets/dmg/**
       - docker/**
