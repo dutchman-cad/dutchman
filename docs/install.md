@@ -1,6 +1,6 @@
 # Install
 
-Dutchman installs as three programs: `dutchman` (the command line), `dutchman-mcp` (the MCP server), and `dutchman-gui` (the desktop app, Dutchman Convert). Every way below installs all three.
+Dutchman installs as three programs: `dutchman` (the command line), `dutchman-mcp` (the MCP server), and `dutchman-gui` (the desktop app, Dutchman Convert). Release archives, the macOS disk image, Homebrew, and Scoop install all three; `cargo install` and Docker leave out the desktop app.
 
 ## Homebrew or Scoop
 
@@ -108,11 +108,11 @@ available for Homebrew and other installations that select a processor. The READ
 table links the latest release's universal archive and disk image.
 
 Download the archive and its `.sha256` file, check one against the other, then unpack it and
-put the programs on your `PATH`. On Linux x86_64, for release 0.1.5 (set `VERSION` and the
+put the programs on your `PATH`. On Linux x86_64, for release 0.2.5 (set `VERSION` and the
 target for another release or machine):
 
 ```sh
-VERSION=0.1.5 TARGET=x86_64-unknown-linux-gnu
+VERSION=0.2.5 TARGET=x86_64-unknown-linux-gnu
 base=https://github.com/dutchman-cad/dutchman/releases/download/v$VERSION
 curl -fLO "$base/dutchman-$VERSION-$TARGET.tar.gz"
 curl -fLO "$base/dutchman-$VERSION-$TARGET.tar.gz.sha256"
@@ -130,25 +130,6 @@ The `export` lasts for this shell; add the same line to your shell's profile (`~
 On Linux, launch the desktop app with `dutchman-gui` from a terminal. It needs an X11 or
 Wayland desktop session with working OpenGL. See [Troubleshooting](troubleshooting.md) if no
 window appears.
-
-The target SolidCraft selector defaults to the found CLI's version, else the built-in newest
-(currently 0.27), even when history checking is off. Choose **Automatic** to follow the detected installation or
-**0.25 and newer** to keep supported FreeCAD helices as editable coils.
-
-The window's title shows its version. **Report a problem**, at the top right beside the
-**System / Day / Night** theme switch, opens the
-[A file didn't convert](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
-form. `dutchman-gui --version` and `dutchman-gui --help` print and exit without opening a
-window (on Windows, read the version with `dutchman --version`).
-
-When a file fails, its card says so and offers **Report this on GitHub**. It opens the same
-form in your browser, filled in: Dutchman's version, your system, the error with its stage
-and upstream, and the file's anonymous report, which names no file and no folder. Read it
-before you submit, and never attach the design; a link to a file that is already public is
-welcome. The link stays short enough for GitHub to open it while you are signed in: if the
-anonymous report does not fit, the app copies it for you to paste into the form's
-**Anonymous report for this file** box, and a very long error message is shortened in the
-form (the anonymous report has all of it).
 
 On macOS, `shasum -a 256 -c` takes the place of `sha256sum -c`. The programs are not signed
 with a Developer ID, so macOS blocks each the first time, as it does
@@ -170,7 +151,7 @@ Expand-Archive dutchman-VERSION-x86_64-pc-windows-msvc.zip -DestinationPath .
 
 ## Channels: stable and nightly
 
-- **Stable** releases (`v0.1.5`, …) are the ones to use. Each is built against one tested
+- **Stable** releases (`v0.2.5`, …) are the ones to use. Each is built against one tested
   commit of cadmpeg, the library that reads the native files.
 - **Nightly** is one pre-release, [`nightly`](https://github.com/dutchman-cad/dutchman/releases/tag/nightly),
   rebuilt each day from Dutchman's latest code against cadmpeg's latest code, and published
@@ -206,13 +187,6 @@ server and used from any browser. [Dutchman Web](web.md) says how to run it.
 
 ## SolidCraft (optional, recommended)
 
-A part that holds an imported solid becomes a base-body Import feature at its place in the
-timeline. Later features keep editable history when they map. Stored geometry has no recipe
-to lose: the report says, at Info level, “This part holds an imported solid; there is no
-feature history to bring over”. A part made only of stored geometry is geometry without
-history, with no flattened-history warning. A base feature the source proves holds no bodies
-builds nothing and is reported `not_needed`.
-
 When a design's feature history converts, Dutchman checks it by replaying it in SolidCraft's
 command-line tool, `solidcraft-cli`, which comes with every
 [SolidCraft release](https://github.com/tangency-labs/solidcraft/releases). Installing the
@@ -246,19 +220,6 @@ than SolidCraft 0.18 patch 2, the oldest that opens and checks Dutchman's design
 SolidCraft") and writes the history unverified. SolidCraft 0.19.0 saves designs in a newer
 format that older versions do not open, so a design you save again in 0.19.0 opens in 0.19.0
 or newer only.
-
-Sheet-metal history includes base flanges (not of symmetric thickness) and full-edge flanges
-on an unchanged rectangular base sheet. An edge flange needs its own CADIR input topology
-with edge midpoint, tangent, and end vertices; each midpoint must identify exactly one edge
-of the rebuilt base sheet. Fixed outer-face heights, angles between zero and 180 degrees,
-inside/outside bend placement, and positive bend radii map. Inner-face heights, partial widths,
-object-ended heights, adjacent/tangent bend placement, and picks on already modified sheets
-keep the geometry and report the reason. Final-body edges alone never select a flange.
-Hems keep geometry: CADIR specifies developed length while SolidCraft requires length to the
-outer face, and rolled, teardrop, and unresolved hem forms are not supported yet. CADIR has no
-contour-flange, bend, unfold/refold, or corner-relief operations, nor K-factor or relief
-settings; sheet rules keep SolidCraft's defaults for those settings. The report names the
-first feature that stops the history; the original geometry is still converted.
 
 ## Building and packaging
 

@@ -22,12 +22,12 @@ The desktop app's **Formats** list shows the same.
 | Rhino | `.3dm` | Reads geometry | L2 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | ACIS | `.sat`, `.sab`, `.smt`, `.smb` | Reads geometry | L3 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | STEP | `.step`, `.stp` | Reads geometry | L8 | Geometry through STEP; solids and surfaces SolidCraft can import |
-| IGES | `.igs`, `.iges` | Open it in SolidCraft directly | L9 | Import it in SolidCraft directly (File > Import) |
-| Creo or NX part | `.prt` | Recognised, not read yet | – | Not yet |
+| IGES | `.igs`, `.iges` | Recognised, not converted | – | Import it in SolidCraft directly (File > Import) |
+| Unidentified part (Creo or NX) | `.prt` | Recognised, not read yet | – | Not yet |
 
-FreeCAD TechDraw drawings also convert to DXF (`--to dxf`): page curves, dimension labels, annotations, and templates.
+FreeCAD TechDraw drawings also convert to DXF (`--to dxf`): page curves, dimension labels, annotations, and templates, with unsupported content reported as Dropped.
 
-Output is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro (`--to freecad`).
+Output is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro (`.FCMacro`, `--to freecad`).
 <!-- /formats -->
 
 ## How formats are recognised

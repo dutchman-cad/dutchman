@@ -86,7 +86,6 @@ resource fields are available on Linux, Windows, and macOS; a measurement that c
 read is null. Linux keeps its `/proc` readers and honours cgroup memory limits when
 checking available memory.
 
-
 Every record is appended and flushed immediately, with a disk sync at least every five
 seconds and on every stage change. A background heartbeat every 30 seconds records the
 stage, elapsed time, process memory, CPU time, and last decoder member id when available.

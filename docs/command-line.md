@@ -21,12 +21,11 @@ CAD extension selects conversion.
 | Option | What it does |
 |---|---|
 | `--preset fast`, `--preset standard`, `--preset full` | What to keep; Standard is the default. See [Choosing what to keep](presets.md). |
-| `--no-history` | Leave history out; alias of `--import-only`. |
+| `--no-history`, `--import-only` | Leave feature history out; keep geometry and the preset's reference sketches. |
 | `--no-sketches` | Leave reference sketches out; sketches needed by retained history stay. |
 | `--no-joints` | Leave assembly joints out and retain stored placements. |
 | `--no-memory-check` | Bypass the memory refusal and Standard's history budget. |
 | `--yes` | Never prompt to switch presets; refuse an over-budget conversion with exit 2. |
-| `--import-only` | Leave feature history out; keep geometry and the preset's reference sketches. |
 | `--solidcraft PATH` | The `solidcraft-cli` that checks a converted history. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`, else the install folder recorded in the registry). |
 | `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the found CLI's version capped at newest known, even with `--no-verify`, else the newest known at build time (currently 0.27). |
 | `--no-verify` | Write the history without checking it in SolidCraft. Cannot be combined with `--solidcraft`. |
@@ -34,6 +33,10 @@ CAD extension selects conversion.
 | `--no-clobber` | Do not replace an existing `.sc` file: that file's conversion fails instead. By default it is replaced. |
 | `--project DIR` | The project folder an assembly's part files are searched in when they are not at their stored paths. Default: the nearest folder above the assembly holding an `.ipj`, else two folders up. See [Finding the part files](inventor.md#finding-the-part-files). |
 | `--search DIR` | Another folder to search for part files the project folder does not hold, such as a shared library. May be given more than once. |
+| `-o PATH`, `--force` | Write to `PATH`; `--force` replaces an existing default output (see [Output files](#output-files)). |
+| `--to freecad`, `--to fcstd`, `--to dxf` | Write a FreeCAD macro or document, or TechDraw pages as DXF (see [FreeCAD](freecad.md)). |
+| `--threads N` | Bound the assembly part workers; `1` is serial (see [Assembly workers](#assembly-workers)). |
+| `--diagnostics`, `--diagnostics-default` | Write an anonymous diagnostic log while converting (see [Diagnostic logs](troubleshooting.md#diagnostic-logs-for-unfinished-runs)). |
 | `--json` | One final JSON report on stdout, with progress JSON lines on stderr. |
 | `--quiet` | Hide conversion progress and the volunteer invitation. |
 | `--verbose` | Print every loss, each note in full. Without it, a file with more than 12 losses is summarised by component (below), and long notes are cut to their first sentence. The JSON report always has them all in full. |
@@ -44,7 +47,7 @@ CAD extension selects conversion.
 `inspect` reads a file and says what converting it would carry across. It writes nothing and
 does not run SolidCraft.
 
-`design_sketch_constraints.f3d`, from the same folder, is for inspecting only: its history is a
+`design_sketch_constraints.f3d`, from the test fixtures folder ([crates/dutchman-core/tests/fixtures/](../crates/dutchman-core/tests/fixtures/)), is for inspecting only: its history is a
 single sketch, with no solid or surface to convert.
 
 ```sh
@@ -123,7 +126,7 @@ Each converted file's loss report is listed beneath it, summarised by component 
 more than 12 losses. The whole report, every loss in full, is written to `dutchman.log` in the
 output folder (`--log FILE` puts it elsewhere). This log, ordinary JSON, and the journal hold
 file names and paths; keep them private. For an issue, request `--report-anon FILE`, review
-it, and share that report as [below](troubleshooting.md). Files in the folders that are not in
+it, and share that report as [Troubleshooting](troubleshooting.md) shows. Files in the folders that are not in
 a format Dutchman knows (`notes.txt`, say) are skipped and counted at the end. The exit code is 0
 only when every file converted, else 1. `--jobs N` sets how many files
 convert at once (default: the machine's cores, at most 8). It takes the same options as
@@ -241,10 +244,33 @@ The target defaults to the found CLI's version, even with `--no-verify`, else th
 newest minor known at build time (currently 0.27). The current window is 0.18–0.27.
 Constant-radius FreeCAD helices keep editable sketch-profile coils only for targets
 0.25 patch 1 or newer; older targets preserve the original geometry and report the version needed.
-SolidCraft names and status comparisons use minors. Patch-sensitive writer gates still use
-full versions internally; for example, 0.25 patch 1 enables sketch-profile coils. CI tests the
+SolidCraft names and status comparisons use minors; patch-sensitive writer gates use full
+versions internally. CI tests the
 latest published patch of the newest minor, while the oldest window release stays pinned.
 Designs open in their target release and newer releases.
+
+
+SolidCraft conversion reports include the selected target and the discovered CLI version,
+even with verification off. Text output includes `Target SolidCraft 0.27 (found 0.27.1)`,
+or `(none found)` when no version can be read. `--solidcraft-version` overrides the target;
+otherwise the found supported version is used, capped at the newest known release, falling
+back to 0.27. Successful conversions print the same installed-version notice beside the
+target line, with the SolidCraft download URL for too-old releases. The CLI never checks
+for Dutchman updates over the network. Failed or refused files print neither line.
+No installed release means no notice. Other output
+formats omit this line and the JSON `solidcraft` object.
+
+CLI version discovery runs at most once per resolved CLI path in each Dutchman process,
+including when the CLI gives no answer. The version command has a three-second limit.
+Successful versions are also cached across runs in `solidcraft-versions.json` under
+`$XDG_CACHE_HOME/dutchman` (or `~/.cache/dutchman`) on Linux,
+`~/Library/Caches/Dutchman` on macOS, and `%LOCALAPPDATA%\Dutchman` on Windows.
+The disk entry must match the CLI's resolved path, file size, and modification time;
+changing the executable causes a fresh probe in the next process. Unreadable or damaged
+caches are ignored, and timeouts are remembered only for the current process.
+With an explicit target (`--solidcraft-version` or the desktop target selector) and
+verification off, Dutchman does not run the version command. Reports reuse a matching
+cached version, or leave `solidcraft.found` null when it has not been checked.
 
 ## Other Dutchman CAD tools
 

@@ -30,7 +30,7 @@ and no component owns them, with an Info `bodies` note giving the count. User-hi
 component members stay available; mixed shown/hidden parts are shown whole, with an Info
 note. See [Fusion visibility](fusion.md#parts-and-history).
 
-Sheet-metal history follows the same mapping limits in the [guide](guide.md) as the CLI:
+Sheet-metal history follows the same mapping limits in [Feature history](history.md#sheet-metal) as the CLI:
 base flanges and full-edge flanges on unchanged rectangular base sheets map when their own
 input-edge geometry proves each pick. Unsupported flange dimensions or selections, and hems,
 appear as the first blocked feature's reason; the conversion keeps the geometry. K-factor and
@@ -540,7 +540,7 @@ The CLI additionally supports experimental `--to fcstd` to run FreeCAD headlessl
 and verify a native document, and `--to freecad --verify` to check a macro without saving
 a document. These options are currently CLI-only; the MCP FreeCAD macro output above
 remains unverified. `FREECAD_CMD` selects the headless executable and
-`--freecad-timeout SECONDS` sets its 300-second default limit. See the guide for discovery,
+`--freecad-timeout SECONDS` sets its 300-second default limit. See [FreeCAD output](freecad.md#freecad-output-experimental) for discovery,
 measurement tolerances, fallback reporting and the `differs` verification status.
 
 For self-hosted browser conversions, [Dutchman Web](web.md#settings) documents the shared
@@ -578,7 +578,7 @@ With an explicit `solidcraft_version` and `verify: false`, version discovery use
 cached results; `solidcraft.found` is null when not checked. Otherwise the CLI version
 probe has a three-second limit and runs at most once per resolved CLI path per process.
 Successful versions are cached across runs until the CLI's size or modification time
-changes; see [the guide](guide.md) for cache locations.
+changes; see [SolidCraft versions](command-line.md#solidcraft-versions) for cache locations.
 
 SolidCraft reports also include `solidcraft.known_newest` (a version string) and
 `solidcraft.status`: `newer`, `too_old`, `older_loses_history`, `current`, or

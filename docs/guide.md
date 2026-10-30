@@ -181,27 +181,8 @@ within the measuring mesh tolerances. A face-count difference alone does not est
 defect. An AI agent can do the same through SolidCraft's MCP server: open the design with
 `solidcraft-cli mcp --in cube.sc` and call its `measure` tool.
 
-SolidCraft conversion reports include the selected target and the discovered CLI version,
-even with verification off. Text output includes `Target SolidCraft 0.27 (found 0.27.1)`,
-or `(none found)` when no version can be read. `--solidcraft-version` overrides the target;
-otherwise the found supported version is used, capped at the newest known release, falling
-back to 0.27. Successful conversions print the same installed-version notice beside the
-target line, with the SolidCraft download URL for too-old releases. The CLI never checks
-for Dutchman updates over the network. Failed or refused files print neither line.
-No installed release means no notice. Other output
-formats omit this line and the JSON `solidcraft` object.
-
-CLI version discovery runs at most once per resolved CLI path in each Dutchman process,
-including when the CLI gives no answer. The version command has a three-second limit.
-Successful versions are also cached across runs in `solidcraft-versions.json` under
-`$XDG_CACHE_HOME/dutchman` (or `~/.cache/dutchman`) on Linux,
-`~/Library/Caches/Dutchman` on macOS, and `%LOCALAPPDATA%\Dutchman` on Windows.
-The disk entry must match the CLI's resolved path, file size, and modification time;
-changing the executable causes a fresh probe in the next process. Unreadable or damaged
-caches are ignored, and timeouts are remembered only for the current process.
-With an explicit target (`--solidcraft-version` or the desktop target selector) and
-verification off, Dutchman does not run the version command. Reports reuse a matching
-cached version, or leave `solidcraft.found` null when it has not been checked.
+Which SolidCraft a design is written for, and how Dutchman finds the installed one, is in
+[SolidCraft versions](command-line.md#solidcraft-versions).
 
 ## Where next
 
@@ -251,6 +232,10 @@ This page used to hold everything. Each part now has its own page:
 ### Docker
 
 [Docker](docker.md)
+
+### Dutchman Web, in a browser
+
+[Dutchman Web, in a browser](install.md#dutchman-web-in-a-browser)
 
 ### SolidCraft (optional, recommended)
 

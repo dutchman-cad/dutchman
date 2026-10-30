@@ -7,6 +7,8 @@ pin is bumped.
 
 ## Parts and history
 
+Bodies a Combine used up as a tool, or that a Remove step took out of the design, are left out when cadmpeg marks them hidden and no component owns them; an Info `bodies` note gives the count. Bodies you hid yourself stay available, and a part with both shown and hidden bodies is shown whole, with an Info note.
+
 | What the codec gives | What Dutchman does |
 |---|---|
 | The design's B-rep, with body transforms applied. | Converts it: restated as STEP, written as SolidCraft's import. |

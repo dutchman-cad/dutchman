@@ -102,13 +102,4 @@ journal from reusing a result made with different choices.
 
 ## Presets and estimates
 
-Use `--preset fast` for shape only, `--preset standard` (the default) for history,
-sketches, and joints with assembly history limited by free memory, or `--preset full`
-to keep everything that maps. Narrow any preset with `--no-history` (also
-`--import-only`), `--no-sketches`, or `--no-joints`. Without joints, stored placements
-are retained. FreeCAD output honours the history choice only.
-
-Before conversion, Dutchman shows an approximate memory/time estimate. An over-budget
-run offers a lighter preset in a terminal, or refuses with exit 2 in scripts, with
-`--yes`, or with `--json`. `--no-memory-check` bypasses the guard and Standard's history
-budget. The tables above give the limits and examples.
+The presets, narrowing switches, and memory guard are described above; `dutchman convert --help` lists them too.

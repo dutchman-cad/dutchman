@@ -37,18 +37,11 @@ When Fast is already selected, the dialog offers only Convert anyway and Cancel.
 When Standard leaves history out to fit in memory, its result card shows the
 history Info message even with the full loss log collapsed. The original geometry is kept.
 
-`dutchman-gui` converts without a terminal. Drop design files or folders on the window (or use
-**Add files…** and **Add folder…**), choose an output folder, and press **Convert**. Each file
-shows whether it converted, what was written (editable history or geometry), and its losses as
-Info, Degraded, or Dropped. A converted design opens in SolidCraft from its card: the app that
-`SOLIDCRAFT_APP` names, else `solidcraft` on `PATH`, else the system's app for `.sc`
-files. When an Inventor assembly's part files are not found, its card names them: **Search a
-folder…** or **Find a file…** converts it again, searching there too. The app follows the
-system's light or dark setting, or can be set to Day or Night. Its **Output format** choice
-offers a FreeCAD macro, and the window title shows its version. A **Report a problem** link
-opens the **A file didn't convert** form; a failed file's **Report this on GitHub** opens it
-filled in with the version, system, error, and an anonymous report. `dutchman-gui --version`
-and `--help` print without opening a window.
+A converted design opens in SolidCraft from its card: the app that `SOLIDCRAFT_APP` names, else
+`solidcraft` on `PATH`, else the system's app for `.sc` files. When an Inventor assembly's part
+files are not found, its card names them: **Search a folder…** or **Find a file…** converts it
+again, searching there too. The app follows the system's light or dark setting, or can be set to
+Day or Night, and its **Output format** choice also offers a FreeCAD macro.
 
 ## SolidCraft version
 
@@ -62,6 +55,25 @@ the version or **not found**, shorten **Update**, and put theme choices in a men
 For an installed release newer than known, the panel has an **Update Dutchman** button, which
 opens the update window, when the update check already knows a newer Dutchman. Too-old releases have a
 [Download SolidCraft](https://github.com/tangency-labs/solidcraft/releases) link.
+
+Choose the target with the **Target SolidCraft** selector: it defaults to the found CLI's version, else the built-in newest (currently 0.27), even when history checking is off. **Automatic** follows the detected installation; **0.25 and newer** keeps supported FreeCAD helices as editable coils.
+
+## Reporting a problem
+
+The window's title shows its version. **Report a problem**, at the top right beside the
+**System / Day / Night** theme switch, opens the
+[A file didn't convert](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
+form. `dutchman-gui --version` and `dutchman-gui --help` print and exit without opening a
+window (on Windows, read the version with `dutchman --version`).
+
+When a file fails, its card says so and offers **Report this on GitHub**. It opens the same
+form in your browser, filled in: Dutchman's version, your system, the error with its stage
+and upstream, and the file's anonymous report, which names no file and no folder. Read it
+before you submit, and never attach the design; a link to a file that is already public is
+welcome. The link stays short enough for GitHub to open it while you are signed in: if the
+anonymous report does not fit, the app copies it for you to paste into the form's
+**Anonymous report for this file** box, and a very long error message is shortened in the
+form (the anonymous report has all of it).
 
 ## Updates
 

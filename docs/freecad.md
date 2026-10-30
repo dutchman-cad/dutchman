@@ -1,7 +1,7 @@
 # FreeCAD documents (`.FCStd`)
 
 FreeCAD documents convert through cadmpeg's `fcstd` codec. Checked in SolidCraft, all 19
-of the test documents (pads, pockets, revolves, holes, fillets, chamfers, shells and a
+of the test documents (pads, pockets, revolves, holes, fillets, chamfers, shells, and a
 three-part assembly) come out at FreeCAD's volume. Before 0.1.5 FreeCAD documents converted
 in the nightly builds only: cadmpeg 0.6.3 stored some faces as replicas of curves, kept each
 feature's intermediate shape as a body of its own and could turn revolved faces inwards.
@@ -174,7 +174,7 @@ documents, authored in FreeCAD 1.1.1 by the cadmpeg project and dedicated to the
 `--to freecad` writes a `.FCMacro` independently of `.FCStd` input support.
 `--to fcstd` runs FreeCAD to save and verify a native document; `--to freecad --verify`
 checks a macro without saving a native document. See
-[FreeCAD output](freecad.md#freecad-output-experimental) for coverage, fallback and execution.
+[FreeCAD output](#freecad-output-experimental) for coverage, fallback, and execution.
 
 The writer is Rust and emits calls to FreeCAD as an outside Python program. It does not
 link or vendor FreeCAD. Its interface references are the public
@@ -225,7 +225,7 @@ dutchman convert part.FCStd --to dxf -o existing-directory
 One ASCII DXF R2000 (`AC1015`) is written per page with `$INSUNITS=4` (mm) and
 metric measurement. Names are `part-<object name>.dxf`, in source page order;
 `--page` uses the source object name, not its displayed label. Names are limited
-to 100 ASCII letters, digits, underscores and hyphens; other characters become
+to 100 ASCII letters, digits, underscores, and hyphens; other characters become
 underscores and collisions get numeric suffixes, also on case-insensitive systems.
 A selected page with an explicit file path uses that exact path. An unselected
 file path supplies a base: `-o drawing.dxf` writes `drawing-Page.dxf`, etc.
@@ -276,9 +276,9 @@ This output works independently of the `freecad` feature used to read `.FCStd` i
 
 The macro makes a Body for each placed part, preserving nested assembly placements. It
 uses Dutchman's existing history mapping and timeline order to rebuild planar sketches
-(lines, circles, arcs, ellipses and supported B-splines), constraints, pads and pockets,
+(lines, circles, arcs, ellipses, and supported B-splines), constraints, pads and pockets,
 full-turn or symmetric revolves, unguided lofts, sweeps, simple holes, linear and circular
-feature patterns, spheres, tori and coils. Numeric feature values are retained. A parameter
+feature patterns, spheres, tori, and coils. Numeric feature values are retained. A parameter
 object keeps evaluated scalar values and source expressions as text; source expressions
 are never executed. Coils are rebuilt with Part geometry and stored as a feature, with
 numeric properties; editing those properties does not recompute the coil.
@@ -293,8 +293,8 @@ remain hidden references. Partial histories are still experimental and unverifie
 
 A part whose history cannot be rebuilt is kept as an embedded STEP solid or surface in a
 Body. Examples include unresolved source selections, intersect operations, fixed-orientation,
-guided, twisted, scaled or binormal sweeps and lofts, lofts ending at a point, extrudes from
-or to a point or face or with taper, counterbored, countersunk or face-ended holes, coils
+guided, twisted, scaled, or binormal sweeps and lofts, lofts ending at a point, extrudes from
+or to a point or face or with taper, counterbored, countersunk, or face-ended holes, coils
 about an axis other than Z, two-direction patterns, and histories spanning multiple bodies. The report gives one result per source feature, including the reason each feature
 was not rebuilt. `--import-only` keeps every part as STEP and leaves out joints.
 Assemblies retain placements and rebuild supported joints as described below.
@@ -356,7 +356,7 @@ resulting solids with its embedded source STEP: solid count, volume (relative to
 with a 1 mm minimum scale). Assemblies are compared in each part's local coordinates.
 The report says `verified` when every part matches, or `differs` and identifies the part.
 A runtime rebuild failure restores embedded STEP and reports the specific reason as a
-loss and a `differs` result, even when the restored solid matches. Sheets, wires and other
+loss and a `differs` result, even when the restored solid matches. Sheets, wires, and other
 parts without solids are reported as not checked rather than verified.
 
 Discovery uses `FREECAD_CMD` (one executable path, or the Flatpak form
@@ -375,23 +375,3 @@ geometry remains in the document, hidden after a successful rebuild. The macro c
 rebuilt geometry with STEP; a rebuild failure or difference restores the original and
 prints a warning in FreeCAD's report view. Temporary execution and STEP files are removed.
 
-For self-hosted browser conversions, [Dutchman Web](web.md#settings) documents the shared
-zip budget, concurrent upload and saved-data limits, private data folder, and allowed browser
-origins. Uploads may be refused with 403 (origin check) or 503 (capacity); the CLI and MCP
-reports are unchanged.
-
-For browser conversions, `dutchman-web --solidcraft` adds an **Open in SolidCraft** link for
-SolidCraft designs. See [Open in SolidCraft](web.md#open-in-solidcraft) for serving both
-apps on one origin and configuring the SolidCraft path.
-
-
-FreeCAD TechDraw drawing output is available from the CLI:
-`dutchman convert part.FCStd --to dxf [--page NAME]`. It writes one
-`part-PageName.dxf` per page; `-o` accepts an existing directory or a file base
-(an exact file path with `--page`). Defaults require `--force` to overwrite;
-explicit outputs replace unless `--no-clobber` is set. Page names are FreeCAD
-object names. Pages keep neutral view curves, dimension labels, annotations, template frames, and
-resolved title-block text in millimetre page space. Unsupported content is reported
-in per-page JSON `pages` results. No page is an error. See [FreeCAD coverage](freecad.md#techdraw-to-dxf).
-DXF conversion is not supported yet by convert-all, the MCP convert tool, desktop,
-or web. The MCP formats report includes the additive `drawings` capability list.

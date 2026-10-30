@@ -47,7 +47,7 @@ Every download holds the desktop app (`dutchman-gui`), the `dutchman` command, a
 
 ## What's new in 0.2.5
 
-- **Whole Fusion assemblies, part by part:** each component keeps its own features, sketches, and parameters, and parts stay where the design puts them.
+- **Whole Fusion assemblies, part by part:** each component keeps its own features, sketches, and parameters, parts stay where the design puts them, and every body keeps its colour.
 - **Much faster on big assemblies:** parts are prepared on several cores, with free memory deciding how many.
 - **Choose what to keep, with an estimate first,** and an **anonymous diagnostic log** for any run.
 - **Updates from the app,** and a pill naming the SolidCraft it found.
@@ -67,7 +67,7 @@ dutchman convert-all project/ --out-dir converted/
 
 ## What converts
 
-Early development: the reader status says whether a format's geometry can be read, and each conversion's report says what that file kept. Run `dutchman formats` for the live list.
+Early development: **Reads** says whether a format's geometry can be read, and each conversion's report says what that file kept. Run `dutchman formats` for the live list.
 
 <!-- formats: generated from dutchman formats --markdown -->
 | Format | Files | Reads | Level | Converts |
@@ -86,12 +86,12 @@ Early development: the reader status says whether a format's geometry can be rea
 | Rhino | `.3dm` | Reads geometry | L2 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | ACIS | `.sat`, `.sab`, `.smt`, `.smb` | Reads geometry | L3 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | STEP | `.step`, `.stp` | Reads geometry | L8 | Geometry through STEP; solids and surfaces SolidCraft can import |
-| IGES | `.igs`, `.iges` | Open it in SolidCraft directly | L9 | Import it in SolidCraft directly (File > Import) |
-| Creo or NX part | `.prt` | Recognised, not read yet | – | Not yet |
+| IGES | `.igs`, `.iges` | Recognised, not converted | – | Import it in SolidCraft directly (File > Import) |
+| Unidentified part (Creo or NX) | `.prt` | Recognised, not read yet | – | Not yet |
 
-FreeCAD TechDraw drawings also convert to DXF (`--to dxf`): page curves, dimension labels, annotations, and templates.
+FreeCAD TechDraw drawings also convert to DXF (`--to dxf`): page curves, dimension labels, annotations, and templates, with unsupported content reported as Dropped.
 
-Output is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro (`--to freecad`).
+Output is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro (`.FCMacro`, `--to freecad`).
 <!-- /formats -->
 
 [Formats](docs/formats.md) has the details for each program, and [Feature history](docs/history.md) what maps onto SolidCraft.
@@ -109,7 +109,7 @@ or send a file that converts wrong, with its STEP export, to Dutchy in
 | Tool | Arguments | Returns |
 |---|---|---|
 | `inspect` | `input` | `dutchman.inspect/1` |
-| `convert` | `input`, `output` (optional for `dry_run`), and optionally `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `dry_run`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `overwrite` | `dutchman.convert/1` |
+| `convert` | `input`, `output`, and the convert options ([all arguments](docs/mcp.md#tools)) | `dutchman.convert/1` |
 | `convert_all` | `inputs` (files and folders), `out_dir`, and optionally `jobs` and the convert options | `dutchman.convert-all/1` |
 | `formats` | none | `dutchman.formats/1` |
 
@@ -146,19 +146,26 @@ For other clients:
 
 **Formats and results**
 
-- [Formats](docs/formats.md), with [Fusion](docs/fusion.md), [Inventor](docs/inventor.md), [SolidWorks](docs/sldprt.md), and [FreeCAD](docs/freecad.md) (also FreeCAD output and TechDraw to DXF).
+- [Formats](docs/formats.md): how each format is recognised and what converts.
+- [Fusion](docs/fusion.md), [Inventor](docs/inventor.md), [SolidWorks](docs/sldprt.md), and [FreeCAD](docs/freecad.md): what converts from each program today, and what stands in the way.
 - [Feature history](docs/history.md): what maps onto SolidCraft, how it is checked, and partial history.
 - [Testing Dutchman on your library](docs/testing-your-library.md): convert your own files and report what broke, without sharing a file.
 - [The anonymous report](docs/report-anon.md): what is safe to share.
 
 **Scripts, servers, and agents**
 
-- [The MCP server](docs/mcp.md) · [JSON reports](docs/json.md) · [Docker](docs/docker.md) · [Dutchman Web](docs/web.md), in a browser on your own server · [Agent skill](skills/README.md)
-- [Pilot](docs/pilot.md): drive SolidCraft from plain-language requests. [Dutchman Print](https://github.com/dutchman-cad/print): send designs to a 3D printer.
+- [The MCP server](docs/mcp.md): every tool and argument, client setup, and safety.
+- [JSON reports](docs/json.md): every field of the `--json` reports.
+- [Docker](docs/docker.md): convert or run the MCP server in a container.
+- [Dutchman Web](docs/web.md): convert in a browser, on a server you host.
+- [Agent skill](skills/README.md): teaches an AI assistant to convert files with Dutchman.
+- [Pilot](docs/pilot.md): drive SolidCraft from plain-language requests.
+- [Dutchman Print](https://github.com/dutchman-cad/print): send designs to a 3D printer.
 
 **Contributing**
 
-- [CONTRIBUTING.md](CONTRIBUTING.md) · [AGENTS.md](AGENTS.md) · [Architecture](docs/ARCHITECTURE.md) · [Releasing](docs/releasing.md) · [Triage](docs/triage.md)
+- [CONTRIBUTING.md](CONTRIBUTING.md), and [AGENTS.md](AGENTS.md) for AI contributors.
+- [Architecture](docs/ARCHITECTURE.md), [Releasing](docs/releasing.md), and [Triage](docs/triage.md).
 - Report a file that didn't convert on the [**A file didn't convert**](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml) form, with no design file. Questions: the [Discord](https://discord.gg/yTcseBEdeu).
 
 ## Licence

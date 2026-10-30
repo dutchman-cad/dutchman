@@ -43,12 +43,63 @@ history, with no flattened-history warning.
 
 ## How a history is checked
 
+A converted history is checked by replaying it in `solidcraft-cli` and comparing the bodies
+and their area and volume with the original, within the measuring mesh tolerances. The result is in the `history:` line of the report, and
+in `verification.status` in `--json`:
+
+| Status | Meaning |
+|---|---|
+| `verified` | The history replays in SolidCraft and matches the original. |
+| `unverified` | The history was written without the check: no `solidcraft-cli` was found, it timed out, or `--no-verify`. The reason is given. |
+| `partial` | An editable prefix and resolved sketches are retained in a hidden component. The imported final shape is visible. The reason names the blocker, counts kept features, and says whether retained features replayed; this does not verify the full history. |
+| `flattened` | No body-building prefix could be retained. The design keeps the imported geometry and mapped sketches with resolved planes, hidden for reference. |
+| `not_applicable` | There was no history to write, or `--import-only`. |
+
+
+Assembly visibility reports count source-hidden placements separately from retained
+editable history. An Info `visibility` note, `N editable-history component placement(s)
+are placed hidden`, counts the latter across repeated and nested placements. Both use
+the same bounded hidden-occurrence paths; a Degraded note reports paths left shown
+past the 4096-path limit.
+
+For a flattened design, one Info line reports `sketches: kept N sketches for reference`,
+with `; M left out` when any sketches did not map or their planes did not resolve.
+`--import-only` leaves out history while retaining reference sketches when the preset
+keeps sketches. Use `--no-sketches` as well, or `--preset fast`, for geometry alone.
+
+An assembly keeps the sketches of its own file the same way, hidden, in the design itself
+(SolidCraft's root component), with the parameters their dimensions use; one Info line
+reports `sketches: kept N sketches in the design itself, for reference`. cadmpeg does not say
+which component a sketch belongs to, so a component's sketch stays where it was drawn and
+does not move with the component.
+
+Assemblies with multiple top-level designs put each design's features in a uniquely named
+timeline folder, including the root's own features when present. Feature order stays the
+same, and joints stay outside folders. Each folder added produces an Info note with subject
+`timeline folders`: `"Name": N feature(s) grouped`. Parts and assemblies with one top-level
+design get no folders.
+Root-owned bodies and adjacent root reference sketches share a folder. If another design's
+features separate them, they use numbered folders so timeline order stays unchanged.
+
+When the design is written as geometry, the same `solidcraft-cli` opens it too. Faces it
+cannot mesh, bodies inside out, solids without volume, and timeline errors still produce a
+`Degraded: geometry: …` loss, such as
+`Degraded: geometry: solid 'unit cube': 3 face(s) could not be meshed and are not shown`.
+Look over those bodies in SolidCraft before relying on them. SolidCraft can merge faces that
+share a surface, so a face-count difference alone produces no loss. The history comparison
+uses area and volume, so an open-shell warning there produces no loss when they agree.
+Geometry-only output has no source measurements to compare against, so a solid it opens as
+an open shell is still reported. Sheets remain exempt from volume and closed-shell checks.
+`--no-verify` skips these checks too.
+
+## Feature by feature
+
 FreeCAD signed horizontal and vertical sketch distances convert to positive dimension
 magnitudes at their solved positions. Their signed parameters and expressions remain
 available; a dependent magnitude parameter drives each negative distance in SolidCraft.
 
 Constant-radius fillets and equal-setback chamfers keep editable history when their own
-feature input topology supplies edge midpoints, tangents and endpoints, and each midpoint
+feature input topology supplies edge midpoints, tangents, and endpoints, and each midpoint
 can be proven to pick exactly one edge of the pre-feature body, whatever history builds it.
 SolidCraft itself rebuilds that body: Dutchman replays the mapped history in `solidcraft-cli`
 once per design (two runs, however many blends, within the check's time limit) and reads the
@@ -82,12 +133,6 @@ For a counterbore, countersink, or chamfered entry with a drill point, the reaso
 `tip_angle` on counterbores and countersinks. SolidCraft 0.22.1 and newer support those drill
 points, but Dutchman retains this limit for compatibility with older releases. Conversion keeps the original geometry.
 
-When every feature in a design's history maps onto SolidCraft (sketches, extrudes, revolves,
-patterns, body mirrors, and body booleans so far), the design keeps that history, editable, with
-the original geometry kept beside it as a suppressed import named "Original geometry
-(imported)". At a blocking feature, the design keeps the earlier editable features and
-resolved sketches hidden beside the visible imported final shape. The report names the
-blocker and counts the retained features.
 
 Sweeps accept ordered sketch curves, or a whole sketch containing a single non-construction
 curve, for their path and optional guide rail. Taper, explicit right or round corners,
@@ -151,65 +196,28 @@ available scalar values with a specific reason. See [FreeCAD expressions](freeca
 for decoder limitations, including named sketch constraint bindings. Verification checks
 the initial geometry; check geometry again after changing a parameter.
 
-A converted history is checked by replaying it in `solidcraft-cli` and comparing the bodies
-and their area and volume with the original, within the measuring mesh tolerances. The result is in the `history:` line of the report, and
-in `verification.status` in `--json`:
+## Sheet metal
 
-| Status | Meaning |
-|---|---|
-| `verified` | The history replays in SolidCraft and matches the original. |
-| `unverified` | The history was written without the check: no `solidcraft-cli` was found, it timed out, or `--no-verify`. The reason is given. |
-| `partial` | An editable prefix and resolved sketches are retained in a hidden component. The imported final shape is visible. The reason names the blocker, counts kept features, and says whether retained features replayed; this does not verify the full history. |
-| `flattened` | No body-building prefix could be retained. The design keeps the imported geometry and mapped sketches with resolved planes, hidden for reference. |
-| `not_applicable` | There was no history to write, or `--import-only`. |
-
-For partial history, show **Editable history (partial)** in the browser to continue editing
-its body. Hide the imported final shape when working on that prefix. Later body-building
-features are omitted; sketches whose planes or external geometry cannot resolve are reported.
-A sketch that fails replay is retried without constraints, with the loss reported. If its
-solved geometry still cannot replay, it is left out and reported. A replay error can shorten
-the prefix further. If replay runs but the final shape differs,
-the mapped timeline is kept hidden for correction because the differing feature is unknown.
-`solidcraft-cli eval` measures hidden bodies too, so its body count includes both results.
-
-Assembly visibility reports count source-hidden placements separately from retained
-editable history. An Info `visibility` note, `N editable-history component placement(s)
-are placed hidden`, counts the latter across repeated and nested placements. Both use
-the same bounded hidden-occurrence paths; a Degraded note reports paths left shown
-past the 4096-path limit.
-
-For a flattened design, one Info line reports `sketches: kept N sketches for reference`,
-with `; M left out` when any sketches did not map or their planes did not resolve.
-`--import-only` leaves out history while retaining reference sketches when the preset
-keeps sketches. Use `--no-sketches` as well, or `--preset fast`, for geometry alone.
-
-An assembly keeps the sketches of its own file the same way, hidden, in the design itself
-(SolidCraft's root component), with the parameters their dimensions use; one Info line
-reports `sketches: kept N sketches in the design itself, for reference`. cadmpeg does not say
-which component a sketch belongs to, so a component's sketch stays where it was drawn and
-does not move with the component.
-
-Assemblies with multiple top-level designs put each design's features in a uniquely named
-timeline folder, including the root's own features when present. Feature order stays the
-same, and joints stay outside folders. Each folder added produces an Info note with subject
-`timeline folders`: `"Name": N feature(s) grouped`. Parts and assemblies with one top-level
-design get no folders.
-Root-owned bodies and adjacent root reference sketches share a folder. If another design's
-features separate them, they use numbered folders so timeline order stays unchanged.
-
-When the design is written as geometry, the same `solidcraft-cli` opens it too. Faces it
-cannot mesh, bodies inside out, solids without volume, and timeline errors still produce a
-`Degraded: geometry: …` loss, such as
-`Degraded: geometry: solid 'unit cube': 3 face(s) could not be meshed and are not shown`.
-Look over those bodies in SolidCraft before relying on them. SolidCraft can merge faces that
-share a surface, so a face-count difference alone produces no loss. The history comparison
-uses area and volume, so an open-shell warning there produces no loss when they agree.
-Geometry-only output has no source measurements to compare against, so a solid it opens as
-an open shell is still reported. Sheets remain exempt from volume and closed-shell checks.
-`--no-verify` skips these checks too.
+Sheet-metal history includes base flanges (not of symmetric thickness) and full-edge flanges
+on an unchanged rectangular base sheet. An edge flange needs its own CADIR input topology
+with edge midpoint, tangent, and end vertices; each midpoint must identify exactly one edge
+of the rebuilt base sheet. Fixed outer-face heights, angles between zero and 180 degrees,
+inside/outside bend placement, and positive bend radii map. Inner-face heights, partial widths,
+object-ended heights, adjacent/tangent bend placement, and picks on already modified sheets
+keep the geometry and report the reason. Final-body edges alone never select a flange.
+Hems keep geometry: CADIR specifies developed length while SolidCraft requires length to the
+outer face, and rolled, teardrop, and unresolved hem forms are not supported yet. CADIR has no
+contour-flange, bend, unfold/refold, or corner-relief operations, nor K-factor or relief
+settings; sheet rules keep SolidCraft's defaults for those settings. The report names the
+first feature that stops the history; the original geometry is still converted.
 
 ## Partial history
 
+Show **Editable history (partial)** in the browser to keep editing its body, and hide the imported final shape while you work on it.
+
+When a feature blocks SolidCraft history conversion, earlier editable features and
+resolved sketches are kept in a hidden **Editable history (partial)** component. The
+original final shape remains visible as an Import after the kept history. Show the
 hidden component to continue editing it. The report names the blocker and counts
 retained source features; `mode: partial_history` and verification `partial` distinguish
 this from full verified history. The reason says whether retained features replayed or
@@ -220,6 +228,3 @@ beside the imported shape for reference. A final shape mismatch preserves the ma
 timeline for correction when it replays; it does not identify which feature needs
 correction. SolidCraft's numerical eval includes hidden bodies as well as the visible
 final shape.
-
-Assembly parts prepare in parallel by default; use `--threads N` to bound workers, or
-`--threads 1` for serial conversion with the same design and ordered report.
