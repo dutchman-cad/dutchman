@@ -118,6 +118,13 @@ An estimate is unknown for formats this build cannot convert, or when metadata c
 be read, including ZIP directories exceeding 10,000 members or 16 MiB, and unreadable
 archives.
 
+For Fusion archives with multiple readable embedded `.f3d` designs, the time estimate
+uses the requested threads (0 means auto), limited by the converter's shared CPU, item
+count and free-memory worker policy. A serial component remains. Before native decoding,
+the embedded design count and the converter's 256 MiB minimum worker budget are proxies;
+actual body counts can reduce conversion workers further. Single-design files keep their
+existing time model. Memory estimates and bands are unchanged by this time refit.
+
 Available memory comes from Linux `MemAvailable` bounded by remaining cgroup v2
 headroom (including ancestor limits), macOS `vm_stat`, or Windows CIM free physical
 memory. Unknown memory or an unknown

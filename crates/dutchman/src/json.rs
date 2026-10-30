@@ -644,7 +644,11 @@ pub fn conversion_choices(report: &mut Value, input: &Path, options: &crate::Con
     if let Some(fields) = report.as_object_mut() {
         fields.insert(
             "estimate".to_owned(),
-            estimate(crate::choices::estimate(input, &choices)),
+            estimate(crate::choices::estimate_with_threads(
+                input,
+                &choices,
+                options.threads,
+            )),
         );
         fields.insert("choices".to_owned(), choice_values(options.preset, choices));
     }

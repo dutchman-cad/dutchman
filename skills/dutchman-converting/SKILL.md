@@ -87,6 +87,13 @@ leave out the SolidCraft check and round up to whole seconds. Assembly parts
 stored in separate files are not pre-read, and archive assembly structure is confirmed
 only during normal decoding. A dry run does not promise that conversion will succeed.
 
+For Fusion archives with multiple readable embedded `.f3d` designs, the time estimate
+uses the requested threads (0 means auto), limited by the converter's shared CPU, item
+count and free-memory worker policy. A serial component remains. Before native decoding,
+the embedded design count and the converter's 256 MiB minimum worker budget are proxies;
+actual body counts can reduce conversion workers further. Single-design files keep their
+existing time model. Memory estimates and bands are unchanged by this time refit.
+
 Both converting tools refuse an over-budget run with a message naming the estimate,
 free memory, and lighter preset. Prefer that lighter preset. Only use
 `no_memory_check: true` when running despite the estimate is intended; it bypasses the
