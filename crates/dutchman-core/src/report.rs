@@ -142,6 +142,7 @@ const MAX_NAMES: usize = 100_000;
 /// succeeded; the report says how faithfully.
 #[derive(Clone, Debug, Default)]
 pub struct Report {
+    threads: Option<(usize, usize)>,
     losses: Vec<Loss>,
     outcome: Option<Outcome>,
     parts: Vec<PartHistory>,
@@ -272,6 +273,20 @@ pub enum FeatureStatus {
 }
 
 impl Report {
+    /// Requested and actual maximum simultaneous part workers.
+    pub fn threads(&self) -> Option<(usize, usize)> {
+        self.threads
+    }
+
+    /// Records the bounded number of part workers used by this conversion.
+    pub fn set_threads(&mut self, requested: usize, used: usize) {
+        let used = self
+            .threads
+            .filter(|(previous, _)| *previous == requested)
+            .map_or(used, |(_, previous)| previous.max(used));
+        self.threads = Some((requested, used));
+    }
+
     /// Records a loss in Dutchman's own mapping.
     pub fn push(
         &mut self,
@@ -330,6 +345,9 @@ impl Report {
 
     /// Records every loss of `other`, after this report's own.
     pub fn append(&mut self, other: Report) {
+        if let Some((requested, used)) = other.threads {
+            self.set_threads(requested, used);
+        }
         self.losses.extend(other.losses);
         self.names.extend(other.names);
     }

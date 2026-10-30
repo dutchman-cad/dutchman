@@ -216,6 +216,7 @@ fn external_links_use_search_folders_and_case_insensitive_filenames() {
         Format::FreeCadDocument,
         &project.join("A01a.FCStd"),
         &PartSearch {
+            threads: 0,
             project: Some(project.clone()),
             also: vec![library],
         },

@@ -543,8 +543,8 @@ pub(crate) enum Components {
 
 /// The components a design defines and places itself (as Fusion designs do), as an assembly
 /// of part models each holding only its component's bodies, plus the design's loose bodies.
-pub(crate) fn local(model: &Model) -> Components {
-    match local_components(model) {
+pub(crate) fn local(model: &Model, threads: usize, report: &mut Report) -> Components {
+    match local_components_with_threads(model, &BTreeMap::new(), threads, report) {
         Ok(Some((assembly, _))) => Components::Assembly(assembly),
         Ok(None) => Components::None,
         Err(reason) => Components::Unplaceable(reason),
@@ -568,6 +568,15 @@ type ExternalParts = BTreeMap<String, Result<(usize, std::rc::Rc<Model>), LeftOu
 fn local_components_with(
     model: &Model,
     external: &ExternalParts,
+) -> Result<Option<(Assembly, Vec<String>)>, String> {
+    local_components_with_threads(model, external, 1, &mut Report::default())
+}
+
+fn local_components_with_threads(
+    model: &Model,
+    external: &ExternalParts,
+    threads: usize,
+    report: &mut Report,
 ) -> Result<Option<(Assembly, Vec<String>)>, String> {
     let document = serde_json::to_value(&model.ir).map_err(|err| err.to_string())?;
     let wire = document.get("model").unwrap_or(&Value::Null);
@@ -642,7 +651,17 @@ fn local_components_with(
         .filter_map(|row| row.get("id")?.as_str())
         .filter(|id| !owned.contains(id))
         .collect();
+    let prepared = prepare_slices(
+        model,
+        &document,
+        &definitions,
+        &occurrences,
+        &loose,
+        threads,
+        report,
+    );
     let mut tree = Tree {
+        prepared,
         external,
         external_built: BTreeMap::new(),
         left_out: Vec::new(),
@@ -670,7 +689,7 @@ fn local_components_with(
     let (joints, mut left_out) = joints(arena("assembly_joints"), &tree.paths, &worlds, &inserted);
 
     let own_part = if !loose.is_empty() {
-        parts.push(only(model, &document, &loose, model.name.clone())?);
+        parts.push(tree.sliced(Slice::Loose, &loose, model.name.clone())?);
         placements.push(Placement {
             hidden: parts.last().is_some_and(all_hidden),
             name: None,
@@ -1555,8 +1574,80 @@ struct Located {
     shared: Option<usize>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Slice<'a> {
+    Empty,
+    Definition(&'a str),
+    Loose,
+}
+
+fn prepare_slices<'a>(
+    model: &Model,
+    document: &Value,
+    definitions: &BTreeMap<&'a str, &'a Value>,
+    occurrences: &[&'a Value],
+    loose: &[&'a str],
+    threads: usize,
+    report: &mut Report,
+) -> BTreeMap<Slice<'a>, Model> {
+    if threads == 1 {
+        report.set_threads(threads, 1);
+        return BTreeMap::new();
+    }
+    // Empty holders share one empty IR. Only Model.name differs, assigned by the tree.
+    let mut jobs = vec![(Slice::Empty, Vec::new())];
+    let mut seen = BTreeSet::new();
+    for &occurrence in occurrences {
+        if scope(occurrence) != Some("local") {
+            continue;
+        }
+        let Some(key) = definition_key(occurrence) else {
+            continue;
+        };
+        if !seen.insert(key) {
+            continue;
+        }
+        let Some(&row) = definitions.get(key) else {
+            continue;
+        };
+        let bodies: Vec<&str> = row
+            .get("bodies")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .collect();
+        if !bodies.is_empty() {
+            jobs.push((Slice::Definition(key), bodies));
+        }
+    }
+    if !loose.is_empty() {
+        jobs.push((Slice::Loose, loose.to_vec()));
+    }
+    let largest = jobs
+        .iter()
+        .map(|(_, bodies)| bodies.len())
+        .max()
+        .unwrap_or(0);
+    let estimate = (largest as u64).saturating_mul(1 << 20).max(256 << 20);
+    // The shared empty template is a helper, not another part worker slot.
+    let workers = crate::parallel::workers(threads, jobs.len().saturating_sub(1), estimate);
+    report.set_threads(threads, workers);
+    if workers == 1 {
+        return BTreeMap::new();
+    }
+    let prepared = crate::parallel::prepare_ordered(&jobs, workers, |(_, bodies)| {
+        only(model, document, bodies, String::new())
+    });
+    jobs.into_iter()
+        .zip(prepared)
+        .filter_map(|((key, _), part)| part.map(|part| (key, part)))
+        .collect()
+}
+
 /// A design's occurrence tree, turned into parts and sub-assemblies one definition at a time.
 struct Tree<'a> {
+    prepared: BTreeMap<Slice<'a>, Model>,
     external: &'a ExternalParts,
     external_built: BTreeMap<usize, usize>,
     left_out: Vec<LeftOut>,
@@ -1583,6 +1674,21 @@ struct Tree<'a> {
 }
 
 impl<'a> Tree<'a> {
+    fn sliced(&mut self, key: Slice<'a>, bodies: &[&str], name: String) -> Result<Model, String> {
+        let prepared = if bodies.is_empty() {
+            self.prepared.get(&Slice::Empty).cloned()
+        } else {
+            self.prepared.remove(&key)
+        };
+        match prepared {
+            Some(mut part) => {
+                part.name = name;
+                Ok(part)
+            }
+            None => only(self.model, self.document, bodies, name),
+        }
+    }
+
     /// The placements of `occurrences` among `self.parts`; `shared`, the length of the path to
     /// the outermost component placed more than once that holds them, when one does.
     fn placements(
@@ -1739,14 +1845,14 @@ impl<'a> Tree<'a> {
             .unwrap_or_else(|| format!("{} component {}", self.model.name, self.parts.len() + 1));
         let model = if inner.is_empty() {
             if bodies.is_empty() && self.all_owned {
-                only(self.model, self.document, &[], name)?
+                self.sliced(Slice::Empty, &[], name)?
             } else if bodies.is_empty() {
                 return Err(format!(
                     "cadmpeg does not say which bodies belong to component {}",
                     name_of(row).unwrap_or(definition)
                 ));
             } else {
-                only(self.model, self.document, &bodies, name)?
+                self.sliced(Slice::Definition(definition), &bodies, name)?
             }
         } else {
             // A sub-assembly: the components inside it, and its own bodies at its origin.
@@ -1759,7 +1865,11 @@ impl<'a> Tree<'a> {
             self.open.pop();
             let mut placements = placed?;
             let own_part = if !bodies.is_empty() {
-                let own = only(self.model, self.document, &bodies, format!("{name} bodies"))?;
+                let own = self.sliced(
+                    Slice::Definition(definition),
+                    &bodies,
+                    format!("{name} bodies"),
+                )?;
                 let hidden = all_hidden(&own);
                 self.parts.push(own);
                 placements.push(Placement {
@@ -1775,7 +1885,7 @@ impl<'a> Tree<'a> {
             let parts = std::mem::replace(&mut self.parts, outer);
             self.built = outer_built;
             self.external_built = outer_external;
-            let mut holder = only(self.model, self.document, &[], name)?;
+            let mut holder = self.sliced(Slice::Empty, &[], name)?;
             holder.assembly = Some(Assembly {
                 own_part,
                 parts,
@@ -3918,5 +4028,28 @@ mod tests {
         );
         assert!(transform(&row(serde_json::json!([2, 1, 1]))).is_err());
         assert!(transform(&serde_json::json!({"transform": [[1, 0, 0]]})).is_err());
+    }
+
+    #[test]
+    fn parallel_slices_keep_parts_names_histories_and_tree_order_identical() {
+        let mut unnamed = nested(true, None);
+        let mut wire = serde_json::to_value(&unnamed.ir).unwrap();
+        for definition in wire["model"]["product_definitions"].as_array_mut().unwrap() {
+            definition.as_object_mut().unwrap().remove("name");
+        }
+        unnamed.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        for model in [
+            nested(true, None),
+            unnamed,
+            with_history(true),
+            with_history(false),
+            with_components(true),
+        ] {
+            let serial =
+                local_components_with_threads(&model, &BTreeMap::new(), 1, &mut Report::default());
+            let parallel =
+                local_components_with_threads(&model, &BTreeMap::new(), 4, &mut Report::default());
+            assert_eq!(format!("{serial:?}"), format!("{parallel:?}"));
+        }
     }
 }

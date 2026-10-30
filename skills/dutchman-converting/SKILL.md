@@ -57,6 +57,16 @@ past the 4096-path limit.
 
 ## Conversion choices and memory
 
+Use `threads: 0` (default) for automatic assembly part concurrency, or
+`threads: 1` for serial preparation; a positive number bounds workers. Part count and
+available memory cap the actual count. The report records `threads: {requested, used}`.
+The core slices components in parallel and reuses identical empty holder models. SolidCraft
+parts prepare independently and enter the design in the original order, preserving the
+design and loss order; worker failures retry serially. Native decoding remains serial.
+Batch `jobs` limits simultaneous files, while `threads` limits part workers per file.
+The CLI equivalent is `--threads N` on `convert`, `convert-all`, and `watch`.
+`no_memory_check` does not remove the part-worker memory cap.
+
 Use `preset: "standard"` by default. `fast` keeps geometry at stored placements,
 without history, reference sketches, or joints; `full` keeps everything that maps and
 never drops history to fit memory. Standard drops only assembly history when its

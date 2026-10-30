@@ -124,6 +124,17 @@ Checks: an end-to-end test converts a synthetic `.f3d` and compares the containe
 `document.json` with a golden file; a non-blocking CI job opens the result in a released
 SolidCraft CLI (`scripts/solidcraft-roundtrip.sh`).
 
+After decode, the core precomputes component slices on bounded scoped workers. Tree building
+consumes them in its original order and assigns the original part names; identical empty
+assembly holders share an empty model. Failed preparations retry serially where needed.
+
+Assembly leaf parts prepare on bounded scoped workers: STEP restatement, history mapping,
+blend proving, and SolidCraft replay checks each own their reports and temporary data.
+The builder consumes results in the original depth-first part order; only it allocates IDs,
+relocates histories, renames bodies, appends reports, and writes blobs. Worker failures and
+panics leave an empty result slot, retried serially by the builder before assembly.
+`--threads 1` takes the serial path without creating workers. Native decoding is unchanged.
+
 ## Feature history
 
 When every active feature of the model maps onto SolidCraft features, the design is that

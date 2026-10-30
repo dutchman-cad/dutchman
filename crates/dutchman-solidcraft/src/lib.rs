@@ -50,6 +50,9 @@ const GEOMETRY: &str = "geometry";
 /// Writes `.solidcraft` designs.
 #[derive(Clone, Debug)]
 pub struct SolidCraftWriter {
+    threads: usize,
+    #[cfg(test)]
+    prepare_hook: Option<fn(&Model)>,
     import_only: bool,
     sketches: bool,
     joints: bool,
@@ -63,6 +66,9 @@ pub struct SolidCraftWriter {
 impl Default for SolidCraftWriter {
     fn default() -> Self {
         SolidCraftWriter {
+            threads: 0,
+            #[cfg(test)]
+            prepare_hook: None,
             import_only: false,
             sketches: true,
             joints: true,
@@ -79,6 +85,13 @@ impl SolidCraftWriter {
     /// A writer that writes history when it can, checked with the SolidCraft CLI it finds.
     pub fn new() -> Self {
         SolidCraftWriter::default()
+    }
+
+    /// Maximum simultaneous assembly part preparations (0: automatic, 1: serial).
+    /// Available memory and the number of parts may reduce this limit.
+    pub fn threads(mut self, threads: usize) -> Self {
+        self.threads = threads;
+        self
     }
 
     /// Target this SolidCraft release, or detect the installed CLI's version when absent.
@@ -748,6 +761,7 @@ impl Writer for SolidCraftWriter {
         out: &mut dyn std::io::Write,
         report: &mut Report,
     ) -> Result<(), Error> {
+        report.set_threads(self.threads, 1);
         if empty_assembly(model) {
             report.push(
                 Severity::Info,

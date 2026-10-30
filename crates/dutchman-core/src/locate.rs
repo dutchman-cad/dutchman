@@ -28,6 +28,8 @@ const MAX_NAMED: usize = 64;
 /// Where to look for the files an assembly places, beyond the paths it stores.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PartSearch {
+    /// Maximum part slice workers (0: automatic, 1: serial).
+    pub threads: usize,
     /// The project folder, searched with its subfolders. Without one, it is the nearest
     /// folder above the assembly that holds an Inventor project file (`.ipj`), else the
     /// folder two above the assembly's. Either way, the folders named by the nearest project
@@ -42,6 +44,7 @@ impl PartSearch {
     /// A search of `project` alone.
     pub fn project(project: impl Into<PathBuf>) -> PartSearch {
         PartSearch {
+            threads: 0,
             project: Some(project.into()),
             also: Vec::new(),
         }
@@ -54,6 +57,7 @@ impl PartSearch {
 /// needed.
 #[derive(Default)]
 pub(crate) struct Finder {
+    pub(crate) threads: usize,
     given: Option<PathBuf>,
     project: OnceCell<Project>,
     index: OnceCell<Index>,
@@ -143,6 +147,7 @@ impl Finder {
     /// above it.
     pub(crate) fn new(search: &PartSearch) -> Finder {
         Finder {
+            threads: search.threads,
             given: search.project.clone(),
             also: search
                 .also
@@ -923,6 +928,7 @@ pub(crate) mod tests {
         std::fs::write(elsewhere.join("Screw.ipt"), b"").unwrap();
         std::fs::write(elsewhere.join("Plate.ipt"), b"").unwrap();
         let finder = Finder::new(&PartSearch {
+            threads: 0,
             project: None,
             also: vec![dir.path().join("Library")],
         });

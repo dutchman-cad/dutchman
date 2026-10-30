@@ -2233,3 +2233,95 @@ fn narrowing_choices_reach_batch_workers_and_invalidate_journal_reuse() {
     );
     assert_eq!(changed["results"][0]["choices"]["sketches"], false);
 }
+
+#[test]
+fn threads_accepts_serial_and_auto_on_conversion_commands() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = fixture("generated_unit_cube.f3d");
+    for threads in ["0", "1", "4"] {
+        let output = dir.path().join(format!("threads-{threads}.solidcraft"));
+        let out = dutchman(&[
+            "convert",
+            input.as_str(),
+            output.to_str().unwrap(),
+            "--threads",
+            threads,
+            "--no-verify",
+            "--json",
+        ]);
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(
+            report["threads"]["requested"],
+            threads.parse::<u64>().unwrap()
+        );
+        assert_eq!(report["threads"]["used"], 1);
+        for args in [
+            vec![
+                "convert-all",
+                input.as_str(),
+                "--out-dir",
+                dir.path().to_str().unwrap(),
+                "--threads",
+                threads,
+                "--help",
+            ],
+            vec![
+                "watch",
+                dir.path().to_str().unwrap(),
+                "--out-dir",
+                dir.path().to_str().unwrap(),
+                "--threads",
+                threads,
+                "--help",
+            ],
+        ] {
+            assert!(dutchman(&args).status.success());
+        }
+    }
+}
+
+#[test]
+fn part_threads_keep_assembly_json_and_design_bytes_identical() {
+    if !dutchman_core::Format::FreeCadDocument.can_convert() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let input = fixture("freecad-1.1.4-A01/A01a.FCStd");
+    let output = dir.path().join("assembly.solidcraft");
+    let mut previous = None;
+    for threads in ["1", "4"] {
+        let out = dutchman(&[
+            "convert",
+            &input,
+            output.to_str().unwrap(),
+            "--threads",
+            threads,
+            "--no-verify",
+            "--solidcraft-version",
+            "0.26.0",
+            "--preset",
+            "full",
+            "--no-memory-check",
+            "--json",
+            "--quiet",
+        ]);
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let mut report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        report.as_object_mut().unwrap().remove("threads");
+        let design = std::fs::read(&output).unwrap();
+        if let Some((before_report, before_design)) = previous {
+            assert_eq!(before_report, report);
+            assert_eq!(before_design, design);
+        }
+        previous = Some((report, design));
+    }
+}

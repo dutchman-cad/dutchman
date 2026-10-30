@@ -12,7 +12,9 @@ mod format;
 mod hidden;
 mod input_edges;
 mod locate;
+mod memory;
 mod names;
+pub mod parallel;
 pub mod placement;
 mod progress;
 mod report;
@@ -26,6 +28,7 @@ pub use assembly::{
 pub use error::{Error, FILE_DID_NOT_CONVERT, RELEASES};
 pub use format::Format;
 pub use locate::{PartSearch, MAX_SEARCHED};
+pub use memory::available_memory;
 pub use progress::{elapsed, Progress, ProgressEvent};
 
 /// The neutral model every conversion passes through.
@@ -160,7 +163,7 @@ pub fn read_with_progress(
         report.push_at(Stage::Input, Severity::Info, "parts search", searched);
     }
     if model.assembly.is_none() {
-        match assembly::local(&model) {
+        match assembly::local(&model, finder.threads, report) {
             assembly::Components::None => {}
             // The writer reports the assembly's joint notes: what it leaves out depends on
             // what it can build.

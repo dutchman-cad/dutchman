@@ -42,8 +42,10 @@ pub(crate) fn write(
             "assembly joints left out by choice; stored placements retained",
         );
     }
+    let prepared = prepare_parts(writer, assembly, report).into_iter();
     let mut builder = Builder {
         writer,
+        prepared,
         container: Container::empty(),
         report,
         next_id: 1,
@@ -410,8 +412,152 @@ fn outcome(histories: &[Check], features: Vec<FeatureOutcome>) -> Outcome {
     }
 }
 
+/// Owned work for one leaf part. IDs, names, and all shared state belong to Builder.
+struct PreparedPart {
+    step: Option<String>,
+    report: Report,
+    history: Option<PreparedHistory>,
+    references: Option<(history::History, Report)>,
+}
+
+struct PreparedHistory {
+    mapping: history::Mapping,
+    report: Report,
+    checked: Option<verify::Outcome>,
+    partial_check: Option<Check>,
+}
+
+fn prepare_history(
+    writer: &SolidCraftWriter,
+    part: &Model,
+    step: &str,
+) -> Result<PreparedHistory, Error> {
+    let mut part_report = Report::default();
+    let mut mapping = history::map_with_sketches(
+        part,
+        &mut part_report,
+        writer.resolved_version(),
+        writer.sketches,
+    );
+    if let Ok(history) = &mut mapping.result {
+        if let Err(why) = history::base::restate(history, part) {
+            mapping.result = Err(why);
+        }
+    }
+    writer.prove_blends(part, &mut mapping, step)?;
+    let checked = if let Ok(history) = &mapping.result {
+        if history.stop.is_some() {
+            None
+        } else {
+            let written = writer.history_design(part, history, step, Live::History)?;
+            Some(writer.check(part, history, step, &written)?)
+        }
+    } else {
+        None
+    };
+    let partial_check = if let Some(verify::Outcome::Differs(why)) = &checked {
+        Some(writer.partial(
+            part,
+            &mut mapping,
+            step,
+            Some(format!("replay differs ({why})")),
+        )?)
+    } else if mapping.result.as_ref().is_ok_and(|h| h.stop.is_some()) {
+        Some(writer.partial(part, &mut mapping, step, None)?)
+    } else {
+        None
+    };
+
+    crate::report_sketches(&mapping.features, &mut part_report);
+    if let Ok(history) = &mapping.result {
+        if history.stop.is_some() {
+            let original = writer.history_design(part, history, step, Live::Original)?;
+            writer.check_import(part, &original, &mut part_report);
+        }
+    }
+    Ok(PreparedHistory {
+        mapping,
+        report: part_report,
+        checked,
+        partial_check,
+    })
+}
+
+fn prepare_part(writer: &SolidCraftWriter, part: &Model) -> Result<PreparedPart, Error> {
+    let mut report = Report::default();
+    let step = if part.ir.model.bodies.is_empty() {
+        None
+    } else {
+        Some(step::restate(part, &mut report)?)
+    };
+    let history = match &step {
+        Some(step) if !writer.import_only => Some(prepare_history(writer, part, step)?),
+        _ => None,
+    };
+    let references = if step.is_some() && writer.import_only && writer.sketches {
+        let mut notes = Report::default();
+        let (references, _) = history::sketches(part, &mut notes);
+        Some((references, notes))
+    } else {
+        None
+    };
+    Ok(PreparedPart {
+        step,
+        report,
+        history,
+        references,
+    })
+}
+
+fn leaf_parts<'a>(assembly: &'a Assembly, parts: &mut Vec<&'a Model>) {
+    for part in &assembly.parts {
+        if let Some(sub) = &part.assembly {
+            leaf_parts(sub, parts);
+        } else {
+            parts.push(part);
+        }
+    }
+}
+
+fn prepare_parts(
+    writer: &SolidCraftWriter,
+    assembly: &Assembly,
+    report: &mut Report,
+) -> Vec<Option<PreparedPart>> {
+    if writer.threads == 1 {
+        report.set_threads(1, 1);
+        return Vec::new();
+    }
+    let mut parts = Vec::new();
+    leaf_parts(assembly, &mut parts);
+    // Reserve mapping, STEP and replay temporaries, with a floor for a CLI process.
+    let largest = parts
+        .iter()
+        .map(|part| part.ir.model.bodies.len())
+        .max()
+        .unwrap_or(0);
+    let estimate = (largest as u64).saturating_mul(1 << 20).max(256 << 20);
+    let workers = dutchman_core::parallel::workers(writer.threads, parts.len(), estimate);
+    report.set_threads(writer.threads, workers);
+    if workers == 1 {
+        return Vec::new();
+    }
+    if !writer.import_only {
+        // Initialise version detection on the coordinator; workers only read the cache.
+        writer.resolved_version();
+    }
+    dutchman_core::parallel::prepare_ordered(&parts, workers, |part| {
+        #[cfg(test)]
+        if let Some(hook) = writer.prepare_hook {
+            hook(part);
+        }
+        prepare_part(writer, part)
+    })
+}
+
 /// The design's components, occurrences and Import features as they are built.
 struct Builder<'r> {
+    prepared: std::vec::IntoIter<Option<PreparedPart>>,
     writer: &'r SolidCraftWriter,
     container: Container,
     report: &'r mut Report,
@@ -720,28 +866,54 @@ impl Builder<'_> {
     /// geometry SolidCraft cannot show and is left out. A part with no bodies at all, as a
     /// component empty in its source, becomes an empty component, so joints to it still hold.
     fn part(&mut self, part: &Model, parent: u64) -> Result<Option<(u64, String)>, Error> {
-        let step = match &part.assembly {
-            Some(_) => None,
-            None if part.ir.model.bodies.is_empty() => {
-                let file = part.source_file.as_deref().unwrap_or(&part.name);
-                self.report.push(
-                    Severity::Info,
-                    file,
-                    format!(
-                        "{}: placed as an empty component: it has no bodies",
-                        part.name
-                    ),
-                );
-                None
-            }
-            None => match step::restate(part, self.report) {
-                Ok(step) => Some(step),
-                Err(err) => {
+        let prepared = if part.assembly.is_none() {
+            self.prepared.next().flatten()
+        } else {
+            None
+        };
+        let mut prepared_history = None;
+        let mut prepared_references = None;
+        let step = match prepared {
+            Some(prepared) => {
+                self.report.append(prepared.report);
+                if prepared.step.is_none() {
                     let file = part.source_file.as_deref().unwrap_or(&part.name);
-                    self.report
-                        .push(Severity::Dropped, file, format!("left out: {err}"));
-                    return Ok(None);
+                    self.report.push(
+                        Severity::Info,
+                        file,
+                        format!(
+                            "{}: placed as an empty component: it has no bodies",
+                            part.name
+                        ),
+                    );
                 }
+                prepared_history = prepared.history;
+                prepared_references = prepared.references;
+                prepared.step
+            }
+            None => match &part.assembly {
+                Some(_) => None,
+                None if part.ir.model.bodies.is_empty() => {
+                    let file = part.source_file.as_deref().unwrap_or(&part.name);
+                    self.report.push(
+                        Severity::Info,
+                        file,
+                        format!(
+                            "{}: placed as an empty component: it has no bodies",
+                            part.name
+                        ),
+                    );
+                    None
+                }
+                None => match step::restate(part, self.report) {
+                    Ok(step) => Some(step),
+                    Err(err) => {
+                        let file = part.source_file.as_deref().unwrap_or(&part.name);
+                        self.report
+                            .push(Severity::Dropped, file, format!("left out: {err}"));
+                        return Ok(None);
+                    }
+                },
             },
         };
         let component = self.id();
@@ -755,7 +927,14 @@ impl Builder<'_> {
             }
             (None, Some(step)) => {
                 let blob = self.container.add_step(step.as_bytes())?;
-                let replayed = self.history(part, &step, component, &name)?;
+                let replayed = self.history(
+                    part,
+                    &step,
+                    component,
+                    &name,
+                    prepared_history,
+                    prepared_references,
+                )?;
                 let id = self.id();
                 let (label, suppressed) = if replayed {
                     (ORIGINAL.to_owned(), true)
@@ -784,11 +963,19 @@ impl Builder<'_> {
         step: &str,
         component: u64,
         name: &str,
+        prepared: Option<PreparedHistory>,
+        references: Option<(history::History, Report)>,
     ) -> Result<bool, Error> {
         let file = part.source_file.as_deref().unwrap_or(&part.name).to_owned();
         if self.writer.import_only {
             if self.writer.sketches {
-                let (mut references, _) = history::sketches(part, self.report);
+                let mut references = match references {
+                    Some((references, report)) => {
+                        self.report.append(report);
+                        references
+                    }
+                    None => history::sketches(part, self.report).0,
+                };
                 references.relocate(self.next_id - 1, component, &prefix(name), &mut self.taken);
                 self.next_id = references.next_id;
                 self.reference_sketches.extend(
@@ -802,45 +989,15 @@ impl Builder<'_> {
             }
             return Ok(false);
         }
-        let mut part_report = Report::default();
-        let mut mapping = history::map_with_sketches(
-            part,
-            &mut part_report,
-            self.writer.resolved_version(),
-            self.writer.sketches,
-        );
-        if let Ok(history) = &mut mapping.result {
-            if let Err(why) = history::base::restate(history, part) {
-                mapping.result = Err(why);
-            }
-        }
-        self.writer.prove_blends(part, &mut mapping, step)?;
-        let checked = if let Ok(history) = &mapping.result {
-            if history.stop.is_some() {
-                None
-            } else {
-                let written = self
-                    .writer
-                    .history_design(part, history, step, Live::History)?;
-                Some(self.writer.check(part, history, step, &written)?)
-            }
-        } else {
-            None
+        let PreparedHistory {
+            mapping,
+            report: mut part_report,
+            checked,
+            partial_check,
+        } = match prepared {
+            Some(prepared) => prepared,
+            None => prepare_history(self.writer, part, step)?,
         };
-        let partial_check = if let Some(verify::Outcome::Differs(why)) = &checked {
-            Some(self.writer.partial(
-                part,
-                &mut mapping,
-                step,
-                Some(format!("replay differs ({why})")),
-            )?)
-        } else if mapping.result.as_ref().is_ok_and(|h| h.stop.is_some()) {
-            Some(self.writer.partial(part, &mut mapping, step, None)?)
-        } else {
-            None
-        };
-
-        crate::report_sketches(&mapping.features, &mut part_report);
         self.outcomes
             .extend(mapping.features.iter().cloned().map(|mut feature| {
                 feature.name = Some(format!("{file}: {}", feature.name.unwrap_or_default()));
@@ -944,12 +1101,6 @@ impl Builder<'_> {
             }
         };
         let partial = history.stop.is_some();
-        if partial {
-            let original = self
-                .writer
-                .history_design(part, &history, step, Live::Original)?;
-            self.writer.check_import(part, &original, &mut part_report);
-        }
         self.report.append_prefixed(part_report, &file);
         let component = if partial {
             let child = self.id();
@@ -1104,5 +1255,72 @@ mod hidden_tests {
         let (paths, left) = hidden_paths(&occurrences, &placements, &hidden, 1);
         assert_eq!(paths.len(), 1);
         assert_eq!(left, 1);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
+mod prepare_tests {
+    use super::*;
+    use dutchman_core::{Format, Writer};
+
+    #[test]
+    fn a_worker_panic_retries_the_part_serially_without_changing_the_design() {
+        let part = dutchman_core::read(
+            Format::InventorPart,
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../dutchman-core/tests/fixtures/synthetic_cube.ipt"),
+            &mut Report::default(),
+        )
+        .unwrap();
+        let mut model = part.clone();
+        let mut second = part.clone();
+        second.name = "Forced panic".to_owned();
+        model.assembly = Some(Assembly {
+            parts: vec![part, second],
+            placements: vec![
+                dutchman_core::Placement {
+                    hidden: false,
+                    name: None,
+                    part: 0,
+                    transform: IDENTITY,
+                },
+                dutchman_core::Placement {
+                    hidden: false,
+                    name: None,
+                    part: 1,
+                    transform: IDENTITY,
+                },
+            ],
+            own_part: None,
+            joints: Vec::new(),
+            left_out: Vec::new(),
+            held: Vec::new(),
+            joint_notes: Vec::new(),
+            stored_placements: Vec::new(),
+        });
+        let serial = SolidCraftWriter::new()
+            .verification(crate::Verification::Off)
+            .threads(1);
+        let mut parallel = serial.clone().threads(4);
+        parallel.prepare_hook = Some(|part| {
+            if part.name == "Forced panic" {
+                panic!("forced part preparation panic");
+            }
+        });
+        let mut expected = Vec::new();
+        let mut expected_report = Report::default();
+        serial
+            .write(&model, &mut expected, &mut expected_report)
+            .unwrap();
+        let mut actual = Vec::new();
+        let mut actual_report = Report::default();
+        parallel
+            .write(&model, &mut actual, &mut actual_report)
+            .unwrap();
+        assert_eq!(expected, actual);
+        assert_eq!(actual_report.threads(), Some((4, 2)));
+        actual_report.set_threads(1, 1);
+        assert_eq!(format!("{expected_report:?}"), format!("{actual_report:?}"));
     }
 }

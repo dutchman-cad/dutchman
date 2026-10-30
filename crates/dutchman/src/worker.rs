@@ -104,6 +104,8 @@ impl ConvertOptions {
     /// part files are looked for is the job's (see [`search_args`]).
     pub fn to_args(&self) -> Vec<OsString> {
         let mut args: Vec<OsString> = Vec::new();
+        args.push("--threads".into());
+        args.push(self.threads.to_string().into());
         // Only a choice other than the default is passed, so the arguments of a SolidCraft run
         // stay those every `dutchman` takes.
         if self.to != crate::OutputFormat::Solidcraft {

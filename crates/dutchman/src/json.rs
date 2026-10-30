@@ -315,6 +315,12 @@ pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value
     out.insert("schema".to_owned(), json!(schema));
     out.insert("ok".to_owned(), json!(true));
     out.insert("input".to_owned(), input);
+    if let Some((requested, used)) = report.threads() {
+        out.insert(
+            "threads".to_owned(),
+            json!({"requested": requested, "used": used}),
+        );
+    }
     if let Some(outcome) = report.outcome() {
         out.extend(outcome_fields(outcome));
         if !report.parts().is_empty() {

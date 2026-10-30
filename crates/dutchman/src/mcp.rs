@@ -184,6 +184,7 @@ fn result(report: &Value) -> Value {
 /// The options every converting tool takes, as JSON Schema properties.
 fn option_properties() -> Map<String, Value> {
     let properties = json!({
+        "threads": {"type": "integer", "minimum": 0, "default": 0, "description": "Maximum assembly part workers (0: automatic, 1: serial); capped by available memory."},
         "to": {"type": "string", "enum": ["solidcraft", "freecad"], "default": "solidcraft", "description": "Output format: SolidCraft design or self-contained FreeCAD rebuild macro."},
         "preset": {"type": "string", "enum": ["fast", "standard", "full"], "default": "standard", "description": "Fast keeps shape only; Standard keeps history, sketches and joints but budgets assembly history; Full never drops history for memory."},
         "history": {"type": "boolean", "default": true, "description": "Keep feature history when the preset allows it; false narrows the preset like import_only."},
@@ -363,7 +364,8 @@ fn count(arguments: &Arguments, key: &str) -> Result<Option<NonZeroUsize>, Strin
     }
 }
 
-const OPTIONS: [&str; 14] = [
+const OPTIONS: [&str; 15] = [
+    "threads",
     "preset",
     "history",
     "sketches",
@@ -397,7 +399,11 @@ fn part_search(arguments: &Arguments) -> Result<PartSearch, String> {
             .collect::<Result<_, _>>()?,
         Some(_) => return Err("search must be a list of paths".to_owned()),
     };
-    Ok(PartSearch { project, also })
+    Ok(PartSearch {
+        threads: 0,
+        project,
+        also,
+    })
 }
 
 fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
@@ -420,9 +426,17 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
             return Err("solidcraft_version must be a version string such as 0.25.1".to_owned())
         }
     };
+    let threads = match arguments.get("threads") {
+        None | Some(Value::Null) => 0,
+        Some(value) => value
+            .as_u64()
+            .and_then(|n| usize::try_from(n).ok())
+            .ok_or_else(|| "threads must be a whole number of at least 0".to_owned())?,
+    };
     let import_only = flag(arguments, "import_only", false)?;
     let history = flag(arguments, "history", true)?;
     Ok(ConvertOptions {
+        threads,
         to,
         verify: false,
         freecad_timeout: 300,
@@ -587,6 +601,25 @@ fn convert_all(arguments: &Arguments) -> Result<Value, String> {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn part_threads_are_validated_and_forwarded() {
+        for requested in [0, 1, 4] {
+            let arguments = json!({"threads": requested});
+            let parsed = options(arguments.as_object().unwrap()).unwrap();
+            assert_eq!(parsed.threads, requested);
+            assert_eq!(parsed.part_search().threads, requested);
+            assert!(parsed.to_args().windows(2).any(|pair| {
+                pair[0] == "--threads" && pair[1] == requested.to_string().as_str()
+            }));
+        }
+        for bad in [json!(-1), json!(1.5), json!("4"), json!(true)] {
+            let arguments = json!({"threads": bad});
+            assert!(options(arguments.as_object().unwrap())
+                .unwrap_err()
+                .contains("threads must be"));
+        }
+    }
 
     #[test]
     fn batch_schema_describes_every_write_destination() {

@@ -96,6 +96,7 @@ pub fn prepare(jobs: &mut [Job], options: &ConvertOptions) {
             job.search.project.clone_from(&options.project);
         }
         job.search.also.clone_from(&options.search);
+        job.search.threads = options.threads;
     }
 }
 
@@ -512,6 +513,7 @@ fn plan_with_limit(
                 output,
                 replace,
                 search: PartSearch {
+                    threads: 0,
                     project: input.is_dir().then(|| input.clone()),
                     also: Vec::new(),
                 },
