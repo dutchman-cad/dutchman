@@ -312,12 +312,8 @@ impl ConvertOptions {
             full: self.output_writer(),
             reduced: reduced.output_writer(),
             options: self.clone(),
-            estimate: choices::estimate_with_threads(input, &self.choices(), self.threads),
-            reduced_estimate: choices::estimate_with_threads(
-                input,
-                &reduced.choices(),
-                self.threads,
-            ),
+            estimate: choices::estimate_with_options(input, &self.choices(), self),
+            reduced_estimate: choices::estimate_with_options(input, &reduced.choices(), self),
             available: if self.no_memory_check || self.preset == choices::Preset::Fast {
                 None
             } else {
@@ -614,6 +610,7 @@ mod option_tests {
             estimate: Some(choices::Estimate {
                 peak_bytes: 2_000_000_000,
                 seconds: 30,
+                seconds_exact: 30.0,
                 band: 0.5,
                 memory_band: 0.5,
                 time_band: Some(0.5),
@@ -621,6 +618,7 @@ mod option_tests {
             reduced_estimate: Some(choices::Estimate {
                 peak_bytes: 500_000_000,
                 seconds: 10,
+                seconds_exact: 10.0,
                 band: 0.5,
                 memory_band: 0.5,
                 time_band: Some(0.5),

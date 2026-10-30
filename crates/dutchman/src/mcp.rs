@@ -489,7 +489,7 @@ fn convert(arguments: &Arguments) -> Result<Value, String> {
     let options = options(arguments)?;
     if flag(arguments, "dry_run", false)? {
         let mut choices = options.choices();
-        let full = crate::choices::estimate_with_threads(&input, &choices, options.threads);
+        let full = crate::choices::estimate_with_options(&input, &choices, &options);
         let available = crate::choices::available_memory();
         let check = crate::choices::memory_check(&input, &options);
         let estimate = match check {
