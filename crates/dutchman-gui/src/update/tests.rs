@@ -244,3 +244,21 @@ fn completed_checks_schedule_an_hour_and_only_manual_checks_open_the_window() {
     assert!(!updater.open);
     assert!(updater.rx.is_none());
 }
+
+#[test]
+fn notes_drop_a_first_line_that_only_repeats_the_version() {
+    use super::notes_body;
+    assert_eq!(
+        notes_body("Dutchman 0.2.6\n\nFaster assemblies.", "v0.2.6"),
+        "Faster assemblies."
+    );
+    assert_eq!(
+        notes_body("v0.2.6\nFaster assemblies.", "v0.2.6"),
+        "Faster assemblies."
+    );
+    assert_eq!(
+        notes_body("Faster assemblies.", "v0.2.6"),
+        "Faster assemblies."
+    );
+    assert_eq!(notes_body("Dutchman 0.2.6", "v0.2.6"), "");
+}

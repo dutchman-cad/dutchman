@@ -457,7 +457,7 @@ impl Updater {
                                 ui.label("Release notes could not be read. Open the release page to read them.");
                                 ui.hyperlink_to("Release page", format!("{RELEASES}/tag/{}", release.tag));
                             } else {
-                                ui.label(&release.notes);
+                                ui.label(notes_body(&release.notes, &release.tag));
                             }
                         });
                     let exe = std::env::current_exe()
@@ -469,10 +469,15 @@ impl Updater {
                         if ui.button("Copy command").clicked() {
                             ctx.copy_text(command.into());
                         }
-                    } else {
-                        ui.hyperlink_to("Download", &release.download);
                     }
                     ui.horizontal(|ui| {
+                        if install_command_for_current_exe().is_none()
+                            && ui
+                                .add(egui::Button::new("Download").fill(ui.visuals().selection.bg_fill))
+                                .clicked()
+                        {
+                            ctx.open_url(egui::OpenUrl::new_tab(&release.download));
+                        }
                         if ui.button("Skip this version").clicked() {
                             self.skipped = release.tag.clone();
                             self.open = false;
@@ -497,3 +502,39 @@ impl Updater {
 
 #[cfg(test)]
 mod tests;
+
+/// The update command for how this copy was installed, when it was installed by a package manager.
+fn install_command_for_current_exe() -> Option<&'static str> {
+    let exe = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.canonicalize().ok().or(Some(p)))?;
+    install_command(&exe)
+}
+
+/// Release notes without a first line that only repeats the version the heading already names.
+fn notes_body<'a>(notes: &'a str, tag: &str) -> &'a str {
+    let version = tag.trim_start_matches('v');
+    let trimmed = notes.trim_start();
+    match trimmed.split_once('\n') {
+        Some((first, rest))
+            if first
+                .trim()
+                .trim_start_matches("Dutchman")
+                .trim()
+                .trim_start_matches('v')
+                == version =>
+        {
+            rest.trim_start()
+        }
+        None if trimmed
+            .trim()
+            .trim_start_matches("Dutchman")
+            .trim()
+            .trim_start_matches('v')
+            == version =>
+        {
+            ""
+        }
+        _ => trimmed,
+    }
+}
