@@ -587,13 +587,22 @@ fn homebrew_job_survives_window_close_and_offers_restart_on_success() {
     harness.run_steps(3);
     assert!(harness.query_by_label("Updating Dutchman…").is_some());
     assert!(harness.query_by_label("Restart Dutchman").is_none());
+    // While the update runs, offering the same command again would only invite running it twice.
+    assert!(harness.query_by_label("Copy command").is_none());
     harness.state_mut().updater.preview_homebrew(true);
     harness.run_steps(3);
     assert!(harness
         .query_by_label("Dutchman 0.2.6 is installed")
         .is_some());
     assert!(harness.query_by_label("Restart Dutchman").is_some());
-    assert!(harness.query_by_label("Copy command").is_some());
+    assert!(harness.query_by_label("Update output").is_some());
+    // After success only the result and Restart apply.
+    for gone in ["Copy command", "Skip this version", "Remind me later"] {
+        assert!(
+            harness.query_by_label(gone).is_none(),
+            "{gone} after success"
+        );
+    }
 }
 
 #[test]
