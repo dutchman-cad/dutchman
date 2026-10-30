@@ -92,7 +92,7 @@ pub(crate) fn map(
 
     // Newer SolidCraft applies entry-recess tip angles. These source forms have
     // flat bottoms; 180 degrees makes that explicit on those releases.
-    if ctx.target_version >= crate::SolidCraftVersion::V0_22_1
+    if crate::VersionGate::EntryRecessTip.supported(ctx.target_version)
         && matches!(
             hole.get("type").and_then(Value::as_str),
             Some("counterbore" | "countersink")

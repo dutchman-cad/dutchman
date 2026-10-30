@@ -382,6 +382,9 @@ impl Updater {
         }
         updater
     }
+    pub fn newer_known(&self) -> bool {
+        self.release.is_some()
+    }
     pub fn saved(&self) -> Value {
         serde_json::json!({"automatic": self.automatic, "skipped": self.skipped, "remind_at": self.remind_at})
     }
