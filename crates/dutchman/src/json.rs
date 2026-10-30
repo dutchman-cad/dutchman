@@ -701,10 +701,8 @@ pub fn conversion_choices(report: &mut Value, input: &Path, options: &crate::Con
     if let Some(fields) = report.as_object_mut() {
         fields.insert(
             "estimate".to_owned(),
-            estimate(crate::choices::estimate_with_threads(
-                input,
-                &choices,
-                options.threads,
+            estimate(crate::choices::estimate_with_options(
+                input, &choices, options,
             )),
         );
         fields.insert("choices".to_owned(), choice_values(options.preset, choices));
@@ -714,7 +712,7 @@ pub fn conversion_choices(report: &mut Value, input: &Path, options: &crate::Con
 /// The shared estimate representation; null means it could not be pre-read.
 pub fn estimate(estimate: Option<crate::choices::Estimate>) -> Value {
     estimate.map_or(Value::Null, |e| {
-        json!({"peak_bytes": e.peak_bytes, "seconds": e.seconds, "band": e.band,
+        json!({"peak_bytes": e.peak_bytes, "seconds": e.seconds, "seconds_exact": e.seconds_exact, "band": e.band,
             "memory_band": e.memory_band, "time_band": e.time_band})
     })
 }
@@ -838,16 +836,20 @@ mod tests {
         let value = estimate(Some(crate::choices::Estimate {
             peak_bytes: 33_000_000,
             seconds: 1,
+            seconds_exact: 0.17,
             band: 0.6,
             memory_band: 0.55,
             time_band: None,
         }));
+        assert_eq!(value["seconds"], json!(1));
+        assert_eq!(value["seconds_exact"], json!(0.17));
         assert_eq!(value["band"], json!(0.6));
         assert_eq!(value["memory_band"], json!(0.55));
         assert!(value["time_band"].is_null());
         let timed = estimate(Some(crate::choices::Estimate {
             peak_bytes: 4_000_000_000,
             seconds: 34,
+            seconds_exact: 34.0,
             band: 0.25,
             memory_band: 0.25,
             time_band: Some(0.2),

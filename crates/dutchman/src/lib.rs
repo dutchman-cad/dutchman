@@ -302,7 +302,7 @@ impl ConvertOptions {
         let mut history_note = None;
         if !self.no_memory_check && self.choices().history_within_budget && self.choices().history {
             if let (Some(estimate), Some(available)) = (
-                choices::estimate_with_threads(input, &self.choices(), self.threads),
+                choices::estimate_with_options(input, &self.choices(), self),
                 available,
             ) {
                 if estimate.peak_bytes > available {
