@@ -283,6 +283,8 @@ fn screenshots() {
                     peak_bytes: 8_000_000_000,
                     seconds: 120,
                     band: 0.3,
+                    memory_band: 0.3,
+                    time_band: None,
                 },
                 available: 4_000_000_000,
                 lighter: Some(dutchman::choices::Preset::Fast),
