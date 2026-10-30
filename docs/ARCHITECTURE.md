@@ -422,8 +422,10 @@ and MCP drawing conversion are not supported yet.
 and the shared memory check. Format detection uses `dutchman-core::Format`; ZIP reads
 are bounded before directory allocation and do not inflate members. Front ends use
 `ConvertOptions::writer_for_input` (or `convert_options_with_progress`) to prepare
-Standard's history budget. The prepared writer confirms the decoded model is an
-assembly before choosing its history-free writer and recording the Info reason.
+Standard's history budget. Conversion checks the budget before decoding, using the
+pre-read estimate and one available-memory snapshot. When only the history-free
+estimate fits, it fixes the history-free writer for parts and assemblies and records
+one Info reason when writing. There is no memory refusal at the map stage.
 `ConvertOptions::writer()` retains options in an `OutputWriter::Configured` adapter;
 `batch::run_each` prepares its inputs individually, including desktop runs and retries.
 Direct low-level writer calls apply presets and switches without a source-specific budget.
