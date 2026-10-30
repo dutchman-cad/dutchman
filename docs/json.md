@@ -84,7 +84,7 @@ its designs when a pre-read exceeds the budget; it also includes that file's ref
   "ok": true,
   "input": {"path": "part.f3d", "format": "fusion_archive", "format_name": "Fusion archive (.f3d)"},
   "output": {"path": "part.solidcraft", "format": "solidcraft/23"},
-  "estimate": {"peak_bytes": 1200000000, "seconds": 90, "band": 0.5},
+  "estimate": {"peak_bytes": 1200000000, "seconds": 90, "band": 0.5, "memory_band": 0.5, "time_band": null},
   "choices": {"preset": "standard", "history": true, "sketches": true, "joints": true},
   "mode": "history",
   "verification": {"status": "verified", "reason": null},
@@ -103,17 +103,30 @@ its designs when a pre-read exceeds the budget; it also includes that file's ref
 }
 ```
 
+RAM bands use every successful Windows and Mac measurement, re-evaluated with the
+current coefficients: Fusion `.f3d` ±55%, multipart `.f3z` ±25%, Inventor parts ±30%,
+SolidWorks parts ±35%, and FreeCAD ±50%. One percentage point of safety is added before
+rounding up to a 5% step. These are empirical envelopes of this corpus, not guarantees for
+unseen designs. Unmeasured formats retain their ±100% memory heuristic.
+Time has its own band: multipart Fusion is ±20%; other time bands are uncalibrated.
+Whole-second rounding cannot describe tiny conversion times with a narrow relative band,
+and a host-specific ten-second SolidCraft version probe affected the older Mac binary.
+Those need a startup/continuous-time model; the bands are not widened to conceal them.
+JSON adds `memory_band` and nullable `time_band`. The existing `band` stays as the legacy
+shared heuristic for compatibility; use the new fields for separate calibrated coverage.
+For multipart Fusion `band` is the larger of the two calibrated bands (25%).
+
 For Fusion archives with multiple readable embedded `.f3d` designs, the time estimate
 uses the requested threads (0 means auto), limited by the converter's shared CPU, item
 count and free-memory worker policy. A serial component remains. Before native decoding,
 the embedded design count and the converter's 256 MiB minimum worker budget are proxies;
 actual body counts can reduce conversion workers further. Single-design files keep their
-existing time model. Memory estimates and bands are unchanged by this time refit.
+existing time model. The worker adjustment changes time estimates only.
 
 | Field | Meaning |
 |---|---|
 | `ok` | `true` when the design was written. |
-| `estimate` | Quick pre-read estimate, including on memory refusals: `peak_bytes` and `seconds` are unsigned integers; `band` is the relative error band (`0.5` means ±50%). `null` when unavailable. No design is decoded; a Fusion archive's designs are read one at a time for their own directories. Calibrated on measured conversions (see guide.md). Memory adds fixed process overhead to a content cost; history scales the content cost. Memory and time use separate history factors. |
+| `estimate` | Quick pre-read estimate, including on memory refusals: `peak_bytes` and `seconds` are unsigned integers; `band` is the legacy shared heuristic (`0.5` means ±50%); `memory_band` is the separate relative RAM band and `time_band` is a relative time band or `null` when uncalibrated. `band` remains the previous heuristic when timing is uncalibrated, and the larger of the two calibrated bands otherwise. `null` when unavailable. No design is decoded; a Fusion archive's designs are read one at a time for their own directories. Calibrated on measured conversions (see guide.md). Memory adds fixed process overhead to a content cost; history scales the content cost. Memory and time use separate history factors. |
 | `threads` | `{requested, used}` records the per-part worker limit (`0`: automatic, `1`: serial) and the bounded maximum used across component slicing and SolidCraft preparation. Counts are limited by part count and available memory, and never below `1`. Present on SolidCraft writes and on assembly reads that reach component slicing, including inspection and other output formats; omitted for pre-read estimates and reads/writers with no part-worker stage. Batch entries and watch reports carry it within each conversion report. Native decoding stays serial. |
 | `choices` | Selected `preset` (`fast`, `standard`, or `full`) and effective `history`, `sketches`, and `joints` booleans after narrowing. `history` is false when Standard leaves assembly history out to fit memory. These describe requested retention, not proof that every feature maps. FreeCAD output honours history only. |
 | `input.format` | `fusion_archive`, `fusion_multi_document`, `inventor_part`, `inventor_assembly`, `solidworks_part`, `solidworks_assembly`, `freecad_document`, `catia_part`, `creo_part`, `nx_part`, `creo_view`, `rhino`, `acis`, `step`, `iges`, `unclassified_part`, or `null` for an unknown extension. `format_name` is the same for people. Creo and NX share `.prt` and are distinguished by contents; inconclusive contents give `unclassified_part`. |

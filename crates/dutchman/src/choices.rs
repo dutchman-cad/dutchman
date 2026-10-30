@@ -88,23 +88,58 @@ pub struct Estimate {
     pub peak_bytes: u64,
     /// Expected time, in seconds.
     pub seconds: u64,
-    /// The relative error band of both numbers (0.3 is ±30 %), from the calibration set.
+    /// Legacy shared band. Use the separate bands for calibrated coverage; when time is
+    /// uncalibrated this retains the previous heuristic for existing consumers.
     pub band: f64,
+    /// Relative peak-memory band (0.3 is ±30 %); unmeasured formats retain a heuristic.
+    pub memory_band: f64,
+    /// Relative time band, or None when measured timings do not support the current model.
+    pub time_band: Option<f64>,
 }
 
 /// A human-readable estimate shared by the CLI and desktop app.
 pub fn estimate_text(estimate: Estimate) -> String {
-    let memory = if estimate.peak_bytes < 100_000_000 {
+    format!(
+        "{}, {}",
+        memory_text(estimate, false),
+        time_text(estimate, false)
+    )
+}
+
+/// The same estimate with its measured error bands, as the command line prints it.
+pub fn estimate_text_with_bands(estimate: Estimate) -> String {
+    format!(
+        "{}, {}",
+        memory_text(estimate, true),
+        time_text(estimate, true)
+    )
+}
+
+fn memory_text(estimate: Estimate, band: bool) -> String {
+    if estimate.peak_bytes < 100_000_000 {
         "under 0.1 GB".to_owned()
+    } else if band {
+        format!(
+            "about {:.1} GB (±{:.0} %)",
+            gb(estimate.peak_bytes),
+            estimate.memory_band * 100.0
+        )
     } else {
         format!("about {:.1} GB", gb(estimate.peak_bytes))
-    };
-    let time = if estimate.seconds < 60 {
-        "under a minute".to_owned()
-    } else {
-        format!("about {} min", estimate.seconds.div_ceil(60))
-    };
-    format!("{memory}, {time}")
+    }
+}
+
+/// A time without a measured band for its format reads as rough.
+fn time_text(estimate: Estimate, band: bool) -> String {
+    if estimate.seconds < 60 {
+        return "under a minute".to_owned();
+    }
+    let minutes = estimate.seconds.div_ceil(60);
+    match estimate.time_band {
+        Some(time_band) if band => format!("about {minutes} min (±{:.0} %)", time_band * 100.0),
+        Some(_) => format!("about {minutes} min"),
+        None => format!("roughly {minutes} min"),
+    }
 }
 
 /// The result of checking a conversion against currently available memory.
@@ -219,6 +254,8 @@ struct Coefficients {
     history_factor: f64,
     history_seconds_factor: f64,
     band: f64,
+    memory_band: f64,
+    time_band: Option<f64>,
 }
 
 // Calibrated on: release builds converting a 350-occurrence Fusion printer frame (74 MB of
@@ -232,6 +269,11 @@ struct Coefficients {
 // FreeCAD recipe/fixture documents: exact-bundle Windows conversions and a pre-preset macOS
 // nightly (see guide.md). Fixed overhead is separate from content-dependent history memory.
 // Memory and time have separate history factors so a RAM fit does not change time estimates.
+// Band refit: all 5,516 successful CSV rows from Windows and both Macs, evaluated
+// against the current model. Add one percentage point of slack, then round up to 5%.
+// Four measured formats have timing misses beyond their previous bands (subsecond
+// rounding and host-specific CLI-probe startup), so their time bands are uncalibrated.
+// Keep their legacy shared heuristics for old consumers; never widen to hide those misses.
 // All format-dependent coefficients, including history factors and bands, live in this table.
 const COEFFICIENTS: &[Coefficients] = &[
     Coefficients {
@@ -247,6 +289,8 @@ const COEFFICIENTS: &[Coefficients] = &[
         history_factor: 1.1,
         history_seconds_factor: 1.1,
         band: 0.6,
+        memory_band: 0.55,
+        time_band: None,
     },
     Coefficients {
         format: Format::FusionMultiDocument,
@@ -260,7 +304,9 @@ const COEFFICIENTS: &[Coefficients] = &[
         }),
         history_factor: 1.1,
         history_seconds_factor: 1.1,
-        band: 0.6,
+        band: 0.25,
+        memory_band: 0.25,
+        time_band: Some(0.2),
     },
     Coefficients {
         format: Format::InventorPart,
@@ -272,6 +318,8 @@ const COEFFICIENTS: &[Coefficients] = &[
         history_factor: 2.0,
         history_seconds_factor: 2.0,
         band: 0.5,
+        memory_band: 0.3,
+        time_band: None,
     },
     Coefficients {
         format: Format::InventorAssembly,
@@ -283,6 +331,8 @@ const COEFFICIENTS: &[Coefficients] = &[
         history_factor: 3.0,
         history_seconds_factor: 3.0,
         band: 1.0,
+        memory_band: 1.0,
+        time_band: None,
     },
     Coefficients {
         format: Format::SolidWorksPart,
@@ -294,6 +344,8 @@ const COEFFICIENTS: &[Coefficients] = &[
         history_factor: 1.7,
         history_seconds_factor: 1.7,
         band: 0.4,
+        memory_band: 0.35,
+        time_band: None,
     },
     Coefficients {
         format: Format::SolidWorksAssembly,
@@ -305,6 +357,8 @@ const COEFFICIENTS: &[Coefficients] = &[
         history_factor: 3.0,
         history_seconds_factor: 3.0,
         band: 1.0,
+        memory_band: 1.0,
+        time_band: None,
     },
     Coefficients {
         format: Format::FreeCadDocument,
@@ -316,6 +370,8 @@ const COEFFICIENTS: &[Coefficients] = &[
         history_factor: 1.04,
         history_seconds_factor: 3.0,
         band: 1.0,
+        memory_band: 0.5,
+        time_band: None,
     },
     Coefficients {
         format: Format::CatiaPart,
@@ -327,6 +383,8 @@ const COEFFICIENTS: &[Coefficients] = &[
         history_factor: 3.0,
         history_seconds_factor: 3.0,
         band: 1.0,
+        memory_band: 1.0,
+        time_band: None,
     },
     Coefficients {
         format: Format::CreoPart,
@@ -338,6 +396,8 @@ const COEFFICIENTS: &[Coefficients] = &[
         history_factor: 3.0,
         history_seconds_factor: 3.0,
         band: 1.0,
+        memory_band: 1.0,
+        time_band: None,
     },
     Coefficients {
         format: Format::NxPart,
@@ -349,6 +409,8 @@ const COEFFICIENTS: &[Coefficients] = &[
         history_factor: 3.0,
         history_seconds_factor: 3.0,
         band: 1.0,
+        memory_band: 1.0,
+        time_band: None,
     },
     Coefficients {
         format: Format::CreoView,
@@ -360,6 +422,8 @@ const COEFFICIENTS: &[Coefficients] = &[
         history_factor: 3.0,
         history_seconds_factor: 3.0,
         band: 1.0,
+        memory_band: 1.0,
+        time_band: None,
     },
     Coefficients {
         format: Format::Rhino,
@@ -371,6 +435,8 @@ const COEFFICIENTS: &[Coefficients] = &[
         history_factor: 3.0,
         history_seconds_factor: 3.0,
         band: 1.0,
+        memory_band: 1.0,
+        time_band: None,
     },
     Coefficients {
         format: Format::Acis,
@@ -382,6 +448,8 @@ const COEFFICIENTS: &[Coefficients] = &[
         history_factor: 3.0,
         history_seconds_factor: 3.0,
         band: 1.0,
+        memory_band: 1.0,
+        time_band: None,
     },
     Coefficients {
         format: Format::Step,
@@ -393,6 +461,8 @@ const COEFFICIENTS: &[Coefficients] = &[
         history_factor: 2.0,
         history_seconds_factor: 2.0,
         band: 1.0,
+        memory_band: 1.0,
+        time_band: None,
     },
     Coefficients {
         format: Format::Iges,
@@ -404,6 +474,8 @@ const COEFFICIENTS: &[Coefficients] = &[
         history_factor: 2.0,
         history_seconds_factor: 2.0,
         band: 1.0,
+        memory_band: 1.0,
+        time_band: None,
     },
     Coefficients {
         format: Format::UnclassifiedPart,
@@ -415,6 +487,8 @@ const COEFFICIENTS: &[Coefficients] = &[
         history_factor: 3.0,
         history_seconds_factor: 3.0,
         band: 1.0,
+        memory_band: 1.0,
+        time_band: None,
     },
 ];
 
@@ -487,6 +561,8 @@ fn estimate_using_workers(
             * seconds_factor)
             .ceil() as u64,
         band: coefficients.band,
+        memory_band: coefficients.memory_band,
+        time_band: coefficients.time_band,
     })
 }
 
@@ -694,6 +770,10 @@ mod tests {
             assert!(c.history_factor.is_finite() && c.history_factor > 1.0);
             assert!(c.history_seconds_factor.is_finite() && c.history_seconds_factor > 1.0);
             assert!(c.band.is_finite() && c.band > 0.0 && c.band <= 1.0);
+            assert!(c.memory_band.is_finite() && c.memory_band > 0.0 && c.memory_band <= c.band);
+            if let Some(time_band) = c.time_band {
+                assert!(time_band.is_finite() && time_band > 0.0 && time_band <= c.band);
+            }
         }
     }
 
@@ -762,6 +842,8 @@ mod tests {
         assert_eq!(limited.seconds, 10);
         assert_eq!(auto.peak_bytes, serial.peak_bytes);
         assert_eq!(auto.band, serial.band);
+        assert_eq!(auto.memory_band, serial.memory_band);
+        assert_eq!(auto.time_band, serial.time_band);
     }
 
     #[test]
@@ -992,6 +1074,8 @@ mod tests {
                 peak_bytes: 2_500_000_000,
                 seconds: 60,
                 band: 0.5,
+                memory_band: 0.5,
+                time_band: Some(0.5),
             },
             available: 1_000_000_000,
             lighter: Some(Preset::Fast),
@@ -1013,10 +1097,41 @@ mod tests {
                 estimate_text(Estimate {
                     peak_bytes,
                     seconds,
-                    band: 0.3
+                    band: 0.3,
+                    memory_band: 0.3,
+                    time_band: Some(0.3),
                 }),
                 expected
             );
         }
+        let measured = Estimate {
+            peak_bytes: 2_500_000_000,
+            seconds: 121,
+            band: 0.25,
+            memory_band: 0.25,
+            time_band: Some(0.2),
+        };
+        assert_eq!(
+            estimate_text_with_bands(measured),
+            "about 2.5 GB (±25 %), about 3 min (±20 %)"
+        );
+        let rough = Estimate {
+            time_band: None,
+            ..measured
+        };
+        assert_eq!(estimate_text(rough), "about 2.5 GB, roughly 3 min");
+        assert_eq!(
+            estimate_text_with_bands(rough),
+            "about 2.5 GB (±25 %), roughly 3 min"
+        );
+        let small = Estimate {
+            peak_bytes: 1,
+            seconds: 1,
+            ..rough
+        };
+        assert_eq!(
+            estimate_text_with_bands(small),
+            "under 0.1 GB, under a minute"
+        );
     }
 }

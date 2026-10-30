@@ -102,24 +102,35 @@ Use `convert` with `dry_run: true` for a quick estimate without decoding or writ
 {"name":"convert","arguments":{"input":"/models/assembly.f3z","preset":"standard","dry_run":true}}
 ```
 
-The result contains `ok: true`, `estimate: {peak_bytes, seconds, band}`,
+The result contains `ok: true`, `estimate: {peak_bytes, seconds, band, memory_band, time_band}`,
 `choices: {preset, history, sketches, joints}`, and `fits` (boolean, or `null` when
 memory or the estimate is unknown). `estimate` itself can be `null`. ZIP directory
-reads are bounded and no design is decoded. The band is ±60 % for Fusion, ±40 % for
-SolidWorks, ±50 % for Inventor parts, and ±100 % for FreeCAD and formats without measurements
-(see guide.md). Memory includes fixed process overhead that is not multiplied by history;
+reads are bounded and no design is decoded. Memory includes fixed process overhead that is not multiplied by history;
 its content cost and the time estimate have separate history factors. A pre-read cannot confirm archive assembly structure,
 so Standard's budgeted choices are provisional until normal decoding. An over-budget
 dry run returns `fits: false`; it writes nothing and does not attempt conversion.
 Normal convert reports, including batch results, carry the same `estimate` and
 `choices` fields ([json.md](json.md)).
 
+RAM bands use every successful Windows and Mac measurement, re-evaluated with the
+current coefficients: Fusion `.f3d` ±55%, multipart `.f3z` ±25%, Inventor parts ±30%,
+SolidWorks parts ±35%, and FreeCAD ±50%. One percentage point of safety is added before
+rounding up to a 5% step. These are empirical envelopes of this corpus, not guarantees for
+unseen designs. Unmeasured formats retain their ±100% memory heuristic.
+Time has its own band: multipart Fusion is ±20%; other time bands are uncalibrated.
+Whole-second rounding cannot describe tiny conversion times with a narrow relative band,
+and a host-specific ten-second SolidCraft version probe affected the older Mac binary.
+Those need a startup/continuous-time model; the bands are not widened to conceal them.
+JSON adds `memory_band` and nullable `time_band`. The existing `band` stays as the legacy
+shared heuristic for compatibility; use the new fields for separate calibrated coverage.
+For multipart Fusion `band` is the larger of the two calibrated bands (25%).
+
 For Fusion archives with multiple readable embedded `.f3d` designs, the time estimate
 uses the requested threads (0 means auto), limited by the converter's shared CPU, item
 count and free-memory worker policy. A serial component remains. Before native decoding,
 the embedded design count and the converter's 256 MiB minimum worker budget are proxies;
 actual body counts can reduce conversion workers further. Single-design files keep their
-existing time model. Memory estimates and bands are unchanged by this time refit.
+existing time model. The worker adjustment changes time estimates only.
 
 
 ## Set up a client

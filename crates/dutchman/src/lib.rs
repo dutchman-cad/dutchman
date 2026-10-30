@@ -615,11 +615,15 @@ mod option_tests {
                 peak_bytes: 2_000_000_000,
                 seconds: 30,
                 band: 0.5,
+                memory_band: 0.5,
+                time_band: Some(0.5),
             }),
             reduced_estimate: Some(choices::Estimate {
                 peak_bytes: 500_000_000,
                 seconds: 10,
                 band: 0.5,
+                memory_band: 0.5,
+                time_band: Some(0.5),
             }),
             available: Some(1_000_000_000),
         };
