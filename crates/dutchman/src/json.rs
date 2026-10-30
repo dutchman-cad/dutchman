@@ -662,8 +662,12 @@ fn solidcraft_values(
     json!({"target": target.to_string(), "found": found})
 }
 
-/// The SolidCraft version line shared by single-file and batch text output.
+/// The SolidCraft version line shared by single-file and batch text output. A file that
+/// failed or was refused writes nothing, so it names no target.
 pub fn solidcraft_line(report: &Value) -> Option<String> {
+    if report.get("error").is_some_and(|error| !error.is_null()) {
+        return None;
+    }
     let target = report.pointer("/solidcraft/target")?.as_str()?;
     let found = report
         .pointer("/solidcraft/found")
@@ -771,6 +775,9 @@ mod tests {
             assert_eq!(report["solidcraft"]["target"], "0.27.0");
             assert_eq!(report["solidcraft"]["found"], json!(found));
             assert_eq!(solidcraft_line(&report).as_deref(), Some(line));
+            let mut refused = report.clone();
+            refused["error"] = json!({"message": "open it in SolidCraft directly"});
+            assert!(solidcraft_line(&refused).is_none());
         }
         assert_eq!(
             solidcraft_values(None, Some("0.26.0".into()))["target"],
