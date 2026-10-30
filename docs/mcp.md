@@ -527,6 +527,7 @@ DXF conversion is not supported yet by convert-all, the MCP convert tool, deskto
 or web. The MCP formats report includes the additive `drawings` capability list.
 
 The desktop app also offers Fast, Standard (default), and Full presets, with Advanced
-checkboxes that leave history, sketches, or joints out. It shows available estimates and
-checks memory before converting; choosing Convert anyway applies only to that run. History
+checkboxes that leave history, sketches, or joints out. Estimates below 0.1 GB show
+**under 0.1 GB**, and times below 60 seconds show **under a minute**, using the CLI’s text
+formatter. Numeric MCP estimates stay unchanged. The app checks memory before converting; choosing Convert anyway applies only to that run. History
 Info messages, including assembly history left out by Standard, appear on its result cards.

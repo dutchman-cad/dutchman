@@ -98,7 +98,9 @@ dutchman convert-all project/ --out-dir converted/ --preset standard --yes
 ```
 
 Text conversions show `Estimate: about N GB, about M min (±B %)` before converting,
-unless `--quiet` is set. Estimates use file size and format. For `.f3d`, `.f3z`, and
+unless `--quiet` is set. Estimates below 0.1 GB read `under 0.1 GB`, and times below
+60 seconds read `under a minute`; longer times round up to whole minutes.
+Estimates use file size and format. For `.f3d`, `.f3z`, and
 `.FCStd`, a bounded ZIP pre-read counts members and uses their total uncompressed size; for
 Fusion archives it also reads each design's own directory, one design at a time, and never
 decodes a design. The figures are calibrated on measured conversions of Fusion assemblies and
@@ -275,7 +277,8 @@ The target SolidCraft selector defaults to the found CLI's version, else the bui
 (currently 0.27.0), even when history checking is off. Choose **0.18.2 and newer** for older installations or
 **0.25.1 and newer** to keep supported FreeCAD helices as editable coils.
 
-The window's title shows its version, and its **Report a problem** link opens the
+The window's title shows its version. **Report a problem**, at the top right beside the
+**System / Day / Night** theme switch, opens the
 [A file didn't convert](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
 form. `dutchman-gui --version` and `dutchman-gui --help` print and exit without opening a
 window (on Windows, read the version with `dutchman --version`).
@@ -418,12 +421,16 @@ are remembered between launches. Older `import_only` settings restore with **Fea
 history** unchecked and Standard as the base.
 
 Queued files show **about N GB, about M min** when an estimate is available. Files in queued
-folders are listed with their estimates too. **M GB free** appears once when the machine's
-free memory can be read. These are estimates, not limits or promises; an unavailable estimate
+folders are listed with their estimates too. Estimates below 0.1 GB show **under 0.1 GB**,
+and times below 60 seconds show **under a minute**, just as in the CLI. **M GB free** appears
+once when the machine's free memory can be read. These are estimates, not limits or promises; an unavailable estimate
 leaves no label. Planning and estimation run in the background.
 
 Before a conversion or retry, Dutchman checks each file's estimate against free memory.
-If one is too large, a dialog names the file, estimate, free memory, and lighter preset.
+If one is too large, a dialog shows only its file name, without the folder path:
+“`<file name>` may use about `<N GB>` of memory while converting. Your computer has about
+`<M GB>` free, so it may not have enough.” A separate line advises using the lighter preset
+when one is available. All dialog buttons appear in one horizontal row.
 **Use Fast** or **Use Standard** selects the offered preset and checks the files again.
 **Convert anyway** skips the memory check for this run only; **Cancel** starts no conversion.
 When Fast is already selected, the dialog offers only Convert anyway and Cancel.

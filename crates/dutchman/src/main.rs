@@ -536,9 +536,8 @@ fn memory_cli(
                 if !as_json && !quiet {
                     if let Some(estimate) = estimate {
                         println!(
-                            "Estimate: about {:.1} GB, about {:.1} min (±{:.0} %)",
-                            choices::gb(estimate.peak_bytes),
-                            estimate.seconds as f64 / 60.0,
+                            "Estimate: {} (±{:.0} %)",
+                            choices::estimate_text(estimate),
                             estimate.band * 100.0
                         );
                     }
@@ -553,9 +552,8 @@ fn memory_cli(
                     if let Some(lighter) = lighter {
                         if !quiet {
                             println!(
-                                "Estimate: about {:.1} GB, about {:.1} min (±{:.0} %)",
-                                choices::gb(estimate.peak_bytes),
-                                estimate.seconds as f64 / 60.0,
+                                "Estimate: {} (±{:.0} %)",
+                                choices::estimate_text(estimate),
                                 estimate.band * 100.0
                             );
                         }

@@ -92,6 +92,21 @@ pub struct Estimate {
     pub band: f64,
 }
 
+/// A human-readable estimate shared by the CLI and desktop app.
+pub fn estimate_text(estimate: Estimate) -> String {
+    let memory = if estimate.peak_bytes < 100_000_000 {
+        "under 0.1 GB".to_owned()
+    } else {
+        format!("about {:.1} GB", gb(estimate.peak_bytes))
+    };
+    let time = if estimate.seconds < 60 {
+        "under a minute".to_owned()
+    } else {
+        format!("about {} min", estimate.seconds.div_ceil(60))
+    };
+    format!("{memory}, {time}")
+}
+
 /// The result of checking a conversion against currently available memory.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum MemoryCheck {
@@ -788,5 +803,26 @@ mod tests {
             lighter: Some(Preset::Fast),
         };
         assert_eq!(check.refusal().unwrap(), "this conversion needs about 2.5 GB and 1.0 GB are free; try --preset fast (or --no-memory-check to run anyway)");
+    }
+
+    #[test]
+    fn estimates_show_lower_bounds_and_round_minutes_up() {
+        for (peak_bytes, seconds, expected) in [
+            (0, 0, "under 0.1 GB, under a minute"),
+            (99_999_999, 59, "under 0.1 GB, under a minute"),
+            (100_000_000, 60, "about 0.1 GB, about 1 min"),
+            (2_500_000_000, 121, "about 2.5 GB, about 3 min"),
+            (100_000_000, 59, "about 0.1 GB, under a minute"),
+            (99_999_999, 60, "under 0.1 GB, about 1 min"),
+        ] {
+            assert_eq!(
+                estimate_text(Estimate {
+                    peak_bytes,
+                    seconds,
+                    band: 0.3
+                }),
+                expected
+            );
+        }
     }
 }

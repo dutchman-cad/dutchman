@@ -230,6 +230,8 @@ Normal JSON reports contain file names and paths. For sharing, request `--report
 The desktop app shows Info messages with subject `history` directly on result cards,
 including Standard's explanation when assembly history is left out to fit in free memory.
 These are existing `losses` entries; desktop estimates and preset labels add no report fields.
+The CLI and desktop display small estimates as “under 0.1 GB” and “under a minute”;
+JSON `estimate.peak_bytes` and `estimate.seconds` remain numeric and unrounded.
 
 ### Stages
 
