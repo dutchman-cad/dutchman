@@ -86,8 +86,10 @@ impl Choices {
 pub struct Estimate {
     /// Expected peak memory, in bytes.
     pub peak_bytes: u64,
-    /// Expected time, in seconds.
+    /// Expected time, rounded up to whole seconds for compatibility.
     pub seconds: u64,
+    /// Expected elapsed time before rounding; time bands apply to this value.
+    pub seconds_exact: f64,
     /// Legacy shared band. Use the separate bands for calibrated coverage; when time is
     /// uncalibrated this retains the previous heuristic for existing consumers.
     pub band: f64,
@@ -187,7 +189,7 @@ pub(crate) fn memory_check_with(
     available: Option<u64>,
 ) -> MemoryCheck {
     let choices = options.choices();
-    let estimate = estimate_with_threads(input, &choices, options.threads);
+    let estimate = estimate_with_options(input, &choices, options);
     if options.no_memory_check || options.preset == Preset::Fast {
         return MemoryCheck::Ok(estimate);
     }
@@ -198,7 +200,7 @@ pub(crate) fn memory_check_with(
         return MemoryCheck::Ok(estimate);
     }
     if choices.history && choices.history_within_budget {
-        let reduced = estimate_without_history(input, choices, options.threads);
+        let reduced = estimate_without_history(input, choices, options);
         if reduced.is_some_and(|e| e.peak_bytes <= available) {
             return MemoryCheck::Ok(reduced);
         }
@@ -213,10 +215,10 @@ pub(crate) fn memory_check_with(
 fn estimate_without_history(
     input: &Path,
     mut choices: Choices,
-    threads: usize,
+    options: &crate::ConvertOptions,
 ) -> Option<Estimate> {
     choices.history = false;
-    estimate_with_threads(input, &choices, threads)
+    estimate_with_options(input, &choices, options)
 }
 
 // Independent embedded designs expose parallel work before native decoding. The serial
@@ -239,6 +241,22 @@ struct Coefficients {
     band: f64,
     memory_band: f64,
     time_band: Option<f64>,
+    startup: Option<StartupTime>,
+}
+
+// Fixed elapsed startup is independent of content/history scaling. Windows history
+// includes the memory guard and CLI discovery. The older Mac binary exhibits both
+// immediate and ten-second CLI probes. Allow the ten-second version-probe timeout
+// until an explicit target version bypasses discovery; this remains a rough estimate.
+struct StartupTime {
+    windows_shape: f64,
+    windows_history: f64,
+    mac_shape: f64,
+    mac_history: f64,
+    windows_verify_shape: f64,
+    windows_verify_history: f64,
+    // FreeCAD recipe data support a much smaller content term than the old guess.
+    content_rates: Option<(f64, f64)>,
 }
 
 // Calibrated on: release builds converting a 350-occurrence Fusion printer frame (74 MB of
@@ -274,6 +292,15 @@ const COEFFICIENTS: &[Coefficients] = &[
         band: 0.6,
         memory_band: 0.55,
         time_band: None,
+        startup: Some(StartupTime {
+            windows_shape: 0.160,
+            windows_history: 1.535,
+            mac_shape: 0.020,
+            mac_history: 10.040,
+            windows_verify_shape: 0.330,
+            windows_verify_history: 1.690,
+            content_rates: None,
+        }),
     },
     Coefficients {
         format: Format::FusionMultiDocument,
@@ -290,6 +317,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         band: 0.25,
         memory_band: 0.25,
         time_band: Some(0.2),
+        startup: None,
     },
     Coefficients {
         format: Format::InventorPart,
@@ -303,6 +331,15 @@ const COEFFICIENTS: &[Coefficients] = &[
         band: 0.5,
         memory_band: 0.3,
         time_band: None,
+        startup: Some(StartupTime {
+            windows_shape: 0.162,
+            windows_history: 1.550,
+            mac_shape: 0.010,
+            mac_history: 10.040,
+            windows_verify_shape: 0.335,
+            windows_verify_history: 1.760,
+            content_rates: None,
+        }),
     },
     Coefficients {
         format: Format::InventorAssembly,
@@ -316,6 +353,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         band: 1.0,
         memory_band: 1.0,
         time_band: None,
+        startup: None,
     },
     Coefficients {
         format: Format::SolidWorksPart,
@@ -329,6 +367,15 @@ const COEFFICIENTS: &[Coefficients] = &[
         band: 0.4,
         memory_band: 0.35,
         time_band: None,
+        startup: Some(StartupTime {
+            windows_shape: 0.170,
+            windows_history: 1.668,
+            mac_shape: 0.010,
+            mac_history: 10.040,
+            windows_verify_shape: 0.340,
+            windows_verify_history: 1.660,
+            content_rates: None,
+        }),
     },
     Coefficients {
         format: Format::SolidWorksAssembly,
@@ -342,6 +389,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         band: 1.0,
         memory_band: 1.0,
         time_band: None,
+        startup: None,
     },
     Coefficients {
         format: Format::FreeCadDocument,
@@ -355,6 +403,15 @@ const COEFFICIENTS: &[Coefficients] = &[
         band: 1.0,
         memory_band: 0.5,
         time_band: None,
+        startup: Some(StartupTime {
+            windows_shape: 0.183,
+            windows_history: 1.600,
+            mac_shape: 0.025,
+            mac_history: 10.050,
+            windows_verify_shape: 0.350,
+            windows_verify_history: 1.900,
+            content_rates: Some((0.2, 0.01)),
+        }),
     },
     Coefficients {
         format: Format::CatiaPart,
@@ -368,6 +425,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         band: 1.0,
         memory_band: 1.0,
         time_band: None,
+        startup: None,
     },
     Coefficients {
         format: Format::CreoPart,
@@ -381,6 +439,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         band: 1.0,
         memory_band: 1.0,
         time_band: None,
+        startup: None,
     },
     Coefficients {
         format: Format::NxPart,
@@ -394,6 +453,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         band: 1.0,
         memory_band: 1.0,
         time_band: None,
+        startup: None,
     },
     Coefficients {
         format: Format::CreoView,
@@ -407,6 +467,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         band: 1.0,
         memory_band: 1.0,
         time_band: None,
+        startup: None,
     },
     Coefficients {
         format: Format::Rhino,
@@ -420,6 +481,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         band: 1.0,
         memory_band: 1.0,
         time_band: None,
+        startup: None,
     },
     Coefficients {
         format: Format::Acis,
@@ -433,6 +495,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         band: 1.0,
         memory_band: 1.0,
         time_band: None,
+        startup: None,
     },
     Coefficients {
         format: Format::Step,
@@ -446,6 +509,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         band: 1.0,
         memory_band: 1.0,
         time_band: None,
+        startup: None,
     },
     Coefficients {
         format: Format::Iges,
@@ -459,6 +523,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         band: 1.0,
         memory_band: 1.0,
         time_band: None,
+        startup: None,
     },
     Coefficients {
         format: Format::UnclassifiedPart,
@@ -472,6 +537,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         band: 1.0,
         memory_band: 1.0,
         time_band: None,
+        startup: None,
     },
 ];
 
@@ -484,6 +550,56 @@ pub fn estimate(input: &Path, choices: &Choices) -> Option<Estimate> {
 /// Estimate using the requested part workers (0 selects the machine's automatic limit).
 pub fn estimate_with_threads(input: &Path, choices: &Choices, threads: usize) -> Option<Estimate> {
     estimate_using_workers(input, choices, threads, dutchman_core::parallel::workers)
+}
+
+/// Estimate with verification and preflight context, without running a CLI probe.
+/// Verification replay has not been measured, so it never inherits a conversion-only band.
+pub fn estimate_with_options(
+    input: &Path,
+    choices: &Choices,
+    options: &crate::ConvertOptions,
+) -> Option<Estimate> {
+    let mut result = estimate_with_threads(input, choices, options.threads)?;
+    let startup = Format::from_path(input)
+        .and_then(|format| COEFFICIENTS.iter().find(|c| c.format == format))
+        .and_then(|c| c.startup.as_ref());
+    if cfg!(target_os = "macos")
+        && startup.is_some()
+        && options.solidcraft_version.is_some()
+        && choices.history
+    {
+        result.seconds_exact = (result.seconds_exact - 10.0).max(0.001);
+        result.seconds = result.seconds_exact.ceil() as u64;
+    }
+    if !options.no_verify {
+        if cfg!(target_os = "macos")
+            && startup.is_some()
+            && !choices.history
+            && options.solidcraft_version.is_none()
+        {
+            // Verification can discover a version even when history is not requested.
+            result.seconds_exact += 10.0;
+            result.seconds = result.seconds_exact.ceil() as u64;
+        }
+        if cfg!(target_os = "windows") {
+            if let Some(startup) = startup {
+                let (without, with) = if choices.history {
+                    (startup.windows_history, startup.windows_verify_history)
+                } else {
+                    (startup.windows_shape, startup.windows_verify_shape)
+                };
+                result.seconds_exact += with - without;
+                result.seconds = result.seconds_exact.ceil() as u64;
+            }
+        }
+        result.time_band = None;
+    }
+    // Explicit target versions bypass history's version discovery. We cannot subtract
+    // its cost from a combined startup measurement, so retain a rough estimate.
+    if options.solidcraft_version.is_some() || options.no_memory_check {
+        result.time_band = None;
+    }
+    Some(result)
 }
 
 fn estimate_using_workers(
@@ -536,13 +652,47 @@ fn estimate_using_workers(
     } else {
         coefficients.seconds_per_mib
     };
+    let time_rate = coefficients
+        .startup
+        .as_ref()
+        .filter(|_| cfg!(target_os = "windows"))
+        .and_then(|s| s.content_rates)
+        .map_or(time_rate * seconds_factor, |(shape, history)| {
+            if choices.history {
+                history
+            } else {
+                shape
+            }
+        });
+    let content_seconds = time_rate * bytes as f64 / (1 << 20) as f64;
+    let seconds_exact = if let Some(startup) = &coefficients.startup {
+        let fixed = if cfg!(target_os = "windows") {
+            if choices.history {
+                startup.windows_history
+            } else {
+                startup.windows_shape
+            }
+        } else if cfg!(target_os = "macos") {
+            if choices.history {
+                startup.mac_history
+            } else {
+                startup.mac_shape
+            }
+        } else {
+            // No Linux timing measurements: retain the previous startup guess.
+            coefficients.base_seconds * seconds_factor
+        };
+        fixed + content_seconds
+    } else {
+        // Preserve the already-calibrated multipart Fusion centre and worker model.
+        (coefficients.base_seconds * seconds_factor + content_seconds).ceil()
+    };
     Some(Estimate {
         peak_bytes: (coefficients.base_bytes as f64
             + coefficients.bytes_per_byte * bytes as f64 * factor)
             .ceil() as u64,
-        seconds: ((coefficients.base_seconds + time_rate * bytes as f64 / (1 << 20) as f64)
-            * seconds_factor)
-            .ceil() as u64,
+        seconds: seconds_exact.ceil() as u64,
+        seconds_exact,
         band: coefficients.band,
         memory_band: coefficients.memory_band,
         time_band: coefficients.time_band,
@@ -848,6 +998,35 @@ mod tests {
     }
 
     #[test]
+    fn fractional_time_and_unmeasured_verification_do_not_claim_coverage() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tiny.ipt");
+        std::fs::write(&path, [0; 16]).unwrap();
+        let choices = Choices::of(Preset::Fast);
+        let options = crate::ConvertOptions {
+            preset: Preset::Fast,
+            no_verify: true,
+            ..crate::ConvertOptions::default()
+        };
+        let fast = estimate_with_options(&path, &choices, &options).unwrap();
+        assert!(fast.seconds_exact > 0.0 && fast.seconds_exact < 1.0);
+        assert_eq!(fast.seconds, 1);
+        assert!(fast.time_band.is_none());
+        let verified = estimate_with_options(
+            &path,
+            &choices,
+            &crate::ConvertOptions {
+                no_verify: false,
+                ..options
+            },
+        )
+        .unwrap();
+        assert_eq!(verified.peak_bytes, fast.peak_bytes);
+        assert!(verified.seconds_exact >= fast.seconds_exact);
+        assert!(verified.time_band.is_none());
+    }
+
+    #[test]
     fn history_does_not_multiply_the_fixed_process_floor() {
         let dir = tempfile::tempdir().unwrap();
         for extension in ["ipt", "sldprt"] {
@@ -867,7 +1046,7 @@ mod tests {
 
     #[cfg(feature = "freecad")]
     #[test]
-    fn memory_history_fit_keeps_the_existing_time_multiplier() {
+    fn freecad_time_separates_startup_from_the_recipe_content_term() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("synthetic.FCStd");
         let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
@@ -878,8 +1057,9 @@ mod tests {
         let fast = estimate(&path, &Choices::of(Preset::Fast)).unwrap();
         let full = estimate(&path, &Choices::of(Preset::Full)).unwrap();
         // RAM's 1.04 multiplier must not replace the existing 3x time multiplier.
-        assert_eq!(fast.seconds, 3);
-        assert_eq!(full.seconds, 9);
+        assert!(fast.seconds_exact > 0.2);
+        assert!(full.seconds_exact > fast.seconds_exact);
+        assert!(full.time_band.is_none());
     }
 
     #[test]
@@ -986,8 +1166,7 @@ mod tests {
         std::fs::write(&part, b"synthetic").unwrap();
         let mut options = ConvertOptions::default();
         let full = estimate(&assembly, &options.choices()).unwrap();
-        let reduced =
-            estimate_without_history(&assembly, options.choices(), options.threads).unwrap();
+        let reduced = estimate_without_history(&assembly, options.choices(), &options).unwrap();
         assert_eq!(
             memory_check_with(&assembly, &options, Some(full.peak_bytes)),
             MemoryCheck::Ok(Some(full))
@@ -1008,7 +1187,7 @@ mod tests {
                 &part,
                 &options,
                 Some(
-                    estimate_without_history(&part, options.choices(), options.threads)
+                    estimate_without_history(&part, options.choices(), &options)
                         .unwrap()
                         .peak_bytes
                 )
@@ -1056,6 +1235,7 @@ mod tests {
             estimate: Estimate {
                 peak_bytes: 2_500_000_000,
                 seconds: 60,
+                seconds_exact: 60.0,
                 band: 0.5,
                 memory_band: 0.5,
                 time_band: Some(0.5),
@@ -1080,6 +1260,7 @@ mod tests {
                 estimate_text(Estimate {
                     peak_bytes,
                     seconds,
+                    seconds_exact: seconds as f64,
                     band: 0.3,
                     memory_band: 0.3,
                     time_band: Some(0.3),
@@ -1090,6 +1271,7 @@ mod tests {
         let measured = Estimate {
             peak_bytes: 2_500_000_000,
             seconds: 121,
+            seconds_exact: 121.0,
             band: 0.25,
             memory_band: 0.25,
             time_band: Some(0.2),
@@ -1110,6 +1292,7 @@ mod tests {
         let small = Estimate {
             peak_bytes: 1,
             seconds: 1,
+            seconds_exact: 1.0,
             ..rough
         };
         assert_eq!(
