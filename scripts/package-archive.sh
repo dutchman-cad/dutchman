@@ -5,8 +5,9 @@
 #
 # Takes dutchman, dutchman-mcp and dutchman-gui (plus dutchman-web on Linux) and writes
 # dist/<name>.zip (Windows) or dist/<name>.tar.gz, holding a <name> folder with the programs,
-# LICENSE, NOTICE, the font licences and the README, its links pinned to <ref> (a tag or a
-# commit). An optional binaries-dir supplies prebuilt programs instead of target/<target>/release.
+# LICENSE, NOTICE, the dependency and font licences, and the README, its links pinned to <ref>
+# (a tag or a commit). An optional binaries-dir supplies prebuilt programs instead of
+# target/<target>/release.
 # Prints the archive's file name. The programs are run once to check them, unless this machine
 # cannot run the target's (SKIP_RUN=1, for a cross-compiled target).
 set -euo pipefail
@@ -31,7 +32,7 @@ done
 cp LICENSE NOTICE "dist/$name/"
 # The archive holds none of the files the README links to: point them at the ref.
 python3 -I scripts/archive-readme.py "$ref" README.md "dist/$name/README.md"
-cp crates/dutchman-gui/assets/fonts/*.txt "dist/$name/licences/"
+cp crates/dutchman-gui/assets/fonts/*.txt licences/*.txt "dist/$name/licences/"
 
 if [[ ${SKIP_RUN:-0} != 1 ]]; then
   "dist/$name/dutchman$exe" --version >&2

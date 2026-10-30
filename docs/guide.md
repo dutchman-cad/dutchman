@@ -114,9 +114,9 @@ be read, including ZIP directories exceeding 10,000 members or 16 MiB, and unrea
 archives.
 
 Available memory comes from Linux `MemAvailable` bounded by remaining cgroup v2
-headroom (including ancestor limits), macOS `vm_stat`, or Windows CIM free physical
-memory. Unknown memory or an unknown
-estimate does not block a run. Estimates use decimal GB and are approximate, not
+headroom (including ancestor limits), or safe system APIs through sysinfo on macOS and
+Windows. Memory probes do not launch subprocesses. Unknown memory or an unknown estimate
+does not block a run. Estimates use decimal GB and are approximate, not
 reservations; other processes and simultaneous conversions can change available memory.
 
 The memory check runs before decoding, using only the pre-read estimate. Standard
@@ -1092,11 +1092,12 @@ finish. Its diagnostic log is here:** with **Open folder** and **Dismiss** butto
 
 Default diagnostic filenames use UTC on every platform, formatted from the system clock
 without launching a timestamp command. Diagnostic OS and total-memory metadata are read
-only when logging is enabled. On Windows the OS version field contains `windows` and total
-memory is null; no PowerShell or `cmd` command is used for those fields. Windows and macOS
-heartbeat resource fields remain null because the workspace forbids unsafe OS calls and
-has no safe process-resource wrapper dependency. Windows available-memory checks still
-use the existing CIM probe to protect conversion before decoding.
+only when logging is enabled. On Windows the OS version field contains `windows`.
+Available memory, total memory, and heartbeat process memory and CPU time are read through
+safe system APIs on Windows and macOS, without launching memory-probe commands. Heartbeat
+resource fields are available on Linux, Windows, and macOS; a measurement that cannot be
+read is null. Linux keeps its `/proc` readers and honours cgroup memory limits when
+checking available memory.
 
 
 Every record is appended and flushed immediately, with a disk sync at least every five

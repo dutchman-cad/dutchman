@@ -561,7 +561,7 @@ conversion's start. A batch/watch log interleaves conversions; group by `file` a
 | `start` | `dutchman` version; `cadmpeg` version and pinned revision; `os: {family, name, version}`; `cpu_count`; `total_memory_bytes`; `available_memory_bytes`; `choices` (the shared preset/history/sketches/joints choices object); `threads` (chosen concurrent conversions); `input: {format, size_bytes}`; `members` (Fusion ZIP member list, or null). |
 | `stage` | `stage`: `input`, `decode`, `project`, `map`, `write`, or `solidcraft`. Written when the stage changes, including the initial stage. |
 | `design` | `count` of successful designs read and `total` (null while unknown). Written when these counts change. |
-| `heartbeat` | `stage`; `rss_bytes`; `cpu_ticks` (process user + system CPU ticks); `cpu_ticks_per_second`; `cpu_ms` (derived process CPU time); `member` (last started member id, or null). Every 30 seconds from an independent timer. Linux reads `/proc`; unavailable resource measurements are null. Windows and macOS resources remain null because unsafe OS calls are forbidden and no safe process-resource wrapper is a dependency. |
+| `heartbeat` | `stage`; `rss_bytes`; `cpu_ticks` (process user + system CPU ticks); `cpu_ticks_per_second`; `cpu_ms` (derived process CPU time); `member` (last started member id, or null). Every 30 seconds from an independent timer. Linux reads `/proc`; unavailable resource measurements are null. Windows and macOS use sysinfo; their CPU ticks are milliseconds (`cpu_ticks_per_second`: 1000). |
 | `member` | `member` (salted id); `event`: `start`, `finish`, or `fail`; `ms` (0 at start, duration at finish/failure); `code` (fixed decoder error category on failure, else null). |
 | `end` | `ok` (boolean); `stage` last reached; `losses` (code-to-count object); `repeated_losses` (total extra occurrences of identical losses); `member_decodes` (member-id-to-start-count object); `redecoded` (sum of starts after each member's first start). |
 
@@ -598,7 +598,8 @@ is still alive. Fields may be added within this schema version.
 
 Default diagnostic filenames use UTC, computed from `SystemTime` without a subprocess.
 Start-record OS and total-memory metadata are collected only with diagnostics enabled.
-On Windows `os.version` is `"windows"` and `total_memory_bytes` is null; these fields
-no longer launch `cmd` or PowerShell. The separate available-memory budget probe still
-uses Windows CIM before decoding. Memory-budget refusals happen before decode, never
-at `map`; Standard accepts the history-free estimate when it fits.
+On Windows `os.version` is `"windows"`. Windows and macOS read total and available memory
+through sysinfo without launching a memory-probe command. Linux reads `/proc` and caps
+available memory by remaining cgroup headroom, including ancestor limits. Memory-budget
+refusals happen before decode, never at `map`; Standard accepts the history-free estimate
+when it fits.

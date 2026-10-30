@@ -23,6 +23,9 @@ default = []
 # turn it on by default; a build without it says FreeCAD files do not convert in that build.
 freecad = ["cadmpeg-registry/fcstd"]
 
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+sysinfo.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
 zip.workspace = true

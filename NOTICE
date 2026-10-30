@@ -11,3 +11,6 @@ crates/dutchman-gui/assets/fonts/, and in licences/ in the release archives):
 - Spectral, Copyright 2017 The Spectral Project Authors.
 - IBM Plex Sans and IBM Plex Mono, Copyright 2017 IBM Corp., with Reserved Font Name "Plex".
 
+Dutchman uses sysinfo on Windows and macOS, under the MIT License (text in
+licences/sysinfo-MIT.txt, and in licences/ in the release archives):
+- sysinfo, Copyright (c) 2015 Guillaume Gomez.
