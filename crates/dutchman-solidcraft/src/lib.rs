@@ -285,6 +285,8 @@ impl SolidCraftWriter {
         document::report_unmapped(model, references, report);
         let design = container::Container::new(step.as_bytes())?;
         let mut doc = document::import_design(model, design.step_blob());
+        let looks = history::imported(model, step, report, false)?;
+        document::import_looks(&mut doc, &looks);
         if let Some(references) = references {
             document::keep_sketches(&mut doc, references);
             let kept = references.features.len();

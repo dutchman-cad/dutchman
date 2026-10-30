@@ -729,6 +729,35 @@ fn local_components_with_threads(
         joint_notes: Vec::new(),
         stored_placements: Vec::new(),
     };
+    fn bindings(assembly: &Assembly, kept: &mut BTreeSet<String>) {
+        for part in &assembly.parts {
+            kept.extend(
+                part.ir
+                    .model
+                    .appearance_bindings
+                    .iter()
+                    .map(|b| b.id.to_string()),
+            );
+            if let Some(sub) = &part.assembly {
+                bindings(sub, kept);
+            }
+        }
+    }
+    let mut kept = BTreeSet::new();
+    bindings(&assembly, &mut kept);
+    for binding in &model.ir.model.appearance_bindings {
+        if !kept.contains(binding.id.as_str()) {
+            report.push(
+                Severity::Dropped,
+                "appearance",
+                format!(
+                    "Appearance binding {} has no target in a placed component's geometry; \
+                     its appearance is left out",
+                    binding.id
+                ),
+            );
+        }
+    }
     assembly.remember_placements();
     left_out.extend(
         place_by_joints(&mut assembly, &posed)
@@ -2152,6 +2181,28 @@ fn slice(
             }
         }
     }
+    // Bindings point to topology, rather than topology pointing to its bindings.
+    // Keep that reverse edge and the appearance asset in each definition's slice.
+    for binding in wire
+        .get("appearance_bindings")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if binding
+            .pointer("/target/id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| keep.contains_key(id))
+        {
+            for id in [binding.get("id"), binding.get("appearance")]
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+            {
+                keep.insert(id, ());
+            }
+        }
+    }
     let mut reduced = serde_json::Map::new();
     for (arena, values) in wire {
         let kept: Vec<Value> = values
@@ -2672,6 +2723,52 @@ mod tests {
         Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
             ..part
+        }
+    }
+
+    #[test]
+    fn component_slicing_reports_an_appearance_binding_without_a_target() {
+        let mut model = with_components(true);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["appearances"] = json!([{
+            "id": "synthetic:test:appearance#red", "base_color": {"r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0}
+        }]);
+        wire["model"]["appearance_bindings"] = json!([{
+            "id": "synthetic:test:appearance-binding#missing",
+            "target": {"kind": "face", "id": "synthetic:test:face#missing"},
+            "appearance": "synthetic:test:appearance#red"
+        }]);
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let mut report = Report::default();
+        assert!(matches!(
+            local(&model, 1, &mut report),
+            Components::Assembly(_)
+        ));
+        let losses: Vec<_> = report
+            .losses()
+            .iter()
+            .filter(|loss| loss.subject == "appearance")
+            .collect();
+        assert_eq!(losses.len(), 1);
+        assert_eq!(losses[0].severity, Severity::Dropped);
+        assert!(losses[0]
+            .detail
+            .contains("synthetic:test:appearance-binding#missing"));
+    }
+
+    #[test]
+    fn cadir_cannot_receive_component_or_occurrence_appearance_targets_yet() {
+        for kind in ["component", "occurrence"] {
+            let mut wire = serde_json::to_value(&with_components(true).ir).unwrap();
+            wire["model"]["appearance_bindings"] = json!([{
+                "id": "synthetic:test:appearance-binding#unsupported",
+                "target": {"kind": kind, "id": "f3d:model:component#block"},
+                "appearance": "synthetic:test:appearance#red"
+            }]);
+            let error = cadmpeg_ir::CadIr::from_json(&wire.to_string())
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(kind), "{error}");
         }
     }
 

@@ -22,6 +22,31 @@ layout lines through hole centres without splitting the circular holes during re
 another active consumer needs the whole sketch or a different selection form, those lines
 stay solid.
 
+## Appearances
+
+Body and face appearance bindings follow the component definition's own BREP ids into its
+written geometry, including imported and stored solids. Every placement inherits that
+geometry's looks. A body binding supplies the body colour, and face bindings override it per face.
+When a body has no body binding and all its faces have the same resolved appearance,
+Dutchman writes one body colour, which SolidCraft shows in its body appearance controls.
+Mixed appearances remain face looks, selected by points in the component's coordinates.
+Imported body names are made unique across the design so an unpainted namesake in another
+component cannot receive a painted body's appearance.
+The look keeps the resolved colour, opacity, and appearance name; it does not infer a
+physical material from a visual preset.
+
+A binding whose target or appearance cannot be resolved is reported as Dropped under
+`appearance`. Mixed curved faces without a resolved planar interior point cannot receive
+SolidCraft's point-selected face looks yet; their bindings are also reported as Dropped.
+Uniformly painted curved bodies can still use a body colour. Conflicting assignments to
+one target are left out and reported. Textures and shader properties are not mapped by this
+look mapping.
+
+The pinned cadmpeg CADIR supports body and face appearance targets, but has no component or
+occurrence appearance target kind. Those assignments need a cadmpeg IR extension before
+Dutchman can receive them. A source appearance absent from CADIR cannot be reconstructed;
+remaining grey bodies may therefore still need additional decoding in cadmpeg.
+
 ## Components
 
 Assemblies with multiple top-level designs group each design's features into a uniquely

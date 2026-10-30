@@ -72,7 +72,8 @@ fn import(feature: &Value, ids: &[&str], ctx: &mut Context) -> Result<Value, Str
     let name = name(feature)
         .map(str::to_owned)
         .unwrap_or_else(|| format!("Base Feature{id}"));
-    Ok(json!({
+    let names = super::faces::import_names(ctx, ids, None);
+    let mut mapped = json!({
         "id": id,
         "name": name,
         "type": "import",
@@ -80,7 +81,11 @@ fn import(feature: &Value, ids: &[&str], ctx: &mut Context) -> Result<Value, Str
         "file": format!("{name}.step"),
         "step": "",
         BODIES: ids,
-    }))
+    });
+    if let (false, Some(fields)) = (names.is_empty(), mapped.as_object_mut()) {
+        fields.insert("body_names".to_owned(), json!(names));
+    }
+    Ok(mapped)
 }
 
 /// Restates the bodies of each base feature in `history` as STEP, from `model`, the design
@@ -106,6 +111,13 @@ pub(crate) fn restate(history: &mut History, model: &Model) -> Result<(), String
             .map_err(|why| format!("base feature \"{title}\": {why}"))?;
         let text = step::restate(&part, &mut Report::default())
             .map_err(|err| format!("base feature \"{title}\": {err}"))?;
+        if fields
+            .get("body_names")
+            .and_then(Value::as_array)
+            .is_some_and(|names| names.len() != super::faces::shape_count(&text))
+        {
+            return Err(format!("base feature \"{title}\": its written shapes cannot be matched to its appearance targets"));
+        }
         fields.insert(STEP.to_owned(), Value::String(text));
     }
     Ok(())

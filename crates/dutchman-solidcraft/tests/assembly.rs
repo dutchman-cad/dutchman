@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use dutchman_core::{read, Assembly, Format, Model, Placement, Report, Writer};
 use dutchman_solidcraft::{SolidCraftWriter, Verification, CLI_ENV};
-use serde_json::Value;
+use serde_json::{json, Value};
 use zip::ZipArchive;
 
 fn placed_twice() -> Model {
@@ -1661,4 +1661,330 @@ fn parallel_replay_checks_keep_partial_histories_and_reports_identical() {
     assert_eq!(serial, parallel);
     parallel_report.set_threads(1, 1);
     assert_eq!(format!("{serial_report:?}"), format!("{parallel_report:?}"));
+}
+
+/// CADIR face bindings use a BREP namespace independent of the component/body ids.
+fn bound_components(mode: &str, stored: bool) -> Model {
+    let mut model = with_components(false);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let face_ids: Vec<_> = wire["model"]["faces"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|face| face["id"].as_str().unwrap().to_owned())
+        .collect();
+    let mut text = wire.to_string();
+    for (n, id) in face_ids.iter().enumerate() {
+        text = text.replace(id, &format!("f3d:brep/component.smb/brep:entity#{n}"));
+    }
+    wire = serde_json::from_str(&text).unwrap();
+    let body = wire["model"]["bodies"][0]["id"].clone();
+    wire["model"]["bodies"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("color");
+    wire["model"]["appearances"] = json!([
+        {"id": "synthetic:test:appearance#red", "name": "Red paint", "base_color": {"r": 1.0, "g": 0.0, "b": 0.0, "a": 0.4}},
+        {"id": "synthetic:test:appearance#blue", "name": "Blue paint", "base_color": {"r": 0.0, "g": 0.0, "b": 1.0, "a": 1.0}},
+    ]);
+    let mut bindings = Vec::new();
+    if mode.starts_with("body") {
+        bindings.push(json!({"id": "synthetic:test:appearance-binding#body", "target": {"kind": "body", "id": body}, "appearance": "synthetic:test:appearance#red"}));
+    }
+    if mode != "body" {
+        for (n, face) in wire["model"]["faces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .enumerate()
+        {
+            if mode == "body_face" && n != 0 {
+                continue;
+            }
+            bindings.push(json!({"id": format!("synthetic:test:appearance-binding#{n}"), "target": {"kind": "face", "id": face["id"]},
+                "appearance": if mode.starts_with("body_") || (mode == "mixed" && n == 0) { "synthetic:test:appearance#blue" } else { "synthetic:test:appearance#red" }}));
+        }
+    }
+    wire["model"]["appearance_bindings"] = json!(bindings);
+    wire["model"]["features"] = if stored {
+        json!([{"id": "synthetic:test:feature#stored", "ordinal": 0, "name": "Stored solid", "suppressed": false, "dependencies": [], "outputs": [body], "definition": {"definition": "stored_geometry"}}])
+    } else {
+        json!([])
+    };
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.assembly = dutchman_core::local_assembly(&model).unwrap();
+    model
+}
+
+#[test]
+fn component_appearance_bindings_colour_imports_and_stored_solids() {
+    for stored in [false, true] {
+        for mode in [
+            "uniform",
+            "mixed",
+            "body",
+            "body_face",
+            "body_uniform_faces",
+        ] {
+            let model = bound_components(mode, stored);
+            let part = &model.assembly.as_ref().unwrap().parts[0];
+            assert!(!part.ir.model.appearance_bindings.is_empty());
+            assert_eq!(
+                part.ir.model.appearances.len(),
+                if mode == "mixed" || mode.starts_with("body_") {
+                    2
+                } else {
+                    1
+                }
+            );
+            let (bytes, report) = written(&model);
+            let doc = document(&bytes);
+            let import = doc["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|f| f["type"] == "import" && f["suppressed"] == false)
+                .unwrap();
+            let name = import["body_names"][0].as_str().unwrap();
+            if mode == "mixed" {
+                assert!(doc["appearances"]["bodies"]
+                    .as_object()
+                    .is_none_or(|b| b.is_empty()));
+                let faces = doc["appearances"]["faces"].as_array().unwrap();
+                assert_eq!(faces.len(), 6);
+                assert!(faces.iter().all(|face| face["body"] == name));
+                assert_eq!(
+                    faces
+                        .iter()
+                        .filter(|f| f["look"]["color"] == json!([0, 0, 255]))
+                        .count(),
+                    1
+                );
+            } else {
+                assert_eq!(
+                    doc["appearances"]["bodies"][name]["color"],
+                    json!([255, 0, 0])
+                );
+                assert!(
+                    (doc["appearances"]["bodies"][name]["opacity"]
+                        .as_f64()
+                        .unwrap()
+                        - 0.4)
+                        .abs()
+                        < 1e-6
+                );
+                assert_eq!(doc["appearances"]["bodies"][name]["name"], "Red paint");
+                let faces = doc["appearances"]["faces"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default();
+                assert_eq!(
+                    faces.len(),
+                    match mode {
+                        "body_face" => 1,
+                        "body_uniform_faces" => 6,
+                        _ => 0,
+                    }
+                );
+                assert!(faces
+                    .iter()
+                    .all(|f| f["body"] == name && f["look"]["color"] == json!([0, 0, 255])));
+            }
+            let component = import["component"].clone();
+            assert_eq!(
+                doc["occurrences"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|o| o["component"] == component)
+                    .count(),
+                2
+            );
+            assert!(
+                !report
+                    .losses()
+                    .iter()
+                    .any(|loss| loss.subject == "appearance"),
+                "{:?}",
+                report.losses()
+            );
+        }
+    }
+}
+
+#[test]
+fn missing_face_appearance_bindings_are_reported() {
+    let mut model = bound_components("uniform", false);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["appearance_bindings"].as_array_mut().unwrap().push(json!({
+        "id": "synthetic:test:appearance-binding#missing", "target": {"kind": "face", "id": "f3d:brep/component.smb/brep:entity#missing"}, "appearance": "synthetic:test:appearance#red"
+    }));
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.assembly = dutchman_core::local_assembly(&model).unwrap();
+    let (_, report) = written(&model);
+    assert!(
+        report
+            .losses()
+            .iter()
+            .any(|loss| loss.subject == "appearance"
+                && loss.severity == dutchman_core::Severity::Dropped
+                && loss
+                    .detail
+                    .contains("synthetic:test:appearance-binding#missing")),
+        "{:?}",
+        report.losses()
+    );
+}
+
+#[test]
+fn solidcraft_inherits_component_appearance_bindings_in_both_placements() {
+    let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) else {
+        return;
+    };
+    for stored in [false, true] {
+        // From SolidCraft 0.26.0, OBJ export writes body colours to a material file and the
+        // appearance list names only faces that override their body. Older releases open the
+        // same coloured design and list every face with its effective colour.
+        let current_listing = dutchman_solidcraft::solidcraft_version(
+            &dutchman_solidcraft::Verification::With(cli.clone()),
+        )
+        .and_then(|line| {
+            line.split_whitespace()
+                .last()?
+                .trim_start_matches('v')
+                .parse::<dutchman_solidcraft::SolidCraftVersion>()
+                .ok()
+        })
+        .is_some_and(|version| version >= "0.26.0".parse().unwrap());
+        for mode in [
+            "uniform",
+            "mixed",
+            "body",
+            "body_face",
+            "body_uniform_faces",
+        ] {
+            let (bytes, _) = written(&bound_components(mode, stored));
+            let dir = tempfile::tempdir().unwrap();
+            let design = dir.path().join("pair.solidcraft");
+            std::fs::write(&design, &bytes).unwrap();
+            let measured = evaluate(&cli, &bytes);
+            assert_eq!(measured.len(), 2);
+            let script = dir.path().join("looks.json");
+            let doc = document(&bytes);
+            let name = doc["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|feature| feature["type"] == "import" && feature["suppressed"] == false)
+                .unwrap()["body_names"][0]
+                .clone();
+            // Appearance queries address definition bodies. OBJ material export resolves
+            // their colours for each placed body, including the second world-name alias.
+            let mesh = dir.path().join("pair.obj");
+            let commands = vec![
+                json!({"command": "appearance.list", "params": {"body": name}}),
+                json!({"command": "file.export", "params": {"path": mesh}}),
+            ];
+            std::fs::write(&script, json!(commands).to_string()).unwrap();
+            let output = dir.path().join("looks.out.json");
+            let status = std::process::Command::new(&cli)
+                .arg("run")
+                .arg(&script)
+                .arg("--in")
+                .arg(&design)
+                .arg("--results")
+                .arg("--json-out")
+                .arg(&output)
+                .status()
+                .unwrap();
+            assert!(status.success());
+            let results: Value = serde_json::from_slice(&std::fs::read(output).unwrap()).unwrap();
+            if mode != "mixed" && current_listing {
+                let materials = std::fs::read_to_string(dir.path().join("pair.mtl")).unwrap();
+                assert_eq!(
+                    materials
+                        .lines()
+                        .filter(|line| *line == "Kd 1.000 0.000 0.000")
+                        .count(),
+                    2,
+                    "{materials}"
+                );
+            }
+            for result in results.as_array().unwrap().iter().take(1) {
+                if mode == "mixed" {
+                    assert_eq!(
+                        result["body"]["faces"].as_array().unwrap().len(),
+                        6,
+                        "{results}"
+                    );
+                    assert_eq!(
+                        result["body"]["faces"]
+                            .as_array()
+                            .unwrap()
+                            .iter()
+                            .filter(|face| face["appearance"]["color"] == "#0000ff")
+                            .count(),
+                        1,
+                        "{results}"
+                    );
+                } else {
+                    assert_eq!(
+                        result["body"]["appearance"]["color"], "#ff0000",
+                        "{results}"
+                    );
+                    assert!(
+                        (result["body"]["appearance"]["opacity"].as_f64().unwrap() - 0.4).abs()
+                            < 1e-6,
+                        "{results}"
+                    );
+                    if current_listing {
+                        assert_eq!(
+                            result["body"]["faces"].as_array().unwrap().len(),
+                            match mode {
+                                "body_face" => 1,
+                                "body_uniform_faces" => 6,
+                                _ => 0,
+                            },
+                            "{results}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn component_appearance_bindings_do_not_colour_an_unpainted_namesake() {
+    let mut model = bound_components("body", false);
+    let assembly = model.assembly.as_mut().unwrap();
+    let coloured = assembly.parts[0].clone();
+    assembly.parts[0].ir.model.appearance_bindings.clear();
+    assembly.parts[0].ir.model.appearances.clear();
+    assembly.parts.push(coloured);
+    assembly.placements[1].part = 1;
+    let (bytes, report) = written(&model);
+    let doc = document(&bytes);
+    let imports: Vec<_> = doc["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["type"] == "import" && f["suppressed"] == false)
+        .collect();
+    let first = imports[0]["body_names"][0].as_str().unwrap();
+    let second = imports[1]["body_names"][0].as_str().unwrap();
+    assert_ne!(first, second);
+    assert!(doc["appearances"]["bodies"].get(first).is_none());
+    assert_eq!(
+        doc["appearances"]["bodies"][second]["color"],
+        json!([255, 0, 0])
+    );
+    assert!(
+        !report
+            .losses()
+            .iter()
+            .any(|loss| loss.subject == "appearance"),
+        "{:?}",
+        report.losses()
+    );
 }
