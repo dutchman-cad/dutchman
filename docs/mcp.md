@@ -117,31 +117,11 @@ dry run returns `fits: false`; it writes nothing and does not attempt conversion
 Normal convert reports, including batch results, carry the same `estimate` and
 `choices` fields ([json.md](json.md)).
 
-RAM bands use every successful Windows and Mac measurement, re-evaluated with the
-current coefficients: Fusion `.f3d` ±55%, multipart `.f3z` ±25%, Inventor parts ±30%,
-SolidWorks parts ±35%, and FreeCAD ±50%. One percentage point of safety is added before
-rounding up to a 5% step. These are empirical envelopes of this corpus, not guarantees for
-unseen designs. Unmeasured formats retain their ±100% memory heuristic.
-Time has its own band: multipart Fusion is ±20%; other time bands are uncalibrated.
-Timing uses fractional `seconds_exact`; `seconds` remains its whole-second ceiling for
-compatibility. Fixed startup is separate from content work: Windows has different fast,
-history and verification startup terms; macOS has its own process floor and allows the
-ten-second version-probe timeout for history without an explicit target version. The estimator
-never runs SolidCraft to measure a probe. History may probe its version even with
-`--no-verify`. Old Mac probe durations were not recorded, Windows startup varies between runs, and
-FreeCAD assembly worker startup is poorly predicted by archive bytes, so these four formats keep uncalibrated time bands. Verification
-replay and explicit-version/no-memory-check variants also retain rough timing; their
-startup or replay costs are not generally calibrated. Bands are not widened to hide this.
-JSON adds `memory_band` and nullable `time_band`. The existing `band` stays as the legacy
-shared heuristic for compatibility; use the new fields for separate calibrated coverage.
-For multipart Fusion `band` is the larger of the two calibrated bands (25%).
-
-For Fusion archives with multiple readable embedded `.f3d` designs, the time estimate
-uses the requested threads (0 means auto), limited by the converter's shared CPU, item
-count and free-memory worker policy. A serial component remains. Before native decoding,
-the embedded design count and the converter's 256 MiB minimum worker budget are proxies;
-actual body counts can reduce conversion workers further. Single-design files keep their
-existing time model. The worker adjustment changes time estimates only.
+`memory_band` and `time_band` describe separate relative uncertainties; `time_band` is
+`null` when timing is uncalibrated. `seconds_exact` is fractional seconds; `seconds` is its
+whole-second ceiling. Keep `band` for older readers; use the separate fields for new displays.
+See [estimate bands and calibration](guide.md#choosing-what-to-keep) for current values,
+thread adjustments, and limits. Estimates never guarantee conversion or available memory.
 
 
 ## Set up a client
@@ -206,6 +186,9 @@ including `.exe`). `SOLIDCRAFT_CLI` is optional: without it, Dutchman looks on t
 provides a usable CLI.
 
 ## Tools
+
+The CLI also offers `dutchman formats --markdown` for a compact documentation table.
+MCP continues to return the full JSON formats report.
 
 `formats` lists all recognised formats, their status `words`,
 and what Dutchman converts. Inputs without geometry support or a codec in this build

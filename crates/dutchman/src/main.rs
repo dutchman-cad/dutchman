@@ -123,6 +123,9 @@ enum Command {
         /// Print one machine-readable report on stdout instead of the text listing.
         #[arg(long)]
         json: bool,
+        /// Print a Markdown table for documentation.
+        #[arg(long, conflicts_with = "json")]
+        markdown: bool,
     },
     /// Show what converting a native CAD file would carry across, without writing anything.
     Inspect {
@@ -494,9 +497,11 @@ fn main() -> ExitCode {
             verbose,
             quiet,
         ),
-        Command::Formats { json } => {
+        Command::Formats { json, markdown } => {
             if json {
                 print_json(&formats::json());
+            } else if markdown {
+                print!("{}", formats::markdown());
             } else {
                 print!("{}", formats::text());
             }

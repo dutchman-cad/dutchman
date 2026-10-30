@@ -569,6 +569,18 @@ fn formats_text_matches_guide() {
 }
 
 #[test]
+fn formats_markdown_matches_renderer() {
+    let out = dutchman(&["formats", "--markdown"]);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(
+        String::from_utf8(out.stdout).unwrap(),
+        dutchman::formats::markdown()
+    );
+    let conflict = dutchman(&["formats", "--markdown", "--json"]);
+    assert!(!conflict.status.success());
+}
+
+#[test]
 fn formats_lists_what_converts() {
     let out = dutchman(&["formats", "--json"]);
     assert_eq!(out.status.code(), Some(0));

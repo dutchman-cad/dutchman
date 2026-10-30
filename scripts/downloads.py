@@ -2,13 +2,13 @@
 """Writes the table of direct downloads, one row per platform, for a release's archives.
 
     scripts/downloads.py <version>            print it, for the release notes
-    scripts/downloads.py <version> README.md  replace the table between the README's markers
+    scripts/downloads.py <version> docs/install.md  replace the table between the install page's markers
     scripts/downloads.py nightly              print it for the nightly pre-release
-    scripts/downloads.py latest README.md     the README's table: version-less files of the latest
+    scripts/downloads.py latest docs/install.md     the install page's table: version-less files of the latest
                                               published release (releases/latest/download/...)
 
-The README's table uses `latest`, so it never names a release before that release is published;
-each release also uploads version-less copies of its files for it. The tests check the README.
+The install page's table uses `latest`, so it never names a release before that release is published;
+each release also uploads version-less copies of its files for it. The tests check the install page.
 """
 
 import sys

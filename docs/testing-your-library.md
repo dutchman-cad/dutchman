@@ -3,10 +3,10 @@
 This guide is for anyone willing to run Dutchman over their own CAD library and tell us what
 broke, without giving away a single file. You convert everything on your own machine, and
 Dutchman writes an **anonymous report**: what converted and what did not, by cause, with no
-file names, paths, part names or geometry in it. You read it, then share it or the parts of
+file names, paths, part names, or geometry in it. You read it, then share it or the parts of
 it you choose.
 
-If you used 0.1.3's report-anon.json, re-run with 0.1.4 before sharing it.
+Use the current release when collecting a report; older reports may lack newer privacy fixes.
 
 Fusion (`.f3d`, `.f3z`) libraries are the main target. Inventor (`.ipt`, `.iam`) and
 SolidWorks (`.sldprt`) and FreeCAD (`.FCStd`) files are welcome too,
@@ -14,19 +14,20 @@ including ones you cannot open any more.
 
 ## Everything stays on your machine
 
-- Dutchman makes **no network connections**. It reads your files, writes the designs and
+- Dutchman makes **no network connections during these CLI batch conversions**. It reads your files, writes the designs and
   reports where you tell it to, and starts only two kinds of program: itself (one copy per
   file, so one bad file cannot stop the run) and, if you have it, SolidCraft's command-line
   tool to check the results. On macOS and Windows it also runs `ps` or `tasklist` to measure
   how much memory each file takes.
 - Your files are never changed. The converted designs go to a folder you name.
-- Nothing is sent anywhere unless you send it yourself.
+- These commands send no reports or designs. The desktop app separately checks for
+  updates in release builds; see [update requests](desktop.md#update-requests).
 
 ## 1. Install
 
-1. Install Dutchman 0.1.4 or newer, as [the guide](guide.md#install) shows: on a Mac, the
-   disk image (`Dutchman Convert.app`, or `Dutchman.app` in 0.1.5 and earlier, with the
-   `dutchman` command inside it, which the guide shows how to put on your `PATH`); elsewhere, the release archive. Check that `dutchman --version`
+1. Install the current Dutchman release, as [the guide](guide.md#install) shows: on a Mac, the
+   disk image (`Dutchman Convert.app`, with the `dutchman` command inside it; the guide shows
+   how to put it on your `PATH`); elsewhere, the release archive. Check that `dutchman --version`
    prints the version.
 2. Optional, recommended: install a current SolidCraft (any release from the last
    two weeks, currently 0.18–0.27). Older targets down to 0.18.2 get simplified features. With it, Dutchman checks every converted design

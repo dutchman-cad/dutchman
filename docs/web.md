@@ -4,7 +4,7 @@
 that can reach it, without installing Dutchman on each computer. Drop design files, or a `.zip`
 of a project folder, on the page and press **Convert**. Each file gets a card saying whether it
 converted, what was written (editable history or geometry), which features did not map, and its
-losses as Info, Degraded or Dropped, with a link to download its design. **Download all** gets
+losses as Info, Degraded, or Dropped, with a link to download its design. **Download all** gets
 every design in one zip. The page waits for the final results; it does not stream conversion
 stages, design counts, or elapsed-time heartbeats.
 
@@ -33,8 +33,8 @@ DUTCHMAN_WEB_PASSWORD=choose-one dutchman-web --listen 0.0.0.0:8080
 It checks histories in SolidCraft when it finds `solidcraft-cli`, as the command does
 ([Feature history](guide.md#feature-history-and-the-solidcraft-check)): set `SOLIDCRAFT_CLI` to
 its path, or put it on the server's `PATH`. The form's **Target SolidCraft version**
-accepts x.y.z, at least 0.18.2. Leave it empty to target the found CLI's version, else
-the newest known at build time (currently 0.27). The rolling 14-day window is currently
+accepts x.y.z, at least 0.18.2. Leave it empty to use the supported found CLI's version, capped at the newest known
+minor (0.27), or 0.27 when none is found. The rolling 14-day window is currently
 0.18–0.27; older targets get simplified features. FreeCAD helix history needs a target of 0.25 patch 1 or newer; older targets preserve
 the original geometry and report the required version.
 
@@ -142,9 +142,8 @@ authentication; the browser reuses those credentials when SolidCraft fetches the
 the same origin.
 
 The address must start with exactly one `/`, without backslashes, control characters, a
-query or a fragment; anything else stops `dutchman-web` at startup. This needs SolidCraft
-[#6670](https://github.com/tangency-labs/solidcraft/pull/6670): use a build from its main
-branch until its next release. Links work only while the job's design is kept.
+query or a fragment; anything else stops `dutchman-web` at startup. Use a SolidCraft build with
+[open-by-URL support](https://github.com/tangency-labs/solidcraft/pull/6670). Links work only while the job's design is kept.
 
 ## Keep it safe
 

@@ -7,7 +7,7 @@ Dutchman makes of what that codec gives, and which upstream gaps keep SolidWorks
 replaying. It drives what is asked of cadmpeg next.
 
 State at the cadmpeg commit pinned in `Cargo.toml`. `dutchman formats` reports the reader's
-current reader status alongside what Dutchman converts.
+current status alongside what Dutchman converts.
 
 ## Parts (`.sldprt`)
 
@@ -21,10 +21,8 @@ current reader status alongside what Dutchman converts.
 | Feature history from the Keywords XML: extrusions with their operation, extent and depth; sketches; suppression state; many features only as `native` records. | Keeps editable features before the first blocker and resolved sketches, hidden beside the imported final shape; the report names the blocker (below). Without a body-building prefix, keeps reference sketches beside the import. |
 | Sketch geometry from the ResolvedFeatures records: lines, arcs, circles, ellipses, splines, coincidences, with a resolved plane. | Read only through a sketch feature that binds it (below). |
 
-Parts read by 0.1.5 that 0.2.0 to 0.2.2 read empty, with fewer bodies, or failing cadmpeg's
-edge checks read again since 0.2.3: cadmpeg no longer lets bytes inside other
-Parasolid records hide or refuse a part's bodies, and keeps the range of arcs stored past the
-seam.
+The current reader keeps each body's Parasolid record boundaries and arc ranges. If an
+older Dutchman release read a part as empty or left bodies out, retry with the current release.
 
 ## Upstream gaps, in the order they block history
 

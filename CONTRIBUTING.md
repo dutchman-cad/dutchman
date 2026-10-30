@@ -127,7 +127,9 @@ publishes a codec for it, Dutchman can convert it.
    name, family and `codec_id`), and to `ALL`. Format ids are part of the JSON reports, so
    choose them once.
 3. Add its row to `dutchman formats` in `crates/dutchman/src/formats.rs`, saying plainly what
-   converts.
+   converts. Regenerate the README block between `<!-- formats: generated from dutchman formats -->`
+   and `<!-- /formats -->` with `dutchman formats --markdown` from a default-feature build.
+   Keep the text listing in `docs/guide.md` in sync with `dutchman formats`; tests check both.
 4. Add a synthetic fixture with its provenance, and tests: decoding in
    `crates/dutchman-core/tests/decode.rs`, the written design against a golden file in
    `crates/dutchman-solidcraft/tests/end_to_end.rs`. The hostile-input test

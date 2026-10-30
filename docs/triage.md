@@ -1,7 +1,7 @@
 # Triaging reports
 
 For maintainers. Dutchman is the one place users report problems, whatever code the problem
-is in: they never need to know whether cadmpeg, Dutchman or SolidCraft has to change. We sort
+is in: they never need to know whether cadmpeg, Dutchman, or SolidCraft has to change. We sort
 each report and take what belongs upstream there ourselves.
 
 ## Labels
@@ -49,7 +49,7 @@ For `upstream:cadmpeg`:
    cause in cadmpeg's own terms (the loss code, the record kind) with the synthetic test.
 4. **Link** the upstream item from every Dutchman issue it covers.
 5. **Close** those issues when Dutchman's cadmpeg pin has moved past the fix and a Dutchman
-   release carries it, saying "fixed in 0.1.x" and which release to install.
+   release carries it, naming the first fixed Dutchman release and which release to install.
 
 For `upstream:solidcraft`, the same: group by root cause, one upstream item per cause, linked
 from each issue, closed when a Dutchman release that writes for the fixed SolidCraft ships.

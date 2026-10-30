@@ -103,31 +103,11 @@ its designs when a pre-read exceeds the budget; it also includes that file's ref
 }
 ```
 
-RAM bands use every successful Windows and Mac measurement, re-evaluated with the
-current coefficients: Fusion `.f3d` ±55%, multipart `.f3z` ±25%, Inventor parts ±30%,
-SolidWorks parts ±35%, and FreeCAD ±50%. One percentage point of safety is added before
-rounding up to a 5% step. These are empirical envelopes of this corpus, not guarantees for
-unseen designs. Unmeasured formats retain their ±100% memory heuristic.
-Time has its own band: multipart Fusion is ±20%; other time bands are uncalibrated.
-Timing uses fractional `seconds_exact`; `seconds` remains its whole-second ceiling for
-compatibility. Fixed startup is separate from content work: Windows has different fast,
-history and verification startup terms; macOS has its own process floor and allows the
-ten-second version-probe timeout for history without an explicit target version. The estimator
-never runs SolidCraft to measure a probe. History may probe its version even with
-`--no-verify`. Old Mac probe durations were not recorded, Windows startup varies between runs, and
-FreeCAD assembly worker startup is poorly predicted by archive bytes, so these four formats keep uncalibrated time bands. Verification
-replay and explicit-version/no-memory-check variants also retain rough timing; their
-startup or replay costs are not generally calibrated. Bands are not widened to hide this.
-JSON adds `memory_band` and nullable `time_band`. The existing `band` stays as the legacy
-shared heuristic for compatibility; use the new fields for separate calibrated coverage.
-For multipart Fusion `band` is the larger of the two calibrated bands (25%).
-
-For Fusion archives with multiple readable embedded `.f3d` designs, the time estimate
-uses the requested threads (0 means auto), limited by the converter's shared CPU, item
-count and free-memory worker policy. A serial component remains. Before native decoding,
-the embedded design count and the converter's 256 MiB minimum worker budget are proxies;
-actual body counts can reduce conversion workers further. Single-design files keep their
-existing time model. The worker adjustment changes time estimates only.
+`memory_band` and `time_band` describe separate relative uncertainties; `time_band` is
+`null` when timing is uncalibrated. `seconds_exact` is fractional seconds; `seconds` is its
+whole-second ceiling. Keep `band` for older readers; use the separate fields for new displays.
+See [estimate bands and calibration](guide.md#choosing-what-to-keep) for current values,
+thread adjustments, and limits. Estimates never guarantee conversion or available memory.
 
 Default SolidCraft paths use `.sc`; targets before 0.25.1 use `.solidcraft`.
 Explicit output paths keep their given extension. The container format stays `solidcraft/23`.
@@ -222,10 +202,8 @@ A mapped `helical_sweep` becomes a sketch-profile coil only for targets 0.25 pat
 For older targets, `history.features[].reason` says
 `needs SolidCraft 0.25 patch 1 or newer (target 0.18)` (with the actual target), and the history
 line explains the blocker. `--solidcraft-version x.y.z` selects the target on `convert`,
-`convert-all`, and `watch`; it must be at least 0.18.2. By default the found verification
-CLI's version is used, even with `--no-verify`, else the newest release known at build
-time (currently 0.27). The supported rolling 14-day window is currently 0.18–0.27;
-older targets down to 0.18.2 retain the existing feature simplifications.
+`convert-all`, and `watch`; it must be at least 0.18.2. The [target selection rules](compatibility.md) apply even with `--no-verify`;
+older supported targets retain the existing feature simplifications.
 When a written coil or flat entry-recess tip uses the newer mapping, the history line
 includes the actual target, such as `target SolidCraft 0.25 patch 1`. No new report fields are added. Counterbore and countersink holes use an explicit flat tip
 for targets 0.22.1 or newer, retaining the source's flat bottom.
@@ -349,6 +327,9 @@ one that crashes the converter. `--report-anon FILE` also writes the anonymous r
 [`dutchman.report-anon/1`](report-anon.md).
 
 ## `dutchman.formats/1`
+
+`dutchman formats --markdown` renders a compact documentation table; it cannot be combined
+with `--json`. The JSON report retains the full conversion descriptions.
 
 `dutchman formats --json` lists the native formats Dutchman knows:
 
@@ -498,7 +479,7 @@ it cannot modify this conversion report. Joint reconstruction does not change ho
 The CLI also accepts `--to fcstd`: `output.format` is `"freecad-document/1"` and the
 output is a native `.FCStd` document. This runs FreeCAD and always measures the result.
 `--to freecad --verify` measures without saving a native document. Both use the existing
-`verification` object: `status: "verified"` when every part's solid count, volume and bounds
+`verification` object: `status: "verified"` when every part's solid count, volume, and bounds
 match its source STEP, or the added status `"differs"`, with a `reason` naming the part
 and differing measurement or runtime fallback. Runtime fallback reasons also appear as
 `Degraded` losses with subject `FreeCAD rebuild`. Feature statuses continue to describe

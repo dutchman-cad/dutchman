@@ -128,7 +128,7 @@ jobs:
       - if: matrix.os == 'ubuntu-latest'
         run: cargo test --locked -p dutchman --no-default-features
 
-  # Docs-only changes skip the build jobs above; the tests that read README.md and the guide
+  # Docs-only changes skip the build jobs above; the tests that read README.md, the install page, and the guide
   # still check them against the program.
   docs:
     needs: changes

@@ -50,7 +50,7 @@ When a maintainer asks about `f3a9c0e1d2b4f5a6`, look it up in your key.
 ```json
 {
   "schema": "dutchman.report-anon/1",
-  "versions": {"dutchman": "0.1.5", "cadmpeg": "0.6.5+63ebadd", "solidcraft": "0.18.2",
+  "versions": {"dutchman": "0.2.5", "cadmpeg": "0.6.7+9bc00b9", "solidcraft": "0.27.1",
                "os": "linux", "arch": "x86_64"},
   "run": {"verify": true, "import_only": false, "jobs": 8, "timeout_s": 900,
           "max_memory_mb": 8192, "resumed": 0},
@@ -81,7 +81,7 @@ When a maintainer asks about `f3a9c0e1d2b4f5a6`, look it up in your key.
 | `versions` | Dutchman's version, the cadmpeg it was built with (its version and the commit Dutchman pins), the SolidCraft CLI that checked the designs (`null` when none did), and the operating system and processor. |
 | `run` | How the batch ran: whether designs were checked in SolidCraft, `--import-only`, files at once, one file's time and memory limits, and how many results came from `--journal`. |
 | `totals` | Every file: `converted`, then how: `history_verified` (editable history, checked against the original in SolidCraft), `history_unverified`, `geometry_only`; `degraded` counts converted files with at least one `Degraded` or `Dropped` loss; `incomplete` counts converted assemblies with placements left out; `failed`; `skipped` (not in a format Dutchman knows). |
-| `formats` | The same counts per input format (`fusion_archive`, `fusion_multi_document`, `inventor_part`, `inventor_assembly`, `solidworks_part`, `solidworks_assembly`, `freecad_document`, `unknown`), each with its `timing`. |
+| `formats` | The same counts per input format (the format ids listed by `dutchman formats --json`, or `unknown`), each with its `timing`. |
 | `skipped_by_extension` | The skipped files by extension: lower case, `none`, or `other` for one that is not 1–8 letters and digits. |
 | `stages` | For each stage (`input`, `decode`, `project`, `map`, `write`, `solidcraft`; see [Stages](json.md#stages)): the files that `failed` there, the `losses` that arose there, and the `files` with either. |
 | `errors` | Every distinct failure, most files first. Messages that differ only in their numbers are one cause. |

@@ -1,7 +1,7 @@
 # Dutchman architecture
 
-Dutchman converts native CAD design files into SolidCraft designs (`.sc`). It starts
-as a command-line tool and becomes a SolidCraft plugin once SolidCraft has plugins. The
+Dutchman converts native CAD design files into SolidCraft designs (`.sc`). It ships a command, desktop app, MCP server, and web server. A future SolidCraft plugin
+can use the same conversion core. The
 design rule is low coupling, high cohesion: one self-contained conversion core, and a thin
 SolidCraft adapter that can later sit behind a plugin interface unchanged.
 
@@ -28,6 +28,10 @@ consumer benefits and Dutchman stays small.
 | `dutchman-solidcraft` | Implements `Writer` for `.sc`. Knows the SolidCraft design format and nothing about native formats. | `dutchman-core`, cadmpeg's STEP encoder, `zip`, `sha2`, `serde_json` |
 | `dutchman` | The CLI (`dutchman convert <in> <out.sc>`) and the MCP server (`dutchman-mcp`), sharing one small library that sets up a conversion and builds the JSON reports both return. Front-end orchestration, printing, the MCP protocol and plain presentation data. | both of the above, `clap` |
 | `dutchman-gui` | The desktop app (eframe/egui). Plans and converts through the `dutchman` library's batch code on background threads; draws the Dutchman design system's Day and Night themes. | `dutchman`, `eframe`, `rfd` |
+| `dutchman-freecad` | Experimental FreeCAD macro writer and headless checks. | `dutchman-core`, `dutchman-solidcraft` |
+| `dutchman-dxf` | Neutral drawing arenas to DXF pages. | `dutchman-core`, `cadmpeg-ir` |
+| `dutchman-web` | Upload page and browser conversion API. | `dutchman`, `dutchman-serve` |
+| `dutchman-serve` | Shared HTTP guards, private folders, and bounded zip extraction. | HTTP and filesystem support |
 
 `dutchman-core` and `dutchman-solidcraft` are `publish = false` until their APIs settle. The
 `dutchman` crate is the published CLI (`cargo install dutchman`); `dutchman-cad` stays a
@@ -153,7 +157,7 @@ When every active feature of the model maps onto SolidCraft features, the design
 history: SolidCraft parameters (`params`) and features at the root, then the original
 geometry as an Import named "Original geometry (imported)", **suppressed**, at the end of the
 timeline. The replayed history is the live result; the original is there to compare with and
-to fall back on, so a history design is never worse than an import design.
+to fall back on, so the original shape remains available if replay fails.
 
 Unused construction helpers need no target feature. Later active consumers carry resolved
 datum frames in sketches, pattern axes, and later datum constructions; unresolved helper
@@ -198,7 +202,7 @@ when it has a single non-construction curve; taper, explicit corner transitions,
 sections, tangent-path extension, and post-sweep simplification are not mapped); spheres, and tori about the Z axis (boxes and cylinder primitives wait on cadmpeg
 placing them); coils along any axis, travelling up or down it, of round or square section,
 turning either way (tapered coils, flat spirals and triangular sections are not mapped);
-simple, counterbore and countersink
+simple, counterbore, and countersink
 holes drilled at the circle centres, arc centres or points of a sketch (including explicit
 entity selections), or at a directed spatial placement, through all or to a depth, flat or,
 for simple holes, with a drill point; axes placed on proven earlier extrusion caps and holes
@@ -327,6 +331,8 @@ Output is encoded in memory and written only when the whole conversion succeeds.
 
 ## v0.1: one format, end to end
 
+This section records the initial milestone, rather than current conversion coverage.
+
 Fusion `.f3d` parts convert to a SolidCraft design holding the model as one non-parametric
 import, which behaves like any STEP import in SolidCraft. History, sketches, parameters and
 appearances are reported as losses. Tests use synthetic fixtures only: CADIR built in code
@@ -335,8 +341,11 @@ and synthetic files from cadmpeg's public test suite (provenance in
 
 ## After v0.1
 
-- **History** (v0.2, in progress): partial revolves once CADIR states the
-  turning direction; more blend inputs once their pre-feature topology can be proven.
+Current capabilities and remaining work:
+
+- **History**: full turns and proven one-sided partial solid revolves map; further blend
+  coverage needs proven pre-feature topology. Blocked histories retain an editable prefix
+  when possible, beside the imported final shape.
 - **Components**: designs that define and place their own components (Fusion) convert as
   SolidCraft components when cadmpeg says which bodies each owns, components inside components
   as sub-assemblies; see fusion.md. Each component's part model is cut from the decoded
@@ -354,8 +363,8 @@ and synthetic files from cadmpeg's public test suite (provenance in
 - **Appearances**: body and face colours carry across: through STEP for imports; as looks for
   replayed bodies, with a planar face's own colour placed by a point inside the face (curved
   faces keep their body's colour). Inside an assembly the point is in the part's own frame,
-  which SolidCraft applies to every occurrence of the part. Materials come next, once cadmpeg
-  gives physical materials (CADIR 0.6 carries appearances only).
+  which SolidCraft applies to every occurrence of the part. Visual appearances do not establish physical materials; material mapping needs
+  decoded physical properties.
 - More formats as cadmpeg's codecs mature. The state of each format and the upstream gaps that
   keep its history from replaying are tracked in [fusion.md](fusion.md),
   [inventor.md](inventor.md) and [sldprt.md](sldprt.md).
@@ -367,7 +376,7 @@ Settled 2026-10-20:
 
 1. First format: Fusion `.f3d`, cadmpeg's most complete native codec. Inventor parts (`.ipt`)
    follow through cadmpeg's Inventor codec, pinned like f3d; improvements land
-   upstream and reach Dutchman by bumping the pin. Assemblies (`.iam`) come later. SolidWorks
+   upstream and reach Dutchman by bumping the pin. Assemblies (`.iam`) followed; they now convert placed parts and sub-assemblies. SolidWorks
    parts (`.sldprt`) follow the same way through cadmpeg's SolidWorks codec.
 2. Dutchman ships cadmpeg's commercial-format codecs (f3d, ipt, sldprt) in its Apache-2.0
    binary; hosting them outside SolidCraft is its purpose.
@@ -387,7 +396,8 @@ for runtime recovery. CLI, batch, MCP and the GUI share the output adapter selec
 The experimental FreeCAD writer also retains the longest mapped history prefix and all
 mapped sketches when a later feature cannot be rebuilt. They remain hidden references in
 **Rebuilt history (partial)** beside the final embedded STEP body; only an exact prefix
-match can replace that final shape. The SolidCraft writer still requires complete history.
+match can replace that final shape. The SolidCraft writer likewise keeps an editable prefix hidden beside the original
+geometry when full history cannot be retained.
 
 ## Conversion progress
 
@@ -411,7 +421,6 @@ stream with immediate flushes, stage/duration records, a 30-second resource hear
 an end summary; an independent timer syncs the file at least every five seconds. Default
 paths, timestamp naming, retention, and unfinished-run discovery live in `dutchman` and are
 shared with the desktop app. See [the diagnostic schema](json.md#dutchmandiagnostics1).
-
 
 
 ## Drawing output

@@ -129,16 +129,23 @@ An estimate is unknown for formats this build cannot convert, or when metadata c
 be read, including ZIP directories exceeding 10,000 members or 16 MiB, and unreadable
 archives.
 
-RAM bands use every successful Windows and Mac measurement, re-evaluated with the
-current coefficients: Fusion `.f3d` ±55%, multipart `.f3z` ±25%, Inventor parts ±30%,
-SolidWorks parts ±35%, and FreeCAD ±50%. One percentage point of safety is added before
-rounding up to a 5% step. These are empirical envelopes of this corpus, not guarantees for
-unseen designs. Unmeasured formats retain their ±100% memory heuristic.
-Time has its own band: multipart Fusion is ±20%; other time bands are uncalibrated.
+Memory and time have separate empirical bands, measured on successful Windows and macOS
+conversions. These describe the measured corpus; they do not guarantee a bound for unseen files.
+
+| Format | Memory band | Time band |
+|---|---|---|
+| Fusion `.f3d` | ±55% | Uncalibrated |
+| Multipart Fusion `.f3z` | ±25% | ±20% |
+| Inventor parts | ±30% | Uncalibrated |
+| SolidWorks parts | ±35% | Uncalibrated |
+| FreeCAD | ±50% | Uncalibrated |
+| Unmeasured formats | ±100% heuristic | Uncalibrated |
+
+Memory bands include one percentage point of safety and round up to a 5% step.
 Timing uses fractional `seconds_exact`; `seconds` remains its whole-second ceiling for
 compatibility. Fixed startup is separate from content work: Windows has different fast,
-history and verification startup terms; macOS has its own process floor and allows the
-ten-second version-probe timeout for history without an explicit target version. The estimator
+history and verification startup terms; macOS has its own process floor and retains a conservative allowance from older
+ten-second version probes. Current probes have a three-second limit and can use a cached version. The estimator
 never runs SolidCraft to measure a probe. History may probe its version even with
 `--no-verify`. Old Mac probe durations were not recorded, Windows startup varies between runs, and
 FreeCAD assembly worker startup is poorly predicted by archive bytes, so these four formats keep uncalibrated time bands. Verification
@@ -222,8 +229,8 @@ Homebrew quarantines the apps it installs, so the app needs the
 
 ### macOS: the app
 
-From 0.1.3 on, each release has `dutchman-VERSION-macos-universal.dmg`: **Dutchman
-Convert.app** (named **Dutchman.app** in 0.1.5 and earlier), for Apple silicon and Intel Macs
+Each release has `dutchman-VERSION-macos-universal.dmg`: **Dutchman
+Convert.app**, for Apple silicon and Intel Macs
 alike, with the `dutchman` and `dutchman-mcp` commands inside it.
 
 1. Open the disk image and drag **Dutchman Convert** onto **Applications**.
@@ -270,13 +277,12 @@ sudo ln -sf "/Applications/Dutchman Convert.app/Contents/Helpers/dutchman" /usr/
 sudo ln -sf "/Applications/Dutchman Convert.app/Contents/Helpers/dutchman-mcp" /usr/local/bin/dutchman-mcp
 ```
 
-With 0.1.5 or earlier, write `/Applications/Dutchman.app` in these commands instead.
 
 ### From a release archive
 
 Each [release](https://github.com/dutchman-cad/dutchman/releases) has archives for the
 platforms below. Each archive holds `dutchman` (the command), `dutchman-mcp` (the
-[MCP server](mcp.md)), `dutchman-gui` (the desktop app, from 0.1.1 on), `LICENSE`, `NOTICE`,
+[MCP server](mcp.md)), `dutchman-gui` (the desktop app), `LICENSE`, `NOTICE`,
 `README.md` and the font licences, with a `.sha256` file beside it.
 
 | Platform | Archive |
@@ -289,15 +295,15 @@ platforms below. Each archive holds `dutchman` (the command), `dutchman-mcp` (th
 | Windows, x86_64 | `dutchman-VERSION-x86_64-pc-windows-msvc.zip` |
 
 The universal macOS archive runs on both Apple silicon and Intel. Per-chip archives remain
-available for Homebrew and other installations that select a processor. The README's download
+available for Homebrew and other installations that select a processor. The [install page](install.md#direct-downloads)
 table links the latest release's universal archive and disk image.
 
 Download the archive and its `.sha256` file, check one against the other, then unpack it and
-put the programs on your `PATH`. On Linux x86_64, for release 0.1.5 (set `VERSION` and the
+put the programs on your `PATH`. On Linux x86_64, for release 0.2.5 (set `VERSION` and the
 target for another release or machine):
 
 ```sh
-VERSION=0.1.5 TARGET=x86_64-unknown-linux-gnu
+VERSION=0.2.5 TARGET=x86_64-unknown-linux-gnu
 base=https://github.com/dutchman-cad/dutchman/releases/download/v$VERSION
 curl -fLO "$base/dutchman-$VERSION-$TARGET.tar.gz"
 curl -fLO "$base/dutchman-$VERSION-$TARGET.tar.gz.sha256"
@@ -355,7 +361,7 @@ Expand-Archive dutchman-VERSION-x86_64-pc-windows-msvc.zip -DestinationPath .
 
 ### Channels: stable and nightly
 
-- **Stable** releases (`v0.1.5`, …) are the ones to use. Each is built against one tested
+- **Stable** releases (`v0.2.5`, …) are the ones to use. Each is built against one tested
   commit of cadmpeg, the library that reads the native files.
 - **Nightly** is one pre-release, [`nightly`](https://github.com/dutchman-cad/dutchman/releases/tag/nightly),
   rebuilt each day from Dutchman's latest code against cadmpeg's latest code, and published
@@ -391,166 +397,14 @@ server and used from any browser. [Dutchman Web](web.md) says how to run it.
 
 ### SolidCraft (optional, recommended)
 
-A part that holds an imported solid becomes a base-body Import feature at its place in the
-timeline. Later features keep editable history when they map. Stored geometry has no recipe
-to lose: the report says, at Info level, “This part holds an imported solid; there is no
-feature history to bring over”. A part made only of stored geometry is geometry without
-history, with no flattened-history warning. A base feature the source proves holds no bodies
-builds nothing and is reported `not_needed`.
-
-When a design's feature history converts, Dutchman checks it by replaying it in SolidCraft's
-command-line tool, `solidcraft-cli`, which comes with every
-[SolidCraft release](https://github.com/tangency-labs/solidcraft/releases). Installing the
-SolidCraft app is enough: Dutchman finds the tool inside it (on macOS, the newest
-`SolidCraft*.app` in `/Applications` or `~/Applications`; on Windows, `Program Files\SolidCraft`, else the install folder the installer recorded in the
-registry).
-`--solidcraft PATH`, `SOLIDCRAFT_CLI`, or `solidcraft-cli` on your `PATH` come first. The
-desktop app says which one it checks with. Without one, conversions still work; a converted
-history is marked unverified.
-
-On macOS, let SolidCraft itself run once before the first check: open SolidCraft from
-Applications, click **Done** when macOS stops it, then click **Open Anyway** in **System
-Settings > Privacy & Security**, the same steps as for Dutchman Convert. Dutchman reads the
-app's quarantine attribute and its user-approved flag without changing them. The desktop app
-retries a blocked check when its window regains focus or you start a conversion. Until then
-it says so under the check option:
-
-<img alt="Dutchman Convert with macOS's “SolidCraft” Not Opened box over it; under Check feature history in SolidCraft it reads: macOS has not yet allowed SolidCraft to run, with the steps to allow it." src="images/macos-solidcraft-blocked.png" width="450">
-
-Dutchman is made for the current SolidCraft (any release from the last two weeks);
-older versions get simplified features, or pass `--solidcraft-version x.y.z` on
-`convert`, `convert-all`, or `watch`. The current window is 0.18–0.27; roundtrip
-checks cover its oldest and newest releases. Each design targets the found CLI's version,
-even with `--no-verify`, else the newest release known at build time (currently 0.27).
-Versions below 0.18.2 and malformed versions are refused. Older targets remain accepted
-down to 0.18.2. Features that need a newer release block history with a named reason
-and preserve the original geometry as for other blockers.
-A design opens in its target release and newer releases. A `solidcraft-cli` older than
-0.18.2 is not used: the conversion says so ("… is older
-than SolidCraft 0.18 patch 2, the oldest that opens and checks Dutchman's designs; install a newer
-SolidCraft") and writes the history unverified. SolidCraft 0.19.0 saves designs in a newer
-format that older versions do not open, so a design you save again in 0.19.0 opens in 0.19.0
-or newer only.
-
-Sheet-metal history includes base flanges (not of symmetric thickness) and full-edge flanges
-on an unchanged rectangular base sheet. An edge flange needs its own CADIR input topology
-with edge midpoint, tangent, and end vertices; each midpoint must identify exactly one edge
-of the rebuilt base sheet. Fixed outer-face heights, angles between zero and 180 degrees,
-inside/outside bend placement, and positive bend radii map. Inner-face heights, partial widths,
-object-ended heights, adjacent/tangent bend placement, and picks on already modified sheets
-keep the geometry and report the reason. Final-body edges alone never select a flange.
-Hems keep geometry: CADIR specifies developed length while SolidCraft requires length to the
-outer face, and rolled, teardrop, and unresolved hem forms are not supported yet. CADIR has no
-contour-flange, bend, unfold/refold, or corner-relief operations, nor K-factor or relief
-settings; sheet rules keep SolidCraft's defaults for those settings. The report names the
-first feature that stops the history; the original geometry is still converted.
+Install SolidCraft to check editable history and open converted designs. Conversion also
+works without it; history is then reported as unverified. See [SolidCraft compatibility](compatibility.md)
+for discovery, macOS approval, target versions, and filename extensions.
 
 ## Desktop app
 
-The header’s SolidCraft status pill opens a small panel with **Target SolidCraft** and a
-notice explaining when the installed SolidCraft is newer than Dutchman knows, too old
-(before minor 0.18), or older and the selected target loses editable history. Only the last case suggests newer SolidCraft for more history;
-0.25 patch 1 through 0.27 currently need no such notice. The notice never blocks conversion.
-The pill shows the detected release, or **SolidCraft not found** with a download link in its
-panel. **Advanced > SolidCraft version…** opens the same panel. Narrow windows show only
-the version or **not found**, shorten **Update**, and put theme choices in a menu.
-For an installed release newer than known, the panel has an **Update Dutchman** button, which
-opens the update window, when the update check already knows a newer Dutchman. Too-old releases have a
-[Download SolidCraft](https://github.com/tangency-labs/solidcraft/releases) link.
-
-Release builds check for updates at startup and every hour while open. A small **Update**
-button beside the theme switch opens the new version and plain-text release notes; an available update never
-opens a window automatically. **Download** opens the package for this platform (or the release page).
-Homebrew and Scoop installations offer **Update with Homebrew** or **Update with Scoop**.
-Homebrew runs `brew update` followed by `brew upgrade --cask dutchman-cad/tap/dutchman-convert`
-(or `brew upgrade dutchman-cad/tap/dutchman` for the formula), with
-`HOMEBREW_NO_AUTO_UPDATE=1` for the upgrade. The window shows progress and the last 12 output
-lines. Closing the update window keeps Homebrew running; reopening it shows the same progress.
-After success, **Restart Dutchman** opens the installed app and closes this copy. Homebrew can
-replace the running app on macOS.
-
-Scoop needs Dutchman to close before Windows can replace its executable. **Update with Scoop**
-first explains the hand-off; **Update and restart** confirms it, and **Cancel** leaves the app
-open. A detached, hidden PowerShell helper waits up to two minutes for Dutchman to exit, runs
-`scoop update` then `scoop update dutchman` for the `dutchman-cad/dutchman` package, and opens
-Dutchman from its Scoop shim whether the update succeeds or fails. Settings save on normal
-close. Finish active conversions before confirming. Output goes to
-`%LOCALAPPDATA%\Dutchman\diagnostics\scoop-update.log`. On the next start, a failed or
-incomplete result opens the update window with its error, output tail, and **Copy command**;
-the log is consumed once and deleted. Success opens no update window.
-
-No package-manager commands run until confirmed. Missing commands, failed commands, and a
-15-minute update timeout retain the copy-command fallback. **Copy command** remains a
-secondary action for both package managers; close Dutchman before running it with Scoop.
-**Skip this version** hides that release; **Remind me later** hides updates for three days.
-These choices persist in the desktop settings. **Settings** offers **Check for updates
-automatically** (on by default) and **Check now**, which also shows skipped releases.
-`DUTCHMAN_UPDATE_CHECK=0` disables all checks, including **Check now**. Builds from source
-never check; only release-workflow builds enable this feature.
-
-For direct downloads, each check sends an HTTPS GET to
-`https://github.com/dutchman-cad/dutchman/releases.atom` with
-`User-Agent: Dutchman-update-check/<version>` and, on repeat checks, `If-None-Match`
-containing the feed ETag GitHub returned. An unchanged feed (304) needs no API request.
-Only a newer stable `vX.Y.Z` release triggers one GET to
-`https://api.github.com/repos/dutchman-cad/dutchman/releases/latest` for package links;
-if the feed fails, one API request is tried instead, then the next automatic check is in
-an hour.
-
-For package-manager installations, the hourly check first sends an HTTPS GET to exactly one
-of these public package files, using the same User-Agent and a conditional `If-None-Match`
-header with that file's ETag:
-
-- Homebrew cask: `https://raw.githubusercontent.com/dutchman-cad/homebrew-tap/main/Casks/dutchman-convert.rb`
-- Homebrew formula: `https://raw.githubusercontent.com/dutchman-cad/homebrew-tap/main/Formula/dutchman.rb`
-- Scoop: `https://raw.githubusercontent.com/dutchman-cad/scoop-bucket/main/bucket/dutchman.json`
-
-An unchanged package file (304) causes no further request. Only a package version newer than
-the version already known triggers a releases-feed request for that exact version's notes;
-no releases API request is needed. The pill appears only once the package has the newer
-stable version. If its feed entry is missing, the window links to the release page.
-Package metadata failures retry in an hour without offering a feed-only update.
-
-These update-check requests send no cookies, identifiers, usage data, file names, paths, or
-file contents. Clicking an update button also runs the package manager, which contacts its
-own configured package sources and download hosts using its own network and privacy settings. GitHub sees the connecting IP address, ordinary HTTPS request metadata,
-the app version in the User-Agent, and the public feed or package ETag. Clicking **Download** opens
-the release asset or page in the default browser, under that browser's privacy settings.
-
-For a visual walkthrough, see [How to use it](../README.md#how-to-use-it).
-
-Open `dutchman-gui`, add design files or folders, choose an output folder, and press
-**Convert**. Convert stays visible while you scroll through settings or results. The
-**Preset** selector starts at **Standard**:
-
-- **Fast**: shape only, least memory.
-- **Standard**: history, sketches, and joints; leaves history out if it would
-  not fit in free memory.
-- **Full**: everything, most memory.
-
-Under **Advanced**, **Feature history**, **Sketches**, and **Joints** let you leave content
-out of the selected preset. A changed checkbox makes the selector read **Custom (based on
-Standard)** or **Custom (based on Full)**. Choosing a preset again resets these switches.
-Fast already leaves all three out; choose Standard or Full to enable them. These choices
-are remembered between launches. Older `import_only` settings restore with **Feature
-history** unchecked and Standard as the base.
-
-Queued files show **about N GB, about M min** when an estimate is available. Files in queued
-folders are listed with their estimates too. Estimates below 0.1 GB show **under 0.1 GB**,
-and times below 60 seconds show **under a minute**, just as in the CLI. **M GB free** appears
-once when the machine's free memory can be read. These are estimates, not limits or promises; an unavailable estimate
-leaves no label. Planning and estimation run in the background.
-
-Before a conversion or retry, Dutchman checks each file's estimate against free memory.
-If one is too large, a dialog shows only its file name, without the folder path:
-“`<file name>` may use about `<N GB>` of memory while converting. Your computer has about
-`<M GB>` free, so it may not have enough.” A separate line advises using the lighter preset
-when one is available. All dialog buttons appear in one horizontal row.
-**Use Fast** or **Use Standard** selects the offered preset and checks the files again.
-**Convert anyway** skips the memory check for this run only; **Cancel** starts no conversion.
-When Fast is already selected, the dialog offers only Convert anyway and Cancel.
-When Standard leaves history out to fit in memory, its result card shows the
-history Info message even with the full loss log collapsed. The original geometry is kept.
+See the [desktop guide](desktop.md) for presets, Advanced settings, separate memory and
+time estimates, diagnostics, the SolidCraft version pill, and updates.
 
 ## Your first conversion
 
@@ -845,6 +699,18 @@ Got a file that converts wrong? Drop it, with its STEP export, in a DM to Dutchy
 dutchman formats
 ```
 
+Use `dutchman formats --markdown` for a compact Markdown table, as shown in [the README](../README.md#what-converts).
+`--markdown` and `--json` are mutually exclusive.
+
+Reader status describes capability; the conversion report says what a particular file kept.
+Fusion archives can keep components and mapped joints; multi-document archives merge
+referenced designs through cadmpeg. Inventor assemblies read placed parts and sub-assemblies
+from their files in the project. SolidWorks parts convert geometry; feature history waits
+on cadmpeg binding sketches and extrude profiles. SolidWorks assemblies are recognised
+without a reader. Creo and NX share `.prt`; contents identify the format, including
+numbered `.prt.N` saves. An inconclusive file stays recognised without choosing a reader.
+IGES is refused before decoding: open it in SolidCraft directly (File > Import).
+
 Each listing adds cadmpeg's published headline level (`L0`–`L9`) beside the reader
 status, when available. The desktop app's **Formats** list shows the same levels.
 The level describes cadmpeg's format-support ladder; the status still says whether
@@ -881,33 +747,7 @@ there.
 
 ## Pilot
 
-`dutchman pilot` runs [Pilot](https://github.com/dutchman-cad/pilot), a local helper for
-driving SolidCraft from plain-language requests through its public interfaces. Find
-commands and example calls:
-
-```sh
-dutchman pilot how "round all edges 3 mm"
-```
-
-Start its model proxy with a chat-completions endpoint such as Ollama or LM Studio:
-
-```sh
-dutchman pilot model --upstream http://localhost:11434/v1
-```
-
-Connect SolidCraft to `http://127.0.0.1:11500/v1`. Install SolidCraft separately.
-`dutchman pilot --help` lists Pilot's commands; `dutchman pilot model --help` lists the
-model proxy's options. The default `pilot` Cargo feature includes this command.
-
-Constant-radius FreeCAD AdditiveHelix and SubtractiveHelix features keep editable history
-as sketch-profile coils when targeting SolidCraft 0.25 patch 1 or newer. Older targets report
-`needs SolidCraft 0.25 patch 1 or newer` with the target version and flatten the history. The
-profile, axis, pitch/height/turn
-law, handedness, reversed travel, and Boolean operation carry across. Available feature
-parameter bindings drive dimensions; dimensions without bindings keep their resolved
-values with a Degraded loss. Spreadsheet expressions follow the usual value fallback.
-Conical helices and flat spirals remain unsupported because SolidCraft's coil has no
-cone-angle or radial-growth option. Replay verification applies as for other features.
+See [Pilot](pilot.md) for commands, model setup, and installed-tool dispatch.
 
 ## Reading the loss report
 
@@ -1488,3 +1328,39 @@ Before conversion, Dutchman shows an approximate memory/time estimate. An over-b
 run offers a lighter preset in a terminal, or refuses with exit 2 in scripts, with
 `--yes`, or with `--json`. `--no-memory-check` bypasses the guard and Standard's history
 budget. See [the guide](#choosing-what-to-keep) for limits and examples.
+
+## Use from scripts and AI agents
+
+Download a prebuilt archive from the
+[latest release](https://github.com/dutchman-cad/dutchman/releases/latest) (see
+[Getting started](guide.md#install)), or install from source (Rust 1.88 or newer):
+
+```sh
+cargo install --git https://github.com/dutchman-cad/dutchman dutchman
+```
+
+See what would carry across, without writing anything:
+
+```sh
+dutchman inspect --json part.ipt
+```
+
+Convert, with one JSON report on stdout:
+
+```sh
+dutchman convert --json part.f3d part.sc
+```
+
+Convert a whole project folder, four files at a time:
+
+```sh
+dutchman convert-all --json --jobs 4 --out-dir converted/ project/
+dutchman watch inbox/ --out-dir converted/  # Poll for settled uploads; keep reports beside results
+```
+
+Exit codes: `0` converted, `1` could not convert (the JSON report has `"ok": false` and
+`error.message`), `2` usage error. A written history is checked in SolidCraft when
+`solidcraft-cli` is found: set `SOLIDCRAFT_CLI` to its path, or pass `--solidcraft PATH`.
+[docs/json.md](json.md) describes every field; field names are stable.
+
+For agent tools and client setup, see [the MCP server](mcp.md).

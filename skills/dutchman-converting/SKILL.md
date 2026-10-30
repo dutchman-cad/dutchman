@@ -138,6 +138,9 @@ extra memory use. Normal JSON reports include `estimate` and effective `choices`
 
 ## 1. Check the format
 
+For a Markdown summary in documentation, run `dutchman formats --markdown`; use
+`dutchman formats --json` or the MCP tool for full conversion descriptions.
+
 Call `formats` for the installed build's formats, status `words` and `converts`.
 Its `level` adds cadmpeg's published headline (`L0`–`L9`), or `null` when none is
 published; reader status still determines whether conversion can be attempted.

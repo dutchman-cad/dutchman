@@ -23,7 +23,7 @@ A release is cut from `main` once CI is green there.
    `CHANGELOG.md` entry (use `--date YYYY-MM-DD` to override today). Review it, add any known
    issue, and stage the deleted fragments. Set the workspace `version` in `Cargo.toml`, along
    with the `version` of the `dutchman-core` and `dutchman-solidcraft` workspace dependencies.
-   Run `cargo build` so `Cargo.lock` follows. Leave the README's download table alone: it
+   Run `cargo build` so `Cargo.lock` follows. Leave the install page's download table alone: it
    links the latest published release's version-less files (`releases/latest/download/`),
    which the release build uploads beside the versioned ones, so it follows a release only
    once that release is published (a test checks the table). Write `release-notes/X.Y.Z.md`: one intro paragraph,
@@ -69,14 +69,22 @@ A release is cut from `main` once CI is green there.
    Both are `publish = false` today, and publishing them makes their APIs public. Run
    `cargo publish --dry-run -p <crate>` before each.
 
+## Format listings
+
+When format capabilities change, regenerate the README table between
+`<!-- formats: generated from dutchman formats -->` and `<!-- /formats -->` with
+`dutchman formats --markdown` from a default-feature build. Update the text listing in
+[guide.md](guide.md#formats) from `dutchman formats` too; tests compare both listings
+against the program.
+
 ## Packaging
 
 Release and nightly Mac downloads offer a universal `.dmg` for the desktop app and a
 universal `.tar.gz` for the command line. Both run on Apple silicon and Intel. Stable
 releases also attach version-less copies, including `dutchman-macos-universal.tar.gz`
 and its `.sha256`. Only after a release containing that archive is published, switch
-`scripts/downloads.py`'s `latest` table to the universal archive and regenerate the README
-download table with `python3 scripts/downloads.py latest README.md`.
+`scripts/downloads.py`'s `latest` table to the universal archive and regenerate the `docs/install.md`
+download table with `python3 scripts/downloads.py latest docs/install.md`.
 
 Linux release and nightly archives include `dutchman-web`; it needs no desktop libraries.
 Windows and macOS archives currently leave it out: native builds of the web server have not

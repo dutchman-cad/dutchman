@@ -21,7 +21,7 @@ docker run --rm dutchman --version
 The `docker tag` line lets the commands below say `dutchman`; you can also give the full name
 each time. The tags are:
 
-- `X.Y.Z`: one release, such as `0.2.1`; it never changes.
+- `X.Y.Z`: one release, such as `0.2.5`; it never changes.
 - `latest`: the newest release.
 - `nightly`: built each day from `main` against cadmpeg's `main`, after its tests pass.
 
@@ -61,7 +61,7 @@ run as yourself so that the converted designs belong to you:
 
 ```sh
 docker run --rm -v "$PWD:/work" --user "$(id -u):$(id -g)" dutchman part.f3d
-docker run --rm -v "$PWD:/work" --user "$(id -u):$(id -g)" dutchman convert --json part.f3d out.solidcraft
+docker run --rm -v "$PWD:/work" --user "$(id -u):$(id -g)" dutchman convert --json part.f3d out.sc
 docker run --rm -v "$PWD:/work" --user "$(id -u):$(id -g)" dutchman convert-all --json --out-dir converted/ project/
 ```
 

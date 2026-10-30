@@ -1,10 +1,8 @@
 # FreeCAD documents (`.FCStd`)
 
-FreeCAD documents convert through cadmpeg's `fcstd` codec. Checked in SolidCraft, all 19
-of the test documents (pads, pockets, revolves, holes, fillets, chamfers, shells and a
-three-part assembly) come out at FreeCAD's volume. Before 0.1.5 FreeCAD documents converted
-in the nightly builds only: cadmpeg 0.6.3 stored some faces as replicas of curves, kept each
-feature's intermediate shape as a body of its own and could turn revolved faces inwards.
+FreeCAD documents convert through cadmpeg's `fcstd` codec. Synthetic and CC0 fixtures
+cover pads, pockets, revolves, holes, fillets, chamfers, shells, and assemblies. Geometry
+and editable history are checked separately; the report says which checks ran.
 
 When a feature blocks SolidCraft history conversion, earlier editable features and resolved
 sketches are kept in a hidden **Editable history (partial)** component. The original final
@@ -42,7 +40,7 @@ includes hidden bodies as well as the visible final shape.
   Assembly-workbench joints use the same mapping as Fusion joints when cadmpeg resolves
   their operands and frames. Joints that cannot be carried are reported; the parts keep
   their stored placements.
-- **Feature history**, when every feature maps: sketches, pads, simple, counterbored and
+- **Feature history**, when every feature maps: sketches, pads, simple, counterbored, and
   countersunk holes, constant-radius fillets, equal-distance chamfers, and revolutions,
   replayed and checked in SolidCraft like a Fusion history. One-sided partial solid
   revolutions keep their sweep side, including `Reversed`, which cadmpeg folds into the
@@ -128,9 +126,7 @@ Constant-radius AdditiveHelix and SubtractiveHelix features keep their sketch pr
 axis, pitch/height/turn law, handedness, reversed direction, and join/cut operation as
 sketch-profile coils when the target is SolidCraft 0.25 patch 1 or newer. Choose a target with
 `--solidcraft-version x.y.z` on `convert`, `convert-all`, or `watch` (at least 0.18.2).
-The default is the found CLI's version, even with `--no-verify`, else the newest release
-known at build time (currently 0.27). The rolling 14-day window is currently
-0.18–0.27. Older targets block the helix with
+The [target defaults and supported releases](compatibility.md) apply even with `--no-verify`. Older targets block the helix with
 `needs SolidCraft 0.25 patch 1 or newer` and the target version, preserving the original
 geometry. Resolved feature parameter
 bindings drive the coil dimensions; dimensions without bindings keep their values.

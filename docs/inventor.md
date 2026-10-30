@@ -87,7 +87,7 @@ as Inventor does, so a project can be converted where it lies:
    and symbolic links are not searched, and the search stops after 200,000 files and folders.
 
 If the file is not under the project folder, the folders its Inventor project file names are
-searched the same way, in order: the workspace, workgroup and library folders in the `.ipj`,
+searched the same way, in order: the workspace, workgroup, and library folders in the `.ipj`,
 then its imported-components folder in each workspace. The project file is the nearest `.ipj`
 in or above the project folder, else above the assembly, so a project folder given inside a
 larger project still reaches the rest of it. Its paths are taken from its own folder; a path
