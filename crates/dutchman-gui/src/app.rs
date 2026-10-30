@@ -1559,11 +1559,14 @@ mod tests {
         harness.get_by_label("Open diagnostics folder");
         harness.get_by_label("Open folder");
         harness.get_by_label("The last run didn't finish. Its diagnostic log is here:");
+        // Toggle through accessibility rather than a pointer position, which depends on how
+        // the platform's fonts lay the form out.
+        let before = harness.state().options.diagnostics_default;
         harness
             .get_by_label("Save a diagnostic log (no names or contents from your file)")
-            .click();
+            .click_accesskit();
         harness.run();
-        assert!(harness.state().options.diagnostics_default);
+        assert_ne!(harness.state().options.diagnostics_default, before);
         harness.get_by_label("Dismiss").click();
         harness.run();
         assert!(harness.state().unfinished_diagnostic.is_none());
