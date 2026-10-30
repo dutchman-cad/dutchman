@@ -264,7 +264,7 @@ The formats report includes each reader's status and cadmpeg's published headlin
 | `import_only` | boolean | Leave feature history out; keep geometry and the preset's reference sketches. |
 | `verify` | boolean | Check a converted history in SolidCraft. Default `true`; skipped, and the history marked unverified, when no `solidcraft-cli` is found. |
 | `solidcraft` | string | Path of `solidcraft-cli` for the check. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`). |
-| `solidcraft_version` | string | Target release as x.y.z, at least 0.18.2. Default: the found CLI's version, else the newest known at build time (currently 0.27.0), including when `verify` is false. |
+| `solidcraft_version` | string | Target release as x.y.z, at least 0.18.2. Default: the found CLI's version capped at newest known, else the newest known at build time (currently 0.27.0), including when `verify` is false. |
 | `verify_timeout` | integer, at least 1 | Seconds each SolidCraft check may run before the history is written unverified. Default 120. |
 | `overwrite` | boolean | Replace an existing `.solidcraft` file (default true). When false, an existing file is left alone and that file's conversion fails with "already exists". |
 | `project` | string | Absolute path of the project folder an assembly's part files are searched in when they are not at their stored paths. Default: the nearest folder above the assembly holding an Inventor `.ipj`, else two folders up; for `convert_all`, each folder given. See [Finding the part files](inventor.md#finding-the-part-files). |
@@ -531,9 +531,15 @@ checkboxes that leave history, sketches, or joints out. It shows available estim
 checks memory before converting; choosing Convert anyway applies only to that run. History
 Info messages, including history left out by Standard, appear on its result cards.
 
-SolidCraft conversion results include `solidcraft: {target, found}`: the selected target
-release and discovered CLI release (or null), even when verification is disabled.
+SolidCraft conversion results include `solidcraft: {target, found, known_newest, status}`: the selected
+target release, discovered CLI release (or null), newest known release, and installed-version
+status, even when verification is disabled.
 Standard fixes its history budget before decoding for parts and assemblies; if only the
 history-free estimate fits, conversion proceeds with one Info explanation. Memory refusals
 happen before decoding. See [JSON reports](json.md) for diagnostic platform limits and UTC
 log filenames.
+
+SolidCraft reports also include `solidcraft.known_newest` (a version string) and
+`solidcraft.status`: `newer`, `too_old`, `older_loses_history`, `current`, or
+`none_found`. History notices follow the selected target’s writer gates. These
+fields require no network check. See [JSON reports](json.md).

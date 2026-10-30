@@ -75,6 +75,8 @@ pub struct App {
     has_app: bool,
     /// The SolidCraft CLI that checks histories when nothing else is chosen, if one is found.
     checker: Result<PathBuf, dutchman_solidcraft::NoCli>,
+    solidcraft_open: bool,
+    found_version: Option<String>,
     detected_version: dutchman_solidcraft::SolidCraftVersion,
     /// What to scroll into view on the next frame, so the results are seen without looking
     /// for them.
@@ -201,9 +203,18 @@ impl App {
         theme::install(&cc.egui_ctx);
         egui_extras::install_image_loaders(&cc.egui_ctx);
         let (sender, messages) = channel();
-        let detected_version = dutchman_solidcraft::SolidCraftVersion::detected(
-            &dutchman_solidcraft::Verification::Auto,
-        );
+        let found_version =
+            dutchman_solidcraft::solidcraft_version(&dutchman_solidcraft::Verification::Auto)
+                .and_then(|line| dutchman::json::solidcraft_release(&line));
+        let detected_version = found_version
+            .as_deref()
+            .and_then(|version| {
+                version
+                    .parse::<dutchman_solidcraft::SolidCraftVersion>()
+                    .ok()
+            })
+            .unwrap_or_default()
+            .min(Default::default());
         let mut options = ConvertOptions {
             solidcraft_version: Some(detected_version),
             ..ConvertOptions::default()
@@ -239,9 +250,19 @@ impl App {
             notice: None,
             has_app: platform::has_solidcraft_app(),
             checker: dutchman_solidcraft::usable_cli(&dutchman_solidcraft::Verification::Auto),
+            solidcraft_open: false,
+            found_version,
             detected_version,
             reveal: None,
         }
+    }
+
+    /// Supplies an installed release without requiring SolidCraft for UI previews.
+    pub fn preview_solidcraft(&mut self, found: Option<&str>) {
+        self.found_version = found.map(str::to_owned);
+        self.detected_version = found.and_then(|v| v.parse().ok()).unwrap_or_default();
+        self.detected_version = self.detected_version.min(Default::default());
+        self.options.solidcraft_version = Some(self.detected_version);
     }
 
     /// Adds design files and folders to convert, each once.
@@ -691,6 +712,7 @@ impl App {
                         }
                     });
             });
+        self.solidcraft_window(ctx);
         self.updater.windows(ctx);
         self.memory_dialog(ctx);
         self.refresh_estimates(ctx);
@@ -699,6 +721,7 @@ impl App {
     fn title(&mut self, ui: &mut egui::Ui) {
         let p = theme::palette(ui);
         let narrow = ui.available_width() < 850.0;
+        let compact = ui.available_width() < 1200.0;
         ui.horizontal(|ui| {
             let mark = if ui.visuals().dark_mode {
                 egui::include_image!("../assets/dutchman-mark-night.svg")
@@ -709,8 +732,14 @@ impl App {
             ui.add_space(theme::SPACE_2);
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
-                ui.label(RichText::new(crate::APP_NAME).text_style(theme::title()));
-                if !narrow {
+                if narrow {
+                    ui.label(RichText::new("Dutchman").heading());
+                } else if compact {
+                    ui.label(RichText::new(crate::APP_NAME).heading());
+                } else {
+                    ui.label(RichText::new(crate::APP_NAME).text_style(theme::title()));
+                }
+                if !compact {
                     ui.label(
                         RichText::new("Converts native CAD designs into SolidCraft designs.")
                             .small()
@@ -719,20 +748,132 @@ impl App {
                 }
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.hyperlink_to("Report a problem", crate::REPORT_PROBLEM_URL);
                 let current = ui.ctx().options(|o| o.theme_preference);
-                for (preference, name) in [
+                let themes = [
                     (ThemePreference::Dark, "Night"),
                     (ThemePreference::Light, "Day"),
                     (ThemePreference::System, "System"),
-                ] {
-                    if ui.selectable_label(current == preference, name).clicked() {
-                        ui.ctx().set_theme(preference);
+                ];
+                if narrow {
+                    let label = match current {
+                        ThemePreference::Dark => "Night",
+                        ThemePreference::Light => "Day",
+                        ThemePreference::System => "System",
+                    };
+                    ui.menu_button(label, |ui| {
+                        for (preference, name) in themes {
+                            if ui.selectable_label(current == preference, name).clicked() {
+                                ui.ctx().set_theme(preference);
+                                ui.close();
+                            }
+                        }
+                    });
+                } else {
+                    for (preference, name) in themes {
+                        if ui.selectable_label(current == preference, name).clicked() {
+                            ui.ctx().set_theme(preference);
+                        }
                     }
                 }
+                self.solidcraft_pill(ui, narrow);
                 self.updater.header(ui, narrow);
             });
         });
-        ui.hyperlink_to("Report a problem", crate::REPORT_PROBLEM_URL);
+    }
+
+    fn solidcraft_report(&self) -> Value {
+        serde_json::json!({"solidcraft": dutchman::json::solidcraft_values(
+            self.options.solidcraft_version, self.found_version.clone())})
+    }
+
+    fn solidcraft_pill(&mut self, ui: &mut egui::Ui, narrow: bool) {
+        let report = self.solidcraft_report();
+        let status = report
+            .pointer("/solidcraft/status")
+            .and_then(Value::as_str)
+            .unwrap_or("none_found");
+        let p = theme::palette(ui);
+        let color = match status {
+            "too_old" | "none_found" => p.lantern_text,
+            "newer" => p.spectre,
+            _ => p.tide,
+        };
+        let label = match (&self.found_version, narrow) {
+            (Some(version), true) => version.clone(),
+            (Some(version), false) => format!("SolidCraft {version}"),
+            (None, true) => "not found".into(),
+            (None, false) => "SolidCraft not found".into(),
+        };
+        let notice = dutchman::json::solidcraft_notice(&report, self.updater.newer_known());
+        if ui
+            .add(
+                egui::Button::new(RichText::new(label).color(color))
+                    .corner_radius(CornerRadius::same(16)),
+            )
+            .on_hover_text(
+                notice.unwrap_or_else(|| "SolidCraft target and installed version".into()),
+            )
+            .clicked()
+        {
+            self.solidcraft_open = !self.solidcraft_open;
+        }
+    }
+
+    fn solidcraft_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.solidcraft_open;
+        egui::Window::new("SolidCraft version")
+            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-24.0, 72.0))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(480.0)
+            .show(ctx, |ui| {
+                let report = self.solidcraft_report();
+                if let Some(notice) = dutchman::json::solidcraft_notice(&report, self.updater.newer_known()) {
+                    ui.label(notice);
+                } else if self.found_version.is_none() {
+                    ui.label("SolidCraft not found. Install SolidCraft to check feature history and open designs.");
+                } else if let Some(found) = &self.found_version {
+                    ui.label(format!("SolidCraft {found} is installed."));
+                }
+                self.solidcraft_picker(ui);
+                if matches!(report.pointer("/solidcraft/status").and_then(Value::as_str), Some("too_old" | "none_found")) {
+                    ui.hyperlink_to("Download SolidCraft", dutchman::json::SOLIDCRAFT_DOWNLOAD);
+                }
+            });
+        self.solidcraft_open = open;
+    }
+
+    fn solidcraft_picker(&mut self, ui: &mut egui::Ui) {
+        egui::ComboBox::from_id_salt("solidcraft_version")
+            .selected_text(format!(
+                "Target SolidCraft {}",
+                self.options
+                    .solidcraft_version
+                    .unwrap_or(self.detected_version)
+            ))
+            .show_ui(ui, |ui| {
+                for (version, label) in [
+                    (
+                        self.detected_version,
+                        format!("Automatic ({})", self.detected_version),
+                    ),
+                    (
+                        dutchman_solidcraft::SolidCraftVersion::default(),
+                        format!(
+                            "Newest known ({})",
+                            dutchman_solidcraft::SolidCraftVersion::default()
+                        ),
+                    ),
+                    (
+                        dutchman_solidcraft::SolidCraftVersion::V0_25_1,
+                        "0.25.1 and newer".to_owned(),
+                    ),
+                ] {
+                    ui.selectable_value(&mut self.options.solidcraft_version, Some(version), label);
+                }
+            });
     }
 
     fn inputs_panel(&mut self, ui: &mut egui::Ui) {
@@ -923,35 +1064,9 @@ impl App {
                 {
                     self.options.no_clobber = !replace;
                 }
-                egui::ComboBox::from_id_salt("solidcraft_version")
-                    .selected_text(format!(
-                        "Target SolidCraft {}",
-                        self.options
-                            .solidcraft_version
-                            .unwrap_or(self.detected_version)
-                    ))
-                    .show_ui(ui, |ui| {
-                        for (version, label) in [
-                            (
-                                self.detected_version,
-                                format!("Found version ({})", self.detected_version),
-                            ),
-                            (
-                                dutchman_solidcraft::SolidCraftVersion::default(),
-                                "0.18.2 and newer".to_owned(),
-                            ),
-                            (
-                                dutchman_solidcraft::SolidCraftVersion::V0_25_1,
-                                "0.25.1 and newer".to_owned(),
-                            ),
-                        ] {
-                            ui.selectable_value(
-                                &mut self.options.solidcraft_version,
-                                Some(version),
-                                label,
-                            );
-                        }
-                    });
+                if ui.small_button("SolidCraft version…").clicked() {
+                    self.solidcraft_open = true;
+                }
                 let mut verify = !self.options.no_verify;
                 if ui
                     .checkbox(&mut verify, "Check feature history in SolidCraft")

@@ -111,7 +111,7 @@ Dutchman does not duplicate its rules.
 The adapter pins format `solidcraft/23`, the first in which an Import may name a non-STEP
 source. SolidCraft upgrades older formats on open and refuses newer ones, so a pinned older
 format provides the 0.18.2 compatibility floor. Feature mapping also respects the writer's
-target SolidCraft release: the found CLI's version, even with verification off, else
+target SolidCraft release: the found CLI's version capped at newest known, even with verification off, else
 `NEWEST_SOLIDCRAFT` (currently 0.27.0), unless an explicit target is supplied.
 `WINDOW_OLDEST` (currently 0.18.2) marks the oldest release in the rolling 14-day window;
 older targets down to the floor remain accepted with the existing feature gates. The

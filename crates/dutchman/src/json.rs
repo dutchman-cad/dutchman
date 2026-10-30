@@ -636,7 +636,8 @@ pub(crate) fn solidcraft_info(options: &crate::ConvertOptions) -> Option<Value> 
     Some(solidcraft_values(options.solidcraft_version, found))
 }
 
-fn solidcraft_release(line: &str) -> Option<String> {
+/// Normalize a discovered CLI version line for presentation.
+pub fn solidcraft_release(line: &str) -> Option<String> {
     // Match the writer's accepted CLI version lines, including v prefixes and suffixes.
     let word = line.split_whitespace().last()?.trim_start_matches('v');
     let mut parts = word.split('.').map(|part| {
@@ -652,14 +653,24 @@ fn solidcraft_release(line: &str) -> Option<String> {
     Some(format!("{major}.{minor}.{patch}"))
 }
 
-fn solidcraft_values(
+/// Build SolidCraft report values from a selected target and injected installed release.
+pub fn solidcraft_values(
     target: Option<dutchman_solidcraft::SolidCraftVersion>,
     found: Option<String>,
 ) -> Value {
     let target = target
-        .or_else(|| found.as_deref().and_then(|version| version.parse().ok()))
+        .or_else(|| {
+            found
+                .as_deref()
+                .and_then(|version| version.parse().ok())
+                .map(|version: dutchman_solidcraft::SolidCraftVersion| {
+                    version.min(Default::default())
+                })
+        })
         .unwrap_or_default();
-    json!({"target": target.to_string(), "found": found})
+    json!({"target": target.to_string(), "found": found,
+        "known_newest": dutchman_solidcraft::SolidCraftVersion::default().to_string(),
+        "status": dutchman_solidcraft::solidcraft_status(target, found.as_deref())})
 }
 
 /// The SolidCraft version line shared by single-file and batch text output. A file that
@@ -677,6 +688,25 @@ pub fn solidcraft_line(report: &Value) -> Option<String> {
             |version| format!("found {version}"),
         );
     Some(format!("Target SolidCraft {target} ({found})"))
+}
+
+/// SolidCraft's release download page, shared by desktop and CLI notices.
+pub const SOLIDCRAFT_DOWNLOAD: &str = "https://github.com/tangency-labs/solidcraft/releases";
+
+/// A non-blocking notice using the same report values in the CLI and desktop.
+pub fn solidcraft_notice(report: &Value, update_known: bool) -> Option<String> {
+    solidcraft_line(report)?;
+    let found = report.pointer("/solidcraft/found")?.as_str()?;
+    let target = report.pointer("/solidcraft/target")?.as_str()?;
+    match report.pointer("/solidcraft/status")?.as_str()? {
+        "newer" => Some(format!(
+            "SolidCraft {found} is newer than this Dutchman knows; designs are written for {target} and open fine in {found}.{}",
+            if update_known { format!(" Update Dutchman for {found}.") } else { String::new() }
+        )),
+        "too_old" => Some(format!("SolidCraft {found} is too old for Dutchman's output; update SolidCraft.")),
+        "older_loses_history" => Some(format!("Designs are written for {target}, your SolidCraft. Newer SolidCraft keeps more history.")),
+        _ => None,
+    }
 }
 
 /// Add the pre-read estimate and choices, including Standard's actual history decision.
@@ -733,6 +763,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn installed_version_notices_are_pure_and_non_blocking() {
+        for (found, status, notice) in [
+            (Some("0.28.0"), "newer", Some("SolidCraft 0.28.0 is newer than this Dutchman knows; designs are written for 0.27.0 and open fine in 0.28.0.")),
+            (Some("0.18.1"), "too_old", Some("SolidCraft 0.18.1 is too old for Dutchman's output; update SolidCraft.")),
+            (Some("0.24.0"), "older_loses_history", Some("Designs are written for 0.24.0, your SolidCraft. Newer SolidCraft keeps more history.")),
+            (Some("0.25.1"), "current", None),
+            (Some("0.26.0"), "current", None),
+            (Some("0.27.0"), "current", None),
+            (Some("0.18.2"), "older_loses_history", Some("Designs are written for 0.18.2, your SolidCraft. Newer SolidCraft keeps more history.")),
+            (None, "none_found", None),
+        ] {
+            let mut report = json!({"solidcraft": solidcraft_values(None, found.map(str::to_owned))});
+            assert_eq!(report["solidcraft"]["status"], status);
+            assert_eq!(report["solidcraft"]["known_newest"], "0.27.0");
+            assert_eq!(solidcraft_notice(&report, false).as_deref(), notice);
+            if status == "newer" {
+                assert_eq!(solidcraft_notice(&report, true), notice.map(|s| format!("{s} Update Dutchman for 0.28.0.")));
+            }
+            report["error"] = json!({"message": "conversion failed"});
+            assert!(solidcraft_notice(&report, true).is_none());
+        }
+        let report = json!({"solidcraft": solidcraft_values(Some(Default::default()), Some("0.24.0".into()))});
+        assert_eq!(report["solidcraft"]["status"], "current");
+        assert!(solidcraft_notice(&report, false).is_none());
+    }
+
+    #[test]
     fn cli_version_lines_are_normalized_like_the_writer() {
         for (line, version) in [
             ("solidcraft-cli 0.27.0", Some("0.27.0")),
@@ -757,7 +814,7 @@ mod tests {
         conversion_choices(&mut report, Path::new("missing.ipt"), &options);
         assert_eq!(
             report["solidcraft"],
-            json!({"target": "0.25.1", "found": null})
+            json!({"target": "0.25.1", "found": null, "known_newest": "0.27.0", "status": "none_found"})
         );
     }
 

@@ -236,7 +236,7 @@ fn chain(
 
 fn require_chain_version(ctx: &Context) -> Result<(), String> {
     let minimum = crate::SolidCraftVersion::V0_25_1;
-    if ctx.target_version < minimum {
+    if !crate::VersionGate::MirrorChain.supported(ctx.target_version) {
         return Err(format!(
             "needs SolidCraft {minimum} or newer (target {})",
             ctx.target_version

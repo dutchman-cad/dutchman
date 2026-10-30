@@ -402,6 +402,17 @@ first feature that stops the history; the original geometry is still converted.
 
 ## Desktop app
 
+The header’s SolidCraft status pill opens a small panel with **Target SolidCraft** and a
+notice explaining when the installed SolidCraft is newer than Dutchman knows, too old
+(before 0.18.2), or older and the selected target loses editable history. Only the last case suggests newer SolidCraft for more history;
+0.25.1 through 0.27.0 currently need no such notice. The notice never blocks conversion.
+The pill shows the detected release, or **SolidCraft not found** with a download link in its
+panel. **Advanced > SolidCraft version…** opens the same panel. Narrow windows show only
+the version or **not found**, shorten **Update**, and put theme choices in a menu.
+For an installed release newer than known, it adds “Update Dutchman for X” only when the
+existing update check already knows a newer Dutchman. Too-old releases have a
+[Download SolidCraft](https://github.com/tangency-labs/solidcraft/releases) link.
+
 Release builds check for updates at startup and every hour while open. A small **Update**
 button beside the theme switch opens the new version and plain-text release notes; nothing
 opens automatically. **Download** opens the package for this platform (or the release page).
@@ -535,7 +546,7 @@ dutchman convert --json generated_unit_cube.f3d cube.solidcraft
 | `--yes` | Never prompt to switch presets; refuse an over-budget conversion with exit 2. |
 | `--import-only` | Leave feature history out; keep geometry and the preset's reference sketches. |
 | `--solidcraft PATH` | The `solidcraft-cli` that checks a converted history. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`, else the install folder recorded in the registry). |
-| `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the found CLI's version, even with `--no-verify`, else the newest known at build time (currently 0.27.0). |
+| `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the found CLI's version capped at newest known, even with `--no-verify`, else the newest known at build time (currently 0.27.0). |
 | `--no-verify` | Write the history without checking it in SolidCraft. Cannot be combined with `--solidcraft`. |
 | `--verify-timeout SECONDS` | How long each SolidCraft check may run before the history is written unverified. Default 120. |
 | `--no-clobber` | Do not replace an existing `.solidcraft` file: that file's conversion fails instead. By default it is replaced. |
@@ -1064,7 +1075,11 @@ defect. An AI agent can do the same through SolidCraft's MCP server: open the de
 SolidCraft conversion reports include the selected target and the discovered CLI version,
 even with verification off. Text output includes `Target SolidCraft 0.27.0 (found 0.27.0)`,
 or `(none found)` when no version can be read. `--solidcraft-version` overrides the target;
-otherwise the found supported version is used, falling back to 0.27.0. Other output
+otherwise the found supported version is used, capped at the newest known release, falling
+back to 0.27.0. Successful conversions print the same installed-version notice beside the
+target line, with the SolidCraft download URL for too-old releases. The CLI never checks
+for Dutchman updates over the network. Failed or refused files print neither line.
+No installed release means no notice. Other output
 formats omit this line and the JSON `solidcraft` object.
 
 

@@ -93,6 +93,62 @@ pub const NEWEST_SOLIDCRAFT: [u64; 3] = [0, 27, 0];
 /// OLDEST_SOLIDCRAFT. Update alongside NEWEST_SOLIDCRAFT and the CI roundtrip pins at release time.
 pub const WINDOW_OLDEST: [u64; 3] = [0, 18, 2];
 
+/// Writer capabilities whose output depends on the target release.
+#[derive(Clone, Copy)]
+pub enum VersionGate {
+    /// Explicit flat tips compensate for changed entry-recess angle handling.
+    EntryRecessTip,
+    /// Editable sketch-profile coils.
+    SketchProfileCoil,
+    /// Editable ordered mirror-pattern chains.
+    MirrorChain,
+}
+
+impl VersionGate {
+    fn minimum(self) -> SolidCraftVersion {
+        match self {
+            Self::EntryRecessTip => SolidCraftVersion::V0_22_1,
+            Self::SketchProfileCoil | Self::MirrorChain => SolidCraftVersion::V0_25_1,
+        }
+    }
+
+    /// Whether this target can write the gated representation.
+    pub fn supported(self, target: SolidCraftVersion) -> bool {
+        target >= self.minimum()
+    }
+}
+
+/// Whether the writer's release gates can retain less history than the newest target.
+pub fn target_loses_history(target: SolidCraftVersion) -> bool {
+    [
+        VersionGate::EntryRecessTip,
+        VersionGate::SketchProfileCoil,
+        VersionGate::MirrorChain,
+    ]
+    .into_iter()
+    .any(|gate| {
+        !matches!(gate, VersionGate::EntryRecessTip)
+            && gate.supported(SolidCraftVersion::default())
+            && !gate.supported(target)
+    })
+}
+
+/// Installed-version status, independent of CLI discovery or network access.
+pub fn solidcraft_status(target: SolidCraftVersion, found: Option<&str>) -> &'static str {
+    let Some(found) = found.and_then(parse_version) else {
+        return "none_found";
+    };
+    if found > NEWEST_SOLIDCRAFT {
+        "newer"
+    } else if found < OLDEST_SOLIDCRAFT {
+        "too_old"
+    } else if found < NEWEST_SOLIDCRAFT && target_loses_history(target) {
+        "older_loses_history"
+    } else {
+        "current"
+    }
+}
+
 /// An accepted SolidCraft target release.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct SolidCraftVersion([u64; 3]);
@@ -104,7 +160,7 @@ impl SolidCraftVersion {
     /// First release with sketch-profile coils.
     pub const V0_25_1: Self = Self([0, 25, 1]);
 
-    /// The found CLI's release (even with verification off), else the built-in newest.
+    /// The found CLI's release capped at newest known (even with verification off), else newest.
     pub fn detected(verification: &Verification) -> Self {
         let detection = match verification {
             Verification::Off => &Verification::Auto,
@@ -113,7 +169,7 @@ impl SolidCraftVersion {
         solidcraft_version(detection)
             .and_then(|line| parse_version(&line))
             .filter(|version| *version >= OLDEST_SOLIDCRAFT)
-            .map(Self)
+            .map(|version| Self(version.min(NEWEST_SOLIDCRAFT)))
             .unwrap_or_default()
     }
 }
@@ -1754,7 +1810,7 @@ mod cli_tests {
     fn target_defaults_to_the_found_cli_or_the_built_in_newest() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
-        for version in ["0.18.2", "0.20.0", "0.25.1", "nonsense", "0.17.0"] {
+        for version in ["0.18.2", "0.20.0", "0.25.1", "0.28.0", "nonsense", "0.17.0"] {
             let cli = dir.path().join(version);
             std::fs::write(
                 &cli,
@@ -1765,7 +1821,8 @@ mod cli_tests {
             let verification = Verification::With(cli);
             let expected = version
                 .parse()
-                .unwrap_or(SolidCraftVersion(NEWEST_SOLIDCRAFT));
+                .unwrap_or(SolidCraftVersion(NEWEST_SOLIDCRAFT))
+                .min(SolidCraftVersion::default());
             assert_eq!(SolidCraftVersion::detected(&verification), expected);
             assert_eq!(
                 crate::SolidCraftWriter::new()

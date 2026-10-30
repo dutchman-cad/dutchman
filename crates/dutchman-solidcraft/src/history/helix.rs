@@ -14,7 +14,7 @@ pub(crate) fn map(
     ctx: &mut Context,
     report: &mut Report,
 ) -> Result<Value, String> {
-    if ctx.target_version < crate::SolidCraftVersion::V0_25_1 {
+    if !crate::VersionGate::SketchProfileCoil.supported(ctx.target_version) {
         return Err(format!(
             "needs SolidCraft 0.25.1 or newer (target {})",
             ctx.target_version

@@ -189,7 +189,7 @@ are not present in the pinned CADIR version.
   `report_key` files go to their specified paths, which may be outside it.
 - `solidcraft_version: "0.25.1"` (CLI `--solidcraft-version 0.25.1` on `convert`,
   `convert-all`, or `watch`) chooses the target release. It must be x.y.z and at least
-  0.18.2. The default is the found CLI's version, else the newest known at build time
+  0.18.2. The default is the found CLI's version capped at newest known, else the newest known at build time
   (currently 0.27.0), even with CLI `--no-verify` or MCP `verify: false`.
   Dutchman targets the current SolidCraft with a rolling 14-day window (currently
   0.18.2–0.27.0); older targets get simplified features with a named reason.
@@ -458,3 +458,8 @@ whether history fits before decoding, for both parts and assemblies; an accepted
 history-free budget cannot turn into a memory refusal after decode. Default diagnostic
 log filenames use UTC. Windows and macOS heartbeat resources are null when no safe
 process-resource API is available under the workspace's unsafe-code ban.
+
+SolidCraft reports also include `solidcraft.known_newest` (a version string) and
+`solidcraft.status`: `newer`, `too_old`, `older_loses_history`, `current`, or
+`none_found`. History notices follow the selected target’s writer gates. These
+fields require no network check. See [JSON reports](../../docs/json.md).
