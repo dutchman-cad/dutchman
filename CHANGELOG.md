@@ -8,6 +8,188 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
+## 0.2.5 (2026-10-30)
+
+### Formats
+
+- Convert FreeCAD TechDraw pages to DXF with `convert --to dxf`, one file per page,
+  or select a page with `--page NAME`. Keep neutral view curves, visible and hidden
+  line types, dimension labels and measurements, annotations, template frames, and
+  resolved title-block text in millimetre page space. Report unsupported content
+  and entity counts per page in JSON.
+- Leave out Fusion bodies kept only as consumed tools or removed bodies, with their exclusive
+  geometry and an Info note. Keep user-hidden component members available.
+
+### History
+
+- A base feature the source proves holds no bodies is reported as not needed instead of
+  stopping the part's history.
+- One-sided partial solid revolutions keep editable history when their selected profile
+  bounds prove the sweep side about the source axis, including reversed FreeCAD revolutions.
+  Unproven sides keep the original geometry and report the missing proof.
+- Uniform periodic sketch B-splines keep their exact shape as editable closed control splines,
+  including equal-weight rational curves. Unequal weights and unsupported interior knots name
+  the weights or custom knots missing from SolidCraft's control splines.
+- Profile regions with holes made of whole circles replay when unused layout lines cross them.
+  The lines stay editable as construction geometry when every active consumer selects
+  explicit whole-loop regions.
+- A whole-region profile is written with its curves and holes in sorted order, which every supported
+  SolidCraft release accepts; older releases refused a profile with ten or more holes as damaged.
+- An Inventor split of a body by a work plane maps to a SolidCraft split, and later features
+  that select either piece keep their history. A split by a surface is reported as not
+  supported yet.
+
+### Assemblies
+
+- Large Fusion assemblies convert with less memory and in less time: each component is cut
+  from the decoded design without first copying the whole design. A 33-placement assembly
+  peaks at 10.3 GB instead of 12.8 GB and converts in under six minutes instead of ten.
+- Fusion components keep the features and parameters cadmpeg identifies as theirs, even when
+  features have no output-body links. Features owned by another component stay out, and the
+  design's loose-body component keeps root-owned history when it exists.
+- Fusion components keep the feature history that builds their bodies: the features that make
+  them, their own sketches, and what those depend on. Each component's history is then mapped
+  and checked like a single part's, so the report names each component's first blocker instead
+  of saying no history was found.
+- A joint that cannot hold its parts where the file places them, because other joints already
+  place them, is written suppressed. SolidCraft solves the joints when it opens a design, so an
+  active conflicting joint moved those parts away from the machine; now they stay where the
+  design has them, and the joint is kept for the user to fix or turn back on.
+- Keep child placements used to resolve the poses of inserted Fusion designs, and suppress
+  conflicting joints so those components stay in place when SolidCraft opens the design.
+- Keep body and face appearance bindings on component definitions, including imported and
+  stored solids, so every placement inherits their colours and opacity. Write uniformly
+  painted faces as a body colour, retain mixed face looks, and report bindings left out.
+- Slice component models in parallel and reuse identical empty assembly holders. Prepare
+  SolidCraft assembly parts in parallel, including per-part replay checks, while
+  preserving design bytes and report order. Bound workers with `--threads N` on `convert`,
+  `convert-all`, and `watch`, or MCP `threads`; `0` selects automatically and `1` runs serially.
+  Part count and available memory cap workers; JSON reports record requested and used counts.
+  Failed worker preparations retry serially. Available memory also respects Linux cgroup
+  limits and is detected on Windows.
+- Parallel part preparation keeps a quarter of free memory (at least 1 GiB) back for the rest
+  of the conversion, so a computer with little spare memory runs fewer workers instead of
+  running out.
+
+### Desktop app
+
+- Choose Fast, Standard, or Full presets and leave feature history, sketches, or joints out
+  under Advanced. Remember choices, restore older geometry-only settings, and keep Convert
+  visible while settings and results scroll.
+- Show memory and time estimates beside queued files, check memory before converting, and
+  offer a lighter preset or a one-run override when a design may not fit.
+- Show history Info messages on result cards, including assembly history left out by Standard.
+- Move Report a problem beside the theme switch in the header. Explain memory warnings in
+  two sentences using only the file name, and keep the dialog buttons in one row.
+- Show under 0.1 GB and under a minute for small estimates in the app and CLI, using the
+  same formatter and rounding longer times up to whole minutes.
+- Release builds check for stable updates at startup and hourly using GitHub's conditional
+  releases feed. A header button offers release notes and the appropriate download or package
+  manager command, with persistent skip and three-day reminder choices and update settings.
+- Homebrew and Scoop updates wait for the new package version. Homebrew updates in the
+  background with live output and restart controls; Scoop confirms a close, update, and reopen
+  hand-off so Windows can replace the executable, and reports failed updates once on restart.
+  Failures retain a copyable command. The Homebrew cask is `dutchman-cad/tap/dutchman-convert`.
+- Explain installed SolidCraft versions in a desktop header pill and beside the CLI target line,
+  with download guidance for minors before 0.18 and history guidance from writer gates.
+  The pill opens target settings and release guidance, and adapts to narrow windows.
+  JSON reports include the newest known SolidCraft release and installed-version status.
+
+### Command line and install
+
+- Add Fast, Standard, and Full conversion presets, with history, reference-sketch, and joint
+  choices. Standard budgets assembly history against available memory; Full never drops it
+  for memory. FreeCAD output honours the history choice only.
+- Estimate conversion memory and time before decoding. Offer a lighter preset interactively,
+  or refuse an over-budget run with exit 2; `--yes` disables prompts and `--no-memory-check`
+  bypasses the guard. JSON reports include estimates and effective choices. MCP accepts the
+  same choices and a `dry_run` pre-read that writes nothing.
+- Elapsed time during a conversion also reads in hours and minutes past a minute, such as
+  `7261 s (2 h 1 min)`, on the command line and in the desktop app.
+- Memory estimates for Fusion designs are calibrated on more measured conversions, including a
+  large single design with 1,500 parts and runs on Windows, so the estimate no longer falls
+  short of a conversion's real peak.
+- Default SolidCraft output uses `.sc` for targets 0.25.1 and newer, and `.solidcraft`
+  for older targets. Explicit `.sc`, `.solidcraft`, and `.solvecraft` outputs are accepted.
+  Batch conversions, the desktop app, MCP, and web downloads use the same naming rule.
+- Cache SolidCraft CLI versions within each process and across runs, with a three-second
+  probe limit. An explicit target with verification off uses only cached versions in reports.
+- Target the installed SolidCraft release, even with verification off, or the newest release
+  known at build time (currently 0.27.0). Dutchman is made for releases from the last two
+  weeks, currently 0.18.2–0.27.0 (the window never starts below 0.18.2, the oldest accepted
+  target). Features a target cannot open keep the original geometry with a named reason.
+- Counterbores and countersinks write their explicit flat tip for targets 0.22.1 and newer,
+  the first SolidCraft release that applies a drill-point angle to them.
+- Read available memory without launching PowerShell on Windows or vm_stat on macOS.
+  Diagnostic heartbeats now record process memory and CPU time on Windows and macOS,
+  as they already do on Linux, and Windows diagnostic logs include total memory.
+- Decide memory refusals before decoding, and let Standard convert parts and assemblies
+  without history when only the history-free estimate fits, with one Info explanation.
+- Show the SolidCraft target and discovered version in conversion JSON and text reports.
+- Name default diagnostic logs in UTC without a timestamp subprocess, and remove Windows
+  shell probes for diagnostic OS and total-memory metadata. Document null Windows and
+  macOS heartbeat resources under the workspace's unsafe-code ban.
+- On Windows, Dutchman finds `solidcraft-cli` in the folder the SolidCraft installer recorded in
+  the registry, so a SolidCraft installed to a folder of your choice is found and its history
+  check runs. The desktop app's hint when none is found names `SOLIDCRAFT_CLI` and asks for the
+  full path of `solidcraft-cli`.
+
+### Reports
+
+- Save anonymous diagnostic JSONL logs during conversion, including stages, resource heartbeats,
+  Fusion member sizes and decode attempts, and final loss counts. CLI, MCP, and desktop settings
+  support fixed diagnostic folders with ten-log retention; the app reopens unfinished logs after
+  a restart. Each record is flushed immediately and synced at least every five seconds.
+- Use a fixed process-memory floor when estimating conversions, so keeping history no
+  longer multiplies that overhead. Refit tiny Inventor and SolidWorks floors and FreeCAD's
+  content cost from Windows and macOS measurements. Keep time estimates separate from
+  memory's history multiplier.
+- Tighten measured RAM bands and give multipart Fusion a separate time band. JSON adds
+  memory_band and nullable time_band while retaining the legacy shared band; text estimates
+  show separate coverage and identify uncalibrated time estimates.
+- Estimate tiny conversions in fractional seconds, with format and host startup costs
+  separate from content work and Windows verification startup. JSON adds `seconds_exact`
+  while keeping integer `seconds`; unsupported timing bands remain null and text remains
+  “roughly”. Memory estimates and calibrated multipart Fusion timing are unchanged.
+- Multipart Fusion archive time estimates account for requested part workers, with a serial
+  component and the converter's CPU and memory limits. Memory estimates are unchanged.
+- An assembly's JSON report lists each part's history under `history.parts`: its name, whether
+  its history was written, checked, partial or flattened, the first blocker, and how many of
+  its features mapped.
+- Name and compare SolidCraft by minor version in the desktop app and CLI. JSON
+  `solidcraft.target` and `known_newest` visibly change from `x.y.z` to `x.y` strings;
+  `found` keeps the installed full version. Patch-sensitive writer gates remain intact.
+- Resolve and checksum-verify the latest stable patch of the newest SolidCraft minor
+  during CI roundtrips. The oldest window release stays pinned.
+
+### cadmpeg
+
+- The cadmpeg pin moves from `2e01486` to `7f08434` on raykholo/cadmpeg, which carries changes
+  ahead of their upstream merge. Fusion components own the bodies their body containers hold,
+  and operation-table poses apply the same way to every occurrence of a definition, so
+  assemblies are placed closer to the design. Inventor derived parts read their stored bodies,
+  positional two-section lofts are read, and rectangular patterns keep their suppressed
+  instances as skipped grid positions. SolidWorks parts with unusual edge topology are refused
+  rather than read wrong. Fusion extrude, fillet, split and loft selections stored as native
+  links are resolved, Fusion files saved offline open, and Fusion mesh bodies that cannot be
+  decoded are reported as such. Fusion extrude profiles resolve to sketch regions in more
+  designs, a Base Feature that holds a stored solid becomes a typed base body (written as a
+  checked SolidCraft import), components whose occurrence frames are stored separately are
+  placed correctly, Fusion Generic appearances keep their transparency, large archives are read
+  one design at a time, and a design inside an archive that fails to read is read once, not
+  again at every place it is used. Inventor schema-15 parts are read, and SolidWorks constant-
+  radius rolling-ball blends and intersection edges are read more exactly.
+- A rectangular pattern that skips grid positions is not mapped yet: SolidCraft's rectangular
+  pattern fills the whole grid. The report names the pattern and how many positions it skips,
+  and the part keeps its exact geometry.
+
+### Docs
+
+- Lead the README with desktop screenshots, downloads, and a three-step conversion walkthrough;
+  keep compatibility and history details in the guide.
+- The README's download table links the universal Mac command-line archive for Apple silicon
+  and Intel, beside the universal desktop disk image, now that a release carries it.
+
 ## 0.2.4 (2026-10-29)
 
 ### History

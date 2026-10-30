@@ -4,6 +4,9 @@ Dutchman Convert is the `dutchman` command. Its main job is converting native CA
 designs (`.sc`). This guide covers installing it, converting your first design,
 reading what the conversion reports, and opening the result in SolidCraft.
 
+See the [0.2.5 release notes](../release-notes/0.2.5.md) for the release highlights and
+the [changelog](../CHANGELOG.md) for the full list of changes.
+
 ```sh
 dutchman part.f3d                 # writes part.sc
 dutchman part.f3d out.sc
