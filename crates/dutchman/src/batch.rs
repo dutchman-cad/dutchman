@@ -158,11 +158,7 @@ pub fn convert_all_with_progress(
                 .and_then(|j| j.recorded(job))
                 .filter(|report| {
                     let mut choices = options.choices();
-                    let full = crate::choices::estimate_with_threads(
-                        &job.input,
-                        &choices,
-                        options.threads,
-                    );
+                    let full = crate::choices::estimate_with_options(&job.input, &choices, options);
                     if let crate::choices::MemoryCheck::Ok(estimate) =
                         crate::choices::memory_check(&job.input, options)
                     {
