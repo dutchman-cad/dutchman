@@ -243,7 +243,11 @@ fn screenshots() {
             "The update window under the pill.",
         );
         for (installed, state, description) in [
-            (false, "running", "Updating with Homebrew: progress and the output tail."),
+            (
+                false,
+                "running",
+                "Updating with Homebrew: progress and the output tail.",
+            ),
             (true, "installed", "Homebrew finished: Restart Dutchman."),
         ] {
             harness.state_mut().updater.preview_homebrew(installed);
