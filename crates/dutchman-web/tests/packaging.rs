@@ -26,6 +26,13 @@ fn archive(target: &str, web: bool) {
     let fonts = dir.join("crates/dutchman-gui/assets/fonts");
     fs::create_dir_all(&fonts).unwrap();
     fs::write(fonts.join("licence.txt"), "Font licence fixture\n").unwrap();
+    let licences = dir.join("licences");
+    fs::create_dir_all(&licences).unwrap();
+    fs::write(
+        licences.join("dependency-MIT.txt"),
+        "Dependency licence fixture\n",
+    )
+    .unwrap();
     let release = dir.join("target").join(target).join("release");
     fs::create_dir_all(&release).unwrap();
     for name in ["dutchman", "dutchman-mcp", "dutchman-gui", "dutchman-web"] {
@@ -71,6 +78,9 @@ fn archive(target: &str, web: bool) {
         files.lines().any(|path| path == "fixture/dutchman-web"),
         web
     );
+    assert!(files
+        .lines()
+        .any(|path| path == "fixture/licences/dependency-MIT.txt"));
     assert!(dir.join("dist/fixture.tar.gz.sha256").is_file());
 }
 

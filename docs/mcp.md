@@ -82,7 +82,7 @@ Both `convert` and `convert_all` accept `preset` (`fast`, `standard`, or `full`,
 booleans default to true and only narrow the preset: true cannot enable history in
 `fast`. `history: false` is also available as the existing `import_only: true`.
 Fast keeps shape only and skips the memory guard. Standard keeps history, sketches,
-and joints, leaving assembly history out when its estimate exceeds free memory and
+and joints, leaving history out when its estimate exceeds free memory and
 the history-free estimate fits. Full never drops history for memory. Reference sketches
 are controlled by `sketches`; sketches needed by retained history stay. Disabling
 joints retains stored placements and adds an Info report line. FreeCAD output honours
@@ -532,4 +532,17 @@ The desktop app also offers Fast, Standard (default), and Full presets, with Adv
 checkboxes that leave history, sketches, or joints out. Estimates below 0.1 GB show
 **under 0.1 GB**, and times below 60 seconds show **under a minute**, using the CLI’s text
 formatter. Numeric MCP estimates stay unchanged. The app checks memory before converting; choosing Convert anyway applies only to that run. History
-Info messages, including assembly history left out by Standard, appear on its result cards.
+Info messages, including history left out by Standard, appear on its result cards.
+
+SolidCraft conversion results include `solidcraft: {target, found}`: the selected target
+release and discovered CLI release (or null), even when verification is disabled.
+Standard fixes its history budget before decoding for parts and assemblies; if only the
+history-free estimate fits, conversion proceeds with one Info explanation. Memory refusals
+happen before decoding. See [JSON reports](json.md) for diagnostic platform limits and UTC
+log filenames.
+
+With an explicit `solidcraft_version` and `verify: false`, version discovery uses only
+cached results; `solidcraft.found` is null when not checked. Otherwise the CLI version
+probe has a three-second limit and runs at most once per resolved CLI path per process.
+Successful versions are cached across runs until the CLI's size or modification time
+changes; see [the guide](guide.md) for cache locations.

@@ -65,8 +65,8 @@ report schemas and field names are unchanged.
 and `fits`, without decoding or writing. `output` is optional. `fits` is a boolean
 when both the estimate and available memory are known, otherwise `null`. A dry run
 returns `fits: false` for an over-budget estimate instead of attempting conversion.
-Standard's pre-read may budget an assembly-capable input without history; the actual
-conversion confirms that it is an assembly before dropping history. The dry run does
+Standard's pre-read budgets any input without history when only its history-free
+estimate fits. The decision is fixed before decoding. The dry run does
 not promise that decoding or conversion will succeed. `no_memory_check` permits a run
 without changing the physical-memory comparison in `fits`.
 
@@ -108,7 +108,8 @@ its designs when a pre-read exceeds the budget; it also includes that file's ref
 | `ok` | `true` when the design was written. |
 | `estimate` | Quick pre-read estimate, including on memory refusals: `peak_bytes` and `seconds` are unsigned integers; `band` is the relative error band (`0.5` means ±50%). `null` when unavailable. No design is decoded; a Fusion archive's designs are read one at a time for their own directories. Calibrated on measured conversions (see guide.md). Memory adds fixed process overhead to a content cost; history scales the content cost. Memory and time use separate history factors. |
 | `threads` | `{requested, used}` records the per-part worker limit (`0`: automatic, `1`: serial) and the bounded maximum used across component slicing and SolidCraft preparation. Counts are limited by part count and available memory, and never below `1`. Present on SolidCraft writes and on assembly reads that reach component slicing, including inspection and other output formats; omitted for pre-read estimates and reads/writers with no part-worker stage. Batch entries and watch reports carry it within each conversion report. Native decoding stays serial. |
-| `choices` | Selected `preset` (`fast`, `standard`, or `full`) and effective `history`, `sketches`, and `joints` booleans after narrowing. `history` is false when Standard leaves assembly history out to fit memory. These describe requested retention, not proof that every feature maps. FreeCAD output honours history only. |
+| `solidcraft` | SolidCraft output only: `target` is the selected `x.y.z` release; `found` is the discovered CLI release as `x.y.z`, or null when unavailable or not checked. Included even with verification off. With an explicit target and verification off, `found` uses only a matching process or disk cache entry; Dutchman does not start a version probe. An explicit target wins; otherwise the supported found version, else built-in newest (0.27.0), is targeted. |
+| `choices` | Selected `preset` (`fast`, `standard`, or `full`) and effective `history`, `sketches`, and `joints` booleans after narrowing. `history` is false when Standard leaves history out to fit memory. These describe requested retention, not proof that every feature maps. FreeCAD output honours history only. |
 | `input.format` | `fusion_archive`, `fusion_multi_document`, `inventor_part`, `inventor_assembly`, `solidworks_part`, `solidworks_assembly`, `freecad_document`, `catia_part`, `creo_part`, `nx_part`, `creo_view`, `rhino`, `acis`, `step`, `iges`, `unclassified_part`, or `null` for an unknown extension. `format_name` is the same for people. Creo and NX share `.prt` and are distinguished by contents; inconclusive contents give `unclassified_part`. |
 | `input.words` | Reader status: `reads geometry`, `opens, no geometry yet`, `recognised, not read yet`, or `open it in SolidCraft directly` (IGES); `null` for an unknown format. Present on successes and failures, including batch results and MCP reports. The conversion's history and verification describe what this file kept. |
 | `input.program`, `input.extension` | Program or format family, and the input's actual suffix without a dot, used for status text (`prt.12` for a numbered save). Unknown programs are `null`. |
@@ -228,7 +229,7 @@ Normal JSON reports contain file names and paths. For sharing, request `--report
 (MCP `report_anon`) and review that file first; keep logs, journals, keys, and salts private.
 
 The desktop app shows Info messages with subject `history` directly on result cards,
-including Standard's explanation when assembly history is left out to fit in free memory.
+including Standard's explanation when history is left out to fit in free memory.
 These are existing `losses` entries; desktop estimates and preset labels add no report fields.
 The CLI and desktop display small estimates as “under 0.1 GB” and “under a minute”;
 JSON `estimate.peak_bytes` and `estimate.seconds` remain numeric and unrounded.
@@ -546,7 +547,7 @@ page output and its reported limitations. Existing `formats` fields keep their m
 
 Live diagnostics are opt-in on CLI `convert`, `convert-all`, and `watch`, MCP `convert`
 and `convert_all`, and the desktop app. See [locations and sharing](guide.md#diagnostic-logs-for-unfinished-runs).
-`--diagnostics-default` creates a unique local timestamp file in the platform's diagnostic
+`--diagnostics-default` creates a unique UTC timestamp file in the platform's diagnostic
 folder, retaining ten logs. `--diagnostics PATH` appends to an explicit file without retention.
 MCP uses `diagnostics_default: true` or `diagnostics: "/absolute/path/run.jsonl"`.
 
@@ -560,7 +561,7 @@ conversion's start. A batch/watch log interleaves conversions; group by `file` a
 | `start` | `dutchman` version; `cadmpeg` version and pinned revision; `os: {family, name, version}`; `cpu_count`; `total_memory_bytes`; `available_memory_bytes`; `choices` (the shared preset/history/sketches/joints choices object); `threads` (chosen concurrent conversions); `input: {format, size_bytes}`; `members` (Fusion ZIP member list, or null). |
 | `stage` | `stage`: `input`, `decode`, `project`, `map`, `write`, or `solidcraft`. Written when the stage changes, including the initial stage. |
 | `design` | `count` of successful designs read and `total` (null while unknown). Written when these counts change. |
-| `heartbeat` | `stage`; `rss_bytes`; `cpu_ticks` (process user + system CPU ticks); `cpu_ticks_per_second`; `cpu_ms` (derived process CPU time); `member` (last started member id, or null). Every 30 seconds from an independent timer. Linux reads `/proc`; unavailable resource measurements are null. |
+| `heartbeat` | `stage`; `rss_bytes`; `cpu_ticks` (process user + system CPU ticks); `cpu_ticks_per_second`; `cpu_ms` (derived process CPU time); `member` (last started member id, or null). Every 30 seconds from an independent timer. Linux reads `/proc`; unavailable resource measurements are null. Windows and macOS use sysinfo; their CPU ticks are milliseconds (`cpu_ticks_per_second`: 1000). |
 | `member` | `member` (salted id); `event`: `start`, `finish`, or `fail`; `ms` (0 at start, duration at finish/failure); `code` (fixed decoder error category on failure, else null). |
 | `end` | `ok` (boolean); `stage` last reached; `losses` (code-to-count object); `repeated_losses` (total extra occurrences of identical losses); `member_decodes` (member-id-to-start-count object); `redecoded` (sum of starts after each member's first start). |
 
@@ -594,3 +595,11 @@ seconds, at start/end, and on stage changes. Complete lines remain readable afte
 ignore a trailing incomplete line. A missing `end` means that conversion did not finish
 reporting. A supervised worker's timeout/cancellation writes an error `end` if its parent
 is still alive. Fields may be added within this schema version.
+
+Default diagnostic filenames use UTC, computed from `SystemTime` without a subprocess.
+Start-record OS and total-memory metadata are collected only with diagnostics enabled.
+On Windows `os.version` is `"windows"`. Windows and macOS read total and available memory
+through sysinfo without launching a memory-probe command. Linux reads `/proc` and caps
+available memory by remaining cgroup headroom, including ancestor limits. Memory-budget
+refusals happen before decode, never at `map`; Standard accepts the history-free estimate
+when it fits.

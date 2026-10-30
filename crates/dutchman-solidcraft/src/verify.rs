@@ -9,6 +9,12 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+#[path = "version_cache.rs"]
+mod version_cache;
+
+/// How long CLI version discovery may run.
+const VERSION_TIMEOUT: Duration = Duration::from_secs(3);
+
 /// The relative difference in volume at which a replay no longer matches the original, when
 /// SolidCraft gives no area and box to bound its meshes' error by (see [`mesh_slack`]).
 pub const VOLUME_TOLERANCE: f64 = 1e-4;
@@ -451,11 +457,23 @@ pub fn solidcraft_version(verification: &Verification) -> Option<String> {
     version_of(&find_cli(verification).ok()?).ok().flatten()
 }
 
+/// Return a previously discovered CLI version without starting the CLI.
+/// Consults both the process cache and the executable's matching disk cache entry.
+pub fn cached_solidcraft_version(verification: &Verification) -> Option<String> {
+    version_cache::version(&find_cli(verification).ok()?, false)
+        .ok()
+        .flatten()
+}
+
 /// How many times to try running a CLI the system says is busy being written.
 const BUSY_TRIES: u32 = 50;
 
 /// The first line `cli --version` prints, when it answers within a few seconds.
 fn version_of(cli: &Path) -> Result<Option<String>, String> {
+    version_cache::version(cli, true)
+}
+
+fn probe_version(cli: &Path) -> Result<Option<(String, bool)>, String> {
     let mut child = match spawn(cli, |command| {
         command
             .arg("--version")
@@ -467,7 +485,7 @@ fn version_of(cli: &Path) -> Result<Option<String>, String> {
         Err(_) => return blocked_failure(cli).map_or(Ok(None), Err),
     };
     let started = Instant::now();
-    loop {
+    let successful = loop {
         match child.try_wait() {
             Ok(Some(status)) => {
                 if !status.success() {
@@ -475,9 +493,9 @@ fn version_of(cli: &Path) -> Result<Option<String>, String> {
                         return Err(why);
                     }
                 }
-                break;
+                break status.success();
             }
-            Ok(None) if started.elapsed() > Duration::from_secs(10) => {
+            Ok(None) if started.elapsed() > VERSION_TIMEOUT => {
                 let _ = child.kill();
                 let _ = child.wait();
                 return blocked_failure(cli).map_or(Ok(None), Err);
@@ -485,7 +503,7 @@ fn version_of(cli: &Path) -> Result<Option<String>, String> {
             Ok(None) => std::thread::sleep(POLL),
             Err(_) => return blocked_failure(cli).map_or(Ok(None), Err),
         }
-    }
+    };
     let line = (|| {
         let mut text = String::new();
         std::io::Read::read_to_string(
@@ -496,7 +514,7 @@ fn version_of(cli: &Path) -> Result<Option<String>, String> {
         let line = text.lines().next()?.trim();
         (!line.is_empty()).then(|| line.to_owned())
     })();
-    Ok(line)
+    Ok(line.map(|line| (line, successful)))
 }
 
 #[cfg(any(target_os = "macos", test))]

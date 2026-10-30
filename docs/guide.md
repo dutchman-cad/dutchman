@@ -80,7 +80,7 @@ the part-worker cap.
 | Preset | SolidCraft output |
 |---|---|
 | `fast` | Geometry at the stored placements; no history, reference sketches, or joints. No memory refusal. |
-| `standard` (default) | History, sketches, and joints. Assembly history is left out when its estimate exceeds free memory and the history-free estimate fits. |
+| `standard` (default) | History, sketches, and joints. History is left out when its estimate exceeds free memory and the history-free estimate fits. |
 | `full` | History, sketches, and joints whenever they map; history is never left out to fit memory. |
 
 `--no-history` (also `--import-only`), `--no-sketches`, and `--no-joints` only remove
@@ -121,18 +121,19 @@ be read, including ZIP directories exceeding 10,000 members or 16 MiB, and unrea
 archives.
 
 Available memory comes from Linux `MemAvailable` bounded by remaining cgroup v2
-headroom (including ancestor limits), macOS `vm_stat`, or Windows CIM free physical
-memory. Unknown memory or an unknown
-estimate does not block a run. Estimates use decimal GB and are approximate, not
+headroom (including ancestor limits), or safe system APIs through sysinfo on macOS and
+Windows. Memory probes do not launch subprocesses. Unknown memory or an unknown estimate
+does not block a run. Estimates use decimal GB and are approximate, not
 reservations; other processes and simultaneous conversions can change available memory.
 
-Standard confirms assembly structure during the normal decode before removing history.
-An assembly-capable archive's pre-read estimate can therefore assume history off while
-a single part found inside it still refuses. When Standard removes history, one Info
-line under `history` says:
+The memory check runs before decoding, using only the pre-read estimate. Standard
+leaves history out for any design whose history estimate exceeds free memory when
+its history-free estimate fits. That decision stays fixed through conversion; there
+is no second refusal after decode. Full refuses before decode when its estimate
+exceeds free memory. When Standard removes history, one Info line under `history` says:
 
 ```text
-feature history left out: this assembly needs about N GB with history and M GB are free; use the full preset to keep it
+feature history left out: this conversion needs about N GB with history and M GB are free; use the full preset to keep it
 ```
 
 If the selected choices exceed free memory, an interactive terminal offers the next
@@ -416,7 +417,7 @@ Open `dutchman-gui`, add design files or folders, choose an output folder, and p
 **Preset** selector starts at **Standard**:
 
 - **Fast**: shape only, least memory.
-- **Standard**: history, sketches, and joints; leaves an assembly's history out if it would
+- **Standard**: history, sketches, and joints; leaves history out if it would
   not fit in free memory.
 - **Full**: everything, most memory.
 
@@ -441,7 +442,7 @@ when one is available. All dialog buttons appear in one horizontal row.
 **Use Fast** or **Use Standard** selects the offered preset and checks the files again.
 **Convert anyway** skips the memory check for this run only; **Cancel** starts no conversion.
 When Fast is already selected, the dialog offers only Convert anyway and Cancel.
-When Standard leaves an assembly's history out to fit in memory, its result card shows the
+When Standard leaves history out to fit in memory, its result card shows the
 history Info message even with the full loss log collapsed. The original geometry is kept.
 
 ## Your first conversion
@@ -1056,6 +1057,24 @@ within the measuring mesh tolerances. A face-count difference alone does not est
 defect. An AI agent can do the same through SolidCraft's MCP server: open the design with
 `solidcraft-cli mcp --in cube.solidcraft` and call its `measure` tool.
 
+SolidCraft conversion reports include the selected target and the discovered CLI version,
+even with verification off. Text output includes `Target SolidCraft 0.27.0 (found 0.27.0)`,
+or `(none found)` when no version can be read. `--solidcraft-version` overrides the target;
+otherwise the found supported version is used, falling back to 0.27.0. Other output
+formats omit this line and the JSON `solidcraft` object.
+
+CLI version discovery runs at most once per resolved CLI path in each Dutchman process,
+including when the CLI gives no answer. The version command has a three-second limit.
+Successful versions are also cached across runs in `solidcraft-versions.json` under
+`$XDG_CACHE_HOME/dutchman` (or `~/.cache/dutchman`) on Linux,
+`~/Library/Caches/Dutchman` on macOS, and `%LOCALAPPDATA%\Dutchman` on Windows.
+The disk entry must match the CLI's resolved path, file size, and modification time;
+changing the executable causes a fresh probe in the next process. Unreadable or damaged
+caches are ignored, and timeouts are remembered only for the current process.
+With an explicit target (`--solidcraft-version` or the desktop target selector) and
+verification off, Dutchman does not run the version command. Reports reuse a matching
+cached version, or leave `solidcraft.found` null when it has not been checked.
+
 ## Diagnostic logs for unfinished runs
 
 Enable diagnostics **before** reproducing a conversion that hangs or stops unexpectedly:
@@ -1066,7 +1085,7 @@ dutchman convert-all --diagnostics-default --out-dir converted parts/
 dutchman watch inbox --diagnostics-default --out-dir converted
 ```
 
-Each invocation creates one JSON Lines file named by local start time, such as
+Each invocation creates one JSON Lines file named by UTC start time, such as
 `2026-10-29_201500.jsonl`; a counter suffix keeps simultaneous starts unique. Input names
 never enter the log's filename. The default folder is:
 
@@ -1088,6 +1107,16 @@ your file)** before starting. **Open diagnostics folder** opens the default fold
 After completion or Stop, **Show the log** opens the log's folder; its path is shown too.
 On launch, an unfinished conversion in the newest default log shows **The last run didn't
 finish. Its diagnostic log is here:** with **Open folder** and **Dismiss** buttons.
+
+Default diagnostic filenames use UTC on every platform, formatted from the system clock
+without launching a timestamp command. Diagnostic OS and total-memory metadata are read
+only when logging is enabled. On Windows the OS version field contains `windows`.
+Available memory, total memory, and heartbeat process memory and CPU time are read through
+safe system APIs on Windows and macOS, without launching memory-probe commands. Heartbeat
+resource fields are available on Linux, Windows, and macOS; a measurement that cannot be
+read is null. Linux keeps its `/proc` readers and honours cgroup memory limits when
+checking available memory.
+
 
 Every record is appended and flushed immediately, with a disk sync at least every five
 seconds and on every stage change. A background heartbeat every 30 seconds records the

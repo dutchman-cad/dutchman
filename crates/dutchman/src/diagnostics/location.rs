@@ -28,42 +28,62 @@ pub fn default_folder() -> Result<PathBuf, String> {
     }
 }
 
-/// Create a uniquely named log at local start time and retain the newest ten logs.
+/// Create a uniquely named log at UTC start time and retain the newest ten logs.
 pub fn new_default_log() -> Result<PathBuf, String> {
     let folder = default_folder()?;
-    let stamp = local_timestamp()?;
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|err| format!("cannot read UTC start time: {err}; use --diagnostics PATH"))?
+        .as_secs();
+    let stamp =
+        utc_timestamp(seconds).ok_or("cannot format UTC start time; use --diagnostics PATH")?;
     create_log(&folder, &stamp)
 }
 
-fn local_timestamp() -> Result<String, String> {
-    let mut command = if cfg!(windows) {
-        let mut command = std::process::Command::new("powershell");
-        command.args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "Get-Date -Format 'yyyy-MM-dd_HHmmss'",
-        ]);
-        command
-    } else {
-        let mut command = std::process::Command::new("date");
-        command.arg("+%Y-%m-%d_%H%M%S");
-        command
-    };
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+fn utc_timestamp(seconds: u64) -> Option<String> {
+    // Limit the calendar walk and keep the four-digit year used by retention.
+    if seconds > 253_402_300_799 {
+        return None;
     }
-    let output = command
-        .stdin(std::process::Stdio::null())
-        .output()
-        .map_err(|err| format!("cannot read local start time: {err}; use --diagnostics PATH"))?;
-    let stamp = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-    if !output.status.success() || !log_name(&format!("{stamp}.jsonl")) {
-        return Err("cannot read local start time; use --diagnostics PATH".into());
+    let mut days = seconds / 86_400;
+    let mut year = 1970;
+    let leap = |year| year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    loop {
+        let length = if leap(year) { 366 } else { 365 };
+        if days < length {
+            break;
+        }
+        days -= length;
+        year += 1;
     }
-    Ok(stamp)
+    let mut month = 1;
+    for length in [
+        31,
+        if leap(year) { 29 } else { 28 },
+        31,
+        30,
+        31,
+        30,
+        31,
+        31,
+        30,
+        31,
+        30,
+        31,
+    ] {
+        if days < length {
+            break;
+        }
+        days -= length;
+        month += 1;
+    }
+    let day = days + 1;
+    let hour = seconds % 86_400 / 3_600;
+    let minute = seconds % 3_600 / 60;
+    let second = seconds % 60;
+    Some(format!(
+        "{year:04}-{month:02}-{day:02}_{hour:02}{minute:02}{second:02}"
+    ))
 }
 
 fn create_log(folder: &Path, stamp: &str) -> Result<PathBuf, String> {
@@ -238,6 +258,21 @@ fn unfinished(path: &Path) -> bool {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn utc_names_cover_epoch_leap_days_and_year_boundaries() {
+        for (seconds, stamp) in [
+            (0, "1970-01-01_000000"),
+            (951_782_400, "2000-02-29_000000"),
+            (1_704_067_199, "2023-12-31_235959"),
+            (1_704_067_200, "2024-01-01_000000"),
+            (253_402_300_799, "9999-12-31_235959"),
+        ] {
+            assert_eq!(utc_timestamp(seconds).as_deref(), Some(stamp));
+            assert!(log_name(&format!("{stamp}.jsonl")));
+        }
+        assert!(utc_timestamp(u64::MAX).is_none());
+    }
 
     #[test]
     fn unique_names_retention_and_unrelated_files() {

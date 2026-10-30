@@ -30,8 +30,9 @@ use dutchman_core::{
 use serde_json::Value;
 
 pub use verify::{
-    find_cli, solidcraft_version, usable_cli, NoCli, SolidCraftVersion, Verification, CLI_ENV,
-    DEFAULT_TIMEOUT, NEWEST_SOLIDCRAFT, OLDEST_SOLIDCRAFT, VOLUME_TOLERANCE, WINDOW_OLDEST,
+    cached_solidcraft_version, find_cli, solidcraft_version, usable_cli, NoCli, SolidCraftVersion,
+    Verification, CLI_ENV, DEFAULT_TIMEOUT, NEWEST_SOLIDCRAFT, OLDEST_SOLIDCRAFT, VOLUME_TOLERANCE,
+    WINDOW_OLDEST,
 };
 
 use document::Live;

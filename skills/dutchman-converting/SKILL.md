@@ -69,7 +69,7 @@ The CLI equivalent is `--threads N` on `convert`, `convert-all`, and `watch`.
 
 Use `preset: "standard"` by default. `fast` keeps geometry at stored placements,
 without history, reference sketches, or joints; `full` keeps everything that maps and
-never drops history to fit memory. Standard drops only assembly history when its
+never drops history to fit memory. Standard drops history when its
 estimate exceeds free memory and the history-free estimate fits, with one Info line
 under `history` explaining the choice. `history: false` (also `import_only: true`),
 `sketches: false`, and `joints: false` narrow any preset. Sketches needed by retained
@@ -453,4 +453,16 @@ The desktop app also offers Fast, Standard (default), and Full presets, with Adv
 checkboxes that leave history, sketches, or joints out. Estimates below 0.1 GB show
 **under 0.1 GB**, and times below 60 seconds show **under a minute**, using the CLI’s text
 formatter. Numeric MCP estimates stay unchanged. The app checks memory before converting; choosing Convert anyway applies only to that run. History
-Info messages, including assembly history left out by Standard, appear on its result cards.
+Info messages, including history left out by Standard, appear on its result cards.
+
+SolidCraft conversion reports include `solidcraft.target` and `solidcraft.found` (null
+when no CLI version is available), even with verification disabled. Standard decides
+whether history fits before decoding, for both parts and assemblies; an accepted
+history-free budget cannot turn into a memory refusal after decode. Default diagnostic
+log filenames use UTC. Heartbeats record process memory and CPU time on Linux, Windows and
+macOS.
+
+With an explicit target and verification off, Dutchman uses only cached CLI versions for
+`solidcraft.found`; null can mean not checked. Version probes run at most once per resolved
+CLI path per process, with a three-second limit. Successful versions also use a disk cache
+keyed by the CLI path, size, and modification time; see `docs/guide.md` for its location.

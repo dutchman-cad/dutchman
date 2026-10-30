@@ -188,7 +188,7 @@ fn option_properties() -> Map<String, Value> {
         "diagnostics_default": {"type": "boolean", "default": false, "description": "Save in the platform diagnostics folder, retaining the newest ten logs. Cannot be combined with diagnostics."},
         "diagnostics": {"type": "string", "description": "Absolute path to append an anonymous live diagnostic JSONL log. Includes progress and resource samples even if a conversion never finishes; no names or file contents."},
         "to": {"type": "string", "enum": ["solidcraft", "freecad"], "default": "solidcraft", "description": "Output format: SolidCraft design or self-contained FreeCAD rebuild macro."},
-        "preset": {"type": "string", "enum": ["fast", "standard", "full"], "default": "standard", "description": "Fast keeps shape only; Standard keeps history, sketches and joints but budgets assembly history; Full never drops history for memory."},
+        "preset": {"type": "string", "enum": ["fast", "standard", "full"], "default": "standard", "description": "Fast keeps shape only; Standard keeps history, sketches and joints but budgets history before decoding; Full never drops history for memory."},
         "history": {"type": "boolean", "default": true, "description": "Keep feature history when the preset allows it; false narrows the preset like import_only."},
         "sketches": {"type": "boolean", "default": true, "description": "Keep reference sketches when the preset allows it. Sketches needed by retained history stay."},
         "joints": {"type": "boolean", "default": true, "description": "Keep assembly joints when the preset allows it; false keeps stored placements."},
