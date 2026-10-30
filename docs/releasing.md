@@ -6,7 +6,7 @@ A release is cut from `main` once CI is green there.
    SolidCraft release published in the 14 days before the tag, never below OLDEST_SOLIDCRAFT;
    NEWEST_SOLIDCRAFT is the newest release at tag time. From SolidCraft's release dates,
    choose both, then run `scripts/solidcraft-window.sh <oldest> <newest>` (for example
-   `scripts/solidcraft-window.sh 0.18.2 0.26.1`). It downloads the release
+   `scripts/solidcraft-window.sh 0.18.2 0.27.0`). It downloads the release
    checksum files and prints both constants and the exact Linux archive URLs and CI entries;
    it fails rather than inventing a checksum. Set `NEWEST_SOLIDCRAFT` and `WINDOW_OLDEST`
    in `crates/dutchman-solidcraft/src/verify.rs`, replace the two entries in the
