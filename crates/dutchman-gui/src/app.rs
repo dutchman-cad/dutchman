@@ -1614,6 +1614,7 @@ mod tests {
                         estimate: Estimate {
                             peak_bytes: 8_000_000_000,
                             seconds: 120,
+                            seconds_exact: 120.0,
                             band: 0.3,
                             memory_band: 0.3,
                             time_band: Some(0.3),
@@ -1691,6 +1692,7 @@ mod tests {
                             Some(Estimate {
                                 peak_bytes: 90_000_000_000,
                                 seconds: 60,
+                                seconds_exact: 60.0,
                                 band: 0.3,
                                 memory_band: 0.3,
                                 time_band: Some(0.3),
@@ -1707,6 +1709,7 @@ mod tests {
                             Some(Estimate {
                                 peak_bytes: 2_500_000_000,
                                 seconds: 121,
+                                seconds_exact: 121.0,
                                 band: 0.3,
                                 memory_band: 0.3,
                                 time_band: Some(0.3),
