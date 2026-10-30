@@ -84,7 +84,7 @@ its designs when a pre-read exceeds the budget; it also includes that file's ref
   "ok": true,
   "input": {"path": "part.f3d", "format": "fusion_archive", "format_name": "Fusion archive (.f3d)"},
   "output": {"path": "part.solidcraft", "format": "solidcraft/23"},
-  "estimate": {"peak_bytes": 1200000000, "seconds": 90, "band": 0.5, "memory_band": 0.5, "time_band": null},
+  "estimate": {"peak_bytes": 1200000000, "seconds": 90, "seconds_exact": 89.5, "band": 0.5, "memory_band": 0.5, "time_band": null},
   "choices": {"preset": "standard", "history": true, "sketches": true, "joints": true},
   "mode": "history",
   "verification": {"status": "verified", "reason": null},
@@ -109,9 +109,15 @@ SolidWorks parts ±35%, and FreeCAD ±50%. One percentage point of safety is add
 rounding up to a 5% step. These are empirical envelopes of this corpus, not guarantees for
 unseen designs. Unmeasured formats retain their ±100% memory heuristic.
 Time has its own band: multipart Fusion is ±20%; other time bands are uncalibrated.
-Whole-second rounding cannot describe tiny conversion times with a narrow relative band,
-and a host-specific ten-second SolidCraft version probe affected the older Mac binary.
-Those need a startup/continuous-time model; the bands are not widened to conceal them.
+Timing uses fractional `seconds_exact`; `seconds` remains its whole-second ceiling for
+compatibility. Fixed startup is separate from content work: Windows has different fast,
+history and verification startup terms; macOS has its own process floor and allows the
+ten-second version-probe timeout for history without an explicit target version. The estimator
+never runs SolidCraft to measure a probe. History may probe its version even with
+`--no-verify`. Old Mac probe durations were not recorded, Windows startup varies between runs, and
+FreeCAD assembly worker startup is poorly predicted by archive bytes, so these four formats keep uncalibrated time bands. Verification
+replay and explicit-version/no-memory-check variants also retain rough timing; their
+startup or replay costs are not generally calibrated. Bands are not widened to hide this.
 JSON adds `memory_band` and nullable `time_band`. The existing `band` stays as the legacy
 shared heuristic for compatibility; use the new fields for separate calibrated coverage.
 For multipart Fusion `band` is the larger of the two calibrated bands (25%).
@@ -126,7 +132,7 @@ existing time model. The worker adjustment changes time estimates only.
 | Field | Meaning |
 |---|---|
 | `ok` | `true` when the design was written. |
-| `estimate` | Quick pre-read estimate, including on memory refusals: `peak_bytes` and `seconds` are unsigned integers; `band` is the legacy shared heuristic (`0.5` means ±50%); `memory_band` is the separate relative RAM band and `time_band` is a relative time band or `null` when uncalibrated. `band` remains the previous heuristic when timing is uncalibrated, and the larger of the two calibrated bands otherwise. `null` when unavailable. No design is decoded; a Fusion archive's designs are read one at a time for their own directories. Calibrated on measured conversions (see guide.md). Memory adds fixed process overhead to a content cost; history scales the content cost. Memory and time use separate history factors. |
+| `estimate` | Quick pre-read estimate, including on memory refusals: `peak_bytes` and `seconds` are unsigned integers; `seconds_exact` is an additive fractional-second elapsed estimate (`seconds` is its ceiling); time bands apply to `seconds_exact`; `band` is the legacy shared heuristic (`0.5` means ±50%); `memory_band` is the separate relative RAM band and `time_band` is a relative time band or `null` when uncalibrated. `band` remains the previous heuristic when timing is uncalibrated, and the larger of the two calibrated bands otherwise. `null` when unavailable. No design is decoded; a Fusion archive's designs are read one at a time for their own directories. Calibrated on measured conversions (see guide.md). Memory adds fixed process overhead to a content cost; history scales the content cost. Memory and time use separate history factors. |
 | `threads` | `{requested, used}` records the per-part worker limit (`0`: automatic, `1`: serial) and the bounded maximum used across component slicing and SolidCraft preparation. Counts are limited by part count and available memory, and never below `1`. Present on SolidCraft writes and on assembly reads that reach component slicing, including inspection and other output formats; omitted for pre-read estimates and reads/writers with no part-worker stage. Batch entries and watch reports carry it within each conversion report. Native decoding stays serial. |
 | `solidcraft` | SolidCraft output only: `target` is the selected `x.y.z` release; `found` is the discovered CLI release as `x.y.z`, or null when unavailable or not checked. Included even with verification off. With an explicit target and verification off, `found` uses only a matching process or disk cache entry; Dutchman does not start a version probe. An explicit target wins; otherwise the supported found version, else built-in newest (0.27.0), is targeted. |
 | `choices` | Selected `preset` (`fast`, `standard`, or `full`) and effective `history`, `sketches`, and `joints` booleans after narrowing. `history` is false when Standard leaves history out to fit memory. These describe requested retention, not proof that every feature maps. FreeCAD output honours history only. |
