@@ -297,7 +297,7 @@ impl Writer for PreparedWriter {
     }
 
     fn accepts_extension(&self, extension: &str) -> bool {
-        self.full.accepts_extension(extension)
+        self.writer.accepts_extension(extension)
     }
 
     fn write(
