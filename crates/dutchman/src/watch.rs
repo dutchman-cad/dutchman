@@ -267,7 +267,7 @@ fn run_loop(
                         &stage
                             .path()
                             .join("result")
-                            .with_extension(command.options.to.extension()),
+                            .with_extension(output.extension().unwrap_or_default()),
                         output,
                         state,
                         out,
@@ -438,7 +438,7 @@ fn run_loop(
             let staged = stage
                 .path()
                 .join("result")
-                .with_extension(command.options.to.extension());
+                .with_extension(job.output.extension().unwrap_or_default());
             let pending = Pending {
                 job: job.clone(),
                 relative,

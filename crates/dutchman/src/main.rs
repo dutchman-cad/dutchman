@@ -13,14 +13,14 @@ use dutchman::{anon, batch, formats, json, worker, ConvertOptions};
 use dutchman_core::{Check, FeatureStatus, Format, Mode};
 use serde_json::Value;
 
-/// Convert CAD files: dutchman part.f3d writes part.solidcraft.
+/// Convert CAD files: dutchman part.f3d writes part.sc.
 #[derive(Parser)]
 #[command(
     name = "dutchman",
     version,
     about,
     allow_external_subcommands = true,
-    after_help = "Examples:\n  dutchman part.f3d\n  dutchman part.f3d out.solidcraft\n  dutchman convert part.f3d out.solidcraft"
+    after_help = "Examples:\n  dutchman part.f3d\n  dutchman part.f3d out.sc\n  dutchman convert part.f3d out.sc"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -315,7 +315,7 @@ fn main() -> ExitCode {
             let output = explicit.unwrap_or_else(|| {
                 dutchman_core::Format::part_revision(&input)
                     .map_or_else(|| input.clone(), |(part, _)| part)
-                    .with_extension(options.to.extension())
+                    .with_extension(options.output_extension())
             });
             if derived {
                 if input == output
@@ -908,7 +908,7 @@ mod output_tests {
             let Command::Convert { options, .. } = cli.command else {
                 panic!("expected convert");
             };
-            assert_eq!(options.to.extension(), extension);
+            assert_eq!(options.output_extension(), extension);
             assert_eq!(options.verify, verify);
             assert_eq!(options.freecad_timeout, 17);
             let mut worker_args = vec![

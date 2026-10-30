@@ -74,9 +74,9 @@ fn designs_convert_from_the_window() {
     let rows = harness.state().rows();
     assert_eq!(rows.len(), 3);
     assert!(rows.iter().all(|row| row.status == Status::Converted));
-    assert!(out.path().join("generated_unit_cube.solidcraft").is_file());
-    assert!(out.path().join("synthetic_cube.solidcraft").is_file());
-    assert!(out.path().join("solidworks_cube.solidcraft").is_file());
+    assert!(out.path().join("generated_unit_cube.sc").is_file());
+    assert!(out.path().join("synthetic_cube.sc").is_file());
+    assert!(out.path().join("solidworks_cube.sc").is_file());
     assert!(harness.query_by_label("3 converted, 0 failed").is_some());
     assert_eq!(harness.query_all_by_label("Open in SolidCraft").count(), 3);
 }
@@ -113,7 +113,7 @@ fn a_file_that_cannot_convert_says_why() {
     assert_eq!(rows[0].status, Status::Failed);
     assert!(harness.query_by_label("Failed").is_some());
     assert!(harness.query_by_label("0 converted, 1 failed").is_some());
-    assert!(!dir.path().join("out/broken.solidcraft").exists());
+    assert!(!dir.path().join("out/broken.sc").exists());
 
     // The failed row says to report it, and its button opens the form filled in, without
     // the file's name.
