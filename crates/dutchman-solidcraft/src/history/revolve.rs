@@ -1,17 +1,17 @@
 //! Revolves, as SolidCraft revolve features.
 //!
-//! CADIR does not state which way a revolve turns, so only revolves whose result does not
-//! depend on it are mapped: symmetric ones, equal two-sided ones, and full turns (unequal
-//! sides that add up to one included). Surface revolves map short of a full turn, and an
-//! axis chosen as a line of the profile's sketch stays that line.
+//! One-sided solid sweeps follow the oriented CADIR axis. SolidCraft instead sweeps toward
+//! the sketch normal, so their angle sign is proven from the selected profile placement.
+//! Symmetric, equal two-sided, and full turns need no direction proof.
 
+use std::collections::BTreeSet;
 use std::f64::consts::TAU;
 
 use serde_json::{json, Value};
 
 use super::extrude::{body_names, operation};
 use super::profile::profile;
-use super::sketch::{dot, number, unit, v3, Mapped};
+use super::sketch::{cross, dot, number, p2, unit, v3, Mapped};
 use super::{name, Context};
 
 /// How far from a full turn (radians) a one-sided revolve may be and still be one.
@@ -51,8 +51,15 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         .ok_or("its sketch is not an earlier mapped sketch")?;
     let sketch_feature = sketch.feature;
     let placed = axis(construction.get("axis"), sketch.normal, sketch.origin)?;
-    let axis = sketch_line(construction.get("axis"), &sketch_id, sketch).unwrap_or(placed);
-    let (angle, symmetric) = sweep(construction.get("extent"))?;
+    let axis =
+        sketch_line(construction.get("axis"), &sketch_id, sketch).unwrap_or_else(|| placed.clone());
+    let (mut angle, symmetric) = sweep(construction.get("extent"))?;
+    if !symmetric && TAU - angle > FULL_TURN {
+        if surface {
+            return Err("one-sided partial surface revolves are not mapped yet (their sweep side is not proven)".to_owned());
+        }
+        angle *= sweep_sign(&placed, sketch, &sketch_id, &profiles, ctx)?;
+    }
     if surface && TAU - angle <= FULL_TURN {
         return Err(
             "full-turn surface revolves are not supported yet (SolidCraft closes them into a solid)"
@@ -93,6 +100,128 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         }
     }
     Ok(out)
+}
+
+/// SolidCraft's positive angle turns each profile toward the sketch normal, regardless
+/// of axis sign. Bound every selected curve on one side of the oriented source axis;
+/// its right-hand rotation then either agrees with that normal or opposes it.
+fn sweep_sign(
+    axis: &Value,
+    sketch: &Mapped,
+    sketch_id: &str,
+    profiles: &Value,
+    ctx: &Context,
+) -> Result<f64, String> {
+    let missing = "its one-sided revolve sweep side is not proven (selected profile curves must lie on one side of the oriented axis)";
+    let vector = |key| -> Option<[f64; 3]> {
+        let values = axis.get(key)?.as_array()?;
+        Some([
+            number(values.first())?,
+            number(values.get(1))?,
+            number(values.get(2))?,
+        ])
+    };
+    let origin = vector("origin").ok_or(missing)?;
+    let direction = vector("dir").ok_or(missing)?;
+    let radial = cross(sketch.normal, direction);
+    let at = |point| {
+        let world = sketch.world(point);
+        dot(
+            radial,
+            [
+                world[0] - origin[0],
+                world[1] - origin[1],
+                world[2] - origin[2],
+            ],
+        )
+    };
+    let all = profiles.get("type").and_then(Value::as_str) == Some("all");
+    let mut selected = BTreeSet::new();
+    selected_curves(profiles, &mut selected);
+    let mut sign: f64 = 0.0;
+    for entity in ctx
+        .arena("sketch_entities")
+        .iter()
+        .filter(|entity| entity.get("sketch").and_then(Value::as_str) == Some(sketch_id))
+    {
+        let selected = if all {
+            entity.get("construction").and_then(Value::as_bool) != Some(true)
+        } else {
+            entity
+                .get("id")
+                .and_then(Value::as_str)
+                .and_then(|id| sketch.curve(id))
+                .is_some_and(|curve| selected.contains(curve.id.as_str()))
+        };
+        if !selected {
+            continue;
+        }
+        let geometry = entity.get("geometry").ok_or(missing)?;
+        let (low, high) = match geometry.get("kind").and_then(Value::as_str) {
+            Some("point" | "reference_line") => continue,
+            Some("line") => {
+                let a = at(p2(geometry.get("start")).ok_or(missing)?);
+                let b = at(p2(geometry.get("end")).ok_or(missing)?);
+                (a.min(b), a.max(b))
+            }
+            // A whole carrier disk is a conservative bound even for a trimmed arc.
+            Some("circle" | "arc" | "ellipse") => {
+                let center = at(p2(geometry.get("center")).ok_or(missing)?);
+                let radius = if geometry.get("kind").and_then(Value::as_str) == Some("ellipse") {
+                    number(geometry.get("major_radius"))
+                        .zip(number(geometry.get("minor_radius")))
+                        .map(|(major, minor)| major.max(minor))
+                } else {
+                    number(geometry.get("radius"))
+                }.filter(|radius| *radius > 0.0).ok_or(missing)?;
+                (center - radius, center + radius)
+            }
+            Some(kind) => return Err(format!(
+                "its one-sided revolve sweep side is not proven (bounds for {kind} profile curves are not mapped yet)"
+            )),
+            None => return Err(missing.to_owned()),
+        };
+        if !low.is_finite() || !high.is_finite() {
+            return Err(missing.to_owned());
+        }
+        let side = if low >= -IN_PLANE && high > IN_PLANE {
+            1.0
+        } else if high <= IN_PLANE && low < -IN_PLANE {
+            -1.0
+        } else if low.abs() <= IN_PLANE && high.abs() <= IN_PLANE {
+            continue;
+        } else {
+            return Err(missing.to_owned());
+        };
+        if sign != 0.0 && sign != side {
+            return Err(missing.to_owned());
+        }
+        sign = side;
+    }
+    if sign == 0.0 {
+        return Err(missing.to_owned());
+    }
+    Ok(sign)
+}
+
+/// Selections produced by `profile` contain curve ids in bounded nested arrays/objects.
+fn selected_curves<'a>(selection: &'a Value, ids: &mut BTreeSet<&'a str>) {
+    match selection {
+        Value::String(value) => {
+            ids.insert(value);
+        }
+        Value::Array(values) => {
+            for value in values {
+                selected_curves(value, ids);
+            }
+        }
+        Value::Object(fields) => {
+            for value in fields.values() {
+                selected_curves(value, ids);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// The axis as a line of the profile's own sketch, when the source chose one.
@@ -177,11 +306,7 @@ fn sweep(extent: Option<&Value>) -> Result<(f64, bool), String> {
             if TAU - turn <= FULL_TURN {
                 Ok((TAU, false))
             } else {
-                Err(
-                    "a one-sided revolve short of a full turn is not mapped yet (CADIR does not \
-                     state which way it turns)"
-                        .to_owned(),
-                )
+                Ok((turn, false))
             }
         }
         Some("two_sided") => {
@@ -229,11 +354,9 @@ mod tests {
     }
 
     #[test]
-    fn direction_dependent_revolves_stop_the_history() {
+    fn partial_angles_map_and_unproven_ends_stop_the_history() {
         let partial = json!({"kind": "one_sided", "termination": angle(PI)});
-        assert!(sweep(Some(&partial))
-            .unwrap_err()
-            .contains("which way it turns"));
+        assert_eq!(sweep(Some(&partial)), Ok((PI, false)));
         let two = json!({"kind": "two_sided", "first": angle(1.0), "second": angle(2.0)});
         assert!(sweep(Some(&two)).is_err());
         let to_face = json!({"kind": "symmetric", "termination": {"kind": "to_face"}});

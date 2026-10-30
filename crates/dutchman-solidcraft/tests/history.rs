@@ -2013,18 +2013,209 @@ fn full_and_symmetric_revolves_are_written() {
         json!({"type": "line", "origin": [0.0, 0.0, 0.0], "dir": [0.0, 0.0, 1.0]})
     );
     assert_eq!(revolve["convention"], "sketch_normal");
+}
 
-    let half = ring_history(json!({"kind": "one_sided",
-        "termination": {"kind": "angle", "angle": std::f64::consts::PI}}));
-    let (_, report) = convert(
-        &half,
-        &SolidCraftWriter::new().verification(Verification::Off),
-    );
-    assert!(
-        history_line(&report).contains("which way it turns"),
-        "{}",
-        history_line(&report)
-    );
+#[test]
+fn one_sided_revolves_follow_the_oriented_axis() {
+    let cli = solidcraft();
+    for axis in [1.0, -1.0] {
+        for normal in [1.0, -1.0] {
+            for radial in [1.0, -1.0] {
+                for placed in [false, true] {
+                    let mut model = ring_history(json!({"kind": "one_sided",
+                    "termination": {"kind": "angle", "angle": std::f64::consts::PI / 3.0}}));
+                    let mut wire = serde_json::to_value(&model.ir).unwrap();
+                    wire["model"]["sketches"][0]["placement"]["frame"]["normal"]["y"] =
+                        json!(normal);
+                    wire["model"]["features"][1]["definition"]["construction"]["axis"]
+                        ["direction"]["z"] = json!(axis);
+                    for entity in wire["model"]["sketch_entities"].as_array_mut().unwrap() {
+                        for end in ["start", "end"] {
+                            let point = &mut entity["geometry"][end];
+                            point["u"] = json!(point["u"].as_f64().unwrap() * radial);
+                            point["v"] = json!(point["v"].as_f64().unwrap() * normal);
+                        }
+                    }
+                    if placed {
+                        // Cycle world axes and translate: sketch u is +Y, normal is +/-Z,
+                        // and the revolution axis is +/-X through the moved sketch origin.
+                        wire["model"]["sketches"][0]["placement"]["frame"] = json!({
+                            "origin": {"x": 11.0, "y": 22.0, "z": 33.0},
+                            "normal": {"x": 0.0, "y": 0.0, "z": normal},
+                            "u_axis": {"x": 0.0, "y": 1.0, "z": 0.0}
+                        });
+                        wire["model"]["features"][1]["definition"]["construction"]["axis"] = json!({
+                            "origin": {"x": 11.0, "y": 22.0, "z": 33.0},
+                            "direction": {"x": axis, "y": 0.0, "z": 0.0}
+                        });
+                    }
+                    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+                    let (design, report) = written(&model);
+                    assert!(
+                        history_line(&report).starts_with("2 of 2 features mapped"),
+                        "{report:?}"
+                    );
+                    let (document, _) = convert(
+                        &model,
+                        &SolidCraftWriter::new().verification(Verification::Off),
+                    );
+                    let revolve = &document["features"][1];
+                    let degrees = revolve["angle"]
+                        .as_str()
+                        .unwrap()
+                        .trim_end_matches(" deg")
+                        .parse::<f64>()
+                        .unwrap();
+                    assert!((degrees - 60.0 * axis * radial * normal).abs() < 1e-10);
+                    assert_eq!(revolve["convention"], "sketch_normal");
+                    if let Some(cli) = &cli {
+                        let side = axis * radial;
+                        let expected_min = [
+                            if radial > 0.0 { 2.5 } else { -10.0 },
+                            if side > 0.0 { 0.0 } else { -75.0_f64.sqrt() },
+                            0.0,
+                        ];
+                        let expected_max = [
+                            if radial > 0.0 { 10.0 } else { -2.5 },
+                            if side > 0.0 { 75.0_f64.sqrt() } else { 0.0 },
+                            10.0,
+                        ];
+                        let place = |corner: [f64; 3]| {
+                            if placed {
+                                [corner[2] + 11.0, corner[0] + 22.0, corner[1] + 33.0]
+                            } else {
+                                corner
+                            }
+                        };
+                        let expected_min = place(expected_min);
+                        let expected_max = place(expected_max);
+                        let boxes = bounds(cli, &design);
+                        assert_eq!(boxes.len(), 1);
+                        for coordinate in 0..3 {
+                            assert!(
+                                (boxes[0].0[coordinate] - expected_min[coordinate]).abs() < 1e-6,
+                                "{boxes:?}"
+                            );
+                            assert!(
+                                (boxes[0].1[coordinate] - expected_max[coordinate]).abs() < 1e-6,
+                                "{boxes:?}"
+                            );
+                        }
+                        let actual = volumes(cli, &design);
+                        let expected = 125.0 * std::f64::consts::PI;
+                        assert_eq!(actual.len(), 1);
+                        assert!((actual[0] - expected).abs() / expected < 1e-3, "{actual:?}");
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn one_sided_revolves_keep_selected_curves_and_a_sketch_axis() {
+    for axis in [1.0, -1.0] {
+        let mut model = ring_history(json!({"kind": "one_sided",
+            "termination": {"kind": "angle", "angle": std::f64::consts::FRAC_PI_2}}));
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        // Move the axis to the inner profile edge. Its sketch line runs opposite +Z.
+        let construction = &mut wire["model"]["features"][1]["definition"]["construction"];
+        construction["axis"]["origin"]["x"] = json!(5.0);
+        construction["axis"]["direction"]["z"] = json!(axis);
+        construction["axis"]["reference"] = json!({"kind": "sketch_curves", "value": {
+            "sketch": SKETCH, "curves": ["f3d:model:sketch-entity#4"]}});
+        construction["profile"] = json!({"kind": "sketch_entities", "value": {
+            "sketch": SKETCH, "entities": (1..=4).map(|id| format!("f3d:model:sketch-entity#{id}")).collect::<Vec<_>>()}});
+        // An unselected curve on the other side must not change the proof.
+        wire["model"]["sketch_entities"]
+            .as_array_mut()
+            .unwrap()
+            .push(line(5, [-10.0, 0.0], [-10.0, -10.0]));
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).starts_with("2 of 2 features mapped"),
+            "{report:?}"
+        );
+        assert_eq!(document["features"][1]["axis"]["type"], "sketch_line");
+        if let Some(cli) = solidcraft() {
+            let design = written(&model).0;
+            let boxes = bounds(&cli, &design);
+            assert_eq!(boxes.len(), 1);
+            let expected = if axis > 0.0 { (0.0, 5.0) } else { (-5.0, 0.0) };
+            assert!((boxes[0].0[0] - 5.0).abs() < 1e-6, "{boxes:?}");
+            assert!((boxes[0].1[0] - 10.0).abs() < 1e-6, "{boxes:?}");
+            assert!((boxes[0].0[1] - expected.0).abs() < 1e-6, "{boxes:?}");
+            assert!((boxes[0].1[1] - expected.1).abs() < 1e-6, "{boxes:?}");
+            let actual = volumes(&cli, &design);
+            assert_eq!(actual.len(), 1);
+            let expected = 62.5 * std::f64::consts::PI;
+            assert!((actual[0] - expected).abs() / expected < 1e-3, "{actual:?}");
+        }
+    }
+}
+
+#[test]
+fn one_sided_revolves_bound_circular_profiles() {
+    for radial in [7.0, -7.0, 0.0] {
+        let mut model = ring_history(json!({"kind": "one_sided",
+            "termination": {"kind": "angle", "angle": std::f64::consts::FRAC_PI_2}}));
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["sketch_entities"] = json!([entity(
+            1,
+            json!({"kind": "circle",
+            "center": {"u": radial, "v": -5.0}, "radius": 2.0})
+        )]);
+        wire["model"]["features"][1]["definition"]["construction"]["profile"] = whole_sketch();
+        wire["model"]["sketches"][0]["profiles"] =
+            json!([[{"entity": "f3d:model:sketch-entity#1"}]]);
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (design, report) = written(&model);
+        if radial == 0.0 {
+            assert!(history_line(&report).contains("sweep side is not proven"));
+        } else {
+            assert!(
+                history_line(&report).starts_with("2 of 2 features mapped"),
+                "{report:?}"
+            );
+            if let Some(cli) = solidcraft() {
+                let boxes = bounds(&cli, &design);
+                assert_eq!(boxes.len(), 1);
+                let expected = if radial > 0.0 {
+                    (0.0, 9.0)
+                } else {
+                    (-9.0, 0.0)
+                };
+                // SolidCraft measures a circular profile's extrema from its mesh.
+                assert!((boxes[0].0[1] - expected.0).abs() < 5e-4, "{boxes:?}");
+                assert!((boxes[0].1[1] - expected.1).abs() < 5e-4, "{boxes:?}");
+                let actual = volumes(&cli, &design);
+                assert_eq!(actual.len(), 1);
+                let expected = 14.0 * std::f64::consts::PI.powi(2);
+                assert!((actual[0] - expected).abs() / expected < 1e-3, "{actual:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_one_sided_revolve_with_profiles_on_both_sides_names_the_missing_proof() {
+    let mut model = ring_history(json!({"kind": "one_sided",
+        "termination": {"kind": "angle", "angle": std::f64::consts::FRAC_PI_2}}));
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    for entity in wire["model"]["sketch_entities"].as_array_mut().unwrap() {
+        for end in ["start", "end"] {
+            let point = &mut entity["geometry"][end];
+            point["u"] = json!(point["u"].as_f64().unwrap() - 7.5);
+        }
+    }
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (_, report) = written(&model);
+    assert!(history_line(&report)
+        .contains("selected profile curves must lie on one side of the oriented axis"));
 }
 
 #[test]

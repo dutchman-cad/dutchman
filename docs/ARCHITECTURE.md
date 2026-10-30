@@ -167,8 +167,12 @@ extrudes may use a non-blind positive-normal end when the negative-normal end is
 Extrudes map as new body, join, cut or intersect (a new body keeps its source name and colour);
 revolves about a line in the sketch plane (a line of the profile's sketch stays that line)
 that are symmetric, equal-angle two-sided or a full turn, including unequal sides that add up
-to one (CADIR does not state which way a revolve turns, so partial one-sided and unequal
-partial two-sided revolves are not mapped), as solids or, short of a full turn, as surfaces;
+to one, as solids or, short of a full turn, as surfaces; one-sided partial solid revolves
+follow the oriented CADIR axis when bounds on the selected lines, circles, ellipses, or whole
+arc carriers prove the profile lies on one side of it. SolidCraft 0.18.2 and 0.26.0 both
+sweep toward the sketch normal for a positive angle, independently of the axis direction;
+the writer signs the angle to preserve the source's right-hand sweep. Unproven sides and
+unequal partial two-sided revolves remain blockers;
 lofts through two to fifty profile or terminal point sections,
 open, smooth (or ruled through two sections without rails), solid or surface (a surface loft
 becomes a new surface body, without point ends), guided by up to two rails of sketch curves or

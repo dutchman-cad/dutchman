@@ -17,6 +17,7 @@ State as of the cadmpeg commit Dutchman pins (see `Cargo.toml`).
 | Planar sketches: points, lines, circles, ellipses, with typed and native constraints. | Mapped, ellipses as whole ellipses; typed constraints mapped, native ones reported as not carried. |
 | Uniform periodic (closed) sketch B-splines, with a full knot vector and polynomial or equal-weight poles. | Mapped exactly by endpoint knot insertion into a clamped SolidCraft control spline. Unequal weights and nonuniform or repeated interior knots are refused specifically: SolidCraft control splines store neither weights nor custom knots. |
 | Extrude, hole, constant-radius fillet, equal-distance chamfer, when every property, dimension and selection resolves. | Extrude: mapped when cadmpeg resolves its profile to sketch profiles or regions, blind or through all; an extrude to a face or to the next face is not mapped yet. Holes map where their placement resolves, drilled the way the hole points; constant-radius fillets and equal-setback chamfers map with proven feature input edge geometry (see guide.md). |
+| Resolved revolve with a sketch profile, axis, and fixed angle. | Maps full turns and one-sided partial solid sweeps when selected profile bounds prove the sweep side about the oriented axis; see [revolve coverage](guide.md). |
 | Mirror of features about a work plane. | Mapped as a SolidCraft mirror pattern of those features about that plane. |
 | Rectangular pattern of features with fixed spacing, in one or two directions. | Mapped as a SolidCraft rectangular pattern of those features. |
 | Rectangular pattern with suppressed instances. | Not mapped yet: SolidCraft's rectangular pattern fills the whole grid. The report names the pattern and how many positions it skips, and the part keeps its exact geometry. |
@@ -40,7 +41,10 @@ State as of the cadmpeg commit Dutchman pins (see `Cargo.toml`).
    by points on them and faces by points or persistent names, so these need typed historical
    or generated references (cadmpeg's `Historical`/`Generated` selections) before Dutchman can
    place them. The same gap holds for Fusion.
-4. **No revolve.** The codec has no revolve projection yet.
+4. **Unresolved revolve controls.** The codec projects its admitted fixed-angle direction
+   with a resolved axis. Other direction controls or unresolved profile/axis operands remain
+   native. Dutchman maps a partial solid sweep only when the selected profile curves can be
+   bounded on one side of that oriented axis; it reports an unproven sweep side otherwise.
 5. **Suppression and dependencies unresolved.** Suppressed Inventor features currently look
    active.
 6. **STEP product name.** cadmpeg's STEP writer names a product with no name by its
