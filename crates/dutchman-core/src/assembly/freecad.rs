@@ -160,6 +160,7 @@ pub(super) fn resolve(
                     &serde_json::to_value(&selected.ir)
                         .map_err(|err| (Stage::Map, err.to_string()))?,
                     &[],
+                    HistoryOwner::Unknown,
                     selected.name.clone(),
                 )
                 .map_err(|why| (Stage::Map, why))?;
@@ -288,6 +289,7 @@ fn select(model: &Model, object: &str) -> Result<(Model, Placement3x4), String> 
                 model,
                 &document,
                 &bodies,
+                id.map_or(HistoryOwner::Unknown, HistoryOwner::Definition),
                 name_of(definition).unwrap_or(object).to_owned(),
             )?,
             placement,
@@ -385,7 +387,13 @@ fn select_shape(
             "linked object \"{object}\" has no readable geometry or components"
         ));
     }
-    let mut selected = only(model, document, &bodies, object.to_owned())?;
+    let mut selected = only(
+        model,
+        document,
+        &bodies,
+        HistoryOwner::Unknown,
+        object.to_owned(),
+    )?;
     if selected
         .ir
         .model

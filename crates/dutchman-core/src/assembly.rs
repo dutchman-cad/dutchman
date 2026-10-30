@@ -729,6 +729,35 @@ fn local_components_with_threads(
         joint_notes: Vec::new(),
         stored_placements: Vec::new(),
     };
+    fn bindings(assembly: &Assembly, kept: &mut BTreeSet<String>) {
+        for part in &assembly.parts {
+            kept.extend(
+                part.ir
+                    .model
+                    .appearance_bindings
+                    .iter()
+                    .map(|b| b.id.to_string()),
+            );
+            if let Some(sub) = &part.assembly {
+                bindings(sub, kept);
+            }
+        }
+    }
+    let mut kept = BTreeSet::new();
+    bindings(&assembly, &mut kept);
+    for binding in &model.ir.model.appearance_bindings {
+        if !kept.contains(binding.id.as_str()) {
+            report.push(
+                Severity::Dropped,
+                "appearance",
+                format!(
+                    "Appearance binding {} has no target in a placed component's geometry; \
+                     its appearance is left out",
+                    binding.id
+                ),
+            );
+        }
+    }
     assembly.remember_placements();
     left_out.extend(
         place_by_joints(&mut assembly, &posed)
@@ -1581,6 +1610,24 @@ enum Slice<'a> {
     Loose,
 }
 
+impl<'a> Slice<'a> {
+    fn owner(self) -> HistoryOwner<'a> {
+        match self {
+            Self::Definition(id) => HistoryOwner::Definition(id),
+            Self::Loose => HistoryOwner::Root,
+            Self::Empty => HistoryOwner::Unknown,
+        }
+    }
+}
+
+/// The history scope of a component slice; an unknown scope uses body and sketch links only.
+#[derive(Clone, Copy)]
+pub(crate) enum HistoryOwner<'a> {
+    Definition(&'a str),
+    Root,
+    Unknown,
+}
+
 fn prepare_slices<'a>(
     model: &Model,
     document: &Value,
@@ -1636,8 +1683,8 @@ fn prepare_slices<'a>(
     if workers == 1 {
         return BTreeMap::new();
     }
-    let prepared = crate::parallel::prepare_ordered(&jobs, workers, |(_, bodies)| {
-        only(model, document, bodies, String::new())
+    let prepared = crate::parallel::prepare_ordered(&jobs, workers, |(key, bodies)| {
+        only(model, document, bodies, key.owner(), String::new())
     });
     jobs.into_iter()
         .zip(prepared)
@@ -1685,7 +1732,7 @@ impl<'a> Tree<'a> {
                 part.name = name;
                 Ok(part)
             }
-            None => only(self.model, self.document, bodies, name),
+            None => only(self.model, self.document, bodies, key.owner(), name),
         }
     }
 
@@ -1981,11 +2028,12 @@ pub(crate) fn only(
     model: &Model,
     document: &Value,
     bodies: &[&str],
+    owner: HistoryOwner<'_>,
     name: String,
 ) -> Result<Model, String> {
-    match slice(model, document, bodies, name.clone(), true) {
+    match slice(model, document, bodies, owner, name.clone(), true) {
         Ok(part) => Ok(part),
-        Err(_) => slice(model, document, bodies, name, false),
+        Err(_) => slice(model, document, bodies, owner, name, false),
     }
 }
 
@@ -1996,16 +2044,18 @@ pub(crate) fn geometry_only(
     bodies: &[&str],
     name: String,
 ) -> Result<Model, String> {
-    slice(model, document, bodies, name, false)
+    slice(model, document, bodies, HistoryOwner::Unknown, name, false)
 }
 
 /// [`only`] with its `history` or [`geometry_only`] without. A feature is the part's when
-/// it makes one of `bodies` or builds a sketch the part's component owns; the features those
-/// depend on come with them, except a feature that makes only other bodies.
+/// its definition owns it, it makes one of `bodies`, or it builds a sketch the component
+/// owns. Referenced features come along, except those owned by another definition or making
+/// only other bodies. Timeline dependencies do not establish component membership.
 fn slice(
     model: &Model,
     document: &Value,
     bodies: &[&str],
+    owner: HistoryOwner<'_>,
     name: String,
     history: bool,
 ) -> Result<Model, String> {
@@ -2036,8 +2086,23 @@ fn slice(
             .filter_map(Value::as_str)
             .any(|id| bodies.contains(&id))
     };
-    // A feature that makes bodies, none of them the part's, belongs to another part.
+    fn product_definition(row: &Value) -> Option<&str> {
+        row.get("product_definition").and_then(Value::as_str)
+    }
+    let definition = match owner {
+        HistoryOwner::Definition(id) => Some(id),
+        HistoryOwner::Root | HistoryOwner::Unknown => None,
+    };
+    let owned = |row: &Value| match owner {
+        HistoryOwner::Definition(id) => product_definition(row) == Some(id),
+        HistoryOwner::Root => product_definition(row).is_none(),
+        HistoryOwner::Unknown => false,
+    };
+    // Explicit ownership takes precedence over output links from older files.
     let foreign = |row: &Value| {
+        if let Some(owner) = product_definition(row) {
+            return Some(owner) != definition;
+        }
         row.get("outputs")
             .and_then(Value::as_array)
             .is_some_and(|ids| !ids.is_empty())
@@ -2054,16 +2119,32 @@ fn slice(
             if let Some(sketch) = sketched(row) {
                 binders.entry(sketch).or_default().push(id);
             }
-            if ours(row.get("outputs")) && keep.insert(id, ()).is_none() {
+            if (owned(row) || (ours(row.get("outputs")) && !foreign(row)))
+                && keep.insert(id, ()).is_none()
+            {
                 queue.push(id);
             }
         }
+        let parameters = wire.get("parameters").and_then(Value::as_array);
+        for row in parameters.map_or(&[][..], Vec::as_slice) {
+            if owned(row) {
+                if let Some(id) = row.get("id").and_then(Value::as_str) {
+                    if keep.insert(id, ()).is_none() {
+                        queue.push(id);
+                    }
+                }
+            }
+        }
         let definitions = wire.get("product_definitions").and_then(Value::as_array);
-        for definition in definitions.map_or(&[][..], Vec::as_slice) {
-            if !ours(definition.get("bodies")) {
+        for component in definitions.map_or(&[][..], Vec::as_slice) {
+            let selected = match definition {
+                Some(id) => component.get("id").and_then(Value::as_str) == Some(id),
+                None => ours(component.get("bodies")),
+            };
+            if !selected {
                 continue;
             }
-            let sketches = definition.get("sketches").and_then(Value::as_array);
+            let sketches = component.get("sketches").and_then(Value::as_array);
             for sketch in sketches.map_or(&[][..], Vec::as_slice) {
                 if let Some(id) = sketch.as_str() {
                     if rows.contains_key(id) && keep.insert(id, ()).is_none() {
@@ -2078,7 +2159,15 @@ fn slice(
             continue;
         };
         let mut refs = Vec::new();
-        strings(row, &mut refs);
+        if *arena == "features" {
+            for (key, value) in row.as_object().into_iter().flatten() {
+                if key != "dependencies" && key != "regeneration_parent" {
+                    strings(value, &mut refs);
+                }
+            }
+        } else {
+            strings(row, &mut refs);
+        }
         if history && *arena == "sketches" {
             refs.extend(binders.get(id).into_iter().flatten().copied());
         }
@@ -2089,6 +2178,28 @@ fn slice(
                 if follow && keep.insert(reference, ()).is_none() {
                     queue.push(reference);
                 }
+            }
+        }
+    }
+    // Bindings point to topology, rather than topology pointing to its bindings.
+    // Keep that reverse edge and the appearance asset in each definition's slice.
+    for binding in wire
+        .get("appearance_bindings")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if binding
+            .pointer("/target/id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| keep.contains_key(id))
+        {
+            for id in [binding.get("id"), binding.get("appearance")]
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+            {
+                keep.insert(id, ());
             }
         }
     }
@@ -2104,6 +2215,26 @@ fn slice(
                     .is_some_and(|id| keep.contains_key(id))
             })
             .cloned()
+            .map(|mut row| {
+                if arena == "features" {
+                    if let Some(fields) = row.as_object_mut() {
+                        // A predecessor outside this slice is not part of its timeline.
+                        if fields
+                            .get("regeneration_parent")
+                            .and_then(Value::as_str)
+                            .is_some_and(|id| !keep.contains_key(id))
+                        {
+                            fields.remove("regeneration_parent");
+                        }
+                        if let Some(ids) =
+                            fields.get_mut("dependencies").and_then(Value::as_array_mut)
+                        {
+                            ids.retain(|id| id.as_str().is_some_and(|id| keep.contains_key(id)));
+                        }
+                    }
+                }
+                row
+            })
             .collect();
         reduced.insert(arena.clone(), Value::Array(kept));
     }
@@ -2596,6 +2727,52 @@ mod tests {
     }
 
     #[test]
+    fn component_slicing_reports_an_appearance_binding_without_a_target() {
+        let mut model = with_components(true);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["appearances"] = json!([{
+            "id": "synthetic:test:appearance#red", "base_color": {"r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0}
+        }]);
+        wire["model"]["appearance_bindings"] = json!([{
+            "id": "synthetic:test:appearance-binding#missing",
+            "target": {"kind": "face", "id": "synthetic:test:face#missing"},
+            "appearance": "synthetic:test:appearance#red"
+        }]);
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let mut report = Report::default();
+        assert!(matches!(
+            local(&model, 1, &mut report),
+            Components::Assembly(_)
+        ));
+        let losses: Vec<_> = report
+            .losses()
+            .iter()
+            .filter(|loss| loss.subject == "appearance")
+            .collect();
+        assert_eq!(losses.len(), 1);
+        assert_eq!(losses[0].severity, Severity::Dropped);
+        assert!(losses[0]
+            .detail
+            .contains("synthetic:test:appearance-binding#missing"));
+    }
+
+    #[test]
+    fn cadir_cannot_receive_component_or_occurrence_appearance_targets_yet() {
+        for kind in ["component", "occurrence"] {
+            let mut wire = serde_json::to_value(&with_components(true).ir).unwrap();
+            wire["model"]["appearance_bindings"] = json!([{
+                "id": "synthetic:test:appearance-binding#unsupported",
+                "target": {"kind": kind, "id": "f3d:model:component#block"},
+                "appearance": "synthetic:test:appearance#red"
+            }]);
+            let error = cadmpeg_ir::CadIr::from_json(&wire.to_string())
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(kind), "{error}");
+        }
+    }
+
+    #[test]
     fn components_that_own_their_bodies_become_an_assembly() {
         let assembly = local_assembly(&with_components(true)).unwrap().unwrap();
         assert_eq!(assembly.own_part, None);
@@ -2717,6 +2894,190 @@ mod tests {
         let assembly = local_assembly(&with_history(false)).unwrap().unwrap();
         assert!(assembly.parts[0].ir.model.sketches.is_empty());
         assert!(feature_ids(&assembly.parts[0]).is_empty());
+    }
+
+    fn with_owned_history() -> Model {
+        let model = with_history(false);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["features"][0]["product_definition"] = json!("f3d:model:component#block");
+        wire["model"]["features"][0]["outputs"] = json!([]);
+        wire["model"]["features"][1]["product_definition"] = json!("f3d:model:component#other");
+        wire["model"]["parameters"] = json!([
+            {"id": "synthetic:model:parameter#block", "name": "block_length", "expression": "5 mm",
+             "product_definition": "f3d:model:component#block"},
+            {"id": "synthetic:model:parameter#other", "name": "other_length", "expression": "6 mm",
+             "product_definition": "f3d:model:component#other"},
+            {"id": "synthetic:model:parameter#root", "name": "root_length", "expression": "7 mm"},
+        ]);
+        Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        }
+    }
+
+    #[test]
+    fn an_owned_feature_without_outputs_and_parameters_come_with_the_component() {
+        let model = with_owned_history();
+        for threads in [1, 4] {
+            let (assembly, _) = local_components_with_threads(
+                &model,
+                &BTreeMap::new(),
+                threads,
+                &mut Report::default(),
+            )
+            .unwrap()
+            .unwrap();
+            let block = &assembly.parts[0];
+            assert_eq!(feature_ids(block), [feature_ids(&model)[0].clone()]);
+            let wire = serde_json::to_value(&block.ir).unwrap();
+            assert_eq!(wire["model"]["parameters"].as_array().unwrap().len(), 1);
+            assert_eq!(wire["model"]["parameters"][0]["name"], "block_length");
+            // Other consumes Block's sketch, but cannot pull in its owned sketch feature.
+            assert_eq!(
+                feature_ids(&assembly.parts[1]),
+                ["synthetic:copy:feature#other"]
+            );
+        }
+    }
+
+    #[test]
+    fn another_components_feature_is_not_seeded_by_outputs_or_followed_from_a_sketch() {
+        let model = with_owned_history();
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let sketch = wire["model"]["sketches"][0]["id"].clone();
+        wire["model"]["product_definitions"][0]["sketches"] = json!([sketch]);
+        wire["model"]["features"][0]["product_definition"] = json!("f3d:model:component#other");
+        wire["model"]["features"][0]["outputs"] = json!([wire["model"]["bodies"][0]["id"]]);
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        };
+        let assembly = local_assembly(&model).unwrap().unwrap();
+        assert!(feature_ids(&assembly.parts[0]).is_empty());
+        assert_eq!(assembly.parts[0].ir.model.sketches.len(), 1);
+    }
+
+    fn history_sphere() -> Value {
+        json!({"id": "synthetic:model:feature#sphere", "ordinal": 100, "suppressed": false,
+            "definition": {"definition": "sphere", "center": {"x": 0.0, "y": 0.0, "z": 0.0},
+                "radius": 1.0, "op": "new_body"}})
+    }
+
+    #[test]
+    fn timeline_predecessors_do_not_bring_another_parts_history() {
+        let model = with_owned_history();
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut predecessor = history_sphere();
+        predecessor["ordinal"] = json!(0);
+        wire["model"]["features"][0]["ordinal"] = json!(101);
+        wire["model"]["features"][0]["dependencies"] = json!([predecessor["id"]]);
+        wire["model"]["features"][0]["regeneration_parent"] = predecessor["id"].clone();
+        wire["model"]["features"]
+            .as_array_mut()
+            .unwrap()
+            .push(predecessor);
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        };
+        let assembly = local_assembly(&model).unwrap().unwrap();
+        assert_eq!(
+            feature_ids(&assembly.parts[0]),
+            [feature_ids(&model)[0].clone()]
+        );
+    }
+
+    #[test]
+    fn root_owned_history_goes_only_to_the_loose_body_part_when_it_exists() {
+        for loose in [false, true] {
+            let model = with_owned_history();
+            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            let feature = history_sphere();
+            wire["model"]["features"]
+                .as_array_mut()
+                .unwrap()
+                .push(feature.clone());
+            if loose {
+                let mut body = wire["model"]["bodies"][0].clone();
+                body["id"] = json!("synthetic:model:body#loose");
+                wire["model"]["bodies"].as_array_mut().unwrap().push(body);
+            }
+            let model = Model {
+                ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+                ..model
+            };
+            for threads in [1, 4] {
+                let (assembly, _) = local_components_with_threads(
+                    &model,
+                    &BTreeMap::new(),
+                    threads,
+                    &mut Report::default(),
+                )
+                .unwrap()
+                .unwrap();
+                assert!(assembly
+                    .parts
+                    .iter()
+                    .take(2)
+                    .all(|part| !feature_ids(part)
+                        .contains(&feature["id"].as_str().unwrap().to_owned())));
+                assert_eq!(assembly.own_part.is_some(), loose);
+                if let Some(own) = assembly.own_part {
+                    assert_eq!(
+                        feature_ids(&assembly.parts[own]),
+                        [feature["id"].as_str().unwrap()]
+                    );
+                    let wire = serde_json::to_value(&assembly.parts[own].ir).unwrap();
+                    assert_eq!(wire["model"]["parameters"].as_array().unwrap().len(), 1);
+                    assert_eq!(wire["model"]["parameters"][0]["name"], "root_length");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_sub_assemblys_own_bodies_keep_its_owned_history() {
+        let model = nested(true, None);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut feature = history_sphere();
+        feature["product_definition"] = json!("f3d:model:component#frame");
+        wire["model"]["features"] = json!([feature]);
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        };
+        for threads in [1, 4] {
+            let (assembly, _) = local_components_with_threads(
+                &model,
+                &BTreeMap::new(),
+                threads,
+                &mut Report::default(),
+            )
+            .unwrap()
+            .unwrap();
+            let inner = assembly.parts[0].assembly.as_ref().unwrap();
+            assert!(feature_ids(&inner.parts[0]).is_empty());
+            assert_eq!(
+                feature_ids(&inner.parts[inner.own_part.unwrap()]),
+                ["synthetic:model:feature#sphere"]
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_scope_does_not_seed_root_owned_history() {
+        let model = with_history(false);
+        let document = serde_json::to_value(&model.ir).unwrap();
+        let body = model.ir.model.bodies[0].id.to_string();
+        let part = only(
+            &model,
+            &document,
+            &[&body],
+            HistoryOwner::Unknown,
+            "Block".to_owned(),
+        )
+        .unwrap();
+        assert!(feature_ids(&part).is_empty());
     }
 
     #[test]

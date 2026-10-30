@@ -4892,25 +4892,33 @@ fn a_face_colour_becomes_a_face_look_on_that_face() {
 }
 
 #[test]
-fn freecad_periodic_spline_recipes_name_the_decoder_knot_gap() {
-    // Keep the native repros explicit until cadmpeg normalizes compact periodic sketches.
-    // Once that reader gap closes, promote these to full conversion/replay checks.
+fn freecad_periodic_spline_recipes_keep_their_history() {
+    // cadmpeg expands compact periodic sketch knots, so both native repros convert in full.
     for name in ["N04a.FCStd", "N04b.FCStd"] {
         let input = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../dutchman-core/tests/fixtures/freecad-1.1.4-N04")
             .join(name);
-        let error = dutchman_core::read(
+        let model = dutchman_core::read(
             dutchman_core::Format::FreeCadDocument,
             &input,
             &mut Report::default(),
         )
-        .unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("knots must contain 7 values, found 5"),
-            "{name}: {error}"
+        .unwrap();
+        let (_, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
         );
+        assert!(
+            history_line(&report).starts_with("3 of 3 features mapped"),
+            "{name}: {}",
+            history_line(&report)
+        );
+        let Some(cli) = solidcraft() else { continue };
+        let (_, report) = written_with(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::With(cli)),
+        );
+        assert_eq!(report.outcome().unwrap().check, Check::Verified, "{name}");
     }
 }
 

@@ -21,8 +21,13 @@ const CUTS: usize = 24;
 const FLIPS: usize = 48;
 /// Many-byte corruptions per fixture.
 const SCRAMBLES: usize = 8;
-/// The longest one attempt may take.
+/// The longest one hostile variant may take: a damaged file must end quickly, in a design or
+/// an error, never hang.
 const SLOWEST: Duration = Duration::from_secs(10);
+/// The longest the unchanged fixture may take. It is a full, valid conversion, which a cold
+/// debug build on a shared Windows runner has taken 10-17 s to finish; the hang check above is
+/// for the damaged variants.
+const SLOWEST_UNCHANGED: Duration = Duration::from_secs(60);
 
 /// How many times over to run the variants (`DUTCHMAN_ROBUSTNESS_SCALE`).
 fn scale() -> usize {
@@ -117,7 +122,12 @@ fn hostile_inputs_end_in_a_design_or_an_error() {
                 let outcome = catch_unwind(AssertUnwindSafe(|| convert(&input, &output, &writer)));
                 let took = started.elapsed();
                 let what = format!("{name} as .{ext}: {label}");
-                assert!(took < SLOWEST, "{what}: took {took:?}");
+                let limit = if label == "unchanged" {
+                    SLOWEST_UNCHANGED
+                } else {
+                    SLOWEST
+                };
+                assert!(took < limit, "{what}: took {took:?}");
                 match outcome {
                     Err(_) => crashes.push(what),
                     Ok(Err(_)) => {

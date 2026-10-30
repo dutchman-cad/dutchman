@@ -104,9 +104,11 @@ and `serde_json` rather than linking `solidcraft-doc`: that crate pulls in Solid
 kernel and renderer, needs edition 2024, and would build against unpatched dependencies
 outside SolidCraft's workspace.
 
-The import's body names and assembly tree are left out: SolidCraft reads them from the STEP
-when it evaluates the design, so its STEP reader stays the only interpreter of that text and
-Dutchman does not duplicate its rules.
+SolidCraft reads the import's assembly tree from the STEP when it evaluates the design.
+When an assembly carries appearance bindings, Dutchman names imported output bodies explicitly
+so looks cannot attach to a different component's namesake. Stored-solid history imports also
+name their bodies. The name sequence follows the restated regions and is checked against the
+written shape count; unmatched bindings are reported rather than assigned by a guessed name.
 
 The adapter pins format `solidcraft/23`, the first in which an Import may name a non-STEP
 source. SolidCraft upgrades older formats on open and refuses newer ones, so a pinned older

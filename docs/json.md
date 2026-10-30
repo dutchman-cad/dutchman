@@ -282,6 +282,11 @@ These are existing `losses` entries; desktop estimates and preset labels add no 
 The CLI and desktop display small estimates as “under 0.1 GB” and “under a minute”;
 JSON `estimate.peak_bytes` and `estimate.seconds` remain numeric and unrounded.
 
+Appearance bindings that cannot reach written component geometry, resolve an appearance, or
+select a mixed-colour face are recorded in `losses` with subject `appearance` and level
+`Dropped`. Their messages identify the binding. Uniform face appearances carried as a body
+colour are preserved and do not produce a loss.
+
 ### Stages
 
 Every loss, and every failure's `error`, says where in the conversion it arose, so a report of

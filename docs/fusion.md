@@ -33,6 +33,31 @@ layout lines through hole centres without splitting the circular holes during re
 another active consumer needs the whole sketch or a different selection form, those lines
 stay solid.
 
+## Appearances
+
+Body and face appearance bindings follow the component definition's own BREP ids into its
+written geometry, including imported and stored solids. Every placement inherits that
+geometry's looks. A body binding supplies the body colour, and face bindings override it per face.
+When a body has no body binding and all its faces have the same resolved appearance,
+Dutchman writes one body colour, which SolidCraft shows in its body appearance controls.
+Mixed appearances remain face looks, selected by points in the component's coordinates.
+Imported body names are made unique across the design so an unpainted namesake in another
+component cannot receive a painted body's appearance.
+The look keeps the resolved colour, opacity, and appearance name; it does not infer a
+physical material from a visual preset.
+
+A binding whose target or appearance cannot be resolved is reported as Dropped under
+`appearance`. Mixed curved faces without a resolved planar interior point cannot receive
+SolidCraft's point-selected face looks yet; their bindings are also reported as Dropped.
+Uniformly painted curved bodies can still use a body colour. Conflicting assignments to
+one target are left out and reported. Textures and shader properties are not mapped by this
+look mapping.
+
+The pinned cadmpeg CADIR supports body and face appearance targets, but has no component or
+occurrence appearance target kind. Those assignments need a cadmpeg IR extension before
+Dutchman can receive them. A source appearance absent from CADIR cannot be reconstructed;
+remaining grey bodies may therefore still need additional decoding in cadmpeg.
+
 ## Components
 
 Assemblies with multiple top-level designs group each design's features into a uniquely
@@ -50,12 +75,14 @@ transform, and each component as a product definition.
   one per component, holding only that component's bodies as an import, one occurrence per
   placement, and the design's own loose bodies as one more component at the origin. This works
   for any format whose CADIR says which bodies a component owns.
-- **Each component keeps its own history:** the features that make its bodies, the sketches
-  it owns with the features that build them, and the features those depend on. A feature that
-  makes only another component's bodies stays with that component. The component's history is
-  then mapped and checked like a single part's; when it does not map, the component keeps its
-  bodies as an import and the report names its first blocker. When cadmpeg links no feature to a
-  component's bodies, it has no history to map.
+- **Each component keeps its own history:** all features and parameters cadmpeg identifies as
+  belonging to its definition, including features with no output-body links, plus the features
+  that make its bodies and the sketches it owns with their building features. Referenced
+  features come along, but timeline predecessors alone do not. A feature explicitly owned by
+  another component stays out; without ownership, the existing body and sketch links still
+  select history. Root-owned history goes to the design's loose-body component when it exists.
+  The component's history is then mapped and checked like a single part's; when it does not
+  map, the component keeps its bodies as an import and the report names its first blocker.
 - **When it does not,** the design converts as stored and the report says so (Degraded,
   `components`): the geometry is written once, so a placement whose geometry the file does
   not store separately is not shown.

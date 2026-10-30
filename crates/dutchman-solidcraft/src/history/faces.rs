@@ -1,4 +1,4 @@
-//! Face colours of the bodies a history makes, as SolidCraft face looks.
+//! Body and face appearances of written geometry, as SolidCraft looks.
 //!
 //! SolidCraft finds a face look's face by its body and a point on the face. A replayed body is
 //! built where the source's final body is, so a point inside the source face finds the same
@@ -88,40 +88,244 @@ pub(super) fn pick(ctx: &Context, selection: Option<&Value>, normal: V3) -> Resu
     point_on(ctx, face).ok_or_else(|| "its face has no resolved planar interior point".to_owned())
 }
 
-/// A colour of `face` that differs from its body's, as SolidCraft face looks; and how many
-/// coloured faces could not be placed.
-pub(crate) fn looks(ctx: &Context) -> (Vec<Value>, usize) {
+/// Body and face bindings override inline colours. Uniform, fully painted bodies need only
+/// one body look; mixed bodies retain point-selected face looks in definition coordinates.
+pub(crate) fn looks(ctx: &mut Context, report: &mut dutchman_core::Report) -> Vec<Value> {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let mut bound: BTreeMap<&str, Vec<&Value>> = BTreeMap::new();
+    for binding in ctx.arena("appearance_bindings") {
+        if let Some(id) = binding.pointer("/target/id").and_then(Value::as_str) {
+            bound.entry(id).or_default().push(binding);
+        }
+    }
+    let mut applied = BTreeSet::new();
+    let resolve = |row: &Value| -> Option<Value> {
+        let id = row.get("id")?.as_str()?;
+        if let Some(bindings) = bound.get(id) {
+            let first = bindings.first()?.get("appearance")?.as_str()?;
+            if bindings
+                .iter()
+                .any(|b| b.get("appearance").and_then(Value::as_str) != Some(first))
+            {
+                return None;
+            }
+            let appearance = ctx.row("appearances", first)?;
+            let mut look = super::extrude::look(appearance.get("base_color")?)?;
+            if let (Some(name), Some(fields)) = (appearance.get("name"), look.as_object_mut()) {
+                fields.insert("name".to_owned(), name.clone());
+            }
+            Some(look)
+        } else {
+            row.get("color").and_then(super::extrude::look)
+        }
+    };
+    let mut body_looks = BTreeMap::new();
     let mut out = Vec::new();
-    let mut unplaced = 0;
     for (body_id, name) in &ctx.named_bodies {
         let Some(body) = ctx.row("bodies", body_id) else {
             continue;
         };
-        let body_color = body.get("color");
-        for face in faces(ctx, body) {
-            let Some(color) = face.get("color").filter(|c| Some(*c) != body_color) else {
-                continue;
+        let body_look = resolve(body);
+        if let Some(look) = &body_look {
+            body_looks.insert(name.clone(), look.clone());
+            applied.insert(body_id.as_str());
+        }
+        let faces = if let Some(region) = ctx.imported_regions.get(name) {
+            faces(ctx, &json!({"regions": [region]}))
+        } else {
+            faces(ctx, body)
+        };
+        let painted: Vec<_> = faces.iter().map(|face| resolve(face)).collect();
+        let uniform = painted.first().and_then(Option::as_ref).filter(|first| {
+            !bound.contains_key(body_id.as_str())
+                && painted.iter().all(|look| look.as_ref() == Some(*first))
+        });
+        if let Some(look) = uniform {
+            body_looks.insert(name.clone(), look.clone());
+            for face in &faces {
+                if let Some(id) = face.get("id").and_then(Value::as_str) {
+                    applied.insert(id);
+                }
+            }
+            continue;
+        }
+        for (face, look) in faces.iter().zip(painted) {
+            let Some(look) = look else { continue };
+            let written = if Some(&look) == body_look.as_ref() {
+                true
+            } else if let Some(point) = point_on(ctx, face).and_then(|p| placed(body, p)) {
+                out.push(json!({"body": name, "point": point, "look": look}));
+                true
+            } else {
+                if face
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| !bound.contains_key(id))
+                {
+                    report.push(
+                        dutchman_core::Severity::Dropped,
+                        "appearance",
+                        format!(
+                            "Face {} has no resolved planar interior point; its colour is left out",
+                            face.get("id").unwrap_or(&Value::Null)
+                        ),
+                    );
+                }
+                false
             };
-            let Some(look) = super::extrude::look(color) else {
-                continue;
-            };
-            match point_on(ctx, face) {
-                Some(point) => out.push(json!({"body": name, "point": point, "look": look})),
-                None => unplaced += 1,
+            if written {
+                if let Some(id) = face.get("id").and_then(Value::as_str) {
+                    applied.insert(id);
+                }
             }
         }
     }
-    (out, unplaced)
+    for binding in ctx.arena("appearance_bindings") {
+        let target = binding.pointer("/target/id").and_then(Value::as_str);
+        if !target.is_some_and(|id| applied.contains(id)) {
+            let kind = binding
+                .pointer("/target/kind")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let appearance = binding
+                .get("appearance")
+                .and_then(Value::as_str)
+                .and_then(|id| ctx.row("appearances", id));
+            let reason = if !matches!(kind, "body" | "face") {
+                "its target kind is not supported yet"
+            } else if target
+                .and_then(|id| ctx.row(if kind == "body" { "bodies" } else { "faces" }, id))
+                .is_none()
+            {
+                "its target does not exist"
+            } else if appearance.is_none() {
+                "its appearance does not exist"
+            } else if appearance
+                .and_then(|a| a.get("base_color"))
+                .and_then(super::extrude::look)
+                .is_none()
+            {
+                "its appearance has no resolved base colour"
+            } else if target.and_then(|id| bound.get(id)).is_some_and(|bindings| {
+                bindings
+                    .iter()
+                    .any(|b| b.get("appearance") != binding.get("appearance"))
+            }) {
+                "its target has conflicting appearance bindings"
+            } else {
+                "its target has no written body name or resolved planar interior point"
+            };
+            report.push(
+                dutchman_core::Severity::Dropped,
+                "appearance",
+                format!(
+                    "Appearance binding {} to {kind} {} is left out: {reason}",
+                    binding
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unnamed"),
+                    target.unwrap_or("unnamed")
+                ),
+            );
+        }
+    }
+    ctx.looks.extend(body_looks);
+    out
+}
+
+fn placed(body: &Value, p: V3) -> Option<V3> {
+    let Some(rows) = body.get("transform").and_then(Value::as_array) else {
+        return Some(p);
+    };
+    let mut out = [0.0; 3];
+    for (value, row) in out.iter_mut().zip(rows) {
+        let row = row.as_array()?;
+        *value = row.get(3)?.as_f64()?;
+        for (coefficient, coordinate) in row.iter().take(3).zip(p) {
+            *value += coefficient.as_f64()? * coordinate;
+        }
+    }
+    out.iter().all(|v| v.is_finite()).then_some(out)
+}
+
+/// STEP emits one surface/solid shape per region, in arena order. Only name that
+/// sequence when its shape count agrees, so an omitted region cannot shift a look.
+pub(super) fn import_names(ctx: &mut Context, ids: &[&str], step: Option<&str>) -> Vec<String> {
+    let mut named = Vec::new();
+    let mut taken: std::collections::BTreeSet<_> = ctx
+        .named_bodies
+        .iter()
+        .map(|(_, name)| name.clone())
+        .collect();
+    let mut regions = std::collections::BTreeMap::new();
+    for region in ctx.arena("regions") {
+        let Some(body_id) = region
+            .get("body")
+            .and_then(Value::as_str)
+            .filter(|id| ids.contains(id))
+        else {
+            continue;
+        };
+        let Some(body) = ctx.row("bodies", body_id) else {
+            continue;
+        };
+        if !matches!(
+            body.get("kind").and_then(Value::as_str),
+            Some("solid" | "sheet")
+        ) {
+            return Vec::new();
+        }
+        let base = body.get("name").and_then(Value::as_str).unwrap_or("Body");
+        let mut name = base.to_owned();
+        let mut n = 2;
+        while !taken.insert(name.clone()) {
+            name = format!("{base} ({n})");
+            n += 1;
+        }
+        if let Some(region_id) = region.get("id").and_then(Value::as_str) {
+            regions.insert(name.clone(), region_id.to_owned());
+        }
+        named.push((body_id.to_owned(), name));
+    }
+    if let Some(step) = step {
+        let shapes = shape_count(step);
+        if shapes != named.len() {
+            return Vec::new();
+        }
+    }
+    let names = named.iter().map(|(_, name)| name.clone()).collect();
+    ctx.imported_regions.extend(regions);
+    ctx.named_bodies.extend(named);
+    names
+}
+
+pub(super) fn shape_count(step: &str) -> usize {
+    step.lines()
+        .filter_map(|line| line.split_once('='))
+        .filter(|(id, definition)| {
+            id.trim()
+                .strip_prefix('#')
+                .is_some_and(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit()))
+                && [
+                    "MANIFOLD_SOLID_BREP(",
+                    "BREP_WITH_VOIDS(",
+                    "SHELL_BASED_SURFACE_MODEL(",
+                ]
+                .iter()
+                .any(|kind| definition.trim_start().starts_with(kind))
+        })
+        .count()
 }
 
 /// The faces of `body`.
-fn faces<'a>(ctx: &Context<'a>, body: &'a Value) -> Vec<&'a Value> {
-    let ids = |row: &'a Value, key: &str| -> Vec<&'a str> {
+fn faces<'a>(ctx: &Context<'a>, body: &Value) -> Vec<&'a Value> {
+    fn ids<'a>(row: &'a Value, key: &str) -> Vec<&'a str> {
         row.get(key)
             .and_then(Value::as_array)
             .map(|ids| ids.iter().filter_map(Value::as_str).collect())
             .unwrap_or_default()
-    };
+    }
     let mut out = Vec::new();
     for region in ids(body, "regions") {
         let Some(region) = ctx.row("regions", region) else {
