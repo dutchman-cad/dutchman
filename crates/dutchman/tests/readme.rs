@@ -35,29 +35,25 @@ fn the_readme_links_the_latest_published_downloads() {
 #[test]
 fn the_readmes_format_table_matches_the_command() {
     let readme = include_str!("../../../README.md");
-    assert_eq!(
-        rows(generated(readme)),
-        rows(&dutchman::formats::markdown()),
-        "Update README's formats table: dutchman formats --markdown"
-    );
-}
-
-/// The block between the README's or a docs page's formats markers.
-fn generated(text: &str) -> &str {
-    text.split_once("<!-- formats: generated from dutchman formats --markdown -->")
+    let table = readme
+        .split_once("<!-- formats: generated from dutchman formats --markdown -->")
         .unwrap()
         .1
         .split_once("<!-- /formats -->")
         .unwrap()
-        .0
-}
-
-/// Lines without padding, leaving out the FreeCAD row in a build without FreeCAD.
-fn rows(text: &str) -> Vec<String> {
-    text.lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty())
-        .filter(|line| cfg!(feature = "freecad") || !line.starts_with("| FreeCAD document |"))
-        .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
-        .collect()
+        .0;
+    // Ignore padding, and the FreeCAD row in a build without FreeCAD.
+    let rows = |text: &str| {
+        text.lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .filter(|line| cfg!(feature = "freecad") || !line.starts_with("| FreeCAD document |"))
+            .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        rows(table),
+        rows(&dutchman::formats::markdown()),
+        "Update README's formats table: dutchman formats --markdown"
+    );
 }
