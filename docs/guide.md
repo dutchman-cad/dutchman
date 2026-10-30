@@ -401,6 +401,28 @@ first feature that stops the history; the original geometry is still converted.
 
 ## Desktop app
 
+Release builds check for updates at startup and every hour while open. A small **Update**
+button beside the theme switch opens the new version and plain-text release notes; nothing
+opens automatically. **Download** opens the package for this platform (or the release page).
+Homebrew and Scoop installations show an upgrade command with **Copy command** instead.
+**Skip this version** hides that release; **Remind me later** hides updates for three days.
+These choices persist in the desktop settings. **Settings** offers **Check for updates
+automatically** (on by default) and **Check now**, which also shows skipped releases.
+`DUTCHMAN_UPDATE_CHECK=0` disables all checks, including **Check now**. Builds from source
+never check; only release-workflow builds enable this feature.
+
+Each check sends an HTTPS GET to
+`https://github.com/dutchman-cad/dutchman/releases.atom` with
+`User-Agent: Dutchman-update-check/<version>` and, on repeat checks, `If-None-Match`
+containing the feed ETag GitHub returned. An unchanged feed (304) needs no API request.
+Only a newer stable `vX.Y.Z` release triggers one GET to
+`https://api.github.com/repos/dutchman-cad/dutchman/releases/latest` for package links;
+if the feed fails, one API request is tried instead, then the next automatic check is in
+an hour. These requests send no cookies, identifiers, usage data, file names, paths, or
+file contents. GitHub sees the connecting IP address, ordinary HTTPS request metadata,
+the app version in the User-Agent, and the public feed ETag. Clicking **Download** opens
+the release asset or page in the default browser, under that browser's privacy settings.
+
 Open `dutchman-gui`, add design files or folders, choose an output folder, and press
 **Convert**. Convert stays visible while you scroll through settings or results. The
 **Preset** selector starts at **Standard**:

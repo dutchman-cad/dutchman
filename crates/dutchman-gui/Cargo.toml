@@ -26,6 +26,8 @@ egui_extras = { version = "0.33", default-features = false, features = ["svg"] }
 pollster = "0.4"
 rfd = "0.15"
 serde_json.workspace = true
+roxmltree.workspace = true
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
 
 [dev-dependencies]
 egui_kittest = { version = "0.33", features = ["eframe", "wgpu"] }
