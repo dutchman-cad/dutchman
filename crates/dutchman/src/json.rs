@@ -694,17 +694,16 @@ pub fn solidcraft_line(report: &Value) -> Option<String> {
 pub const SOLIDCRAFT_DOWNLOAD: &str = "https://github.com/tangency-labs/solidcraft/releases";
 
 /// A non-blocking notice using the same report values in the CLI and desktop.
-pub fn solidcraft_notice(report: &Value, update_known: bool) -> Option<String> {
+pub fn solidcraft_notice(report: &Value) -> Option<String> {
     solidcraft_line(report)?;
     let found = report.pointer("/solidcraft/found")?.as_str()?;
     let target = report.pointer("/solidcraft/target")?.as_str()?;
     match report.pointer("/solidcraft/status")?.as_str()? {
         "newer" => Some(format!(
-            "SolidCraft {found} is newer than this Dutchman knows; designs are written for {target} and open fine in {found}.{}",
-            if update_known { format!(" Update Dutchman for {found}.") } else { String::new() }
+            "SolidCraft {found} is newer than this Dutchman knows. Designs are written for {target} and open fine in {found}."
         )),
-        "too_old" => Some(format!("SolidCraft {found} is too old for Dutchman's output; update SolidCraft.")),
-        "older_loses_history" => Some(format!("Designs are written for {target}, your SolidCraft. Newer SolidCraft keeps more history.")),
+        "too_old" => Some(format!("SolidCraft {found} is too old to open Dutchman's designs. Install a newer SolidCraft to open them.")),
+        "older_loses_history" => Some(format!("Designs are written for SolidCraft {target}, the version you have. A newer SolidCraft keeps more of their history.")),
         _ => None,
     }
 }
@@ -765,28 +764,25 @@ mod tests {
     #[test]
     fn installed_version_notices_are_pure_and_non_blocking() {
         for (found, status, notice) in [
-            (Some("0.28.0"), "newer", Some("SolidCraft 0.28.0 is newer than this Dutchman knows; designs are written for 0.27.0 and open fine in 0.28.0.")),
-            (Some("0.18.1"), "too_old", Some("SolidCraft 0.18.1 is too old for Dutchman's output; update SolidCraft.")),
-            (Some("0.24.0"), "older_loses_history", Some("Designs are written for 0.24.0, your SolidCraft. Newer SolidCraft keeps more history.")),
+            (Some("0.28.0"), "newer", Some("SolidCraft 0.28.0 is newer than this Dutchman knows. Designs are written for 0.27.0 and open fine in 0.28.0.")),
+            (Some("0.18.1"), "too_old", Some("SolidCraft 0.18.1 is too old to open Dutchman's designs. Install a newer SolidCraft to open them.")),
+            (Some("0.24.0"), "older_loses_history", Some("Designs are written for SolidCraft 0.24.0, the version you have. A newer SolidCraft keeps more of their history.")),
             (Some("0.25.1"), "current", None),
             (Some("0.26.0"), "current", None),
             (Some("0.27.0"), "current", None),
-            (Some("0.18.2"), "older_loses_history", Some("Designs are written for 0.18.2, your SolidCraft. Newer SolidCraft keeps more history.")),
+            (Some("0.18.2"), "older_loses_history", Some("Designs are written for SolidCraft 0.18.2, the version you have. A newer SolidCraft keeps more of their history.")),
             (None, "none_found", None),
         ] {
             let mut report = json!({"solidcraft": solidcraft_values(None, found.map(str::to_owned))});
             assert_eq!(report["solidcraft"]["status"], status);
             assert_eq!(report["solidcraft"]["known_newest"], "0.27.0");
-            assert_eq!(solidcraft_notice(&report, false).as_deref(), notice);
-            if status == "newer" {
-                assert_eq!(solidcraft_notice(&report, true), notice.map(|s| format!("{s} Update Dutchman for 0.28.0.")));
-            }
+            assert_eq!(solidcraft_notice(&report).as_deref(), notice);
             report["error"] = json!({"message": "conversion failed"});
-            assert!(solidcraft_notice(&report, true).is_none());
+            assert!(solidcraft_notice(&report).is_none());
         }
         let report = json!({"solidcraft": solidcraft_values(Some(Default::default()), Some("0.24.0".into()))});
         assert_eq!(report["solidcraft"]["status"], "current");
-        assert!(solidcraft_notice(&report, false).is_none());
+        assert!(solidcraft_notice(&report).is_none());
     }
 
     #[test]

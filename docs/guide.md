@@ -409,8 +409,8 @@ notice explaining when the installed SolidCraft is newer than Dutchman knows, to
 The pill shows the detected release, or **SolidCraft not found** with a download link in its
 panel. **Advanced > SolidCraft version…** opens the same panel. Narrow windows show only
 the version or **not found**, shorten **Update**, and put theme choices in a menu.
-For an installed release newer than known, it adds “Update Dutchman for X” only when the
-existing update check already knows a newer Dutchman. Too-old releases have a
+For an installed release newer than known, the panel has an **Update Dutchman** button, which
+opens the update window, when the update check already knows a newer Dutchman. Too-old releases have a
 [Download SolidCraft](https://github.com/tangency-labs/solidcraft/releases) link.
 
 Release builds check for updates at startup and every hour while open. A small **Update**

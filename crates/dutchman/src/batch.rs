@@ -277,7 +277,7 @@ pub fn text(report: &Value, verbose: bool) -> String {
         if let Some(version) = report::solidcraft_line(result) {
             out.push_str(&version);
             out.push('\n');
-            if let Some(notice) = report::solidcraft_notice(result, false) {
+            if let Some(notice) = report::solidcraft_notice(result) {
                 out.push_str(&notice);
                 if result.pointer("/solidcraft/status").and_then(Value::as_str) == Some("too_old") {
                     out.push(' ');

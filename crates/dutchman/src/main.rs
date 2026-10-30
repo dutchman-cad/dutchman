@@ -609,7 +609,7 @@ fn convert(
     if !as_json {
         if let Some(line) = json::solidcraft_line(&report) {
             println!("{line}");
-            if let Some(notice) = json::solidcraft_notice(&report, false) {
+            if let Some(notice) = json::solidcraft_notice(&report) {
                 if report.pointer("/solidcraft/status").and_then(Value::as_str) == Some("too_old") {
                     println!("{notice} {}", json::SOLIDCRAFT_DOWNLOAD);
                 } else {

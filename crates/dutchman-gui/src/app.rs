@@ -805,7 +805,7 @@ impl App {
             (None, true) => "not found".into(),
             (None, false) => "SolidCraft not found".into(),
         };
-        let notice = dutchman::json::solidcraft_notice(&report, self.updater.newer_known());
+        let notice = dutchman::json::solidcraft_notice(&report);
         if ui
             .add(
                 egui::Button::new(RichText::new(label).color(color))
@@ -830,7 +830,7 @@ impl App {
             .default_width(480.0)
             .show(ctx, |ui| {
                 let report = self.solidcraft_report();
-                if let Some(notice) = dutchman::json::solidcraft_notice(&report, self.updater.newer_known()) {
+                if let Some(notice) = dutchman::json::solidcraft_notice(&report) {
                     ui.label(notice);
                 } else if self.found_version.is_none() {
                     ui.label("SolidCraft not found. Install SolidCraft to check feature history and open designs.");
@@ -838,6 +838,12 @@ impl App {
                     ui.label(format!("SolidCraft {found} is installed."));
                 }
                 self.solidcraft_picker(ui);
+                if report.pointer("/solidcraft/status").and_then(Value::as_str) == Some("newer")
+                    && self.updater.newer_known()
+                    && ui.button("Update Dutchman").clicked()
+                {
+                    self.updater.open = true;
+                }
                 if matches!(report.pointer("/solidcraft/status").and_then(Value::as_str), Some("too_old" | "none_found")) {
                     ui.hyperlink_to("Download SolidCraft", dutchman::json::SOLIDCRAFT_DOWNLOAD);
                 }

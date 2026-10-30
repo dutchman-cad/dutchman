@@ -264,10 +264,10 @@ fn screenshots() {
             preview.run();
             assert!(preview
                 .query_by_label_contains(match case {
-                    "newer-update" | "narrow" => "Update Dutchman for 0.28.0.",
+                    "newer-update" | "narrow" => "Update Dutchman",
                     "newer" => "is newer than this Dutchman knows",
-                    "too-old" => "is too old for Dutchman's output",
-                    "older-history" => "Newer SolidCraft keeps more history.",
+                    "too-old" => "is too old to open Dutchman's designs",
+                    "older-history" => "A newer SolidCraft keeps more of their history.",
                     "none-found" => "SolidCraft not found. Install SolidCraft",
                     _ => "SolidCraft 0.27.0 is installed.",
                 })
@@ -367,8 +367,11 @@ fn dropped_files_and_results_show_format_status_and_one_invitation() {
 fn solidcraft_status_panel_waits_for_a_click_and_shares_version_notices() {
     for (found, expected) in [
         (Some("0.28.0"), "is newer than this Dutchman knows"),
-        (Some("0.18.1"), "is too old for Dutchman's output"),
-        (Some("0.24.0"), "Newer SolidCraft keeps more history."),
+        (Some("0.18.1"), "is too old to open Dutchman's designs"),
+        (
+            Some("0.24.0"),
+            "A newer SolidCraft keeps more of their history.",
+        ),
         (Some("0.27.0"), "SolidCraft 0.27.0 is installed."),
         (None, "SolidCraft not found. Install SolidCraft"),
     ] {
