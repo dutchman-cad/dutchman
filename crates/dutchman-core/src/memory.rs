@@ -9,22 +9,32 @@ pub fn available_memory() -> Option<u64> {
 
 #[cfg(target_os = "linux")]
 fn platform_available_memory() -> Option<u64> {
-    let host = std::fs::read_to_string("/proc/meminfo")
-        .ok()
-        .and_then(|text| {
-            text.lines().find_map(|line| {
-                let rest = line.strip_prefix("MemAvailable:")?;
-                rest.split_whitespace()
-                    .next()?
-                    .parse::<u64>()
-                    .ok()?
-                    .checked_mul(1024)
-            })
-        });
+    linux_available_memory(
+        std::path::Path::new("/proc/meminfo"),
+        std::path::Path::new("/proc/self/cgroup"),
+        std::path::Path::new("/sys/fs/cgroup"),
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn linux_available_memory(
+    meminfo: &std::path::Path,
+    groups: &std::path::Path,
+    root: &std::path::Path,
+) -> Option<u64> {
+    let host = std::fs::read_to_string(meminfo).ok().and_then(|text| {
+        text.lines().find_map(|line| {
+            let rest = line.strip_prefix("MemAvailable:")?;
+            rest.split_whitespace()
+                .next()?
+                .parse::<u64>()
+                .ok()?
+                .checked_mul(1024)
+        })
+    });
     let mut available = host;
-    if let Ok(groups) = std::fs::read_to_string("/proc/self/cgroup") {
+    if let Ok(groups) = std::fs::read_to_string(groups) {
         if let Some(group) = groups.lines().find_map(|line| line.strip_prefix("0::")) {
-            let root = std::path::Path::new("/sys/fs/cgroup");
             let mut path = root.join(group.trim_start_matches('/'));
             while path.starts_with(root) {
                 let read = |name| {
@@ -47,65 +57,51 @@ fn platform_available_memory() -> Option<u64> {
     available
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 fn platform_available_memory() -> Option<u64> {
-    let output = std::process::Command::new("vm_stat").output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8(output.stdout).ok()?;
-    let page_size = text
-        .lines()
-        .next()?
-        .split("page size of ")
-        .nth(1)?
-        .split_whitespace()
-        .next()?
-        .parse::<u64>()
-        .ok()?;
-    let pages = text
-        .lines()
-        .filter(|line| {
-            ["Pages free:", "Pages inactive:", "Pages speculative:"]
-                .iter()
-                .any(|prefix| line.starts_with(prefix))
-        })
-        .try_fold(0_u64, |sum, line| {
-            let pages = line
-                .split(':')
-                .nth(1)?
-                .trim()
-                .trim_end_matches('.')
-                .parse::<u64>()
-                .ok()?;
-            sum.checked_add(pages)
-        })?;
-    pages.checked_mul(page_size)
-}
-
-#[cfg(target_os = "windows")]
-fn platform_available_memory() -> Option<u64> {
-    let output = std::process::Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "(Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory",
-        ])
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    String::from_utf8(output.stdout)
-        .ok()?
-        .trim()
-        .parse::<u64>()
-        .ok()?
-        .checked_mul(1024)
+    let mut system = sysinfo::System::new();
+    system.refresh_memory_specifics(sysinfo::MemoryRefreshKind::nothing().with_ram());
+    Some(system.available_memory())
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 fn platform_available_memory() -> Option<u64> {
     None
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn linux_prefers_cgroup_headroom_including_ancestors() {
+        let dir = tempfile::tempdir().unwrap();
+        let meminfo = dir.path().join("meminfo");
+        let groups = dir.path().join("cgroup");
+        let root = dir.path().join("groups");
+        let child = root.join("scope/worker");
+        std::fs::create_dir_all(&child).unwrap();
+        std::fs::write(&meminfo, "MemAvailable: 1000 kB\n").unwrap();
+        std::fs::write(&groups, "0::/scope/worker\n").unwrap();
+        std::fs::write(child.join("memory.max"), "900000").unwrap();
+        std::fs::write(child.join("memory.current"), "100000").unwrap();
+        let read = || super::linux_available_memory(&meminfo, &groups, &root);
+        assert_eq!(read(), Some(800000));
+        std::fs::write(root.join("scope/memory.max"), "500000").unwrap();
+        std::fs::write(root.join("scope/memory.current"), "200000").unwrap();
+        assert_eq!(read(), Some(300000));
+        std::fs::write(&meminfo, "MemAvailable: 100 kB\n").unwrap();
+        assert_eq!(read(), Some(102400));
+        std::fs::write(root.join("scope/memory.max"), "max").unwrap();
+        assert_eq!(read(), Some(102400));
+        std::fs::write(child.join("memory.current"), "900001").unwrap();
+        assert_eq!(read(), Some(0));
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    fn available_memory_is_plausible() {
+        let bytes = super::available_memory().unwrap();
+        assert!(bytes > 0 && bytes < 1_000_000_000_000_000);
+    }
 }

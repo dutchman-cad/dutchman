@@ -515,18 +515,13 @@ fn total_memory() -> Option<u64> {
                     .checked_mul(1024)
             })
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
-        command_value("/usr/sbin/sysctl", &["-n", "hw.memsize"])?
-            .parse()
-            .ok()
+        let mut system = sysinfo::System::new();
+        system.refresh_memory_specifics(sysinfo::MemoryRefreshKind::nothing().with_ram());
+        Some(system.total_memory())
     }
-    #[cfg(windows)]
-    {
-        // No safe OS memory API dependency is available under the workspace's unsafe ban.
-        None
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     None
 }
 
@@ -547,7 +542,12 @@ fn clock_ticks() -> Option<u64> {
             (hz > 0).then_some(hz)
         })
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        // sysinfo reports accumulated process CPU time in milliseconds.
+        Some(1000)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     None
 }
 
@@ -575,9 +575,23 @@ fn resources(pid: u32) -> (Option<u64>, Option<u64>) {
         });
         (rss, ticks)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
-        // Windows/macOS process APIs require unsafe calls; no safe wrapper is a dependency.
+        let pid = sysinfo::Pid::from_u32(pid);
+        let mut system = sysinfo::System::new();
+        system.refresh_processes_specifics(
+            sysinfo::ProcessesToUpdate::Some(&[pid]),
+            true,
+            sysinfo::ProcessRefreshKind::nothing()
+                .with_memory()
+                .with_cpu(),
+        );
+        system.process(pid).map_or((None, None), |process| {
+            (Some(process.memory()), Some(process.accumulated_cpu_time()))
+        })
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
         let _ = pid;
         (None, None)
     }
@@ -597,13 +611,29 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     fn unavailable_resources_are_null() {
         let (rss, ticks) = resources(std::process::id());
         assert_eq!(
             json!({"rss_bytes": rss, "cpu_ticks": ticks, "cpu_ms": ticks.zip(clock_ticks())}),
             json!({"rss_bytes": null, "cpu_ticks": null, "cpu_ms": null})
         );
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    fn resources_are_plausible() {
+        let deadline = Instant::now() + Duration::from_millis(50);
+        while Instant::now() < deadline {
+            std::hint::black_box(42_u64.wrapping_mul(42));
+        }
+        let (rss, ticks) = resources(std::process::id());
+        let rss = rss.unwrap();
+        assert!(rss > 0 && rss < 1_000_000_000_000_000);
+        let cpu_ms = ticks.unwrap() * 1000 / clock_ticks().unwrap();
+        assert!(cpu_ms > 0 && cpu_ms < 1_000_000_000_000_000);
+        let total = total_memory().unwrap();
+        assert!(total > 0 && total < 1_000_000_000_000_000);
     }
 
     #[test]
@@ -685,7 +715,7 @@ mod tests {
             .unwrap();
         assert_eq!(heartbeat["member"], records[1]["member"]);
         assert!(records.iter().all(|line| line["type"] != "end"));
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         {
             assert!(heartbeat["rss_bytes"].as_u64().unwrap() > 0);
             assert!(heartbeat["cpu_ms"].as_u64().is_some());
