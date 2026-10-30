@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
 use dutchman::batch::{Event, Job};
-use dutchman::choices::{Choices, Estimate, MemoryCheck, Preset};
+use dutchman::choices::{estimate_text, Choices, Estimate, MemoryCheck, Preset};
 use dutchman::present::FileView;
 use dutchman::{json, present, ConvertOptions};
 use eframe::egui::{
@@ -178,14 +178,6 @@ fn gigabytes(bytes: u64) -> f64 {
     bytes as f64 / 1_000_000_000.0
 }
 
-fn estimate_text(estimate: Estimate) -> String {
-    format!(
-        "about {:.1} GB, about {} min",
-        gigabytes(estimate.peak_bytes),
-        estimate.seconds.div_ceil(60).max(1)
-    )
-}
-
 /// What to scroll into view.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Reveal {
@@ -257,6 +249,22 @@ impl App {
     /// Whether written histories are checked in SolidCraft.
     pub fn set_verify(&mut self, verify: bool) {
         self.options.no_verify = !verify;
+    }
+
+    /// Injects a memory decision for headless UI review without allocating a huge design.
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn show_memory_check_for_test(&mut self, input: PathBuf, check: MemoryCheck) {
+        if let Some(out_dir) = self.out_dir.clone() {
+            self.pending = Some(PendingRun {
+                options: self.options.clone(),
+                kind: RunKind::Batch {
+                    inputs: self.inputs.clone(),
+                    out_dir,
+                },
+            });
+            self.memory_warning = Some((input, check));
+        }
     }
 
     /// The rows of the current or last run.
@@ -441,9 +449,9 @@ impl App {
         egui::Modal::new(egui::Id::new("memory_warning")).show(ctx, |ui| {
             ui.heading("This conversion may need more memory");
             ui.label(format!(
-                "{}: {}; {:.1} GB free.",
-                display(&path),
-                estimate_text(estimate),
+                "{} may use about {:.1} GB of memory while converting. Your computer has about {:.1} GB free, so it may not have enough.",
+                path.file_name().unwrap_or_default().to_string_lossy(),
+                gigabytes(estimate.peak_bytes),
                 gigabytes(available)
             ));
             if let Some(preset) = lighter {
@@ -451,18 +459,22 @@ impl App {
                     "Use {} to keep less and reduce memory use.",
                     preset_label(preset)
                 ));
-                if ui.button(format!("Use {}", preset_label(preset))).clicked() {
-                    action = Some(MemoryAction::Use(preset));
-                }
             } else {
                 ui.label("This is already the lightest preset.");
             }
-            if ui.button("Convert anyway").clicked() {
-                action = Some(MemoryAction::Anyway);
-            }
-            if ui.button("Cancel").clicked() {
-                action = Some(MemoryAction::Cancel);
-            }
+            ui.horizontal(|ui| {
+                if let Some(preset) = lighter {
+                    if ui.button(format!("Use {}", preset_label(preset))).clicked() {
+                        action = Some(MemoryAction::Use(preset));
+                    }
+                }
+                if ui.button("Convert anyway").clicked() {
+                    action = Some(MemoryAction::Anyway);
+                }
+                if ui.button("Cancel").clicked() {
+                    action = Some(MemoryAction::Cancel);
+                }
+            });
         });
         if let Some(action) = action {
             self.memory_warning = None;
@@ -710,6 +722,8 @@ impl App {
                 );
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.hyperlink_to("Report a problem", crate::REPORT_PROBLEM_URL);
+                ui.add_space(theme::SPACE_2);
                 let current = ui.ctx().options(|o| o.theme_preference);
                 for (preference, name) in [
                     (ThemePreference::Dark, "Night"),
@@ -722,7 +736,6 @@ impl App {
                 }
             });
         });
-        ui.hyperlink_to("Report a problem", crate::REPORT_PROBLEM_URL);
     }
 
     fn inputs_panel(&mut self, ui: &mut egui::Ui) {
@@ -1593,7 +1606,7 @@ mod tests {
                     },
                 });
                 app.memory_warning = Some((
-                    PathBuf::from("synthetic.f3z"),
+                    PathBuf::from("Designs").join("synthetic.f3z"),
                     MemoryCheck::TooBig {
                         estimate: Estimate {
                             peak_bytes: 8_000_000_000,
@@ -1608,15 +1621,48 @@ mod tests {
             });
         harness.run();
         assert!(harness
-            .query_by_label("synthetic.f3z: about 8.0 GB, about 2 min; 4.0 GB free.")
+            .query_by_label("synthetic.f3z may use about 8.0 GB of memory while converting. Your computer has about 4.0 GB free, so it may not have enough.")
             .is_some());
         assert!(harness.query_by_label("Use Fast").is_some());
         assert!(harness.query_by_label("Convert anyway").is_some());
+        let use_fast = harness.get_by_label("Use Fast").rect();
+        let anyway = harness.get_by_label("Convert anyway").rect();
+        let cancel = harness.get_by_label("Cancel").rect();
+        assert_eq!(use_fast.center().y, anyway.center().y);
+        assert_eq!(anyway.center().y, cancel.center().y);
+        assert!(use_fast.right() < anyway.left());
+        assert!(anyway.right() < cancel.left());
         harness.get_by_label("Cancel").click();
         harness.run();
         assert!(!harness.state().running());
         assert!(harness.state().memory_warning.is_none());
         assert!(!harness.state().options.no_memory_check);
+    }
+
+    #[test]
+    fn tiny_estimates_use_lower_bounds() {
+        use egui_kittest::kittest::Queryable;
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1000.0, 1400.0))
+            .build_eframe(|cc| {
+                let mut app = App::new(cc);
+                let input = PathBuf::from("synthetic.f3d");
+                app.inputs = vec![input.clone()];
+                app.estimate_key = Some((app.inputs.clone(), app.options.choices()));
+                app.estimates = vec![(
+                    input,
+                    Some(Estimate {
+                        peak_bytes: 1,
+                        seconds: 1,
+                        band: 0.3,
+                    }),
+                )];
+                app
+            });
+        harness.run();
+        assert!(harness
+            .query_by_label("under 0.1 GB, under a minute")
+            .is_some());
     }
 
     #[test]

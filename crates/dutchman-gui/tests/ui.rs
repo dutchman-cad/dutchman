@@ -2,7 +2,8 @@
 //! the results read back from the window.
 //!
 //! `screenshots` renders the window in both themes; it needs a GPU, so it is ignored by default:
-//! `DUTCHMAN_GUI_SCREENSHOTS=<dir> cargo test -p dutchman-gui --test ui -- --ignored`.
+//! `DUTCHMAN_GUI_SCREENSHOTS=<dir> cargo test -p dutchman-gui --features test-support
+//! --test ui -- --ignored screenshots`. Linux isolates diagnostics with XDG_STATE_HOME.
 
 // Test helpers outside `#[test]` functions are not covered by clippy.toml's test allowances.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
@@ -33,23 +34,17 @@ fn convert(harness: &mut Harness<'static, App>) {
     harness.run();
     harness.get_by_label("Convert").click();
     harness.step();
-    let started = Instant::now();
-    while harness.state().running() || harness.state().rows().is_empty() {
-        assert!(
-            started.elapsed() < Duration::from_secs(120),
-            "the run did not finish"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-        harness.step();
-    }
-    harness.run();
+    wait_for_conversion(harness);
 }
 
 #[test]
 fn the_window_offers_the_file_problem_form_and_names_its_version() {
     let mut harness = harness();
     harness.run();
-    assert!(harness.query_by_label("Report a problem").is_some());
+    let report = harness.get_by_label("Report a problem").rect();
+    let night = harness.get_by_label("Night").rect();
+    assert!((report.center().y - night.center().y).abs() < 1.0);
+    assert!(report.left() > night.right());
     assert_eq!(
         dutchman_gui::WINDOW_TITLE,
         format!("Dutchman Convert {}", env!("CARGO_PKG_VERSION"))
@@ -191,65 +186,261 @@ fn screenshots() {
         panic!("set DUTCHMAN_GUI_SCREENSHOTS to a folder");
     };
     std::fs::create_dir_all(&dir).unwrap();
-    // The designs, copied where their paths say nothing about this machine.
+    // Environment changes happen only in a child process, never alongside other tests.
+    // In particular, never inspect or write the owner's diagnostic logs.
+    if std::env::var_os("DUTCHMAN_GUI_SCREENSHOT_CHILD").is_none() {
+        let state = tempfile::tempdir().unwrap();
+        if !cfg!(target_os = "linux") {
+            panic!("diagnostics isolation uses XDG_STATE_HOME on Linux");
+        }
+        if !cfg!(feature = "test-support") {
+            panic!("enable --features test-support for the memory dialog");
+        }
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "screenshots", "--nocapture"])
+            .env("DUTCHMAN_GUI_SCREENSHOT_CHILD", "1")
+            .env("XDG_STATE_HOME", state.path())
+            .status()
+            .unwrap();
+        assert!(status.success(), "screenshot child failed: {status}");
+        return;
+    }
     let work = tempfile::tempdir().unwrap();
     let designs = work.path().join("Designs");
     std::fs::create_dir_all(&designs).unwrap();
-    let inputs: Vec<PathBuf> = [
-        "solidworks_cube.sldprt",
-        "synthetic_cube.ipt",
-        "container_metadata_only.f3d",
-    ]
-    .into_iter()
-    .map(|name| {
-        let copy = designs.join(name);
-        std::fs::copy(fixture(name), &copy).unwrap();
-        copy
-    })
-    .collect();
+    let input = designs.join("generated_unit_cube.f3d");
+    std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
+    let failed_input = designs.join("container_metadata_only.f3d");
+    std::fs::copy(fixture("container_metadata_only.f3d"), &failed_input).unwrap();
+    let mut index = format!("# Dutchman desktop UI review\n\nBuilt from Dutchman {}. 1100 × 800 logical pixels, one PNG per state and theme. Day = light; Night = dark.\n\n", env!("CARGO_PKG_VERSION"));
     for (theme, name) in [
-        (ThemePreference::Light, "day"),
-        (ThemePreference::Dark, "night"),
+        (ThemePreference::Light, "light"),
+        (ThemePreference::Dark, "dark"),
     ] {
-        let mut harness = harness();
-        harness.ctx.set_theme(theme);
+        let mut harness = screenshot_harness(theme);
         harness.run();
-        harness
-            .render()
-            .unwrap()
-            .save(dir.join(format!("{name}-empty.png")))
-            .unwrap();
-
-        let mut harness = Harness::builder()
-            .with_size(egui::vec2(760.0, 1040.0))
-            .build_eframe(|cc| App::new(cc));
-        harness.ctx.set_theme(theme);
-        harness.state_mut().add_inputs(inputs.clone());
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "01-start",
+            name,
+            "Empty start window.",
+        );
+        harness.state_mut().add_inputs([input.clone()]);
         harness
             .state_mut()
             .set_out_dir(work.path().join(format!("Converted-{name}")));
         harness.state_mut().set_verify(false);
-        convert(&mut harness);
-        // Scrolled to the results, then with the first file's losses open.
+        wait_for_estimate(&mut harness);
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "02-file-estimate",
+            name,
+            "Repository cube chosen, with its live estimate and output folder.",
+        );
+        for (number, previous, preset) in [
+            ("03", "Standard", "Fast"),
+            ("04", "Fast", "Standard"),
+            ("05", "Standard", "Full"),
+        ] {
+            harness.get_by_value(previous).click();
+            harness.run();
+            harness.get_by_label(preset).click();
+            wait_for_estimate(&mut harness);
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("{number}-preset-{}", preset.to_lowercase()),
+                name,
+                &format!("{preset} preset selected, with refreshed estimate."),
+            );
+        }
+        harness.get_by_label("Advanced").click();
+        harness.run();
+        harness.get_by_label("Sketches").click();
+        wait_for_estimate(&mut harness);
+        assert!(harness.query_by_value("Custom (based on Full)").is_some());
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "06-advanced-custom",
+            name,
+            "Advanced open; Sketches unchecked; Custom based on Full.",
+        );
+        // Collapse before conversion so the ordinary 800-pixel window shows more results.
+        harness.get_by_label("Advanced").click();
+        harness.run();
+        #[cfg(feature = "test-support")]
+        harness.state_mut().show_memory_check_for_test(
+            input.clone(),
+            dutchman::choices::MemoryCheck::TooBig {
+                estimate: dutchman::choices::Estimate {
+                    peak_bytes: 8_000_000_000,
+                    seconds: 120,
+                    band: 0.3,
+                },
+                available: 4_000_000_000,
+                lighter: Some(dutchman::choices::Preset::Fast),
+            },
+        );
+        harness.run();
+        harness.get_by_label("This conversion may need more memory");
+        shot(&mut harness, &dir, &mut index, "07-memory-dialog", name, "Injected TooBig memory decision: 8 GB estimated, 4 GB free, Use Fast / Convert anyway / Cancel.");
+        harness.get_by_label("Cancel").click();
+        harness.run();
+
+        harness.get_by_label("Convert").click();
+        // Do not settle frames here: the tiny cube may finish before the next frame.
+        harness.step();
+        // The click takes effect after the action bar is drawn. Paint its updated state.
+        harness.step();
+        let running = if harness.query_by_label("Stop").is_some() {
+            "First frame after Convert for a real cube conversion; memory preflight / Stop is visible. The tiny fixture completes too quickly for a reliable mid-run progress frame."
+        } else {
+            "First frame after Convert for a real cube conversion; the tiny fixture completed before a running frame could be rendered."
+        };
+        shot(&mut harness, &dir, &mut index, "08-running", name, running);
+        wait_for_conversion(&mut harness);
+        assert_eq!(harness.state().rows().len(), 1);
+        assert_eq!(harness.state().rows()[0].status, Status::Converted);
         harness.get_by_label("RESULTS").scroll_to_me();
         harness.run();
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "09-done",
+            name,
+            "One successful conversion, report card and summary; scrolled to results.",
+        );
+
+        let mut harness = screenshot_harness(theme);
+        harness.state_mut().add_inputs([failed_input.clone()]);
         harness
-            .render()
-            .unwrap()
-            .save(dir.join(format!("{name}-results.png")))
-            .unwrap();
+            .state_mut()
+            .set_out_dir(work.path().join(format!("Failed-{name}")));
+        harness.state_mut().set_verify(false);
+        convert(&mut harness);
+        assert_eq!(harness.state().rows()[0].status, Status::Failed);
+        harness.get_by_label("RESULTS").scroll_to_me();
+        harness.run();
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "10-failed",
+            name,
+            "Repository metadata-only Fusion fixture fails conversion; report card explains why.",
+        );
+
+        let folder = dutchman::diagnostics::default_folder().unwrap();
+        std::fs::create_dir_all(&folder).unwrap();
+        let unfinished = folder.join("2026-10-29_201500.jsonl");
+        std::fs::write(&unfinished, "{\"type\":\"start\",\"file\":\"f1\"}\n").unwrap();
+        let mut harness = screenshot_harness(theme);
+        harness.state_mut().add_inputs([input.clone()]);
         harness
-            .query_all_by_label_contains("Losses:")
-            .next()
-            .unwrap()
-            .click();
+            .state_mut()
+            .set_out_dir(work.path().join(format!("Converted-{name}")));
+        harness.run();
+        harness.get_by_label("The last run didn't finish. Its diagnostic log is here:");
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "11-unfinished-log",
+            name,
+            "Unfinished-run banner detected from an isolated temporary default diagnostic log.",
+        );
+        harness
+            .get_by_label("Save a diagnostic log (no names or contents from your file)")
+            .scroll_to_me();
         harness.run();
         harness
-            .render()
-            .unwrap()
-            .save(dir.join(format!("{name}-losses.png")))
-            .unwrap();
+            .get_by_label("Save a diagnostic log (no names or contents from your file)")
+            .click();
+        harness.run();
+        harness.get_by_label("Open diagnostics folder");
+        shot(&mut harness, &dir, &mut index, "12-diagnostics", name, "Diagnostics checkbox on and Open diagnostics folder button; scrolled to show the controls.");
+        harness
+            .get_by_label("The last run didn't finish. Its diagnostic log is here:")
+            .scroll_to_me();
+        harness.run();
+        harness.get_by_label("Dismiss").click();
+        harness.run();
+        std::fs::remove_file(unfinished).unwrap();
+        harness.get_by_label("OUTPUT FOLDER").scroll_to_me();
+        harness.run();
+        shot(&mut harness, &dir, &mut index, "13-settings", name, "Output folder, SolidCraft output and target, history checking, assembly project folder, and diagnostics settings; scrolled to the output section.");
+        harness.get_by_label("Formats").click();
+        harness.run();
+        harness.get_by_label("Fusion archive (.f3d)");
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "14-formats",
+            name,
+            "Formats menu open with reader status and capability levels.",
+        );
     }
+    index.push_str("\nMemory dialog uses the opt-in `test-support` hook; no oversized CAD file is allocated. All conversions use repository fixtures copied into a temporary folder. Native file/folder pickers and external folder/app launches are not invoked. Diagnostics are read from a temporary XDG_STATE_HOME in a child test process.\n");
+    std::fs::write(dir.join("INDEX.md"), index).unwrap();
+}
+
+fn screenshot_harness(theme: ThemePreference) -> Harness<'static, App> {
+    let harness = Harness::builder()
+        .with_size(egui::vec2(1100.0, 800.0))
+        .build_eframe(|cc| App::new(cc));
+    harness.ctx.set_theme(theme);
+    harness
+}
+
+fn shot(
+    harness: &mut Harness<'static, App>,
+    dir: &Path,
+    index: &mut String,
+    state: &str,
+    theme: &str,
+    description: &str,
+) {
+    let file = format!("{state}-{theme}.png");
+    let image = harness.render().unwrap();
+    assert_eq!(image.dimensions(), (1100, 800));
+    image.save(dir.join(&file)).unwrap();
+    index.push_str(&format!("- [{file}]({file}) — {description}\n"));
+}
+
+fn wait_for_estimate(harness: &mut Harness<'static, App>) {
+    harness.run();
+    let started = Instant::now();
+    while harness.query_all_by_label_contains("GB, ").count() == 0 {
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "estimate did not arrive"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+        harness.step();
+    }
+    harness.run();
+}
+
+fn wait_for_conversion(harness: &mut Harness<'static, App>) {
+    let started = Instant::now();
+    while harness.state().running() || harness.state().rows().is_empty() {
+        assert!(
+            started.elapsed() < Duration::from_secs(120),
+            "conversion did not finish"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+        harness.step();
+    }
+    harness.run();
 }
 
 #[test]

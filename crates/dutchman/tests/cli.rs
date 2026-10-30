@@ -2177,12 +2177,14 @@ fn estimates_are_text_only_and_respect_quiet() {
         assert!(out.status.success(), "{out:?}");
         let text = String::from_utf8_lossy(&out.stdout);
         assert_eq!(
-            text.contains("Estimate: about "),
+            text.contains("Estimate: under 0.1 GB, under a minute (±"),
             flags.is_empty(),
             "{text}"
         );
         if flags.contains(&"--json") {
             let report: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert!(report["estimate"]["peak_bytes"].is_u64());
+            assert!(report["estimate"]["seconds"].is_u64());
             assert_eq!(
                 report["choices"],
                 serde_json::json!({"preset": "fast", "history": false, "sketches": false, "joints": false})
