@@ -1567,7 +1567,7 @@ mod tests {
             .click_accesskit();
         harness.run();
         assert_ne!(harness.state().options.diagnostics_default, before);
-        harness.get_by_label("Dismiss").click();
+        harness.get_by_label("Dismiss").click_accesskit();
         harness.run();
         assert!(harness.state().unfinished_diagnostic.is_none());
     }
@@ -1579,16 +1579,18 @@ mod tests {
             .with_size(egui::vec2(1000.0, 1400.0))
             .build_eframe(|cc| App::new(cc));
         harness.run();
-        harness.get_by_label("Advanced").click();
+        harness.get_by_label("Advanced").click_accesskit();
         harness.run();
-        harness.get_by_label("Feature history").click();
+        harness.get_by_label("Feature history").click_accesskit();
         harness.run();
         assert!(harness.state().custom);
         assert!(harness.state().options.import_only);
         assert_eq!(harness.state().options.preset, Preset::Standard);
-        harness.get_by_value("Custom (based on Standard)").click();
+        harness
+            .get_by_value("Custom (based on Standard)")
+            .click_accesskit();
         harness.run();
-        harness.get_by_label("Full").click();
+        harness.get_by_label("Full").click_accesskit();
         harness.run();
         assert!(!harness.state().custom);
         assert_eq!(harness.state().options.choices(), Choices::of(Preset::Full));
@@ -1635,7 +1637,7 @@ mod tests {
         assert_eq!(anyway.center().y, cancel.center().y);
         assert!(use_fast.right() < anyway.left());
         assert!(anyway.right() < cancel.left());
-        harness.get_by_label("Cancel").click();
+        harness.get_by_label("Cancel").click_accesskit();
         harness.run();
         assert!(!harness.state().running());
         assert!(harness.state().memory_warning.is_none());
