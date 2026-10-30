@@ -7,6 +7,7 @@
 pub mod anon;
 pub mod batch;
 pub mod choices;
+pub mod diagnostics;
 pub mod dxf;
 pub mod formats;
 pub mod issue;
@@ -91,6 +92,18 @@ impl Writer for OutputWriter {
 /// How a design is converted.
 #[derive(Clone, Debug, clap::Args)]
 pub struct ConvertOptions {
+    /// Append an anonymous live diagnostic log, including progress while a conversion runs.
+    #[arg(long, value_name = "PATH")]
+    pub diagnostics: Option<PathBuf>,
+    /// Save a diagnostic log in the platform's default folder, keeping the newest ten.
+    #[arg(long, conflicts_with = "diagnostics")]
+    pub diagnostics_default: bool,
+    /// Private salt shared with an anonymous report when one is requested.
+    #[arg(skip)]
+    pub diagnostics_salt: Option<anon::Salt>,
+    /// Concurrent conversions selected by the front end.
+    #[arg(skip = 1_usize)]
+    pub diagnostics_threads: usize,
     /// Output format: SolidCraft (default), a FreeCAD macro/document (experimental),
     /// or partial TechDraw DXF pages (convert command only).
     #[arg(long, value_enum, default_value = "solidcraft")]
@@ -151,6 +164,10 @@ pub struct ConvertOptions {
 impl Default for ConvertOptions {
     fn default() -> Self {
         Self {
+            diagnostics: None,
+            diagnostics_default: false,
+            diagnostics_salt: None,
+            diagnostics_threads: 1,
             to: OutputFormat::default(),
             preset: choices::Preset::default(),
             import_only: false,
@@ -309,14 +326,48 @@ pub fn convert_options_with_progress(
     search: &PartSearch,
     on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
 ) -> Value {
-    let check = choices::memory_check(input, options);
-    if let Some(message) = check.refusal() {
-        return json::memory_failure(json::CONVERT, input, options, &message);
+    convert_options_with_observer(input, output, options, replace, search, on_progress, None)
+}
+
+pub(crate) fn convert_options_with_observer(
+    input: &Path,
+    output: &Path,
+    options: &ConvertOptions,
+    replace: bool,
+    search: &PartSearch,
+    on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
+    observer: Option<std::sync::Arc<dyn dutchman_core::MemberObserver>>,
+) -> Value {
+    if options.diagnostics.as_ref().is_some_and(|path| {
+        path == output
+            || std::fs::canonicalize(path)
+                .ok()
+                .zip(std::fs::canonicalize(output).ok())
+                .is_some_and(|(a, b)| a == b)
+    }) {
+        return json::failure(
+            json::CONVERT,
+            json::input(input),
+            "the diagnostic log would be replaced by the output; choose another --diagnostics path",
+        );
     }
-    let writer = options.writer_for_input(input);
-    let mut report = convert_with_progress(input, output, &writer, replace, search, on_progress);
-    json::conversion_choices(&mut report, input, options);
-    report
+    diagnostics::run(input, options, on_progress, |callback, log| {
+        let check = choices::memory_check(input, options);
+        if let Some(message) = check.refusal() {
+            return json::memory_failure(json::CONVERT, input, options, &message);
+        }
+        let writer = options.writer_for_input(input);
+        let progress = dutchman_core::Progress::new(callback)
+            .with_members(log.map(diagnostics::Log::observer).or(observer));
+        let mut report = match dutchman_core::convert_with_progress(
+            input, output, &writer, replace, search, &progress,
+        ) {
+            Ok(report) => convert_success(input, output, &report),
+            Err(err) => json::error(json::CONVERT, json::input(input), &err),
+        };
+        json::conversion_choices(&mut report, input, options);
+        report
+    })
 }
 
 /// Converts `input` into `output`, writing nothing else, and returns the `dutchman.convert/1`

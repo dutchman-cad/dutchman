@@ -31,8 +31,8 @@ design updates plus a still-working heartbeat every five seconds with elapsed ti
 `--json` makes these `dutchman.progress/1` JSON lines; parse stdout as the final report
 (or the existing watch-event stream). `--quiet` suppresses progress. Desktop file cards
 show the same information, with a determinate bar when the design total is known. Fusion
-`.f3z` member counts are not available yet, so their updates show stage and elapsed time
-without a percentage. MCP and web conversions return only their final reports; no
+`.f3z` updates show stage and elapsed time without a percentage; diagnostic member decode
+attempts can repeat and do not establish a unique design completion count. MCP and web conversions return only their final reports; no
 progress stream is available.
 
 When a feature blocks SolidCraft history conversion, earlier editable features and
@@ -208,6 +208,23 @@ stay private. Do not attach designs publicly; a user who wants to share a reprod
 offer it privately in the issue. The issue goes on Dutchman even when the report says
 `upstream: cadmpeg` or `upstream: solidcraft`. Draft the issue for the user to post; don't
 post it yourself.
+
+When conversion hangs or gets killed, enable a live diagnostic log **before** retrying:
+MCP `convert`/`convert_all` accept `diagnostics: "/abs/run.jsonl"`, or
+`diagnostics_default: true` for an automatically named log. CLI `convert`, `convert-all`,
+and `watch` accept `--diagnostics PATH` or `--diagnostics-default`. Explicit files append;
+default folders retain ten timestamp logs. They are Windows
+`%LOCALAPPDATA%\Dutchman\diagnostics\`, macOS `~/Library/Logs/Dutchman/`, and Linux
+`$XDG_STATE_HOME/dutchman/diagnostics/` (default `~/.local/state/dutchman/diagnostics/`).
+The app has **Save a diagnostic log (no names or contents from your file)** and
+**Open diagnostics folder** settings, **Show the log** after Stop/completion, and an
+unfinished-run notice on next launch. Logs flush every record and sync at least every five
+seconds and at stage changes. They hold stages, resource heartbeats, anonymous member
+sizes and decoder events, and loss-code counts; no names, paths, contents, geometry, or
+messages. Per-member records appear when the decoder reports them. Ask the user to review
+and share this JSONL log with the Dutchman issue; keep ordinary logs private. A combined
+`report_anon` shares its salt and file ids with diagnostics; keep the salt/key private.
+See `docs/guide.md#diagnostic-logs-for-unfinished-runs` and `docs/json.md` for the schema.
 
 ## 4. Verify in SolidCraft
 

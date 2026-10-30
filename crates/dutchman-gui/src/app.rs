@@ -60,6 +60,9 @@ pub struct App {
     memory_warning: Option<(PathBuf, MemoryCheck)>,
     out_dir: Option<PathBuf>,
     options: ConvertOptions,
+    diagnostic_path: Option<PathBuf>,
+    diagnostic_stopped: bool,
+    unfinished_diagnostic: Option<PathBuf>,
     rows: Vec<Row>,
     /// Rows before the run's first job: inputs that could not be planned.
     offset: usize,
@@ -140,6 +143,10 @@ fn restore_choices(options: &mut ConvertOptions, settings: &Value) -> bool {
         _ => Preset::Standard,
     };
     select_preset(options, preset);
+    options.diagnostics_default = settings
+        .get("save_diagnostics")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     options.import_only = settings
         .get("import_only")
         .and_then(Value::as_bool)
@@ -161,6 +168,7 @@ fn restore_choices(options: &mut ConvertOptions, settings: &Value) -> bool {
 fn saved_choices(options: &ConvertOptions, custom: bool) -> Value {
     serde_json::json!({
         "preset": options.preset.name(), "custom": custom,
+        "save_diagnostics": options.diagnostics_default,
         "import_only": options.import_only,
         "no_sketches": options.no_sketches, "no_joints": options.no_joints,
     })
@@ -216,6 +224,9 @@ impl App {
             memory_warning: None,
             out_dir: None,
             options,
+            diagnostic_path: None,
+            diagnostic_stopped: false,
+            unfinished_diagnostic: dutchman::diagnostics::unfinished_default_log(),
             rows: Vec::new(),
             offset: 0,
             run: None,
@@ -351,11 +362,24 @@ impl App {
     }
 
     fn start_checked(&mut self, ctx: &egui::Context) {
-        let Some(pending) = self.pending.take() else {
+        let Some(mut pending) = self.pending.take() else {
             return;
         };
         self.refresh_blocked_checker();
         self.notice = None;
+        self.diagnostic_stopped = false;
+        self.diagnostic_path = None;
+        if pending.options.diagnostics_default {
+            let threads = match &pending.kind {
+                RunKind::Batch { .. } => dutchman::batch::workers(None),
+                RunKind::Retry { .. } => 1,
+            };
+            if let Err(message) = dutchman::diagnostics::prepare(&mut pending.options, threads) {
+                self.notice = Some(message);
+                return;
+            }
+            self.diagnostic_path = pending.options.diagnostics.clone();
+        }
         self.run = Some(match pending.kind {
             RunKind::Batch { inputs, out_dir } => {
                 self.rows.clear();
@@ -638,6 +662,21 @@ impl App {
                 ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
+                        if let Some(path) = self.unfinished_diagnostic.clone() {
+                            ui.label("The last run didn't finish. Its diagnostic log is here:");
+                            ui.label(path.display().to_string());
+                            ui.horizontal(|ui| {
+                                if ui.button("Open folder").clicked() {
+                                    if let Err(message) = platform::reveal(&path) {
+                                        self.notice = Some(message);
+                                    }
+                                }
+                                if ui.button("Dismiss").clicked() {
+                                    self.unfinished_diagnostic = None;
+                                }
+                            });
+                            ui.add_space(theme::SPACE_4);
+                        }
                         self.inputs_panel(ui);
                         ui.add_space(theme::SPACE_4);
                         self.output_panel(ui, ctx);
@@ -969,6 +1008,24 @@ impl App {
                     self.options.project = None;
                 }
             });
+            ui.horizontal_wrapped(|ui| {
+                ui.add_enabled(
+                    !running,
+                    egui::Checkbox::new(
+                        &mut self.options.diagnostics_default,
+                        "Save a diagnostic log (no names or contents from your file)",
+                    ),
+                );
+                if ui.button("Open diagnostics folder").clicked() {
+                    let result = dutchman::diagnostics::default_folder().and_then(|folder| {
+                        std::fs::create_dir_all(&folder).map_err(|err| err.to_string())?;
+                        platform::open(&folder)
+                    });
+                    if let Err(message) = result {
+                        self.notice = Some(message);
+                    }
+                }
+            });
         });
     }
 
@@ -985,6 +1042,7 @@ impl App {
                 {
                     if let Some(run) = &self.run {
                         run.stop();
+                        self.diagnostic_stopped = true;
                     }
                 }
             } else {
@@ -1043,6 +1101,17 @@ impl App {
         let reveal = self.reveal.take();
         if reveal == Some(Reveal::Results) {
             heading.scroll_to_me(Some(Align::Min));
+        }
+        if let Some(path) = &self.diagnostic_path {
+            ui.label(path.display().to_string());
+            if (!self.running() || self.diagnostic_stopped)
+                && path.is_file()
+                && ui.button("Show the log").clicked()
+            {
+                if let Err(message) = platform::reveal(path) {
+                    self.notice = Some(message);
+                }
+            }
         }
         let first = (reveal == Some(Reveal::FirstIssue)).then_some(view.first_to_show);
         let mut action = None;
@@ -1451,12 +1520,40 @@ mod tests {
         select_preset(&mut options, Preset::Full);
         set_choices(&mut options, true, false, true);
         options.no_memory_check = true;
+        options.diagnostics_default = true;
         let saved = saved_choices(&options, true);
         let mut restored = ConvertOptions::default();
         assert!(restore_choices(&mut restored, &saved));
         assert_eq!(restored.preset, Preset::Full);
         assert_eq!(restored.choices(), options.choices());
         assert!(!restored.no_memory_check);
+        assert!(restored.diagnostics_default);
+        assert!(restored.diagnostics.is_none());
+    }
+
+    #[test]
+    fn diagnostics_setting_and_unfinished_notice_are_available_and_dismissable() {
+        use egui_kittest::kittest::Queryable;
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1200.0, 1600.0))
+            .build_eframe(|cc| {
+                let mut app = App::new(cc);
+                app.unfinished_diagnostic =
+                    Some(PathBuf::from("diagnostics/2026-10-29_201500.jsonl"));
+                app
+            });
+        harness.run();
+        harness.get_by_label("Open diagnostics folder");
+        harness.get_by_label("Open folder");
+        harness.get_by_label("The last run didn't finish. Its diagnostic log is here:");
+        harness
+            .get_by_label("Save a diagnostic log (no names or contents from your file)")
+            .click();
+        harness.run();
+        assert!(harness.state().options.diagnostics_default);
+        harness.get_by_label("Dismiss").click();
+        harness.run();
+        assert!(harness.state().unfinished_diagnostic.is_none());
     }
 
     #[test]

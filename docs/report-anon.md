@@ -4,6 +4,13 @@
 writes, beside the usual results, one JSON file that says how a batch went without saying
 which files were in it. It is made to be shared: posted in an issue, sent to the maintainers.
 
+For a conversion that never finishes, enable [a live diagnostic log](guide.md#diagnostic-logs-for-unfinished-runs)
+before trying again: `--diagnostics-default`, or `--diagnostics PATH` for an explicit file.
+Unlike this completed-batch report, [`dutchman.diagnostics/1`](json.md#dutchmandiagnostics1)
+writes progress and resource heartbeats during the run, with no messages at all. A run using
+both reports shares this report's salt and file ids. The desktop app can save diagnostics
+and reopen their folder after a stopped run or on its next launch.
+
 ## What it never holds
 
 - **No file or folder names, no paths.** Each file appears only as an id, `f` and 16 hex

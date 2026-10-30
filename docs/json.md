@@ -532,3 +532,56 @@ leave already-written pages on disk.
 `name`, `output` and `converts`; `input` uses the existing native format id
 (`freecad_document`). The FreeCAD TechDraw entry describes DXF
 page output and its reported limitations. Existing `formats` fields keep their meaning.
+
+## `dutchman.diagnostics/1`
+
+Live diagnostics are opt-in on CLI `convert`, `convert-all`, and `watch`, MCP `convert`
+and `convert_all`, and the desktop app. See [locations and sharing](guide.md#diagnostic-logs-for-unfinished-runs).
+`--diagnostics-default` creates a unique local timestamp file in the platform's diagnostic
+folder, retaining ten logs. `--diagnostics PATH` appends to an explicit file without retention.
+MCP uses `diagnostics_default: true` or `diagnostics: "/absolute/path/run.jsonl"`.
+
+Each line is one JSON object. Common fields are `schema: "dutchman.diagnostics/1"`,
+`type`, `file` (the anonymous report's salted file id), and `elapsed_ms` since that
+conversion's start. A batch/watch log interleaves conversions; group by `file` and each
+`start`/`end` pair. Repeated conversions of one file can reuse its id within a run.
+
+| `type` | Other fields |
+|---|---|
+| `start` | `dutchman` version; `cadmpeg` version and pinned revision; `os: {family, name, version}`; `cpu_count`; `total_memory_bytes`; `available_memory_bytes`; `choices` (the shared preset/history/sketches/joints choices object); `threads` (chosen concurrent conversions); `input: {format, size_bytes}`; `members` (Fusion ZIP member list, or null). |
+| `stage` | `stage`: `input`, `decode`, `project`, `map`, `write`, or `solidcraft`. Written when the stage changes, including the initial stage. |
+| `design` | `count` of successful designs read and `total` (null while unknown). Written when these counts change. |
+| `heartbeat` | `stage`; `rss_bytes`; `cpu_ticks` (process user + system CPU ticks); `cpu_ticks_per_second`; `cpu_ms` (derived process CPU time); `member` (last started member id, or null). Every 30 seconds from an independent timer. Linux reads `/proc`; unavailable resource measurements are null. |
+| `member` | `member` (salted id); `event`: `start`, `finish`, or `fail`; `ms` (0 at start, duration at finish/failure); `code` (fixed decoder error category on failure, else null). |
+| `end` | `ok` (boolean); `stage` last reached; `losses` (code-to-count object); `repeated_losses` (total extra occurrences of identical losses); `member_decodes` (member-id-to-start-count object); `redecoded` (sum of starts after each member's first start). |
+
+Each `members` entry is `{id, compressed_bytes, uncompressed_bytes, nested_content_bytes}`.
+The last value is the sum of a nested design archive's declared uncompressed content sizes,
+or null when unavailable or beyond the bounded metadata-read budget (64 MiB total).
+Directories and metadata entries are included with anonymous ids. Archive directories are
+bounded to 10,000 members and the existing memory estimator's directory size limits.
+
+Per-member records appear when the decoder reports them. The pinned Fusion decoder reports
+actual `.f3z` member decode attempts, including re-decodes during composition; these are
+not unique design completion counts. Error categories are `wrong_format`, `malformed`,
+`invalid_input`, `truncated`, `resource_limit`, `unsupported_dialect`, `unsupported_target`,
+`insufficient_depth`, `not_implemented`, `io`, or `other`. They contain no exception text.
+`member_decodes` tracks at most 100,000 distinct ids per conversion.
+
+```json
+{"schema":"dutchman.diagnostics/1","type":"member","file":"f0123456789abcdef","elapsed_ms":245,"member":"fabcdef0123456789","event":"fail","ms":23,"code":"resource_limit"}
+{"schema":"dutchman.diagnostics/1","type":"end","file":"f0123456789abcdef","elapsed_ms":246,"ok":false,"stage":"decode","losses":{},"repeated_losses":0,"member_decodes":{"fabcdef0123456789":2},"redecoded":1}
+```
+
+Names, paths, geometry, file contents, messages, and the salt are never written. Loss codes
+use the same generic code/subject mapping as [report-anon](report-anon.md); messages are
+used only in memory to count repeated identical losses. A combined anonymous report and
+diagnostic log share the run's salt and file ids. Member ids use that same derivation on
+literal member paths without resolving them on the host filesystem, so the `start` list,
+member events, and heartbeats agree.
+
+Every record is appended and flushed as it occurs. `sync_data()` runs at least every five
+seconds, at start/end, and on stage changes. Complete lines remain readable after a kill;
+ignore a trailing incomplete line. A missing `end` means that conversion did not finish
+reporting. A supervised worker's timeout/cancellation writes an error `end` if its parent
+is still alive. Fields may be added within this schema version.

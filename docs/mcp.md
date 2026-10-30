@@ -265,6 +265,24 @@ An unknown argument is refused (`unknown argument bogus`), as is a missing requi
 Paths are on the machine running the server. Give absolute ones: a relative path is read
 against the server's working directory, which the client chooses.
 
+### Diagnostic logs during conversion
+
+Both `convert` and `convert_all` accept optional `diagnostics` (an absolute file path), or
+`diagnostics_default: true` for a unique timestamp file in the platform's default diagnostics
+folder. They cannot be combined. Explicit files are appended without retention; the default
+folder keeps the newest ten timestamp logs. [The guide](guide.md#diagnostic-logs-for-unfinished-runs)
+lists each OS folder and how to review and send a log.
+
+For example, call `convert` with `{"input":"/abs/part.f3d","output":"/abs/part.solidcraft",
+"diagnostics":"/abs/run.jsonl"}`. `dry_run` writes no diagnostic log.
+The log is [`dutchman.diagnostics/1`](json.md#dutchmandiagnostics1): records are flushed as
+conversion proceeds, with disk syncs at least every five seconds and at stage changes,
+and resource heartbeats every 30 seconds. It survives an interrupted process and contains
+no names, paths, design contents, geometry, or messages. Per-member records appear when the
+decoder reports them. `convert_all` with `report_anon` shares its salt and ids with diagnostics;
+keep the salt and any `report_key` private. These extra files do not change conversion report
+schemas or the output format.
+
 ## Example calls and replies
 
 Each reply carries the report twice: as `structuredContent`, and as the same JSON in a text
@@ -379,9 +397,10 @@ parameter edits, particularly named sketch constraint expressions and object-lab
 - **Everything stays on your machine.** The server reads and writes local files only and
   sends nothing over the network. It runs `solidcraft-cli` locally for the history check.
 - **What it writes.** `inspect` and `formats` write nothing. `convert` writes only its
-  `output` file, which must end in `.solidcraft`. `convert_all` writes converted designs and
-  its default log inside `out_dir`. If supplied, `journal`, `report_anon`, and `report_key`
-  are also written at their specified paths. A failed file creates no design; a mixed batch
+  `output` file, matching the selected format. `convert_all` writes converted designs and
+  its ordinary log inside `out_dir`. If supplied, `diagnostics`, `journal`, `report_anon`,
+  and `report_key` are also written at their specified paths. `diagnostics_default` writes
+  in the platform diagnostics folder and retains its newest ten timestamp logs. A failed file creates no design; a mixed batch
   can still write successful designs, logs, and requested reports. A design is written only
   once it is complete. The server has no list of allowed folders: it can read and write
   wherever the account running it can. Point `output` and `out_dir` at a folder for converted

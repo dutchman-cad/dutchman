@@ -544,8 +544,9 @@ Stage ids are `input` (opening the input and finding part files), `decode` (read
 (saving the output). A model-check fallback can return to `decode` to read geometry alone.
 A heartbeat confirms the worker is running; it does not measure decoder activity.
 
-Fusion `.f3z` archives are decoded in one call. Their member counts are not available yet;
-no percentage is estimated. Separate assembly part files report completions as they are read,
+Fusion `.f3z` archives are decoded in one call. Member decode attempts can repeat, so
+progress does not infer unique design counts or a percentage from them. Optional
+[diagnostic logs](#diagnostic-logs-for-unfinished-runs) record these attempts. Separate assembly part files report completions as they are read,
 with an unknown total while parts are discovered. These updates do not change the final report.
 
 ## Convert a whole folder: convert-all
@@ -1006,6 +1007,60 @@ meshing warning, and compare each body's `area_mm2` and `volume_mm3` with the or
 within the measuring mesh tolerances. A face-count difference alone does not establish a
 defect. An AI agent can do the same through SolidCraft's MCP server: open the design with
 `solidcraft-cli mcp --in cube.solidcraft` and call its `measure` tool.
+
+## Diagnostic logs for unfinished runs
+
+Enable diagnostics **before** reproducing a conversion that hangs or stops unexpectedly:
+
+```sh
+dutchman convert --diagnostics-default part.f3d converted.solidcraft
+dutchman convert-all --diagnostics-default --out-dir converted parts/
+dutchman watch inbox --diagnostics-default --out-dir converted
+```
+
+Each invocation creates one JSON Lines file named by local start time, such as
+`2026-10-29_201500.jsonl`; a counter suffix keeps simultaneous starts unique. Input names
+never enter the log's filename. The default folder is:
+
+| System | Folder |
+|---|---|
+| Windows | `%LOCALAPPDATA%\Dutchman\diagnostics\` |
+| macOS | `~/Library/Logs/Dutchman/` |
+| Linux | `$XDG_STATE_HOME/dutchman/diagnostics/`, or `~/.local/state/dutchman/diagnostics/` when unset |
+
+The newest ten automatically placed logs are kept. Starting a run removes older logs
+whose filenames match this timestamp pattern; unrelated files are left alone.
+`--diagnostics /absolute/path/run.jsonl` instead appends to an explicit file, without
+retention. Choose either `--diagnostics-default` or `--diagnostics PATH`.
+The MCP `convert` and `convert_all` tools accept `diagnostics` (an explicit path) or
+`diagnostics_default: true`.
+
+In the desktop app's settings, select **Save a diagnostic log (no names or contents from
+your file)** before starting. **Open diagnostics folder** opens the default folder.
+After completion or Stop, **Show the log** opens the log's folder; its path is shown too.
+On launch, an unfinished conversion in the newest default log shows **The last run didn't
+finish. Its diagnostic log is here:** with **Open folder** and **Dismiss** buttons.
+
+Every record is appended and flushed immediately, with a disk sync at least every five
+seconds and on every stage change. A background heartbeat every 30 seconds records the
+stage, elapsed time, process memory, CPU time, and last decoder member id when available.
+Fusion archives include anonymous member sizes; per-member records appear when the decoder
+reports them, including re-decodes and fixed failure categories. No progress bar total is
+inferred from these decode attempts. A stopped process leaves its complete lines usable;
+an interrupted final line may be incomplete. A supervised batch worker that times out or
+is cancelled gets an error `end` record; killing the supervising process can leave no `end`.
+
+The schema is [`dutchman.diagnostics/1`](json.md#dutchmandiagnostics1). It holds versions,
+machine resources, selected conversion choices, input and archive byte sizes, timings,
+salted ids, and loss codes with counts. It contains no file or design names, paths, geometry,
+file contents, or loss/error messages. Salts use the anonymous report's random source and
+hashing scheme; when `convert-all` also requests `--report-anon`, both share its salt and
+file ids, including `--report-salt` when supplied. Keep that salt and any report key private.
+
+Review the JSONL file, then attach it to Dutchman's **A file didn't convert** issue or send
+it with your problem report. No design file is needed. Diagnostics work while conversion
+is still running; [the anonymous report](report-anon.md) adds a batch summary after it ends.
+Ordinary `--log`, JSON conversion reports, and journals contain names and stay private.
 
 ## Troubleshooting
 

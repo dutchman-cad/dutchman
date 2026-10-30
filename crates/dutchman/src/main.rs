@@ -276,11 +276,12 @@ fn main() -> ExitCode {
                         .unwrap_or(Path::new("."))
                         .to_path_buf()
                 });
-                let report = dutchman::dxf::convert(
+                let report = dutchman::dxf::convert_with_diagnostics(
                     &input,
                     &output,
                     page.as_deref(),
                     !options.no_clobber && (!derived || force),
+                    &options,
                 );
                 if let Some(log) = log {
                     if let Err(err) =
@@ -371,7 +372,7 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             }
-            let anon = match report_salt.as_deref().map(anon::Salt::parse).transpose() {
+            let mut anon = match report_salt.as_deref().map(anon::Salt::parse).transpose() {
                 Ok(salt) => report_anon.map(|path| anon::Request {
                     path,
                     salt,
@@ -382,6 +383,17 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             };
+            if let Some(request) = &mut anon {
+                let salt = match request.salt.clone().map_or_else(anon::Salt::random, Ok) {
+                    Ok(salt) => salt,
+                    Err(err) => {
+                        eprintln!("dutchman: {err}");
+                        return ExitCode::from(2);
+                    }
+                };
+                request.salt = Some(salt.clone());
+                options.diagnostics_salt = Some(salt);
+            }
             let settings = match batch::Settings::isolated() {
                 Ok(settings) => batch::Settings {
                     jobs,
