@@ -528,7 +528,8 @@ blocked one), and the loss report. `inspect --json` prints the same as a
 ### Progress during conversion
 
 `convert`, `convert-all`, `inspect`, and `watch` show the current stage, designs read, and
-elapsed seconds on stderr. A terminal gets one updating line; redirected stderr gets a line at
+elapsed time on stderr, in seconds and, past a minute, also in hours and minutes, such as
+`7261 s (2 h 1 min)`; the desktop app shows the same. A terminal gets one updating line; redirected stderr gets a line at
 each stage or design completion and a still-working line every five seconds. `--quiet`
 suppresses progress. With `--json`, stderr contains `dutchman.progress/1` JSON lines; stdout
 stays one final report (or the existing watch-event stream for `watch`). Elapsed time starts
