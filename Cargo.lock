@@ -1431,8 +1431,10 @@ dependencies = [
  "image",
  "pollster",
  "rfd",
+ "roxmltree 0.21.1",
  "serde_json",
  "tempfile",
+ "ureq",
 ]
 
 [[package]]
