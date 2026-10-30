@@ -38,7 +38,7 @@ Converts Fusion, Inventor, SolidWorks parts, FreeCAD, CATIA, Rhino, Creo View, A
 - **Faster multi-part conversion:** assembly parts prepare on several cores, with memory limiting the worker count.
 - **Choose what to keep:** Fast, Standard, and Full show estimated memory and time before conversion.
 - **A diagnostic log:** save an anonymous log during a run, including runs that never finish.
-<!-- Pending merge: update button (PR #297). Lead: add a feature line only after it lands on main. -->
+- **An update button:** a small pill in the header shows when a newer release is out; Homebrew and Scoop installs update in place.
 <!-- Pending merge: SolidCraft version pill (follow-up PR). Lead: add a feature line only after it lands on main. -->
 
 [What converts](#what-converts) lists coverage and limits; every conversion reports what it could not carry across.
