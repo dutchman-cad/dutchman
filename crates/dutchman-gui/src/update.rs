@@ -441,6 +441,8 @@ impl Updater {
         let mut open = self.open;
         if let Some(release) = self.release.clone() {
             egui::Window::new("Dutchman update")
+                // Under the Update pill, at the header's right.
+                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-24.0, 72.0))
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
