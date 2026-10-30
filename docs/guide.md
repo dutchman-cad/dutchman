@@ -273,8 +273,8 @@ Wayland desktop session with working OpenGL. See [Troubleshooting](#troubleshoot
 window appears.
 
 The target SolidCraft selector defaults to the found CLI's version, else the built-in newest
-(currently 0.27.0), even when history checking is off. Choose **0.18.2 and newer** for older installations or
-**0.25.1 and newer** to keep supported FreeCAD helices as editable coils.
+(currently 0.27), even when history checking is off. Choose **Automatic** to follow the detected installation or
+**0.25 and newer** to keep supported FreeCAD helices as editable coils.
 
 The window's title shows its version, and its **Report a problem** link opens the
 [A file didn't convert](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
@@ -374,15 +374,15 @@ it says so under the check option:
 
 Dutchman is made for the current SolidCraft (any release from the last two weeks);
 older versions get simplified features, or pass `--solidcraft-version x.y.z` on
-`convert`, `convert-all`, or `watch`. The current window is 0.18.2–0.27.0; roundtrip
+`convert`, `convert-all`, or `watch`. The current window is 0.18–0.27; roundtrip
 checks cover its oldest and newest releases. Each design targets the found CLI's version,
-even with `--no-verify`, else the newest release known at build time (currently 0.27.0).
+even with `--no-verify`, else the newest release known at build time (currently 0.27).
 Versions below 0.18.2 and malformed versions are refused. Older targets remain accepted
 down to 0.18.2. Features that need a newer release block history with a named reason
 and preserve the original geometry as for other blockers.
 A design opens in its target release and newer releases. A `solidcraft-cli` older than
 0.18.2 is not used: the conversion says so ("… is older
-than SolidCraft 0.18.2, the oldest that opens and checks Dutchman's designs; install a newer
+than SolidCraft 0.18 patch 2, the oldest that opens and checks Dutchman's designs; install a newer
 SolidCraft") and writes the history unverified. SolidCraft 0.19.0 saves designs in a newer
 format that older versions do not open, so a design you save again in 0.19.0 opens in 0.19.0
 or newer only.
@@ -404,8 +404,8 @@ first feature that stops the history; the original geometry is still converted.
 
 The header’s SolidCraft status pill opens a small panel with **Target SolidCraft** and a
 notice explaining when the installed SolidCraft is newer than Dutchman knows, too old
-(before 0.18.2), or older and the selected target loses editable history. Only the last case suggests newer SolidCraft for more history;
-0.25.1 through 0.27.0 currently need no such notice. The notice never blocks conversion.
+(before minor 0.18), or older and the selected target loses editable history. Only the last case suggests newer SolidCraft for more history;
+0.25 patch 1 through 0.27 currently need no such notice. The notice never blocks conversion.
 The pill shows the detected release, or **SolidCraft not found** with a download link in its
 panel. **Advanced > SolidCraft version…** opens the same panel. Narrow windows show only
 the version or **not found**, shorten **Update**, and put theme choices in a menu.
@@ -546,7 +546,7 @@ dutchman convert --json generated_unit_cube.f3d cube.solidcraft
 | `--yes` | Never prompt to switch presets; refuse an over-budget conversion with exit 2. |
 | `--import-only` | Leave feature history out; keep geometry and the preset's reference sketches. |
 | `--solidcraft PATH` | The `solidcraft-cli` that checks a converted history. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`, else the install folder recorded in the registry). |
-| `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the found CLI's version capped at newest known, even with `--no-verify`, else the newest known at build time (currently 0.27.0). |
+| `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the found CLI's version capped at newest known, even with `--no-verify`, else the newest known at build time (currently 0.27). |
 | `--no-verify` | Write the history without checking it in SolidCraft. Cannot be combined with `--solidcraft`. |
 | `--verify-timeout SECONDS` | How long each SolidCraft check may run before the history is written unverified. Default 120. |
 | `--no-clobber` | Do not replace an existing `.solidcraft` file: that file's conversion fails instead. By default it is replaced. |
@@ -811,8 +811,8 @@ Connect SolidCraft to `http://127.0.0.1:11500/v1`. Install SolidCraft separately
 model proxy's options. The default `pilot` Cargo feature includes this command.
 
 Constant-radius FreeCAD AdditiveHelix and SubtractiveHelix features keep editable history
-as sketch-profile coils when targeting SolidCraft 0.25.1 or newer. Older targets report
-`needs SolidCraft 0.25.1 or newer` with the target version and flatten the history. The
+as sketch-profile coils when targeting SolidCraft 0.25 patch 1 or newer. Older targets report
+`needs SolidCraft 0.25 patch 1 or newer` with the target version and flatten the history. The
 profile, axis, pitch/height/turn
 law, handedness, reversed travel, and Boolean operation carry across. Available feature
 parameter bindings drive dimensions; dimensions without bindings keep their resolved
@@ -958,8 +958,8 @@ around an axis, or at fixed spacing along curves of an earlier planar sketch. Ex
 linear offsets and circular angles map when their intervals are equal; two linear composite
 stages map to a rectangular grid. Composite feature patterns containing resolved mirrors
 map to an ordered chain: each stage repeats the preceding stage's entire instance set.
-Chained stages require a target of SolidCraft 0.25.1 or newer; older targets report
-`needs SolidCraft 0.25.1 or newer` and keep the original geometry. Single-stage mirrors
+Chained stages require a target of SolidCraft 0.25 patch 1 or newer; older targets report
+`needs SolidCraft 0.25 patch 1 or newer` and keep the original geometry. Single-stage mirrors
 and patterns still map on every supported target.
 Full-turn circular angles that repeat the seed endpoint keep only the distinct locations.
 Composite mirror chains allow up to 32 stages; patterns are limited to 10,000 instances,
@@ -1073,10 +1073,10 @@ defect. An AI agent can do the same through SolidCraft's MCP server: open the de
 `solidcraft-cli mcp --in cube.solidcraft` and call its `measure` tool.
 
 SolidCraft conversion reports include the selected target and the discovered CLI version,
-even with verification off. Text output includes `Target SolidCraft 0.27.0 (found 0.27.0)`,
+even with verification off. Text output includes `Target SolidCraft 0.27 (found 0.27.1)`,
 or `(none found)` when no version can be read. `--solidcraft-version` overrides the target;
 otherwise the found supported version is used, capped at the newest known release, falling
-back to 0.27.0. Successful conversions print the same installed-version notice beside the
+back to 0.27. Successful conversions print the same installed-version notice beside the
 target line, with the SolidCraft download URL for too-old releases. The CLI never checks
 for Dutchman updates over the network. Failed or refused files print neither line.
 No installed release means no notice. Other output

@@ -800,8 +800,13 @@ impl App {
             _ => p.tide,
         };
         let label = match (&self.found_version, narrow) {
-            (Some(version), true) => version.clone(),
-            (Some(version), false) => format!("SolidCraft {version}"),
+            (Some(version), true) => {
+                dutchman_solidcraft::solidcraft_minor(version).unwrap_or_default()
+            }
+            (Some(version), false) => format!(
+                "SolidCraft {}",
+                dutchman_solidcraft::solidcraft_minor(version).unwrap_or_default()
+            ),
             (None, true) => "not found".into(),
             (None, false) => "SolidCraft not found".into(),
         };
@@ -835,7 +840,9 @@ impl App {
                 } else if self.found_version.is_none() {
                     ui.label("SolidCraft not found. Install SolidCraft to check feature history and open designs.");
                 } else if let Some(found) = &self.found_version {
-                    ui.label(format!("SolidCraft {found} is installed."));
+                    if let Some(minor) = dutchman_solidcraft::solidcraft_minor(found) {
+                        ui.label(format!("SolidCraft {minor} is installed."));
+                    }
                 }
                 self.solidcraft_picker(ui);
                 if report.pointer("/solidcraft/status").and_then(Value::as_str) == Some("newer")
@@ -858,23 +865,24 @@ impl App {
                 self.options
                     .solidcraft_version
                     .unwrap_or(self.detected_version)
+                    .minor()
             ))
             .show_ui(ui, |ui| {
                 for (version, label) in [
                     (
                         self.detected_version,
-                        format!("Automatic ({})", self.detected_version),
+                        format!("Automatic ({})", self.detected_version.minor()),
                     ),
                     (
                         dutchman_solidcraft::SolidCraftVersion::default(),
                         format!(
                             "Newest known ({})",
-                            dutchman_solidcraft::SolidCraftVersion::default()
+                            dutchman_solidcraft::SolidCraftVersion::default().minor()
                         ),
                     ),
                     (
                         dutchman_solidcraft::SolidCraftVersion::V0_25_1,
-                        "0.25.1 and newer".to_owned(),
+                        "0.25 and newer".to_owned(),
                     ),
                 ] {
                     ui.selectable_value(&mut self.options.solidcraft_version, Some(version), label);

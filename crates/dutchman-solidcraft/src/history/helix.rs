@@ -16,8 +16,8 @@ pub(crate) fn map(
 ) -> Result<Value, String> {
     if !crate::VersionGate::SketchProfileCoil.supported(ctx.target_version) {
         return Err(format!(
-            "needs SolidCraft 0.25.1 or newer (target {})",
-            ctx.target_version
+            "needs SolidCraft 0.25 patch 1 or newer (target {})",
+            ctx.target_version.minor()
         ));
     }
     let construction = definition

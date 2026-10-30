@@ -108,7 +108,7 @@ its designs when a pre-read exceeds the budget; it also includes that file's ref
 | `ok` | `true` when the design was written. |
 | `estimate` | Quick pre-read estimate, including on memory refusals: `peak_bytes` and `seconds` are unsigned integers; `band` is the relative error band (`0.5` means ±50%). `null` when unavailable. No design is decoded; a Fusion archive's designs are read one at a time for their own directories. Calibrated on measured conversions (see guide.md). |
 | `threads` | `{requested, used}` records the per-part worker limit (`0`: automatic, `1`: serial) and the bounded maximum used across component slicing and SolidCraft preparation. Counts are limited by part count and available memory, and never below `1`. Present on SolidCraft writes and on assembly reads that reach component slicing, including inspection and other output formats; omitted for pre-read estimates and reads/writers with no part-worker stage. Batch entries and watch reports carry it within each conversion report. Native decoding stays serial. |
-| `solidcraft` | SolidCraft output only: `target` is the selected `x.y.z` release; `found` is the discovered CLI release as `x.y.z`, or null when unavailable. `known_newest` is the newest known release (`0.27.0`). `status` is `newer`, `too_old`, `older_loses_history`, `current`, or `none_found`. The history status requires an older installed release and a selected target whose writer gates retain less history than newest; `current` includes older releases with no gated history loss. Included even with verification off. An explicit target wins; otherwise the supported found version capped at known newest, else built-in newest (0.27.0), is targeted. |
+| `solidcraft` | SolidCraft output only: `target` is the selected `x.y` minor; `found` is the discovered CLI release as `x.y.z`, or null when unavailable. `known_newest` is the newest known minor (`0.27`). `status` is `newer`, `too_old`, `older_loses_history`, `current`, or `none_found`. The history status requires an older installed release and a selected target whose writer gates retain less history than newest; `current` includes older releases with no gated history loss. Included even with verification off. An explicit target wins; otherwise the supported found version capped at known newest, else built-in newest (0.27), is targeted. |
 | `choices` | Selected `preset` (`fast`, `standard`, or `full`) and effective `history`, `sketches`, and `joints` booleans after narrowing. `history` is false when Standard leaves history out to fit memory. These describe requested retention, not proof that every feature maps. FreeCAD output honours history only. |
 | `input.format` | `fusion_archive`, `fusion_multi_document`, `inventor_part`, `inventor_assembly`, `solidworks_part`, `solidworks_assembly`, `freecad_document`, `catia_part`, `creo_part`, `nx_part`, `creo_view`, `rhino`, `acis`, `step`, `iges`, `unclassified_part`, or `null` for an unknown extension. `format_name` is the same for people. Creo and NX share `.prt` and are distinguished by contents; inconclusive contents give `unclassified_part`. |
 | `input.words` | Reader status: `reads geometry`, `opens, no geometry yet`, `recognised, not read yet`, or `open it in SolidCraft directly` (IGES); `null` for an unknown format. Present on successes and failures, including batch results and MCP reports. The conversion's history and verification describe what this file kept. |
@@ -124,12 +124,20 @@ its designs when a pre-read exceeds the budget; it also includes that file's ref
 | `names` | Every name the conversion met, sorted: the paths and folders it read from, and the names the design gives its parts, components, bodies, features, sketches, parameters and properties. For tools that take names out of a report before it is shared (the anonymous report does); absent when there were none. |
 | `losses` | What did not survive intact. `level` is `Info` (no effect on geometry), `Degraded` (carried in a weaker form) or `Dropped` (left out). `code` is cadmpeg's stable loss code when cadmpeg reported it, else `null`; `subject` says what was affected; `message` is for people. `stage` and `upstream` say where it arose (below). |
 
-`solidcraft.status` compares the installed release with 0.18.2 and `known_newest`:
-`newer` is above newest, `too_old` is below the floor, and `none_found` has no readable
+SolidCraft version presentation uses minors: `solidcraft.target` and
+`solidcraft.known_newest` now contain `x.y` strings (for example, `"0.27"`), changing their
+previous `x.y.z` representation. `solidcraft.found` keeps the full CLI release (for example,
+`"0.27.1"`). Status comparisons use minors, so all 0.27 patches are current; 0.28 is newer
+and 0.17 is too old. Patch-sensitive writer gates and the internal 0.18.2 verification
+floor remain unchanged. Explicit `solidcraft_version` inputs still accept `x.y.z` for
+precise gate control.
+
+`solidcraft.status` compares the installed minor with 0.18 and `known_newest`:
+`newer` is above the newest minor, `too_old` is below the floor, and `none_found` has no readable
 installed version. Within the supported range, `older_loses_history` requires an older
 installed release and a selected target that disables editable writer capabilities;
 otherwise it is `current`. Today those capabilities are sketch-profile coils and ordered
-mirror-pattern chains, both introduced in 0.25.1. The 0.22.1 entry-recess tip representation
+mirror-pattern chains, both introduced in 0.25 patch 1. The 0.22 patch 1 entry-recess tip representation
 change preserves geometry and does not count as history loss. These fields use local
 version discovery only.
 
@@ -180,16 +188,16 @@ For a blocked sweep, `history.features[].reason` names the unsupported option, s
 post-sweep simplification also block history. These are messages within the existing schema;
 no report fields change.
 
-A mapped `helical_sweep` becomes a sketch-profile coil only for targets 0.25.1 or newer.
+A mapped `helical_sweep` becomes a sketch-profile coil only for targets 0.25 patch 1 or newer.
 For older targets, `history.features[].reason` says
-`needs SolidCraft 0.25.1 or newer (target 0.18.2)` (with the actual target), and the history
+`needs SolidCraft 0.25 patch 1 or newer (target 0.18)` (with the actual target), and the history
 line explains the blocker. `--solidcraft-version x.y.z` selects the target on `convert`,
 `convert-all`, and `watch`; it must be at least 0.18.2. By default the found verification
 CLI's version is used, even with `--no-verify`, else the newest release known at build
-time (currently 0.27.0). The supported rolling 14-day window is currently 0.18.2–0.27.0;
+time (currently 0.27). The supported rolling 14-day window is currently 0.18–0.27;
 older targets down to 0.18.2 retain the existing feature simplifications.
 When a written coil or flat entry-recess tip uses the newer mapping, the history line
-includes the actual target, such as `target SolidCraft 0.25.1`. No new report fields are added. Counterbore and countersink holes use an explicit flat tip
+includes the actual target, such as `target SolidCraft 0.25 patch 1`. No new report fields are added. Counterbore and countersink holes use an explicit flat tip
 for targets 0.22.1 or newer, retaining the source's flat bottom.
 
 Conical and spiral helices report
@@ -391,8 +399,8 @@ off, or having no usable CLI, still writes unverified history.
 
 Composite feature patterns containing resolved mirrors can map to several ordered timeline
 features while retaining one result per source feature in the history report. Each stage
-repeats the previous instance set. Chained stages require a target of SolidCraft 0.25.1
-or newer; older targets report `needs SolidCraft 0.25.1 or newer` and keep the original
+repeats the previous instance set. Chained stages require a target of SolidCraft 0.25 patch 1
+or newer; older targets report `needs SolidCraft 0.25 patch 1 or newer` and keep the original
 geometry. Single-stage mirrors and patterns still map on every supported target.
 A full-turn circular pattern with a repeated seed endpoint
 keeps each distinct location once. Replay differences still flatten the history and report

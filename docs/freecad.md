@@ -62,9 +62,9 @@ A simple binder over a resolved construction plane can likewise be carried in it
 sketches. A binder used by a later feature remains a blocker when its source geometry
 reference is not resolved; the report says `a binder used by a later feature is not mapped yet`.
 
-MultiTransforms containing resolved mirrors require a target of SolidCraft 0.25.1 or newer
+MultiTransforms containing resolved mirrors require a target of SolidCraft 0.25 patch 1 or newer
 when a stage patterns or mirrors an earlier stage. Older targets report
-`needs SolidCraft 0.25.1 or newer` and keep the original geometry. Single-stage mirrors
+`needs SolidCraft 0.25 patch 1 or newer` and keep the original geometry. Single-stage mirrors
 and patterns still map on every supported target. These MultiTransforms keep their stage
 order as a chain of SolidCraft
 mirror and pattern features. Each stage repeats the complete instance set from the previous
@@ -124,12 +124,12 @@ parameter. A flattened design retains only parameters needed by its reference sk
 
 Constant-radius AdditiveHelix and SubtractiveHelix features keep their sketch profile,
 axis, pitch/height/turn law, handedness, reversed direction, and join/cut operation as
-sketch-profile coils when the target is SolidCraft 0.25.1 or newer. Choose a target with
+sketch-profile coils when the target is SolidCraft 0.25 patch 1 or newer. Choose a target with
 `--solidcraft-version x.y.z` on `convert`, `convert-all`, or `watch` (at least 0.18.2).
 The default is the found CLI's version, even with `--no-verify`, else the newest release
-known at build time (currently 0.27.0). The rolling 14-day window is currently
-0.18.2–0.27.0. Older targets block the helix with
-`needs SolidCraft 0.25.1 or newer` and the target version, preserving the original
+known at build time (currently 0.27). The rolling 14-day window is currently
+0.18–0.27. Older targets block the helix with
+`needs SolidCraft 0.25 patch 1 or newer` and the target version, preserving the original
 geometry. Resolved feature parameter
 bindings drive the coil dimensions; dimensions without bindings keep their values.
 Spreadsheet parameters follow the usual expression/value fallback. Conical helices and

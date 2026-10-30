@@ -30,9 +30,9 @@ use dutchman_core::{
 use serde_json::Value;
 
 pub use verify::{
-    find_cli, solidcraft_status, solidcraft_version, target_loses_history, usable_cli, NoCli,
-    SolidCraftVersion, Verification, VersionGate, CLI_ENV, DEFAULT_TIMEOUT, NEWEST_SOLIDCRAFT,
-    OLDEST_SOLIDCRAFT, VOLUME_TOLERANCE, WINDOW_OLDEST,
+    find_cli, solidcraft_minor, solidcraft_status, solidcraft_version, target_loses_history,
+    usable_cli, NoCli, SolidCraftVersion, Verification, VersionGate, CLI_ENV, DEFAULT_TIMEOUT,
+    NEWEST_SOLIDCRAFT, OLDEST_SOLIDCRAFT, VOLUME_TOLERANCE, WINDOW_OLDEST,
 };
 
 use document::Live;
@@ -269,7 +269,10 @@ impl SolidCraftWriter {
                 || feature.pointer("/hole/tip_angle").and_then(Value::as_str) == Some("180")
         });
         if uses_target {
-            format!("{summary}; target SolidCraft {}", self.resolved_version())
+            format!(
+                "{summary}; target SolidCraft {}",
+                self.resolved_version().minor()
+            )
         } else {
             summary
         }

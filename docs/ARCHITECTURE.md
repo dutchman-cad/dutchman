@@ -112,13 +112,18 @@ The adapter pins format `solidcraft/23`, the first in which an Import may name a
 source. SolidCraft upgrades older formats on open and refuses newer ones, so a pinned older
 format provides the 0.18.2 compatibility floor. Feature mapping also respects the writer's
 target SolidCraft release: the found CLI's version capped at newest known, even with verification off, else
-`NEWEST_SOLIDCRAFT` (currently 0.27.0), unless an explicit target is supplied.
+`NEWEST_SOLIDCRAFT` (currently 0.27), unless an explicit target is supplied.
 `WINDOW_OLDEST` (currently 0.18.2) marks the oldest release in the rolling 14-day window;
 older targets down to the floor remain accepted with the existing feature gates. The
 CLI's `--solidcraft-version x.y.z` selects a target on `convert`, `convert-all`, and `watch`.
-Sketch-profile helical sweeps require a target of 0.25.1 or newer; older targets block them
+Sketch-profile helical sweeps require a target of 0.25 patch 1 or newer; older targets block them
 and preserve the original geometry. Entry-recess holes write an explicit flat tip for
-0.22.1 and newer targets, where SolidCraft applies their drill-point angle.
+0.22 patch 1 and newer targets, where SolidCraft applies their drill-point angle.
+
+SolidCraft status and presentation use major/minor pairs. `NEWEST_SOLIDCRAFT` is a pair;
+its internal writer default is minor.0. `SolidCraftVersion` keeps all three numbers so
+0.18.2, 0.22.1, and 0.25.1 gates still apply. CI resolves the latest stable patch of the
+newest minor using authenticated release metadata and verifies its release checksum.
 
 Checks: an end-to-end test converts a synthetic `.f3d` and compares the container layout and
 `document.json` with a golden file; a non-blocking CI job opens the result in a released
@@ -196,7 +201,7 @@ patterns of earlier features or named bodies, linear in one or
 two directions, circular over a partial span or all the way round, or at fixed spacing along
 planar sketch curves; regular explicit offsets and angles, and pairs of linear composite
 stages; ordered chains of feature-pattern stages containing mirrors (target SolidCraft
-0.25.1 or newer), each repeating the previous instance set (at most 32 stages), with at most
+0.25 patch 1 or newer), each repeating the previous instance set (at most 32 stages), with at most
 10,000 instances per pattern or chain;
 mirrors of earlier features across a
 plane; and body mirror patterns and body combines (join, cut or intersect, optionally keeping

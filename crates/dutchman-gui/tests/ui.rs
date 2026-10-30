@@ -227,10 +227,10 @@ fn screenshots() {
             .save(dir.join(format!("{name}-update-pill.png")))
             .unwrap();
         for (found, case, update, width) in [
-            (Some("0.27.0"), "current", false, 1120.0),
+            (Some("0.27.9"), "current", false, 1120.0),
             (Some("0.28.0"), "newer", false, 1120.0),
             (Some("0.28.0"), "newer-update", true, 1120.0),
-            (Some("0.18.1"), "too-old", false, 1120.0),
+            (Some("0.17.9"), "too-old", false, 1120.0),
             (Some("0.24.0"), "older-history", false, 1120.0),
             (None, "none-found", false, 1120.0),
             (Some("0.28.0"), "narrow", true, 760.0),
@@ -253,11 +253,18 @@ fn screenshots() {
             }
             preview.run();
             let label = if width < 850.0 {
-                found.unwrap_or("not found").to_owned()
+                found
+                    .and_then(dutchman_solidcraft::solidcraft_minor)
+                    .unwrap_or_else(|| "not found".into())
             } else {
                 found.map_or_else(
                     || "SolidCraft not found".into(),
-                    |v| format!("SolidCraft {v}"),
+                    |v| {
+                        format!(
+                            "SolidCraft {}",
+                            dutchman_solidcraft::solidcraft_minor(v).unwrap()
+                        )
+                    },
                 )
             };
             preview.get_by_label(&label).click();
@@ -269,7 +276,7 @@ fn screenshots() {
                     "too-old" => "is too old to open Dutchman's designs",
                     "older-history" => "A newer SolidCraft keeps more of their history.",
                     "none-found" => "SolidCraft not found. Install SolidCraft",
-                    _ => "SolidCraft 0.27.0 is installed.",
+                    _ => "SolidCraft 0.27 is installed.",
                 })
                 .is_some());
             preview
@@ -367,12 +374,12 @@ fn dropped_files_and_results_show_format_status_and_one_invitation() {
 fn solidcraft_status_panel_waits_for_a_click_and_shares_version_notices() {
     for (found, expected) in [
         (Some("0.28.0"), "is newer than this Dutchman knows"),
-        (Some("0.18.1"), "is too old to open Dutchman's designs"),
+        (Some("0.17.9"), "is too old to open Dutchman's designs"),
         (
             Some("0.24.0"),
             "A newer SolidCraft keeps more of their history.",
         ),
-        (Some("0.27.0"), "SolidCraft 0.27.0 is installed."),
+        (Some("0.27.0"), "SolidCraft 0.27 is installed."),
         (None, "SolidCraft not found. Install SolidCraft"),
     ] {
         let mut harness = Harness::builder()
@@ -383,12 +390,17 @@ fn solidcraft_status_panel_waits_for_a_click_and_shares_version_notices() {
         assert!(harness.query_by_label("SolidCraft version").is_none());
         let label = found.map_or_else(
             || "SolidCraft not found".into(),
-            |v| format!("SolidCraft {v}"),
+            |v| {
+                format!(
+                    "SolidCraft {}",
+                    dutchman_solidcraft::solidcraft_minor(v).unwrap()
+                )
+            },
         );
         harness.get_by_label(&label).click();
         harness.run();
         assert!(harness.query_by_label_contains(expected).is_some());
-        if found.is_none() || found == Some("0.18.1") {
+        if found.is_none() || found == Some("0.17.9") {
             assert!(harness.query_by_label("Download SolidCraft").is_some());
         }
     }

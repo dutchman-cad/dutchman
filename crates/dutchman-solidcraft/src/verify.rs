@@ -86,8 +86,8 @@ pub fn find_cli(verification: &Verification) -> Result<PathBuf, String> {
 /// The oldest accepted SolidCraft target, retained for simplified output.
 pub const OLDEST_SOLIDCRAFT: [u64; 3] = [0, 18, 2];
 
-/// The newest release known at build time; update with the release checklist.
-pub const NEWEST_SOLIDCRAFT: [u64; 3] = [0, 27, 0];
+/// The newest minor known at build time. Patch releases need no constant update.
+pub const NEWEST_SOLIDCRAFT: [u64; 2] = [0, 27];
 
 /// The oldest SolidCraft release published in the 14 days before the tag, never below
 /// OLDEST_SOLIDCRAFT. Update alongside NEWEST_SOLIDCRAFT and the CI roundtrip pins at release time.
@@ -138,15 +138,24 @@ pub fn solidcraft_status(target: SolidCraftVersion, found: Option<&str>) -> &'st
     let Some(found) = found.and_then(parse_version) else {
         return "none_found";
     };
+    let [major, minor, _] = found;
+    let found = [major, minor];
+    let [old_major, old_minor, _] = OLDEST_SOLIDCRAFT;
     if found > NEWEST_SOLIDCRAFT {
         "newer"
-    } else if found < OLDEST_SOLIDCRAFT {
+    } else if found < [old_major, old_minor] {
         "too_old"
     } else if found < NEWEST_SOLIDCRAFT && target_loses_history(target) {
         "older_loses_history"
     } else {
         "current"
     }
+}
+
+/// A discovered version's minor, including releases below the writer's target floor.
+pub fn solidcraft_minor(line: &str) -> Option<String> {
+    let [major, minor, _] = parse_version(line)?;
+    Some(format!("{major}.{minor}"))
 }
 
 /// An accepted SolidCraft target release.
@@ -160,6 +169,12 @@ impl SolidCraftVersion {
     /// First release with sketch-profile coils.
     pub const V0_25_1: Self = Self([0, 25, 1]);
 
+    /// The minor used in presentation; patch-sensitive writer gates keep the full version.
+    pub fn minor(self) -> String {
+        let Self([major, minor, _]) = self;
+        format!("{major}.{minor}")
+    }
+
     /// The found CLI's release capped at newest known (even with verification off), else newest.
     pub fn detected(verification: &Verification) -> Self {
         let detection = match verification {
@@ -169,14 +184,15 @@ impl SolidCraftVersion {
         solidcraft_version(detection)
             .and_then(|line| parse_version(&line))
             .filter(|version| *version >= OLDEST_SOLIDCRAFT)
-            .map(|version| Self(version.min(NEWEST_SOLIDCRAFT)))
+            .map(|version| Self(version).min(Self::default()))
             .unwrap_or_default()
     }
 }
 
 impl Default for SolidCraftVersion {
     fn default() -> Self {
-        Self(NEWEST_SOLIDCRAFT)
+        let [major, minor] = NEWEST_SOLIDCRAFT;
+        Self([major, minor, 0])
     }
 }
 
@@ -208,7 +224,8 @@ impl std::str::FromStr for SolidCraftVersion {
         }
         if version < OLDEST_SOLIDCRAFT {
             return Err(
-                "target needs SolidCraft 0.18.2 or newer; choose a supported version".to_owned(),
+                "target needs SolidCraft 0.18 patch 2 or newer; choose a supported version"
+                    .to_owned(),
             );
         }
         Ok(Self(version))
@@ -245,7 +262,7 @@ pub fn usable_cli(verification: &Verification) -> Result<PathBuf, NoCli> {
         Some(version) if version < OLDEST_SOLIDCRAFT => {
             let [major, minor, patch] = OLDEST_SOLIDCRAFT;
             Err(NoCli::TooOld(format!(
-                "{line} at {} is older than SolidCraft {major}.{minor}.{patch}, the oldest that \
+                "{line} at {} is older than SolidCraft {major}.{minor} patch {patch}, the oldest that \
                  opens and checks Dutchman's designs; install a newer SolidCraft",
                 cli.display()
             )))
@@ -1797,11 +1814,12 @@ mod cli_tests {
     #[test]
     fn target_window_bounds_and_default_are_consistent() {
         assert!(OLDEST_SOLIDCRAFT <= WINDOW_OLDEST);
-        assert!(WINDOW_OLDEST <= NEWEST_SOLIDCRAFT);
-        assert!(OLDEST_SOLIDCRAFT <= NEWEST_SOLIDCRAFT);
+        assert!(SolidCraftVersion(WINDOW_OLDEST) <= SolidCraftVersion::default());
+        assert!(SolidCraftVersion(OLDEST_SOLIDCRAFT) <= SolidCraftVersion::default());
+        let [major, minor] = NEWEST_SOLIDCRAFT;
         assert_eq!(
             SolidCraftVersion::default(),
-            SolidCraftVersion(NEWEST_SOLIDCRAFT)
+            SolidCraftVersion([major, minor, 0])
         );
     }
 
@@ -1820,8 +1838,8 @@ mod cli_tests {
             std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
             let verification = Verification::With(cli);
             let expected = version
-                .parse()
-                .unwrap_or(SolidCraftVersion(NEWEST_SOLIDCRAFT))
+                .parse::<SolidCraftVersion>()
+                .unwrap_or_default()
                 .min(SolidCraftVersion::default());
             assert_eq!(SolidCraftVersion::detected(&verification), expected);
             assert_eq!(
@@ -1872,7 +1890,7 @@ mod cli_tests {
             Err(NoCli::TooOld(why)) => assert!(
                 why.starts_with("solidcraft-cli 0.17.0 at ")
                     && why.ends_with(
-                        "is older than SolidCraft 0.18.2, the oldest that opens \
+                        "is older than SolidCraft 0.18 patch 2, the oldest that opens \
                                       and checks Dutchman's designs; install a newer SolidCraft"
                     ),
                 "{why}"
@@ -1917,5 +1935,38 @@ mod cli_tests {
             shown(&eval(&[1000.0, -2629.0], &[open]), Expected::default()),
             Shown::Short(_)
         ));
+    }
+}
+
+#[cfg(test)]
+mod version_tests {
+    use super::*;
+
+    #[test]
+    fn minor_status_preserves_patch_sensitive_writer_rules() {
+        for (found, status) in [
+            ("0.27.0", "current"),
+            ("0.27.9", "current"),
+            ("0.28.0", "newer"),
+            ("0.17.99", "too_old"),
+        ] {
+            assert_eq!(
+                solidcraft_status(SolidCraftVersion::default(), Some(found)),
+                status
+            );
+        }
+        let before: SolidCraftVersion = "0.25.0".parse().unwrap();
+        let after: SolidCraftVersion = "0.25.1".parse().unwrap();
+        assert_eq!(before.minor(), after.minor());
+        assert!(target_loses_history(before));
+        assert!(!target_loses_history(after));
+        assert!(!VersionGate::EntryRecessTip.supported("0.22.0".parse().unwrap()));
+        assert!(VersionGate::EntryRecessTip.supported(SolidCraftVersion::V0_22_1));
+        assert!("0.18.1".parse::<SolidCraftVersion>().is_err());
+        assert!("0.18.2".parse::<SolidCraftVersion>().is_ok());
+        assert_ne!(
+            solidcraft_status(SolidCraftVersion::default(), Some("0.18.1")),
+            "too_old"
+        );
     }
 }
