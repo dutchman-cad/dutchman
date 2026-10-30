@@ -16,6 +16,17 @@ pin is bumped.
 | Parameters, planar sketches with typed and native constraints. | Mapped; native constraints are reported as not carried. |
 | Typed extrudes, revolves, fillets, chamfers and more, with selections often native. | Extrudes, revolves, lofts, sweeps, spheres, tori and coils map (see ARCHITECTURE.md for the cases); boxes and cylinder primitives wait on cadmpeg placing them; simple, counterbore and countersink holes drilled at a sketch's points map; constant-radius fillets and equal-setback chamfers map from proven feature input edge geometry, matched on SolidCraft's own replay of the history before them (a fillet with a tangency weight of exactly 1 maps as a circular fillet, with an Info note; any other weight is refused); other blends and holes placed on unresolved faces wait on input geometry (see guide.md). |
 
+Fusion stores consumed Combine tools (with keep-tools off) and bodies removed by the
+timeline alongside its live bodies. For `.f3d`, designs inside `.f3z`, and component parts,
+Dutchman leaves out bodies cadmpeg marks hidden only when no CADIR product definition lists
+them in its `bodies`. Their exclusive geometry is left out too, with one Info note giving
+the count and reason. History remains available; a reference that can no longer map is
+reported as a history blocker.
+
+User-hidden bodies that still belong to a component are kept, with an Info note. Hidden
+occurrences remain hidden; the current writer shows a part with both shown and hidden bodies
+whole, so its hidden members can appear visible in SolidCraft.
+
 When every active feature using a sketch selects explicit whole-loop regions, unused lines
 crossing selected whole circles are kept as construction geometry. This preserves
 layout lines through hole centres without splitting the circular holes during replay. If

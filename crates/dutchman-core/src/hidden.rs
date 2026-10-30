@@ -1,4 +1,5 @@
-//! Bodies a design keeps hidden. A FreeCAD document stores the shape of every step of a
+//! Bodies a design keeps hidden. Fusion keeps unowned consumed or removed bodies; owned
+//! hidden bodies remain parts of the design. A FreeCAD document stores the shape of every step of a
 //! PartDesign Body (each Pad and Pocket result, its tool shapes) beside the Body's own shape,
 //! and shows only the last; cadmpeg marks the others `visible: false`. They are not parts of
 //! the design, so they are left out rather than converted as bodies of their own.
@@ -10,7 +11,7 @@ use serde_json::Value;
 use crate::assembly::strings;
 #[cfg(test)]
 use crate::assembly::NOT_GEOMETRY;
-use crate::Model;
+use crate::{Model, Report, Severity};
 
 /// The arenas a body's B-rep is made of. Only rows of these that hidden bodies alone reach are
 /// left out: a sketch, a feature or anything else a hidden body names (a sketch's own wire
@@ -33,28 +34,81 @@ const BREP: [&str; 15] = [
     "tessellations",
 ];
 
+/// Fusion keeps consumed tools and removed bodies outside every component's body list.
+/// User-hidden component members remain available, even when their visibility cannot be
+/// represented separately by a writer's single geometry import.
+pub(crate) fn fusion(model: Model, report: &mut Report) -> Model {
+    let owned: BTreeSet<_> = model
+        .ir
+        .model
+        .product_definitions
+        .iter()
+        .flat_map(|definition| definition.bodies.iter().map(|body| body.as_str()))
+        .collect();
+    let hidden = model
+        .ir
+        .model
+        .bodies
+        .iter()
+        .filter(|body| body.visible == Some(false) && owned.contains(body.id.as_str()))
+        .count();
+    if hidden > 0 {
+        report.push(Severity::Info, "bodies", format!(
+            "{hidden} user-hidden Fusion bodies were kept; parts with both shown and hidden bodies are shown whole"
+        ));
+    }
+    match filtered(&model, true) {
+        Ok(Some((shown, count))) => {
+            report.push(Severity::Info, "bodies", format!(
+                "{count} bodies Fusion keeps only as consumed tools or removed bodies were not converted"
+            ));
+            shown
+        }
+        Ok(None) => model,
+        Err(why) => {
+            report.push(
+                Severity::Degraded,
+                "bodies",
+                format!("consumed or removed Fusion bodies converted too, as {why}"),
+            );
+            model
+        }
+    }
+}
+
 /// `model` without its hidden bodies and the geometry only they reach, with how many were
 /// left out; `None` when visibility is unchanged, or nothing but hidden bodies remain
 /// (then it converts as stored). Ancestor visibility is propagated to occurrences; history,
 /// structure and parameters are kept.
 pub(crate) fn shown(model: &Model) -> Result<Option<(Model, usize)>, String> {
+    filtered(model, false)
+}
+
+fn filtered(model: &Model, fusion: bool) -> Result<Option<(Model, usize)>, String> {
     let bodies = &model.ir.model.bodies;
     let mut document = serde_json::to_value(&model.ir).map_err(|err| err.to_string())?;
     // FreeCAD hides what a hidden container holds. Other formats say each body's and each
     // occurrence's own visibility, and the assembly writer keeps hidden occurrences hidden.
     let freecad = document.pointer("/native/fcstd").is_some();
     let visibility_changed = freecad && propagate_visibility(&mut document);
-    let hidden_ids = if freecad {
+    let owned: BTreeSet<&str> = listed(document.pointer("/model/product_definitions"))
+        .iter()
+        .flat_map(|definition| listed(definition.get("bodies")))
+        .filter_map(Value::as_str)
+        .collect();
+    let hidden_ids = if freecad && !fusion {
         hidden_bodies(&document)
     } else {
         listed(document.pointer("/model/bodies"))
             .iter()
             .filter(|body| body.get("visible").and_then(Value::as_bool) == Some(false))
-            .filter_map(|body| body.get("id").and_then(Value::as_str).map(str::to_owned))
+            .filter_map(|body| body.get("id").and_then(Value::as_str))
+            .filter(|id| !fusion || !owned.contains(id))
+            .map(str::to_owned)
             .collect()
     };
     let hidden = hidden_ids.len();
-    if (hidden == 0 && !visibility_changed) || hidden == bodies.len() {
+    if (hidden == 0 && !visibility_changed) || (!fusion && hidden == bodies.len()) {
         return Ok(None);
     }
     let wire = document
@@ -447,6 +501,135 @@ mod tests {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
             ..part
         }
+    }
+
+    /// Synthetic final box and a stored cylinder tool, with a cut referring to that tool.
+    fn fusion_cut() -> Model {
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/synthetic_cube.ipt");
+        let mut model =
+            crate::read(Format::InventorPart, &fixture, &mut Report::default()).unwrap();
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let m = &mut wire["model"];
+        let id = |arena: &str, key: usize| format!("test:tool:{arena}#{key}");
+        let point = |z: f64| json!({"x": 5.0, "y": 5.0, "z": z});
+        let axis = json!({"x": 0.0, "y": 0.0, "z": 1.0});
+        let reference = json!({"x": 1.0, "y": 0.0, "z": 0.0});
+        for (i, z) in [0.0, 10.0].into_iter().enumerate() {
+            m["points"].as_array_mut().unwrap().push(json!({
+                "id": id("point", i), "position": {"x": 7.0, "y": 5.0, "z": z}}));
+            m["vertices"].as_array_mut().unwrap().push(json!({
+                "id": id("vertex", i), "point": id("point", i)}));
+            m["curves"].as_array_mut().unwrap().push(json!({
+                "id": id("curve", i), "geometry": {"kind": "circle", "center": point(z),
+                    "axis": axis, "ref_direction": reference, "radius": 2.0}}));
+            m["edges"].as_array_mut().unwrap().push(json!({
+                "id": id("edge", i), "start": id("vertex", i), "end": id("vertex", i),
+                "carrier": {"curve": id("curve", i), "param_range": [0.0, std::f64::consts::TAU]}}));
+            m["surfaces"].as_array_mut().unwrap().push(json!({
+                "id": id("surface", i), "geometry": {"kind": "plane", "origin": point(z),
+                    "normal": axis, "u_axis": reference}}));
+            for (key, face, forward) in [(i, i, i == 1), (i + 2, 2, i == 0)] {
+                m["coedges"].as_array_mut().unwrap().push(json!({
+                    "id": id("coedge", key), "owner_loop": id("loop", key),
+                    "edge": id("edge", i), "radial_next": id("coedge", if key < 2 {key + 2} else {key - 2}),
+                    "sense": if forward {"forward"} else {"reversed"}, "pcurves": []}));
+                m["loops"].as_array_mut().unwrap().push(json!({
+                    "id": id("loop", key), "face": id("face", face),
+                    "boundary": {"kind": "ring", "coedges": [id("coedge", key)]}}));
+            }
+        }
+        m["surfaces"].as_array_mut().unwrap().push(json!({
+            "id": id("surface", 2), "geometry": {"kind": "cylinder", "origin": point(0.0),
+                "axis": axis, "ref_direction": reference, "radius": 2.0}}));
+        for i in 0..3 {
+            m["faces"].as_array_mut().unwrap().push(json!({
+                "id": id("face", i), "shell": id("shell", 0), "surface": id("surface", i),
+                "sense": if i == 0 {"reversed"} else {"forward"},
+                "loops": {"classification": "unspecified", "loops": if i == 2 {
+                    vec![id("loop", 2), id("loop", 3)]
+                } else {vec![id("loop", i)]}}}));
+        }
+        m["shells"].as_array_mut().unwrap().push(json!({
+            "id": id("shell", 0), "region": id("region", 0),
+            "members": [{"kind": "face", "id": id("face", 0)}, {"kind": "face", "id": id("face", 1)}, {"kind": "face", "id": id("face", 2)}]}));
+        m["regions"].as_array_mut().unwrap().push(json!({
+            "id": id("region", 0), "body": id("body", 0), "shells": [id("shell", 0)]}));
+        m["bodies"].as_array_mut().unwrap().push(json!({
+            "id": id("body", 0), "kind": "solid", "regions": [id("region", 0)], "visible": false}));
+        let target = m["bodies"][0]["id"].clone();
+        m["product_definitions"] =
+            json!([{"id": "test:model:component#box", "kind": "part", "bodies": [target]}]);
+        m["features"] = json!([{"id": "test:model:feature#cut", "ordinal": 0, "suppressed": false,
+            "outputs": [target], "definition": {"definition": "combine", "op": "cut", "keep_tools": false,
+                "operands": {"target": {"kind": "bodies", "value": [target]},
+                    "tools": {"kind": "bodies", "value": [id("body", 0)]}}}}]);
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model
+    }
+
+    #[test]
+    fn fusion_consumed_tools_leave_one_body_and_one_info_note() {
+        let model = fusion_cut();
+        let mut report = Report::default();
+        let kept = fusion(model, &mut report);
+        assert_eq!(kept.ir.model.bodies.len(), 1);
+        assert_eq!(kept.ir.model.faces.len(), 6);
+        assert_eq!(kept.ir.model.features.len(), 1);
+        assert_eq!(report.losses().len(), 1);
+        assert_eq!(report.losses()[0].severity, Severity::Info);
+        assert_eq!(
+            report.losses()[0].detail,
+            "1 bodies Fusion keeps only as consumed tools or removed bodies were not converted"
+        );
+        assert!(kept.source_step.is_none());
+    }
+
+    #[test]
+    fn fusion_user_hidden_component_members_are_kept() {
+        let mut model = fusion_cut();
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let tool = wire["model"]["bodies"][1]["id"].clone();
+        wire["model"]["product_definitions"][0]["bodies"]
+            .as_array_mut()
+            .unwrap()
+            .push(tool);
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let mut report = Report::default();
+        let kept = fusion(model, &mut report);
+        assert_eq!(kept.ir.model.bodies.len(), 2);
+        assert_eq!(kept.ir.model.faces.len(), 9);
+        assert_eq!(report.losses().len(), 1);
+        assert_eq!(report.losses()[0].severity, Severity::Info);
+        assert!(report.losses()[0].detail.contains("user-hidden"));
+    }
+
+    #[test]
+    fn fusion_hidden_bodies_owned_by_placed_assembly_parts_are_kept() {
+        let mut model = fusion_cut();
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let tool = wire["model"]["bodies"][1]["id"].clone();
+        wire["model"]["product_definitions"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+            "id": "test:model:component#tool", "kind": "part", "bodies": [tool]}));
+        wire["model"]["occurrences"] = json!([{
+            "id": "test:model:occurrence#tool", "ordinal": 0,
+            "prototype": {"scope": "local", "definition": "test:model:component#tool"},
+            "parent": {"kind": "root"}, "transform": crate::placement::IDENTITY,
+            "scale": [1, 1, 1], "visible": false}]);
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let mut report = Report::default();
+        let kept = fusion(model, &mut report);
+        assert_eq!(kept.ir.model.bodies.len(), 2);
+        assert_eq!(kept.ir.model.occurrences.len(), 1);
+        assert!(report
+            .losses()
+            .iter()
+            .all(|loss| !loss.detail.contains("not converted")));
+        // Component membership is protected even when the occurrence itself is hidden.
+        assert_eq!(kept.ir.model.product_definitions.len(), 2);
     }
 
     #[test]

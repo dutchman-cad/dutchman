@@ -225,6 +225,9 @@ fn decode_file(
     }
     let model = decode::decode_with_progress(format, input, &bytes, report, progress)?;
     names::saw_model(&model, report);
+    if matches!(format, Format::FusionArchive | Format::FusionMultiDocument) {
+        return Ok(hidden::fusion(model, report));
+    }
     if format != Format::FreeCadDocument {
         return Ok(model);
     }

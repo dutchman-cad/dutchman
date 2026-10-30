@@ -25,6 +25,11 @@ to lose: the report says, at Info level, “This part holds an imported solid; t
 feature history to bring over”. A part made only of stored geometry is geometry without
 history, with no flattened-history warning.
 
+Fusion consumed tools and removed bodies are omitted only when cadmpeg marks them hidden
+and no component owns them, with an Info `bodies` note giving the count. User-hidden
+component members stay available; mixed shown/hidden parts are shown whole, with an Info
+note. See [Fusion visibility](fusion.md#parts-and-history).
+
 Sheet-metal history follows the same mapping limits in the [guide](guide.md) as the CLI:
 base flanges and full-edge flanges on unchanged rectangular base sheets map when their own
 input-edge geometry proves each pick. Unsupported flange dimensions or selections, and hems,
