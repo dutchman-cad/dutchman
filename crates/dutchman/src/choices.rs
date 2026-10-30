@@ -193,29 +193,30 @@ struct Coefficients {
 }
 
 // Calibrated on: release builds converting a 350-occurrence Fusion printer frame (74 MB of
-// nested archive content), a 33-placement Fusion assembly (259 MB), a 168 MB Fusion archive
-// (859 MB, over 24 GB with history), Fusion and Inventor recipe parts and SolidWorks parts of
-// 0.3 to 6.4 MB, each with history off and on. Peak memory with history is about 40 bytes per
-// byte of nested Fusion content and 140 bytes per byte of SolidWorks file. Formats without
-// measurements keep a conservative guess and a band of 100 %.
+// nested archive content), a 33-placement Fusion assembly (259 MB), a 60 MB single Fusion design
+// of 202 MB content with 1,500 parts, a 168 MB Fusion archive (859 MB, over 24 GB with history),
+// Fusion and Inventor recipe parts and SolidWorks parts of 0.3 to 6.4 MB, each with history off
+// and on, on Linux and Windows, with the default parallel part workers. Peak memory is about 52
+// bytes per byte of Fusion design content (57 with history) and 140 per byte of SolidWorks
+// file. Formats without measurements keep a conservative guess and a band of 100 %.
 // All format-dependent coefficients, including history factors and bands, live in this table.
 const COEFFICIENTS: &[Coefficients] = &[
     Coefficients {
         format: Format::FusionArchive,
         base_bytes: 33_000_000,
-        bytes_per_byte: 27.0,
+        bytes_per_byte: 52.0,
         base_seconds: 0.2,
-        seconds_per_mib: 1.0,
-        history_factor: 1.5,
+        seconds_per_mib: 1.4,
+        history_factor: 1.1,
         band: 0.6,
     },
     Coefficients {
         format: Format::FusionMultiDocument,
         base_bytes: 33_000_000,
-        bytes_per_byte: 27.0,
+        bytes_per_byte: 52.0,
         base_seconds: 0.2,
-        seconds_per_mib: 1.0,
-        history_factor: 1.5,
+        seconds_per_mib: 1.4,
+        history_factor: 1.1,
         band: 0.6,
     },
     Coefficients {
