@@ -137,6 +137,21 @@ flat spirals are not supported yet: SolidCraft's sketch-profile coil has no cone
 radial growth. Replay verification still applies, including fallback when a profile or
 Boolean operation cannot rebuild.
 
+## Periodic sketch B-splines
+
+Uniform periodic (closed) sketch B-splines map exactly when CADIR supplies the full knot
+vector and its corresponding poles. Dutchman inserts endpoint knots to clamp the active
+parameter interval without changing the curve, and shares the seam point in SolidCraft.
+Equal-weight rational splines map the same way. Unequal weights and nonuniform or repeated
+interior knots are refused specifically because SolidCraft control splines store neither
+weights nor custom knots.
+
+The CC0 FreeCAD 1.1.4 recipe fixtures N04a and N04b currently stop before this mapping:
+cadmpeg's sketch reader passes FreeCAD's compact periodic knots and poles directly to CADIR,
+which requires a full knot vector. Native periodic sketch decoding needs normalization in
+cadmpeg; Dutchman does not decode or repair native spline data. Synthetic CADIR tests cover
+the mapping and a closed-profile extrusion in SolidCraft independently of that reader gap.
+
 ## Building with FreeCAD
 
 FreeCAD support is the `freecad` cargo feature of `dutchman` and `dutchman-gui`, on by

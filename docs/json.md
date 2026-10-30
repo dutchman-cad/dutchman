@@ -357,6 +357,12 @@ Signed horizontal and vertical sketch distances that map to positive magnitudes 
 their constraints and expression dependencies without a constraint-loss message. Report
 fields and verification statuses are unchanged.
 
+Periodic sketch B-splines use the existing feature status and reason fields. Uniform curves
+(including equal-weight rational curves) map by exact endpoint knot insertion. A periodic
+curve with unequal weights is blocked with `weighted periodic splines are not supported yet:
+SolidCraft control splines have no weights`; nonuniform or repeated interior knots name
+SolidCraft's missing custom knots. No report fields or schema versions change.
+
 Sketch constraint losses keep the existing report fields and schema. Their `message`
 counts source constraints, for example `2 of 2 constraints not carried (angle difference:
 solver scalar identities have no sketch entity binding, scalar equality: solver scalar

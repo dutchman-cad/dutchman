@@ -15,6 +15,7 @@ State as of the cadmpeg commit Dutchman pins (see `Cargo.toml`).
 | No geometry (empty or invalid carrier: blocking `geometry_not_transferred`). | Stops: "no geometry could be read". |
 | Parameters (closed scalar graphs). | Mapped to SolidCraft parameters. |
 | Planar sketches: points, lines, circles, ellipses, with typed and native constraints. | Mapped, ellipses as whole ellipses; typed constraints mapped, native ones reported as not carried. |
+| Uniform periodic (closed) sketch B-splines, with a full knot vector and polynomial or equal-weight poles. | Mapped exactly by endpoint knot insertion into a clamped SolidCraft control spline. Unequal weights and nonuniform or repeated interior knots are refused specifically: SolidCraft control splines store neither weights nor custom knots. |
 | Extrude, hole, constant-radius fillet, equal-distance chamfer, when every property, dimension and selection resolves. | Extrude: mapped when cadmpeg resolves its profile to sketch profiles or regions, blind or through all; an extrude to a face or to the next face is not mapped yet. Holes map where their placement resolves, drilled the way the hole points; constant-radius fillets and equal-setback chamfers map with proven feature input edge geometry (see guide.md). |
 | Mirror of features about a work plane. | Mapped as a SolidCraft mirror pattern of those features about that plane. |
 | Rectangular pattern of features with fixed spacing, in one or two directions. | Mapped as a SolidCraft rectangular pattern of those features. |

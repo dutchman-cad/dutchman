@@ -297,9 +297,12 @@ editability: the solved geometry remains exact. Coordinate, intersection, coradi
 endpoint tangency, curvature, point symmetry, regular polygon, and repeated dimensions can
 now carry across. Static patterns keep point and radius associations, but driving count
 or span parameters still need a loss. Bounded parabolas and hyperbolas, elliptical arcs
-up to one turn, rational quadratic Béziers, and equal-weight rational splines map; selected
-multi-piece elliptical arcs, unbounded conics, other weighted/nonuniform splines, and text without
-solved outlines still prevent the sketch's history from mapping.
+up to one turn, rational quadratic Béziers, equal-weight rational splines, and uniform
+periodic splines map. Periodic splines are clamped exactly by endpoint knot insertion;
+unequal weights or nonuniform/repeated interior knots name the weights or custom knots
+SolidCraft control splines cannot store. FreeCAD compact periodic sketch knots currently
+need normalization in cadmpeg before reaching the mapper. Selected multi-piece elliptical
+arcs, unbounded conics, other weighted/nonuniform splines, and text without solved outlines still prevent the sketch's history from mapping.
 
 FreeCAD numeric spreadsheet cells and supported formulas can remain editable parameters.
 Qualified object properties bind through decoded parameter identities; renaming preserves

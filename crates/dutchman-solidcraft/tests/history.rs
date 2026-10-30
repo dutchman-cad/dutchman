@@ -4696,6 +4696,100 @@ fn a_face_colour_becomes_a_face_look_on_that_face() {
 }
 
 #[test]
+fn freecad_periodic_spline_recipes_name_the_decoder_knot_gap() {
+    // Keep the native repros explicit until cadmpeg normalizes compact periodic sketches.
+    // Once that reader gap closes, promote these to full conversion/replay checks.
+    for name in ["N04a.FCStd", "N04b.FCStd"] {
+        let input = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../dutchman-core/tests/fixtures/freecad-1.1.4-N04")
+            .join(name);
+        let error = dutchman_core::read(
+            dutchman_core::Format::FreeCadDocument,
+            &input,
+            &mut Report::default(),
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("knots must contain 7 values, found 5"),
+            "{name}: {error}"
+        );
+    }
+}
+
+fn periodic_spline_profile(profile: Value) -> Model {
+    let mut model = cube_with_history(10.0, profile, None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["sketches"][0]["profiles"] = json!([[{"entity": "f3d:model:sketch-entity#1"}]]);
+    wire["model"]["sketch_constraints"] = json!([]);
+    wire["model"]["sketch_entities"] = json!([entity(
+        1,
+        json!({"kind": "nurbs", "curve": {"degree": 2, "periodic": true,
+            "knots": [-2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+            "poles": {"form": "polynomial", "points": [
+                {"u": -10.0, "v": -10.0}, {"u": 10.0, "v": -10.0},
+                {"u": 10.0, "v": 10.0}, {"u": -10.0, "v": 10.0},
+                {"u": -10.0, "v": -10.0}, {"u": 10.0, "v": -10.0}]}}})
+    )]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn periodic_spline_profiles_keep_editable_history_and_profile_selections() {
+    for profile in [whole_sketch(), first_profile()] {
+        let model = periodic_spline_profile(profile);
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert_eq!(report.outcome().unwrap().mode, Mode::History, "{report:?}");
+        let sketch = &document["features"][0]["sketch"];
+        let curve = &sketch["curves"][0];
+        assert_eq!(curve["type"], "spline");
+        assert_eq!(curve["degree"], 2);
+        assert_eq!(curve["control"], true);
+        let pts = curve["pts"].as_array().unwrap();
+        assert_eq!(pts.first(), pts.last());
+        assert_eq!(pts.len(), 6);
+        assert!(!history_line(&report).contains("not mapped"));
+    }
+}
+
+#[test]
+fn weighted_periodic_splines_name_solidcrafts_missing_weights() {
+    let mut model = periodic_spline_profile(whole_sketch());
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let curve = &mut wire["model"]["sketch_entities"][0]["geometry"]["curve"];
+    let points = curve["poles"]["points"].as_array().unwrap().clone();
+    curve["poles"] = json!({"form": "rational", "points": points.iter().enumerate()
+        .map(|(i, p)| json!({"point": p, "weight": if i % 4 == 0 { 2.0 } else { 1.0 }})).collect::<Vec<_>>()});
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_eq!(report.outcome().unwrap().mode, Mode::Import);
+    assert!(history_line(&report).contains("weighted periodic splines are not supported yet: SolidCraft control splines have no weights"), "{report:?}");
+}
+
+#[test]
+fn solidcraft_extrudes_a_closed_periodic_spline_profile() {
+    let Some(cli) = solidcraft() else { return };
+    for profile in [whole_sketch(), first_profile()] {
+        let model = periodic_spline_profile(profile);
+        let (bytes, report) = written(&model);
+        assert_eq!(report.outcome().unwrap().mode, Mode::History, "{report:?}");
+        let got = volumes(&cli, &bytes);
+        // A 20 mm square with four quadratic corners removes 4 × 10²/6 mm².
+        let expected = (400.0 - 400.0 / 6.0) * 10.0;
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert!((got[0] - expected).abs() / expected < 1e-3, "{got:?}");
+    }
+}
+
+#[test]
 fn solidcraft_extrudes_a_spline_profile() {
     let Some(cli) = solidcraft() else { return };
     let mut model = cube_with_history(10.0, whole_sketch(), None);
