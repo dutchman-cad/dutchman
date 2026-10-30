@@ -1842,6 +1842,20 @@ fn solidcraft_inherits_component_appearance_bindings_in_both_placements() {
         return;
     };
     for stored in [false, true] {
+        // From SolidCraft 0.26.0, OBJ export writes body colours to a material file and the
+        // appearance list names only faces that override their body. Older releases open the
+        // same coloured design and list every face with its effective colour.
+        let current_listing = dutchman_solidcraft::solidcraft_version(
+            &dutchman_solidcraft::Verification::With(cli.clone()),
+        )
+        .and_then(|line| {
+            line.split_whitespace()
+                .last()?
+                .trim_start_matches('v')
+                .parse::<dutchman_solidcraft::SolidCraftVersion>()
+                .ok()
+        })
+        .is_some_and(|version| version >= "0.26.0".parse().unwrap());
         for mode in [
             "uniform",
             "mixed",
@@ -1885,7 +1899,7 @@ fn solidcraft_inherits_component_appearance_bindings_in_both_placements() {
                 .unwrap();
             assert!(status.success());
             let results: Value = serde_json::from_slice(&std::fs::read(output).unwrap()).unwrap();
-            if mode != "mixed" {
+            if mode != "mixed" && current_listing {
                 let materials = std::fs::read_to_string(dir.path().join("pair.mtl")).unwrap();
                 assert_eq!(
                     materials
@@ -1923,15 +1937,17 @@ fn solidcraft_inherits_component_appearance_bindings_in_both_placements() {
                             < 1e-6,
                         "{results}"
                     );
-                    assert_eq!(
-                        result["body"]["faces"].as_array().unwrap().len(),
-                        match mode {
-                            "body_face" => 1,
-                            "body_uniform_faces" => 6,
-                            _ => 0,
-                        },
-                        "{results}"
-                    );
+                    if current_listing {
+                        assert_eq!(
+                            result["body"]["faces"].as_array().unwrap().len(),
+                            match mode {
+                                "body_face" => 1,
+                                "body_uniform_faces" => 6,
+                                _ => 0,
+                            },
+                            "{results}"
+                        );
+                    }
                 }
             }
         }
