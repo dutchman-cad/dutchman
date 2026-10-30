@@ -74,6 +74,11 @@ pub trait Writer {
     /// The file extension this writer produces, without the dot.
     fn extension(&self) -> &'static str;
 
+    /// Whether this writer accepts an output suffix, including legacy names.
+    fn accepts_extension(&self, extension: &str) -> bool {
+        extension.eq_ignore_ascii_case(self.extension())
+    }
+
     /// Writes `model` to `out`, recording anything it drops in `report`.
     fn write(
         &self,
@@ -387,7 +392,7 @@ fn check_output(output: &Path, writer: &dyn Writer) -> Result<(), Error> {
     let matches = output
         .extension()
         .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| ext.eq_ignore_ascii_case(expected));
+        .is_some_and(|ext| writer.accepts_extension(ext));
     if matches {
         Ok(())
     } else {
