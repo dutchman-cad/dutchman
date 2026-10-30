@@ -2,7 +2,7 @@
 //! expected to cost before the design is read.
 //!
 //! Presets: `Fast` keeps the shape only; `Standard` (the default) keeps feature history,
-//! sketches and joints, but leaves an assembly's feature history out when the estimate says
+//! sketches and joints, but leaves feature history out when the estimate says
 //! it would not fit in the memory this machine has free, and says so; `Full` keeps everything.
 //! Per-choice switches (`--no-history`, `--no-sketches`, `--no-joints`) narrow any preset.
 
@@ -14,7 +14,7 @@ use std::path::Path;
 pub enum Preset {
     /// The shape only: one import, no feature history, sketches or joints. Least memory.
     Fast,
-    /// Feature history, sketches and joints, with an assembly's history left out (and the
+    /// Feature history, sketches and joints, with history left out (and the
     /// report saying so) when it would not fit in free memory.
     #[default]
     Standard,
@@ -51,7 +51,7 @@ pub struct Choices {
     pub sketches: bool,
     /// Assembly joints.
     pub joints: bool,
-    /// Standard only: leave an assembly's history out when it would not fit in free memory.
+    /// Standard only: leave history out when it would not fit in free memory.
     pub history_within_budget: bool,
 }
 
@@ -146,7 +146,7 @@ pub fn memory_check(input: &Path, options: &crate::ConvertOptions) -> MemoryChec
     memory_check_with(input, options, available)
 }
 
-fn memory_check_with(
+pub(crate) fn memory_check_with(
     input: &Path,
     options: &crate::ConvertOptions,
     available: Option<u64>,
@@ -162,7 +162,7 @@ fn memory_check_with(
     if full.peak_bytes <= available {
         return MemoryCheck::Ok(estimate);
     }
-    if choices.history && choices.history_within_budget && may_be_assembly(input) {
+    if choices.history && choices.history_within_budget {
         let reduced = estimate_without_history(input, choices);
         if reduced.is_some_and(|e| e.peak_bytes <= available) {
             return MemoryCheck::Ok(reduced);
@@ -178,23 +178,6 @@ fn memory_check_with(
 fn estimate_without_history(input: &Path, mut choices: Choices) -> Option<Estimate> {
     choices.history = false;
     estimate(input, &choices)
-}
-
-// Archive formats may hold an assembly. The writer confirms this after the normal decode.
-pub(crate) fn may_be_assembly(input: &Path) -> bool {
-    use dutchman_core::Format;
-    Format::from_path(input).is_some_and(|f| {
-        f.is_assembly()
-            || matches!(
-                f,
-                Format::FusionArchive
-                    | Format::FusionMultiDocument
-                    | Format::FreeCadDocument
-                    | Format::Step
-                    | Format::Rhino
-                    | Format::CreoView
-            )
-    })
 }
 
 struct Coefficients {
@@ -754,7 +737,7 @@ mod tests {
                         .peak_bytes
                 )
             ),
-            MemoryCheck::TooBig { .. }
+            MemoryCheck::Ok(_)
         ));
         options.preset = Preset::Full;
         assert!(matches!(

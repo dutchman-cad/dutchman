@@ -111,8 +111,8 @@ pub struct ConvertOptions {
     /// or partial TechDraw DXF pages (convert command only).
     #[arg(long, value_enum, default_value = "solidcraft")]
     pub to: OutputFormat,
-    /// What to keep: fast (the shape only), standard (history, sketches and joints, with an
-    /// assembly's history left out when it would not fit in free memory) or full.
+    /// What to keep: fast (the shape only), standard (history, sketches and joints, with
+    /// history left out when it would not fit in free memory) or full.
     #[arg(long, value_enum, default_value = "standard")]
     pub preset: choices::Preset,
     /// Leave feature history out; keep geometry and the preset's reference sketches.
@@ -252,20 +252,17 @@ impl ConvertOptions {
     }
 }
 
-/// A writer prepared with this input's estimate and Standard's assembly history budget.
+/// A writer with the history decision fixed before decoding.
 #[derive(Clone, Debug)]
 pub struct PreparedWriter {
-    full: OutputWriter,
-    reduced: OutputWriter,
-    options: ConvertOptions,
-    estimate: Option<choices::Estimate>,
-    reduced_estimate: Option<choices::Estimate>,
-    available: Option<u64>,
+    writer: OutputWriter,
+    history_note: Option<String>,
+    solidcraft: Option<Value>,
 }
 
 impl Writer for PreparedWriter {
     fn extension(&self) -> &'static str {
-        self.full.extension()
+        self.writer.extension()
     }
 
     fn write(
@@ -274,52 +271,55 @@ impl Writer for PreparedWriter {
         out: &mut dyn std::io::Write,
         report: &mut Report,
     ) -> Result<(), Error> {
-        if let (Some(estimate), Some(available)) = (self.estimate, self.available) {
-            if estimate.peak_bytes > available {
-                let choices = self.options.choices();
-                if choices.history
-                    && choices.history_within_budget
-                    && model.assembly.is_some()
-                    && self
-                        .reduced_estimate
-                        .is_some_and(|e| e.peak_bytes <= available)
-                {
-                    report.push(dutchman_core::Severity::Info, "history", format!(
-                        "feature history left out: this assembly needs about {:.1} GB with history and {:.1} GB are free; use the full preset to keep it",
-                        choices::gb(estimate.peak_bytes), choices::gb(available)
-                    ));
-                    return self.reduced.write(model, out, report);
-                }
-                let refusal = choices::MemoryCheck::TooBig {
-                    estimate,
-                    available,
-                    lighter: self.options.preset.lighter(),
-                };
-                return Err(Error::MemoryBudget(refusal.refusal().unwrap_or_default()));
-            }
+        if let Some(note) = &self.history_note {
+            report.push(dutchman_core::Severity::Info, "history", note.clone());
         }
-        self.full.write(model, out, report)
+        self.writer.write(model, out, report)
     }
 }
 
 impl ConvertOptions {
-    /// Prepare Standard's history budget for a known input. Front ends should use this
-    /// instead of `writer()` when the source path is available.
+    /// Prepare the history choice from the pre-read estimate, without decoding.
     pub fn writer_for_input(&self, input: &Path) -> PreparedWriter {
-        let mut reduced = self.clone();
-        reduced.import_only = true;
-        PreparedWriter {
-            full: self.output_writer(),
-            reduced: reduced.output_writer(),
-            options: self.clone(),
-            estimate: choices::estimate(input, &self.choices()),
-            reduced_estimate: choices::estimate(input, &reduced.choices()),
-            available: if self.no_memory_check || self.preset == choices::Preset::Fast {
-                None
-            } else {
-                choices::available_memory()
-            },
+        self.prepare_writer(input, choices::available_memory())
+    }
+
+    fn prepare_writer(&self, input: &Path, available: Option<u64>) -> PreparedWriter {
+        let mut options = self.clone();
+        let mut history_note = None;
+        if !self.no_memory_check && self.choices().history_within_budget && self.choices().history {
+            if let (Some(estimate), Some(available)) =
+                (choices::estimate(input, &self.choices()), available)
+            {
+                if estimate.peak_bytes > available {
+                    options.import_only = true;
+                    history_note = Some(format!(
+                        "feature history left out: this conversion needs about {:.1} GB with history and {:.1} GB are free; use the full preset to keep it",
+                        choices::gb(estimate.peak_bytes), choices::gb(available)
+                    ));
+                }
+            }
         }
+        let solidcraft = json::solidcraft_info(self);
+        if let Some(target) = solidcraft
+            .as_ref()
+            .and_then(|value| value.get("target"))
+            .and_then(Value::as_str)
+        {
+            options.solidcraft_version = target.parse().ok();
+        }
+        PreparedWriter {
+            writer: options.output_writer(),
+            history_note,
+            solidcraft,
+        }
+    }
+
+    fn preflight(&self, input: &Path, available: Option<u64>) -> Result<PreparedWriter, Value> {
+        if let Some(message) = choices::memory_check_with(input, self, available).refusal() {
+            return Err(json::memory_failure(json::CONVERT, input, self, &message));
+        }
+        Ok(self.prepare_writer(input, available))
     }
 }
 
@@ -358,22 +358,42 @@ pub(crate) fn convert_options_with_observer(
         );
     }
     diagnostics::run(input, options, on_progress, |callback, log| {
-        let check = choices::memory_check(input, options);
-        if let Some(message) = check.refusal() {
-            return json::memory_failure(json::CONVERT, input, options, &message);
-        }
-        let writer = options.writer_for_input(input);
+        let available = if options.no_memory_check || options.preset == choices::Preset::Fast {
+            None
+        } else {
+            choices::available_memory()
+        };
+        let prepared = options.preflight(input, available);
         let progress = dutchman_core::Progress::new(callback)
             .with_members(log.map(diagnostics::Log::observer).or(observer));
-        let mut report = match dutchman_core::convert_with_progress(
-            input, output, &writer, replace, search, &progress,
-        ) {
-            Ok(report) => convert_success(input, output, &report),
-            Err(err) => json::error(json::CONVERT, json::input(input), &err),
-        };
-        json::conversion_choices(&mut report, input, options);
-        report
+        convert_prepared(input, output, options, replace, search, &progress, prepared)
     })
+}
+
+fn convert_prepared(
+    input: &Path,
+    output: &Path,
+    options: &ConvertOptions,
+    replace: bool,
+    search: &PartSearch,
+    progress: &dutchman_core::Progress<'_>,
+    prepared: Result<PreparedWriter, Value>,
+) -> Value {
+    let writer = match prepared {
+        Ok(writer) => writer,
+        Err(report) => return report,
+    };
+    let mut report = match dutchman_core::convert_with_progress(
+        input, output, &writer, replace, search, progress,
+    ) {
+        Ok(report) => convert_success(input, output, &report),
+        Err(err) => json::error(json::CONVERT, json::input(input), &err),
+    };
+    if let (Some(solidcraft), Some(fields)) = (writer.solidcraft, report.as_object_mut()) {
+        fields.insert("solidcraft".to_owned(), solidcraft);
+    }
+    json::conversion_choices(&mut report, input, options);
+    report
 }
 
 /// Converts `input` into `output`, writing nothing else, and returns the `dutchman.convert/1`
@@ -576,51 +596,31 @@ mod option_tests {
     }
 
     #[test]
-    fn standard_drops_only_assembly_history_and_reports_the_exact_reason() {
+    fn standard_leaves_history_out_for_single_parts_before_decode() {
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../dutchman-core/tests/fixtures/synthetic_cube.ipt");
-        let part =
-            dutchman_core::read(Format::InventorPart, &fixture, &mut Report::default()).unwrap();
-        let mut model = part.clone();
-        model.assembly = Some(dutchman_core::Assembly {
-            own_part: None,
-            parts: vec![part.clone()],
-            placements: vec![dutchman_core::Placement {
-                part: 0,
-                name: None,
-                hidden: false,
-                transform: dutchman_core::placement::IDENTITY,
-            }],
-            joints: Vec::new(),
-            left_out: Vec::new(),
-            held: Vec::new(),
-            joint_notes: Vec::new(),
-            stored_placements: Vec::new(),
-        });
         let options = ConvertOptions {
             no_verify: true,
             ..Default::default()
         };
-        let mut reduced = options.clone();
-        reduced.import_only = true;
-        let mut writer = PreparedWriter {
-            full: options.writer(),
-            reduced: reduced.writer(),
-            options,
-            estimate: Some(choices::Estimate {
-                peak_bytes: 2_000_000_000,
-                seconds: 30,
-                band: 0.5,
-            }),
-            reduced_estimate: Some(choices::Estimate {
-                peak_bytes: 500_000_000,
-                seconds: 10,
-                band: 0.5,
-            }),
-            available: Some(1_000_000_000),
-        };
+        let mut reduced = options.choices();
+        reduced.history = false;
+        let available = choices::estimate(&fixture, &reduced).unwrap().peak_bytes;
+        let writer = options.preflight(&fixture, Some(available)).unwrap();
+        assert!(writer.history_note.is_some());
+        let fusion = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../dutchman-core/tests/fixtures/generated_unit_cube.f3d");
+        let fusion_available = choices::estimate(&fusion, &reduced).unwrap().peak_bytes;
+        assert!(options
+            .preflight(&fusion, Some(fusion_available))
+            .unwrap()
+            .history_note
+            .is_some());
+        let part =
+            dutchman_core::read(Format::InventorPart, &fixture, &mut Report::default()).unwrap();
+        assert!(part.assembly.is_none());
         let mut report = Report::default();
-        writer.write(&model, &mut Vec::new(), &mut report).unwrap();
+        writer.write(&part, &mut Vec::new(), &mut report).unwrap();
         let reasons: Vec<_> = report
             .losses()
             .iter()
@@ -630,18 +630,43 @@ mod option_tests {
             .collect();
         assert_eq!(reasons.len(), 1);
         assert_eq!(reasons[0].severity, dutchman_core::Severity::Info);
-        assert_eq!(reasons[0].detail, "feature history left out: this assembly needs about 2.0 GB with history and 1.0 GB are free; use the full preset to keep it");
         let mut json = convert_success(&fixture, Path::new("test.solidcraft"), &report);
-        json::conversion_choices(&mut json, &fixture, &writer.options);
+        json::conversion_choices(&mut json, &fixture, &options);
         assert_eq!(json["choices"]["history"], false);
-        assert!(matches!(
-            writer.write(&part, &mut Vec::new(), &mut Report::default()),
-            Err(Error::MemoryBudget(_))
-        ));
-        writer.options.preset = choices::Preset::Full;
-        assert!(matches!(
-            writer.write(&model, &mut Vec::new(), &mut Report::default()),
-            Err(Error::MemoryBudget(_))
-        ));
+    }
+
+    #[test]
+    fn memory_refusal_never_decodes_or_progresses_past_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("synthetic.ipt");
+        // Deliberately not a CAD file: reaching decode would give a different error.
+        std::fs::write(&input, b"synthetic").unwrap();
+        for preset in [choices::Preset::Standard, choices::Preset::Full] {
+            let options = ConvertOptions {
+                preset,
+                ..Default::default()
+            };
+            let events = std::sync::Mutex::new(Vec::new());
+            let callback = |event| events.lock().unwrap().push(event);
+            let progress = dutchman_core::Progress::new(&callback);
+            let output = dir.path().join("never-written.solidcraft");
+            let report = convert_prepared(
+                &input,
+                &output,
+                &options,
+                false,
+                &PartSearch::default(),
+                &progress,
+                options.preflight(&input, Some(0)),
+            );
+            assert_eq!(report["ok"], false);
+            assert_eq!(report["error"]["stage"], "input");
+            assert!(report["error"]["message"]
+                .as_str()
+                .unwrap()
+                .starts_with("this conversion needs about "));
+            assert!(events.lock().unwrap().is_empty());
+            assert!(!output.exists());
+        }
     }
 }

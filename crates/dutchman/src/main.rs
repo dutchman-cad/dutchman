@@ -604,6 +604,11 @@ fn convert(
             eprintln!("dutchman: cannot write {}: {err}", log.display());
         }
     }
+    if !as_json {
+        if let Some(line) = json::solidcraft_line(&report) {
+            println!("{line}");
+        }
+    }
     if as_json {
         print_json(&report);
     } else if let Some(message) = report.pointer("/error/message").and_then(Value::as_str) {

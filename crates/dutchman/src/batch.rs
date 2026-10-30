@@ -274,6 +274,10 @@ pub fn text(report: &Value, verbose: bool) -> String {
             out.push_str(&status);
             out.push('\n');
         }
+        if let Some(version) = report::solidcraft_line(result) {
+            out.push_str(&version);
+            out.push('\n');
+        }
         out.push_str(&line(result));
         out.push('\n');
         for line in report::completeness_lines(result) {
