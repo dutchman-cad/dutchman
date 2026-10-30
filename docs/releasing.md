@@ -2,19 +2,23 @@
 
 A release is cut from `main` once CI is green there.
 
-1. Refresh the SolidCraft window alongside the cadmpeg pin. WINDOW_OLDEST is the oldest
-   SolidCraft release published in the 14 days before the tag, never below OLDEST_SOLIDCRAFT;
-   NEWEST_SOLIDCRAFT is the newest release at tag time. From SolidCraft's release dates,
-   choose both, then run `scripts/solidcraft-window.sh <oldest> <newest>` (for example
-   `scripts/solidcraft-window.sh 0.18.2 0.27.0`). It downloads the release
-   checksum files and prints both constants and the exact Linux archive URLs and CI entries;
-   it fails rather than inventing a checksum. Set `NEWEST_SOLIDCRAFT` and `WINDOW_OLDEST`
-   in `crates/dutchman-solidcraft/src/verify.rs`, replace the two entries in the
-   `solidcraft-roundtrip` matrix in `.github/workflows/ci.yml`, and update the current
-   versions in the README and docs. Keep `OLDEST_SOLIDCRAFT` at 0.18.2 as the oldest accepted
-   explicit target. Run the target-version tests and roundtrip checks at both window bounds.
-   Release notes include: "Made for the current SolidCraft (any release from the last two
-   weeks); older versions get simplified features, or pass --solidcraft-version."
+1. Refresh the SolidCraft window alongside the cadmpeg pin. `WINDOW_OLDEST` stays an
+   exact, checksum-pinned release from the rolling 14-day window, never below the internal
+   `OLDEST_SOLIDCRAFT` floor (0.18.2). `NEWEST_SOLIDCRAFT` names only the newest known
+   minor, currently `[0, 27]`; a patch release requires no Dutchman constant or docs update.
+   Choose the oldest release and newest minor from SolidCraft's release dates, then run
+   `GITHUB_TOKEN=... scripts/solidcraft-window.sh 0.18.2 0.27` with a read-only GitHub token.
+   The script reads the authenticated GitHub releases list, selects the highest published
+   stable patch of that minor, and checks its checksum metadata. It prints the constants,
+   the oldest pinned checksum, and the newest minor's dynamic CI matrix entry. Copy those
+   into `crates/dutchman-solidcraft/src/verify.rs` and `.github/workflows/ci.yml`.
+   CI resolves that newest minor again at each run with the workflow's `GITHUB_TOKEN`,
+   downloads its `SHA256SUMS.txt`, and verifies the exact archive before extracting it.
+   Drafts, prereleases, missing minors, and ambiguous checksums fail rather than falling back.
+   Keep the oldest entry pinned. Update minor names in README and docs when the newest
+   minor changes. Internal writer targets default to newest-minor.0; explicit and found
+   targets retain patches for feature gates and the 0.18.2 verification floor.
+   Run target-version and roundtrip checks at both window bounds in CI.
 2. Run `python3 scripts/changelog.py release X.Y.Z` to assemble the fragments into a dated
    `CHANGELOG.md` entry (use `--date YYYY-MM-DD` to override today). Review it, add any known
    issue, and stage the deleted fragments. Set the workspace `version` in `Cargo.toml`, along

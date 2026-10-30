@@ -234,6 +234,65 @@ fn screenshots() {
             name,
             "A newer release is available: the Update pill in the header.",
         );
+        for (found, case, update, width) in [
+            (Some("0.27.9"), "current", false, 1120.0),
+            (Some("0.28.0"), "newer", false, 1120.0),
+            (Some("0.28.0"), "newer-update", true, 1120.0),
+            (Some("0.17.9"), "too-old", false, 1120.0),
+            (Some("0.24.0"), "older-history", false, 1120.0),
+            (None, "none-found", false, 1120.0),
+            (Some("0.28.0"), "narrow", true, 760.0),
+        ] {
+            let mut preview = Harness::builder()
+                .with_size(egui::vec2(width, 680.0))
+                .build_eframe(|cc| App::new(cc));
+            preview.ctx.set_theme(theme);
+            preview.state_mut().preview_solidcraft(found);
+            if update {
+                preview
+                    .state_mut()
+                    .updater
+                    .preview(dutchman_gui::update::Release {
+                        tag: "v0.2.6".into(),
+                        notes: "Release notes".into(),
+                        download: "https://github.com/dutchman-cad/dutchman/releases/tag/v0.2.6"
+                            .into(),
+                    });
+            }
+            preview.run();
+            let label = if width < 850.0 {
+                found
+                    .and_then(dutchman_solidcraft::solidcraft_minor)
+                    .unwrap_or_else(|| "not found".into())
+            } else {
+                found.map_or_else(
+                    || "SolidCraft not found".into(),
+                    |v| {
+                        format!(
+                            "SolidCraft {}",
+                            dutchman_solidcraft::solidcraft_minor(v).unwrap()
+                        )
+                    },
+                )
+            };
+            preview.get_by_label(&label).click_accesskit();
+            preview.run();
+            assert!(preview
+                .query_by_label_contains(match case {
+                    "newer-update" | "narrow" => "Update Dutchman",
+                    "newer" => "is newer than this Dutchman knows",
+                    "too-old" => "is too old to open Dutchman's designs",
+                    "older-history" => "A newer SolidCraft keeps more of their history.",
+                    "none-found" => "SolidCraft not found. Install SolidCraft",
+                    _ => "SolidCraft 0.27 is installed.",
+                })
+                .is_some());
+            let file = format!("00-solidcraft-{case}-{name}.png");
+            preview.render().unwrap().save(dir.join(&file)).unwrap();
+            index.push_str(&format!(
+                "- [{file}]({file}) — SolidCraft version pill and panel: {case} ({width} px wide).\n"
+            ));
+        }
         harness.get_by_label("Update to 0.2.6").click();
         harness.run();
         shot(
@@ -535,6 +594,42 @@ fn dropped_files_and_results_show_format_status_and_one_invitation() {
     assert!(harness
         .query_by_label(dutchman::json::DISCORD_URL)
         .is_some());
+}
+
+#[test]
+fn solidcraft_status_panel_waits_for_a_click_and_shares_version_notices() {
+    for (found, expected) in [
+        (Some("0.28.0"), "is newer than this Dutchman knows"),
+        (Some("0.17.9"), "is too old to open Dutchman's designs"),
+        (
+            Some("0.24.0"),
+            "A newer SolidCraft keeps more of their history.",
+        ),
+        (Some("0.27.0"), "SolidCraft 0.27 is installed."),
+        (None, "SolidCraft not found. Install SolidCraft"),
+    ] {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1120.0, 680.0))
+            .build_eframe(|cc| App::new(cc));
+        harness.state_mut().preview_solidcraft(found);
+        harness.run();
+        assert!(harness.query_by_label("SolidCraft version").is_none());
+        let label = found.map_or_else(
+            || "SolidCraft not found".into(),
+            |v| {
+                format!(
+                    "SolidCraft {}",
+                    dutchman_solidcraft::solidcraft_minor(v).unwrap()
+                )
+            },
+        );
+        harness.get_by_label(&label).click();
+        harness.run();
+        assert!(harness.query_by_label_contains(expected).is_some());
+        if found.is_none() || found == Some("0.17.9") {
+            assert!(harness.query_by_label("Download SolidCraft").is_some());
+        }
+    }
 }
 
 #[test]

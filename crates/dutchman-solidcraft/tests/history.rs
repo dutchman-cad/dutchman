@@ -1821,7 +1821,7 @@ fn helix_cli() -> Option<PathBuf> {
     let version =
         dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone()));
     if version < dutchman_solidcraft::SolidCraftVersion::V0_25_1 {
-        eprintln!("skipped: sketch-profile coils need SolidCraft 0.25.1 or newer");
+        eprintln!("skipped: sketch-profile coils need SolidCraft 0.25 patch 1 or newer");
         return None;
     }
     Some(cli)
@@ -1849,7 +1849,10 @@ fn helical_sweeps_block_history_for_the_compatibility_floor() {
         .reason
         .as_deref()
         .unwrap();
-    assert_eq!(reason, "needs SolidCraft 0.25.1 or newer (target 0.18.2)");
+    assert_eq!(
+        reason,
+        "needs SolidCraft 0.25 patch 1 or newer (target 0.18)"
+    );
     assert!(history_line(&report).contains(reason));
 }
 
@@ -1877,7 +1880,7 @@ fn helical_sweeps_keep_the_profile_axis_law_hand_and_operation() {
                             .target_version(Some(dutchman_solidcraft::SolidCraftVersion::V0_25_1)),
                     );
                     let coil = &document["features"][1];
-                    assert!(history_line(&report).contains("target SolidCraft 0.25.1"));
+                    assert!(history_line(&report).contains("target SolidCraft 0.25"));
                     assert_eq!(coil["type"], "coil");
                     assert_eq!(coil["sketch"], document["features"][0]["id"]);
                     assert_eq!(coil["profiles"], json!({"type": "all"}));
@@ -4228,7 +4231,7 @@ fn composite_cli() -> Option<PathBuf> {
     let version =
         dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone()));
     if version < dutchman_solidcraft::SolidCraftVersion::V0_25_1 {
-        eprintln!("skipped: composite chains need SolidCraft 0.25.1 or newer");
+        eprintln!("skipped: composite chains need SolidCraft 0.25 patch 1 or newer");
         return None;
     }
     Some(cli)
@@ -4264,7 +4267,7 @@ fn compatibility_floor_blocks_composite_chains_but_keeps_single_stages() {
             .unwrap();
         assert_eq!(
             feature.reason.as_deref(),
-            Some("needs SolidCraft 0.25.1 or newer (target 0.18.2)")
+            Some("needs SolidCraft 0.25 patch 1 or newer (target 0.18)")
         );
         assert!(history_line(&report).contains(feature.reason.as_deref().unwrap()));
         assert!(!types(&document)
@@ -4299,7 +4302,9 @@ fn compatibility_floor_blocks_composite_chains_but_keeps_single_stages() {
         let (_, report) = convert(&model, &writer);
         // The features before the gated later pattern stay as partial history.
         assert_eq!(report.outcome().unwrap().mode, Mode::PartialHistory);
-        assert!(history_line(&report).contains("needs SolidCraft 0.25.1 or newer (target 0.18.2)"));
+        assert!(
+            history_line(&report).contains("needs SolidCraft 0.25 patch 1 or newer (target 0.18)")
+        );
         let (_, report) = convert(&model, &composite_writer());
         assert_eq!(report.outcome().unwrap().mode, Mode::History);
     }
@@ -8586,7 +8591,7 @@ fn partial_helices_keep_the_target_in_parts_and_assemblies() {
                 assert!(report.outcome().unwrap().features.iter().any(|f| f
                     .reason
                     .as_deref()
-                    .is_some_and(|why| why.contains("needs SolidCraft 0.25.1"))));
+                    .is_some_and(|why| why.contains("needs SolidCraft 0.25 patch 1"))));
             } else {
                 assert_eq!(coils.len(), 1);
                 assert_eq!(report.outcome().unwrap().mode, Mode::PartialHistory);

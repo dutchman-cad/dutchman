@@ -218,12 +218,12 @@ ordered sketch curves or a whole sketch with one non-construction curve. A block
 keeps the original geometry when converted.
 
 Constant-radius helical sweeps, including FreeCAD AdditiveHelix and SubtractiveHelix,
-map to sketch-profile coils when targeting SolidCraft 0.25.1 or newer. Older targets block
-the helix with `needs SolidCraft 0.25.1 or newer` and the target version, preserving the
+map to sketch-profile coils when targeting SolidCraft 0.25 patch 1 or newer. Older targets block
+the helix with `needs SolidCraft 0.25 patch 1 or newer` and the target version, preserving the
 original geometry. The CLI equivalent is `--solidcraft-version x.y.z` on `convert`,
 `convert-all`, and `watch` (default: found CLI version, even with `--no-verify`, else
-the newest release known at build time, currently 0.27.0). The rolling 14-day window
-is currently 0.18.2–0.27.0; older targets down to 0.18.2 get simplified features.
+the newest release known at build time, currently 0.27). The rolling 14-day window
+is currently 0.18–0.27; older targets down to 0.18.2 get simplified features.
 Pitch/height/turn laws, handedness, axis, reversed travel, and Boolean operation carry across. Feature parameter
 bindings are retained when available, otherwise dimensions use resolved values. Conical
 and spiral sweeps report the missing SolidCraft cone-angle/radial-growth option.
@@ -266,7 +266,7 @@ The formats report includes each reader's status and cadmpeg's published headlin
 | `import_only` | boolean | Leave feature history out; keep geometry and the preset's reference sketches. |
 | `verify` | boolean | Check a converted history in SolidCraft. Default `true`; skipped, and the history marked unverified, when no `solidcraft-cli` is found. |
 | `solidcraft` | string | Path of `solidcraft-cli` for the check. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`). |
-| `solidcraft_version` | string | Target release as x.y.z, at least 0.18.2. Default: the found CLI's version, else the newest known at build time (currently 0.27.0), including when `verify` is false. |
+| `solidcraft_version` | string | Target release as x.y.z, at least 0.18.2. Default: the found CLI's version capped at newest known, else the newest known at build time (currently 0.27), including when `verify` is false. |
 | `verify_timeout` | integer, at least 1 | Seconds each SolidCraft check may run before the history is written unverified. Default 120. |
 | `overwrite` | boolean | Replace an existing `.solidcraft` file (default true). When false, an existing file is left alone and that file's conversion fails with "already exists". |
 | `project` | string | Absolute path of the project folder an assembly's part files are searched in when they are not at their stored paths. Default: the nearest folder above the assembly holding an Inventor `.ipj`, else two folders up; for `convert_all`, each folder given. See [Finding the part files](inventor.md#finding-the-part-files). |
@@ -454,8 +454,8 @@ off, or having no usable CLI, still writes unverified history.
 
 Composite feature patterns containing resolved mirrors can map to several ordered timeline
 features while retaining one result per source feature in the history report. Each stage
-repeats the previous instance set. Chained stages require a target of SolidCraft 0.25.1
-or newer; older targets report `needs SolidCraft 0.25.1 or newer` and keep the original
+repeats the previous instance set. Chained stages require a target of SolidCraft 0.25 patch 1
+or newer; older targets report `needs SolidCraft 0.25 patch 1 or newer` and keep the original
 geometry. Single-stage mirrors and patterns still map on every supported target.
 A full-turn circular pattern with a repeated seed endpoint
 keeps each distinct location once. Replay differences still flatten the history and report
@@ -534,8 +534,9 @@ checkboxes that leave history, sketches, or joints out. Estimates below 0.1 GB s
 formatter. Numeric MCP estimates stay unchanged. The app checks memory before converting; choosing Convert anyway applies only to that run. History
 Info messages, including history left out by Standard, appear on its result cards.
 
-SolidCraft conversion results include `solidcraft: {target, found}`: the selected target
-release and discovered CLI release (or null), even when verification is disabled.
+SolidCraft conversion results include `solidcraft: {target, found, known_newest, status}`: the selected
+target release, discovered CLI release (or null), newest known release, and installed-version
+status, even when verification is disabled.
 Standard fixes its history budget before decoding for parts and assemblies; if only the
 history-free estimate fits, conversion proceeds with one Info explanation. Memory refusals
 happen before decoding. See [JSON reports](json.md) for diagnostic platform limits and UTC
@@ -546,3 +547,16 @@ cached results; `solidcraft.found` is null when not checked. Otherwise the CLI v
 probe has a three-second limit and runs at most once per resolved CLI path per process.
 Successful versions are cached across runs until the CLI's size or modification time
 changes; see [the guide](guide.md) for cache locations.
+
+SolidCraft reports also include `solidcraft.known_newest` (a version string) and
+`solidcraft.status`: `newer`, `too_old`, `older_loses_history`, `current`, or
+`none_found`. History notices follow the selected target’s writer gates. These
+fields require no network check. See [JSON reports](json.md).
+
+SolidCraft version presentation uses minors: `solidcraft.target` and
+`solidcraft.known_newest` now contain `x.y` strings (for example, `"0.27"`), changing their
+previous `x.y.z` representation. `solidcraft.found` keeps the full CLI release (for example,
+`"0.27.1"`). Status comparisons use minors, so all 0.27 patches are current; 0.28 is newer
+and 0.17 is too old. Patch-sensitive writer gates and the internal 0.18.2 verification
+floor remain unchanged. Explicit `solidcraft_version` inputs still accept `x.y.z` for
+precise gate control.
