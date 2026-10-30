@@ -19,7 +19,8 @@ env:
 
 jobs:
   # Whether the change touches Rust code, which the macOS tests (macOS runners are scarce) wait on,
-  # or the Docker image, which the Docker job waits on.
+  # or the Docker image, which the Docker job waits on (on pull requests, only the image's own
+  # inputs; on main, any crate).
   changes:
     runs-on: ubuntu-latest
     outputs:
@@ -44,8 +45,14 @@ jobs:
           else
             echo "rust=false" >> "$GITHUB_OUTPUT"
           fi
-          if git diff --name-only "$BASE" HEAD \
-            | grep -qE '^(crates/|Cargo\.(toml|lock)$|Dockerfile$|\.dockerignore$|\.github/workflows/ci\.yml$)'; then
+          # The image is a full release build (40-80 minutes), so pull requests build it only when
+          # the image itself or the web server it serves changes; every push to main builds it.
+          if [ "${{ github.event_name }}" != pull_request ]; then
+            image='^(crates/|Cargo\.(toml|lock)$|Dockerfile$|\.dockerignore$|\.github/workflows/ci\.yml$)'
+          else
+            image='^(Dockerfile$|\.dockerignore$|crates/dutchman-web/|docs/docker\.md$|\.github/workflows/ci\.yml$)'
+          fi
+          if git diff --name-only "$BASE" HEAD | grep -qE "$image"; then
             echo "docker=true" >> "$GITHUB_OUTPUT"
           else
             echo "docker=false" >> "$GITHUB_OUTPUT"
