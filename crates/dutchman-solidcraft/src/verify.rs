@@ -63,7 +63,9 @@ pub(crate) enum Outcome {
 /// The SolidCraft CLI `verification` checks with: for [`Verification::Auto`], the one
 /// `SOLIDCRAFT_CLI` names, else `solidcraft-cli` on `PATH`, else the one inside an installed
 /// SolidCraft app: on macOS `SolidCraft*.app` in `/Applications` or `~/Applications`, newest
-/// version first; on Windows `SolidCraft\solidcraft-cli.exe` in Program Files.
+/// version first; on Windows `SolidCraft\solidcraft-cli.exe` in Program Files or `%LOCALAPPDATA%`,
+/// else in the install folder the installer recorded in the registry (`InstallDir`, or beside
+/// the registered `solidcraft.exe`).
 pub fn find_cli(verification: &Verification) -> Result<PathBuf, String> {
     match verification {
         Verification::Off => Err("verification turned off".to_owned()),
@@ -234,9 +236,165 @@ fn installed() -> Option<PathBuf> {
             })
             .map(|folder| folder.join(format!("{CLI_NAME}.exe")))
             .find(|cli| cli.is_file())
+            .or_else(registered)
     } else {
         None
     }
+}
+
+/// Where the SolidCraft installer records its install folder: key, value name. `InstallDir`
+/// holds the folder the person chose; `solidcraft-cli.exe` sits directly in it.
+const REG_INSTALL_DIR: [(&str, &str); 2] = [
+    (r"HKLM\Software\SolidCraft", "InstallDir"),
+    (r"HKCU\Software\SolidCraft", "InstallDir"),
+];
+
+/// Where the installer records the path of `solidcraft.exe` (the CLI sits beside it): key,
+/// value name. The `App Paths` default value is the bare path; the open command quotes it.
+const REG_APP_EXE: [(&str, &str); 2] = [
+    (
+        r"HKLM\Software\Microsoft\Windows\CurrentVersion\App Paths\solidcraft.exe",
+        "(Default)",
+    ),
+    (
+        r"HKLM\Software\Classes\Applications\solidcraft.exe\shell\open\command",
+        "(Default)",
+    ),
+];
+
+/// The CLI in the folder the Windows installer recorded in the registry, whatever folder the
+/// person chose. Read through `reg.exe`, in the 64-bit and the 32-bit view.
+fn registered() -> Option<PathBuf> {
+    let read = |(key, name): (&str, &str)| {
+        ["/reg:64", "/reg:32"]
+            .into_iter()
+            .filter_map(|view| reg_value(&reg_query(key, name, view)?, name))
+            .collect::<Vec<_>>()
+    };
+    let folders = REG_INSTALL_DIR
+        .into_iter()
+        .flat_map(read)
+        .map(PathBuf::from);
+    let beside_exe = REG_APP_EXE
+        .into_iter()
+        .flat_map(read)
+        .filter_map(|value| exe_path(&value))
+        .filter_map(|exe| Path::new(&exe).parent().map(Path::to_path_buf));
+    folders
+        .chain(beside_exe)
+        .map(|folder| folder.join(format!("{CLI_NAME}.exe")))
+        .find(|cli| cli.is_file())
+}
+
+/// What `reg.exe query key /v name` (`/ve` for the default value) prints in one registry
+/// view, when it succeeds.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn reg_query(key: &str, name: &str, view: &str) -> Option<String> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // No console window flashing up from the desktop app.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let reg = std::env::var_os("SystemRoot")
+            .map(|root| Path::new(&root).join("System32").join("reg.exe"))
+            .unwrap_or_else(|| PathBuf::from("reg"));
+        let mut command = Command::new(reg);
+        command.arg("query").arg(key);
+        if name == "(Default)" {
+            command.arg("/ve");
+        } else {
+            command.arg("/v").arg(name);
+        }
+        let output = command
+            .arg(view)
+            .stdin(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .ok()?;
+        output
+            .status
+            .success()
+            .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (key, name, view);
+        None
+    }
+}
+
+/// The value `name` in `reg query` output, with `%VAR%` expanded in a `REG_EXPAND_SZ` value;
+/// `(Default)` names the key's default value. None when it is absent or empty.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn reg_value(output: &str, name: &str) -> Option<String> {
+    reg_value_with(output, name, &|var| std::env::var(var).ok())
+}
+
+/// [`reg_value`], expanding variables with `env`.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn reg_value_with(
+    output: &str,
+    name: &str,
+    env: &dyn Fn(&str) -> Option<String>,
+) -> Option<String> {
+    // A value line is `    <name>    <REG_TYPE>    <data>`, separated by four spaces
+    // (older systems use tabs); the name may hold single spaces and the data any text.
+    let default = |name: &str| name.eq_ignore_ascii_case("(Default)") || name == "<NO NAME>";
+    output.lines().find_map(|line| {
+        let line = line.replace('\t', "    ");
+        let (found, rest) = line.trim_start().split_once("    REG_")?;
+        let found = found.trim_end();
+        if !(found.eq_ignore_ascii_case(name) || default(found) && default(name)) {
+            return None;
+        }
+        let rest = format!("REG_{rest}");
+        let (kind, data) = rest.split_once("    ").unwrap_or((&rest, ""));
+        let data = data.trim();
+        if data.is_empty() {
+            return None;
+        }
+        Some(if kind == "REG_EXPAND_SZ" {
+            expand_vars(data, env)
+        } else {
+            data.to_owned()
+        })
+    })
+}
+
+/// `text` with each `%VAR%` that `env` knows replaced by its value; the rest stays as written.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn expand_vars(text: &str, env: &dyn Fn(&str) -> Option<String>) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some((before, after)) = rest.split_once('%') {
+        out.push_str(before);
+        match after.split_once('%') {
+            Some((var, tail)) if !var.is_empty() && env(var).is_some() => {
+                out.push_str(&env(var).unwrap_or_default());
+                rest = tail;
+            }
+            _ => {
+                out.push('%');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// The path to `solidcraft.exe` in a registry value: the first quoted path of an open command
+/// (`"C:\Apps\SolidCraft\solidcraft.exe" "%1"`), else an unquoted path, up to its `.exe`.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn exe_path(command: &str) -> Option<String> {
+    let command = command.trim();
+    let path = if let Some(quoted) = command.strip_prefix('"') {
+        quoted.split_once('"')?.0
+    } else {
+        let end = command.to_ascii_lowercase().find(".exe")? + ".exe".len();
+        command.get(..end)?
+    };
+    (!path.is_empty()).then(|| path.to_owned())
 }
 
 /// The CLI in the newest `SolidCraft*.app` bundle in `folders` (`Contents/MacOS/solidcraft-cli`),
@@ -995,6 +1153,84 @@ fn parse(value: &Value) -> Result<Eval, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const REG_INSTALL: &str = "\r\nHKEY_LOCAL_MACHINE\\Software\\SolidCraft\r\n    InstallDir    REG_SZ    C:\\Apps\\Solid Craft\\\r\n\r\n";
+
+    fn fake_env(var: &str) -> Option<String> {
+        var.eq_ignore_ascii_case("ProgramFiles")
+            .then(|| r"C:\Program Files".to_owned())
+    }
+
+    #[test]
+    fn a_registry_string_value_is_read() {
+        assert_eq!(
+            reg_value(REG_INSTALL, "InstallDir").as_deref(),
+            Some("C:\\Apps\\Solid Craft\\")
+        );
+        assert_eq!(reg_value(REG_INSTALL, "Other"), None);
+    }
+
+    #[test]
+    fn registry_variables_are_expanded_in_expand_sz_only() {
+        let expand = "HKEY_LOCAL_MACHINE\\Software\\SolidCraft\n    InstallDir    REG_EXPAND_SZ    %ProgramFiles%\\SolidCraft\n";
+        assert_eq!(
+            reg_value_with(expand, "InstallDir", &fake_env).as_deref(),
+            Some(r"C:\Program Files\SolidCraft")
+        );
+        let plain = expand.replace("REG_EXPAND_SZ", "REG_SZ");
+        assert_eq!(
+            reg_value_with(&plain, "InstallDir", &fake_env).as_deref(),
+            Some(r"%ProgramFiles%\SolidCraft")
+        );
+        assert_eq!(expand_vars("%NOPE%\\x 100%", &fake_env), r"%NOPE%\x 100%");
+    }
+
+    #[test]
+    fn a_default_registry_value_is_read() {
+        let output = "HKEY_LOCAL_MACHINE\\Software\\Classes\\Applications\\solidcraft.exe\\shell\\open\\command\n    (Default)    REG_SZ    \"C:\\Program Files\\SolidCraft\\solidcraft.exe\" \"%1\"\n";
+        let value = reg_value(output, "(Default)");
+        assert_eq!(
+            value.as_deref(),
+            Some(r#""C:\Program Files\SolidCraft\solidcraft.exe" "%1""#)
+        );
+        let old = "HKLM\\Software\\X\n\t<NO NAME>\tREG_SZ\tC:\\a b\\solidcraft.exe\n";
+        assert_eq!(
+            reg_value(old, "(Default)").as_deref(),
+            Some(r"C:\a b\solidcraft.exe")
+        );
+    }
+
+    #[test]
+    fn an_unset_registry_value_is_none() {
+        let output = "HKEY_LOCAL_MACHINE\\Software\\X\n    (Default)    REG_SZ    \n";
+        assert_eq!(reg_value(output, "(Default)"), None);
+        assert_eq!(reg_value("", "InstallDir"), None);
+        assert_eq!(
+            reg_value(
+                "ERROR: The system was unable to find the specified registry key or value.",
+                "InstallDir"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn the_exe_in_an_open_command_is_found() {
+        assert_eq!(
+            exe_path(r#""C:\Program Files\SolidCraft\solidcraft.exe" "%1""#).as_deref(),
+            Some(r"C:\Program Files\SolidCraft\solidcraft.exe")
+        );
+        assert_eq!(
+            exe_path(r"D:\My Apps\SolidCraft\solidcraft.EXE").as_deref(),
+            Some(r"D:\My Apps\SolidCraft\solidcraft.EXE")
+        );
+        assert_eq!(
+            exe_path(r"D:\My Apps\solidcraft.exe %1").as_deref(),
+            Some(r"D:\My Apps\solidcraft.exe")
+        );
+        assert_eq!(exe_path(r#""unterminated"#), None);
+        assert_eq!(exe_path(""), None);
+    }
 
     #[test]
     fn the_nearest_enclosing_app_is_found() {
