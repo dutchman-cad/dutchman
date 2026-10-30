@@ -58,14 +58,14 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
                 })
         };
         let travel =
-            height(target).ok_or("its terminating face point is malformed")? - start_height;
+            height(target).ok_or("its terminating object point is malformed")? - start_height;
         let sign = if extent.get("direction").and_then(Value::as_str) == Some("negative") {
             -1.0
         } else {
             1.0
         };
         if travel * sign <= 0.0 {
-            return Err("its terminating face is not along the selected extrude side".to_owned());
+            return Err("its terminating object is not along the selected extrude side".to_owned());
         }
     }
     if extent.contains_key("taper")
@@ -141,8 +141,8 @@ fn extent(
         }
         Some("symmetric") => {
             let side = side(extent.get("side"), ctx, normal)?;
-            if matches!(side, Side::ToFace(..)) {
-                return Err("a symmetric extrude to a face is not supported yet".to_owned());
+            if matches!(side, Side::ToObject(..)) {
+                return Err("a symmetric extrude to an object is not supported yet".to_owned());
             }
             out.insert("direction".to_owned(), json!("symmetric"));
             out.insert("convention".to_owned(), json!("total_distance"));
@@ -197,7 +197,7 @@ fn extent(
 enum Side {
     Blind(f64),
     ThroughAll,
-    ToFace([f64; 3], Option<f64>),
+    ToObject([f64; 3], Option<f64>),
 }
 
 fn side(side: Option<&Value>, ctx: &Context, normal: [f64; 3]) -> Result<Side, String> {
@@ -209,10 +209,38 @@ fn side(side: Option<&Value>, ctx: &Context, normal: [f64; 3]) -> Result<Side, S
             .map(Side::Blind)
             .ok_or_else(|| "its blind length is malformed".to_owned()),
         Some("through_all") => Ok(Side::ThroughAll),
-        Some("to_face") => Ok(Side::ToFace(
+        Some("to_face") => Ok(Side::ToObject(
             super::faces::pick(ctx, termination.get("face"), normal)?,
             number(termination.get("offset")),
         )),
+        Some("to_plane") => {
+            let plane = termination.get("plane").ok_or("its terminating plane is missing")?;
+            let plane_normal = v3(plane.get("normal"))
+                .and_then(unit)
+                .ok_or("its terminating plane normal is malformed")?;
+            if dot(plane_normal, normal).abs() < ALONG_NORMAL {
+                return Err(
+                    "a terminating plane not parallel to the extrude sketch is not supported yet"
+                        .to_owned(),
+                );
+            }
+            // A free point works before any body exists. Later, SolidCraft may
+            // reinterpret it as a face pick. Final-body faces cannot prove that
+            // the same face exists at this point of the timeline.
+            if ctx.builds {
+                return Err(
+                    "a to-plane extrude after earlier geometry is not supported yet: CADIR does not supply the input face geometry needed to distinguish a plane point from an existing body face"
+                        .to_owned(),
+                );
+            }
+            let point = v3(plane.get("origin"))
+                .ok_or("its terminating plane origin is malformed")?;
+            Ok(Side::ToObject(point, None))
+        }
+        Some("to_vertex") => Err(
+            "a to-vertex extrude needs a resolved input vertex position; native, generated, and historical vertex selections are not mapped yet"
+                .to_owned(),
+        ),
         Some(other) => Err(format!("{other} extrude ends are not mapped yet")),
         None => Err("its extent is malformed".to_owned()),
     }
@@ -223,7 +251,7 @@ fn put(out: &mut Map<String, Value>, side: Side, key: &str) {
         Side::Blind(length) => {
             out.insert(key.to_owned(), json!(mm(length)));
         }
-        Side::ToFace(point, offset) => {
+        Side::ToObject(point, offset) => {
             out.insert(key.to_owned(), json!("0 mm"));
             out.insert("to".to_owned(), json!(point));
             if let Some(offset) = offset {
