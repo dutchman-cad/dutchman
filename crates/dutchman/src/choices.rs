@@ -1260,6 +1260,7 @@ mod tests {
                 estimate_text(Estimate {
                     peak_bytes,
                     seconds,
+                    seconds_exact: seconds as f64,
                     band: 0.3,
                     memory_band: 0.3,
                     time_band: Some(0.3),
@@ -1270,6 +1271,7 @@ mod tests {
         let measured = Estimate {
             peak_bytes: 2_500_000_000,
             seconds: 121,
+            seconds_exact: 121.0,
             band: 0.25,
             memory_band: 0.25,
             time_band: Some(0.2),
@@ -1290,6 +1292,7 @@ mod tests {
         let small = Estimate {
             peak_bytes: 1,
             seconds: 1,
+            seconds_exact: 1.0,
             ..rough
         };
         assert_eq!(

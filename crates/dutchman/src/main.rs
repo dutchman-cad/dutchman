@@ -758,20 +758,6 @@ fn print_losses(losses: &[Value], verbose: bool) {
     }
 }
 
-/// The estimate shown before a text conversion. A time without a measured band reads as rough.
-fn estimate_line(estimate: &dutchman::choices::Estimate) -> String {
-    let minutes = estimate.seconds_exact / 60.0;
-    let time = match estimate.time_band {
-        Some(band) => format!("about {minutes:.1} min (±{:.0} %)", band * 100.0),
-        None => format!("roughly {minutes:.1} min"),
-    };
-    format!(
-        "Estimate: about {:.1} GB (±{:.0} %), {time}",
-        dutchman::choices::gb(estimate.peak_bytes),
-        estimate.memory_band * 100.0
-    )
-}
-
 #[cfg(test)]
 mod output_tests {
     use super::*;
