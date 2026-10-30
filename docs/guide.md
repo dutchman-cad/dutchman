@@ -271,7 +271,7 @@ Wayland desktop session with working OpenGL. See [Troubleshooting](#troubleshoot
 window appears.
 
 The target SolidCraft selector defaults to the found CLI's version, else the built-in newest
-(currently 0.26.1), even when history checking is off. Choose **0.18.2 and newer** for older installations or
+(currently 0.27.0), even when history checking is off. Choose **0.18.2 and newer** for older installations or
 **0.25.1 and newer** to keep supported FreeCAD helices as editable coils.
 
 The window's title shows its version, and its **Report a problem** link opens the
@@ -372,9 +372,9 @@ it says so under the check option:
 
 Dutchman is made for the current SolidCraft (any release from the last two weeks);
 older versions get simplified features, or pass `--solidcraft-version x.y.z` on
-`convert`, `convert-all`, or `watch`. The current window is 0.18.2–0.26.1; roundtrip
+`convert`, `convert-all`, or `watch`. The current window is 0.18.2–0.27.0; roundtrip
 checks cover its oldest and newest releases. Each design targets the found CLI's version,
-even with `--no-verify`, else the newest release known at build time (currently 0.26.1).
+even with `--no-verify`, else the newest release known at build time (currently 0.27.0).
 Versions below 0.18.2 and malformed versions are refused. Older targets remain accepted
 down to 0.18.2. Features that need a newer release block history with a named reason
 and preserve the original geometry as for other blockers.
@@ -511,7 +511,7 @@ dutchman convert --json generated_unit_cube.f3d cube.solidcraft
 | `--yes` | Never prompt to switch presets; refuse an over-budget conversion with exit 2. |
 | `--import-only` | Leave feature history out; keep geometry and the preset's reference sketches. |
 | `--solidcraft PATH` | The `solidcraft-cli` that checks a converted history. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`, else the install folder recorded in the registry). |
-| `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the found CLI's version, even with `--no-verify`, else the newest known at build time (currently 0.26.1). |
+| `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the found CLI's version, even with `--no-verify`, else the newest known at build time (currently 0.27.0). |
 | `--no-verify` | Write the history without checking it in SolidCraft. Cannot be combined with `--solidcraft`. |
 | `--verify-timeout SECONDS` | How long each SolidCraft check may run before the history is written unverified. Default 120. |
 | `--no-clobber` | Do not replace an existing `.solidcraft` file: that file's conversion fails instead. By default it is replaced. |

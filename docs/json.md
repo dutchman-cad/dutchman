@@ -176,7 +176,7 @@ For older targets, `history.features[].reason` says
 line explains the blocker. `--solidcraft-version x.y.z` selects the target on `convert`,
 `convert-all`, and `watch`; it must be at least 0.18.2. By default the found verification
 CLI's version is used, even with `--no-verify`, else the newest release known at build
-time (currently 0.26.1). The supported rolling 14-day window is currently 0.18.2–0.26.1;
+time (currently 0.27.0). The supported rolling 14-day window is currently 0.18.2–0.27.0;
 older targets down to 0.18.2 retain the existing feature simplifications.
 When a written coil or flat entry-recess tip uses the newer mapping, the history line
 includes the actual target, such as `target SolidCraft 0.25.1`. No new report fields are added. Counterbore and countersink holes use an explicit flat tip
