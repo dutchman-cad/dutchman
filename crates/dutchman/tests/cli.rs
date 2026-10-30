@@ -2178,7 +2178,7 @@ fn estimates_are_text_only_and_respect_quiet() {
         assert!(out.status.success(), "{out:?}");
         let text = String::from_utf8_lossy(&out.stdout);
         assert_eq!(
-            text.contains("Estimate: under 0.1 GB, under a minute (±"),
+            text.contains("Estimate: under 0.1 GB, under a minute"),
             flags.is_empty(),
             "{text}"
         );

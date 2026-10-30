@@ -713,10 +713,10 @@ pub fn conversion_choices(report: &mut Value, input: &Path, options: &crate::Con
 
 /// The shared estimate representation; null means it could not be pre-read.
 pub fn estimate(estimate: Option<crate::choices::Estimate>) -> Value {
-    estimate.map_or(
-        Value::Null,
-        |e| json!({"peak_bytes": e.peak_bytes, "seconds": e.seconds, "band": e.band}),
-    )
+    estimate.map_or(Value::Null, |e| {
+        json!({"peak_bytes": e.peak_bytes, "seconds": e.seconds, "band": e.band,
+            "memory_band": e.memory_band, "time_band": e.time_band})
+    })
 }
 
 /// The selected preset and its effective narrowed choices.
@@ -831,6 +831,29 @@ mod tests {
             assert!(report.get("solidcraft").is_none());
             assert!(solidcraft_line(&report).is_none());
         }
+    }
+
+    #[test]
+    fn separate_estimate_bands_keep_legacy_coverage_and_unknown_time() {
+        let value = estimate(Some(crate::choices::Estimate {
+            peak_bytes: 33_000_000,
+            seconds: 1,
+            band: 0.6,
+            memory_band: 0.55,
+            time_band: None,
+        }));
+        assert_eq!(value["band"], json!(0.6));
+        assert_eq!(value["memory_band"], json!(0.55));
+        assert!(value["time_band"].is_null());
+        let timed = estimate(Some(crate::choices::Estimate {
+            peak_bytes: 4_000_000_000,
+            seconds: 34,
+            band: 0.25,
+            memory_band: 0.25,
+            time_band: Some(0.2),
+        }));
+        assert_eq!(timed["time_band"], json!(0.2));
+        assert!(estimate(None).is_null());
     }
 
     #[test]
