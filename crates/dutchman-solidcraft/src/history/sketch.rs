@@ -120,7 +120,12 @@ pub(crate) fn map(
         .iter()
         .filter(|row| row.get("sketch").and_then(Value::as_str) == Some(sketch_id))
         .collect();
-    let crossing = super::crossing::crossing(sketch, &entities);
+    let mut crossing = super::crossing::crossing(sketch, &entities);
+    crossing.extend(super::crossing::region_lines(
+        sketch,
+        &entities,
+        ctx.arena("features"),
+    ));
     let mut builder = Builder::default();
     for entity in &entities {
         let is_crossing = entity

@@ -16,6 +16,12 @@ pin is bumped.
 | Parameters, planar sketches with typed and native constraints. | Mapped; native constraints are reported as not carried. |
 | Typed extrudes, revolves, fillets, chamfers and more, with selections often native. | Extrudes, revolves, lofts, sweeps, spheres, tori and coils map (see ARCHITECTURE.md for the cases); boxes and cylinder primitives wait on cadmpeg placing them; simple, counterbore and countersink holes drilled at a sketch's points map; constant-radius fillets and equal-setback chamfers map from proven feature input edge geometry, matched on SolidCraft's own replay of the history before them (a fillet with a tangency weight of exactly 1 maps as a circular fillet, with an Info note; any other weight is refused); other blends and holes placed on unresolved faces wait on input geometry (see guide.md). |
 
+When every active feature using a sketch selects explicit whole-loop regions, unused lines
+crossing selected whole circles are kept as construction geometry. This preserves
+layout lines through hole centres without splitting the circular holes during replay. If
+another active consumer needs the whole sketch or a different selection form, those lines
+stay solid.
+
 ## Components
 
 Assemblies with multiple top-level designs group each design's features into a uniquely

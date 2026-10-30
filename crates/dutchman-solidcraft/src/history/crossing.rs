@@ -6,6 +6,8 @@
 //! decoder that does not know which curves are construction (cadmpeg's Inventor decoder, for
 //! now) leaves such a line solid; SolidCraft then finds the region split and no profile it can
 //! match. Such lines are construction, and are written so.
+//! Explicit whole-loop region consumers also identify unused layout lines, provided no other
+//! consumer needs those lines as profile geometry.
 //!
 //! When a source loop itself follows crossing curves, keep those curves solid and split
 //! their straight-line arrangement for region selection. Sampling is used only for
@@ -80,6 +82,181 @@ pub(super) fn crossing(sketch: &Value, entities: &[&Value]) -> BTreeSet<String> 
                 .then(|| id.to_owned())
         })
         .collect()
+}
+
+/// Unused lines crossing selected circles are helpers when all consumers of the sketch
+/// select whole-loop regions. Keeping them solid would split those circles.
+pub(super) fn region_lines(
+    sketch: &Value,
+    entities: &[&Value],
+    features: &[Value],
+) -> BTreeSet<String> {
+    let Some(id) = sketch.get("id").and_then(Value::as_str) else {
+        return BTreeSet::new();
+    };
+    let mut identities = vec![id];
+    identities.extend(features.iter().filter_map(|feature| {
+        let definition = super::operation(feature);
+        if definition.get("definition").and_then(Value::as_str) != Some("sketch")
+            || definition.pointer("/sketch/sketch").and_then(Value::as_str) != Some(id)
+        {
+            return None;
+        }
+        feature.get("id").and_then(Value::as_str)
+    }));
+    let mut used = BTreeSet::new();
+    let mut selected = false;
+    for feature in features {
+        if feature.get("suppressed").and_then(Value::as_bool) == Some(true) {
+            continue;
+        }
+        let definition = super::operation(feature);
+        if definition.get("definition").and_then(Value::as_str) == Some("sketch") {
+            continue;
+        }
+        let Some(found) = region_uses(definition, id, &identities, sketch, &mut used, 0) else {
+            return BTreeSet::new();
+        };
+        if !found
+            && feature
+                .get("dependencies")
+                .and_then(Value::as_array)
+                .is_some_and(|dependencies| {
+                    dependencies
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .any(|id| identities.contains(&id))
+                })
+        {
+            return BTreeSet::new();
+        }
+        selected |= found;
+    }
+    if !selected || entities.len() > MAX_EDGES {
+        return BTreeSet::new();
+    }
+    let circles: Vec<&Value> = entities
+        .iter()
+        .copied()
+        .filter(|entity| {
+            entity
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| used.contains(id))
+                && entity.pointer("/geometry/kind").and_then(Value::as_str) == Some("circle")
+        })
+        .collect();
+    if circles.len() > MAX_LINES {
+        return BTreeSet::new();
+    }
+    entities
+        .iter()
+        .filter(|entity| entity.get("construction").and_then(Value::as_bool) != Some(true))
+        .filter(|entity| {
+            entity
+                .get("geometry")
+                .and_then(|g| g.get("kind"))
+                .and_then(Value::as_str)
+                == Some("line")
+        })
+        .filter(|entity| circles.iter().any(|circle| cuts_circle(entity, circle)))
+        .filter_map(|entity| entity.get("id").and_then(Value::as_str))
+        .filter(|id| !used.contains(*id))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// A proper secant through a whole circle; tangencies and lines ending inside it are left
+/// alone. The margin avoids treating round-off at a tangent as evidence of a crossing.
+fn cuts_circle(line: &Value, circle: &Value) -> bool {
+    let positions = || {
+        Some((
+            super::sketch::p2(line.pointer("/geometry/start"))?,
+            super::sketch::p2(line.pointer("/geometry/end"))?,
+            super::sketch::p2(circle.pointer("/geometry/center"))?,
+            number(circle.pointer("/geometry/radius"))?,
+        ))
+    };
+    let Some(([ax, ay], [bx, by], [cx, cy], radius)) = positions() else {
+        return false;
+    };
+    let (dx, dy) = (bx - ax, by - ay);
+    let length2 = dx * dx + dy * dy;
+    let radius2 = radius * radius;
+    if length2 <= 0.0 || !length2.is_finite() || radius <= 0.0 || !radius2.is_finite() {
+        return false;
+    }
+    let along = ((cx - ax) * dx + (cy - ay) * dy) / length2;
+    let distance2 = (ax + along * dx - cx).powi(2) + (ay + along * dy - cy).powi(2);
+    along > 0.0
+        && along < 1.0
+        && distance2 < radius2 * (1.0 - 1e-6)
+        && (ax - cx).powi(2) + (ay - cy).powi(2) > radius2 * (1.0 + 1e-6)
+        && (bx - cx).powi(2) + (by - cy).powi(2) > radius2 * (1.0 + 1e-6)
+}
+
+/// Any other reference to the sketch prevents changing its profile geometry globally.
+fn region_uses(
+    value: &Value,
+    id: &str,
+    identities: &[&str],
+    sketch: &Value,
+    used: &mut BTreeSet<String>,
+    depth: usize,
+) -> Option<bool> {
+    if depth > MAX_SELECTION_DEPTH {
+        return None;
+    }
+    if value.get("kind").and_then(Value::as_str) == Some("sketch_regions")
+        && value.get("value")?.get("sketch").and_then(Value::as_str) == Some(id)
+    {
+        let regions = value.get("value")?.get("regions")?.as_array()?;
+        if regions.is_empty() || regions.len() > MAX_LINES {
+            return None;
+        }
+        let profiles = sketch.get("profiles")?.as_array()?;
+        let mut members = 0usize;
+        for region in regions {
+            if region.get("region").and_then(Value::as_str) != Some("loops") {
+                return None;
+            }
+            let holes = match region.get("holes") {
+                Some(holes) => Some(holes.as_array()?),
+                None => None,
+            };
+            if holes.is_some_and(|holes| holes.len() > MAX_LINES) {
+                return None;
+            }
+            for index in std::iter::once(region.get("outer")?).chain(holes.into_iter().flatten()) {
+                let index = usize::try_from(index.as_u64()?).ok()?;
+                let boundary = profiles.get(index)?.as_array()?;
+                if boundary.is_empty() {
+                    return None;
+                }
+                members = members.checked_add(boundary.len())?;
+                if members > MAX_EDGES {
+                    return None;
+                }
+                for member in boundary {
+                    used.insert(member.get("entity")?.as_str()?.to_owned());
+                    if used.len() > MAX_EDGES {
+                        return None;
+                    }
+                }
+            }
+        }
+        return Some(true);
+    }
+    match value {
+        Value::String(s) if identities.contains(&s.as_str()) => None,
+        Value::Array(values) => values.iter().try_fold(false, |found, value| {
+            Some(region_uses(value, id, identities, sketch, used, depth + 1)? || found)
+        }),
+        Value::Object(fields) => fields.values().try_fold(false, |found, value| {
+            Some(region_uses(value, id, identities, sketch, used, depth + 1)? || found)
+        }),
+        _ => Some(false),
+    }
 }
 
 /// The loops of the sketch's profile table, each its members (`{entity, reversed}`) in order.
@@ -194,6 +371,7 @@ fn inside(p: P2, polygon: &[P2]) -> bool {
 /// A line arrangement is deliberately bounded: intersections and directed edges grow
 /// quadratically. Larger arrangements keep the existing refusal.
 const MAX_LINES: usize = 128;
+const MAX_SELECTION_DEPTH: usize = 64;
 const MAX_EDGES: usize = 16_384;
 const MAX_POINTS: usize = 2048;
 const EPS: f64 = 1e-8;
@@ -562,6 +740,22 @@ mod tests {
 
     fn member(id: &str) -> Value {
         json!({"entity": id, "reversed": false})
+    }
+
+    #[test]
+    fn circle_crossings_require_a_proper_secant() {
+        let circle = json!({"geometry": {"kind": "circle",
+            "center": {"u": 0.0, "v": 0.0}, "radius": 2.0}});
+        for (start, end, crosses) in [
+            ([-3.0, 0.0], [3.0, 0.0], true),
+            ([-3.0, -3.0], [3.0, 3.0], true),
+            ([-3.0, 2.0], [3.0, 2.0], false),
+            ([-3.0, 3.0], [3.0, 3.0], false),
+            ([-3.0, 0.0], [0.0, 0.0], false),
+            ([0.0, 0.0], [0.0, 0.0], false),
+        ] {
+            assert_eq!(cuts_circle(&line("line", start, end), &circle), crosses);
+        }
     }
 
     #[test]

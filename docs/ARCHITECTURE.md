@@ -215,6 +215,10 @@ constraints; SolidCraft matches the pieces on recompute. Selected subsets with o
 curves, ambiguous boundary matches or curved crossing arrangements still flatten the history.
 Native profile picks within a known sketch also map when even-odd nesting identifies exactly one material
 region, with its holes; multiple islands and touching loops remain ambiguous.
+When every active consumer of a sketch selects explicit whole-loop regions, unused lines
+crossing selected whole circles become construction geometry. This keeps layout
+rectangles through hole centres from splitting those holes. Any other selection form keeps
+the lines solid; a boundary needed by another region consumer stays solid too.
 
 A written history is checked in SolidCraft itself, since Dutchman has no kernel. The writer
 runs `solidcraft-cli eval` on the design as written and on a copy with the history suppressed
