@@ -33,11 +33,24 @@ impl std::fmt::Display for ProgressEvent {
         } else if self.designs_read > 0 {
             write!(f, "; {} designs read", self.designs_read)?;
         }
-        write!(f, "; {} s elapsed", self.elapsed_ms / 1000)?;
+        write!(f, "; {} elapsed", elapsed(self.elapsed_ms / 1000))?;
         if self.heartbeat {
             write!(f, "; still working")?;
         }
         Ok(())
+    }
+}
+
+/// `seconds` as people read it: the seconds, and past a minute also hours and minutes, as
+/// "45 s", "125 s (2 min 5 s)" or "7261 s (2 h 1 min)".
+pub fn elapsed(seconds: u64) -> String {
+    let (hours, minutes, rest) = (seconds / 3600, seconds % 3600 / 60, seconds % 60);
+    if seconds < 60 {
+        format!("{seconds} s")
+    } else if hours == 0 {
+        format!("{seconds} s ({minutes} min {rest} s)")
+    } else {
+        format!("{seconds} s ({hours} h {minutes} min)")
     }
 }
 
@@ -174,5 +187,18 @@ mod tests {
         });
         while receive.try_recv().is_ok() {}
         assert!(receive.recv_timeout(Duration::from_millis(30)).is_err());
+    }
+}
+
+#[cfg(test)]
+mod elapsed_tests {
+    use super::elapsed;
+
+    #[test]
+    fn long_runs_also_read_in_hours_and_minutes() {
+        assert_eq!(elapsed(45), "45 s");
+        assert_eq!(elapsed(125), "125 s (2 min 5 s)");
+        assert_eq!(elapsed(7261), "7261 s (2 h 1 min)");
+        assert_eq!(elapsed(3600), "3600 s (1 h 0 min)");
     }
 }

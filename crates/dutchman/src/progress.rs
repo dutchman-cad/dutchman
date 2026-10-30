@@ -39,9 +39,9 @@ impl StderrProgress {
                     .to_string_lossy();
                 let name: String = name.chars().take(20).collect();
                 let mut text = format!(
-                    "{name}: {} | {} s elapsed",
+                    "{name}: {} | {} elapsed",
                     event.stage.id(),
-                    event.elapsed_ms / 1000
+                    dutchman_core::elapsed(event.elapsed_ms / 1000)
                 );
                 if let Some(total) = event.designs_total {
                     let _ = write!(text, " | {}/{total} designs", event.designs_read);
