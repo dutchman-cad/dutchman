@@ -301,9 +301,10 @@ impl ConvertOptions {
         let mut options = self.clone();
         let mut history_note = None;
         if !self.no_memory_check && self.choices().history_within_budget && self.choices().history {
-            if let (Some(estimate), Some(available)) =
-                (choices::estimate(input, &self.choices()), available)
-            {
+            if let (Some(estimate), Some(available)) = (
+                choices::estimate_with_threads(input, &self.choices(), self.threads),
+                available,
+            ) {
                 if estimate.peak_bytes > available {
                     options.import_only = true;
                     history_note = Some(format!(
