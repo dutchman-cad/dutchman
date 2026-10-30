@@ -49,6 +49,29 @@ It runs installed tools and identifies itself as `dutchman launcher <version>` w
 `--version`. Get [Dutchman Convert](https://github.com/dutchman-cad/dutchman) for `convert`,
 `convert-all`, `watch`, `inspect` and `formats`.
 
+## Assembly workers
+
+`convert`, `convert-all`, and `watch` accept `--threads N` for assembly part work. `0` (the default) uses available CPU parallelism; `1` runs the
+serial path. The actual count is limited by the number of leaf parts and free memory,
+using the largest part's CADIR body count to estimate temporary memory, with a floor
+for mapping and a SolidCraft check process. The core precomputes component slices and
+reuses an identical empty model for assembly holders, then builds the tree in its
+original order. SolidCraft STEP restatement, history mapping, blend proving, and per-part
+replay checks prepare independently. Parts then enter the design in source order, keeping
+IDs, names, blobs, losses, and history records identical. Failed worker preparations are
+retried serially at their original positions.
+
+```sh
+dutchman convert assembly.f3z assembly.solidcraft --threads 4
+dutchman convert-all project/ --out-dir converted/ --threads 1
+```
+
+`--jobs` limits simultaneous files in a batch; `--threads` limits part workers within
+each file. Account for both when tuning memory use. Native decoding remains serial.
+Other writers use the shared slicing stage only. The JSON report's `threads` field records the
+requested limit and the number of workers used. `--no-memory-check` does not disable
+the part-worker cap.
+
 ## Choosing what to keep
 
 `convert`, `convert-all`, and `watch` accept these presets and narrowing switches:
@@ -87,8 +110,9 @@ An estimate is unknown for formats this build cannot convert, or when metadata c
 be read, including ZIP directories exceeding 10,000 members or 16 MiB, and unreadable
 archives.
 
-Available memory comes from Linux `MemAvailable`, or free and inactive pages from
-macOS `vm_stat`. It is unknown on Windows in this build. Unknown memory or an unknown
+Available memory comes from Linux `MemAvailable` bounded by remaining cgroup v2
+headroom (including ancestor limits), macOS `vm_stat`, or Windows CIM free physical
+memory. Unknown memory or an unknown
 estimate does not block a run. Estimates use decimal GB and are approximate, not
 reservations; other processes and simultaneous conversions can change available memory.
 

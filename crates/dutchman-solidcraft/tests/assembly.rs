@@ -1538,3 +1538,127 @@ fn reference_sketch_choice_applies_to_single_parts_and_component_parts() {
         }
     }
 }
+
+#[test]
+fn parallel_parts_keep_the_complete_container_and_report_in_serial_order() {
+    let mut models = vec![
+        nested(),
+        with_components(true),
+        with_sketches(),
+        jointed(),
+        mixed_histories(),
+    ];
+    if Format::FreeCadDocument.can_convert() {
+        for file in ["product_assembly.FCStd", "freecad-1.1.4-A01/A01a.FCStd"] {
+            models.push(
+                read(
+                    Format::FreeCadDocument,
+                    &Path::new(env!("CARGO_MANIFEST_DIR"))
+                        .join("../dutchman-core/tests/fixtures")
+                        .join(file),
+                    &mut Report::default(),
+                )
+                .unwrap(),
+            );
+        }
+    }
+    for model in models {
+        for import_only in [false, true] {
+            for sketches in [false, true] {
+                let writer = SolidCraftWriter::new()
+                    .verification(Verification::Off)
+                    .import_only(import_only)
+                    .sketches(sketches);
+                let mut serial = Vec::new();
+                let mut serial_report = Report::default();
+                writer
+                    .clone()
+                    .threads(1)
+                    .write(&model, &mut serial, &mut serial_report)
+                    .unwrap();
+                let mut parallel = Vec::new();
+                let mut parallel_report = Report::default();
+                writer
+                    .threads(4)
+                    .write(&model, &mut parallel, &mut parallel_report)
+                    .unwrap();
+                assert_eq!(serial, parallel, "{}", model.name);
+                parallel_report.set_threads(1, 1);
+                assert_eq!(
+                    format!("{serial_report:?}"),
+                    format!("{parallel_report:?}"),
+                    "{}",
+                    model.name
+                );
+            }
+        }
+    }
+}
+
+fn mixed_histories() -> Model {
+    let mut model = placed_twice();
+    let assembly = model.assembly.as_mut().unwrap();
+    let mut part = assembly.parts[0].clone();
+    part.name = "Repeated name".to_owned();
+    let mut wire = serde_json::to_value(&part.ir).unwrap();
+    let sphere = serde_json::json!({
+        "id": "test:model:feature#sphere", "ordinal": 0, "name": "Ball", "suppressed": false,
+        "outputs": [wire["model"]["bodies"][0]["id"]],
+        "definition": {"definition": "sphere", "center": {"x": 5.0, "y": 5.0, "z": 5.0},
+                       "radius": 5.0, "op": "new_body"},
+    });
+    wire["model"]["features"] = serde_json::json!([sphere]);
+    part.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    assembly.parts.push(part.clone());
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({
+            "id": "test:model:feature#later", "ordinal": 1, "name": "Later", "suppressed": false,
+            "definition": {"definition": "native", "kind": "Mystery"},
+        }));
+    part.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    assembly.parts.push(part.clone());
+    // A restatement failure must retry serially and keep its Dropped note at this position.
+    part.ir.model.faces.clear();
+    assembly.parts.push(part.clone());
+    part.ir.model.bodies.clear();
+    assembly.parts.push(part);
+    assembly.placements = assembly
+        .parts
+        .iter()
+        .enumerate()
+        .map(|(index, _)| Placement {
+            hidden: false,
+            name: None,
+            part: index,
+            transform: dutchman_core::placement::IDENTITY,
+        })
+        .collect();
+    model
+}
+
+#[test]
+fn parallel_replay_checks_keep_partial_histories_and_reports_identical() {
+    let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) else {
+        return;
+    };
+    let model = mixed_histories();
+    let writer = SolidCraftWriter::new().verification(Verification::With(cli));
+    let mut serial = Vec::new();
+    let mut serial_report = Report::default();
+    writer
+        .clone()
+        .threads(1)
+        .write(&model, &mut serial, &mut serial_report)
+        .unwrap();
+    let mut parallel = Vec::new();
+    let mut parallel_report = Report::default();
+    writer
+        .threads(4)
+        .write(&model, &mut parallel, &mut parallel_report)
+        .unwrap();
+    assert_eq!(serial, parallel);
+    parallel_report.set_threads(1, 1);
+    assert_eq!(format!("{serial_report:?}"), format!("{parallel_report:?}"));
+}

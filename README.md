@@ -52,6 +52,9 @@ timeline for correction when it replays; it does not identify which feature need
 correction. SolidCraft's numerical eval includes hidden bodies as well as the visible
 final shape.
 
+Assembly parts prepare in parallel by default; use `--threads N` to bound workers, or
+`--threads 1` for serial conversion with the same design and ordered report.
+
 ## Choosing what to keep
 
 Use `--preset fast` for shape only, `--preset standard` (the default) for history,

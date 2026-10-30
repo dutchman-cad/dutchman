@@ -474,6 +474,7 @@ fn main() -> ExitCode {
         } => inspect(
             &input,
             &dutchman::PartSearch {
+                threads: 0,
                 project,
                 also: search,
             },

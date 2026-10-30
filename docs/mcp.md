@@ -64,6 +64,17 @@ are placed hidden`, counts the latter across repeated and nested placements. Bot
 the same bounded hidden-occurrence paths; a Degraded note reports paths left shown
 past the 4096-path limit.
 
+Both `convert` and `convert_all` accept `threads`, a whole number at least zero.
+`0` (default) selects available CPU parallelism for assembly parts; `1`
+uses the serial path. Part count and available memory cap the actual worker count.
+Component slices prepare independently and identical empty holders share a model.
+SolidCraft parts also prepare independently, including checks in separate temporary folders,
+and enter the design in their original order. Designs and ordered reports are identical
+apart from `threads: {requested, used}`. Failed preparations retry serially. Native
+decoding remains serial; other writers use shared component slicing only. Batch `jobs` limits
+files, while `threads` limits part workers per file. `no_memory_check` leaves this
+worker cap enabled.
+
 ## Choosing what to keep and estimating cost
 
 Both `convert` and `convert_all` accept `preset` (`fast`, `standard`, or `full`, default
@@ -226,8 +237,8 @@ points, but Dutchman retains this limit for compatibility with older releases.
 | Tool | Arguments | Returns | Writes |
 |---|---|---|---|
 | `inspect` | `input`, and optionally `project`, `search` | `dutchman.inspect/1` | nothing |
-| `convert` | `input`, `output` (optional for `dry_run`), and optionally `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `dry_run`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `overwrite`, `project`, `search` | `dutchman.convert/1` | the `output` file |
-| `convert_all` | `inputs`, `out_dir`, and optionally `jobs`, `timeout`, `max_memory_mb`, `journal`, `report_anon`, `report_salt`, `report_key`, `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `overwrite`, `project`, `search` | `dutchman.convert-all/1` | designs and the default log inside `out_dir`, plus `journal`, `report_anon`, and `report_key` at their specified paths |
+| `convert` | `input`, `output` (optional for `dry_run`), and optionally `threads`, `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `dry_run`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `overwrite`, `project`, `search` | `dutchman.convert/1` | the `output` file |
+| `convert_all` | `inputs`, `out_dir`, and optionally `jobs`, `timeout`, `max_memory_mb`, `journal`, `report_anon`, `report_salt`, `report_key`, `threads`, `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `overwrite`, `project`, `search` | `dutchman.convert-all/1` | designs and the default log inside `out_dir`, plus `journal`, `report_anon`, and `report_key` at their specified paths |
 | `formats` | none | `dutchman.formats/1` | nothing |
 
 The formats report includes each reader's status and cadmpeg's published headline

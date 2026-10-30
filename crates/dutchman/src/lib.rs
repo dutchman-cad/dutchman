@@ -91,6 +91,9 @@ impl Writer for OutputWriter {
 /// How a design is converted.
 #[derive(Clone, Debug, clap::Args)]
 pub struct ConvertOptions {
+    /// Maximum assembly part workers (0: automatic, 1: serial), capped by available memory.
+    #[arg(long, value_name = "N", default_value_t = 0)]
+    pub threads: usize,
     /// Output format: SolidCraft (default), a FreeCAD macro/document (experimental),
     /// or partial TechDraw DXF pages (convert command only).
     #[arg(long, value_enum, default_value = "solidcraft")]
@@ -151,6 +154,7 @@ pub struct ConvertOptions {
 impl Default for ConvertOptions {
     fn default() -> Self {
         Self {
+            threads: 0,
             to: OutputFormat::default(),
             preset: choices::Preset::default(),
             import_only: false,
@@ -192,6 +196,7 @@ impl ConvertOptions {
     /// Where these options say to look for an assembly's part files.
     pub fn part_search(&self) -> PartSearch {
         PartSearch {
+            threads: self.threads,
             project: self.project.clone(),
             also: self.search.clone(),
         }
@@ -210,6 +215,7 @@ impl ConvertOptions {
             OutputFormat::Dxf => OutputWriter::Dxf,
             OutputFormat::Solidcraft => OutputWriter::SolidCraft(
                 SolidCraftWriter::new()
+                    .threads(self.threads)
                     .import_only(!self.choices().history)
                     .sketches(self.choices().sketches)
                     .joints(self.choices().joints)
