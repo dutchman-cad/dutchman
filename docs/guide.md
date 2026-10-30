@@ -413,7 +413,6 @@ first feature that stops the history; the original geometry is still converted.
 ## Desktop app
 
 For a visual walkthrough, see [How to use it](../README.md#how-to-use-it).
-The walkthrough uses `.sc` for SolidCraft designs; targets older than 0.25.1 use `.solidcraft`.
 
 Open `dutchman-gui`, add design files or folders, choose an output folder, and press
 **Convert**. Convert stays visible while you scroll through settings or results. The

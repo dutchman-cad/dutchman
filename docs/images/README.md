@@ -4,9 +4,6 @@
 `readme-result-night.png` show the real desktop UI rendered by the ignored
 `readme_screenshots` GPU test in `crates/dutchman-gui/tests/ui.rs`.
 
-The walkthrough uses `.sc` for SolidCraft designs. Targets older
-than SolidCraft 0.25.1 use `.solidcraft`.
-
 The source file is `crates/dutchman-core/tests/fixtures/design_history.FCStd`,
 shown as `Bracket.FCStd`. It is cadmpeg's CC0-1.0 synthetic FreeCAD history fixture;
 its origin and checksum are recorded in the fixtures README. No private designs
@@ -16,8 +13,4 @@ real SolidCraft CLI to check history. PNGs use the image crate's best compressio
 
 To regenerate on Linux with a GPU, set `SOLIDCRAFT_CLI` to a released CLI and
 `DUTCHMAN_GUI_SCREENSHOTS` to an absolute output folder, then run the ignored
-`readme_screenshots` test with the `test-support` feature. In environments that
-require the build queue, run Cargo through that queue.
-
-These captures show main before PR #304, so the result card still names
-`Bracket.solidcraft`. Regenerate after that change merges to show `Bracket.sc`.
+`readme_screenshots` test with the `test-support` feature.

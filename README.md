@@ -7,7 +7,7 @@ Converts Fusion, Inventor, SolidWorks parts, FreeCAD, CATIA, Rhino, Creo View, A
 
 <img alt="Dutchman Convert in Day theme: CC0 FreeCAD bracket converted, with its mapped feature history and Open in SolidCraft result card" src="docs/images/readme-result-day.png#gh-light-mode-only" width="800">
 <img alt="Dutchman Convert in Night theme: the same CC0 bracket conversion and feature history result card" src="docs/images/readme-result-night.png#gh-dark-mode-only" width="800">
-<!-- After PR #304 merges, regenerate readme_screenshots and the generated formats block for .sc output. -->
+<!-- After the .sc output change (#304) merges, retake these screenshots and update the extension wording. -->
 
 ## Download
 
@@ -27,7 +27,7 @@ Converts Fusion, Inventor, SolidWorks parts, FreeCAD, CATIA, Rhino, Creo View, A
 
    <img alt="CC0 bracket queued in Day theme with Standard selected and a live memory and time estimate" src="docs/images/readme-preset-day.png" width="480">
 
-3. **Convert, then Open in SolidCraft.** The result card says what came across and what could not. Your converted design is a `.sc` file (SolidCraft targets older than 0.25.1 get `.solidcraft`).
+3. **Convert, then Open in SolidCraft.** The result card says what came across and what could not. Your converted design is a `.solidcraft` file.
 
    <img alt="CC0 bracket result in Day theme showing mapped feature history and Open in SolidCraft" src="docs/images/readme-result-day.png" width="480">
 
@@ -46,9 +46,9 @@ Converts Fusion, Inventor, SolidWorks parts, FreeCAD, CATIA, Rhino, Creo View, A
 ## Command line
 
 ```sh
-dutchman part.f3d                 # writes part.sc
-dutchman part.f3d out.sc
-dutchman convert part.f3d out.sc
+dutchman part.f3d                 # writes part.solidcraft
+dutchman part.f3d out.solidcraft
+dutchman convert part.f3d out.solidcraft
 dutchman convert part.f3d --preset fast
 ```
 
@@ -230,7 +230,7 @@ installed Pilot takes precedence over the built-in one.
 **Add files…** and **Add folder…**), choose an output folder, and press **Convert**. Each file
 shows whether it converted, what was written (editable history or geometry), and its losses as
 Info, Degraded or Dropped. A converted design opens in SolidCraft from its card: the app that
-`SOLIDCRAFT_APP` names, else `solidcraft` on `PATH`, else the system's app for `.sc`
+`SOLIDCRAFT_APP` names, else `solidcraft` on `PATH`, else the system's app for `.solidcraft`
 files. When an Inventor assembly's part files are not found, its card names them: **Search a
 folder…** or **Find a file…** converts it again, searching there too. The app follows the
 system's light or dark setting, or can be set to Day or Night. Its **Output format** choice
@@ -317,7 +317,7 @@ dutchman inspect --json part.ipt
 Convert, with one JSON report on stdout:
 
 ```sh
-dutchman convert --json part.f3d part.sc
+dutchman convert --json part.f3d part.solidcraft
 ```
 
 Convert a whole project folder, four files at a time:
