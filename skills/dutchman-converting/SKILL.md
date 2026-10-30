@@ -1,6 +1,6 @@
 ---
 name: dutchman-converting
-description: Use when someone wants a CAD file (Fusion, Inventor, SolidWorks, FreeCAD, CATIA, Creo View, Rhino, ACIS or STEP) turned into a SolidCraft design (.solidcraft) with Dutchman, through the dutchman-mcp tools or the dutchman command. Covers inspecting first, reader status and refusals (including IGES, Creo and NX), converting one file or a folder, checking the result in SolidCraft, and explaining losses in plain words.
+description: Use when someone wants a CAD file (Fusion, Inventor, SolidWorks, FreeCAD, CATIA, Creo View, Rhino, ACIS or STEP) turned into a SolidCraft design (.sc) with Dutchman, through the dutchman-mcp tools or the dutchman command. Covers inspecting first, reader status and refusals (including IGES, Creo and NX), converting one file or a folder, checking the result in SolidCraft, and explaining losses in plain words.
 ---
 
 # Converting CAD files with Dutchman
@@ -190,7 +190,9 @@ are not present in the pinned CADIR version.
 
 ## 3. Convert
 
-- One file: `convert` with `input` and `output` (ending in `.solidcraft`).
+- One file: `convert` with `input` and `output` (ending in `.sc`; legacy `.solidcraft`
+  and `.solvecraft` names also work). Default names use `.solidcraft` for targets before
+  SolidCraft 0.25.1.
 - Many files or a folder: `convert_all` with `inputs` and `out_dir`. One failure does not stop
   the rest; the call is an error when any file failed, and each file has its own report in
   `results`.
@@ -267,9 +269,9 @@ Never remove or change the quarantine attribute.
   timeline folders, keeping feature order and leaving joints outside folders. Each folder
   added has an Info `timeline folders` note: `"Name": N feature(s) grouped`. Parts and
   assemblies with one top-level design get no folders.
-- Open the design and look at it: `solidcraft-cli eval /abs/path/design.solidcraft`, or with
+- Open the design and look at it: `solidcraft-cli eval /abs/path/design.sc`, or with
   SolidCraft's MCP server, start it on the design (`solidcraft-cli mcp --in
-  /abs/path/design.solidcraft`) and call `measure`.
+  /abs/path/design.sc`) and call `measure`.
 - For partial history, use SolidCraft's `document.inspect` to check each body's `visible`
   flag; numerical `eval` includes hidden editable bodies in its body count and totals.
   Compare the visible bodies with the source's final bodies.
@@ -308,7 +310,7 @@ supported yet.
 ```sh
 dutchman formats --json
 dutchman inspect --json /abs/part.f3d
-dutchman convert --json /abs/part.f3d /abs/converted/part.solidcraft
+dutchman convert --json /abs/part.f3d /abs/converted/part.sc
 dutchman convert-all --json --out-dir /abs/converted /abs/project
 ```
 

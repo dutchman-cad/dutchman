@@ -173,8 +173,8 @@ fn an_mcp_client_converts_through_dutchman() {
     assert_eq!(all["isError"], false, "{all}");
     assert_eq!(all["structuredContent"]["schema"], "dutchman.convert-all/1");
     assert_eq!(all["structuredContent"]["converted"], 2);
-    assert!(out_dir.join("generated_unit_cube.solidcraft").is_file());
-    assert!(out_dir.join("synthetic_cube.solidcraft").is_file());
+    assert!(out_dir.join("generated_unit_cube.sc").is_file());
+    assert!(out_dir.join("synthetic_cube.sc").is_file());
 
     // The same batch, each file in a converter of its own, with an anonymous report.
     let anon = dir.path().join("anon.json");

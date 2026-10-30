@@ -89,8 +89,9 @@ impl Settings {
 /// options' project folder when they name one, else in the folder given that holds each file,
 /// then in the options' other folders. Numbered saves keep existing output files.
 pub fn prepare(jobs: &mut [Job], options: &ConvertOptions) {
+    let extension = options.output_extension();
     for job in jobs {
-        let _ = job.output.set_extension(options.to.extension());
+        let _ = job.output.set_extension(extension);
         job.replace = !options.no_clobber && Format::part_revision(&job.input).is_none();
         if options.project.is_some() {
             job.search.project.clone_from(&options.project);
@@ -515,7 +516,7 @@ fn plan_with_limit(
                         Format::part_revision(&relative)
                             .map_or_else(|| relative.clone(), |(part, _)| part),
                     )
-                    .with_extension("solidcraft"),
+                    .with_extension(crate::OutputFormat::Solidcraft.extension()),
                 &mut outputs,
             );
             let replace = Format::part_revision(&path).is_none();
@@ -623,7 +624,7 @@ fn search(
     }
 }
 
-/// `path`, numbered (`part-2.solidcraft`) when an earlier file already writes there.
+/// `path`, numbered (`part-2.sc`) when an earlier file already writes there.
 fn unique(path: PathBuf, taken: &mut BTreeSet<PathBuf>) -> PathBuf {
     let mut candidate = path.clone();
     let mut n = 2;
@@ -632,7 +633,12 @@ fn unique(path: PathBuf, taken: &mut BTreeSet<PathBuf>) -> PathBuf {
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_default();
-        candidate = path.with_file_name(format!("{stem}-{n}.solidcraft"));
+        let mut name = std::ffi::OsString::from(format!("{stem}-{n}"));
+        if let Some(extension) = path.extension() {
+            name.push(".");
+            name.push(extension);
+        }
+        candidate = path.with_file_name(name);
         n += 1;
     }
     taken.insert(candidate.clone());
@@ -935,7 +941,7 @@ mod tests {
         for name in ["bracket.prt.3", "bracket.prt.7", "pin.prt.9", "pin.prt.10"] {
             std::fs::write(input.join(name), b"#UGC:2").unwrap();
         }
-        let existing = out.join("bracket.solidcraft");
+        let existing = out.join("bracket.sc");
         std::fs::write(&existing, b"keep this design").unwrap();
         let mut plan = plan(&[input], &out);
         assert_eq!(plan.jobs.len(), 2);
@@ -981,5 +987,45 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].0, Path::new(names[2]));
         assert_eq!(skipped.len(), 2);
+    }
+
+    #[test]
+    fn batch_names_follow_the_target_and_preserve_collision_numbers() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = dir.path().join("part.v2.f3d");
+        let second = dir.path().join("part.v2.ipt");
+        std::fs::write(&first, b"").unwrap();
+        std::fs::write(&second, b"").unwrap();
+        for (target, extension) in [
+            ("0.18.2", "solidcraft"),
+            ("0.25.0", "solidcraft"),
+            ("0.25.1", "sc"),
+            ("0.27.0", "sc"),
+        ] {
+            let mut planned = plan(&[first.clone(), second.clone()], &dir.path().join("out"));
+            let options = ConvertOptions {
+                solidcraft_version: Some(target.parse().unwrap()),
+                ..ConvertOptions::default()
+            };
+            prepare(&mut planned.jobs, &options);
+            let names: Vec<_> = planned
+                .jobs
+                .iter()
+                .map(|job| {
+                    job.output
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .into_owned()
+                })
+                .collect();
+            assert_eq!(
+                names,
+                [
+                    format!("part.v2.{extension}"),
+                    format!("part.v2-2.{extension}")
+                ]
+            );
+        }
     }
 }

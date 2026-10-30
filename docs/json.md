@@ -83,7 +83,7 @@ its designs when a pre-read exceeds the budget; it also includes that file's ref
   "schema": "dutchman.convert/1",
   "ok": true,
   "input": {"path": "part.f3d", "format": "fusion_archive", "format_name": "Fusion archive (.f3d)"},
-  "output": {"path": "part.solidcraft", "format": "solidcraft/23"},
+  "output": {"path": "part.sc", "format": "solidcraft/23"},
   "estimate": {"peak_bytes": 1200000000, "seconds": 90, "band": 0.5},
   "choices": {"preset": "standard", "history": true, "sketches": true, "joints": true},
   "mode": "history",
@@ -109,6 +109,10 @@ count and free-memory worker policy. A serial component remains. Before native d
 the embedded design count and the converter's 256 MiB minimum worker budget are proxies;
 actual body counts can reduce conversion workers further. Single-design files keep their
 existing time model. Memory estimates and bands are unchanged by this time refit.
+
+Default SolidCraft paths use `.sc`; targets before 0.25.1 use `.solidcraft`.
+Explicit output paths keep their given extension. The container format stays `solidcraft/23`.
+
 
 | Field | Meaning |
 |---|---|
@@ -290,7 +294,7 @@ part in that folder is converted. `skipped_revisions` lists each older save as
 `{"path": "bracket.prt.3", "newer": "bracket.prt.7"}` (full paths as supplied).
 These skips count in `skipped`, separately from `skipped_by_extension`. Explicit file
 arguments are converted as named. A numbered save strips exactly one revision suffix
-before deriving its base output name (`bracket.solidcraft`); existing outputs are kept.
+before deriving its base output name (`bracket.sc`); existing outputs are kept.
 These report additions retain `dutchman.convert-all/1`; existing fields keep their types.
 
 Each file converts in a process of its own. One that runs past `--timeout` or holds more than
