@@ -325,3 +325,56 @@ fn memory_refusals_and_dry_run_share_the_estimate_without_writing() {
     assert!(!output.exists() && !out_dir.exists());
     client.finish();
 }
+
+#[test]
+fn diagnostics_paths_are_optional_on_both_converting_tools() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = Client::start();
+    let tools = client.request("tools/list", json!({}));
+    for name in ["convert", "convert_all"] {
+        let tool = tools["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap();
+        assert_eq!(
+            tool["inputSchema"]["properties"]["diagnostics"]["type"],
+            "string"
+        );
+        assert_eq!(
+            tool["inputSchema"]["properties"]["diagnostics_default"]["type"],
+            "boolean"
+        );
+    }
+    for batch in [false, true] {
+        let log = dir.path().join(format!("{batch}.jsonl"));
+        let (name, args) = if batch {
+            (
+                "convert_all",
+                json!({"inputs": [fixture("generated_unit_cube.f3d")],
+                "out_dir": dir.path().join("batch"), "diagnostics": log, "verify": false, "jobs": 1}),
+            )
+        } else {
+            (
+                "convert",
+                json!({"input": fixture("generated_unit_cube.f3d"),
+                "output": dir.path().join("cube.solidcraft"), "diagnostics": log, "verify": false}),
+            )
+        };
+        let result = client.call(name, args);
+        assert_eq!(result["isError"], false, "{result}");
+        let records: Vec<Value> = std::fs::read_to_string(log)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(records[0]["type"], "start");
+        assert_eq!(records.last().unwrap()["type"], "end");
+    }
+    let result = client.call("convert", json!({"input": fixture("generated_unit_cube.f3d"),
+        "output": dir.path().join("refused.solidcraft"), "diagnostics": dir.path().join("refused.jsonl"), "diagnostics_default": true}));
+    assert_eq!(result["isError"], true);
+    assert!(!dir.path().join("refused.jsonl").exists());
+    client.finish();
+}

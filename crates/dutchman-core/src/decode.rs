@@ -191,10 +191,19 @@ fn decode_unguarded(
         progress.stage(Stage::Decode);
     }
     let options = DecodeOptions { depth, policy };
-    let decoded = codec
-        .decode(&mut Cursor::new(bytes), &options)
-        .map_err(|err| decode_failure(format, err))
-        .map_err(other)?;
+    let decode = || codec.decode(&mut Cursor::new(bytes), &options);
+    let decoded = match progress.and_then(|progress| progress.members.clone()) {
+        Some(sink) => cadmpeg_codec_f3d::observe_f3z_members(
+            std::rc::Rc::new(Members {
+                sink,
+                started: std::cell::RefCell::new(std::collections::BTreeMap::new()),
+            }),
+            decode,
+        ),
+        None => decode(),
+    }
+    .map_err(|err| decode_failure(format, err))
+    .map_err(other)?;
     let (mut ir, decode_report, fidelity) = decoded.into_parts();
     // An assembly's geometry is in its parts' files, read afterwards.
     if !drawings
@@ -226,6 +235,50 @@ fn decode_unguarded(
             .then(|| String::from_utf8(bytes.to_vec()).ok())
             .flatten(),
     })
+}
+
+struct Members {
+    sink: std::sync::Arc<dyn crate::MemberObserver>,
+    started: std::cell::RefCell<std::collections::BTreeMap<String, std::time::Instant>>,
+}
+
+impl cadmpeg_codec_f3d::F3zMemberObserver for Members {
+    fn member_started(&self, path: &str) {
+        let mut started = self.started.borrow_mut();
+        // The decoder also caps archive members; bound diagnostics independently.
+        if started.len() < 100_000 {
+            started.insert(path.to_owned(), std::time::Instant::now());
+        }
+        self.sink
+            .member_event(path, crate::MemberEvent::Start, 0, None);
+    }
+
+    fn member_finished(&self, path: &str, outcome: Result<(), &CodecError>) {
+        let ms = self.started.borrow_mut().remove(path).map_or(0, |start| {
+            u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
+        });
+        let (event, code) = match outcome {
+            Ok(()) => (crate::MemberEvent::Finish, None),
+            Err(error) => (crate::MemberEvent::Fail, Some(member_error_code(error))),
+        };
+        self.sink.member_event(path, event, ms, code);
+    }
+}
+
+fn member_error_code(error: &CodecError) -> &'static str {
+    match error {
+        CodecError::WrongFormat(_) => "wrong_format",
+        CodecError::Malformed(_) => "malformed",
+        CodecError::InvalidInput(_) => "invalid_input",
+        CodecError::Truncated { .. } => "truncated",
+        CodecError::ResourceLimit(_) => "resource_limit",
+        CodecError::UnsupportedDialect { .. } => "unsupported_dialect",
+        CodecError::UnsupportedTarget(_) => "unsupported_target",
+        CodecError::InsufficientDepth { .. } => "insufficient_depth",
+        CodecError::NotImplemented(_) => "not_implemented",
+        CodecError::Io(_) => "io",
+        _ => "other",
+    }
 }
 
 /// Keep only the arenas needed to restate geometry and its assembly structure.
@@ -607,5 +660,49 @@ mod tests {
         })
         .unwrap_err();
         assert!(other.to_string().contains("unreadable"));
+    }
+
+    #[test]
+    fn member_observer_times_repeated_decodes_and_sends_categories_only() {
+        use crate::{MemberEvent, MemberObserver};
+        use cadmpeg_codec_f3d::F3zMemberObserver;
+        use std::sync::{Arc, Mutex};
+        type Event = (String, MemberEvent, u64, Option<&'static str>);
+        #[derive(Default)]
+        struct Events(Mutex<Vec<Event>>);
+        impl MemberObserver for Events {
+            fn member_event(
+                &self,
+                path: &str,
+                event: MemberEvent,
+                ms: u64,
+                code: Option<&'static str>,
+            ) {
+                self.0.lock().unwrap().push((path.into(), event, ms, code));
+            }
+        }
+        let events = Arc::new(Events::default());
+        let observer = Members {
+            sink: events.clone(),
+            started: Default::default(),
+        };
+        observer.member_started("ZebraWidget.f3d");
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        observer.member_finished(
+            "ZebraWidget.f3d",
+            Err(&CodecError::Malformed("Secret decoder message".into())),
+        );
+        observer.member_started("ZebraWidget.f3d");
+        observer.member_finished("ZebraWidget.f3d", Ok(()));
+        let events = events.0.lock().unwrap();
+        assert_eq!(events.len(), 4);
+        assert_eq!(events[0].1, MemberEvent::Start);
+        assert_eq!(events[1].1, MemberEvent::Fail);
+        assert!(events[1].2 >= 2);
+        assert_eq!(events[1].3, Some("malformed"));
+        assert_eq!(events[2].1, MemberEvent::Start);
+        assert_eq!(events[3].1, MemberEvent::Finish);
+        assert_eq!(events[3].3, None);
+        assert!(observer.started.borrow().is_empty());
     }
 }

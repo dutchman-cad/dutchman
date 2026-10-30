@@ -99,3 +99,11 @@ using FreeCAD 1.1.4 through its public scripting interface (version and CC0
 dedication recorded in cadmpeg’s `corpus/manifest.toml`). The first two are byte-identical
 to the retained draft fixtures; no duplicate copies are stored. They exercise neutral template primitives,
 resolved editable text, projected curves, dimensions, and text height.
+
+### Diagnostic log archive tests
+
+`crates/dutchman/tests/diagnostics.rs` builds temporary `.f3z` archives from the repository's
+`generated_unit_cube.f3d`, with a synthetic `Manifest.json` naming its root and an empty
+`DesignDescription.json` graph, following cadmpeg's public `test_support::assembly_test`
+recipe at `43fbc10c4910f2c549d7ca79001acb11429aea3f`. These temporary files exercise
+anonymous member lists and decode events; no third-party models are used or retained.

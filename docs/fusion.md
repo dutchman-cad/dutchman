@@ -118,6 +118,12 @@ cadmpeg merges the referenced designs into the root design with their placements
 components.
 
 While reading an `.f3z`, Dutchman shows the current stage and elapsed time with a five-second
-still-working heartbeat. cadmpeg decodes all members in one call without exposing member
-completions, so design counts and a determinate reading bar are not available yet for `.f3z`.
+still-working heartbeat. cadmpeg owns member discovery and composition; decode attempts
+can repeat, so the progress display does not infer unique design counts or a determinate
+reading bar for `.f3z`.
 A single `.f3d` reports one design when its read succeeds.
+
+Optional [diagnostic logs](guide.md#diagnostic-logs-for-unfinished-runs) record salted `.f3z`
+member ids, sizes, actual decode starts/finishes/failures, and re-decode counts. Per-member
+records appear when the decoder reports them; they do not establish a unique design total
+for the progress bar. The pinned decoder's observer is installed on the decoding thread.

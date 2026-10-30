@@ -105,9 +105,14 @@ impl Salt {
     /// The id of the file at `path`: the salted hash of its full path.
     pub fn file_id(&self, path: &Path) -> String {
         let full = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        self.member_id(&full.to_string_lossy())
+    }
+
+    /// The same salted hash for a logical archive path, without resolving it on the host.
+    pub(crate) fn member_id(&self, path: &str) -> String {
         let mut hash = Sha256::new();
         hash.update(self.0);
-        hash.update(full.to_string_lossy().as_bytes());
+        hash.update(path.as_bytes());
         let digest = hash.finalize();
         let hex: String = digest.iter().take(8).map(|b| format!("{b:02x}")).collect();
         format!("f{hex}")
@@ -650,7 +655,7 @@ const KINDS: [&str; 18] = [
 
 /// The kind of thing a loss of Dutchman's own is about: the first word of its subject (the
 /// part after a part file's name in an assembly) when it is one of [`KINDS`], else `other`.
-fn subject_kind(subject: &str) -> &'static str {
+pub(crate) fn subject_kind(subject: &str) -> &'static str {
     let own = subject.rsplit(": ").next().unwrap_or(subject);
     let word = own.split_whitespace().next().unwrap_or("");
     KINDS
@@ -662,7 +667,7 @@ fn subject_kind(subject: &str) -> &'static str {
 
 /// `code` when it is a code (lower-case letters, digits and `_ . / -`, at most 80), else
 /// `fallback`: cadmpeg's codes are fixed words, and nothing else is let through as one.
-fn generic(code: &str, fallback: &str) -> String {
+pub(crate) fn generic(code: &str, fallback: &str) -> String {
     let fixed = !code.is_empty()
         && code.len() <= 80
         && code.chars().all(|c| {

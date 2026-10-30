@@ -379,9 +379,21 @@ and holds document counts in atomics. `convert_with_progress` runs a five-second
 the conversion and joins it before returning. `read_with_progress` reports input, decode,
 and model-check stages, and separate document completions; callers using it directly own
 the timer (`Progress::run`). There is no per-entity reporting. Fusion `.f3z` member decoding
-is internal to cadmpeg, whose current API exposes neither member completion nor a total.
+is internal to cadmpeg. Its optional observer reports actual member decode attempts,
+which can repeat during composition and do not establish a unique design total.
 The shared batch events forward progress to the desktop worker; isolated CLI workers use
 JSON lines on stderr. The CLI formats these separately from its unchanged final reports.
+
+
+Diagnostics attach a format-neutral `MemberObserver` to `Progress`. The guarded decoder
+installs cadmpeg's thread-local F3Z observer around the decode call, measures each member,
+and reduces errors to fixed categories. The front-end sink hashes member paths with the
+anonymous report's salt before writing. Isolated workers forward private member activity
+over their existing stderr pipe to that sink. Each conversion writes an append-only JSONL
+stream with immediate flushes, stage/duration records, a 30-second resource heartbeat, and
+an end summary; an independent timer syncs the file at least every five seconds. Default
+paths, timestamp naming, retention, and unfinished-run discovery live in `dutchman` and are
+shared with the desktop app. See [the diagnostic schema](json.md#dutchmandiagnostics1).
 
 
 

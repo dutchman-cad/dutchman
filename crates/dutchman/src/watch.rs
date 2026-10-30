@@ -116,7 +116,8 @@ pub fn run(command: Command) -> Result<bool, String> {
 }
 
 /// Runs with conversion progress on stderr, unless `quiet` is set.
-pub fn run_with_progress(command: Command, quiet: bool) -> Result<bool, String> {
+pub fn run_with_progress(mut command: Command, quiet: bool) -> Result<bool, String> {
+    crate::diagnostics::prepare(&mut command.options, batch::workers(command.jobs))?;
     let progress = Arc::new(crate::progress::StderrProgress::new(quiet, command.json));
     if command.options.to == crate::OutputFormat::Dxf {
         return Err(

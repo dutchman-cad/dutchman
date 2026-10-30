@@ -29,7 +29,7 @@ pub use error::{Error, FILE_DID_NOT_CONVERT, RELEASES};
 pub use format::Format;
 pub use locate::{PartSearch, MAX_SEARCHED};
 pub use memory::available_memory;
-pub use progress::{elapsed, Progress, ProgressEvent};
+pub use progress::{elapsed, MemberEvent, MemberObserver, Progress, ProgressEvent};
 
 /// The neutral model every conversion passes through.
 #[derive(Clone, Debug)]
