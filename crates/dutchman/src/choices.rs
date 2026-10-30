@@ -152,7 +152,7 @@ pub(crate) fn memory_check_with(
     available: Option<u64>,
 ) -> MemoryCheck {
     let choices = options.choices();
-    let estimate = estimate(input, &choices);
+    let estimate = estimate_with_threads(input, &choices, options.threads);
     if options.no_memory_check || options.preset == Preset::Fast {
         return MemoryCheck::Ok(estimate);
     }
@@ -163,7 +163,7 @@ pub(crate) fn memory_check_with(
         return MemoryCheck::Ok(estimate);
     }
     if choices.history && choices.history_within_budget {
-        let reduced = estimate_without_history(input, choices);
+        let reduced = estimate_without_history(input, choices, options.threads);
         if reduced.is_some_and(|e| e.peak_bytes <= available) {
             return MemoryCheck::Ok(reduced);
         }
@@ -175,9 +175,20 @@ pub(crate) fn memory_check_with(
     }
 }
 
-fn estimate_without_history(input: &Path, mut choices: Choices) -> Option<Estimate> {
+fn estimate_without_history(
+    input: &Path,
+    mut choices: Choices,
+    threads: usize,
+) -> Option<Estimate> {
     choices.history = false;
-    estimate(input, &choices)
+    estimate_with_threads(input, &choices, threads)
+}
+
+// Independent embedded designs expose parallel work before native decoding. The serial
+// fraction covers decode, assembly coordination and container writing.
+struct MultipartTime {
+    seconds_per_mib: f64,
+    serial_fraction: f64,
 }
 
 struct Coefficients {
@@ -187,6 +198,7 @@ struct Coefficients {
     bytes_per_byte: f64,
     base_seconds: f64,
     seconds_per_mib: f64,
+    multipart_time: Option<MultipartTime>,
     history_factor: f64,
     history_seconds_factor: f64,
     band: f64,
@@ -211,6 +223,10 @@ const COEFFICIENTS: &[Coefficients] = &[
         bytes_per_byte: 52.0,
         base_seconds: 0.2,
         seconds_per_mib: 1.4,
+        multipart_time: Some(MultipartTime {
+            seconds_per_mib: 0.75,
+            serial_fraction: 0.60,
+        }),
         history_factor: 1.1,
         history_seconds_factor: 1.1,
         band: 0.6,
@@ -221,6 +237,10 @@ const COEFFICIENTS: &[Coefficients] = &[
         bytes_per_byte: 52.0,
         base_seconds: 0.2,
         seconds_per_mib: 1.4,
+        multipart_time: Some(MultipartTime {
+            seconds_per_mib: 0.75,
+            serial_fraction: 0.60,
+        }),
         history_factor: 1.1,
         history_seconds_factor: 1.1,
         band: 0.6,
@@ -231,6 +251,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         bytes_per_byte: 25.0,
         base_seconds: 0.1,
         seconds_per_mib: 2.0,
+        multipart_time: None,
         history_factor: 2.0,
         history_seconds_factor: 2.0,
         band: 0.5,
@@ -241,6 +262,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         bytes_per_byte: 30.0,
         base_seconds: 1.0,
         seconds_per_mib: 2.0,
+        multipart_time: None,
         history_factor: 3.0,
         history_seconds_factor: 3.0,
         band: 1.0,
@@ -251,6 +273,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         bytes_per_byte: 25.0,
         base_seconds: 1.0,
         seconds_per_mib: 5.0,
+        multipart_time: None,
         history_factor: 1.7,
         history_seconds_factor: 1.7,
         band: 0.4,
@@ -261,6 +284,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         bytes_per_byte: 30.0,
         base_seconds: 1.0,
         seconds_per_mib: 5.0,
+        multipart_time: None,
         history_factor: 3.0,
         history_seconds_factor: 3.0,
         band: 1.0,
@@ -271,6 +295,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         bytes_per_byte: 150.0,
         base_seconds: 1.0,
         seconds_per_mib: 2.0,
+        multipart_time: None,
         history_factor: 1.04,
         history_seconds_factor: 3.0,
         band: 1.0,
@@ -281,6 +306,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         bytes_per_byte: 30.0,
         base_seconds: 1.0,
         seconds_per_mib: 2.0,
+        multipart_time: None,
         history_factor: 3.0,
         history_seconds_factor: 3.0,
         band: 1.0,
@@ -291,6 +317,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         bytes_per_byte: 30.0,
         base_seconds: 1.0,
         seconds_per_mib: 2.0,
+        multipart_time: None,
         history_factor: 3.0,
         history_seconds_factor: 3.0,
         band: 1.0,
@@ -301,6 +328,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         bytes_per_byte: 30.0,
         base_seconds: 1.0,
         seconds_per_mib: 2.0,
+        multipart_time: None,
         history_factor: 3.0,
         history_seconds_factor: 3.0,
         band: 1.0,
@@ -311,6 +339,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         bytes_per_byte: 30.0,
         base_seconds: 1.0,
         seconds_per_mib: 2.0,
+        multipart_time: None,
         history_factor: 3.0,
         history_seconds_factor: 3.0,
         band: 1.0,
@@ -321,6 +350,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         bytes_per_byte: 30.0,
         base_seconds: 1.0,
         seconds_per_mib: 2.0,
+        multipart_time: None,
         history_factor: 3.0,
         history_seconds_factor: 3.0,
         band: 1.0,
@@ -331,6 +361,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         bytes_per_byte: 30.0,
         base_seconds: 1.0,
         seconds_per_mib: 2.0,
+        multipart_time: None,
         history_factor: 3.0,
         history_seconds_factor: 3.0,
         band: 1.0,
@@ -341,6 +372,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         bytes_per_byte: 20.0,
         base_seconds: 1.0,
         seconds_per_mib: 1.0,
+        multipart_time: None,
         history_factor: 2.0,
         history_seconds_factor: 2.0,
         band: 1.0,
@@ -351,6 +383,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         bytes_per_byte: 20.0,
         base_seconds: 1.0,
         seconds_per_mib: 1.0,
+        multipart_time: None,
         history_factor: 2.0,
         history_seconds_factor: 2.0,
         band: 1.0,
@@ -361,14 +394,30 @@ const COEFFICIENTS: &[Coefficients] = &[
         bytes_per_byte: 30.0,
         base_seconds: 1.0,
         seconds_per_mib: 2.0,
+        multipart_time: None,
         history_factor: 3.0,
         history_seconds_factor: 3.0,
         band: 1.0,
     },
 ];
 
-/// Estimate from file metadata and ZIP directory entries only; never decode or inflate a member.
+/// Estimate without native decoding, using automatic part workers. Nested Fusion ZIP
+/// containers are inflated only to read their bounded directories.
 pub fn estimate(input: &Path, choices: &Choices) -> Option<Estimate> {
+    estimate_with_threads(input, choices, 0)
+}
+
+/// Estimate using the requested part workers (0 selects the machine's automatic limit).
+pub fn estimate_with_threads(input: &Path, choices: &Choices, threads: usize) -> Option<Estimate> {
+    estimate_using_workers(input, choices, threads, dutchman_core::parallel::workers)
+}
+
+fn estimate_using_workers(
+    input: &Path,
+    choices: &Choices,
+    threads: usize,
+    workers: impl FnOnce(usize, usize, u64) -> usize,
+) -> Option<Estimate> {
     let format = Format::from_path(input)?;
     if !format.can_convert() {
         return None;
@@ -378,7 +427,7 @@ pub fn estimate(input: &Path, choices: &Choices) -> Option<Estimate> {
         return None;
     }
     let coefficients = COEFFICIENTS.iter().find(|c| c.format == format)?;
-    let (bytes, _members) = if matches!(
+    let (bytes, _members, designs) = if matches!(
         format,
         Format::FusionArchive | Format::FusionMultiDocument | Format::FreeCadDocument
     ) {
@@ -387,7 +436,7 @@ pub fn estimate(input: &Path, choices: &Choices) -> Option<Estimate> {
             matches!(format, Format::FusionArchive | Format::FusionMultiDocument),
         )?
     } else {
-        (metadata.len(), 0)
+        (metadata.len(), 0, 0)
     };
     let factor = if choices.history {
         coefficients.history_factor
@@ -399,12 +448,25 @@ pub fn estimate(input: &Path, choices: &Choices) -> Option<Estimate> {
     } else {
         1.0
     };
+    let time_rate = if let Some(time) = coefficients.multipart_time.as_ref().filter(|_| designs > 1)
+    {
+        // The native body counts are not available yet. Use the converter's 256 MiB
+        // minimum per-worker budget and embedded design count as pre-decode proxies.
+        let count = if threads == 1 {
+            1
+        } else {
+            workers(threads, designs, 256 << 20)
+        };
+        time.seconds_per_mib
+            * (time.serial_fraction + (1.0 - time.serial_fraction) / count.max(1) as f64)
+    } else {
+        coefficients.seconds_per_mib
+    };
     Some(Estimate {
         peak_bytes: (coefficients.base_bytes as f64
             + coefficients.bytes_per_byte * bytes as f64 * factor)
             .ceil() as u64,
-        seconds: ((coefficients.base_seconds
-            + coefficients.seconds_per_mib * bytes as f64 / (1 << 20) as f64)
+        seconds: ((coefficients.base_seconds + time_rate * bytes as f64 / (1 << 20) as f64)
             * seconds_factor)
             .ceil() as u64,
         band: coefficients.band,
@@ -490,7 +552,7 @@ pub(crate) fn bounded_archive<R: std::io::Read + std::io::Seek>(
     Some(archive)
 }
 
-fn archive_size(input: &Path, fusion: bool) -> Option<(u64, u64)> {
+fn archive_size(input: &Path, fusion: bool) -> Option<(u64, u64, usize)> {
     let mut archive = bounded_archive(std::fs::File::open(input).ok()?)?;
     let bytes = match archive.decompressed_size() {
         Some(bytes) => u64::try_from(bytes).unwrap_or(u64::MAX),
@@ -503,22 +565,23 @@ fn archive_size(input: &Path, fusion: bool) -> Option<(u64, u64)> {
         }
     };
     let members = archive.len() as u64;
-    let bytes = if fusion {
-        bytes.max(nested_size(&mut archive))
+    let (nested_bytes, designs) = if fusion {
+        nested_size(&mut archive)
     } else {
-        bytes
+        (0, 0)
     };
-    Some((bytes, members))
+    Some((bytes.max(nested_bytes), members, designs))
 }
 
 /// The uncompressed size of the designs a Fusion archive holds as zips of their own (an `.f3z`
 /// holds each design as an `.f3d`), read from each inner directory: one member at a time is
 /// read, never the designs inside it; 0 when none can be read.
-fn nested_size<R: std::io::Read + std::io::Seek>(archive: &mut zip::ZipArchive<R>) -> u64 {
+fn nested_size<R: std::io::Read + std::io::Seek>(archive: &mut zip::ZipArchive<R>) -> (u64, usize) {
     /// The most bytes of inner archives read in all.
     const LIMIT: u64 = 2 << 30;
     let mut total = 0_u64;
     let mut read = 0_u64;
+    let mut designs = 0_usize;
     for index in 0..archive.len() {
         let Ok(mut member) = archive.by_index(index) else {
             continue;
@@ -535,9 +598,10 @@ fn nested_size<R: std::io::Read + std::io::Seek>(archive: &mut zip::ZipArchive<R
         }
         if let Some(size) = nested_content_size(&mut member, LIMIT) {
             total = total.saturating_add(size);
+            designs += 1;
         }
     }
-    total
+    (total, designs)
 }
 
 /// Read only a bounded nested archive's directory, never its design contents.
@@ -604,6 +668,12 @@ mod tests {
                     && c.seconds_per_mib.is_finite()
                     && c.seconds_per_mib > 0.0
             );
+            if let Some(time) = &c.multipart_time {
+                assert!(time.seconds_per_mib.is_finite() && time.seconds_per_mib > 0.0);
+                assert!(
+                    time.serial_fraction.is_finite() && (0.0..=1.0).contains(&time.serial_fraction)
+                );
+            }
             assert!(c.history_factor.is_finite() && c.history_factor > 1.0);
             assert!(c.history_seconds_factor.is_finite() && c.history_seconds_factor > 1.0);
             assert!(c.band.is_finite() && c.band > 0.0 && c.band <= 1.0);
@@ -631,8 +701,68 @@ mod tests {
         zip.start_file("Part.f3d", stored).unwrap();
         zip.write_all(&inner).unwrap();
         zip.finish().unwrap();
-        assert_eq!(archive_size(&path, true), Some((4 << 20, 1)));
-        assert_eq!(archive_size(&path, false), Some((inner.len() as u64, 1)));
+        assert_eq!(archive_size(&path, true), Some((4 << 20, 1, 1)));
+        assert_eq!(archive_size(&path, false), Some((inner.len() as u64, 1, 0)));
+    }
+
+    #[test]
+    fn multipart_time_uses_requested_workers_without_changing_memory() {
+        let mut inner = Vec::new();
+        {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut inner));
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Deflated);
+            zip.start_file("Design/BulkStream.dat", options).unwrap();
+            zip.write_all(&vec![0; 4 << 20]).unwrap();
+            zip.finish().unwrap();
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("synthetic.f3z");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+        for name in ["a.f3d", "b.f3d", "c.f3d", "d.f3d"] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(&inner).unwrap();
+        }
+        zip.finish().unwrap();
+        let choices = Choices::of(Preset::Fast);
+        let serial = estimate_using_workers(&path, &choices, 1, |_, _, _| {
+            panic!("serial needs no probe")
+        })
+        .unwrap();
+        let auto = estimate_using_workers(&path, &choices, 0, |requested, parts, budget| {
+            assert_eq!((requested, parts, budget), (0, 4, 256 << 20));
+            4
+        })
+        .unwrap();
+        let limited = estimate_using_workers(&path, &choices, 2, |requested, _, _| {
+            assert_eq!(requested, 2);
+            2
+        })
+        .unwrap();
+        assert_eq!(serial.seconds, 13);
+        assert_eq!(auto.seconds, 9);
+        assert_eq!(limited.seconds, 10);
+        assert_eq!(auto.peak_bytes, serial.peak_bytes);
+        assert_eq!(auto.band, serial.band);
+    }
+
+    #[test]
+    fn zip_members_alone_do_not_imply_parallel_designs() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("synthetic.f3d");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+        for name in ["Design/a", "Design/b"] {
+            zip.start_file(name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(&vec![0; 1 << 20]).unwrap();
+        }
+        zip.finish().unwrap();
+        let estimate = estimate_using_workers(&path, &Choices::of(Preset::Fast), 0, |_, _, _| {
+            panic!("one design needs no parallel estimate")
+        })
+        .unwrap();
+        assert_eq!(estimate.seconds, 3);
     }
 
     #[test]
@@ -683,7 +813,7 @@ mod tests {
             zip.start_file("second-member", options).unwrap();
             zip.write_all(b"synthetic").unwrap();
             zip.finish().unwrap();
-            assert_eq!(archive_size(&path, false), Some(((1 << 20) + 9, 2)));
+            assert_eq!(archive_size(&path, false), Some(((1 << 20) + 9, 2, 0)));
             assert!(std::fs::metadata(&path).unwrap().len() < 1 << 20);
             if !Format::from_path(&path).unwrap().can_convert() {
                 assert!(estimate(&path, &Choices::of(Preset::Fast)).is_none());
@@ -733,7 +863,7 @@ mod tests {
         end[12..20].fill(255);
         bytes.extend_from_slice(&end);
         std::fs::write(&path, &bytes).unwrap();
-        assert_eq!(archive_size(&path, false), Some((9, 1)));
+        assert_eq!(archive_size(&path, false), Some((9, 1, 0)));
         // A hostile ZIP64 count must be refused before zip can allocate its directory.
         bytes[zip64_offset as usize + 24..zip64_offset as usize + 32]
             .copy_from_slice(&u64::MAX.to_le_bytes());
@@ -747,7 +877,7 @@ mod tests {
             .unwrap();
         zip.write_all(b"synthetic").unwrap();
         zip.finish().unwrap();
-        assert_eq!(archive_size(&path, false), Some((9, 1)));
+        assert_eq!(archive_size(&path, false), Some((9, 1, 0)));
     }
 
     #[test]
@@ -774,7 +904,8 @@ mod tests {
         std::fs::write(&part, b"synthetic").unwrap();
         let mut options = ConvertOptions::default();
         let full = estimate(&assembly, &options.choices()).unwrap();
-        let reduced = estimate_without_history(&assembly, options.choices()).unwrap();
+        let reduced =
+            estimate_without_history(&assembly, options.choices(), options.threads).unwrap();
         assert_eq!(
             memory_check_with(&assembly, &options, Some(full.peak_bytes)),
             MemoryCheck::Ok(Some(full))
@@ -795,7 +926,7 @@ mod tests {
                 &part,
                 &options,
                 Some(
-                    estimate_without_history(&part, options.choices())
+                    estimate_without_history(&part, options.choices(), options.threads)
                         .unwrap()
                         .peak_bytes
                 )
