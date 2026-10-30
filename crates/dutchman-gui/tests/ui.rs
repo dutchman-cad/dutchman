@@ -293,7 +293,7 @@ fn screenshots() {
                 "- [{file}]({file}) — SolidCraft version pill and panel: {case} ({width} px wide).\n"
             ));
         }
-        harness.get_by_label("Update to 0.2.6").click();
+        harness.get_by_label("Update to 0.2.6").click_accesskit();
         harness.run();
         shot(
             &mut harness,
@@ -633,7 +633,7 @@ fn solidcraft_status_panel_waits_for_a_click_and_shares_version_notices() {
                 )
             },
         );
-        harness.get_by_label(&label).click();
+        harness.get_by_label(&label).click_accesskit();
         harness.run();
         assert!(harness.query_by_label_contains(expected).is_some());
         if found.is_none() || found == Some("0.17.9") {
@@ -660,12 +660,12 @@ fn update_pill_adapts_to_width_and_waits_for_a_click() {
         assert!(harness
             .query_by_label("Dutchman 0.2.6 is available")
             .is_none());
-        harness.get_by_label(label).click();
+        harness.get_by_label(label).click_accesskit();
         harness.run();
         assert!(harness
             .query_by_label("Dutchman 0.2.6 is available")
             .is_some());
-        harness.get_by_label("Skip this version").click();
+        harness.get_by_label("Skip this version").click_accesskit();
         harness.run();
         assert!(harness.query_by_label(label).is_none());
         assert!(harness
@@ -690,7 +690,7 @@ fn homebrew_job_survives_window_close_and_offers_restart_on_success() {
     assert!(harness.query_by_label("Updating Dutchman…").is_some());
     harness.state_mut().updater.open = false;
     harness.run_steps(3);
-    harness.get_by_label("Update").click();
+    harness.get_by_label("Update").click_accesskit();
     harness.run_steps(3);
     assert!(harness.query_by_label("Updating Dutchman…").is_some());
     assert!(harness.query_by_label("Restart Dutchman").is_none());
@@ -729,10 +729,10 @@ fn scoop_confirmation_can_be_cancelled_without_starting_a_process() {
         .query_by_label("Dutchman closes, Scoop updates it, and Dutchman opens again.")
         .is_some());
     assert!(harness.query_by_label("Update and restart").is_some());
-    harness.get_by_label("Cancel").click();
+    harness.get_by_label("Cancel").click_accesskit();
     harness.run();
     assert!(harness.query_by_label("Update and restart").is_none());
-    harness.get_by_label("Update with Scoop").click();
+    harness.get_by_label("Update with Scoop").click_accesskit();
     harness.run();
     assert!(harness.query_by_label("Update and restart").is_some());
 }
