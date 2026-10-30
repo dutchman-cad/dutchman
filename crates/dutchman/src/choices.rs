@@ -385,10 +385,12 @@ pub fn estimate(input: &Path, choices: &Choices) -> Option<Estimate> {
     })
 }
 
-fn archive_size(input: &Path, fusion: bool) -> Option<(u64, u64)> {
-    use std::io::{Read, Seek, SeekFrom};
-    let mut file = std::fs::File::open(input).ok()?;
-    let length = file.metadata().ok()?.len();
+/// Open a zip only after bounding its directory and entry count.
+pub(crate) fn bounded_archive<R: std::io::Read + std::io::Seek>(
+    mut file: R,
+) -> Option<zip::ZipArchive<R>> {
+    use std::io::SeekFrom;
+    let length = file.seek(SeekFrom::End(0)).ok()?;
     // Bound directory allocation, including ZIP64's extensible record, before zip reads it.
     let tail_len = length.min(65_633);
     file.seek(SeekFrom::End(-i64::try_from(tail_len).ok()?))
@@ -455,10 +457,15 @@ fn archive_size(input: &Path, fusion: bool) -> Option<(u64, u64)> {
     {
         return None;
     }
-    let mut archive = zip::ZipArchive::new(file).ok()?;
+    let archive = zip::ZipArchive::new(file).ok()?;
     if archive.len() > 10_000 {
         return None;
     }
+    Some(archive)
+}
+
+fn archive_size(input: &Path, fusion: bool) -> Option<(u64, u64)> {
+    let mut archive = bounded_archive(std::fs::File::open(input).ok()?)?;
     let bytes = match archive.decompressed_size() {
         Some(bytes) => u64::try_from(bytes).unwrap_or(u64::MAX),
         None => {
@@ -482,7 +489,6 @@ fn archive_size(input: &Path, fusion: bool) -> Option<(u64, u64)> {
 /// holds each design as an `.f3d`), read from each inner directory: one member at a time is
 /// read, never the designs inside it; 0 when none can be read.
 fn nested_size<R: std::io::Read + std::io::Seek>(archive: &mut zip::ZipArchive<R>) -> u64 {
-    use std::io::Read;
     /// The most bytes of inner archives read in all.
     const LIMIT: u64 = 2 << 30;
     let mut total = 0_u64;
@@ -501,18 +507,28 @@ fn nested_size<R: std::io::Read + std::io::Seek>(archive: &mut zip::ZipArchive<R
         if read > LIMIT {
             break;
         }
-        let mut bytes = Vec::new();
-        if member.read_to_end(&mut bytes).is_err() {
-            continue;
-        }
-        if let Ok(inner) = zip::ZipArchive::new(std::io::Cursor::new(bytes)) {
-            let size = inner
-                .decompressed_size()
-                .map_or(0, |n| u64::try_from(n).unwrap_or(u64::MAX));
+        if let Some(size) = nested_content_size(&mut member, LIMIT) {
             total = total.saturating_add(size);
         }
     }
     total
+}
+
+/// Read only a bounded nested archive's directory, never its design contents.
+pub(crate) fn nested_content_size(reader: &mut impl std::io::Read, limit: u64) -> Option<u64> {
+    use std::io::Read;
+    let mut bytes = Vec::new();
+    reader
+        .take(limit.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .ok()?;
+    if bytes.len() as u64 > limit {
+        return None;
+    }
+    let archive = bounded_archive(std::io::Cursor::new(bytes))?;
+    archive
+        .decompressed_size()
+        .and_then(|n| u64::try_from(n).ok())
 }
 
 /// Available memory, including process limits where available.

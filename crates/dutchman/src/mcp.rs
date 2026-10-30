@@ -185,6 +185,8 @@ fn result(report: &Value) -> Value {
 fn option_properties() -> Map<String, Value> {
     let properties = json!({
         "threads": {"type": "integer", "minimum": 0, "default": 0, "description": "Maximum assembly part workers (0: automatic, 1: serial); capped by available memory."},
+        "diagnostics_default": {"type": "boolean", "default": false, "description": "Save in the platform diagnostics folder, retaining the newest ten logs. Cannot be combined with diagnostics."},
+        "diagnostics": {"type": "string", "description": "Absolute path to append an anonymous live diagnostic JSONL log. Includes progress and resource samples even if a conversion never finishes; no names or file contents."},
         "to": {"type": "string", "enum": ["solidcraft", "freecad"], "default": "solidcraft", "description": "Output format: SolidCraft design or self-contained FreeCAD rebuild macro."},
         "preset": {"type": "string", "enum": ["fast", "standard", "full"], "default": "standard", "description": "Fast keeps shape only; Standard keeps history, sketches and joints but budgets assembly history; Full never drops history for memory."},
         "history": {"type": "boolean", "default": true, "description": "Keep feature history when the preset allows it; false narrows the preset like import_only."},
@@ -252,7 +254,7 @@ fn tools() -> Value {
     convert.insert("dry_run".to_owned(), json!({"type": "boolean", "default": false, "description": "Return estimate, choices and fits from a quick pre-read, without decoding or writing. Output is optional."}));
     convert.insert(
         "output".to_owned(),
-        json!({"type": "string", "description": "Absolute path of the .solidcraft or .FCMacro file to write, matching to. An existing file there is replaced, unless overwrite is false. Nothing else is written."}),
+        json!({"type": "string", "description": "Absolute path of the .solidcraft or .FCMacro file to write, matching to. An existing file there is replaced, unless overwrite is false. If supplied, diagnostics is also written at its specified path."}),
     );
     let mut all = option_properties();
     all.insert(
@@ -266,7 +268,7 @@ fn tools() -> Value {
     );
     all.insert(
         "out_dir".to_owned(),
-        json!({"type": "string", "description": "Absolute path of the folder to write the designs to, keeping each input folder's layout. Designs already there are replaced, unless overwrite is false. Converted designs are written only inside out_dir. If supplied, journal, report_anon, and report_key are also written at their specified paths."}),
+        json!({"type": "string", "description": "Absolute path of the folder to write the designs to, keeping each input folder's layout. Designs already there are replaced, unless overwrite is false. Converted designs are written only inside out_dir. If supplied, diagnostics, journal, report_anon, and report_key are also written at their specified paths."}),
     );
     all.insert(
         "jobs".to_owned(),
@@ -364,7 +366,9 @@ fn count(arguments: &Arguments, key: &str) -> Result<Option<NonZeroUsize>, Strin
     }
 }
 
-const OPTIONS: [&str; 15] = [
+const OPTIONS: [&str; 17] = [
+    "diagnostics",
+    "diagnostics_default",
     "threads",
     "preset",
     "history",
@@ -435,8 +439,19 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
     };
     let import_only = flag(arguments, "import_only", false)?;
     let history = flag(arguments, "history", true)?;
+    let diagnostics_default = flag(arguments, "diagnostics_default", false)?;
+    if diagnostics_default && arguments.get("diagnostics").is_some_and(|v| !v.is_null()) {
+        return Err("diagnostics and diagnostics_default cannot be combined".into());
+    }
     Ok(ConvertOptions {
         threads,
+        diagnostics_default,
+        diagnostics: match arguments.get("diagnostics") {
+            None | Some(Value::Null) => None,
+            Some(_) => Some(path(arguments, "diagnostics")?),
+        },
+        diagnostics_salt: None,
+        diagnostics_threads: 1,
         to,
         verify: false,
         freecad_timeout: 300,
@@ -541,12 +556,12 @@ fn convert_all(arguments: &Arguments) -> Result<Value, String> {
         None => return Err("inputs is required".to_owned()),
     };
     let out_dir = path(arguments, "out_dir")?;
-    let options = options(arguments)?;
+    let mut options = options(arguments)?;
     let optional = |key: &str| match arguments.get(key) {
         None | Some(Value::Null) => Ok(None),
         Some(_) => path(arguments, key).map(Some),
     };
-    let anon = match optional("report_anon")? {
+    let mut anon = match optional("report_anon")? {
         Some(path) => Some(crate::anon::Request {
             path,
             salt: match arguments.get("report_salt") {
@@ -563,6 +578,14 @@ fn convert_all(arguments: &Arguments) -> Result<Value, String> {
         }
         None => None,
     };
+    if let Some(request) = &mut anon {
+        let salt = request
+            .salt
+            .clone()
+            .map_or_else(crate::anon::Salt::random, Ok)?;
+        request.salt = Some(salt.clone());
+        options.diagnostics_salt = Some(salt);
+    }
     let max_memory = match arguments.get("max_memory_mb") {
         None | Some(Value::Null) => Some(crate::worker::DEFAULT_MAX_MEMORY_MB << 20),
         Some(value) => match value.as_u64() {

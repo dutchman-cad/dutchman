@@ -1,7 +1,7 @@
 //! Coarse conversion progress. No work is done per geometry entity.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::Stage;
@@ -54,9 +54,24 @@ pub fn elapsed(seconds: u64) -> String {
     }
 }
 
+/// Decoder member activity, including repeated reads of the same member.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MemberEvent {
+    Start,
+    Finish,
+    Fail,
+}
+
+/// Optional diagnostics sink. Paths are private decoder identities; the sink must hash
+/// them before publishing. Codes are fixed categories, never decoder messages.
+pub trait MemberObserver: Send + Sync {
+    fn member_event(&self, path: &str, event: MemberEvent, ms: u64, code: Option<&'static str>);
+}
+
 /// A thread-safe reporter, shared by all document readers of one conversion.
 /// Callbacks run in order, must return promptly, and must not re-enter this reporter.
 pub struct Progress<'a> {
+    pub(crate) members: Option<Arc<dyn MemberObserver>>,
     started: Instant,
     stage: Mutex<Stage>,
     read: AtomicU64,
@@ -67,12 +82,18 @@ pub struct Progress<'a> {
 impl<'a> Progress<'a> {
     pub fn new(callback: &'a (dyn Fn(ProgressEvent) + Send + Sync)) -> Self {
         Self {
+            members: None,
             started: Instant::now(),
             stage: Mutex::new(Stage::Input),
             read: AtomicU64::new(0),
             total: AtomicU64::new(u64::MAX),
             callback,
         }
+    }
+
+    pub fn with_members(mut self, members: Option<Arc<dyn MemberObserver>>) -> Self {
+        self.members = members;
+        self
     }
 
     pub fn stage(&self, stage: Stage) {

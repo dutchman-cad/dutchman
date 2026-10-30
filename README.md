@@ -35,8 +35,8 @@ Conversions show their stage and elapsed time, with a still-working update every
 seconds. The desktop app shows design counts and a progress bar when the reader knows
 the total. `convert`, `convert-all`, `inspect`, and `watch` write progress to stderr;
 `--quiet` hides it. With `--json`, progress is JSON lines on stderr and stdout keeps its
-existing report format. Fusion `.f3z` member counts are not available yet; their
-progress shows stage and elapsed time.
+existing report format. Fusion `.f3z` progress shows stage and elapsed time;
+[diagnostic logs](docs/guide.md#diagnostic-logs-for-unfinished-runs) also record member decode attempts.
 
 When a feature blocks SolidCraft history conversion, earlier editable features and
 resolved sketches are kept in a hidden **Editable history (partial)** component. The
@@ -291,6 +291,10 @@ desktop portal, and dropping files works without it.
 - Reporting a problem: a file that doesn't convert goes on the
   [**A file didn't convert**](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
   form, with no design file; see [Troubleshooting](docs/guide.md#troubleshooting).
+- Conversion never finishes? Enable `--diagnostics-default` or the app's **Save a diagnostic log**;
+  [review and send the JSONL log](docs/guide.md#diagnostic-logs-for-unfinished-runs). Find it in
+  Windows `%LOCALAPPDATA%\Dutchman\diagnostics\`, macOS `~/Library/Logs/Dutchman/`, or Linux
+  `$XDG_STATE_HOME/dutchman/diagnostics/` (default `~/.local/state/dutchman/diagnostics/`).
 - Questions and help: the [Dutchman CAD Discord](https://discord.gg/yTcseBEdeu) has a forum for Dutchman Convert.
 - Contributing: [CONTRIBUTING.md](CONTRIBUTING.md), and [AGENTS.md](AGENTS.md) for AI
   contributors.

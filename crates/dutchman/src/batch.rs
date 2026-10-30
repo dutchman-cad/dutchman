@@ -121,6 +121,9 @@ pub fn convert_all_with_progress(
     settings: &Settings,
     on_progress: &(dyn Fn(&Path, dutchman_core::ProgressEvent) + Send + Sync),
 ) -> Result<Value, String> {
+    let mut prepared = options.clone();
+    crate::diagnostics::prepare(&mut prepared, workers(settings.jobs))?;
+    let options = &prepared;
     if options.to == crate::OutputFormat::Dxf {
         return Err(
             "DXF page output uses dutchman convert --to dxf; batch and watch are not supported yet"

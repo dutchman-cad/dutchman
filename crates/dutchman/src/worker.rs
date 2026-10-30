@@ -87,16 +87,43 @@ pub fn run_if_worker() -> Option<ExitCode> {
         }
     };
     let callback = |event| eprintln!("{}", json::progress(&parsed.input, event));
-    let report = crate::convert_options_with_progress(
+    let members: Option<Arc<dyn dutchman_core::MemberObserver>> =
+        std::env::var_os("DUTCHMAN_MEMBER_PROGRESS")
+            .map(|_| Arc::new(MemberProgress) as Arc<dyn dutchman_core::MemberObserver>);
+    let report = crate::convert_options_with_observer(
         &parsed.input,
         &parsed.output,
         &parsed.options,
         !parsed.options.no_clobber,
         &parsed.options.part_search(),
         &callback,
+        members,
     );
     println!("{report}");
     Some(ExitCode::SUCCESS)
+}
+
+/// Private worker protocol; names travel only to the supervising process's hashing sink.
+struct MemberProgress;
+
+impl dutchman_core::MemberObserver for MemberProgress {
+    fn member_event(
+        &self,
+        path: &str,
+        event: dutchman_core::MemberEvent,
+        ms: u64,
+        code: Option<&'static str>,
+    ) {
+        let event = match event {
+            dutchman_core::MemberEvent::Start => "start",
+            dutchman_core::MemberEvent::Finish => "finish",
+            dutchman_core::MemberEvent::Fail => "fail",
+        };
+        eprintln!(
+            "{}",
+            serde_json::json!({"dutchman_member": path, "event": event, "ms": ms, "code": code})
+        );
+    }
 }
 
 impl ConvertOptions {
@@ -207,6 +234,20 @@ pub fn convert_isolated_with_progress(
     shutdown: Option<&std::sync::atomic::AtomicBool>,
     on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
 ) -> Value {
+    crate::diagnostics::run(&job.input, options, on_progress, |progress, log| {
+        convert_isolated_inner(program, job, options, limits, shutdown, progress, log)
+    })
+}
+
+fn convert_isolated_inner(
+    program: &Path,
+    job: &Job,
+    options: &ConvertOptions,
+    limits: &Limits,
+    shutdown: Option<&std::sync::atomic::AtomicBool>,
+    on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
+    log: Option<&crate::diagnostics::Log>,
+) -> Value {
     let mut options = options.clone();
     options.no_clobber = !job.replace;
     let mut command = Command::new(program);
@@ -220,6 +261,11 @@ pub fn convert_isolated_with_progress(
         use std::os::windows::process::CommandExt;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
         command.creation_flags(CREATE_NEW_PROCESS_GROUP);
+    }
+    if log.is_some() {
+        command.env("DUTCHMAN_MEMBER_PROGRESS", "1");
+    } else {
+        command.env_remove("DUTCHMAN_MEMBER_PROGRESS");
     }
     let child = command
         .arg(WORKER_ARG)
@@ -241,6 +287,9 @@ pub fn convert_isolated_with_progress(
             )
         }
     };
+    if let Some(log) = log {
+        log.process(child.id());
+    }
     std::thread::scope(|scope| {
         let stage = Arc::new(Mutex::new(Stage::Input));
         let stdout = child.stdout.take().map(|out| {
@@ -252,7 +301,7 @@ pub fn convert_isolated_with_progress(
         });
         let stderr = child.stderr.take().map(|err| {
             let stage = Arc::clone(&stage);
-            scope.spawn(move || follow_stages(err, &stage, on_progress))
+            scope.spawn(move || follow_stages(err, &stage, on_progress, log))
         });
 
         let stopped = supervise(&mut child, limits, shutdown);
@@ -319,10 +368,33 @@ fn follow_stages(
     stream: impl Read,
     stage: &Mutex<Stage>,
     on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
+    log: Option<&crate::diagnostics::Log>,
 ) {
     use std::io::BufRead;
     for line in std::io::BufReader::new(stream).lines() {
         let Ok(line) = line else { break };
+        if let (Some(log), Ok(record)) = (log, serde_json::from_str::<Value>(&line)) {
+            if let Some(member) = record.get("dutchman_member").and_then(Value::as_str) {
+                let event = match record.get("event").and_then(Value::as_str) {
+                    Some("start") => Some(dutchman_core::MemberEvent::Start),
+                    Some("finish") => Some(dutchman_core::MemberEvent::Finish),
+                    Some("fail") => Some(dutchman_core::MemberEvent::Fail),
+                    _ => None,
+                };
+                if let Some(event) = event {
+                    log.member_event(
+                        member,
+                        event,
+                        record.get("ms").and_then(Value::as_u64).unwrap_or(0),
+                        record
+                            .get("code")
+                            .and_then(Value::as_str)
+                            .map(crate::diagnostics::member_code),
+                    );
+                }
+                continue;
+            }
+        }
         if let Some(event) = serde_json::from_str::<Value>(&line)
             .ok()
             .as_ref()
