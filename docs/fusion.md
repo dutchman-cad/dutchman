@@ -7,6 +7,8 @@ pin is bumped.
 
 ## Parts and history
 
+Bodies a Combine used up as a tool, or that a Remove step took out of the design, are left out when cadmpeg marks them hidden and no component owns them; an Info `bodies` note gives the count. Bodies you hid yourself stay available, and a part with both shown and hidden bodies is shown whole, with an Info note.
+
 | What the codec gives | What Dutchman does |
 |---|---|
 | The design's B-rep, with body transforms applied. | Converts it: restated as STEP, written as SolidCraft's import. |
@@ -161,7 +163,7 @@ can repeat, so the progress display does not infer unique design counts or a det
 reading bar for `.f3z`.
 A single `.f3d` reports one design when its read succeeds.
 
-Optional [diagnostic logs](guide.md#diagnostic-logs-for-unfinished-runs) record salted `.f3z`
+Optional [diagnostic logs](troubleshooting.md#diagnostic-logs-for-unfinished-runs) record salted `.f3z`
 member ids, sizes, actual decode starts/finishes/failures, and re-decode counts. Per-member
 records appear when the decoder reports them; they do not establish a unique design total
 for the progress bar. The pinned decoder's observer is installed on the decoding thread.

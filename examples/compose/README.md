@@ -46,7 +46,7 @@ Drop native CAD files or project folders into `Inbox`. The watcher waits for fil
 to settle before converting, and keeps relative folders in `Converted`. Keep the
 hidden `.dutchman-watch.json` state file with the outputs, and run only one watcher
 per output folder. Web uploads also save to `Converted`, numbering names already
-taken. See [Watch a folder](../../docs/guide.md#watch-a-folder) and
+taken. See [Watch a folder](../../docs/command-line.md#watch-a-folder) and
 [Save to a shared folder](../../docs/web.md#save-to-a-shared-folder).
 
 Each Dutchman container has a 10 GB memory limit. One file may use 8 GB, and the

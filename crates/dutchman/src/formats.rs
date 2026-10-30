@@ -62,6 +62,61 @@ pub fn text() -> String {
     out
 }
 
+/// The listing as a Markdown table, for the README and docs/formats.md.
+pub fn markdown() -> String {
+    let mut out =
+        String::from("| Format | Files | Reads | Level | Converts |\n|---|---|---|---|---|\n");
+    for format in Format::ALL {
+        let (name, files) = format
+            .name()
+            .split_once(" (")
+            .map(|(name, files)| (name, files.trim_end_matches(')')))
+            .unwrap_or((format.name(), ""));
+        let name = if format == Format::UnclassifiedPart {
+            "Unidentified part (Creo or NX)"
+        } else {
+            name
+        };
+        let files = files
+            .split(", ")
+            .filter(|file| !file.is_empty())
+            .map(|file| format!("`{file}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let reads = if format == Format::Iges {
+            "Recognised, not converted".to_owned()
+        } else {
+            capitalised(format.words())
+        };
+        let level = match format {
+            Format::Iges => None,
+            _ => format.headline_level(),
+        };
+        let converts = if format == Format::Iges {
+            "Import it in SolidCraft directly (File > Import)".to_owned()
+        } else if format.can_convert() || format == Format::FreeCadDocument {
+            capitalised(converts(format))
+        } else {
+            "Not yet".to_owned()
+        };
+        out.push_str(&format!(
+            "| {name} | {files} | {reads} | {} | {converts} |\n",
+            level.unwrap_or_else(|| "–".to_owned()),
+        ));
+    }
+    out.push_str("\nFreeCAD TechDraw drawings also convert to DXF (`--to dxf`): page curves, dimension labels, annotations, and templates, with unsupported content reported as Dropped.\n");
+    out.push_str("\nOutput is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro (`.FCMacro`, `--to freecad`).\n");
+    out
+}
+
+fn capitalised(text: &str) -> String {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+
 /// The JSON listing.
 pub fn json() -> Value {
     let formats: Vec<_> = Format::ALL

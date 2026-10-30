@@ -268,7 +268,7 @@ struct StartupTime {
 // file. Formats without measurements keep a conservative guess and a band of 100 %.
 // Small-file floors were refit on the synthetic Inventor and SolidWorks cubes and
 // FreeCAD recipe/fixture documents: exact-bundle Windows conversions and a pre-preset macOS
-// nightly (see guide.md). Fixed overhead is separate from content-dependent history memory.
+// nightly (see docs/presets.md). Fixed overhead is separate from content-dependent history memory.
 // Memory and time have separate history factors so a RAM fit does not change time estimates.
 // Band refit: all 5,516 successful CSV rows from Windows and both Macs, evaluated
 // against the current model. Add one percentage point of slack, then round up to 5%.

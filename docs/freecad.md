@@ -1,7 +1,7 @@
 # FreeCAD documents (`.FCStd`)
 
 FreeCAD documents convert through cadmpeg's `fcstd` codec. Checked in SolidCraft, all 19
-of the test documents (pads, pockets, revolves, holes, fillets, chamfers, shells and a
+of the test documents (pads, pockets, revolves, holes, fillets, chamfers, shells, and a
 three-part assembly) come out at FreeCAD's volume. Before 0.1.5 FreeCAD documents converted
 in the nightly builds only: cadmpeg 0.6.3 stored some faces as replicas of curves, kept each
 feature's intermediate shape as a body of its own and could turn revolved faces inwards.
@@ -174,7 +174,7 @@ documents, authored in FreeCAD 1.1.1 by the cadmpeg project and dedicated to the
 `--to freecad` writes a `.FCMacro` independently of `.FCStd` input support.
 `--to fcstd` runs FreeCAD to save and verify a native document; `--to freecad --verify`
 checks a macro without saving a native document. See
-[FreeCAD output](guide.md#freecad-output-experimental) for coverage, fallback and execution.
+[FreeCAD output](#freecad-output-experimental) for coverage, fallback, and execution.
 
 The writer is Rust and emits calls to FreeCAD as an outside Python program. It does not
 link or vendor FreeCAD. Its interface references are the public
@@ -225,7 +225,7 @@ dutchman convert part.FCStd --to dxf -o existing-directory
 One ASCII DXF R2000 (`AC1015`) is written per page with `$INSUNITS=4` (mm) and
 metric measurement. Names are `part-<object name>.dxf`, in source page order;
 `--page` uses the source object name, not its displayed label. Names are limited
-to 100 ASCII letters, digits, underscores and hyphens; other characters become
+to 100 ASCII letters, digits, underscores, and hyphens; other characters become
 underscores and collisions get numeric suffixes, also on case-insensitive systems.
 A selected page with an explicit file path uses that exact path. An unselected
 file path supplies a base: `-o drawing.dxf` writes `drawing-Page.dxf`, etc.
@@ -258,3 +258,120 @@ The CC0 fixtures include the original synthetic pages made with
 `crates/dutchman-core/tests/fixtures/techdraw.py` and cadmpeg's documented
 TechDraw corpus. Tests read committed files and require neither FreeCAD nor a
 Python DXF reader. No CAD implementation source is used for drawing mapping.
+
+## FreeCAD output (experimental)
+
+**Experimental.** The macro, its options and what it rebuilds may change between releases,
+including the headless verification result. Keep the original design for comparison.
+
+Write a self-contained FreeCAD rebuild macro instead of a SolidCraft design:
+
+```sh
+dutchman convert in.f3d --to freecad -o out.FCMacro
+```
+
+The positional output path still works. `convert-all --to freecad --out-dir DIR` writes
+`.FCMacro` files; the desktop app's **Output format** choice offers **FreeCAD macro** too.
+This output works independently of the `freecad` feature used to read `.FCStd` inputs.
+
+The macro makes a Body for each placed part, preserving nested assembly placements. It
+uses Dutchman's existing history mapping and timeline order to rebuild planar sketches
+(lines, circles, arcs, ellipses, and supported B-splines), constraints, pads and pockets,
+full-turn or symmetric revolves, unguided lofts, sweeps, simple holes, linear and circular
+feature patterns, spheres, tori, and coils. Numeric feature values are retained. A parameter
+object keeps evaluated scalar values and source expressions as text; source expressions
+are never executed. Coils are rebuilt with Part geometry and stored as a feature, with
+numeric properties; editing those properties does not recompute the coil.
+
+When a later feature cannot be rebuilt, the macro keeps the longest mapped prefix and
+all mapped sketches in a hidden group named **Rebuilt history (partial)**. The embedded
+STEP remains the visible final shape when the prefix differs; reference features are not
+included in the final shape's measurements. The report says `rebuilt N of M features;
+kept as reference` (sketches count as features; suppressed and organizational features do
+not). Later body-building features are blocked, with their reasons; later mapped sketches
+remain hidden references. Partial histories are still experimental and unverified.
+
+A part whose history cannot be rebuilt is kept as an embedded STEP solid or surface in a
+Body. Examples include unresolved source selections, intersect operations, fixed-orientation,
+guided, twisted, scaled, or binormal sweeps and lofts, lofts ending at a point, extrudes from
+or to a point or face or with taper, counterbored, countersunk, or face-ended holes, coils
+about an axis other than Z, two-direction patterns, and histories spanning multiple bodies. The report gives one result per source feature, including the reason each feature
+was not rebuilt. `--import-only` keeps every part as STEP and leaves out joints.
+Assemblies retain placements and rebuild supported joints as described below.
+Pattern counts are limited to 10,000. Solid lines drawn corner to
+corner across a profile taken whole (a centre rectangle's diagonals, when the source does
+not mark them construction) are left out of the padded profile, which is the same region.
+Geometry whose STEP uses replicated trimming curves (`CURVE_REPLICA`) is refused, because
+FreeCAD 1.1's STEP reader crashes on it.
+
+Assembly workbench joints are experimental and exercised with FreeCAD 1.1.4. The fixed,
+revolute, and slider joints the SolidCraft output writes are written to FreeCAD too, with the
+same resolved parts, connector frames, frame sense, angles, and limits, through
+sub-assemblies as well. Between parts placed directly in the assembly, cylindrical, ball,
+distance, parallel, perpendicular, and angle joints are also written; axis coincidence uses
+a cylindrical joint, and an insert uses a revolute joint with its plane offset. Their
+attachment offsets are kept, angular limits use degrees and linear limits millimetres, and
+either bound may be enabled alone. FreeCAD's static solve preserves free coordinates; limit
+properties are kept for the workbench rather than used to drive a pose during conversion.
+For a single revolute joint with one of its parts grounded, the macro also provides
+`drive_joint_angle(assembly, joint, degrees)`, which clamps the requested angle to the
+stored bounds and solves the other part's new pose. Use the workbench's simulation tools
+for chains and loops.
+
+A sub-assembly whose parts are joined gets its own Assembly, solved before the one that
+holds it; FreeCAD moves a sub-assembly as one body in its parent, so a moving joint from a
+part outside it to a part inside it turns the whole sub-assembly, with a note. Explicit
+grounding is retained. In each assembly, a joint chain nothing grounds gets one inferred
+grounded part (the second side of its first joint, as in the SolidCraft output), named in
+the report. Suppressed joints remain suppressed. External CADIR operands, subelement
+operands, joints between a sub-assembly and a part inside it, suppressed grounding, limits
+on fixed joints, driving parameter expressions, rack/pinion, screw, gear, and belt
+couplings, plane coincidence, point-on-axis, tangent, and native joint families get
+specific report notes. Their stored placements are kept.
+
+The macro checks the solver result and every part's stored pose. If the Assembly API is
+unavailable, solving fails, or a part moves during reconstruction, it removes the new
+joints and puts each part back where it was placed, as the macro does without joints.
+FreeCAD's report view gives the reason. Conversion reports remain unverified until the
+macro runs.
+
+Open the macro in FreeCAD with **Macro > Macros… > Execute**, or run:
+
+```sh
+freecadcmd out.FCMacro
+```
+
+The macro creates a new document. Save it as `.FCStd` from FreeCAD, or have Dutchman
+run FreeCAD headlessly and write the document directly:
+
+```sh
+dutchman convert in.f3d --to fcstd -o out.FCStd
+dutchman convert in.f3d --to freecad --verify -o out.FCMacro
+```
+
+`--to fcstd` always checks the result. `--to freecad --verify` checks the macro without
+saving a native document; the macro remains self-contained. Both compare each part's
+resulting solids with its embedded source STEP: solid count, volume (relative tolerance
+0.01%, the same as SolidCraft), and bounding-box coordinates (0.01% of the part's span,
+with a 1 mm minimum scale). Assemblies are compared in each part's local coordinates.
+The report says `verified` when every part matches, or `differs` and identifies the part.
+A runtime rebuild failure restores embedded STEP and reports the specific reason as a
+loss and a `differs` result, even when the restored solid matches. Sheets, wires, and other
+parts without solids are reported as not checked rather than verified.
+
+Discovery uses `FREECAD_CMD` (one executable path, or the Flatpak form
+`flatpak run --command=FreeCADCmd org.freecad.FreeCAD`; no shell is involved),
+then `freecadcmd` or `FreeCADCmd` on `PATH`, the standard `/Applications/FreeCAD.app` or
+`~/Applications/FreeCAD.app` bundle's `Contents/Resources/bin`, then an installed
+`org.freecad.FreeCAD` Flatpak. Flatpak receives access only to the temporary execution
+folder in addition to its existing permissions. `--freecad-timeout SECONDS` defaults to
+300; the process is killed on timeout. Native output fails when FreeCAD cannot run or
+produce measurements. A macro still writes successfully with verification `unverified`
+and reason `not checked: FreeCAD not found` when discovery finds no installation.
+`convert-all` forwards these options to each conversion worker.
+
+No FreeCAD installation is needed to generate a macro without `--verify`. Original STEP
+geometry remains in the document, hidden after a successful rebuild. The macro compares
+rebuilt geometry with STEP; a rebuild failure or difference restores the original and
+prints a warning in FreeCAD's report view. Temporary execution and STEP files are removed.
+

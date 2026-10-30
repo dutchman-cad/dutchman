@@ -5,95 +5,19 @@
 
 Converts Fusion, Inventor, SolidWorks parts, FreeCAD, CATIA, Rhino, Creo View, ACIS, and STEP designs into editable SolidCraft designs.
 
-<img alt="Dutchman Convert in Day theme: CC0 FreeCAD bracket converted, with its mapped feature history and Open in SolidCraft result card" src="docs/images/readme-result-day.png#gh-light-mode-only" width="800">
-<img alt="Dutchman Convert in Night theme: the same CC0 bracket conversion and feature history result card" src="docs/images/readme-result-night.png#gh-dark-mode-only" width="800">
+<a href="https://dutchman-cad.github.io/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-day.png&alt=Dutchman%20Convert%20in%20Day%20theme%3A%20a%20CC0%20FreeCAD%20bracket%20converted%2C%20with%20its%20mapped%20feature%20history%20and%20Open%20in%20SolidCraft"><img alt="Dutchman Convert in Day theme: a CC0 FreeCAD bracket converted, with its mapped feature history and Open in SolidCraft" src="docs/images/readme-result-day.png#gh-light-mode-only" width="100%"></a>
+<a href="https://dutchman-cad.github.io/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-night.png&alt=Dutchman%20Convert%20in%20Night%20theme%3A%20the%20same%20CC0%20bracket%20conversion%20and%20its%20result%20card"><img alt="Dutchman Convert in Night theme: the same CC0 bracket conversion and its result card" src="docs/images/readme-result-night.png#gh-dark-mode-only" width="100%"></a>
 
 ## Download
 
-- **Mac:** `brew install --cask dutchman-cad/tap/dutchman-convert` · [download the app](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-macos-universal.dmg).
-- **Windows:** [download the 64-bit ZIP](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-x86_64-pc-windows-msvc.zip), extract it, and open `dutchman-gui`.
-- **Linux:** download for [x86_64](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-x86_64-unknown-linux-gnu.tar.gz) or [ARM64](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-aarch64-unknown-linux-gnu.tar.gz), extract it, and open `dutchman-gui`.
+- **Mac:** [download the app](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-macos-universal.dmg), or `brew install --cask dutchman-cad/tap/dutchman-convert`.
+- **Windows:** [download the 64-bit ZIP](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-x86_64-pc-windows-msvc.zip), extract it, and open `dutchman-gui`; or `scoop bucket add dutchman-cad https://github.com/dutchman-cad/scoop-bucket` then `scoop install dutchman-cad/dutchman`.
+- **Linux:** download for [x86_64](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-x86_64-unknown-linux-gnu.tar.gz) or [ARM64](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-aarch64-unknown-linux-gnu.tar.gz), extract it, and open `dutchman-gui`; or `brew install dutchman-cad/tap/dutchman`.
 
-[First-run help](docs/guide.md#opening-the-app-the-first-time) · [Checksums and command-line downloads](#direct-downloads)
+Every download holds the desktop app (`dutchman-gui`), the `dutchman` command, and the `dutchman-mcp` server. On macOS, the app needs a [one-time approval](docs/install.md#opening-the-app-the-first-time). [Install](docs/install.md) has Docker, nightly builds, and building from source.
 
-## How to use it
-
-1. **Drop files or folders in.** Or choose **Add files…**; then choose an output folder.
-
-   <img alt="Day theme start screen with the drop area and Add files button" src="docs/images/readme-drop-day.png" width="480">
-
-2. **Pick Fast, Standard, or Full.** Fast keeps the shape; Standard keeps history, sketches, and joints within available memory; Full keeps everything that maps. The live estimate shows memory and time before you start.
-
-   <img alt="CC0 bracket queued in Day theme with Standard selected and a live memory and time estimate" src="docs/images/readme-preset-day.png" width="480">
-
-3. **Convert, then Open in SolidCraft.** The result card says what came across and what could not. Your converted design is a `.sc` file (SolidCraft targets older than 0.25.1 get `.solidcraft`).
-
-   <img alt="CC0 bracket result in Day theme showing mapped feature history and Open in SolidCraft" src="docs/images/readme-result-day.png" width="480">
-
-## What's new in 0.2.5
-
-- **Editable Fusion history, part by part:** features, sketches, and parameters stay editable where they map.
-- **Parts stay placed in assemblies:** components keep their poses; conflicting joints stay suppressed.
-- **Faster multi-part conversion:** assembly parts prepare on several cores, with memory limiting the worker count.
-- **Choose what to keep:** Fast, Standard, and Full show estimated memory and time before conversion.
-- **A diagnostic log:** save an anonymous log during a run, including runs that never finish.
-- **An update button:** a small pill in the header shows when a newer release is out; Homebrew and Scoop installs update in place.
-- **A SolidCraft version pill:** the header names the SolidCraft you have and explains whether its designs open there.
-
-[What converts](#what-converts) lists coverage and limits; every conversion reports what it could not carry across.
-
-## Command line
-
-```sh
-dutchman part.f3d                 # writes part.sc
-dutchman part.f3d out.sc
-dutchman convert part.f3d out.sc
-dutchman convert part.f3d --preset fast
-```
-
-[Getting started](docs/guide.md) covers options, presets, version compatibility, partial history, and parallel conversion.
-
-## Send us a file that won't convert
-
-Make a small public test file from a [fixtures recipe](https://dutchman-cad.github.io/fixtures/),
-or send a file that converts wrong, with its STEP export, to Dutchy in
-[Discord](https://discord.gg/yTcseBEdeu). Share only designs you own and can share.
-
-## Learn more
-
-[Desktop and command-line guide](docs/guide.md) · [Format coverage](#what-converts) ·
-[MCP tools](docs/mcp.md) · [Browser conversion on your own server](docs/web.md) ·
-[All docs](#docs)
-
-Dutchman is pure Rust, Apache-2.0. Native files are read by
-[cadmpeg](https://github.com/cadmpeg/cadmpeg); Dutchman maps its neutral model onto
-[SolidCraft](https://github.com/tangency-labs/solidcraft).
-
-## Install
-
-With [Homebrew](https://brew.sh) on macOS or Linux:
-
-```sh
-brew install dutchman-cad/tap/dutchman
-```
-
-With [Scoop](https://scoop.sh) on Windows:
-
-```powershell
-scoop bucket add dutchman-cad https://github.com/dutchman-cad/scoop-bucket
-scoop install dutchman-cad/dutchman
-```
-
-Both install `dutchman`, `dutchman-mcp` and the desktop app (`dutchman-gui`; Scoop also adds a
-Start menu shortcut), and follow each release: `brew upgrade` or `scoop update` brings the
-newest. Homebrew pours a ready-made bottle, so it needs no Xcode or Command Line Tools, and on
-macOS the commands need no first-run approval, because Homebrew's downloads are not
-quarantined. For **Dutchman Convert.app** in Applications and Launchpad, add
-`brew install --cask dutchman-cad/tap/dutchman-convert`; the app needs the
-[first-run approval](docs/guide.md#opening-the-app-the-first-time) once. Or download a release
-below, or run it in [Docker](docs/docker.md) (`docker pull ghcr.io/dutchman-cad/dutchman:latest`).
-
-## Direct downloads
+<details>
+<summary>All downloads, with checksums</summary>
 
 <!-- downloads -->
 | Your computer | Download | Checksum |
@@ -105,308 +29,89 @@ below, or run it in [Docker](docs/docker.md) (`docker pull ghcr.io/dutchman-cad/
 | Linux, ARM 64-bit (aarch64) | [dutchman-aarch64-unknown-linux-gnu.tar.gz](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-aarch64-unknown-linux-gnu.tar.gz) | [SHA-256](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-aarch64-unknown-linux-gnu.tar.gz.sha256) |
 <!-- /downloads -->
 
-Each archive holds `dutchman`, `dutchman-mcp` and the desktop app, Dutchman Convert
-(`dutchman-gui`).
-[Getting started](docs/guide.md) shows how to check it, install it and convert a sample in a
-minute. Every release is on the [releases page](https://github.com/dutchman-cad/dutchman/releases).
+</details>
+
+## How to use it
+
+1. **Drop files or folders in.** Or choose **Add files…**, then choose an output folder.
+
+   <a href="https://dutchman-cad.github.io/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-drop-day.png&alt=Start%20screen%20with%20the%20drop%20area%20and%20Add%20files%20button"><img alt="Start screen with the drop area and Add files button" src="docs/images/readme-drop-day.png" width="100%"></a>
+
+2. **Pick Fast, Standard, or Full.** Fast keeps the shape; Standard keeps history, sketches, and joints within the memory you have free; Full keeps everything that maps. The estimate shows memory and time before you start.
+
+   <a href="https://dutchman-cad.github.io/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-preset-day.png&alt=A%20CC0%20bracket%20queued%20with%20Standard%20selected%20and%20a%20live%20memory%20and%20time%20estimate"><img alt="A CC0 bracket queued with Standard selected and a live memory and time estimate" src="docs/images/readme-preset-day.png" width="100%"></a>
+
+3. **Convert, then Open in SolidCraft.** The result card says what came across and what didn't. Your design is a `.sc` file.
+
+   <a href="https://dutchman-cad.github.io/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-day.png&alt=The%20CC0%20bracket%27s%20result%3A%20mapped%20feature%20history%20and%20Open%20in%20SolidCraft"><img alt="The CC0 bracket's result: mapped feature history and Open in SolidCraft" src="docs/images/readme-result-day.png" width="100%"></a>
+
+## What's new in 0.2.5
+
+- **Whole Fusion assemblies, part by part:** each component keeps its own features, sketches, and parameters, parts stay where the design puts them, and every body keeps its colour.
+- **Much faster on big assemblies:** parts are prepared on several cores, with free memory deciding how many.
+- **Choose what to keep, with an estimate first,** and an **anonymous diagnostic log** for any run.
+- **Updates from the app,** and a pill naming the SolidCraft it found.
+
+[Release notes](https://github.com/dutchman-cad/dutchman/releases/latest) · [Changelog](CHANGELOG.md)
+
+## Command line
+
+```sh
+dutchman part.f3d                          # writes part.sc beside it
+dutchman convert part.f3d out.sc --preset fast
+dutchman inspect part.ipt                  # what would carry across, without writing
+dutchman convert-all project/ --out-dir converted/
+```
+
+[The command line](docs/command-line.md) covers every option.
 
 ## What converts
 
-Early development. Reader status says whether geometry can be read; the conversion report
-says what this file kept. Formats with geometry readers attempt conversion through STEP.
-Creo and NX share `.prt` and are identified by contents, including numbered `.prt.N` saves.
-SolidWorks assemblies are recognised without a reader.
-IGES (`.igs`, `.iges`) is recognised and refused before decoding: "Dutchman doesn't convert
-IGES yet: open it in SolidCraft directly (File > Import)."
-`dutchman formats` lists the current reader status, cadmpeg's published headline level
-when available, and what Dutchman converts:
+Early development: **Reads** says whether a format's geometry can be read, and each conversion's report says what that file kept. Run `dutchman formats` for the live list.
 
-<!-- formats: generated from dutchman formats -->
-```text
-Fusion archive (.f3d)  reads geometry  L5  converts: geometry; feature history when every feature maps; components and mapped joints
-Fusion multi-document archive (.f3z)  reads geometry  L5  converts: as a Fusion archive, with referenced designs merged in by cadmpeg
-Inventor part (.ipt)  reads geometry  L3  converts: geometry; feature history when every feature maps
-Inventor assembly (.iam)  reads geometry  L3  converts: placed parts and sub-assemblies, read from their files in the project
-SolidWorks part (.sldprt)  reads geometry  L3  converts: geometry; feature history waits on cadmpeg binding sketches and extrude profiles
-SolidWorks assembly (.sldasm)  recognised, not read yet  not yet: nothing yet; reading geometry is not supported yet
-FreeCAD document (.FCStd)  reads geometry  L5  converts: geometry and components; feature history and joints when they map
-CATIA part (.CATPart)  reads geometry  L3  converts: geometry through STEP; solids and surfaces SolidCraft can import
-Creo part (.prt, .prt.N)  opens, no geometry yet  L1  not yet: nothing yet; reading geometry is not supported yet
-NX part (.prt)  opens, no geometry yet  L1  not yet: nothing yet; reading geometry is not supported yet
-Creo View (.pvz)  reads geometry  L3  converts: geometry through STEP; solids and surfaces SolidCraft can import
-Rhino (.3dm)  reads geometry  L2  converts: geometry through STEP; solids and surfaces SolidCraft can import
-ACIS (.sat, .sab, .smt, .smb)  reads geometry  L3  converts: geometry through STEP; solids and surfaces SolidCraft can import
-STEP (.step, .stp)  reads geometry  L8  converts: geometry through STEP; solids and surfaces SolidCraft can import
-IGES (.igs, .iges)  open it in SolidCraft directly  L9  not yet: SolidCraft imports IGES itself (File > Import)
-Creo or NX part (.prt)  recognised, not read yet  not yet: nothing yet; reading geometry is not supported yet
+<!-- formats: generated from dutchman formats --markdown -->
+| Format | Files | Reads | Level | Converts |
+|---|---|---|---|---|
+| Fusion archive | `.f3d` | Reads geometry | L5 | Geometry; feature history when every feature maps; components and mapped joints |
+| Fusion multi-document archive | `.f3z` | Reads geometry | L5 | As a Fusion archive, with referenced designs merged in by cadmpeg |
+| Inventor part | `.ipt` | Reads geometry | L3 | Geometry; feature history when every feature maps |
+| Inventor assembly | `.iam` | Reads geometry | L3 | Placed parts and sub-assemblies, read from their files in the project |
+| SolidWorks part | `.sldprt` | Reads geometry | L3 | Geometry; feature history waits on cadmpeg binding sketches and extrude profiles |
+| SolidWorks assembly | `.sldasm` | Recognised, not read yet | – | Not yet |
+| FreeCAD document | `.FCStd` | Reads geometry | L5 | Geometry and components; feature history and joints when they map |
+| CATIA part | `.CATPart` | Reads geometry | L3 | Geometry through STEP; solids and surfaces SolidCraft can import |
+| Creo part | `.prt`, `.prt.N` | Opens, no geometry yet | L1 | Not yet |
+| NX part | `.prt` | Opens, no geometry yet | L1 | Not yet |
+| Creo View | `.pvz` | Reads geometry | L3 | Geometry through STEP; solids and surfaces SolidCraft can import |
+| Rhino | `.3dm` | Reads geometry | L2 | Geometry through STEP; solids and surfaces SolidCraft can import |
+| ACIS | `.sat`, `.sab`, `.smt`, `.smb` | Reads geometry | L3 | Geometry through STEP; solids and surfaces SolidCraft can import |
+| STEP | `.step`, `.stp` | Reads geometry | L8 | Geometry through STEP; solids and surfaces SolidCraft can import |
+| IGES | `.igs`, `.iges` | Recognised, not converted | – | Import it in SolidCraft directly (File > Import) |
+| Unidentified part (Creo or NX) | `.prt` | Recognised, not read yet | – | Not yet |
 
-FreeCAD TechDraw → DXF  drawings: page curves, dimension labels, annotations, and templates; unsupported content reported as Dropped
+FreeCAD TechDraw drawings also convert to DXF (`--to dxf`): page curves, dimension labels, annotations, and templates, with unsupported content reported as Dropped.
 
-Written as a SolidCraft design (.sc), or, experimental, as a FreeCAD rebuild macro (.FCMacro, --to freecad)
-```
+Output is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro (`.FCMacro`, `--to freecad`).
 <!-- /formats -->
 
-After a refused conversion (except IGES) or a history that did not fully map, Dutchman points
-to the same [fixtures recipes](https://dutchman-cad.github.io/fixtures/) and `/volunteer` in
-[Discord](https://discord.gg/yTcseBEdeu); `--quiet` hides that, and `--json` keeps the final
-report on stdout. For a file that converts wrong, DM it to Dutchy with its STEP export.
+[Formats](docs/formats.md) has the details for each program, and [Feature history](docs/history.md) what maps onto SolidCraft.
 
-A part that holds an imported solid becomes a base-body Import feature at its place in the
-timeline. Later features keep editable history when they map. Stored geometry has no recipe
-to lose: the report says, at Info level, “This part holds an imported solid; there is no
-feature history to bring over”. A part made only of stored geometry is geometry without
-history, with no flattened-history warning.
+## Send us a file that won't convert
 
-- When every feature in a design's history maps onto SolidCraft, the SolidCraft design keeps
-  that history, editable, with the original geometry kept beside it. If `solidcraft-cli` is
-  installed, Dutchman replays the history in it and compares area and volume with the
-  original before keeping it. A face-count difference (SolidCraft merges faces that share a
-  surface) or an open-shell warning alone does not fail that comparison. What maps, most of it from Fusion:
-  - sketches: lines, arcs, circles, conics, splines, and many constraints and dimensions;
-  - extrudes and revolves, with their end forms;
-  - holes: counterbores, countersinks, chamfered entries, and thread labels on tapped holes;
-    drill points on plain drilled holes only (SolidCraft ignores them on entry recesses);
-  - sweeps, lofts, and coils;
-  - linear, circular, and path patterns of features or bodies, body mirrors, and body
-    booleans;
-  - sheet-metal base flanges;
-  - constant-radius fillets and equal-setback chamfers, on edges proven on SolidCraft's own
-    replay of the history before them (so they need `solidcraft-cli`); a Fusion fillet with a
-    tangency weight of exactly 1 maps as a circular fillet.
-
-  [Feature history](docs/guide.md#feature-history-and-the-solidcraft-check) in the guide has
-  the detail, and what stops a history.
-- A blocker keeps the editable prefix and resolved sketches hidden beside the visible
-  original shape. Without a body-building prefix, the design keeps imported geometry and
-  hidden reference sketches.
-- Assemblies keep their components and placements. Fusion and FreeCAD assemblies keep their
-  joints too (revolute, slider, and rigid), with their grounded parts held where they are.
-  Fusion components keep their current poses, including child placements used to resolve an
-  inserted design's pose. A joint that conflicts with the placements
-  is kept suppressed, so no part moves when SolidCraft opens the design. Inventor assemblies
-  place their parts, without joints. Sketches in the assembly's own file are kept, hidden, for
-  reference.
-- FreeCAD output is experimental: `--to freecad` writes a self-contained rebuild macro,
-  `--to fcstd` runs FreeCAD headlessly to save a native `.FCStd` document and checks its
-  solids against the original, and `--to freecad --verify` runs the same check on a macro.
-- Every conversion lists what it could not carry across, as Info, Degraded or Dropped.
-
-By default, the output is a SolidCraft design. `--to freecad` writes a FreeCAD rebuild macro (`.FCMacro`)
-instead. It rebuilds the mapped history in FreeCAD, keeps the original geometry, and rebuilds
-an assembly's joints (fixed, revolute, slider, cylindrical, ball, and more, through
-sub-assemblies too) in the Assembly workbench, with its grounded parts. When a later feature
-can't be rebuilt, the mapped features before it and the mapped sketches are kept, hidden, in
-a "Rebuilt history (partial)" group beside the original geometry (experimental; see
-[FreeCAD output](docs/guide.md#freecad-output-experimental)).
-
-`dutchman formats` lists what converts from each format; `dutchman convert --help` lists the
-options.
-
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for how it fits together.
-
-## Pilot
-
-`dutchman pilot` runs [Pilot](https://github.com/dutchman-cad/pilot), a local helper for
-driving SolidCraft from plain-language requests through its public interfaces.
-
-```sh
-dutchman pilot --help
-dutchman pilot how "round all edges 3 mm"
-dutchman pilot model --upstream http://localhost:11434/v1
-```
-
-Install SolidCraft separately. The `model` command connects to a chat-completions endpoint
-such as Ollama or LM Studio. Pilot is included with the default `pilot` Cargo feature.
-
-`dutchman` also runs the other Dutchman CAD tools: `dutchman pilot` and `dutchman fixtures`
-run installed `dutchman-pilot` and `dutchman-fixtures` executables, found next to `dutchman`
-first, then on `PATH`. `dutchman --help` lists the installed tools and their versions. An
-installed Pilot takes precedence over the built-in one.
-
-## Desktop app
-
-Release builds check for updates at startup and every hour while open. A small **Update**
-button beside the theme switch opens the new version and plain-text release notes; an available update never
-opens a window automatically. **Download** opens the package for this platform (or the release page).
-Homebrew and Scoop installations offer **Update with Homebrew** or **Update with Scoop**.
-Homebrew runs `brew update` followed by `brew upgrade --cask dutchman-cad/tap/dutchman-convert`
-(or `brew upgrade dutchman-cad/tap/dutchman` for the formula), with
-`HOMEBREW_NO_AUTO_UPDATE=1` for the upgrade. The window shows progress and the last 12 output
-lines. Closing the update window keeps Homebrew running; reopening it shows the same progress.
-After success, **Restart Dutchman** opens the installed app and closes this copy. Homebrew can
-replace the running app on macOS.
-
-Scoop needs Dutchman to close before Windows can replace its executable. **Update with Scoop**
-first explains the hand-off; **Update and restart** confirms it, and **Cancel** leaves the app
-open. A detached, hidden PowerShell helper waits up to two minutes for Dutchman to exit, runs
-`scoop update` then `scoop update dutchman` for the `dutchman-cad/dutchman` package, and opens
-Dutchman from its Scoop shim whether the update succeeds or fails. Settings save on normal
-close. Finish active conversions before confirming. Output goes to
-`%LOCALAPPDATA%\Dutchman\diagnostics\scoop-update.log`. On the next start, a failed or
-incomplete result opens the update window with its error, output tail, and **Copy command**;
-the log is consumed once and deleted. Success opens no update window.
-
-No package-manager commands run until confirmed. Missing commands, failed commands, and a
-15-minute update timeout retain the copy-command fallback. **Copy command** remains a
-secondary action for both package managers; close Dutchman before running it with Scoop.
-**Skip this version** hides that release; **Remind me later** hides updates for three days.
-These choices persist in the desktop settings. **Settings** offers **Check for updates
-automatically** (on by default) and **Check now**, which also shows skipped releases.
-`DUTCHMAN_UPDATE_CHECK=0` disables all checks, including **Check now**. Builds from source
-never check; only release-workflow builds enable this feature.
-
-For direct downloads, each check sends an HTTPS GET to
-`https://github.com/dutchman-cad/dutchman/releases.atom` with
-`User-Agent: Dutchman-update-check/<version>` and, on repeat checks, `If-None-Match`
-containing the feed ETag GitHub returned. An unchanged feed (304) needs no API request.
-Only a newer stable `vX.Y.Z` release triggers one GET to
-`https://api.github.com/repos/dutchman-cad/dutchman/releases/latest` for package links;
-if the feed fails, one API request is tried instead, then the next automatic check is in
-an hour.
-
-For package-manager installations, the hourly check first sends an HTTPS GET to exactly one
-of these public package files, using the same User-Agent and a conditional `If-None-Match`
-header with that file's ETag:
-
-- Homebrew cask: `https://raw.githubusercontent.com/dutchman-cad/homebrew-tap/main/Casks/dutchman-convert.rb`
-- Homebrew formula: `https://raw.githubusercontent.com/dutchman-cad/homebrew-tap/main/Formula/dutchman.rb`
-- Scoop: `https://raw.githubusercontent.com/dutchman-cad/scoop-bucket/main/bucket/dutchman.json`
-
-An unchanged package file (304) causes no further request. Only a package version newer than
-the version already known triggers a releases-feed request for that exact version's notes;
-no releases API request is needed. The pill appears only once the package has the newer
-stable version. If its feed entry is missing, the window links to the release page.
-Package metadata failures retry in an hour without offering a feed-only update.
-
-These update-check requests send no cookies, identifiers, usage data, file names, paths, or
-file contents. Clicking an update button also runs the package manager, which contacts its
-own configured package sources and download hosts using its own network and privacy settings. GitHub sees the connecting IP address, ordinary HTTPS request metadata,
-the app version in the User-Agent, and the public feed or package ETag. Clicking **Download** opens
-the release asset or page in the default browser, under that browser's privacy settings.
-
-`dutchman-gui` converts without a terminal. Drop design files or folders on the window (or use
-**Add files…** and **Add folder…**), choose an output folder, and press **Convert**. Each file
-shows whether it converted, what was written (editable history or geometry), and its losses as
-Info, Degraded or Dropped. A converted design opens in SolidCraft from its card: the app that
-`SOLIDCRAFT_APP` names, else `solidcraft` on `PATH`, else the system's app for `.sc`
-files. When an Inventor assembly's part files are not found, its card names them: **Search a
-folder…** or **Find a file…** converts it again, searching there too. The app follows the
-system's light or dark setting, or can be set to Day or Night. Its **Output format** choice
-offers a FreeCAD macro, and the window title shows its version. A **Report a problem** link
-opens the **A file didn't convert** form; a failed file's **Report this on GitHub** opens it
-filled in with the version, system, error, and an anonymous report. `dutchman-gui --version`
-and `--help` print without opening a window.
-
-Choose **Fast** for shape only and the least memory, **Standard** (the default) for history,
-sketches, and joints within the assembly history memory budget, or **Full** for everything.
-**Advanced** lets you leave feature history, sketches, or joints out; the selection then reads
-**Custom** and keeps its base preset. Choices are remembered between launches. Queued files
-show approximate memory and time when an estimate is available, with free memory shown once.
-If a file is expected to exceed free memory, choose the offered lighter preset,
-**Convert anyway** for that run, or **Cancel**. Assembly history left out by Standard is
-explained on the result card.
-
-See the [desktop walkthrough](#how-to-use-it) above and the [desktop guide](docs/guide.md#desktop-app).
-
-On macOS it comes as **Dutchman Convert.app** in a disk image: open it and drag it onto Applications in the window that appears (see
-[opening it the first time](docs/guide.md#opening-the-app-the-first-time): approve it once
-and the commands inside it run too). It ships in the
-release archives beside `dutchman`, or build it from source with Rust 1.88 or newer:
-
-```sh
-cargo install --git https://github.com/dutchman-cad/dutchman dutchman-gui
-```
-
-On macOS, let SolidCraft itself run once before the first check: open SolidCraft from
-Applications, click **Done** when macOS stops it, then click **Open Anyway** in **System
-Settings > Privacy & Security**, the same steps as for Dutchman Convert. Dutchman reads the
-app's quarantine attribute and its user-approved flag without changing them. The desktop app
-retries a blocked check when its window regains focus or you start a conversion.
-
-On Linux it needs a desktop session (X11 or Wayland with OpenGL); the file dialogs use the
-desktop portal, and dropping files works without it.
-
-## Docs
-
-- [Getting started](docs/guide.md): install, convert, read the loss report, open the result
-  in SolidCraft, troubleshooting.
-- [The MCP server](docs/mcp.md): tools, client setup for Claude Code, Codex and others,
-  example calls, safety.
-- [Docker](docs/docker.md): pull or build the image, convert in a container, run the MCP server
-  from it.
-- [Dutchman Web](docs/web.md): convert from a browser, on a server you host.
-- [Dutchman Print](https://github.com/dutchman-cad/print): `dutchman printers` and `dutchman print`, a
-  separate app that prepares and sends print jobs from SolidCraft.
-- [Agent skill](skills/README.md): teaches an AI assistant to convert files with Dutchman and
-  explain the results.
-- [JSON reports](docs/json.md): every field of the `--json` reports, and
-  [the anonymous batch report](docs/report-anon.md) that is safe to share.
-- [Testing Dutchman on your library](docs/testing-your-library.md): convert your own files
-  and report what broke, without sharing a file.
-- Formats: [Fusion](docs/fusion.md), [Inventor](docs/inventor.md),
-  [SolidWorks](docs/sldprt.md), [FreeCAD](docs/freecad.md).
-- Reporting a problem: a file that doesn't convert goes on the
-  [**A file didn't convert**](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
-  form, with no design file; see [Troubleshooting](docs/guide.md#troubleshooting).
-- Conversion never finishes? Enable `--diagnostics-default` or the app's **Save a diagnostic log**;
-  [review and send the JSONL log](docs/guide.md#diagnostic-logs-for-unfinished-runs). Find it in
-  Windows `%LOCALAPPDATA%\Dutchman\diagnostics\`, macOS `~/Library/Logs/Dutchman/`, or Linux
-  `$XDG_STATE_HOME/dutchman/diagnostics/` (default `~/.local/state/dutchman/diagnostics/`).
-- Questions and help: the [Dutchman CAD Discord](https://discord.gg/yTcseBEdeu) has a forum for Dutchman Convert.
-- Contributing: [CONTRIBUTING.md](CONTRIBUTING.md), and [AGENTS.md](AGENTS.md) for AI
-  contributors.
+Make a small public test file from a [fixtures recipe](https://dutchman-cad.github.io/fixtures/),
+or send a file that converts wrong, with its STEP export, to Dutchy in
+[Discord](https://discord.gg/yTcseBEdeu). Share only designs you own and can share.
 
 ## Use from scripts and AI agents
 
-Download a prebuilt archive from the
-[latest release](https://github.com/dutchman-cad/dutchman/releases/latest) (see
-[Getting started](docs/guide.md#install)), or install from source (Rust 1.88 or newer):
-
-```sh
-cargo install --git https://github.com/dutchman-cad/dutchman dutchman
-```
-
-See what would carry across, without writing anything:
-
-```sh
-dutchman inspect --json part.ipt
-```
-
-Convert, with one JSON report on stdout:
-
-```sh
-dutchman convert --json part.f3d part.sc
-```
-
-Convert a whole project folder, four files at a time:
-
-```sh
-dutchman convert-all --json --jobs 4 --out-dir converted/ project/
-dutchman watch inbox/ --out-dir converted/  # Poll for settled uploads; keep reports beside results
-```
-
-Exit codes: `0` converted, `1` could not convert (the JSON report has `"ok": false` and
-`error.message`), `2` usage error. A written history is checked in SolidCraft when
-`solidcraft-cli` is found: set `SOLIDCRAFT_CLI` to its path, or pass `--solidcraft PATH`.
-[docs/json.md](docs/json.md) describes every field; field names are stable.
-
-### As an MCP server
-
-`cargo install` also installs `dutchman-mcp`, a [Model Context Protocol](https://modelcontextprotocol.io)
-server on stdio. It gives an agent four tools, each returning the same report as the matching
-`--json` command:
+`dutchman --json` prints one machine-readable report, and `dutchman-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server on stdio with four tools, each returning the same report as the matching `--json` command:
 
 | Tool | Arguments | Returns |
 |---|---|---|
 | `inspect` | `input` | `dutchman.inspect/1` |
-| `convert` | `input`, `output` (optional for `dry_run`), and optionally `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `dry_run`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `overwrite` | `dutchman.convert/1` |
+| `convert` | `input`, `output`, and the convert options ([all arguments](docs/mcp.md#tools)) | `dutchman.convert/1` |
 | `convert_all` | `inputs` (files and folders), `out_dir`, and optionally `jobs` and the convert options | `dutchman.convert-all/1` |
 | `formats` | none | `dutchman.formats/1` |
-
-A conversion that fails comes back as a tool error carrying its failure report. Paths are on
-the machine running the server, so give absolute ones. `convert` writes only its `output`
-file. `convert_all` writes converted designs and its default log inside `out_dir`. If supplied,
-`journal`, `report_anon`, and `report_key` are also written at their specified paths.
 
 For Claude Code:
 
@@ -414,7 +119,7 @@ For Claude Code:
 claude mcp add dutchman -- dutchman-mcp
 ```
 
-For other clients, the usual configuration entry is:
+For other clients:
 
 ```json
 {
@@ -426,40 +131,43 @@ For other clients, the usual configuration entry is:
 }
 ```
 
-Dutchman finds `solidcraft-cli` on the server's `PATH` or inside an installed SolidCraft app.
-Otherwise, a written history is reported unverified. To set an optional `SOLIDCRAFT_CLI`
-path, see [client setup](docs/mcp.md#set-up-a-client); replace the placeholder with your
-installed executable's absolute path.
+[The MCP server](docs/mcp.md) has every argument, client setup, and safety; [JSON reports](docs/json.md) has every field. Exit codes: `0` converted, `1` could not convert, `2` usage error.
 
-## Building
+## Docs
 
-```sh
-cargo build --release
-cargo test --workspace
-```
+**Using Dutchman**
 
-For packagers: the std-only `dutchman-launcher` crate provides a tiny front command for installations that
-ship with Pilot alone. Packagers install its binary as `dutchman`; `dutchman --version`
-identifies it as `dutchman launcher <version>`. Install Dutchman Convert for conversion commands.
+- [Getting started](docs/guide.md): install, a first conversion, the loss report, and opening the result.
+- [Install](docs/install.md): Homebrew, Scoop, release archives and checksums, Docker, nightly, and source.
+- [The desktop app](docs/desktop.md): presets, estimates, the SolidCraft version pill, and updates.
+- [The command line](docs/command-line.md): options, `inspect`, whole folders, and watching a folder.
+- [Choosing what to keep](docs/presets.md): Fast, Standard, Full, and the memory and time estimate.
+- [Troubleshooting](docs/troubleshooting.md): common problems and diagnostic logs.
+
+**Formats and results**
+
+- [Formats](docs/formats.md): how each format is recognised and what converts.
+- [Fusion](docs/fusion.md), [Inventor](docs/inventor.md), [SolidWorks](docs/sldprt.md), and [FreeCAD](docs/freecad.md): what converts from each program today, and what stands in the way.
+- [Feature history](docs/history.md): what maps onto SolidCraft, how it is checked, and partial history.
+- [Testing Dutchman on your library](docs/testing-your-library.md): convert your own files and report what broke, without sharing a file.
+- [The anonymous report](docs/report-anon.md): what is safe to share.
+
+**Scripts, servers, and agents**
+
+- [The MCP server](docs/mcp.md): every tool and argument, client setup, and safety.
+- [JSON reports](docs/json.md): every field of the `--json` reports.
+- [Docker](docs/docker.md): convert or run the MCP server in a container.
+- [Dutchman Web](docs/web.md): convert in a browser, on a server you host.
+- [Agent skill](skills/README.md): teaches an AI assistant to convert files with Dutchman.
+- [Pilot](docs/pilot.md): drive SolidCraft from plain-language requests.
+- [Dutchman Print](https://github.com/dutchman-cad/print): send designs to a 3D printer.
+
+**Contributing**
+
+- [CONTRIBUTING.md](CONTRIBUTING.md), and [AGENTS.md](AGENTS.md) for AI contributors.
+- [Architecture](docs/ARCHITECTURE.md), [Releasing](docs/releasing.md), and [Triage](docs/triage.md).
+- Report a file that didn't convert on the [**A file didn't convert**](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml) form, with no design file. Questions: the [Discord](https://discord.gg/yTcseBEdeu).
 
 ## Licence
 
-Licensed under the [Apache License, Version 2.0](LICENSE).
-
-### FreeCAD TechDraw drawing output
-
-`dutchman convert part.FCStd --to dxf` writes `part-PageName.dxf` for each
-TechDraw page beside the input. `--page NAME` selects a page by its FreeCAD object
-name. Use `-o existing-directory` for per-page files there, or `-o drawing.dxf`
-with `--page` for an exact filename; without `--page`, that path is the filename
-base (`drawing-PageName.dxf`). Default files require `--force` to replace;
-explicit outputs replace unless `--no-clobber` is given.
-
-DXF output keeps neutral view curves, positioned annotation text, dimension labels,
-template frames, and resolved title-block text in millimetres at 1:1 page scale.
-Dimensions keep verified measurements or replacement text. Neutral linear and
-radial anchor pairs generate non-associative lines and open arrows; dimensions
-without usable anchors keep labels only. Missing curves, unresolved dimensions, and unsupported presentation are
-reported per page. `--json` lists entity counts and losses.
-See [FreeCAD drawing coverage](docs/freecad.md#techdraw-to-dxf). DXF is available
-through `convert`; batch, desktop, web and MCP drawing conversion are not supported yet.
+Dutchman is pure Rust, licensed under the [Apache License, Version 2.0](LICENSE). Native files are read by [cadmpeg](https://github.com/cadmpeg/cadmpeg); Dutchman maps them onto [SolidCraft](https://github.com/tangency-labs/solidcraft).

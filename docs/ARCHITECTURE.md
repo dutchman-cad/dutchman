@@ -223,7 +223,7 @@ named uniquely on the timeline, since SolidCraft patterns refer to them by name.
 keep their expressions where SolidCraft reads them the same way, else their evaluated values.
 
 Constant-radius fillets and equal-setback chamfers keep editable history when their own
-feature input topology supplies edge midpoints, tangents and endpoints, and each midpoint
+feature input topology supplies edge midpoints, tangents, and endpoints, and each midpoint
 can be proven to pick exactly one edge of the pre-feature body, whatever history builds it.
 SolidCraft itself rebuilds that body: Dutchman replays the mapped history in `solidcraft-cli`
 once per design (two runs, however many blends, within the check's time limit) and reads the

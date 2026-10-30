@@ -4,7 +4,7 @@
 writes, beside the usual results, one JSON file that says how a batch went without saying
 which files were in it. It is made to be shared: posted in an issue, sent to the maintainers.
 
-For a conversion that never finishes, enable [a live diagnostic log](guide.md#diagnostic-logs-for-unfinished-runs)
+For a conversion that never finishes, enable [a live diagnostic log](troubleshooting.md#diagnostic-logs-for-unfinished-runs)
 before trying again: `--diagnostics-default`, or `--diagnostics PATH` for an explicit file.
 Unlike this completed-batch report, [`dutchman.diagnostics/1`](json.md#dutchmandiagnostics1)
 writes progress and resource heartbeats during the run, with no messages at all. A run using

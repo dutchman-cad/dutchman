@@ -24,7 +24,7 @@ including ones you cannot open any more.
 
 ## 1. Install
 
-1. Install Dutchman 0.1.4 or newer, as [the guide](guide.md#install) shows: on a Mac, the
+1. Install Dutchman 0.1.4 or newer, as [the guide](install.md) shows: on a Mac, the
    disk image (`Dutchman Convert.app`, or `Dutchman.app` in 0.1.5 and earlier, with the
    `dutchman` command inside it, which the guide shows how to put on your `PATH`); elsewhere, the release archive. Check that `dutchman --version`
    prints the version.

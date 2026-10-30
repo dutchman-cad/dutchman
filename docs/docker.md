@@ -61,7 +61,7 @@ run as yourself so that the converted designs belong to you:
 
 ```sh
 docker run --rm -v "$PWD:/work" --user "$(id -u):$(id -g)" dutchman part.f3d
-docker run --rm -v "$PWD:/work" --user "$(id -u):$(id -g)" dutchman convert --json part.f3d out.solidcraft
+docker run --rm -v "$PWD:/work" --user "$(id -u):$(id -g)" dutchman convert --json part.f3d out.sc
 docker run --rm -v "$PWD:/work" --user "$(id -u):$(id -g)" dutchman convert-all --json --out-dir converted/ project/
 ```
 
@@ -150,7 +150,7 @@ host with SELinux, add `:Z` to the volume (`.:/work:Z`).
 ## Checking histories in SolidCraft
 
 Without `solidcraft-cli`, a written history is reported `unverified`
-([Feature history](guide.md#feature-history-and-the-solidcraft-check)). On x86_64, an image you build
+([Feature history](history.md)). On x86_64, an image you build
 yourself can include a [SolidCraft release](https://github.com/tangency-labs/solidcraft/releases) to check
 each history. Give its version and the SHA-256 of its `solidcraft-VERSION-linux-x86_64.tar.gz`:
 

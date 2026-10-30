@@ -128,7 +128,7 @@ jobs:
       - if: matrix.os == 'ubuntu-latest'
         run: cargo test --locked -p dutchman --no-default-features
 
-  # Docs-only changes skip the build jobs above; the tests that read README.md and the guide
+  # Docs-only changes skip the build jobs above; the tests that read README.md and docs/formats.md
   # still check them against the program.
   docs:
     needs: changes
@@ -142,7 +142,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --locked -p dutchman --test readme
-      - run: cargo test --locked -p dutchman --test cli formats_text_matches_guide
+      - run: cargo test --locked -p dutchman --test cli formats_markdown_matches_the_formats_page
 
   # The same on macOS, only when Rust code changed: the account runs few macOS jobs at once.
   test-macos:

@@ -9,7 +9,7 @@
 # (0.1.3, or nightly). Each dir holds one target's dutchman, dutchman-mcp and dutchman-gui.
 #
 # The app is signed ad hoc (`codesign -s -`), not with a Developer ID, and not notarized:
-# macOS asks once before opening it (docs/guide.md, "Opening the app the first time").
+# macOS asks once before opening it (docs/install.md, "Opening the app the first time").
 set -euo pipefail
 
 if [[ $# -ne 5 ]]; then
