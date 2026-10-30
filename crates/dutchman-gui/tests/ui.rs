@@ -32,7 +32,7 @@ fn harness() -> Harness<'static, App> {
 /// Presses Convert and runs the window until the run is over.
 fn convert(harness: &mut Harness<'static, App>) {
     harness.run();
-    harness.get_by_label("Convert").click();
+    harness.get_by_label("Convert").click_accesskit();
     harness.step();
     wait_for_conversion(harness);
 }
@@ -87,7 +87,7 @@ fn the_format_list_shows_headlines_beside_reader_status() {
         .with_size(egui::vec2(1200.0, 1800.0))
         .build_eframe(|cc| App::new(cc));
     harness.run();
-    harness.get_by_label("Formats").click();
+    harness.get_by_label("Formats").click_accesskit();
     harness.run();
     assert!(harness.query_by_label("Fusion archive (.f3d)").is_some());
     assert!(harness.query_all_by_label("L5").count() >= 1);
@@ -117,7 +117,9 @@ fn a_file_that_cannot_convert_says_why() {
 
     // The failed row says to report it, and its button opens the form filled in, without
     // the file's name.
-    harness.get_by_label("Report this on GitHub").click();
+    harness
+        .get_by_label("Report this on GitHub")
+        .click_accesskit();
     harness.step();
     let opened = harness
         .output()
@@ -246,9 +248,9 @@ fn screenshots() {
             ("04", "Fast", "Standard"),
             ("05", "Standard", "Full"),
         ] {
-            harness.get_by_value(previous).click();
+            harness.get_by_value(previous).click_accesskit();
             harness.run();
-            harness.get_by_label(preset).click();
+            harness.get_by_label(preset).click_accesskit();
             wait_for_estimate(&mut harness);
             shot(
                 &mut harness,
@@ -259,9 +261,9 @@ fn screenshots() {
                 &format!("{preset} preset selected, with refreshed estimate."),
             );
         }
-        harness.get_by_label("Advanced").click();
+        harness.get_by_label("Advanced").click_accesskit();
         harness.run();
-        harness.get_by_label("Sketches").click();
+        harness.get_by_label("Sketches").click_accesskit();
         wait_for_estimate(&mut harness);
         assert!(harness.query_by_value("Custom (based on Full)").is_some());
         shot(
@@ -273,7 +275,7 @@ fn screenshots() {
             "Advanced open; Sketches unchecked; Custom based on Full.",
         );
         // Collapse before conversion so the ordinary 800-pixel window shows more results.
-        harness.get_by_label("Advanced").click();
+        harness.get_by_label("Advanced").click_accesskit();
         harness.run();
         #[cfg(feature = "test-support")]
         harness.state_mut().show_memory_check_for_test(
@@ -291,10 +293,10 @@ fn screenshots() {
         harness.run();
         harness.get_by_label("This conversion may need more memory");
         shot(&mut harness, &dir, &mut index, "07-memory-dialog", name, "Injected TooBig memory decision: 8 GB estimated, 4 GB free, Use Fast / Convert anyway / Cancel.");
-        harness.get_by_label("Cancel").click();
+        harness.get_by_label("Cancel").click_accesskit();
         harness.run();
 
-        harness.get_by_label("Convert").click();
+        harness.get_by_label("Convert").click_accesskit();
         // Do not settle frames here: the tiny cube may finish before the next frame.
         harness.step();
         // The click takes effect after the action bar is drawn. Paint its updated state.
@@ -363,7 +365,7 @@ fn screenshots() {
         harness.run();
         harness
             .get_by_label("Save a diagnostic log (no names or contents from your file)")
-            .click();
+            .click_accesskit();
         harness.run();
         harness.get_by_label("Open diagnostics folder");
         shot(&mut harness, &dir, &mut index, "12-diagnostics", name, "Diagnostics checkbox on and Open diagnostics folder button; scrolled to show the controls.");
@@ -371,13 +373,13 @@ fn screenshots() {
             .get_by_label("The last run didn't finish. Its diagnostic log is here:")
             .scroll_to_me();
         harness.run();
-        harness.get_by_label("Dismiss").click();
+        harness.get_by_label("Dismiss").click_accesskit();
         harness.run();
         std::fs::remove_file(unfinished).unwrap();
         harness.get_by_label("OUTPUT FOLDER").scroll_to_me();
         harness.run();
         shot(&mut harness, &dir, &mut index, "13-settings", name, "Output folder, SolidCraft output and target, history checking, assembly project folder, and diagnostics settings; scrolled to the output section.");
-        harness.get_by_label("Formats").click();
+        harness.get_by_label("Formats").click_accesskit();
         harness.run();
         harness.get_by_label("Fusion archive (.f3d)");
         shot(
