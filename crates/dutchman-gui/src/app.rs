@@ -259,6 +259,22 @@ impl App {
         self.options.no_verify = !verify;
     }
 
+    /// Injects a memory decision for headless UI review without allocating a huge design.
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn show_memory_check_for_test(&mut self, input: PathBuf, check: MemoryCheck) {
+        if let Some(out_dir) = self.out_dir.clone() {
+            self.pending = Some(PendingRun {
+                options: self.options.clone(),
+                kind: RunKind::Batch {
+                    inputs: self.inputs.clone(),
+                    out_dir,
+                },
+            });
+            self.memory_warning = Some((input, check));
+        }
+    }
+
     /// The rows of the current or last run.
     pub fn rows(&self) -> &[Row] {
         &self.rows

@@ -14,6 +14,8 @@ path = "src/main.rs"
 
 [features]
 default = ["freecad"]
+# Opt-in state injection for the ignored GPU screenshot test.
+test-support = []
 # FreeCAD documents (.FCStd); see dutchman-core's feature of the same name.
 freecad = ["dutchman/freecad"]
 
