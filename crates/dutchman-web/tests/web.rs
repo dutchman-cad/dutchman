@@ -128,10 +128,10 @@ async fn an_upload_converts_and_its_designs_download() {
     assert_eq!(report["skipped"], 1);
     let result = &report["results"][0];
     assert_eq!(result["input"]["path"], "Bracket v2.f3d");
-    assert_eq!(result["output"]["path"], "Bracket v2.solidcraft");
+    assert_eq!(result["output"]["path"], "Bracket v2.sc");
     let job = report["job"].as_str().unwrap();
     let link = result["output"]["download"].as_str().unwrap();
-    assert_eq!(link, format!("jobs/{job}/files/Bracket%20v2.solidcraft"));
+    assert_eq!(link, format!("jobs/{job}/files/Bracket%20v2.sc"));
     let shown = text(&body);
     assert!(
         !shown.contains(&data.path().display().to_string()),
@@ -142,16 +142,13 @@ async fn an_upload_converts_and_its_designs_download() {
     assert_eq!(status, StatusCode::OK);
     assert!(design.starts_with(b"PK"), "a design is a zip container");
     let disposition = headers[header::CONTENT_DISPOSITION].to_str().unwrap();
-    assert!(
-        disposition.contains("Bracket v2.solidcraft"),
-        "{disposition}"
-    );
+    assert!(disposition.contains("Bracket v2.sc"), "{disposition}");
 
     let (status, _, all) = send(&app, get(&format!("/jobs/{job}/designs.zip"))).await;
     assert_eq!(status, StatusCode::OK);
     let zip = zip::ZipArchive::new(std::io::Cursor::new(all)).unwrap();
     let names: Vec<String> = zip.file_names().map(|n| n.unwrap().into_owned()).collect();
-    assert_eq!(names, ["Bracket v2.solidcraft"]);
+    assert_eq!(names, ["Bracket v2.sc"]);
 
     let (status, _, page) = send(&app, get(&format!("/jobs/{job}"))).await;
     assert_eq!(status, StatusCode::OK);
@@ -216,10 +213,7 @@ async fn a_project_zip_keeps_its_folders() {
         .map(|r| r["output"]["path"].as_str().unwrap())
         .collect();
     outputs.sort_unstable();
-    assert_eq!(
-        outputs,
-        ["project/cube.solidcraft", "project/parts/cube.solidcraft"]
-    );
+    assert_eq!(outputs, ["project/cube.sc", "project/parts/cube.sc"]);
 }
 
 #[tokio::test]
@@ -572,7 +566,7 @@ async fn a_base_path_serves_every_page_under_it() {
     // Problem pages lead back to the base path, whatever their depth.
     let (status, _, page) = send(
         &app,
-        get("/dutchman/jobs/0123456789abcdef0123456789abcdef/files/a/b.solidcraft"),
+        get("/dutchman/jobs/0123456789abcdef0123456789abcdef/files/a/b.sc"),
     )
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -627,8 +621,8 @@ async fn designs_are_also_saved_in_the_output_folder() {
         assert!(text(&page).contains("Saved in the output folder as Bracket"));
     }
     // A second upload of the same name never replaces the first one's design.
-    assert_eq!(saved, ["Bracket.solidcraft", "Bracket (1).solidcraft"]);
-    for name in ["Bracket.solidcraft", "Bracket (1).solidcraft"] {
+    assert_eq!(saved, ["Bracket.sc", "Bracket (1).sc"]);
+    for name in ["Bracket.sc", "Bracket (1).sc"] {
         let design = std::fs::read(share.path().join(name)).unwrap();
         assert!(design.starts_with(b"PK"), "{name}");
     }
@@ -678,7 +672,7 @@ async fn designs_open_in_solidcraft_when_configured() {
             assert_eq!(output["format"], "freecad-macro/1");
         }
         if let Some(prefix) = expected {
-            let link = format!("{prefix}{job}%2Ffiles%2FBracket%2520%2526%2520v2.solidcraft");
+            let link = format!("{prefix}{job}%2Ffiles%2FBracket%2520%2526%2520v2.sc");
             assert_eq!(output["open"], link);
             assert!(
                 text(&page).contains(&format!(
@@ -697,7 +691,7 @@ async fn designs_open_in_solidcraft_when_configured() {
             )
             .unwrap();
             assert!(stored["results"][0]["output"].get("open").is_none());
-            config.solidcraft = Some("/cad/".to_owned());
+            config.sc = Some("/cad/".to_owned());
             let restarted = dutchman_web::router(config);
             let (_, _, body) = send(
                 &restarted,

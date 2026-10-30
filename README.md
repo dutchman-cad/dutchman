@@ -13,10 +13,13 @@ target format, starting with [SolidCraft](https://github.com/tangency-labs/solid
 or send a file that converts wrong to Dutchy in [Discord](https://discord.gg/yTcseBEdeu).
 
 ```sh
-dutchman part.f3d                 # writes part.solidcraft
-dutchman part.f3d out.solidcraft
-dutchman convert part.f3d out.solidcraft
+dutchman part.f3d                 # writes part.sc
+dutchman part.f3d out.sc
+dutchman convert part.f3d out.sc
 ```
+
+Targets before SolidCraft 0.25.1 get `.solidcraft` by default. Explicit `.sc`,
+`.solidcraft`, and `.solvecraft` outputs keep their given names.
 
 Dutchman is made for the current SolidCraft (any release from the last two weeks);
 older versions get simplified features, or pass `--solidcraft-version x.y.z` on
@@ -141,7 +144,7 @@ Creo or NX part (.prt)  recognised, not read yet  not yet: nothing yet; reading 
 
 FreeCAD TechDraw → DXF  drawings: page curves, dimension labels, annotations, and templates; unsupported content reported as Dropped
 
-Written as a SolidCraft design (.solidcraft), or, experimental, as a FreeCAD rebuild macro (.FCMacro, --to freecad)
+Written as a SolidCraft design (.sc), or, experimental, as a FreeCAD rebuild macro (.FCMacro, --to freecad)
 ```
 <!-- /formats -->
 
@@ -287,7 +290,7 @@ the release asset or page in the default browser, under that browser's privacy s
 **Add files…** and **Add folder…**), choose an output folder, and press **Convert**. Each file
 shows whether it converted, what was written (editable history or geometry), and its losses as
 Info, Degraded or Dropped. A converted design opens in SolidCraft from its card: the app that
-`SOLIDCRAFT_APP` names, else `solidcraft` on `PATH`, else the system's app for `.solidcraft`
+`SOLIDCRAFT_APP` names, else `solidcraft` on `PATH`, else the system's app for `.sc`
 files. When an Inventor assembly's part files are not found, its card names them: **Search a
 folder…** or **Find a file…** converts it again, searching there too. The app follows the
 system's light or dark setting, or can be set to Day or Night. Its **Output format** choice
@@ -377,7 +380,7 @@ dutchman inspect --json part.ipt
 Convert, with one JSON report on stdout:
 
 ```sh
-dutchman convert --json part.f3d part.solidcraft
+dutchman convert --json part.f3d part.sc
 ```
 
 Convert a whole project folder, four files at a time:

@@ -216,8 +216,8 @@ fn batch_refuses_iges_without_inviting_test_files_and_continues_other_formats() 
                 assert_eq!(text.matches(reason).count(), 2);
                 assert!(!text.contains("Want to help"));
             }
-            assert!(!outputs.join("first.solidcraft").exists());
-            assert!(!outputs.join("second.solidcraft").exists());
+            assert!(!outputs.join("first.sc").exists());
+            assert!(!outputs.join("second.sc").exists());
         }
     }
     std::fs::copy(fixture("generated_unit_cube.f3d"), inputs.join("cube.f3d")).unwrap();
@@ -232,14 +232,14 @@ fn batch_refuses_iges_without_inviting_test_files_and_continues_other_formats() 
     let report = json_of(&out);
     assert_eq!(report["converted"], 1);
     assert_eq!(report["failed"], 2);
-    assert!(outputs.join("cube.solidcraft").is_file());
+    assert!(outputs.join("cube.sc").is_file());
 }
 
 #[test]
 fn convert_rejects_wrong_output_extension() {
     let out = dutchman(&["convert", "part.f3d", "part.step"]);
     assert_eq!(out.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("output must be a .solidcraft file"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("output must be a .sc file"));
 }
 
 #[test]
@@ -684,8 +684,8 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
     for result in results {
         assert_eq!(result["schema"], "dutchman.convert/1");
     }
-    assert!(out_dir.join("cube.solidcraft").is_file());
-    assert!(out_dir.join("parts").join("block.solidcraft").is_file());
+    assert!(out_dir.join("cube.sc").is_file());
+    assert!(out_dir.join("parts").join("block.sc").is_file());
     // The whole text report, every loss in full, beside the designs.
     let log = std::fs::read_to_string(out_dir.join("dutchman.log")).unwrap();
     assert!(
@@ -694,7 +694,7 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
     );
     assert!(log.contains("missing.f3d: no such file or folder"), "{log}");
     assert!(log.ends_with("2 converted, 2 failed, 1 skipped\n"), "{log}");
-    assert!(!out_dir.join("parts").join("broken.solidcraft").exists());
+    assert!(!out_dir.join("parts").join("broken.sc").exists());
 
     let text = dutchman(&[
         "convert-all",
@@ -816,7 +816,7 @@ fn convert_says_what_it_wrote_and_cuts_long_notes_short() {
 fn no_clobber_keeps_an_existing_design() {
     let dir = std::env::temp_dir().join(format!("dutchman-noclobber-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let output = dir.join("cube.solidcraft");
+    let output = dir.join("cube.sc");
     std::fs::write(&output, b"SENTINEL").unwrap();
     let cube = fixture("synthetic_cube.ipt");
 
@@ -845,7 +845,7 @@ fn no_clobber_keeps_an_existing_design() {
     // convert-all fails that one file and converts the rest.
     let out_dir = dir.join("all");
     std::fs::create_dir_all(&out_dir).unwrap();
-    std::fs::write(out_dir.join("synthetic_cube.solidcraft"), b"SENTINEL").unwrap();
+    std::fs::write(out_dir.join("synthetic_cube.sc"), b"SENTINEL").unwrap();
     let out = dutchman(&[
         "convert-all",
         "--json",
@@ -860,10 +860,10 @@ fn no_clobber_keeps_an_existing_design() {
     assert_eq!(report["converted"], 1);
     assert_eq!(report["failed"], 1);
     assert_eq!(
-        std::fs::read(out_dir.join("synthetic_cube.solidcraft")).unwrap(),
+        std::fs::read(out_dir.join("synthetic_cube.sc")).unwrap(),
         b"SENTINEL"
     );
-    assert!(out_dir.join("generated_unit_cube.solidcraft").is_file());
+    assert!(out_dir.join("generated_unit_cube.sc").is_file());
 }
 
 /// A library whose folder, files and parts carry names that must not reach a shared report.
@@ -1023,10 +1023,10 @@ fn a_journal_lets_a_stopped_run_carry_on_without_converting_files_again() {
     assert_eq!(second["failed"], 1);
 
     // A design removed since is made again; a changed file is converted again.
-    std::fs::remove_file(out_dir.join("Housing_Rev7_Secret.solidcraft")).unwrap();
+    std::fs::remove_file(out_dir.join("Housing_Rev7_Secret.sc")).unwrap();
     let third = run();
     assert_eq!(third["resumed"], 2, "{third}");
-    assert!(out_dir.join("Housing_Rev7_Secret.solidcraft").is_file());
+    assert!(out_dir.join("Housing_Rev7_Secret.sc").is_file());
 }
 
 #[test]
@@ -1399,16 +1399,16 @@ fn bare_and_explicit_conversion_derive_and_protect_default_outputs() {
             "{}",
             String::from_utf8_lossy(&out.stderr)
         );
-        let output = dir.path().join("part.solidcraft");
+        let output = dir.path().join("part.sc");
         assert!(std::fs::read(&output).unwrap().starts_with(b"PK"));
         std::fs::remove_file(output).unwrap();
     }
-    let output = dir.path().join("part.solidcraft");
+    let output = dir.path().join("part.sc");
     std::fs::write(&output, b"sentinel").unwrap();
     let modified = output.metadata().unwrap().modified().unwrap();
     let out = run(&["part.f3d"]);
     assert_eq!(out.status.code(), Some(2));
-    assert_eq!(out.stderr, b"dutchman: part.solidcraft already exists; choose another output with -o PATH, or replace it with --force\n");
+    assert_eq!(out.stderr, b"dutchman: part.sc already exists; choose another output with -o PATH, or replace it with --force\n");
     assert_eq!(std::fs::read(&output).unwrap(), b"sentinel");
     assert_eq!(output.metadata().unwrap().modified().unwrap(), modified);
     assert!(run(&["part.f3d", "--force", "--no-verify"])
@@ -1416,7 +1416,7 @@ fn bare_and_explicit_conversion_derive_and_protect_default_outputs() {
         .success());
     assert_ne!(std::fs::read(&output).unwrap(), b"sentinel");
     std::fs::write(&output, b"sentinel").unwrap();
-    assert!(run(&["part.f3d", "part.solidcraft", "--no-verify"])
+    assert!(run(&["part.f3d", "part.sc", "--no-verify"])
         .status
         .success());
     assert_ne!(std::fs::read(&output).unwrap(), b"sentinel");
@@ -1424,7 +1424,7 @@ fn bare_and_explicit_conversion_derive_and_protect_default_outputs() {
         run(&["part.f3d", "--force", "--no-clobber"]).status.code(),
         Some(2)
     );
-    assert!(run(&["part.f3d", "-o", "other.solidcraft", "--no-verify"])
+    assert!(run(&["part.f3d", "-o", "other.sc", "--no-verify"])
         .status
         .success());
 }
@@ -1489,7 +1489,7 @@ fn format_status_and_volunteer_invitation_follow_run_options() {
     for path in [&first, &second] {
         std::fs::write(path, b"#UGC:2").unwrap();
     }
-    let output = dir.path().join("out.solidcraft");
+    let output = dir.path().join("out.sc");
     for option in [None, Some("--quiet"), Some("--json")] {
         let mut args = vec!["convert", first.to_str().unwrap(), output.to_str().unwrap()];
         args.extend(option);
@@ -1624,14 +1624,14 @@ fn numbered_saves_select_the_newest_and_report_the_older_revision() {
 fn numbered_default_outputs_use_the_base_name_and_keep_existing_files() {
     let dir = tempfile::tempdir().unwrap();
     let input = dir.path().join("bracket.prt.7");
-    let output = dir.path().join("bracket.solidcraft");
+    let output = dir.path().join("bracket.sc");
     std::fs::write(&input, b"#UGC:2").unwrap();
     std::fs::write(&output, b"keep this design").unwrap();
     let out = dutchman(&[input.to_str().unwrap()]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&out.stderr).contains("bracket.solidcraft already exists"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("bracket.sc already exists"));
     assert_eq!(std::fs::read(output).unwrap(), b"keep this design");
-    assert!(!dir.path().join("bracket.prt.solidcraft").exists());
+    assert!(!dir.path().join("bracket.prt.sc").exists());
 }
 
 fn assert_text_error_with_progress(out: &Output, input: &std::path::Path, expected: &str) {
@@ -1671,7 +1671,7 @@ fn assert_progress_json(out: &Output) -> Vec<serde_json::Value> {
 #[test]
 fn conversion_progress_stays_on_stderr_and_quiet_suppresses_it() {
     let dir = tempfile::tempdir().unwrap();
-    let output = dir.path().join("progress.solidcraft");
+    let output = dir.path().join("progress.sc");
     for batch in [false, true] {
         for json in [false, true] {
             for quiet in [false, true] {
@@ -2093,7 +2093,7 @@ fn memory_refusal_precedes_decode_and_returns_exit_two() {
     };
     let dir = tempfile::tempdir().unwrap();
     let input = dir.path().join("synthetic.step");
-    let output = dir.path().join("never-written.solidcraft");
+    let output = dir.path().join("never-written.sc");
     // Sparse metadata is enough for the estimator; no design bytes are read or allocated.
     std::fs::File::create(&input)
         .unwrap()
@@ -2242,7 +2242,7 @@ fn threads_accepts_serial_and_auto_on_conversion_commands() {
     let dir = tempfile::tempdir().unwrap();
     let input = fixture("generated_unit_cube.f3d");
     for threads in ["0", "1", "4"] {
-        let output = dir.path().join(format!("threads-{threads}.solidcraft"));
+        let output = dir.path().join(format!("threads-{threads}.sc"));
         let out = dutchman(&[
             "convert",
             input.as_str(),
@@ -2337,4 +2337,73 @@ fn without_target_line(stdout: &str) -> Vec<&str> {
         .partition(|line| line.starts_with("Target SolidCraft "));
     assert_eq!(target.len(), 1, "{stdout}");
     rest
+}
+
+#[test]
+fn solidcraft_output_extensions_follow_the_target_and_accept_explicit_names() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::copy(
+        fixture("generated_unit_cube.f3d"),
+        dir.path().join("part.f3d"),
+    )
+    .unwrap();
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_dutchman"))
+            .current_dir(dir.path())
+            .args(args)
+            .env("PATH", "")
+            .env_remove("SOLIDCRAFT_CLI")
+            .test_output()
+            .unwrap()
+    };
+    for (target, extension) in [("0.25.0", "solidcraft"), ("0.25.1", "sc"), ("0.27.0", "sc")] {
+        let out = run(&[
+            "convert",
+            "part.f3d",
+            "--solidcraft-version",
+            target,
+            "--no-verify",
+            "--json",
+        ]);
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let output = format!("part.{extension}");
+        assert_eq!(json_of(&out)["output"]["path"], output);
+        assert!(std::fs::read(dir.path().join(&output))
+            .unwrap()
+            .starts_with(b"PK"));
+        std::fs::remove_file(dir.path().join(output)).unwrap();
+    }
+    let newest = run(&["part.f3d", "--no-verify", "--json"]);
+    assert!(newest.status.success());
+    assert_eq!(json_of(&newest)["output"]["path"], "part.sc");
+    for extension in ["sc", "solidcraft", "solvecraft", "SC"] {
+        for target in ["0.25.0", "0.25.1"] {
+            let output = format!("explicit.{extension}");
+            let out = run(&[
+                "convert",
+                "part.f3d",
+                "-o",
+                &output,
+                "--solidcraft-version",
+                target,
+                "--no-verify",
+                "--json",
+            ]);
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            let report = json_of(&out);
+            assert_eq!(report["output"]["path"], output);
+            assert_eq!(report["output"]["format"], "solidcraft/23");
+            assert!(std::fs::read(dir.path().join(output))
+                .unwrap()
+                .starts_with(b"PK"));
+        }
+    }
 }

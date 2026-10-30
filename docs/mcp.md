@@ -249,7 +249,7 @@ The formats report includes each reader's status and cadmpeg's published headlin
 | Argument | Type | Meaning |
 |---|---|---|
 | `input` | string | Absolute path of a native CAD file: `.f3d`, `.f3z`, `.ipt`, `.iam` or `.sldprt` or `.FCStd`. |
-| `output` | string | Absolute path of the `.solidcraft` file to write. An existing file is replaced, unless `overwrite` is false. |
+| `output` | string | Absolute path of the `.sc` file to write (`.solidcraft` and `.solvecraft` also work). An existing file is replaced, unless `overwrite` is false. |
 | `inputs` | array of strings, at least one | Absolute paths of files, and of folders to search (with their subfolders) for files Dutchman knows. |
 | `out_dir` | string | Absolute path of the folder for the designs, keeping each input folder's layout. Created if missing. |
 | `jobs` | integer, at least 1 | How many files to convert at once. Default: the machine's cores, at most 8. |
@@ -268,7 +268,7 @@ The formats report includes each reader's status and cadmpeg's published headlin
 | `solidcraft` | string | Path of `solidcraft-cli` for the check. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`). |
 | `solidcraft_version` | string | Target release as x.y.z, at least 0.18.2. Default: the found CLI's version, else the newest known at build time (currently 0.27.0), including when `verify` is false. |
 | `verify_timeout` | integer, at least 1 | Seconds each SolidCraft check may run before the history is written unverified. Default 120. |
-| `overwrite` | boolean | Replace an existing `.solidcraft` file (default true). When false, an existing file is left alone and that file's conversion fails with "already exists". |
+| `overwrite` | boolean | Replace an existing `.sc` file (default true). When false, an existing file is left alone and that file's conversion fails with "already exists". |
 | `project` | string | Absolute path of the project folder an assembly's part files are searched in when they are not at their stored paths. Default: the nearest folder above the assembly holding an Inventor `.ipj`, else two folders up; for `convert_all`, each folder given. See [Finding the part files](inventor.md#finding-the-part-files). |
 | `search` | array of strings | Absolute paths of more folders to search, with their subfolders, for part files the project folder does not hold. |
 
@@ -286,7 +286,10 @@ folder. They cannot be combined. Explicit files are appended without retention; 
 folder keeps the newest ten timestamp logs. [The guide](guide.md#diagnostic-logs-for-unfinished-runs)
 lists each OS folder and how to review and send a log.
 
-For example, call `convert` with `{"input":"/abs/part.f3d","output":"/abs/part.solidcraft",
+Batch output defaults to `.sc`; targets before SolidCraft 0.25.1 use `.solidcraft`.
+Explicit output names are preserved.
+
+For example, call `convert` with `{"input":"/abs/part.f3d","output":"/abs/part.sc",
 "diagnostics":"/abs/run.jsonl"}`. `dry_run` writes no diagnostic log.
 The log is [`dutchman.diagnostics/1`](json.md#dutchmandiagnostics1): records are flushed as
 conversion proceeds, with disk syncs at least every five seconds and at stage changes,
@@ -325,14 +328,14 @@ Inspect a file:
 Convert one file:
 
 ```json
-{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"convert","arguments":{"input":"/home/me/designs/synthetic_cube.ipt","output":"/home/me/designs/cube.solidcraft"}}}
+{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"convert","arguments":{"input":"/home/me/designs/synthetic_cube.ipt","output":"/home/me/designs/cube.sc"}}}
 ```
 
 ```json
 {"jsonrpc":"2.0","id":3,"result":{"isError":false,"content":"…","structuredContent":{
   "schema":"dutchman.convert/1","ok":true,
   "input":{"format":"inventor_part","format_name":"Inventor part (.ipt)","path":"/home/me/designs/synthetic_cube.ipt"},
-  "output":{"format":"solidcraft/23","path":"/home/me/designs/cube.solidcraft"},
+  "output":{"format":"solidcraft/23","path":"/home/me/designs/cube.sc"},
   "mode":"import",
   "verification":{"status":"not_applicable","reason":"the design carries no feature history"},
   "history":{"features":[],"mapped":0,"total":0},
@@ -390,10 +393,10 @@ still converted and each has its own report (shortened here):
 {"jsonrpc":"2.0","id":5,"result":{"isError":true,"content":"…","structuredContent":{
   "schema":"dutchman.convert-all/1","ok":false,"converted":3,"failed":1,
   "results":[
-    {"ok":true,"input":{"path":"/home/me/designs/project/generated_unit_cube.f3d", …},"output":{"path":"/home/me/designs/converted/generated_unit_cube.solidcraft", …},"mode":"import", …},
+    {"ok":true,"input":{"path":"/home/me/designs/project/generated_unit_cube.f3d", …},"output":{"path":"/home/me/designs/converted/generated_unit_cube.sc", …},"mode":"import", …},
     {"ok":false,"input":{"path":"/home/me/designs/project/sub/container_metadata_only.f3d", …},"error":{"message":"cannot read this design: no geometry could be read from this Fusion archive (.f3d) file"}},
-    {"ok":true,"input":{"path":"/home/me/designs/project/sub/solidworks_cube.sldprt", …},"output":{"path":"/home/me/designs/converted/sub/solidworks_cube.solidcraft", …},"mode":"import", …},
-    {"ok":true,"input":{"path":"/home/me/designs/project/sub/synthetic_cube.ipt", …},"output":{"path":"/home/me/designs/converted/sub/synthetic_cube.solidcraft", …},"mode":"import", …}]}}}
+    {"ok":true,"input":{"path":"/home/me/designs/project/sub/solidworks_cube.sldprt", …},"output":{"path":"/home/me/designs/converted/sub/solidworks_cube.sc", …},"mode":"import", …},
+    {"ok":true,"input":{"path":"/home/me/designs/project/sub/synthetic_cube.ipt", …},"output":{"path":"/home/me/designs/converted/sub/synthetic_cube.sc", …},"mode":"import", …}]}}}
 ```
 
 FreeCAD conversions retain numeric spreadsheet cells and supported formulas as parameters,

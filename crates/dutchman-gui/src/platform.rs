@@ -10,7 +10,7 @@ use std::process::Command;
 pub const APP_ENV: &str = "SOLIDCRAFT_APP";
 
 /// Opens `design` in SolidCraft: the app `SOLIDCRAFT_APP` names, else `solidcraft` on `PATH`,
-/// else whatever the system opens `.solidcraft` files with.
+/// else whatever the system opens the design's extension with.
 pub fn open_in_solidcraft(design: &Path) -> Result<(), String> {
     match solidcraft_app() {
         Some(app) => spawn(Command::new(app).arg(design)),
