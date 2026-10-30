@@ -25,6 +25,69 @@ use crate::container::Container;
 use crate::document::{column_major, component_name, feature_name, import_feature, Live, ORIGINAL};
 use crate::{history, step, verify, SolidCraftWriter, FORMAT, HISTORY};
 
+/// Public callers may build an assembly without the core's read report. Account for
+/// reverse bindings that slicing could not attach to any of its component definitions.
+fn report_appearance_bindings(model: &Model, report: &mut Report) -> bool {
+    fn kept(model: &Model, ids: &mut BTreeSet<String>) {
+        if let Some(assembly) = &model.assembly {
+            for part in &assembly.parts {
+                kept(part, ids);
+            }
+        } else {
+            ids.extend(
+                model
+                    .ir
+                    .model
+                    .appearance_bindings
+                    .iter()
+                    .map(|b| b.id.to_string()),
+            );
+        }
+    }
+    fn parents(model: &Model, ids: &BTreeSet<String>, report: &mut Report) {
+        let Some(assembly) = &model.assembly else {
+            return;
+        };
+        for binding in &model.ir.model.appearance_bindings {
+            if ids.contains(binding.id.as_str()) {
+                continue;
+            }
+            let detail = format!(
+                "Appearance binding {} has no target in a placed component's geometry; \
+                 its appearance is left out",
+                binding.id
+            );
+            if !report
+                .losses()
+                .iter()
+                .any(|loss| loss.subject == "appearance" && loss.detail.ends_with(&detail))
+            {
+                report.push(Severity::Dropped, "appearance", detail);
+            }
+        }
+        for part in &assembly.parts {
+            parents(part, ids, report);
+        }
+    }
+    let mut ids = BTreeSet::new();
+    kept(model, &mut ids);
+    parents(model, &ids, report);
+    !ids.is_empty()
+}
+
+fn unwritten_appearances(part: &Model, report: &mut Report) {
+    for binding in &part.ir.model.appearance_bindings {
+        report.push(
+            Severity::Dropped,
+            "appearance",
+            format!(
+                "Appearance binding {} is left out: its component has no written geometry",
+                binding.id
+            ),
+        );
+    }
+}
+
 /// Writes `assembly`, the assembly `model` places, as a SolidCraft design container, and
 /// records what became of its parts' histories.
 pub(crate) fn write(
@@ -42,6 +105,7 @@ pub(crate) fn write(
             "assembly joints left out by choice; stored placements retained",
         );
     }
+    let has_appearances = report_appearance_bindings(model, report);
     let prepared = prepare_parts(writer, assembly, report).into_iter();
     let mut builder = Builder {
         writer,
@@ -57,6 +121,7 @@ pub(crate) fn write(
         taken: BTreeSet::new(),
         looks: BTreeMap::new(),
         face_looks: Vec::new(),
+        has_appearances,
         bodies: BTreeSet::new(),
         names: Vec::new(),
         placed: BTreeMap::new(),
@@ -576,6 +641,8 @@ struct Builder<'r> {
     /// Looks of those bodies' faces, each by a point in its part's own frame, which SolidCraft
     /// applies to every occurrence of the part.
     face_looks: Vec<Value>,
+    /// Name every imported body when looks are shared across the design.
+    has_appearances: bool,
     /// Body names the parts' histories use so far, kept unique across parts.
     bodies: BTreeSet<String>,
     /// What became of each part's history.
@@ -911,6 +978,7 @@ impl Builder<'_> {
                         let file = part.source_file.as_deref().unwrap_or(&part.name);
                         self.report
                             .push(Severity::Dropped, file, format!("left out: {err}"));
+                        unwritten_appearances(part, self.report);
                         return Ok(None);
                     }
                 },
@@ -941,16 +1009,27 @@ impl Builder<'_> {
                 } else {
                     (feature_name(part), false)
                 };
-                self.features.push(import_feature(
-                    part,
-                    id,
-                    &label,
-                    Some(component),
-                    suppressed,
-                    &blob,
-                ));
+                let mut imported =
+                    import_feature(part, id, &label, Some(component), suppressed, &blob);
+                if !replayed {
+                    let mut looks =
+                        history::imported(part, &step, self.report, self.has_appearances)?;
+                    looks.rename_bodies(&name, &mut self.bodies);
+                    if let (Some(names), Some(fields)) = (
+                        looks
+                            .features
+                            .first()
+                            .and_then(|feature| feature.get("body_names")),
+                        imported.as_object_mut(),
+                    ) {
+                        fields.insert("body_names".to_owned(), names.clone());
+                    }
+                    self.looks.append(&mut looks.looks);
+                    self.face_looks.append(&mut looks.face_looks);
+                }
+                self.features.push(imported);
             }
-            (None, None) => {}
+            (None, None) => unwritten_appearances(part, self.report),
         }
         Ok(Some((component, name)))
     }

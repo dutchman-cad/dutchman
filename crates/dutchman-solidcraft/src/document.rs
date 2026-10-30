@@ -4,8 +4,8 @@
 //! - a **history design**: the replayed history, then the original geometry as an import,
 //!   suppressed, at the end of the timeline.
 //!
-//! An import's body names and assembly tree are left for SolidCraft to read from the STEP
-//! itself, so SolidCraft's STEP reader stays the only interpreter of that text.
+//! SolidCraft reads an import's assembly tree from the STEP itself. Imports receiving
+//! explicit looks also name their output bodies so each look has a stable target.
 
 use dutchman_core::{Model, Report, Severity};
 use serde_json::{json, Value};
@@ -54,6 +54,29 @@ pub(crate) fn import_design(model: &Model, step_blob: &str) -> Value {
         }],
         "features": [import_feature(model, FEATURE, &feature_name(model), Some(COMPONENT), false, step_blob)],
     })
+}
+
+/// Applies explicit import body names and their definition-level looks.
+pub(crate) fn import_looks(doc: &mut Value, looks: &History) {
+    if let Some(names) = looks.features.first().and_then(|f| f.get("body_names")) {
+        if let Some(fields) = doc
+            .get_mut("features")
+            .and_then(Value::as_array_mut)
+            .and_then(|features| features.first_mut())
+            .and_then(Value::as_object_mut)
+        {
+            fields.insert("body_names".to_owned(), names.clone());
+        }
+    }
+    if let (false, Some(fields)) = (
+        looks.looks.is_empty() && looks.face_looks.is_empty(),
+        doc.as_object_mut(),
+    ) {
+        fields.insert(
+            "appearances".to_owned(),
+            json!({"bodies": looks.looks, "faces": looks.face_looks}),
+        );
+    }
 }
 
 /// Appends mapped sketches to the import's component, hidden but editable. Parameters stay

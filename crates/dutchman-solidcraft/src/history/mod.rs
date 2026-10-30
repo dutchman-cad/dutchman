@@ -66,6 +66,40 @@ pub(crate) struct History {
     pub(crate) blends: Vec<blend::Pending>,
 }
 
+/// Looks and explicit names for bodies carried by an Import, independent of feature history.
+pub(crate) fn imported(
+    model: &Model,
+    step: &str,
+    report: &mut Report,
+    name_all: bool,
+) -> Result<History, dutchman_core::Error> {
+    if model.source_step.is_some() || (!name_all && model.ir.model.appearance_bindings.is_empty()) {
+        return Ok(History::default());
+    }
+    let wire = serde_json::to_value(&model.ir)
+        .map_err(|err| dutchman_core::Error::Encode(format!("cannot map appearances: {err}")))?;
+    let mut ctx = Context::new(wire.get("model").unwrap_or(&Value::Null));
+    let ids: Vec<_> = model
+        .ir
+        .model
+        .bodies
+        .iter()
+        .map(|body| body.id.as_str())
+        .collect();
+    let names = faces::import_names(&mut ctx, &ids, Some(step));
+    let face_looks = faces::looks(&mut ctx, report);
+    Ok(History {
+        features: if names.is_empty() {
+            Vec::new()
+        } else {
+            vec![serde_json::json!({"body_names": names})]
+        },
+        looks: ctx.looks,
+        face_looks,
+        ..History::default()
+    })
+}
+
 /// What one source feature becomes.
 enum Mapped {
     /// SolidCraft needs no feature for it (a principal datum plane).
@@ -259,6 +293,8 @@ struct Context<'a> {
     pattern_replay_required: bool,
     /// The source bodies the history makes under their own names: (CADIR body id, name).
     named_bodies: Vec<(String, String)>,
+    /// Region of each explicitly named imported shape.
+    imported_regions: BTreeMap<String, String>,
     /// Whether a feature that builds geometry has been mapped.
     builds: bool,
     /// The sheet thicknesses (mm) its sheet-metal features use, each with its rule's name.
@@ -280,6 +316,7 @@ impl<'a> Context<'a> {
             pattern_features: BTreeMap::new(),
             pattern_replay_required: false,
             named_bodies: Vec::new(),
+            imported_regions: BTreeMap::new(),
             builds: false,
             sheet_rules: Vec::new(),
             blends: Vec::new(),
@@ -652,16 +689,8 @@ fn map_into(
     history.stop = blocked;
     history.params = params;
     params::unsigned_dimensions(&mut history, &ctx);
+    history.face_looks = faces::looks(&mut ctx, report);
     history.looks = std::mem::take(&mut ctx.looks);
-    let (face_looks, unplaced) = faces::looks(&ctx);
-    history.face_looks = face_looks;
-    if unplaced > 0 {
-        report.push(
-            Severity::Info,
-            "appearance",
-            format!("{unplaced} coloured curved faces keep their body's colour"),
-        );
-    }
     history.sheet_rules = ctx
         .sheet_rules
         .iter()
