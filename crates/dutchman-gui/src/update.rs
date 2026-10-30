@@ -547,11 +547,15 @@ impl Updater {
                 .resizable(false)
                 .default_width(420.0)
                 .show(ctx, |ui| {
-                    if matches!(self.job.snapshot().phase, Phase::Installed | Phase::Restarted) {
+                    // After a successful package update only the result and Restart apply.
+                    let installed =
+                        matches!(self.job.snapshot().phase, Phase::Installed | Phase::Restarted);
+                    if installed {
                         ui.heading(format!("Dutchman {} is installed", self.job.tag.trim_start_matches('v')));
-                    } else {
-                        ui.heading(format!("Dutchman {} is available", release.tag.trim_start_matches('v')));
+                        self.package_ui(ui, &release, can_restart);
+                        return;
                     }
+                    ui.heading(format!("Dutchman {} is available", release.tag.trim_start_matches('v')));
                     egui::ScrollArea::vertical()
                         .max_height(240.0)
                         .show(ui, |ui| {
@@ -640,8 +644,22 @@ impl Updater {
                 }
             }
             Phase::Installed | Phase::Restarted => {
+                ui.label("The update finished.");
+                if !progress.tail.is_empty() {
+                    egui::CollapsingHeader::new("Update output")
+                        .id_salt("package-output-done")
+                        .default_open(false)
+                        .show(ui, |ui| {
+                            ui.monospace(
+                                progress.tail.iter().cloned().collect::<Vec<_>>().join("\n"),
+                            );
+                        });
+                }
                 if ui
-                    .add_enabled(can_restart, egui::Button::new("Restart Dutchman"))
+                    .add_enabled(
+                        can_restart,
+                        egui::Button::new("Restart Dutchman").fill(ui.visuals().selection.bg_fill),
+                    )
                     .clicked()
                 {
                     self.job.restart(self.install.clone(), ui.ctx());
@@ -649,6 +667,7 @@ impl Updater {
                 if !can_restart {
                     ui.label("Finish the current conversion before restarting.");
                 }
+                return;
             }
             Phase::Failed(error) => {
                 ui.label(error);
@@ -661,6 +680,11 @@ impl Updater {
                 .show(ui, |ui| {
                     ui.monospace(progress.tail.iter().cloned().collect::<Vec<_>>().join("\n"));
                 });
+        }
+        // The command is an alternative before an update starts and the fallback after a
+        // failure; while one runs it would only invite running it twice.
+        if matches!(progress.phase, Phase::Running | Phase::Restarting) {
+            return;
         }
         ui.separator();
         ui.label("Or run this command yourself:");
