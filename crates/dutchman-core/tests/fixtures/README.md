@@ -27,6 +27,21 @@ authored in FreeCAD 1.1.4 (`generated/freecad-1.1.4/manifest.json`):
 | `P01a.FCStd` | P01a: box, 6000 mm³; bounds (-10, -15, 0) to (10, 15, 10) mm. | `a306278dd58bb7abb306463887db3df3c032278109358718c5ad3c8b5c103f64` |
 | `P02a.FCStd` | P02a: turned part, 62831.8530718 mm³; bounds after A01a placement (40, -30, 0) to (100, 30, 40) mm. | `1a3fbd0781d5468290fcbbba4509c0cd7009286e40b0c257f06d935e0ca0bd82` |
 
+`freecad-1.1.4-N04/` contains unchanged CC0-1.0 CAD Fixture Recipes booklet 1.30
+files from the public release
+[freecad-1.1.4-recipes-v1.30](https://github.com/dutchman-cad/fixtures/releases/tag/freecad-1.1.4-recipes-v1.30),
+asset `freecad-1.1.4-recipes-v1.30.zip`, authored in FreeCAD 1.1.4. The files were copied
+from a locally cached copy of that release asset.
+
+| File | Recipe and purpose | SHA-256 |
+|---|---|---|
+| `N04a.FCStd` | N04a: uniform quadratic periodic sketch B-spline with equal weights and a pad. | `c55205033fe8d9931abcfacf4a827a4feb94b68db1815ff0047fb410d43befdd` |
+| `N04b.FCStd` | N04b: a second uniform quadratic periodic sketch B-spline case with equal weights and a pad. | `ff9e07c4aa712b1dbb7686b3d4ee1af7a77942d70ea2de7c63ad12f0a785e12a` |
+
+At the pinned cadmpeg revision, both stop in native sketch decoding because the compact
+periodic knot vector is not expanded to CADIR's full vector and corresponding poles.
+They record that end-to-end reader gap; periodic mapping tests use synthetic full CADIR.
+
 The three cubes hold `cadmpeg_ir::examples::unit_cube()`, the 10 mm example cube, as fixed in
 cadmpeg PR #257 (`main` `f816fb00fb54`): before it, the example's face loops ran clockwise
 about their outward normals, so the cube read back inside out (cadmpeg/cadmpeg#255). Each reads

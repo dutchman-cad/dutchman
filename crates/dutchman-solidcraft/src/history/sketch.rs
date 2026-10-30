@@ -881,12 +881,10 @@ const EVEN: f64 = 1e-9;
 
 /// A CADIR NURBS curve as SolidCraft's clamped uniform B-spline: its degree and control
 /// points; or why it is not one. SolidCraft's control splines have exactly this knot layout,
-/// so only curves that already have it map; any other would change shape.
+/// so periodic curves are first clamped by exact endpoint knot insertion.
 fn spline(curve: Option<&Value>) -> Result<(u64, Vec<P2>), String> {
     let curve = curve.ok_or("its spline is malformed")?;
-    if curve.get("periodic").and_then(Value::as_bool) == Some(true) {
-        return Err("periodic splines are not mapped yet".to_owned());
-    }
+    let periodic = curve.get("periodic").and_then(Value::as_bool) == Some(true);
     let poles = curve.get("poles").ok_or("its spline is malformed")?;
     let rows = poles
         .get("points")
@@ -903,10 +901,13 @@ fn spline(curve: Option<&Value>) -> Result<(u64, Vec<P2>), String> {
             .filter(|w| *w != 0.0)
             .ok_or("its spline has no nonzero weight")?;
         if !rows.iter().all(|p| number(p.get("weight")) == Some(first)) {
+            if periodic {
+                return Err("weighted periodic splines are not supported yet: SolidCraft control splines have no weights".to_owned());
+            }
             return Err("weighted splines other than a positive-weight quadratic Bézier are not supported yet: SolidCraft control splines have no weights".to_owned());
         }
     }
-    let points: Vec<P2> = rows
+    let mut points: Vec<P2> = rows
         .iter()
         .map(|p| p2(if rational { p.get("point") } else { Some(p) }))
         .collect::<Option<_>>()
@@ -920,16 +921,27 @@ fn spline(curve: Option<&Value>) -> Result<(u64, Vec<P2>), String> {
     if points.len() < order || points.len() > MAX_POLES {
         return Err("its spline has too few or too many control points".to_owned());
     }
-    let knots: Vec<f64> = curve
+    let knot_values = curve
         .get("knots")
         .and_then(Value::as_array)
-        .ok_or("its spline is malformed")?
+        .ok_or("its spline is malformed")?;
+    if knot_values.len() != points.len() + order {
+        return Err("its spline's knots do not fit its control points".to_owned());
+    }
+    let mut knots: Vec<f64> = knot_values
         .iter()
         .map(Value::as_f64)
         .collect::<Option<_>>()
         .ok_or("its spline is malformed")?;
-    if knots.len() != points.len() + order {
-        return Err("its spline's knots do not fit its control points".to_owned());
+    if periodic {
+        (knots, points) = clamp_periodic(order - 1, knots, points)
+            .ok_or("its periodic spline cannot be clamped on its active knot domain")?;
+        if points.len() > MAX_POLES {
+            return Err(
+                "clamping its periodic spline needs more than SolidCraft's 500 control points"
+                    .to_owned(),
+            );
+        }
     }
     let (Some(&first), Some(&last)) = (knots.first(), knots.last()) else {
         return Err("its spline is malformed".to_owned());
@@ -950,18 +962,111 @@ fn spline(curve: Option<&Value>) -> Result<(u64, Vec<P2>), String> {
         .unwrap_or_default()
         .to_vec();
     let pieces = inner.len() + 1;
+    // Exact periodic conversion must not round nearly uniform source knots into shape.
+    let tolerance = if periodic { 8.0 * f64::EPSILON } else { EVEN };
     let even = inner.iter().enumerate().all(|(i, k)| {
         let want = first + span * (i + 1) as f64 / pieces as f64;
-        (k - want).abs() <= EVEN * span
+        (k - want).abs() <= tolerance * span
     });
     if clamped && even {
         Ok((degree, points))
+    } else if periodic {
+        Err("periodic splines with nonuniform or repeated interior knots are not supported yet: SolidCraft control splines have no custom knots".to_owned())
     } else {
         Err(
             "its spline is not a clamped uniform B-spline, which SolidCraft's splines are"
                 .to_owned(),
         )
     }
+}
+
+/// Restrict the full CADIR knot vector to [U[p], U[pole_count]]. Repeating each
+/// boundary knot p+1 times makes the first and last poles points on the curve;
+/// discarding the outside knots and poles then leaves the same polynomial curve.
+fn clamp_periodic(
+    degree: usize,
+    mut knots: Vec<f64>,
+    mut points: Vec<P2>,
+) -> Option<(Vec<f64>, Vec<P2>)> {
+    if degree == 0
+        || degree > MAX_DEGREE as usize
+        || points.len() > MAX_POLES
+        || points.len() <= degree
+        || knots.len() != points.len() + degree + 1
+        || knots.iter().any(|k| !k.is_finite())
+        || knots.windows(2).any(|pair| pair.first() > pair.get(1))
+    {
+        return None;
+    }
+    let start = *knots.get(degree)?;
+    let end = *knots.get(points.len())?;
+    if start >= end || !(end - start).is_finite() {
+        return None;
+    }
+    for boundary in [start, end] {
+        let multiplicity = knots.iter().filter(|k| **k == boundary).count();
+        if multiplicity > degree + 1 {
+            return None;
+        }
+        for _ in multiplicity..=degree {
+            insert_spline_knot(degree, &mut knots, &mut points, boundary)?;
+        }
+    }
+    let first = knots.iter().position(|k| *k == start)?;
+    let last = knots.iter().rposition(|k| *k == end)?;
+    let count = (last + 1).checked_sub(first + degree + 1)?;
+    Some((
+        knots.get(first..=last)?.to_vec(),
+        points.get(first..first + count)?.to_vec(),
+    ))
+}
+
+/// One Boehm insertion: untouched poles on either side, affine blends between.
+fn insert_spline_knot(
+    degree: usize,
+    knots: &mut Vec<f64>,
+    points: &mut Vec<P2>,
+    value: f64,
+) -> Option<()> {
+    let span = knots.iter().rposition(|k| *k <= value)?;
+    let multiplicity = knots.iter().filter(|k| **k == value).count();
+    let left = span.checked_sub(degree)?;
+    let right = span.checked_sub(multiplicity)?;
+    if left > right || right >= points.len() {
+        return None;
+    }
+    let mut inserted = Vec::with_capacity(points.len() + 1);
+    for i in 0..=points.len() {
+        let point = if i <= left {
+            *points.get(i)?
+        } else if i > right {
+            *points.get(i - 1)?
+        } else {
+            let low = *knots.get(i)?;
+            let high = *knots.get(i + degree)?;
+            let width = high - low;
+            if !width.is_finite() || width <= 0.0 {
+                return None;
+            }
+            let alpha = (value - low) / width;
+            if !alpha.is_finite() || !(0.0..=1.0).contains(&alpha) {
+                return None;
+            }
+            let [ax, ay] = *points.get(i - 1)?;
+            let [bx, by] = *points.get(i)?;
+            [
+                (1.0 - alpha) * ax + alpha * bx,
+                (1.0 - alpha) * ay + alpha * by,
+            ]
+        };
+        if point.iter().any(|v| !v.is_finite()) {
+            return None;
+        }
+        inserted.push(point);
+    }
+    knots.insert(span + 1, value);
+    *points = inserted;
+    Some(())
 }
 
 pub(crate) fn number(value: Option<&Value>) -> Option<f64> {
@@ -1148,6 +1253,166 @@ mod tests {
         assert!(spline(Some(&rational)).is_err());
         let wrong_count = nurbs(3, &[0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0], &five);
         assert!(spline(Some(&wrong_count)).is_err());
+    }
+
+    // Cox–de Boor basis evaluation, independent of the insertion implementation.
+    #[allow(clippy::indexing_slicing)]
+    fn evaluate(degree: usize, knots: &[f64], points: &[P2], t: f64) -> P2 {
+        let mut basis: Vec<f64> = knots
+            .windows(2)
+            .map(|pair| {
+                if (pair[0] <= t && t < pair[1] && t != knots[points.len()])
+                    || (t == knots[points.len()] && pair[0] < t && t <= pair[1])
+                {
+                    1.0
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        for p in 1..=degree {
+            basis = (0..basis.len() - 1)
+                .map(|i| {
+                    let a = knots[i + p] - knots[i];
+                    let b = knots[i + p + 1] - knots[i + 1];
+                    (if a > 0.0 {
+                        (t - knots[i]) / a * basis[i]
+                    } else {
+                        0.0
+                    }) + (if b > 0.0 {
+                        (knots[i + p + 1] - t) / b * basis[i + 1]
+                    } else {
+                        0.0
+                    })
+                })
+                .collect();
+        }
+        points
+            .iter()
+            .zip(basis)
+            .fold([0.0, 0.0], |[x, y], (p, b)| [x + p[0] * b, y + p[1] * b])
+    }
+
+    fn periodic_curve(degree: usize) -> (Vec<f64>, Vec<P2>) {
+        let count = degree + 3;
+        let mut points: Vec<P2> = (0..count)
+            .map(|i| {
+                let angle = std::f64::consts::TAU * i as f64 / count as f64;
+                [10.0 * angle.cos(), 10.0 * angle.sin()]
+            })
+            .collect();
+        points.extend_from_within(..degree);
+        let knots = (0..points.len() + degree + 1)
+            .map(|i| i as f64 - degree as f64)
+            .collect();
+        (knots, points)
+    }
+
+    #[test]
+    fn periodic_clamping_preserves_sampled_positions() {
+        for degree in 1..=9 {
+            let (knots, points) = periodic_curve(degree);
+            let (clamped, poles) = clamp_periodic(degree, knots.clone(), points.clone()).unwrap();
+            let start = knots[degree];
+            let end = knots[points.len()];
+            assert!(clamped[..=degree].iter().all(|k| *k == start));
+            assert!(clamped[clamped.len() - degree - 1..]
+                .iter()
+                .all(|k| *k == end));
+            assert!(distance(poles[0], *poles.last().unwrap()) < 1e-12);
+            for i in 0..=2000 {
+                let t = start + (end - start) * i as f64 / 2000.0;
+                let a = evaluate(degree, &knots, &points, t);
+                let b = evaluate(degree, &clamped, &poles, t);
+                assert!(
+                    distance(a, b) < 1e-9,
+                    "degree {degree}, t {t}: {a:?} != {b:?}"
+                );
+            }
+            assert!(
+                distance(
+                    evaluate(degree, &knots, &points, end),
+                    *poles.last().unwrap()
+                ) < 1e-9
+            );
+            let mut curve = nurbs(degree as u64, &knots, &points);
+            curve["periodic"] = json!(true);
+            assert!(spline(Some(&curve)).is_ok());
+        }
+    }
+
+    #[test]
+    fn clamping_handles_repeated_nonuniform_knots_and_clamped_ends() {
+        let degree = 3;
+        let knots = vec![-2.0, -1.0, 0.0, 0.0, 0.2, 0.2, 0.7, 1.0, 1.0, 2.0, 3.0];
+        let points: Vec<P2> = (0..7).map(|i| [i as f64, (i * i % 5) as f64]).collect();
+        let (clamped, poles) = clamp_periodic(degree, knots.clone(), points.clone()).unwrap();
+        for i in 0..1000 {
+            let t = i as f64 / 1000.0;
+            assert!(
+                distance(
+                    evaluate(degree, &knots, &points, t),
+                    evaluate(degree, &clamped, &poles, t)
+                ) < 1e-9
+            );
+        }
+        let (again, same) = clamp_periodic(degree, clamped.clone(), poles.clone()).unwrap();
+        assert_eq!((again, same), (clamped, poles));
+        let mut curve = nurbs(degree as u64, &knots, &points);
+        curve["periodic"] = json!(true);
+        assert!(spline(Some(&curve))
+            .unwrap_err()
+            .contains("no custom knots"));
+    }
+
+    #[test]
+    fn periodic_spline_refusals_name_the_missing_target_data() {
+        let (knots, points) = periodic_curve(3);
+        let mut curve = nurbs(3, &knots, &points);
+        curve["periodic"] = json!(true);
+        curve["poles"] = json!({"form": "rational", "points": points.iter().enumerate()
+            .map(|(i, p)| json!({"point": {"u": p[0], "v": p[1]}, "weight": i + 1})).collect::<Vec<_>>()});
+        assert!(spline(Some(&curve))
+            .unwrap_err()
+            .contains("weighted periodic splines"));
+        for point in curve["poles"]["points"].as_array_mut().unwrap() {
+            point["weight"] = json!(2.0);
+        }
+        assert!(spline(Some(&curve)).is_ok());
+        assert!(clamp_periodic(3, vec![], vec![]).is_none());
+        assert!(clamp_periodic(3, vec![0.0; 11], points.clone()).is_none());
+        let mut almost_uniform = nurbs(3, &knots, &points);
+        almost_uniform["periodic"] = json!(true);
+        almost_uniform["knots"][4] = json!(1.0 + 1e-10);
+        assert!(spline(Some(&almost_uniform))
+            .unwrap_err()
+            .contains("no custom knots"));
+        let mut decreasing = knots.clone();
+        decreasing[4] = -100.0;
+        assert!(clamp_periodic(3, decreasing, points.clone()).is_none());
+        let mut nonfinite = knots;
+        nonfinite[0] = f64::NAN;
+        assert!(clamp_periodic(3, nonfinite, points).is_none());
+    }
+
+    #[test]
+    fn a_periodic_spline_shares_its_seam_point() {
+        let (knots, points) = periodic_curve(3);
+        let mut curve = nurbs(3, &knots, &points);
+        curve["periodic"] = json!(true);
+        let mut builder = Builder::default();
+        builder
+            .entity(
+                &entity(json!({"kind": "nurbs", "curve": curve})),
+                &mut Report::default(),
+            )
+            .unwrap();
+        let spline = &builder.curves[0];
+        assert_eq!(spline["control"], true);
+        assert_eq!(spline["degree"], 3);
+        let pts = spline["pts"].as_array().unwrap();
+        assert_eq!(pts.first(), pts.last());
+        assert_eq!(pts.len(), points.len());
     }
 
     #[test]

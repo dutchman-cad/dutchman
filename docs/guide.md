@@ -939,8 +939,13 @@ spacing and locations.
 
 Sketches retain bounded parabolas and hyperbolas, elliptical arcs up to one turn,
 and rational quadratic Béziers as editable conics. Equal-weight rational splines become
-polynomial control splines. Selected multi-piece elliptical arcs, unbounded conics, other
-weighted or nonuniform splines, and text without solved outlines still prevent history replay.
+polynomial control splines. Uniform periodic (closed) B-splines keep their exact shape
+through endpoint knot insertion, becoming clamped control splines with a shared seam point.
+Weighted periodic splines with unequal weights are not supported yet because SolidCraft
+control splines have no weights. Periodic splines whose clamped form has nonuniform or
+repeated interior knots also remain unsupported because SolidCraft stores no custom knots.
+Selected multi-piece elliptical arcs, unbounded conics, other weighted or nonuniform splines,
+and text without solved outlines still prevent history replay.
 Additional coordinate, intersection, tangency, curvature, symmetry, and repeated-dimension
 relations carry across. Static sketch patterns retain point and radius associations;
 driving count or span parameters are not supported yet. Constraints that cannot carry
