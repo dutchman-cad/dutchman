@@ -190,18 +190,13 @@ fn default_location_and_explicit_override_are_distinct() {
     assert_eq!(out.status.code(), Some(2));
 }
 
-#[cfg(unix)]
 #[test]
-fn sigkill_leaves_start_and_heartbeat_as_valid_complete_lines() {
-    // A FIFO holds the real conversion at output publication, with no reader. This makes
-    // the kill deterministic without slowing down or substituting the decoder under test.
+fn a_killed_conversion_leaves_start_and_heartbeat_as_valid_complete_lines() {
+    // The debug build holds the real conversion at its write stage (a test-only switch), so
+    // the kill lands there deterministically on every platform: SIGKILL on Unix,
+    // TerminateProcess on Windows.
     let dir = tempfile::tempdir().unwrap();
-    let output = dir.path().join("blocked.solidcraft");
-    assert!(Command::new("mkfifo")
-        .arg(&output)
-        .status()
-        .unwrap()
-        .success());
+    let output = dir.path().join("held.solidcraft");
     let log = dir.path().join("killed.jsonl");
     let child = Command::new(env!("CARGO_BIN_EXE_dutchman"))
         .args(["convert", "--no-verify", "--diagnostics"])
@@ -209,6 +204,7 @@ fn sigkill_leaves_start_and_heartbeat_as_valid_complete_lines() {
         .arg(fixture())
         .arg(&output)
         .env("DUTCHMAN_DIAGNOSTICS_HEARTBEAT_MS", "10")
+        .env("DUTCHMAN_DIAGNOSTICS_TEST_HOLD", "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -240,14 +236,18 @@ fn sigkill_leaves_start_and_heartbeat_as_valid_complete_lines() {
         );
         assert!(
             Instant::now() < deadline,
-            "conversion never reached the blocked write"
+            "conversion never reached the held write"
         );
         std::thread::sleep(Duration::from_millis(5));
     }
     child.0.kill().unwrap();
     let status = child.0.wait().unwrap();
-    use std::os::unix::process::ExitStatusExt;
-    assert_eq!(status.signal(), Some(9));
+    assert!(!status.success());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        assert_eq!(status.signal(), Some(9));
+    }
     let text = std::fs::read_to_string(&log).unwrap();
     // SIGKILL may interrupt one write: ignore only an incomplete trailing line.
     let complete = text.rsplit_once('\n').map(|(lines, _)| lines).unwrap_or("");

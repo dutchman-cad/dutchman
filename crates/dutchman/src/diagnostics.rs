@@ -177,6 +177,14 @@ impl Log {
                 );
             }
         }
+        // Tests hold a real conversion at its write stage to kill it there, on every platform;
+        // release builds never do.
+        #[cfg(debug_assertions)]
+        if event.stage == dutchman_core::Stage::Write
+            && std::env::var_os("DUTCHMAN_DIAGNOSTICS_TEST_HOLD").is_some()
+        {
+            std::thread::sleep(std::time::Duration::from_secs(60));
+        }
     }
 
     /// A cloneable sink for the decoder or the isolated worker's progress stream.
