@@ -1056,6 +1056,17 @@ or `(none found)` when no version can be read. `--solidcraft-version` overrides 
 otherwise the found supported version is used, falling back to 0.27.0. Other output
 formats omit this line and the JSON `solidcraft` object.
 
+CLI version discovery runs at most once per resolved CLI path in each Dutchman process,
+including when the CLI gives no answer. The version command has a three-second limit.
+Successful versions are also cached across runs in `solidcraft-versions.json` under
+`$XDG_CACHE_HOME/dutchman` (or `~/.cache/dutchman`) on Linux,
+`~/Library/Caches/Dutchman` on macOS, and `%LOCALAPPDATA%\Dutchman` on Windows.
+The disk entry must match the CLI's resolved path, file size, and modification time;
+changing the executable causes a fresh probe in the next process. Unreadable or damaged
+caches are ignored, and timeouts are remembered only for the current process.
+With an explicit target (`--solidcraft-version` or the desktop target selector) and
+verification off, Dutchman does not run the version command. Reports reuse a matching
+cached version, or leave `solidcraft.found` null when it has not been checked.
 
 ## Diagnostic logs for unfinished runs
 

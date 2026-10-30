@@ -201,6 +201,19 @@ impl ConvertOptions {
         }
     }
 
+    /// The CLI version for reports, avoiding discovery for an explicit unchecked target.
+    pub(crate) fn reported_solidcraft_version(&self) -> Option<String> {
+        let detection = self
+            .solidcraft
+            .as_ref()
+            .map_or(Verification::Auto, |path| Verification::With(path.clone()));
+        if self.no_verify && self.solidcraft_version.is_some() {
+            dutchman_solidcraft::cached_solidcraft_version(&detection)
+        } else {
+            dutchman_solidcraft::solidcraft_version(&detection)
+        }
+    }
+
     /// What these options keep: their preset, narrowed by the per-choice switches.
     pub fn choices(&self) -> choices::Choices {
         let mut choices = choices::Choices::of(self.preset);

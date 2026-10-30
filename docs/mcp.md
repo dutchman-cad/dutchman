@@ -538,3 +538,9 @@ Standard fixes its history budget before decoding for parts and assemblies; if o
 history-free estimate fits, conversion proceeds with one Info explanation. Memory refusals
 happen before decoding. See [JSON reports](json.md) for diagnostic platform limits and UTC
 log filenames.
+
+With an explicit `solidcraft_version` and `verify: false`, version discovery uses only
+cached results; `solidcraft.found` is null when not checked. Otherwise the CLI version
+probe has a three-second limit and runs at most once per resolved CLI path per process.
+Successful versions are cached across runs until the CLI's size or modification time
+changes; see [the guide](guide.md) for cache locations.

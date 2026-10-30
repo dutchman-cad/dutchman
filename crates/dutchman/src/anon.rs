@@ -254,15 +254,13 @@ pub fn write(
         None => Salt::random()?,
     };
     let solidcraft = match options.to {
-        crate::OutputFormat::Solidcraft => {
-            dutchman_solidcraft::solidcraft_version(&options.verification())
-        }
+        crate::OutputFormat::Solidcraft => options.reported_solidcraft_version(),
         crate::OutputFormat::Freecad | crate::OutputFormat::Fcstd | crate::OutputFormat::Dxf => {
             None
         }
     };
     let run = Run {
-        verify: solidcraft.is_some(),
+        verify: !options.no_verify && solidcraft.is_some(),
         solidcraft,
         import_only: options.import_only,
         jobs: crate::batch::workers(settings.jobs),

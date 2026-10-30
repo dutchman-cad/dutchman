@@ -625,13 +625,8 @@ pub(crate) fn solidcraft_info(options: &crate::ConvertOptions) -> Option<Value> 
     if options.to != crate::OutputFormat::Solidcraft {
         return None;
     }
-    let detection = options
-        .solidcraft
-        .as_ref()
-        .map_or(dutchman_solidcraft::Verification::Auto, |path| {
-            dutchman_solidcraft::Verification::With(path.clone())
-        });
-    let found = dutchman_solidcraft::solidcraft_version(&detection)
+    let found = options
+        .reported_solidcraft_version()
         .and_then(|line| solidcraft_release(&line));
     Some(solidcraft_values(options.solidcraft_version, found))
 }
@@ -759,6 +754,37 @@ mod tests {
             report["solidcraft"],
             json!({"target": "0.25.1", "found": null})
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn explicit_unverified_target_does_not_spawn_for_writer_or_reports() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let cli = dir.path().join("solidcraft-cli");
+        std::fs::write(
+            &cli,
+            "#!/bin/sh\ntouch \"$0.spawned\"\necho 'solidcraft-cli 0.26.0'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let target = "0.25.1".parse().unwrap();
+        let options = crate::ConvertOptions {
+            no_verify: true,
+            solidcraft: Some(cli.clone()),
+            solidcraft_version: Some(target),
+            ..Default::default()
+        };
+        let writer = dutchman_solidcraft::SolidCraftWriter::new()
+            .verification(options.verification())
+            .target_version(options.solidcraft_version);
+        assert_eq!(writer.resolved_version(), target);
+        assert_eq!(
+            solidcraft_info(&options).unwrap(),
+            json!({"target": "0.25.1", "found": null})
+        );
+        assert!(options.reported_solidcraft_version().is_none());
+        assert!(!dir.path().join("solidcraft-cli.spawned").exists());
     }
 
     #[test]
