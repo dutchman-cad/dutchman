@@ -43,7 +43,7 @@ lipo -info "$app/Contents/MacOS/Dutchman"
 
 cp "$root/crates/dutchman-gui/assets/Dutchman.icns" "$app/Contents/Resources/Dutchman.icns"
 cp "$root/LICENSE" "$root/NOTICE" "$app/Contents/Resources/"
-cp "$root"/crates/dutchman-gui/assets/fonts/*.txt "$app/Contents/Resources/licences/"
+cp "$root"/crates/dutchman-gui/assets/fonts/*.txt "$root"/licences/*.txt "$app/Contents/Resources/licences/"
 
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
