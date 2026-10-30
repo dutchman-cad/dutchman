@@ -312,8 +312,12 @@ impl ConvertOptions {
             full: self.output_writer(),
             reduced: reduced.output_writer(),
             options: self.clone(),
-            estimate: choices::estimate(input, &self.choices()),
-            reduced_estimate: choices::estimate(input, &reduced.choices()),
+            estimate: choices::estimate_with_threads(input, &self.choices(), self.threads),
+            reduced_estimate: choices::estimate_with_threads(
+                input,
+                &reduced.choices(),
+                self.threads,
+            ),
             available: if self.no_memory_check || self.preset == choices::Preset::Fast {
                 None
             } else {

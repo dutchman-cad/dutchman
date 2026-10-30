@@ -489,14 +489,14 @@ fn convert(arguments: &Arguments) -> Result<Value, String> {
     let options = options(arguments)?;
     if flag(arguments, "dry_run", false)? {
         let mut choices = options.choices();
-        let full = crate::choices::estimate(&input, &choices);
+        let full = crate::choices::estimate_with_threads(&input, &choices, options.threads);
         let available = crate::choices::available_memory();
         let check = crate::choices::memory_check(&input, &options);
         let estimate = match check {
             crate::choices::MemoryCheck::Ok(estimate) => estimate,
             crate::choices::MemoryCheck::TooBig { estimate, .. } => Some(estimate),
         };
-        if estimate != full {
+        if estimate.map(|e| e.peak_bytes) != full.map(|e| e.peak_bytes) {
             choices.history = false;
         }
         return Ok(json!({

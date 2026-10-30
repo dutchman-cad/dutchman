@@ -103,6 +103,13 @@ its designs when a pre-read exceeds the budget; it also includes that file's ref
 }
 ```
 
+For Fusion archives with multiple readable embedded `.f3d` designs, the time estimate
+uses the requested threads (0 means auto), limited by the converter's shared CPU, item
+count and free-memory worker policy. A serial component remains. Before native decoding,
+the embedded design count and the converter's 256 MiB minimum worker budget are proxies;
+actual body counts can reduce conversion workers further. Single-design files keep their
+existing time model. Memory estimates and bands are unchanged by this time refit.
+
 | Field | Meaning |
 |---|---|
 | `ok` | `true` when the design was written. |
