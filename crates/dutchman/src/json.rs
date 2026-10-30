@@ -620,8 +620,69 @@ pub fn memory_failure(
     report
 }
 
+/// SolidCraft target and discovered release, including when verification is off.
+pub(crate) fn solidcraft_info(options: &crate::ConvertOptions) -> Option<Value> {
+    if options.to != crate::OutputFormat::Solidcraft {
+        return None;
+    }
+    let detection = options
+        .solidcraft
+        .as_ref()
+        .map_or(dutchman_solidcraft::Verification::Auto, |path| {
+            dutchman_solidcraft::Verification::With(path.clone())
+        });
+    let found = dutchman_solidcraft::solidcraft_version(&detection)
+        .and_then(|line| solidcraft_release(&line));
+    Some(solidcraft_values(options.solidcraft_version, found))
+}
+
+fn solidcraft_release(line: &str) -> Option<String> {
+    // Match the writer's accepted CLI version lines, including v prefixes and suffixes.
+    let word = line.split_whitespace().last()?.trim_start_matches('v');
+    let mut parts = word.split('.').map(|part| {
+        part.chars()
+            .take_while(char::is_ascii_digit)
+            .collect::<String>()
+            .parse::<u64>()
+            .ok()
+    });
+    let major = parts.next()??;
+    let minor = parts.next()??;
+    let patch = parts.next().flatten().unwrap_or(0);
+    Some(format!("{major}.{minor}.{patch}"))
+}
+
+fn solidcraft_values(
+    target: Option<dutchman_solidcraft::SolidCraftVersion>,
+    found: Option<String>,
+) -> Value {
+    let target = target
+        .or_else(|| found.as_deref().and_then(|version| version.parse().ok()))
+        .unwrap_or_default();
+    json!({"target": target.to_string(), "found": found})
+}
+
+/// The SolidCraft version line shared by single-file and batch text output.
+pub fn solidcraft_line(report: &Value) -> Option<String> {
+    let target = report.pointer("/solidcraft/target")?.as_str()?;
+    let found = report
+        .pointer("/solidcraft/found")
+        .and_then(Value::as_str)
+        .map_or_else(
+            || "none found".to_owned(),
+            |version| format!("found {version}"),
+        );
+    Some(format!("Target SolidCraft {target} ({found})"))
+}
+
 /// Add the pre-read estimate and choices, including Standard's actual history decision.
 pub fn conversion_choices(report: &mut Value, input: &Path, options: &crate::ConvertOptions) {
+    if report.get("solidcraft").is_none() {
+        if let (Some(solidcraft), Some(fields)) = (solidcraft_info(options), report.as_object_mut())
+        {
+            fields.insert("solidcraft".to_owned(), solidcraft);
+        }
+    }
     let mut choices = options.choices();
     if report
         .get("losses")
@@ -632,10 +693,7 @@ pub fn conversion_choices(report: &mut Value, input: &Path, options: &crate::Con
                     && loss
                         .get("message")
                         .and_then(Value::as_str)
-                        .is_some_and(|detail| {
-                            detail
-                                .starts_with("feature history left out: this assembly needs about ")
-                        })
+                        .is_some_and(|detail| detail.starts_with("feature history left out: "))
             })
         })
     {
@@ -669,6 +727,74 @@ mod tests {
     use dutchman_core::FeatureOutcome;
 
     use super::*;
+
+    #[test]
+    fn cli_version_lines_are_normalized_like_the_writer() {
+        for (line, version) in [
+            ("solidcraft-cli 0.27.0", Some("0.27.0")),
+            ("solidcraft-cli v0.26.0-beta", Some("0.26.0")),
+            ("solidcraft-cli 0.25", Some("0.25.0")),
+            ("not a version", None),
+        ] {
+            assert_eq!(solidcraft_release(line).as_deref(), version);
+        }
+    }
+
+    #[test]
+    fn explicit_target_is_reported_with_verification_off_and_no_cli() {
+        let dir = tempfile::tempdir().unwrap();
+        let options = crate::ConvertOptions {
+            no_verify: true,
+            solidcraft: Some(dir.path().join("missing-solidcraft-cli")),
+            solidcraft_version: Some("0.25.1".parse().unwrap()),
+            ..Default::default()
+        };
+        let mut report = json!({});
+        conversion_choices(&mut report, Path::new("missing.ipt"), &options);
+        assert_eq!(
+            report["solidcraft"],
+            json!({"target": "0.25.1", "found": null})
+        );
+    }
+
+    #[test]
+    fn solidcraft_versions_report_target_found_and_absence() {
+        let target = "0.27.0".parse().unwrap();
+        for (found, line) in [
+            (
+                Some("0.26.0".to_owned()),
+                "Target SolidCraft 0.27.0 (found 0.26.0)",
+            ),
+            (None, "Target SolidCraft 0.27.0 (none found)"),
+        ] {
+            let report = json!({"solidcraft": solidcraft_values(Some(target), found.clone())});
+            assert_eq!(report["solidcraft"]["target"], "0.27.0");
+            assert_eq!(report["solidcraft"]["found"], json!(found));
+            assert_eq!(solidcraft_line(&report).as_deref(), Some(line));
+        }
+        assert_eq!(
+            solidcraft_values(None, Some("0.26.0".into()))["target"],
+            "0.26.0"
+        );
+        assert_eq!(solidcraft_values(None, None)["target"], "0.27.0");
+        for to in [
+            crate::OutputFormat::Freecad,
+            crate::OutputFormat::Fcstd,
+            crate::OutputFormat::Dxf,
+        ] {
+            let mut report = json!({});
+            conversion_choices(
+                &mut report,
+                Path::new("missing.ipt"),
+                &crate::ConvertOptions {
+                    to,
+                    ..Default::default()
+                },
+            );
+            assert!(report.get("solidcraft").is_none());
+            assert!(solidcraft_line(&report).is_none());
+        }
+    }
 
     #[test]
     fn partial_history_is_distinct_from_full_verification() {

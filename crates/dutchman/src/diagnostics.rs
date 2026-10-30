@@ -483,21 +483,16 @@ fn os_version() -> Option<String> {
     }
     #[cfg(windows)]
     {
-        command_value("cmd", &["/C", "ver"])
+        Some(std::env::consts::OS.to_owned())
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     None
 }
 
-#[cfg(any(target_os = "macos", windows))]
+#[cfg(target_os = "macos")]
 fn command_value(program: &str, args: &[&str]) -> Option<String> {
     let mut command = std::process::Command::new(program);
     command.args(args).stdin(std::process::Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    }
     let output = command.output().ok()?;
     output
         .status
@@ -528,18 +523,8 @@ fn total_memory() -> Option<u64> {
     }
     #[cfg(windows)]
     {
-        command_value(
-            "powershell",
-            &[
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "(Get-CimInstance Win32_OperatingSystem).TotalVisibleMemorySize",
-            ],
-        )?
-        .parse::<u64>()
-        .ok()?
-        .checked_mul(1024)
+        // No safe OS memory API dependency is available under the workspace's unsafe ban.
+        None
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
     None
@@ -592,6 +577,7 @@ fn resources(pid: u32) -> (Option<u64>, Option<u64>) {
     }
     #[cfg(not(target_os = "linux"))]
     {
+        // Windows/macOS process APIs require unsafe calls; no safe wrapper is a dependency.
         let _ = pid;
         (None, None)
     }
@@ -608,6 +594,16 @@ mod tests {
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect()
+    }
+
+    #[test]
+    #[cfg(not(target_os = "linux"))]
+    fn unavailable_resources_are_null() {
+        let (rss, ticks) = resources(std::process::id());
+        assert_eq!(
+            json!({"rss_bytes": rss, "cpu_ticks": ticks, "cpu_ms": ticks.zip(clock_ticks())}),
+            json!({"rss_bytes": null, "cpu_ticks": null, "cpu_ms": null})
+        );
     }
 
     #[test]

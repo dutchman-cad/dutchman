@@ -828,7 +828,7 @@ impl App {
         egui::ComboBox::from_label("Preset").selected_text(label).show_ui(ui, |ui| {
             for (preset, description) in [
                 (Preset::Fast, "shape only, least memory"),
-                (Preset::Standard, "history, sketches and joints; leaves an assembly's history out if it would not fit in free memory"),
+                (Preset::Standard, "history, sketches and joints; leaves history out if it would not fit in free memory"),
                 (Preset::Full, "everything, most memory"),
             ] {
                 if ui.selectable_label(!self.custom && self.options.preset == preset, preset_label(preset)).clicked() {
