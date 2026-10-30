@@ -81,7 +81,9 @@ This pre-reads metadata and bounded ZIP directory information without decoding o
 writing. Read `estimate` (`peak_bytes`, `seconds`, `band`, or `null`), `choices`
 (`preset`, `history`, `sketches`, `joints`), and `fits` (boolean or unknown `null`).
 Estimates are calibrated on measured conversions; the band is ±60 % for Fusion, ±40 % for
-SolidWorks, ±100 % for other formats, and times leave out the SolidCraft check. Assembly parts
+SolidWorks, ±50 % for Inventor parts, and ±100 % for FreeCAD and other formats. Fixed process
+overhead does not grow with history; memory and time have separate history factors. Times
+leave out the SolidCraft check and round up to whole seconds. Assembly parts
 stored in separate files are not pre-read, and archive assembly structure is confirmed
 only during normal decoding. A dry run does not promise that conversion will succeed.
 
