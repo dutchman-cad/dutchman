@@ -54,7 +54,8 @@ It runs installed tools and identifies itself as `dutchman launcher <version>` w
 `convert`, `convert-all`, and `watch` accept `--threads N` for assembly part work. `0` (the default) uses available CPU parallelism; `1` runs the
 serial path. The actual count is limited by the number of leaf parts and free memory,
 using the largest part's CADIR body count to estimate temporary memory, with a floor
-for mapping and a SolidCraft check process. The core precomputes component slices and
+for mapping and a SolidCraft check process. Workers share only the memory that stays free
+after a quarter of it (at least 1 GiB) is kept back for the rest of the conversion. The core precomputes component slices and
 reuses an identical empty model for assembly holders, then builds the tree in its
 original order. SolidCraft STEP restatement, history mapping, blend proving, and per-part
 replay checks prepare independently. Parts then enter the design in source order, keeping
