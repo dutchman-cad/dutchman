@@ -43,11 +43,13 @@ includes hidden bodies as well as the visible final shape.
   their operands and frames. Joints that cannot be carried are reported; the parts keep
   their stored placements.
 - **Feature history**, when every feature maps: sketches, pads, simple, counterbored and
-  countersunk holes, constant-radius fillets, and equal-distance chamfers, replayed and
-  checked in SolidCraft like a Fusion history. Thicknesses (shells), counterbores or
-  countersinks with a drill point, and
-  revolutions short of a full turn are not mapped yet; a document holding one converts as
-  geometry, and the report names the first feature that stopped it.
+  countersunk holes, constant-radius fillets, equal-distance chamfers, and revolutions,
+  replayed and checked in SolidCraft like a Fusion history. One-sided partial solid
+  revolutions keep their sweep side, including `Reversed`, which cadmpeg folds into the
+  axis direction, when the selected profile bounds prove one side of the axis (see
+  [revolve coverage](guide.md)). Thicknesses (shells), counterbores or
+  countersinks with a drill point, and unproven revolution sweep sides stop the history;
+  the original geometry stays visible, and the report names the first blocker.
 
 Hidden container visibility takes precedence over a child's own shown flag, including
 nested Parts, groups, and PartDesign Bodies. A body hidden only by its source container can still supply a separately shown occurrence.

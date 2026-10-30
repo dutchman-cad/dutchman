@@ -908,11 +908,15 @@ changing sections, tangent-path extension, and post-sweep simplification keep th
 geometry and report the unsupported option. Twist, end scale, and the supported orientations
 remain editable; a guide rail requires the default orientation without twist or scale.
 
-Revolves keep symmetric angles, equal angles on two sides, and full turns, including unequal
+Revolves keep one-sided partial solid sweeps about the oriented source axis when the selected
+profile curves can be bounded on one side of it: lines, circles, ellipses, and arcs whose
+whole carrier circle lies on that side. Reversing the source axis reverses the sweep.
+They also keep symmetric angles, equal angles on two sides, and full turns, including unequal
 sides that add up to a full turn. An axis that is a line of the profile's sketch stays that
 line; an edge or datum axis becomes a fixed line in the sketch plane. Surface revolves keep
-their history short of a full turn. Partial one-sided angles, unequal partial two-sided
-angles, ends at a face, vertex or body, full-turn surface revolves, and faces built other than
+their symmetric history short of a full turn. Unproven one-sided sweep sides, one-sided
+partial surface sweeps, unequal partial two-sided angles, ends at a face, vertex or body,
+full-turn surface revolves, and faces built other than
 the way FreeCAD's default (bullseye) face maker builds them stop the history, and the report
 names which.
 
