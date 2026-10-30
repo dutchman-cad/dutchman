@@ -707,8 +707,9 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
     assert_eq!(text.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&text.stdout);
     assert!(stdout.ends_with("1 converted, 0 failed\n"), "{stdout}");
-    // Each converted file's losses are listed beneath it, as `convert` prints them.
-    let lines: Vec<&str> = stdout.lines().collect();
+    // Each converted file's losses are listed beneath it, as `convert` prints them, after the
+    // SolidCraft version it targets.
+    let lines = without_target_line(&stdout);
     assert_eq!(lines[0], "Fusion .f3d: reads geometry");
     assert!(lines[1].starts_with("converted  "), "{stdout}");
     assert!(
@@ -769,7 +770,7 @@ fn convert_says_what_it_wrote_and_cuts_long_notes_short() {
     assert_eq!(out.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_eq!(
-        stdout.trim_end(),
+        without_target_line(&stdout).join("\n"),
         format!(
             "SolidWorks .sldprt: reads geometry\nconverted  {cube} -> {} (geometry without history)",
             output.display()
@@ -2324,4 +2325,14 @@ fn part_threads_keep_assembly_json_and_design_bytes_identical() {
         }
         previous = Some((report, design));
     }
+}
+
+/// Output lines without the one "Target SolidCraft x.y.z (...)" line, which names whatever
+/// SolidCraft the machine has.
+fn without_target_line(stdout: &str) -> Vec<&str> {
+    let (target, rest): (Vec<&str>, Vec<&str>) = stdout
+        .lines()
+        .partition(|line| line.starts_with("Target SolidCraft "));
+    assert_eq!(target.len(), 1, "{stdout}");
+    rest
 }
