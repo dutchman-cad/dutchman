@@ -724,7 +724,9 @@ fn local_components_with(
 /// The occurrences cadmpeg places at the pose the file shows them in, which a Fusion design
 /// stores for some occurrences beside their placements: an external occurrence with a
 /// current pose or with poses of the occurrences inside it, and a local occurrence with a
-/// current pose. Read from cadmpeg's Fusion records by the occurrences' native references.
+/// current pose. When an inserted design has no current pose of its own, contained poses
+/// also protect the child occurrence they name. Read from cadmpeg's Fusion records by the
+/// occurrences' native references.
 fn source_posed(document: &Value) -> BTreeSet<String> {
     let records = |name: &str| {
         document
@@ -744,10 +746,11 @@ fn source_posed(document: &Value) -> BTreeSet<String> {
         })
         .filter_map(|row| row.get("id")?.as_str())
         .collect();
-    document
+    let occurrences = document
         .pointer("/model/occurrences")
         .and_then(Value::as_array)
-        .map_or(&[][..], Vec::as_slice)
+        .map_or(&[][..], Vec::as_slice);
+    let mut posed: BTreeSet<String> = occurrences
         .iter()
         .filter(|row| {
             row.get("native_ref")
@@ -755,7 +758,118 @@ fn source_posed(document: &Value) -> BTreeSet<String> {
                 .is_some_and(|native| posed_refs.contains(native))
         })
         .filter_map(|row| Some(row.get("id")?.as_str()?.to_owned()))
-        .collect()
+        .collect();
+    // A contained pose names a child record in the referenced design, not just the
+    // external occurrence that holds it. Preserve that child's decoded placement too.
+    let carriers: BTreeMap<&str, u64> = records("design_component_occurrences")
+        .iter()
+        .filter_map(|row| Some((row.get("id")?.as_str()?, row.get("record_index")?.as_u64()?)))
+        .collect();
+    let references: BTreeMap<&str, &Value> = records("xref_references")
+        .iter()
+        .filter_map(|row| Some((row.get("id")?.as_str()?, row)))
+        .collect();
+    let by_id: BTreeMap<&str, &Value> = occurrences
+        .iter()
+        .filter_map(|row| Some((row.get("id")?.as_str()?, row)))
+        .collect();
+    let parent = |row: &Value| {
+        row.pointer("/parent/occurrence")
+            .and_then(Value::as_str)
+            .and_then(|id| by_id.get(id).copied())
+    };
+    // Record numbers are local to a member. Resolve them only below the nearest
+    // inserted occurrence, and refuse ambiguous targets rather than protecting a sibling.
+    let mut targets: BTreeMap<(&str, u64), Vec<&Value>> = BTreeMap::new();
+    for row in occurrences {
+        let Some(record) = row
+            .get("native_ref")
+            .and_then(Value::as_str)
+            .and_then(|id| carriers.get(id))
+        else {
+            continue;
+        };
+        let mut up = parent(row);
+        for _ in 0..MAX_DEPTH {
+            let Some(outer) = up else { break };
+            if outer
+                .get("native_ref")
+                .and_then(Value::as_str)
+                .is_some_and(|id| references.contains_key(id))
+            {
+                if let Some(id) = outer.get("id").and_then(Value::as_str) {
+                    targets.entry((id, *record)).or_default().push(row);
+                }
+                break;
+            }
+            up = parent(outer);
+        }
+    }
+    for ((instance, record), targets) in targets {
+        let [target] = targets.as_slice() else {
+            continue;
+        };
+        let Some(outer) = by_id.get(instance) else {
+            continue;
+        };
+        let Some(reference) = outer
+            .get("native_ref")
+            .and_then(Value::as_str)
+            .and_then(|id| references.get(id))
+        else {
+            continue;
+        };
+        // An explicit current pose places the inserted occurrence itself. Its
+        // contained records do not independently pose the children; their own
+        // current poses, if present, were collected above.
+        if reference
+            .get("current_pose")
+            .is_some_and(|pose| !pose.is_null())
+        {
+            continue;
+        }
+        // A component-path pose applies only in the owner chain it names, from
+        // the innermost owner outwards. Missing owner indices mean every instance.
+        let mut owners = Vec::new();
+        let mut up = parent(outer);
+        for _ in 0..MAX_DEPTH {
+            let Some(owner) = up else { break };
+            let Some(index) = owner
+                .get("native_ref")
+                .and_then(Value::as_str)
+                .filter(|id| !id.starts_with("f3d:xref/"))
+                .and_then(|id| carriers.get(id))
+            else {
+                break;
+            };
+            owners.push(*index);
+            up = parent(owner);
+        }
+        let matches = reference
+            .get("contained_poses")
+            .and_then(Value::as_array)
+            .is_some_and(|poses| {
+                poses.iter().any(|pose| {
+                    pose.get("contained_record_index").and_then(Value::as_u64) == Some(record)
+                        && pose
+                            .get("owner_record_indices")
+                            .and_then(Value::as_array)
+                            .is_none_or(|path| {
+                                path.len() <= owners.len()
+                                    && path
+                                        .iter()
+                                        .zip(&owners)
+                                        .all(|(a, b)| a.as_u64() == Some(*b))
+                            })
+                })
+            });
+        if matches {
+            if let Some(id) = target.get("id").and_then(Value::as_str) {
+                posed.insert(id.to_owned());
+            }
+        }
+    }
+    posed
 }
 
 /// Places the parts the joints join where the joints put them, as cadmpeg's own placements
@@ -2941,6 +3055,119 @@ mod tests {
             &world_at(&assembly, &[0, 1]).unwrap(),
             &at([130.0, 0.0, 0.0], 0.0)
         ));
+    }
+
+    #[test]
+    fn a_contained_pose_keeps_its_child_while_an_unposed_sibling_can_move() {
+        let mut frame = placed(0, "frame", root(), 100.0);
+        frame["native_ref"] = json!("f3d:xref:reference#1");
+        let mut child = placed(1, "block", inside(0), 0.0);
+        child["native_ref"] = json!("f3d:xref/member/Design:occurrence#1");
+        let mut sibling = placed(2, "block", inside(0), 30.0);
+        sibling["native_ref"] = json!("f3d:xref/member/Design:occurrence#2");
+        let model = nested(false, Some(json!([frame, child, sibling])));
+        let model = with_joints(
+            model,
+            json!([
+                joint(
+                    1,
+                    json!({"kind": "fixed"}),
+                    connector(Some((0, &[]))),
+                    connector_at(1, &[], facing(at([-20.0, 0.0, 0.0], 0.0)))
+                ),
+                joint(
+                    2,
+                    json!({"kind": "fixed"}),
+                    connector(Some((0, &[]))),
+                    connector_at(2, &[], facing(at([-40.0, 0.0, 0.0], 0.0)))
+                ),
+            ]),
+        );
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["native"]["f3d"]["xref_references"] = json!([
+            {"id": "f3d:xref:reference#1", "contained_poses": [
+                {"contained_record_index": 11}
+            ]}
+        ]);
+        wire["native"]["f3d"]["design_component_occurrences"] = json!([
+            {"id": "f3d:xref/member/Design:occurrence#1", "record_index": 11},
+            {"id": "f3d:xref/member/Design:occurrence#2", "record_index": 12},
+        ]);
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        };
+        let (assembly, notes) = local_components(&model).unwrap().unwrap();
+        assert!(near(
+            &world_at(&assembly, &[0, 0]).unwrap(),
+            &at([100.0, 0.0, 0.0], 0.0)
+        ));
+        assert!(assembly.joints[0].suppressed);
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(near(
+            &world_at(&assembly, &[0, 1]).unwrap(),
+            &at([140.0, 0.0, 0.0], 0.0)
+        ));
+        assert!(!assembly.joints[1].suppressed);
+
+        // A reference's own current pose holds the reference, while its children
+        // still need their joints unless they carry current poses of their own.
+        wire["native"]["f3d"]["xref_references"][0]["current_pose"] =
+            json!({"carrier_record_index": 21});
+        let own_pose = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        };
+        let (assembly, notes) = local_components(&own_pose).unwrap().unwrap();
+        assert!(near(
+            &world_at(&assembly, &[0, 0]).unwrap(),
+            &at([120.0, 0.0, 0.0], 0.0)
+        ));
+        assert!(!assembly.joints[0].suppressed);
+        assert!(notes.is_empty(), "{notes:?}");
+    }
+
+    #[test]
+    fn contained_pose_targets_stay_in_their_member_and_owner_scope() {
+        let mut wire = json!({
+            "model": {"occurrences": [
+                {"id": "owner", "native_ref": "f3d:Design:owner"},
+                {"id": "insert", "native_ref": "reference", "parent": {"occurrence": "owner"}},
+                {"id": "child", "native_ref": "member:child", "parent": {"occurrence": "insert"}},
+                {"id": "other", "native_ref": "reference"},
+                {"id": "other-child", "native_ref": "member:child", "parent": {"occurrence": "other"}},
+                {"id": "nested", "native_ref": "nested-reference", "parent": {"occurrence": "insert"}},
+                {"id": "nested-child", "native_ref": "nested:child", "parent": {"occurrence": "nested"}}
+            ]},
+            "native": {"f3d": {
+                "xref_references": [
+                    {"id": "reference", "contained_poses": [
+                        {"contained_record_index": 11, "owner_record_indices": [5]}
+                    ]},
+                    {"id": "nested-reference"}
+                ],
+                "design_component_occurrences": [
+                    {"id": "f3d:Design:owner", "record_index": 5},
+                    {"id": "member:child", "record_index": 11},
+                    {"id": "nested:child", "record_index": 11}
+                ]
+            }}
+        });
+        assert_eq!(
+            source_posed(&wire),
+            BTreeSet::from(["insert".to_owned(), "other".to_owned(), "child".to_owned()])
+        );
+        // Two candidates with the same record in one instance are ambiguous.
+        wire["model"]["occurrences"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "id": "duplicate", "native_ref": "member:child", "parent": {"occurrence": "insert"}
+            }));
+        assert_eq!(
+            source_posed(&wire),
+            BTreeSet::from(["insert".to_owned(), "other".to_owned()])
+        );
     }
 
     #[test]
