@@ -535,11 +535,7 @@ fn memory_cli(
             MemoryCheck::Ok(estimate) => {
                 if !as_json && !quiet {
                     if let Some(estimate) = estimate {
-                        println!(
-                            "Estimate: {} (±{:.0} %)",
-                            choices::estimate_text(estimate),
-                            estimate.band * 100.0
-                        );
+                        println!("Estimate: {}", choices::estimate_text_with_bands(estimate));
                     }
                 }
                 return true;
@@ -551,11 +547,7 @@ fn memory_cli(
                 if !as_json && !yes && std::io::stdin().is_terminal() {
                     if let Some(lighter) = lighter {
                         if !quiet {
-                            println!(
-                                "Estimate: {} (±{:.0} %)",
-                                choices::estimate_text(estimate),
-                                estimate.band * 100.0
-                            );
+                            println!("Estimate: {}", choices::estimate_text_with_bands(estimate));
                         }
                         eprint!("{message}\nSwitch to --preset {}? [y/N] ", lighter.name());
                         let _ = std::io::stderr().flush();
