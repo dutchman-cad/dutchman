@@ -412,7 +412,15 @@ fn shot(
     let file = format!("{state}-{theme}.png");
     let image = harness.render().unwrap();
     assert_eq!(image.dimensions(), (1100, 800));
-    image.save(dir.join(&file)).unwrap();
+    use image::ImageEncoder;
+    let output = std::fs::File::create(dir.join(&file)).unwrap();
+    image::codecs::png::PngEncoder::new_with_quality(
+        output,
+        image::codecs::png::CompressionType::Best,
+        image::codecs::png::FilterType::Adaptive,
+    )
+    .write_image(image.as_raw(), 1100, 800, image::ExtendedColorType::Rgba8)
+    .unwrap();
     index.push_str(&format!("- [{file}]({file}) — {description}\n"));
 }
 
@@ -479,4 +487,100 @@ fn dropped_files_and_results_show_format_status_and_one_invitation() {
     assert!(harness
         .query_by_label(dutchman::json::DISCORD_URL)
         .is_some());
+}
+
+/// Public documentation images: real CC0 conversion, isolated paths, and both themes.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "renders README images with a GPU; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn readme_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    if std::env::var_os("DUTCHMAN_GUI_SCREENSHOT_CHILD").is_none() {
+        let home = tempfile::tempdir().unwrap();
+        let designs = home.path().join("~/Designs");
+        std::fs::create_dir_all(&designs).unwrap();
+        std::fs::copy(
+            fixture("design_history.FCStd"),
+            designs.join("Bracket.FCStd"),
+        )
+        .unwrap();
+        let tools = home.path().join("~/Applications/SolidCraft");
+        std::fs::create_dir_all(&tools).unwrap();
+        // Preserve the real check while keeping the machine's installation path private.
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(
+            std::env::var_os("SOLIDCRAFT_CLI").unwrap(),
+            tools.join("solidcraft-cli"),
+        )
+        .unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "readme_screenshots", "--nocapture"])
+            .current_dir(home.path())
+            .env("DUTCHMAN_GUI_SCREENSHOT_CHILD", "1")
+            .env("HOME", home.path())
+            .env("XDG_CONFIG_HOME", home.path().join("config"))
+            .env("XDG_CACHE_HOME", home.path().join("cache"))
+            .env("XDG_DATA_HOME", home.path().join("data"))
+            .env("XDG_STATE_HOME", home.path().join("state"))
+            .env("SOLIDCRAFT_CLI", "~/Applications/SolidCraft/solidcraft-cli")
+            .status()
+            .unwrap();
+        assert!(status.success(), "README screenshot child failed: {status}");
+        return;
+    }
+    let mut index = String::new();
+    for (theme, name) in [
+        (ThemePreference::Light, "day"),
+        (ThemePreference::Dark, "night"),
+    ] {
+        let mut harness = screenshot_harness(theme);
+        harness.run();
+        if name == "day" {
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                "readme-drop",
+                name,
+                "Drop designs here.",
+            );
+        }
+        harness
+            .state_mut()
+            .add_inputs([PathBuf::from("~/Designs/Bracket.FCStd")]);
+        harness
+            .state_mut()
+            .set_out_dir(PathBuf::from("~/Designs/Converted"));
+        wait_for_estimate(&mut harness);
+        if name == "day" {
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                "readme-preset",
+                name,
+                "Standard preset and live estimate.",
+            );
+        }
+        convert(&mut harness);
+        let row = &harness.state().rows()[0];
+        assert_eq!(row.status, Status::Converted);
+        let report = row.report.as_ref().unwrap();
+        assert!(
+            report["history"]["mapped"].as_u64().unwrap_or(0) > 0,
+            "{report}"
+        );
+        harness.get_by_label("RESULTS").scroll_to_me();
+        harness.run();
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "readme-result",
+            name,
+            "CC0 bracket with mapped feature history.",
+        );
+        std::fs::remove_dir_all("~/Designs/Converted").unwrap();
+    }
 }
