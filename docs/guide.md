@@ -102,8 +102,8 @@ unless `--quiet` is set. Estimates use file size and format. For `.f3d`, `.f3z`,
 `.FCStd`, a bounded ZIP pre-read counts members and uses their total uncompressed size; for
 Fusion archives it also reads each design's own directory, one design at a time, and never
 decodes a design. The figures are calibrated on measured conversions of Fusion assemblies and
-parts, Inventor parts, and SolidWorks parts: with history, about 40 bytes of memory per byte of
-Fusion design content and 140 per byte of SolidWorks file. The band is ±60 % for Fusion,
+parts, Inventor parts, and SolidWorks parts: about 52 bytes of memory per byte of Fusion design
+content (57 with history) and 140 per byte of SolidWorks file. The band is ±60 % for Fusion,
 ±40 % for SolidWorks, and ±100 % for formats without measurements. Times do not include the
 history check in SolidCraft, which can add several minutes on a large assembly.
 Separate assembly part files are not pre-read, so their cost can be underestimated.
