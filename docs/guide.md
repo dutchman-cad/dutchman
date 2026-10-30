@@ -1,17 +1,18 @@
 # Getting started
 
 Dutchman Convert is the `dutchman` command. Its main job is converting native CAD files into [SolidCraft](https://github.com/tangency-labs/solidcraft)
-designs (`.solidcraft`). This guide covers installing it, converting your first design,
+designs (`.sc`). This guide covers installing it, converting your first design,
 reading what the conversion reports, and opening the result in SolidCraft.
 
 ```sh
-dutchman part.f3d                 # writes part.solidcraft
-dutchman part.f3d out.solidcraft
-dutchman convert part.f3d out.solidcraft
+dutchman part.f3d                 # writes part.sc
+dutchman part.f3d out.sc
+dutchman convert part.f3d out.sc
 ```
 
 Omit the output to write beside the input, using its stem and the extension chosen by
-`--to`: `.solidcraft` (default), `.FCMacro`, or `.FCStd` for model output.
+`--to`: `.sc` (default), `.FCMacro`, or `.FCStd` for model output.
+Targets before SolidCraft 0.25.1 get `.solidcraft` by default.
 `--to dxf` writes one `part-PageName.dxf` per TechDraw page; see
 [TechDraw drawing output](freecad.md#techdraw-to-dxf). If a model default exists, Dutchman
 exits 2 without changing it: choose `-o PATH` or pass `--force` to replace it. A default
@@ -64,7 +65,7 @@ IDs, names, blobs, losses, and history records identical. Failed worker preparat
 retried serially at their original positions.
 
 ```sh
-dutchman convert assembly.f3z assembly.solidcraft --threads 4
+dutchman convert assembly.f3z assembly.sc --threads 4
 dutchman convert-all project/ --out-dir converted/ --threads 1
 ```
 
@@ -93,8 +94,8 @@ FreeCAD output (`--to freecad` or `--to fcstd`) honours the history choice only;
 the sketch and joint choices do not control that writer.
 
 ```sh
-dutchman convert assembly.f3z assembly.solidcraft --preset fast
-dutchman convert part.ipt part.solidcraft --preset full --no-sketches
+dutchman convert assembly.f3z assembly.sc --preset fast
+dutchman convert part.ipt part.sc --preset full --no-sketches
 dutchman convert-all project/ --out-dir converted/ --preset standard --yes
 ```
 
@@ -543,12 +544,12 @@ curl -fLO "$fixtures/synthetic_cube.ipt"
 ```
 
 ```sh
-dutchman convert solidworks_cube.sldprt cube.solidcraft
+dutchman convert solidworks_cube.sldprt cube.sc
 ```
 
 ```text
 SolidWorks .sldprt: reads geometry
-converted  solidworks_cube.sldprt -> cube.solidcraft (geometry without history)
+converted  solidworks_cube.sldprt -> cube.sc (geometry without history)
 dutchman: Degraded: sldprt/source.dialect-unverified: the document carries no swSolidWorks swVersion declaration, so no declared identity was verified. …
 dutchman: Degraded: sldprt/config.inferred-without-native: 1 configuration state(s) are inferred from geometry partitions without native configuration definitions.
 dutchman: Info: step/design.parametric-records-omitted: 1 parametric/design record(s) were not represented in STEP: configuration=1
@@ -572,12 +573,13 @@ or `editable history, unverified`). After progress updates, the lines on stderr 
 replaced (`--no-clobber` keeps it, and the conversion fails instead), and nothing is written
 when the conversion fails.
 
-The default target output must end in `.solidcraft`; other targets use their own extension.
+SolidCraft output accepts `.sc`, `.solidcraft`, and `.solvecraft`; each uses the same container.
+Other targets use their own extension.
 To get one machine-readable report on stdout instead
 of the text, add `--json` ([json.md](json.md) describes every field):
 
 ```sh
-dutchman convert --json generated_unit_cube.f3d cube.solidcraft
+dutchman convert --json generated_unit_cube.f3d cube.sc
 ```
 
 ```json
@@ -589,7 +591,7 @@ dutchman convert --json generated_unit_cube.f3d cube.solidcraft
   {"code":"step/native.source-record-omitted","level":"Info","message":"45 source-native record(s) were not represented in STEP","subject":"step/native.source-record-omitted"},
   {"code":null,"level":"Info","message":"flattened: the design carries no feature history","subject":"history"}],
  "mode":"import","ok":true,
- "output":{"format":"solidcraft/23","path":"cube.solidcraft"},
+ "output":{"format":"solidcraft/23","path":"cube.sc"},
  "schema":"dutchman.convert/1",
  "verification":{"reason":"the design carries no feature history","status":"not_applicable"}}
 ```
@@ -611,7 +613,7 @@ dutchman convert --json generated_unit_cube.f3d cube.solidcraft
 | `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the found CLI's version, even with `--no-verify`, else the newest known at build time (currently 0.27.0). |
 | `--no-verify` | Write the history without checking it in SolidCraft. Cannot be combined with `--solidcraft`. |
 | `--verify-timeout SECONDS` | How long each SolidCraft check may run before the history is written unverified. Default 120. |
-| `--no-clobber` | Do not replace an existing `.solidcraft` file: that file's conversion fails instead. By default it is replaced. |
+| `--no-clobber` | Do not replace an existing `.sc` file: that file's conversion fails instead. By default it is replaced. |
 | `--project DIR` | The project folder an assembly's part files are searched in when they are not at their stored paths. Default: the nearest folder above the assembly holding an `.ipj`, else two folders up. See [Finding the part files](inventor.md#finding-the-part-files). |
 | `--search DIR` | Another folder to search for part files the project folder does not hold, such as a shared library. May be given more than once. |
 | `--json` | One final JSON report on stdout, with progress JSON lines on stderr. |
@@ -682,7 +684,7 @@ dutchman convert-all --jobs 2 --out-dir converted project
 
 ```text
 Fusion .f3d: reads geometry
-converted  project/generated_unit_cube.f3d -> converted/generated_unit_cube.solidcraft (geometry without history)
+converted  project/generated_unit_cube.f3d -> converted/generated_unit_cube.sc (geometry without history)
            Degraded: f3d/material.not-transferred: Materials/appearances (.protein assets, ACT/design assignments) were not transferred.
            Info: step/attribute.source-record-not-written: 7 source attribute record(s) were not written to STEP
            Info: step/native.source-record-omitted: 45 source-native record(s) were not represented in STEP
@@ -690,7 +692,7 @@ converted  project/generated_unit_cube.f3d -> converted/generated_unit_cube.soli
 Fusion .f3d: reads geometry
 failed     project/sub/container_metadata_only.f3d: cannot read this design: no geometry could be read from this Fusion archive (.f3d) file
 Inventor .ipt: reads geometry
-converted  project/sub/synthetic_cube.ipt -> converted/sub/synthetic_cube.solidcraft (geometry without history)
+converted  project/sub/synthetic_cube.ipt -> converted/sub/synthetic_cube.sc (geometry without history)
            Degraded: inventor/rse.segment-pair-untyped: Retained 1 structurally paired RSe segment(s) without record semantics.
            Info: step/attribute.source-record-not-written: 7 source attribute record(s) were not written to STEP
            Info: step/native.source-record-omitted: 67 source-native record(s) were not represented in STEP
@@ -766,7 +768,7 @@ machine's cores, at most 8. `--timeout` defaults to 900 seconds per file, and
 `convert-all` apply, including `--to`, `--import-only`, `--no-verify`, `--solidcraft`, `--solidcraft-version`,
 `--project` and `--search`.
 
-For `parts/cube.f3d`, the default results are `parts/cube.solidcraft` and
+For `parts/cube.f3d`, the default results are `parts/cube.sc` and
 `parts/cube.report.json` under the output folder. Failures write `parts/cube.failed.json`
 there, with the ordinary `dutchman.convert/1` error report. A failed update keeps the
 previous design. Successful updates replace the design and report; obsolete report sidecars
@@ -803,7 +805,7 @@ solids or surfaces SolidCraft can import says so.
 
 Directory conversion keeps only the highest numeric `.prt.N` revision of each part in its
 folder and reports each older revision as skipped. A numbered save such as `bracket.prt.7`
-uses `bracket.solidcraft` as its default output. Existing outputs for numbered saves are
+uses `bracket.sc` as its default output. Existing outputs for numbered saves are
 kept; choose another output path (or `--force` for a single file) to replace one deliberately.
 
 After the results, a refused conversion (except IGES) or a history that did not fully map
@@ -843,7 +845,7 @@ Creo or NX part (.prt)  recognised, not read yet  not yet: nothing yet; reading 
 
 FreeCAD TechDraw → DXF  drawings: page curves, dimension labels, annotations, and templates; unsupported content reported as Dropped
 
-Written as a SolidCraft design (.solidcraft), or, experimental, as a FreeCAD rebuild macro (.FCMacro, --to freecad)
+Written as a SolidCraft design (.sc), or, experimental, as a FreeCAD rebuild macro (.FCMacro, --to freecad)
 ```
 
 The state of each format, and what is still missing upstream, is in [fusion.md](fusion.md),
@@ -888,7 +890,7 @@ An assembly's conversion first says how complete it is, under the line saying wh
 written:
 
 ```text
-converted  top.iam -> out/top.solidcraft (geometry without history)
+converted  top.iam -> out/top.sc (geometry without history)
 assembly: 18 of 20 placements placed; 2 left out:
   pin.ipt ×2: not found at its stored path or in the project folder /work/Robot
 ```
@@ -1122,21 +1124,21 @@ an open shell is still reported. Sheets remain exempt from volume and closed-she
 In the SolidCraft app, use File, Open, or start it with the design:
 
 ```sh
-solidcraft cube.solidcraft
+solidcraft cube.sc
 ```
 
 From the command line, `solidcraft-cli eval` opens the design, rebuilds its timeline and
 prints its bodies as JSON:
 
 ```sh
-solidcraft-cli eval cube.solidcraft
+solidcraft-cli eval cube.sc
 ```
 
 Check that `body_count` is what you expect, that no `timeline` entry has an `error` or a
 meshing warning, and compare each body's `area_mm2` and `volume_mm3` with the original design
 within the measuring mesh tolerances. A face-count difference alone does not establish a
 defect. An AI agent can do the same through SolidCraft's MCP server: open the design with
-`solidcraft-cli mcp --in cube.solidcraft` and call its `measure` tool.
+`solidcraft-cli mcp --in cube.sc` and call its `measure` tool.
 
 SolidCraft conversion reports include the selected target and the discovered CLI version,
 even with verification off. Text output includes `Target SolidCraft 0.27.0 (found 0.27.0)`,
@@ -1161,7 +1163,7 @@ cached version, or leave `solidcraft.found` null when it has not been checked.
 Enable diagnostics **before** reproducing a conversion that hangs or stops unexpectedly:
 
 ```sh
-dutchman convert --diagnostics-default part.f3d converted.solidcraft
+dutchman convert --diagnostics-default part.f3d converted.sc
 dutchman convert-all --diagnostics-default --out-dir converted parts/
 dutchman watch inbox --diagnostics-default --out-dir converted
 ```
@@ -1253,7 +1255,7 @@ and requested reports.
 
 | Message | What to do |
 |---|---|
-| `x.step: output must be a .solidcraft file` | Name the output `something.solidcraft`. |
+| `x.step: output must be a .sc file` | Name the output `something.sc`. |
 | `a.txt: Dutchman does not convert this kind of file. It converts …` | Choose one of the formats listed by `dutchman formats`. STEP exchange files convert too. |
 | `Dutchman doesn't convert IGES yet: open it in SolidCraft directly (File > Import).` | Open the `.igs` or `.iges` file in SolidCraft using File > Import. |
 | `… reading geometry is not supported yet. Export a STEP file and convert that instead.` | The format is recognised, but its reader has no geometry path yet. Export STEP from the program that made the design and convert that. |

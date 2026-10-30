@@ -124,7 +124,7 @@ fn answer(method: &str, params: &Value) -> Result<Value, (i64, String)> {
                 "capabilities": {"tools": {}},
                 "serverInfo": {"name": "dutchman", "version": env!("CARGO_PKG_VERSION")},
                 "instructions": format!(
-                    "Converts native CAD files ({}) into SolidCraft designs (.solidcraft). Use \
+                    "Converts native CAD files ({}) into SolidCraft designs (.sc). Use \
                      inspect to see what a file would carry across, convert for one file, \
                      convert_all for many. Paths are on the machine running this server; give \
                      absolute paths.",
@@ -207,7 +207,7 @@ fn option_properties() -> Map<String, Value> {
         },
         "overwrite": {
             "type": "boolean",
-            "description": "Replace an existing .solidcraft file at the output (default true). When false, an existing file is left alone and that file's conversion fails, saying so.",
+            "description": "Replace an existing .sc file at the output (default true). When false, an existing file is left alone and that file's conversion fails, saying so.",
         },
         "solidcraft_version": {
             "type": "string",
@@ -254,7 +254,7 @@ fn tools() -> Value {
     convert.insert("dry_run".to_owned(), json!({"type": "boolean", "default": false, "description": "Return estimate, choices and fits from a quick pre-read, without decoding or writing. Output is optional."}));
     convert.insert(
         "output".to_owned(),
-        json!({"type": "string", "description": "Absolute path of the .solidcraft or .FCMacro file to write, matching to. An existing file there is replaced, unless overwrite is false. If supplied, diagnostics is also written at its specified path."}),
+        json!({"type": "string", "description": "Absolute path of the .sc (legacy .solidcraft or .solvecraft) or .FCMacro file to write, matching to. An existing file there is replaced, unless overwrite is false. If supplied, diagnostics is also written at its specified path."}),
     );
     let mut all = option_properties();
     all.insert(

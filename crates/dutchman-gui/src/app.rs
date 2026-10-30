@@ -1263,7 +1263,7 @@ fn row_ui(
                 open
             } else {
                 open.on_hover_text(format!(
-                    "Opens with the system's app for .solidcraft files. Set {} to choose SolidCraft.",
+                    "Opens with the system's app for this design. Set {} to choose SolidCraft.",
                     platform::APP_ENV
                 ))
             };

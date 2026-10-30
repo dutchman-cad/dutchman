@@ -58,7 +58,7 @@ pub fn text() -> String {
         ));
     }
     out.push_str("\nFreeCAD TechDraw → DXF  drawings: page curves, dimension labels, annotations, and templates; unsupported content reported as Dropped\n");
-    out.push_str("\nWritten as a SolidCraft design (.solidcraft), or, experimental, as a FreeCAD rebuild macro (.FCMacro, --to freecad)\n");
+    out.push_str("\nWritten as a SolidCraft design (.sc), or, experimental, as a FreeCAD rebuild macro (.FCMacro, --to freecad)\n");
     out
 }
 
