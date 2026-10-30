@@ -33,6 +33,7 @@ CAD extension selects conversion.
 - [Feature history and the SolidCraft check](#feature-history-and-the-solidcraft-check)
 - [Open the result in SolidCraft](#open-the-result-in-solidcraft)
 - [Troubleshooting](#troubleshooting)
+- [Conversion details](#conversion-details)
 
 `dutchman pilot` and `dutchman fixtures` also run other installed Dutchman CAD tools.
 Install `dutchman-pilot` or `dutchman-fixtures` next to `dutchman` or on `PATH`; the copy
@@ -470,6 +471,9 @@ file contents. Clicking an update button also runs the package manager, which co
 own configured package sources and download hosts using its own network and privacy settings. GitHub sees the connecting IP address, ordinary HTTPS request metadata,
 the app version in the User-Agent, and the public feed or package ETag. Clicking **Download** opens
 the release asset or page in the default browser, under that browser's privacy settings.
+
+For a visual walkthrough, see [How to use it](../README.md#how-to-use-it).
+The walkthrough uses `.sc` for SolidCraft designs; targets older than 0.25.1 use `.solidcraft`.
 
 Open `dutchman-gui`, add design files or folders, choose an output folder, and press
 **Convert**. Convert stays visible while you scroll through settings or results. The
@@ -1380,3 +1384,55 @@ resolved title-block text in millimetre page space. Unsupported content is repor
 in per-page JSON `pages` results. No page is an error. See [FreeCAD coverage](freecad.md#techdraw-to-dxf).
 DXF conversion is not supported yet by convert-all, the MCP convert tool, desktop,
 or web. The MCP formats report includes the additive `drawings` capability list.
+
+## Conversion details
+
+Dutchman is made for the current SolidCraft (any release from the last two weeks);
+older versions get simplified features, or pass `--solidcraft-version x.y.z` on
+`convert`, `convert-all`, or `watch` (at least 0.18.2).
+The target defaults to the found CLI's version, even with `--no-verify`, else the
+newest release known at build time (currently 0.27.0). The current window is 0.18.2–0.27.0.
+Constant-radius FreeCAD helices keep editable sketch-profile coils only for targets
+0.25.1 or newer; older targets preserve the original geometry and report the version needed.
+Designs open in their target release and newer releases.
+
+With no output given, Dutchman writes beside the input and won't replace a file that is
+already there unless you pass `--force`. `dutchman convert --help` lists every option, and
+[Getting started](#your-first-conversion) walks through a first conversion.
+
+Conversions show their stage and elapsed time, with a still-working update every five
+seconds. The desktop app shows design counts and a progress bar when the reader knows
+the total. `convert`, `convert-all`, `inspect`, and `watch` write progress to stderr;
+`--quiet` hides it. With `--json`, progress is JSON lines on stderr and stdout keeps its
+existing report format. Fusion `.f3z` progress shows stage and elapsed time;
+[diagnostic logs](#diagnostic-logs-for-unfinished-runs) also record member decode attempts.
+
+When a feature blocks SolidCraft history conversion, earlier editable features and
+resolved sketches are kept in a hidden **Editable history (partial)** component. The
+original final shape remains visible as an Import after the kept history. Show the
+hidden component to continue editing it. The report names the blocker and counts
+retained source features; `mode: partial_history` and verification `partial` distinguish
+this from full verified history. The reason says whether retained features replayed or
+remain unverified. Later sketches with unresolved planes or external geometry are
+reported and left out. A sketch that fails replay is retried without constraints, with
+the loss reported. If there is no body-building prefix, resolved sketches remain hidden
+beside the imported shape for reference. A final shape mismatch preserves the mapped
+timeline for correction when it replays; it does not identify which feature needs
+correction. SolidCraft's numerical eval includes hidden bodies as well as the visible
+final shape.
+
+Assembly parts prepare in parallel by default; use `--threads N` to bound workers, or
+`--threads 1` for serial conversion with the same design and ordered report.
+
+### Presets and estimates
+
+Use `--preset fast` for shape only, `--preset standard` (the default) for history,
+sketches, and joints with assembly history limited by free memory, or `--preset full`
+to keep everything that maps. Narrow any preset with `--no-history` (also
+`--import-only`), `--no-sketches`, or `--no-joints`. Without joints, stored placements
+are retained. FreeCAD output honours the history choice only.
+
+Before conversion, Dutchman shows an approximate memory/time estimate. An over-budget
+run offers a lighter preset in a terminal, or refuses with exit 2 in scripts, with
+`--yes`, or with `--json`. `--no-memory-check` bypasses the guard and Standard's history
+budget. See [the guide](#choosing-what-to-keep) for limits and examples.
