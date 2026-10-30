@@ -172,13 +172,22 @@ impl SolidCraftVersion {
     /// First release that applies a drill-point angle on counterbores and countersinks.
     pub const V0_22_1: Self = Self([0, 22, 1]);
 
-    /// First release with sketch-profile coils.
+    /// First release with sketch-profile coils and the `.sc` design extension.
     pub const V0_25_1: Self = Self([0, 25, 1]);
 
     /// The minor used in presentation; patch-sensitive writer gates keep the full version.
     pub fn minor(self) -> String {
         let Self([major, minor, _]) = self;
         format!("{major}.{minor}")
+    }
+
+    /// The default design extension this release recognises.
+    pub fn extension(self) -> &'static str {
+        if self >= Self::V0_25_1 {
+            "sc"
+        } else {
+            "solidcraft"
+        }
     }
 
     /// The found CLI's release capped at newest known (even with verification off), else newest.

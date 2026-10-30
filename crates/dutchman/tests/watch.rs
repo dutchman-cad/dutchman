@@ -77,12 +77,12 @@ fn nested_conversion_hash_restart_and_changed_content() {
     assert_eq!(report["schema"], "dutchman.convert/1");
     assert_eq!(
         report["output"]["path"],
-        std::fs::canonicalize(out.join("nested/cube.solidcraft"))
+        std::fs::canonicalize(out.join("nested/cube.sc"))
             .unwrap()
             .to_str()
             .unwrap()
     );
-    assert!(out.join("nested/cube.solidcraft").is_file());
+    assert!(out.join("nested/cube.sc").is_file());
     assert!(events(&watch(&inbox, &out, "0")).is_empty());
     std::fs::File::options()
         .write(true)
@@ -144,7 +144,7 @@ fn ignored_uploads_and_recent_or_future_modifications_are_not_ready() {
         .set_times(std::fs::FileTimes::new().set_modified(SystemTime::now()))
         .unwrap();
     assert!(events(&watch(&inbox, &out, "10")).is_empty());
-    assert!(!out.join("cube.solidcraft").exists());
+    assert!(!out.join("cube.sc").exists());
 }
 
 #[test]
@@ -156,7 +156,7 @@ fn failure_is_recorded_once_and_unrelated_outputs_are_protected() {
     std::fs::create_dir_all(&out).unwrap();
     std::fs::write(inbox.join("broken.f3d"), b"synthetic unreadable archive").unwrap();
     cube(&inbox.join("cube.f3d"));
-    std::fs::write(out.join("cube.solidcraft"), b"unrelated").unwrap();
+    std::fs::write(out.join("cube.sc"), b"unrelated").unwrap();
     let first = watch(&inbox, &out, "0");
     assert_eq!(first.status.code(), Some(1));
     let lines = events(&first);
@@ -170,10 +170,7 @@ fn failure_is_recorded_once_and_unrelated_outputs_are_protected() {
         serde_json::from_slice(&std::fs::read(out.join("broken.failed.json")).unwrap()).unwrap();
     assert_eq!(failure["ok"], false);
     assert!(failure["error"]["message"].is_string());
-    assert_eq!(
-        std::fs::read(out.join("cube.solidcraft")).unwrap(),
-        b"unrelated"
-    );
+    assert_eq!(std::fs::read(out.join("cube.sc")).unwrap(), b"unrelated");
     let again = watch(&inbox, &out, "0");
     assert!(again.status.success());
     assert!(events(&again).is_empty());
@@ -197,12 +194,12 @@ fn read_only_inbox_and_modified_owned_output_are_protected() {
     std::fs::set_permissions(&input, std::fs::Permissions::from_mode(0o644)).unwrap();
     assert!(result.status.success());
     assert_eq!(std::fs::read_dir(&inbox).unwrap().count(), 1);
-    std::fs::write(out.join("cube.solidcraft"), b"edited externally").unwrap();
+    std::fs::write(out.join("cube.sc"), b"edited externally").unwrap();
     std::fs::write(&input, b"different synthetic input").unwrap();
     // Failure sidecars can still be written, but the existing design is retained.
     assert_eq!(watch(&inbox, &out, "0").status.code(), Some(1));
     assert_eq!(
-        std::fs::read(out.join("cube.solidcraft")).unwrap(),
+        std::fs::read(out.join("cube.sc")).unwrap(),
         b"edited externally"
     );
 }
@@ -280,7 +277,7 @@ fn polling_settles_changes_and_sigterm_saves_state() {
             .unwrap()
             .write_all(b"x")
             .unwrap();
-        assert!(!out.join("cube.solidcraft").exists());
+        assert!(!out.join("cube.sc").exists());
     }
     let deadline = Instant::now() + Duration::from_secs(15);
     while !out.join("cube.report.json").exists() && Instant::now() < deadline {
@@ -318,7 +315,7 @@ fn alternate_format_and_unrelated_report_sidecars() {
     let skipped = watch(&inbox, &out, "0");
     assert!(skipped.status.success());
     assert_eq!(events(&skipped)[0]["event"], "skipped");
-    assert!(!out.join("cube.solidcraft").exists());
+    assert!(!out.join("cube.sc").exists());
     assert_eq!(
         std::fs::read(out.join("cube.report.json")).unwrap(),
         b"unrelated report"
@@ -391,7 +388,7 @@ fn a_later_same_stem_input_cannot_replace_another_inputs_design() {
     )
     .unwrap();
     assert!(watch(&inbox, &out, "0").status.success());
-    let design = std::fs::read(out.join("cube.solidcraft")).unwrap();
+    let design = std::fs::read(out.join("cube.sc")).unwrap();
     let report = std::fs::read(out.join("cube.report.json")).unwrap();
     // This sorts before the existing input and would otherwise take its output name.
     cube(&inbox.join("cube.f3d"));
@@ -399,6 +396,6 @@ fn a_later_same_stem_input_cannot_replace_another_inputs_design() {
     assert!(result.status.success());
     assert_eq!(events(&result).len(), 1);
     assert_eq!(events(&result)[0]["event"], "skipped");
-    assert_eq!(std::fs::read(out.join("cube.solidcraft")).unwrap(), design);
+    assert_eq!(std::fs::read(out.join("cube.sc")).unwrap(), design);
     assert_eq!(std::fs::read(out.join("cube.report.json")).unwrap(), report);
 }

@@ -75,15 +75,15 @@ server or container that much memory, or lower them.
   files: zip the whole project folder. A zip of one folder unpacks as that folder. Entries
   that would land outside it are refused and symbolic links are skipped. All zips of one
   upload share the 5,000-entry cap and `--max-unzipped` byte cap.
-- **SolidCraft design** writes `.solidcraft` designs; **FreeCAD macro (experimental)** writes
+- **SolidCraft design** writes `.sc` designs (`.solidcraft` for targets before 0.25.1); **FreeCAD macro (experimental)** writes
   `.FCMacro` rebuild macros (`--to freecad`). **Geometry only** is `--import-only`.
 
 ## Save to a shared folder
 
 With `--output-dir`, each converted design is also saved in that folder, such as a network
 share the server has mounted, where it stays after the job is deleted. Designs keep the folders
-and names they were uploaded with (`project/bracket.solidcraft`). A name already taken in the
-folder gets a number, as a browser's downloads do (`bracket (1).solidcraft`), so a file already
+and names they were uploaded with (`project/bracket.sc`). A name already taken in the
+folder gets a number, as a browser's downloads do (`bracket (1).sc`), so a file already
 there is never replaced. Designs are not saved through a symbolic link in the folder.
 
 Each card says where its design was saved, and the API report gives it as `saved` in the

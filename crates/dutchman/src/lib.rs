@@ -29,7 +29,7 @@ use serde_json::{json, Value};
 /// The format written by a conversion; independent of FreeCAD input support.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
 pub enum OutputFormat {
-    /// A SolidCraft design (`.solidcraft`).
+    /// A SolidCraft design (`.sc`).
     #[default]
     Solidcraft,
     /// A FreeCAD rebuild macro (`.FCMacro`). Experimental.
@@ -43,7 +43,7 @@ pub enum OutputFormat {
 impl OutputFormat {
     pub fn extension(self) -> &'static str {
         match self {
-            Self::Solidcraft => "solidcraft",
+            Self::Solidcraft => SolidCraftVersion::default().extension(),
             Self::Freecad => "FCMacro",
             Self::Fcstd => "FCStd",
             Self::Dxf => "dxf",
@@ -71,6 +71,15 @@ impl Writer for OutputWriter {
             Self::SolidCraft(writer) => writer.extension(),
             Self::FreeCad(writer) => writer.extension(),
             Self::Dxf => "dxf",
+        }
+    }
+
+    fn accepts_extension(&self, extension: &str) -> bool {
+        match self {
+            Self::Configured { writer, .. } => writer.accepts_extension(extension),
+            Self::SolidCraft(writer) => writer.accepts_extension(extension),
+            Self::FreeCad(writer) => writer.accepts_extension(extension),
+            Self::Dxf => extension.eq_ignore_ascii_case(self.extension()),
         }
     }
 
@@ -135,7 +144,7 @@ pub struct ConvertOptions {
     /// Made for the current SolidCraft (any release from the last two weeks); older
     /// versions get simplified features, or pass --solidcraft-version x.y.z (at least
     /// 0.18.2). Defaults to the found CLI's version, else the newest known at build time,
-    /// even with --no-verify.
+    /// even with --no-verify. Default output uses .sc from 0.25.1, else .solidcraft.
     #[arg(long, value_name = "x.y.z")]
     pub solidcraft_version: Option<SolidCraftVersion>,
     /// Write history without checking it in SolidCraft.
@@ -214,6 +223,15 @@ impl ConvertOptions {
         }
     }
 
+    /// The default output suffix, respecting the writer's target release.
+    pub fn output_extension(&self) -> &'static str {
+        if self.to == OutputFormat::Solidcraft {
+            self.output_writer().extension()
+        } else {
+            self.to.extension()
+        }
+    }
+
     /// What these options keep: their preset, narrowed by the per-choice switches.
     pub fn choices(&self) -> choices::Choices {
         let mut choices = choices::Choices::of(self.preset);
@@ -276,6 +294,10 @@ pub struct PreparedWriter {
 impl Writer for PreparedWriter {
     fn extension(&self) -> &'static str {
         self.writer.extension()
+    }
+
+    fn accepts_extension(&self, extension: &str) -> bool {
+        self.writer.accepts_extension(extension)
     }
 
     fn write(

@@ -1,6 +1,6 @@
 # Dutchman architecture
 
-Dutchman converts native CAD design files into SolidCraft designs (`.solidcraft`). It starts
+Dutchman converts native CAD design files into SolidCraft designs (`.sc`). It starts
 as a command-line tool and becomes a SolidCraft plugin once SolidCraft has plugins. The
 design rule is low coupling, high cohesion: one self-contained conversion core, and a thin
 SolidCraft adapter that can later sit behind a plugin interface unchanged.
@@ -9,7 +9,7 @@ SolidCraft adapter that can later sit behind a plugin interface unchanged.
 
 ```
 native file ──cadmpeg decode──▶ CADIR (neutral model) ──Writer──▶ target file
-  .f3d .ipt .sldprt …            exact B-rep, history,             .solidcraft
+  .f3d .ipt .sldprt …            exact B-rep, history,             .sc
                                  product structure
                     └──────────── Report (losses) ─────────────┘
 ```
@@ -25,8 +25,8 @@ consumer benefits and Dutchman stays small.
 |---|---|---|
 | `dutchman-launcher` | Discovers installed `dutchman-<tool>` commands and dispatches them; also supplies a small front command. | std only |
 | `dutchman-core` | Format gate, input caps, the `Writer` seam, the `Report`, the `convert` pipeline. Owns the cadmpeg decode call. | `cadmpeg-ir`, `cadmpeg-core`, `cadmpeg-registry` |
-| `dutchman-solidcraft` | Implements `Writer` for `.solidcraft`. Knows the SolidCraft design format and nothing about native formats. | `dutchman-core`, cadmpeg's STEP encoder, `zip`, `sha2`, `serde_json` |
-| `dutchman` | The CLI (`dutchman convert <in> <out.solidcraft>`) and the MCP server (`dutchman-mcp`), sharing one small library that sets up a conversion and builds the JSON reports both return. Front-end orchestration, printing, the MCP protocol and plain presentation data. | both of the above, `clap` |
+| `dutchman-solidcraft` | Implements `Writer` for `.sc`. Knows the SolidCraft design format and nothing about native formats. | `dutchman-core`, cadmpeg's STEP encoder, `zip`, `sha2`, `serde_json` |
+| `dutchman` | The CLI (`dutchman convert <in> <out.sc>`) and the MCP server (`dutchman-mcp`), sharing one small library that sets up a conversion and builds the JSON reports both return. Front-end orchestration, printing, the MCP protocol and plain presentation data. | both of the above, `clap` |
 | `dutchman-gui` | The desktop app (eframe/egui). Plans and converts through the `dutchman` library's batch code on background threads; draws the Dutchman design system's Day and Night themes. | `dutchman`, `eframe`, `rfd` |
 
 `dutchman-core` and `dutchman-solidcraft` are `publish = false` until their APIs settle. The
@@ -66,9 +66,14 @@ solids, so Dutchman directs users to SolidCraft's own IGES importer (File > Impo
 ```rust
 pub trait Writer {
     fn extension(&self) -> &'static str;
+    fn accepts_extension(&self, extension: &str) -> bool;
     fn write(&self, model: &Model, out: &mut dyn Write, report: &mut Report) -> Result<(), Error>;
 }
 ```
+
+The default `accepts_extension` checks the writer's extension case-insensitively; the
+SolidCraft adapter also accepts legacy `.solidcraft` and `.solvecraft` names. Its default
+extension follows the same target version gates as feature mapping.
 
 The SolidCraft adapter depends only on this trait, CADIR and the SolidCraft file format.
 When SolidCraft grows a plugin interface, a small shim crate implements that interface by

@@ -1,4 +1,4 @@
-//! SolidCraft adapter for Dutchman: writes the neutral model as a `.solidcraft` design.
+//! SolidCraft adapter for Dutchman: writes the neutral model as a `.sc` design.
 //!
 //! When every feature of the model's history maps onto SolidCraft features, the design is
 //! that history, followed by the original geometry as a suppressed import; the history is
@@ -48,7 +48,7 @@ const HISTORY: &str = "history";
 /// The report subject of what SolidCraft shows of the written geometry.
 const GEOMETRY: &str = "geometry";
 
-/// Writes `.solidcraft` designs.
+/// Writes `.sc` designs.
 #[derive(Clone, Debug)]
 pub struct SolidCraftWriter {
     threads: usize,
@@ -758,7 +758,13 @@ impl SolidCraftWriter {
 
 impl Writer for SolidCraftWriter {
     fn extension(&self) -> &'static str {
-        "solidcraft"
+        self.resolved_version().extension()
+    }
+
+    fn accepts_extension(&self, extension: &str) -> bool {
+        ["sc", "solidcraft", "solvecraft"]
+            .iter()
+            .any(|suffix| extension.eq_ignore_ascii_case(suffix))
     }
 
     fn write(
@@ -1025,4 +1031,27 @@ pub fn mapped_history(model: &Model, report: &mut Report) -> MappedHistory {
 /// preserve the original beside rebuilt features.
 pub fn restate_step(model: &Model, report: &mut Report) -> Result<String, Error> {
     step::restate(model, report)
+}
+
+#[cfg(test)]
+mod extension_tests {
+    use super::*;
+
+    #[test]
+    fn target_release_selects_the_default_but_accepts_all_design_suffixes() {
+        for (target, extension) in [
+            ("0.18.2", "solidcraft"),
+            ("0.25.0", "solidcraft"),
+            ("0.25.1", "sc"),
+        ] {
+            let writer = SolidCraftWriter::new().target_version(Some(target.parse().unwrap()));
+            assert_eq!(writer.extension(), extension);
+            for suffix in ["sc", "SC", "solidcraft", "SOLVECRAFT"] {
+                assert!(writer.accepts_extension(suffix));
+            }
+            assert!(!writer.accepts_extension("step"));
+        }
+        let newest = SolidCraftWriter::new().target_version(Some(SolidCraftVersion::default()));
+        assert_eq!(newest.extension(), "sc");
+    }
 }
