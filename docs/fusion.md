@@ -22,6 +22,15 @@ layout lines through hole centres without splitting the circular holes during re
 another active consumer needs the whole sketch or a different selection form, those lines
 stay solid.
 
+Resolved `to_plane` extrude ends map before any body-building feature when the terminating
+plane is parallel to the sketch. The plane origin becomes a fixed SolidCraft To Object point;
+a construction plane or body face need not exist there. After earlier geometry, `to_plane`
+ends are not supported yet: SolidCraft can reinterpret a point on an existing face as a
+different end, and CADIR supplies no input face geometry to prove which face exists then.
+Final-body faces cannot establish that timeline state. Tilted plane ends and native,
+generated, or historical vertex selections are not supported yet. Symmetric To Object ends
+and non-blind ends against the sketch normal on two-sided extrudes remain unsupported.
+
 ## Components
 
 Assemblies with multiple top-level designs group each design's features into a uniquely

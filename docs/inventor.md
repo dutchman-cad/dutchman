@@ -15,7 +15,7 @@ State as of the cadmpeg commit Dutchman pins (see `Cargo.toml`).
 | No geometry (empty or invalid carrier: blocking `geometry_not_transferred`). | Stops: "no geometry could be read". |
 | Parameters (closed scalar graphs). | Mapped to SolidCraft parameters. |
 | Planar sketches: points, lines, circles, ellipses, with typed and native constraints. | Mapped, ellipses as whole ellipses; typed constraints mapped, native ones reported as not carried. |
-| Extrude, hole, constant-radius fillet, equal-distance chamfer, when every property, dimension and selection resolves. | Extrude: mapped when cadmpeg resolves its profile to sketch profiles or regions, blind or through all; an extrude to a face or to the next face is not mapped yet. Holes map where their placement resolves, drilled the way the hole points; constant-radius fillets and equal-setback chamfers map with proven feature input edge geometry (see guide.md). |
+| Extrude, hole, constant-radius fillet, equal-distance chamfer, when every property, dimension and selection resolves. | Extrude: mapped when cadmpeg resolves its profile to sketch profiles or regions, blind, through all, or to a resolved plane parallel to the sketch before any body-building feature (including a placed work plane); resolved parallel planar faces on earlier named bodies also map. Native face selections, tilted terminating planes, vertex selections, and to-next-face ends are not mapped yet. Holes map where their placement resolves, drilled the way the hole points; constant-radius fillets and equal-setback chamfers map with proven feature input edge geometry (see guide.md). |
 | Mirror of features about a work plane. | Mapped as a SolidCraft mirror pattern of those features about that plane. |
 | Rectangular pattern of features with fixed spacing, in one or two directions. | Mapped as a SolidCraft rectangular pattern of those features. |
 | Rectangular pattern with suppressed instances. | Not mapped yet: SolidCraft's rectangular pattern fills the whole grid. The report names the pattern and how many positions it skips, and the part keeps its exact geometry. |
@@ -26,6 +26,15 @@ State as of the cadmpeg commit Dutchman pins (see `Cargo.toml`).
 | Features the codec keeps in native form (`native`). | Not mapped; a part whose every feature is native has no history Dutchman can write. |
 | Suppression and dependency state: unresolved (`suppressed` absent). | Features are treated as active; verification catches a replay that differs and keeps a replayable editable prefix hidden beside the imported final shape when possible. |
 | Product name: none for the root product definition. | cadmpeg's STEP writer then names the product by its id (`inventor:document:product#root`), which SolidCraft shows as the body name. |
+
+Resolved `to_plane` extrude ends map before any body-building feature when the terminating
+plane is parallel to the sketch. The plane origin becomes a fixed SolidCraft To Object point;
+a construction plane or body face need not exist there. After earlier geometry, `to_plane`
+ends are not supported yet: SolidCraft can reinterpret a point on an existing face as a
+different end, and CADIR supplies no input face geometry to prove which face exists then.
+Final-body faces cannot establish that timeline state. Tilted plane ends and native,
+generated, or historical vertex selections are not supported yet. Symmetric To Object ends
+and non-blind ends against the sketch normal on two-sided extrudes remain unsupported.
 
 ## Upstream gaps, in the order they block history
 

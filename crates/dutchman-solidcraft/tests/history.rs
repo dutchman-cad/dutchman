@@ -6134,6 +6134,182 @@ fn solidcraft_rebuilds_drafted_extrude_volumes() {
     }
 }
 
+/// A resolved parallel plane end, optionally also present as a placed datum helper.
+fn plane_ended_extrude(z: f64, datum: bool, change: impl FnOnce(&mut Value)) -> Model {
+    let frame = json!({
+        "origin": {"x": 37.0, "y": -23.0, "z": z},
+        "normal": {"x": 0.0, "y": 0.0, "z": -2.0},
+        "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0}
+    });
+    let mut model = changed_extrude(|definition| {
+        definition["extent"]["side"]["termination"] = json!({
+            "kind": "to_plane", "plane": frame, "native": "synthetic plane"
+        });
+        change(definition);
+    });
+    if datum {
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["features"][1]["ordinal"] = json!(2);
+        wire["model"]["features"][1]["dependencies"] = json!(["f3d:model:feature#3"]);
+        wire["model"]["features"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "id": "f3d:model:feature#3", "ordinal": 1, "name": "End plane",
+                "suppressed": false, "dependencies": [], "outputs": [],
+                "definition": {"definition": "datum_plane", "frame": frame}
+            }));
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    }
+    model
+}
+
+#[test]
+fn parallel_plane_ended_extrudes_use_free_to_object_points() {
+    for datum in [false, true] {
+        for reverse in [false, true] {
+            let z = if reverse { -10.0 } else { 10.0 };
+            let model = plane_ended_extrude(z, datum, |definition| {
+                if reverse {
+                    definition["direction"] = json!({"kind": "reversed_profile_normal"});
+                }
+            });
+            let (document, report) = convert(
+                &model,
+                &SolidCraftWriter::new().verification(Verification::Off),
+            );
+            assert!(
+                history_line(&report).starts_with(if datum {
+                    "3 of 3 features mapped"
+                } else {
+                    "2 of 2 features mapped"
+                }),
+                "{}",
+                history_line(&report)
+            );
+            assert_eq!(
+                document["features"][1]["extent"]["to"],
+                json!([37.0, -23.0, z])
+            );
+            assert_eq!(document["features"][1]["extent"]["distance"], "0 mm");
+            if let Some(cli) = solidcraft() {
+                let actual = volumes(&cli, &written(&model).0);
+                assert_eq!(actual.len(), 1);
+                assert!((actual[0] - 1000.0).abs() < 1e-4, "{actual:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn plane_ended_extrudes_follow_a_placed_sketch_normal() {
+    let mut model = plane_ended_extrude(10.0, false, |_| {});
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["sketches"][0]["placement"]["frame"] = json!({
+        "origin": {"x": 5.0, "y": 2.0, "z": 3.0},
+        "normal": {"x": 1.0, "y": 0.0, "z": 0.0},
+        "u_axis": {"x": 0.0, "y": 1.0, "z": 0.0}
+    });
+    wire["model"]["features"][1]["definition"]["extent"]["side"]["termination"]["plane"] = json!({
+        "origin": {"x": 15.0, "y": -23.0, "z": 37.0},
+        "normal": {"x": 2.0, "y": 0.0, "z": 0.0},
+        "u_axis": {"x": 0.0, "y": 0.0, "z": 1.0}
+    });
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+    assert_eq!(
+        document["features"][1]["extent"]["to"],
+        json!([15.0, -23.0, 37.0])
+    );
+    if let Some(cli) = solidcraft() {
+        let actual = volumes(&cli, &written(&model).0);
+        assert_eq!(actual.len(), 1);
+        assert!((actual[0] - 1000.0).abs() < 1e-4, "{actual:?}");
+    }
+}
+
+#[test]
+fn plane_ended_extrudes_keep_start_offsets_and_two_sided_travel() {
+    let model = plane_ended_extrude(10.0, false, |definition| {
+        definition["start"] = json!({"kind": "offset_profile_plane", "offset": 3.0});
+        let first = definition["extent"]["side"].clone();
+        definition["extent"] = json!({"kind": "two_sided", "first": first,
+            "second": {"termination": {"kind": "blind", "length": 2.0}}});
+    });
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+    assert_eq!(document["features"][1]["extent"]["start_offset"], "3 mm");
+    assert_eq!(document["features"][1]["extent"]["distance2"], "2 mm");
+    if let Some(cli) = solidcraft() {
+        let actual = volumes(&cli, &written(&model).0);
+        assert_eq!(actual.len(), 1);
+        assert!((actual[0] - 900.0).abs() < 1e-4, "{actual:?}");
+    }
+}
+
+#[test]
+fn unsupported_plane_and_vertex_extrude_ends_name_the_blocker() {
+    for (termination, reason) in [
+        (
+            json!({"kind": "to_plane", "native": "synthetic tilted plane", "plane": {
+                "origin": {"x": 0.0, "y": 0.0, "z": 10.0},
+                "normal": {"x": 0.0, "y": 1.0, "z": 1.0},
+                "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0}
+            }}),
+            "terminating plane not parallel",
+        ),
+        (
+            json!({"kind": "to_vertex", "vertex": {"kind": "native", "value": "synthetic vertex"}}),
+            "to-vertex extrude needs a resolved input vertex position",
+        ),
+    ] {
+        let model = changed_extrude(|definition| {
+            definition["extent"]["side"]["termination"] = termination;
+        });
+        let (_, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        let line = history_line(&report);
+        assert!(line.contains("Block") && line.contains(reason), "{line}");
+    }
+    for (z, change, reason) in [
+        (-10.0, "wrong_side", "not along the selected extrude side"),
+        (10.0, "symmetric", "symmetric extrude to an object"),
+        (
+            10.0,
+            "negative_end",
+            "non-blind extrude end against the sketch normal",
+        ),
+    ] {
+        let model = plane_ended_extrude(z, false, |definition| {
+            let side = definition["extent"]["side"].clone();
+            if change == "symmetric" {
+                definition["extent"] = json!({"kind": "symmetric", "side": side});
+            } else if change == "negative_end" {
+                definition["extent"] = json!({"kind": "two_sided",
+                    "first": {"termination": {"kind": "blind", "length": 2.0}}, "second": side});
+            }
+        });
+        let (_, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).contains(reason),
+            "{}",
+            history_line(&report)
+        );
+    }
+}
+
 /// An earlier cube followed by another extrusion using its top face as an end or start.
 fn face_ended_extrude(from_face: bool, offset: f64, resolved: bool) -> Model {
     let mut model = cube_with_history(10.0, whole_sketch(), None);
@@ -6166,6 +6342,33 @@ fn face_ended_extrude(from_face: bool, offset: f64, resolved: bool) -> Model {
     wire["model"]["features"].as_array_mut().unwrap().push(next);
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
+}
+
+#[test]
+fn plane_ended_extrudes_after_bodies_need_input_face_geometry() {
+    for z in [10.0, 5.0] {
+        let mut model = face_ended_extrude(false, 0.0, false);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["features"][2]["definition"]["extent"]["side"]["termination"] = json!({
+            "kind": "to_plane", "native": "synthetic plane", "plane": {
+                "origin": {"x": 0.0, "y": 5.0, "z": z},
+                "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
+                "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0}
+            }
+        });
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        let line = history_line(&report);
+        assert!(
+            line.contains("Face extent")
+                && line.contains("CADIR does not supply the input face geometry"),
+            "{line}"
+        );
+        assert_partial(&document, &report, 1);
+    }
 }
 
 #[test]

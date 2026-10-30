@@ -160,9 +160,13 @@ dimension linked to its parameter (a constraint that does not map is dropped and
 since the geometry is already exact); extrudes of a whole sketch, of selected sketch
 profiles, of profile regions (whole loops with their holes, or regions bounded by pieces of
 curves) or of selected curves, one-sided, symmetric or two-sided, blind or through all, from the sketch plane or an
-offset, or a resolved parallel planar face on an earlier named body; one-sided extrudes may
-end on such a face with an offset and may carry draft (positive grows outward); two-sided
-extrudes may use a non-blind positive-normal end when the negative-normal end is blind.
+offset, or a resolved parallel planar face on an earlier named body. One-sided extrudes may
+carry draft (positive grows outward), end on such a face with an offset, or end on a resolved
+parallel plane. Before any body-building feature, a plane end uses its origin as a fixed
+To Object point (SolidCraft accepts a free point without a construction plane or body face).
+After earlier geometry, `to_plane` ends wait on input face geometry: SolidCraft may
+reinterpret a point as a body face, and final-body faces cannot prove the timeline state. Two-sided extrudes may use a non-blind positive-normal end when
+the negative-normal end is blind.
 Extrudes map as new body, join, cut or intersect (a new body keeps its source name and colour);
 revolves about a line in the sketch plane (a line of the profile's sketch stays that line)
 that are symmetric, equal-angle two-sided or a full turn, including unequal sides that add up
