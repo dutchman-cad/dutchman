@@ -62,6 +62,47 @@ pub fn text() -> String {
     out
 }
 
+/// The listing as a Markdown table, for the README and docs/formats.md.
+pub fn markdown() -> String {
+    let mut out =
+        String::from("| Format | Files | Reads | Level | Converts |\n|---|---|---|---|---|\n");
+    for format in Format::ALL {
+        let (name, files) = format
+            .name()
+            .split_once(" (")
+            .map(|(name, files)| (name, files.trim_end_matches(')')))
+            .unwrap_or((format.name(), ""));
+        let files = files
+            .split(", ")
+            .map(|file| format!("`{file}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let converts = if format == Format::Iges {
+            "Import it in SolidCraft directly (File > Import)".to_owned()
+        } else if format.can_convert() || format == Format::FreeCadDocument {
+            capitalised(converts(format))
+        } else {
+            "Not yet".to_owned()
+        };
+        out.push_str(&format!(
+            "| {name} | {files} | {} | {} | {converts} |\n",
+            capitalised(format.words()),
+            format.headline_level().unwrap_or_else(|| "–".to_owned()),
+        ));
+    }
+    out.push_str("\nFreeCAD TechDraw drawings also convert to DXF (`--to dxf`): page curves, dimension labels, annotations, and templates.\n");
+    out.push_str("\nOutput is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro (`--to freecad`).\n");
+    out
+}
+
+fn capitalised(text: &str) -> String {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .map(|first| first.to_uppercase().chain(chars).collect())
+        .unwrap_or_default()
+}
+
 /// The JSON listing.
 pub fn json() -> Value {
     let formats: Vec<_> = Format::ALL

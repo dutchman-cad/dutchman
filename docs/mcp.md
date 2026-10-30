@@ -15,7 +15,7 @@ an AI assistant convert CAD files with Dutchman on your machine: it gives the as
 tools, and each returns the same JSON report as the matching `dutchman … --json` command
 ([json.md](json.md)).
 
-It comes in every release archive and with `cargo install` (see the [guide](guide.md#install)).
+It comes in every release archive and with `cargo install` (see the [guide](install.md)).
 It speaks JSON-RPC over stdio, one message per line, and takes no arguments: the client starts
 it and talks to it.
 
@@ -98,7 +98,7 @@ A conversion that exceeds available memory refuses with the same message as the 
 --no-memory-check to run anyway)`. Set a lighter `preset`, or explicitly set
 `no_memory_check: true` to bypass the guard and Standard's history budget. Existing
 input and batch worker limits still apply. Standard's automatic history decision is
-reported as one Info line under `history`, as described in the [guide](guide.md#choosing-what-to-keep).
+reported as one Info line under `history`, as described in the [guide](presets.md).
 
 Use `convert` with `dry_run: true` for a quick estimate without decoding or writing;
 `output` is optional:
@@ -312,7 +312,7 @@ against the server's working directory, which the client chooses.
 Both `convert` and `convert_all` accept optional `diagnostics` (an absolute file path), or
 `diagnostics_default: true` for a unique timestamp file in the platform's default diagnostics
 folder. They cannot be combined. Explicit files are appended without retention; the default
-folder keeps the newest ten timestamp logs. [The guide](guide.md#diagnostic-logs-for-unfinished-runs)
+folder keeps the newest ten timestamp logs. [The guide](troubleshooting.md#diagnostic-logs-for-unfinished-runs)
 lists each OS folder and how to review and send a log.
 
 Batch output defaults to `.sc`; targets before SolidCraft 0.25.1 use `.solidcraft`.
@@ -528,7 +528,7 @@ whose histories cannot be fully rebuilt retain their mapped prefix and mapped sk
 in a hidden **Rebuilt history (partial)** group, with STEP as the visible final shape when
 the prefix differs. The report says `rebuilt N of M features; kept as reference`.
 FreeCAD output is unverified and does not invoke SolidCraft or FreeCAD. `import_only` writes STEP geometry alone. See
-[FreeCAD output](guide.md#freecad-output-experimental) for feature coverage and running the macro.
+[FreeCAD output](freecad.md#freecad-output-experimental) for feature coverage and running the macro.
 
 Experimental Assembly output keeps supported joints, through sub-assemblies too, with
 resolved connector frames, limits, and grounding. Unsupported operands or joint options

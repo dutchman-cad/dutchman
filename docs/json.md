@@ -603,7 +603,7 @@ page output and its reported limitations. Existing `formats` fields keep their m
 ## `dutchman.diagnostics/1`
 
 Live diagnostics are opt-in on CLI `convert`, `convert-all`, and `watch`, MCP `convert`
-and `convert_all`, and the desktop app. See [locations and sharing](guide.md#diagnostic-logs-for-unfinished-runs).
+and `convert_all`, and the desktop app. See [locations and sharing](troubleshooting.md#diagnostic-logs-for-unfinished-runs).
 `--diagnostics-default` creates a unique UTC timestamp file in the platform's diagnostic
 folder, retaining ten logs. `--diagnostics PATH` appends to an explicit file without retention.
 MCP uses `diagnostics_default: true` or `diagnostics: "/absolute/path/run.jsonl"`.

@@ -4,7 +4,7 @@
 that can reach it, without installing Dutchman on each computer. Drop design files, or a `.zip`
 of a project folder, on the page and press **Convert**. Each file gets a card saying whether it
 converted, what was written (editable history or geometry), which features did not map, and its
-losses as Info, Degraded or Dropped, with a link to download its design. **Download all** gets
+losses as Info, Degraded, or Dropped, with a link to download its design. **Download all** gets
 every design in one zip. The page waits for the final results; it does not stream conversion
 stages, design counts, or elapsed-time heartbeats.
 
@@ -31,7 +31,7 @@ DUTCHMAN_WEB_PASSWORD=choose-one dutchman-web --listen 0.0.0.0:8080
 ```
 
 It checks histories in SolidCraft when it finds `solidcraft-cli`, as the command does
-([Feature history](guide.md#feature-history-and-the-solidcraft-check)): set `SOLIDCRAFT_CLI` to
+([Feature history](history.md)): set `SOLIDCRAFT_CLI` to
 its path, or put it on the server's `PATH`. The form's **Target SolidCraft version**
 accepts x.y.z, at least 0.18.2. Leave it empty to target the found CLI's version, else
 the newest known at build time (currently 0.27). The rolling 14-day window is currently

@@ -532,39 +532,32 @@ fn inspect_prints_a_text_summary() {
 }
 
 #[test]
-fn formats_text_matches_guide() {
-    let out = dutchman(&["formats"]);
+fn formats_markdown_matches_the_formats_page() {
+    let out = dutchman(&["formats", "--markdown"]);
     assert!(out.status.success(), "{out:?}");
-    let text = String::from_utf8(out.stdout).unwrap();
-    let guide = include_str!("../../../docs/guide.md");
-    let section = guide
-        .split_once("## Formats")
+    let table = String::from_utf8(out.stdout).unwrap();
+    let page = include_str!("../../../docs/formats.md");
+    let block = page
+        .split_once("<!-- formats: generated from dutchman formats --markdown -->")
         .unwrap()
         .1
-        .split("\n## ")
-        .next()
-        .unwrap();
-    let listing = section
-        .split_once("```text")
+        .split_once("<!-- /formats -->")
         .unwrap()
-        .1
-        .split_once("```")
-        .unwrap()
-        .0
-        .trim();
-    // Ignore column padding, and the FreeCAD line in a build without FreeCAD: the guide shows
-    // the default build.
-    let lines = |listing: &str| {
-        listing
-            .lines()
-            .filter(|line| cfg!(feature = "freecad") || !line.starts_with("FreeCAD document "))
+        .0;
+    // Ignore padding, and the FreeCAD row in a build without FreeCAD: the page shows the
+    // default build.
+    let rows = |text: &str| {
+        text.lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .filter(|line| cfg!(feature = "freecad") || !line.starts_with("| FreeCAD document |"))
             .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
             .collect::<Vec<_>>()
     };
     assert_eq!(
-        lines(&text),
-        lines(listing),
-        "Update the Formats listing in docs/guide.md to match dutchman formats"
+        rows(&table),
+        rows(block),
+        "Update the table in docs/formats.md: dutchman formats --markdown"
     );
 }
 

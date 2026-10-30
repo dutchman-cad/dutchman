@@ -263,7 +263,7 @@ sizes and decoder events, and loss-code counts; no names, paths, contents, geome
 messages. Per-member records appear when the decoder reports them. Ask the user to review
 and share this JSONL log with the Dutchman issue; keep ordinary logs private. A combined
 `report_anon` shares its salt and file ids with diagnostics; keep the salt/key private.
-See `docs/guide.md#diagnostic-logs-for-unfinished-runs` and `docs/json.md` for the schema.
+See `docs/troubleshooting.md#diagnostic-logs-for-unfinished-runs` and `docs/json.md` for the schema.
 
 ## 4. Verify in SolidCraft
 
@@ -438,7 +438,7 @@ imported geometry, with the mapped prefix and mapped sketches hidden in **Rebuil
 `history.features` and their reasons, and that the history is unverified until the macro
 runs. The original remains available for comparison; a runtime
 failure restores it and warns in FreeCAD. Parameter values are kept; source expressions
-remain inert text. See `docs/guide.md#freecad-output-experimental` for the supported cases and limits.
+remain inert text. See `docs/freecad.md#freecad-output-experimental` for the supported cases and limits.
 Assembly macros also write supported joints (through sub-assemblies too) with frames,
 limits, and grounding. Explain `joints` losses: unsupported operands/options retain stored
 placements, and an ungrounded joint chain gets an inferred grounded part (`Info`). A failed
