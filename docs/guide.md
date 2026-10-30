@@ -97,9 +97,10 @@ dutchman convert part.ipt part.solidcraft --preset full --no-sketches
 dutchman convert-all project/ --out-dir converted/ --preset standard --yes
 ```
 
-Text conversions show `Estimate: about N GB, about M min (±B %)` before converting,
+Text conversions show `Estimate: about N GB (±R %), about M min (±T %)` before converting,
 unless `--quiet` is set. Estimates below 0.1 GB read `under 0.1 GB`, and times below
-60 seconds read `under a minute`; longer times round up to whole minutes.
+60 seconds read `under a minute`; longer times round up to whole minutes. Where measurements
+don't yet support a time band for the format, the time reads `roughly M min`.
 Estimates use file size and format. For `.f3d`, `.f3z`, and
 `.FCStd`, a bounded ZIP pre-read counts members and uses their total uncompressed size; for
 Fusion archives it also reads each design's own directory, one design at a time, and never
@@ -110,9 +111,7 @@ byte (57 with history). FreeCAD uses about 29 MB plus 150 bytes per byte of arch
 with a 1.04 history multiplier on that content term. The small-file fit uses synthetic parts
 and CC0 FreeCAD recipes from 0.21.2, 1.0.2 and 1.1.4, measured on Windows and macOS; the Mac
 measurements used an older nightly decoder. Larger Fusion assemblies retain their earlier
-calibration. The band is ±60 % for Fusion, ±40 % for SolidWorks, ±50 % for Inventor parts,
-and ±100 % for FreeCAD and formats without measurements. Time uses separate history factors;
-this memory refit does not change time estimates. Times are rounded up to whole seconds,
+calibration. Memory and time use separate history factors. Times are rounded up to whole seconds,
 so subsecond conversions are especially approximate. They leave out the history check in
 SolidCraft, which can add several minutes on a large assembly.
 Separate assembly part files are not pre-read, so their cost can be underestimated.
@@ -120,12 +119,25 @@ An estimate is unknown for formats this build cannot convert, or when metadata c
 be read, including ZIP directories exceeding 10,000 members or 16 MiB, and unreadable
 archives.
 
+RAM bands use every successful Windows and Mac measurement, re-evaluated with the
+current coefficients: Fusion `.f3d` ±55%, multipart `.f3z` ±25%, Inventor parts ±30%,
+SolidWorks parts ±35%, and FreeCAD ±50%. One percentage point of safety is added before
+rounding up to a 5% step. These are empirical envelopes of this corpus, not guarantees for
+unseen designs. Unmeasured formats retain their ±100% memory heuristic.
+Time has its own band: multipart Fusion is ±20%; other time bands are uncalibrated.
+Whole-second rounding cannot describe tiny conversion times with a narrow relative band,
+and a host-specific ten-second SolidCraft version probe affected the older Mac binary.
+Those need a startup/continuous-time model; the bands are not widened to conceal them.
+JSON adds `memory_band` and nullable `time_band`. The existing `band` stays as the legacy
+shared heuristic for compatibility; use the new fields for separate calibrated coverage.
+For multipart Fusion `band` is the larger of the two calibrated bands (25%).
+
 For Fusion archives with multiple readable embedded `.f3d` designs, the time estimate
 uses the requested threads (0 means auto), limited by the converter's shared CPU, item
 count and free-memory worker policy. A serial component remains. Before native decoding,
 the embedded design count and the converter's 256 MiB minimum worker budget are proxies;
 actual body counts can reduce conversion workers further. Single-design files keep their
-existing time model. Memory estimates and bands are unchanged by this time refit.
+existing time model. The worker adjustment changes time estimates only.
 
 Available memory comes from Linux `MemAvailable` bounded by remaining cgroup v2
 headroom (including ancestor limits), or safe system APIs through sysinfo on macOS and
