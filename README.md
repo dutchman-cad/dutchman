@@ -39,7 +39,7 @@ Converts Fusion, Inventor, SolidWorks parts, FreeCAD, CATIA, Rhino, Creo View, A
 - **Choose what to keep:** Fast, Standard, and Full show estimated memory and time before conversion.
 - **A diagnostic log:** save an anonymous log during a run, including runs that never finish.
 - **An update button:** a small pill in the header shows when a newer release is out; Homebrew and Scoop installs update in place.
-<!-- Pending merge: SolidCraft version pill (follow-up PR). Lead: add a feature line only after it lands on main. -->
+- **A SolidCraft version pill:** the header names the SolidCraft you have and explains whether its designs open there.
 
 [What converts](#what-converts) lists coverage and limits; every conversion reports what it could not carry across.
 

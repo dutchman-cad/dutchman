@@ -210,10 +210,10 @@ are not present in the pinned CADIR version.
   `report_key` files go to their specified paths, which may be outside it.
 - `solidcraft_version: "0.25.1"` (CLI `--solidcraft-version 0.25.1` on `convert`,
   `convert-all`, or `watch`) chooses the target release. It must be x.y.z and at least
-  0.18.2. The default is the found CLI's version, else the newest known at build time
-  (currently 0.27.0), even with CLI `--no-verify` or MCP `verify: false`.
+  0.18.2. The default is the found CLI's version capped at newest known, else the newest known at build time
+  (currently 0.27), even with CLI `--no-verify` or MCP `verify: false`.
   Dutchman targets the current SolidCraft with a rolling 14-day window (currently
-  0.18.2–0.27.0); older targets get simplified features with a named reason.
+  0.18–0.27); older targets get simplified features with a named reason.
 - `preset: "fast"` when the user wants only the shape. `history: false` (also
   `import_only: true`) removes history while keeping the preset's reference sketches and
   joints. Leave `verify` at its default.
@@ -376,8 +376,8 @@ off, or having no usable CLI, still writes unverified history.
 
 Composite feature patterns containing resolved mirrors can map to several ordered timeline
 features while retaining one result per source feature in the history report. Each stage
-repeats the previous instance set. Chained stages require a target of SolidCraft 0.25.1
-or newer; older targets report `needs SolidCraft 0.25.1 or newer` and keep the original
+repeats the previous instance set. Chained stages require a target of SolidCraft 0.25 patch 1
+or newer; older targets report `needs SolidCraft 0.25 patch 1 or newer` and keep the original
 geometry. Single-stage mirrors and patterns still map on every supported target.
 A full-turn circular pattern with a repeated seed endpoint
 keeps each distinct location once. Replay differences still flatten the history and report
@@ -393,8 +393,8 @@ SolidCraft's ISO metric designation would invent thread data; these stop the edi
 
 Constant-radius helical sweeps (FreeCAD AdditiveHelix and SubtractiveHelix) keep their
 sketch profile, axis, pitch/height/turn law, handedness, reversed travel, and Boolean
-operation as sketch-profile coils only for targets SolidCraft 0.25.1 or newer. Older
-targets block the feature with `needs SolidCraft 0.25.1 or newer` and the target version,
+operation as sketch-profile coils only for targets SolidCraft 0.25 patch 1 or newer. Older
+targets block the feature with `needs SolidCraft 0.25 patch 1 or newer` and the target version,
 preserving the original geometry. Feature parameter
 bindings drive dimensions when available; otherwise their resolved values are kept.
 Conical helices and spirals remain blocked because SolidCraft's coil has no cone-angle
@@ -485,3 +485,13 @@ With an explicit target and verification off, Dutchman uses only cached CLI vers
 `solidcraft.found`; null can mean not checked. Version probes run at most once per resolved
 CLI path per process, with a three-second limit. Successful versions also use a disk cache
 keyed by the CLI path, size, and modification time; see `docs/guide.md` for its location.
+
+SolidCraft reports also include `solidcraft.known_newest` (a version string) and
+`solidcraft.status`: `newer`, `too_old`, `older_loses_history`, `current`, or
+`none_found`. History notices follow the selected target’s writer gates. These
+fields require no network check. See [JSON reports](../../docs/json.md).
+
+SolidCraft names and report targets use minors: `solidcraft.target` and
+`solidcraft.known_newest` are `x.y` strings such as `"0.27"`. `solidcraft.found`
+retains the full installed version. All patches of the newest minor count as current;
+writer gates still use full versions internally. Explicit target inputs remain `x.y.z`.

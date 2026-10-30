@@ -231,8 +231,7 @@ jobs:
         solidcraft:
           - version: 0.18.2
             sha256: 9d0c922ac72204f34ad22ca7a171be78016ab002e304ace3c07d34d187d830ff
-          - version: 0.27.0
-            sha256: eb5b8eb5447d5443be9b5e094cb1a7ec2c7d08393fc49bb31ccae595562e9175
+          - version: "0.27"
     env:
       SOLIDCRAFT_VERSION: ${{ matrix.solidcraft.version }}
       SOLIDCRAFT_SHA256: ${{ matrix.solidcraft.sha256 }}
@@ -242,11 +241,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --locked
       - name: Fetch SolidCraft
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          archive="solidcraft-${SOLIDCRAFT_VERSION}-linux-x86_64.tar.gz"
-          curl -fsSL -o "$archive" "https://github.com/tangency-labs/solidcraft/releases/download/v${SOLIDCRAFT_VERSION}/$archive"
-          echo "${SOLIDCRAFT_SHA256}  $archive" | sha256sum -c -
-          tar xzf "$archive"
+          version=$(scripts/solidcraft-window.sh --fetch "$SOLIDCRAFT_VERSION" "$SOLIDCRAFT_SHA256")
+          echo "SOLIDCRAFT_VERSION=$version" >> "$GITHUB_ENV"
       # Each fixture holds cadmpeg's example 10 mm cube, which must read back as one.
       - name: Check converted geometry in SolidCraft
         run: |
