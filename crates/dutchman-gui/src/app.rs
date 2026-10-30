@@ -49,6 +49,7 @@ impl Row {
 
 /// Dutchman Convert's window.
 pub struct App {
+    pub updater: crate::update::Updater,
     inputs: Vec<PathBuf>,
     custom: bool,
     estimate_key: Option<(Vec<PathBuf>, Choices)>,
@@ -199,12 +200,15 @@ impl App {
             solidcraft_version: Some(detected_version),
             ..ConvertOptions::default()
         };
-        let custom = cc
+        let stored = cc
             .storage
             .and_then(|storage| storage.get_string(SETTINGS_KEY))
-            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-            .is_some_and(|settings| restore_choices(&mut options, &settings));
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+        let custom = stored
+            .as_ref()
+            .is_some_and(|settings| restore_choices(&mut options, settings));
         App {
+            updater: crate::update::Updater::new(stored.as_ref().and_then(|v| v.get("update"))),
             inputs: Vec::new(),
             custom,
             estimate_key: None,
@@ -631,6 +635,7 @@ impl App {
         }) {
             self.refresh_blocked_checker();
         }
+        self.updater.tick(ctx);
         self.receive(ctx);
         self.take_dropped_files(ctx);
         self.refresh_estimates(ctx);
@@ -698,12 +703,14 @@ impl App {
                         }
                     });
             });
+        self.updater.windows(ctx);
         self.memory_dialog(ctx);
         self.refresh_estimates(ctx);
     }
 
     fn title(&mut self, ui: &mut egui::Ui) {
         let p = theme::palette(ui);
+        let narrow = ui.available_width() < 850.0;
         ui.horizontal(|ui| {
             let mark = if ui.visuals().dark_mode {
                 egui::include_image!("../assets/dutchman-mark-night.svg")
@@ -715,11 +722,13 @@ impl App {
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 ui.label(RichText::new(crate::APP_NAME).text_style(theme::title()));
-                ui.label(
-                    RichText::new("Converts native CAD designs into SolidCraft designs.")
-                        .small()
-                        .color(p.tide),
-                );
+                if !narrow {
+                    ui.label(
+                        RichText::new("Converts native CAD designs into SolidCraft designs.")
+                            .small()
+                            .color(p.tide),
+                    );
+                }
             });
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.hyperlink_to("Report a problem", crate::REPORT_PROBLEM_URL);
@@ -734,6 +743,7 @@ impl App {
                         ui.ctx().set_theme(preference);
                     }
                 }
+                self.updater.header(ui, narrow);
             });
         });
     }
@@ -1183,10 +1193,11 @@ impl App {
 
 impl eframe::App for App {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        storage.set_string(
-            SETTINGS_KEY,
-            saved_choices(&self.options, self.custom).to_string(),
-        );
+        let mut settings = saved_choices(&self.options, self.custom);
+        if let Some(object) = settings.as_object_mut() {
+            object.insert("update".into(), self.updater.saved());
+        }
+        storage.set_string(SETTINGS_KEY, settings.to_string());
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {

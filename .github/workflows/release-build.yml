@@ -35,6 +35,7 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  DUTCHMAN_RELEASE_BUILD: "1"
 
 jobs:
   build:

@@ -65,3 +65,5 @@ fn icon() -> Option<eframe::egui::IconData> {
         height: u32::try_from(height).ok()?,
     })
 }
+
+pub mod update;
