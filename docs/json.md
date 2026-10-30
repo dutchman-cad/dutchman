@@ -230,6 +230,11 @@ report the form or developed length SolidCraft cannot express. A blocked history
 to geometry. These use the existing report fields; no schema fields change.
 
 Renamed parameter names are included in `names` so anonymous reports can remove them.
+Fusion consumed tools and removed bodies are omitted only when cadmpeg marks them hidden
+and no component owns them, with an Info `bodies` note giving the count. User-hidden
+component members stay available; mixed shown/hidden parts are shown whole, with an Info
+note. See [Fusion visibility](fusion.md#parts-and-history).
+
 Parameter expression fallbacks use the existing `losses` records: `subject` is
 `parameter <written name>`, `level` is `Degraded` when a scalar value is retained, and
 `Dropped` when neither expression nor scalar value can be written. The message names the

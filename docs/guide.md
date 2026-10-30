@@ -21,6 +21,11 @@ over files with the same name; use `dutchman convert pilot` for a file named `pi
 Installed tools take precedence over bare files; otherwise an existing file or a recognised
 CAD extension selects conversion.
 
+Fusion consumed tools and removed bodies are omitted only when cadmpeg marks them hidden
+and no component owns them, with an Info `bodies` note giving the count. User-hidden
+component members stay available; mixed shown/hidden parts are shown whole, with an Info
+note. See [Fusion visibility](fusion.md#parts-and-history).
+
 - [Install](#install)
 - [Your first conversion](#your-first-conversion)
 - [Choosing what to keep](#choosing-what-to-keep)

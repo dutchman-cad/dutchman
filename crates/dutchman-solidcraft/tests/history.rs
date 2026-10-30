@@ -7461,6 +7461,38 @@ fn booleans_map_target_tools_operation_and_retention() {
 }
 
 #[test]
+fn a_boolean_referencing_a_removed_tool_reports_a_history_blocker() {
+    let mut model = combined_spheres("cut", false);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    // Match core's consumed-body filtering: preserve history, remove the tool's topology.
+    for (arena, values) in wire["model"].as_object_mut().unwrap() {
+        if arena == "features" {
+            continue;
+        }
+        if let Some(rows) = values.as_array_mut() {
+            rows.retain(|row| {
+                !row["id"]
+                    .as_str()
+                    .is_some_and(|id| id.starts_with("synthetic:tool:"))
+            });
+        }
+    }
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_eq!(report.outcome().unwrap().features.len(), 3);
+    assert!(
+        report.losses().iter().any(|loss| loss
+            .detail
+            .contains("it selects a body that an earlier feature has not named")),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
 fn unsupported_modify_options_explain_what_stops_history() {
     let mut cases = Vec::new();
     // Shell and draft faces exist only on the final body, which the feature has changed.

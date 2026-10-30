@@ -348,6 +348,11 @@ SolidCraft control splines cannot store. FreeCAD compact periodic sketch knots c
 need normalization in cadmpeg before reaching the mapper. Selected multi-piece elliptical
 arcs, unbounded conics, other weighted/nonuniform splines, and text without solved outlines still prevent the sketch's history from mapping.
 
+Fusion consumed tools and removed bodies are omitted only when cadmpeg marks them hidden
+and no component owns them, with an Info `bodies` note giving the count. User-hidden
+component members stay available; mixed shown/hidden parts are shown whole, with an Info
+note. See the Fusion format documentation.
+
 FreeCAD numeric spreadsheet cells and supported formulas can remain editable parameters.
 Qualified object properties bind through decoded parameter identities; renaming preserves
 links. Text cells are omitted silently, and unused numeric cells get `Info` notes.
