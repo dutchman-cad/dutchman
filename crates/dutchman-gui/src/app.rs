@@ -1729,7 +1729,13 @@ mod tests {
         harness
             .get_by_value("Custom (based on Standard)")
             .click_accesskit();
-        harness.run();
+        // The preset menu can take more than one frame to open on a slow runner.
+        for _ in 0..60 {
+            harness.run();
+            if harness.query_by_label("Full").is_some() {
+                break;
+            }
+        }
         harness.get_by_label("Full").click_accesskit();
         harness.run();
         assert!(!harness.state().custom);
