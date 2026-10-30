@@ -1657,6 +1657,7 @@ mod tests {
                     Some(Estimate {
                         peak_bytes: 1,
                         seconds: 1,
+                        seconds_exact: 1.0,
                         band: 0.3,
                         memory_band: 0.3,
                         time_band: None,

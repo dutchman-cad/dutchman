@@ -282,6 +282,7 @@ fn screenshots() {
                 estimate: dutchman::choices::Estimate {
                     peak_bytes: 8_000_000_000,
                     seconds: 120,
+                    seconds_exact: 120.0,
                     band: 0.3,
                     memory_band: 0.3,
                     time_band: None,
