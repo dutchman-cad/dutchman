@@ -691,7 +691,7 @@ async fn designs_open_in_solidcraft_when_configured() {
             )
             .unwrap();
             assert!(stored["results"][0]["output"].get("open").is_none());
-            config.sc = Some("/cad/".to_owned());
+            config.solidcraft = Some("/cad/".to_owned());
             let restarted = dutchman_web::router(config);
             let (_, _, body) = send(
                 &restarted,
