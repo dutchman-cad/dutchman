@@ -154,19 +154,24 @@ fn skip_and_three_day_reminder_survive_settings_restore() {
 #[test]
 fn installation_paths_and_assets_match_platform() {
     assert_eq!(
-        install_command(Path::new(
+        Install::detect(Path::new(
             "/opt/homebrew/Cellar/dutchman/0.2.4/bin/dutchman-gui"
-        )),
-        Some("brew upgrade dutchman-cad/tap/dutchman")
+        ))
+        .command(),
+        Some("brew update && brew upgrade dutchman-cad/tap/dutchman")
     );
-    assert_eq!(install_command(Path::new("/opt/homebrew/Caskroom/dutchman/0.2.4/Dutchman Convert.app/Contents/MacOS/dutchman-gui")), Some("brew upgrade --cask dutchman"));
+    assert_eq!(Install::detect(Path::new("/opt/homebrew/Caskroom/dutchman-convert/0.2.4/Dutchman Convert.app/Contents/MacOS/dutchman-gui")).command(), Some("brew update && brew upgrade --cask dutchman-cad/tap/dutchman-convert"));
     assert_eq!(
-        install_command(Path::new(
+        Install::detect(Path::new(
             "C:\\Users\\test\\scoop\\apps\\dutchman\\current\\dutchman-gui.exe"
-        )),
-        Some("scoop update dutchman")
+        ))
+        .command(),
+        Some("scoop update; if ($?) { scoop update dutchman }")
     );
-    assert_eq!(install_command(Path::new("/tmp/dutchman-gui")), None);
+    assert_eq!(
+        Install::detect(Path::new("/tmp/dutchman-gui")).command(),
+        None
+    );
     assert!(matches_asset(
         "dutchman-0.2.6-x86_64-unknown-linux-gnu.tar.gz",
         "linux",
@@ -217,6 +222,7 @@ fn completed_checks_schedule_an_hour_and_only_manual_checks_open_the_window() {
         let (tx, rx) = channel();
         updater.rx = Some(rx);
         tx.send(Ok(Checked {
+            clear_release: false,
             release: Some(Release {
                 tag: "v9.0.0".into(),
                 notes: "Notes".into(),
@@ -261,4 +267,99 @@ fn notes_drop_a_first_line_that_only_repeats_the_version() {
         "Faster assemblies."
     );
     assert_eq!(notes_body("Dutchman 0.2.6", "v0.2.6"), "");
+}
+
+#[test]
+fn tap_304_makes_no_further_request() {
+    let calls = RefCell::new(Vec::new());
+    let install = Install::Cask("/opt/homebrew".into());
+    let checked = check_package(
+        &|url, etag| {
+            calls
+                .borrow_mut()
+                .push((url.to_owned(), etag.map(str::to_owned)));
+            Ok(Response::Unchanged)
+        },
+        &install,
+        "v0.2.4",
+        "v0.2.4",
+        Some("tap-etag"),
+    )
+    .unwrap();
+    assert!(checked.release.is_none());
+    assert_eq!(
+        *calls.borrow(),
+        vec![(install.source().unwrap().into(), Some("tap-etag".into()))]
+    );
+}
+
+#[test]
+fn homebrew_pill_waits_for_tap_version_and_uses_matching_feed_notes() {
+    for tag in ["0.2.4", "0.2.5"] {
+        let calls = RefCell::new(Vec::new());
+        let install = Install::Cask("/opt/homebrew".into());
+        let checked = check_package(
+            &|url, _| {
+                calls.borrow_mut().push(url.to_owned());
+                let bytes = if url == FEED {
+                    atom(&["v0.2.6", "v0.2.5"])
+                } else {
+                    format!("version \"{tag}\"").into_bytes()
+                };
+                Ok(Response::Body {
+                    bytes,
+                    etag: Some("tap-etag".into()),
+                })
+            },
+            &install,
+            "v0.2.4",
+            "v0.2.4",
+            None,
+        )
+        .unwrap();
+        let mut updater = Updater::new(None);
+        updater.release = checked.release;
+        assert_eq!(updater.offered(100), tag == "0.2.5");
+        assert_eq!(calls.borrow().len(), if tag == "0.2.5" { 2 } else { 1 });
+        if tag == "0.2.5" {
+            let release = updater.release.unwrap();
+            assert_eq!(release.tag, "v0.2.5");
+            assert_eq!(release.notes.trim(), "Safer & faster.");
+        }
+        assert!(!calls.borrow().iter().any(|url| url == API));
+    }
+}
+
+#[test]
+fn missing_feed_entry_or_failed_feed_still_offers_the_available_package() {
+    for feed in [
+        Ok(Response::Body {
+            bytes: atom(&["v0.2.6"]),
+            etag: None,
+        }),
+        Err("offline".into()),
+    ] {
+        let feed = RefCell::new(Some(feed));
+        let checked = check_package(
+            &|url, _| {
+                if url == FEED {
+                    feed.borrow_mut().take().unwrap()
+                } else {
+                    Ok(Response::Body {
+                        bytes: br#"{"version":"0.2.5"}"#.to_vec(),
+                        etag: None,
+                    })
+                }
+            },
+            &Install::Scoop("shims".into()),
+            "v0.2.4",
+            "v0.2.4",
+            None,
+        )
+        .unwrap();
+        let release = checked.release.unwrap();
+        assert_eq!(release.tag, "v0.2.5");
+        assert!(release.notes.is_empty());
+        assert!(release.download.ends_with("/tag/v0.2.5"));
+    }
 }

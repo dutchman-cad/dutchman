@@ -703,7 +703,7 @@ impl App {
                         }
                     });
             });
-        self.updater.windows(ctx);
+        self.updater.windows(ctx, !self.running());
         self.memory_dialog(ctx);
         self.refresh_estimates(ctx);
     }

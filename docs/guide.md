@@ -405,25 +405,62 @@ first feature that stops the history; the original geometry is still converted.
 ## Desktop app
 
 Release builds check for updates at startup and every hour while open. A small **Update**
-button beside the theme switch opens the new version and plain-text release notes; nothing
-opens automatically. **Download** opens the package for this platform (or the release page).
-Homebrew and Scoop installations show an upgrade command with **Copy command** instead.
+button beside the theme switch opens the new version and plain-text release notes; an available update never
+opens a window automatically. **Download** opens the package for this platform (or the release page).
+Homebrew and Scoop installations offer **Update with Homebrew** or **Update with Scoop**.
+Homebrew runs `brew update` followed by `brew upgrade --cask dutchman-cad/tap/dutchman-convert`
+(or `brew upgrade dutchman-cad/tap/dutchman` for the formula), with
+`HOMEBREW_NO_AUTO_UPDATE=1` for the upgrade. The window shows progress and the last 12 output
+lines. Closing the update window keeps Homebrew running; reopening it shows the same progress.
+After success, **Restart Dutchman** opens the installed app and closes this copy. Homebrew can
+replace the running app on macOS.
+
+Scoop needs Dutchman to close before Windows can replace its executable. **Update with Scoop**
+first explains the hand-off; **Update and restart** confirms it, and **Cancel** leaves the app
+open. A detached, hidden PowerShell helper waits up to two minutes for Dutchman to exit, runs
+`scoop update` then `scoop update dutchman` for the `dutchman-cad/dutchman` package, and opens
+Dutchman from its Scoop shim whether the update succeeds or fails. Settings save on normal
+close. Finish active conversions before confirming. Output goes to
+`%LOCALAPPDATA%\Dutchman\diagnostics\scoop-update.log`. On the next start, a failed or
+incomplete result opens the update window with its error, output tail, and **Copy command**;
+the log is consumed once and deleted. Success opens no update window.
+
+No package-manager commands run until confirmed. Missing commands, failed commands, and a
+15-minute update timeout retain the copy-command fallback. **Copy command** remains a
+secondary action for both package managers; close Dutchman before running it with Scoop.
 **Skip this version** hides that release; **Remind me later** hides updates for three days.
 These choices persist in the desktop settings. **Settings** offers **Check for updates
 automatically** (on by default) and **Check now**, which also shows skipped releases.
 `DUTCHMAN_UPDATE_CHECK=0` disables all checks, including **Check now**. Builds from source
 never check; only release-workflow builds enable this feature.
 
-Each check sends an HTTPS GET to
+For direct downloads, each check sends an HTTPS GET to
 `https://github.com/dutchman-cad/dutchman/releases.atom` with
 `User-Agent: Dutchman-update-check/<version>` and, on repeat checks, `If-None-Match`
 containing the feed ETag GitHub returned. An unchanged feed (304) needs no API request.
 Only a newer stable `vX.Y.Z` release triggers one GET to
 `https://api.github.com/repos/dutchman-cad/dutchman/releases/latest` for package links;
 if the feed fails, one API request is tried instead, then the next automatic check is in
-an hour. These requests send no cookies, identifiers, usage data, file names, paths, or
-file contents. GitHub sees the connecting IP address, ordinary HTTPS request metadata,
-the app version in the User-Agent, and the public feed ETag. Clicking **Download** opens
+an hour.
+
+For package-manager installations, the hourly check first sends an HTTPS GET to exactly one
+of these public package files, using the same User-Agent and a conditional `If-None-Match`
+header with that file's ETag:
+
+- Homebrew cask: `https://raw.githubusercontent.com/dutchman-cad/homebrew-tap/main/Casks/dutchman-convert.rb`
+- Homebrew formula: `https://raw.githubusercontent.com/dutchman-cad/homebrew-tap/main/Formula/dutchman.rb`
+- Scoop: `https://raw.githubusercontent.com/dutchman-cad/scoop-bucket/main/bucket/dutchman.json`
+
+An unchanged package file (304) causes no further request. Only a package version newer than
+the version already known triggers a releases-feed request for that exact version's notes;
+no releases API request is needed. The pill appears only once the package has the newer
+stable version. If its feed entry is missing, the window links to the release page.
+Package metadata failures retry in an hour without offering a feed-only update.
+
+These update-check requests send no cookies, identifiers, usage data, file names, paths, or
+file contents. Clicking an update button also runs the package manager, which contacts its
+own configured package sources and download hosts using its own network and privacy settings. GitHub sees the connecting IP address, ordinary HTTPS request metadata,
+the app version in the User-Agent, and the public feed or package ETag. Clicking **Download** opens
 the release asset or page in the default browser, under that browser's privacy settings.
 
 Open `dutchman-gui`, add design files or folders, choose an output folder, and press

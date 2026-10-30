@@ -7,6 +7,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use eframe::egui;
 use serde_json::Value;
 
+mod package;
+use package::{Install, Job, Phase};
+
 const FEED: &str = "https://github.com/dutchman-cad/dutchman/releases.atom";
 const API: &str = "https://api.github.com/repos/dutchman-cad/dutchman/releases/latest";
 const RELEASES: &str = "https://github.com/dutchman-cad/dutchman/releases";
@@ -67,6 +70,12 @@ fn plain_text(html: &str) -> String {
 }
 
 fn parse_feed(body: &[u8]) -> Result<Option<Release>, String> {
+    Ok(feed_entries(body)?
+        .into_iter()
+        .max_by_key(|r| version(&r.tag)))
+}
+
+fn feed_entries(body: &[u8]) -> Result<Vec<Release>, String> {
     if body.len() > MAX_BYTES {
         return Err("Release feed is too large.".into());
     }
@@ -82,7 +91,7 @@ fn parse_feed(body: &[u8]) -> Result<Option<Release>, String> {
     if !doc.root_element().has_tag_name("feed") {
         return Err("Release feed could not be read.".into());
     }
-    let mut newest: Option<Release> = None;
+    let mut releases = Vec::new();
     for entry in doc
         .root_element()
         .children()
@@ -97,21 +106,15 @@ fn parse_feed(body: &[u8]) -> Result<Option<Release>, String> {
                 .unwrap_or("")
         };
         let tag = field("id").rsplit('/').next().unwrap_or("");
-        if let Some(v) = version(tag) {
-            if newest
-                .as_ref()
-                .and_then(|r| version(&r.tag))
-                .is_none_or(|old| v > old)
-            {
-                newest = Some(Release {
-                    tag: tag.into(),
-                    notes: plain_text(field("content")),
-                    download: format!("{RELEASES}/tag/{tag}"),
-                });
-            }
+        if version(tag).is_some() {
+            releases.push(Release {
+                tag: tag.into(),
+                notes: plain_text(field("content")),
+                download: format!("{RELEASES}/tag/{tag}"),
+            });
         }
     }
-    Ok(newest)
+    Ok(releases)
 }
 
 enum Response {
@@ -123,6 +126,7 @@ enum Response {
 }
 
 struct Checked {
+    clear_release: bool,
     release: Option<Release>,
     etag: Option<String>,
 }
@@ -137,6 +141,7 @@ fn check(
     match fetch(FEED, etag) {
         Ok(Response::Unchanged) => {
             return Ok(Checked {
+                clear_release: false,
                 release: None,
                 etag: etag.map(str::to_owned),
             })
@@ -146,6 +151,7 @@ fn check(
                 feed_etag = etag;
                 if top.as_ref().and_then(|r| version(&r.tag)) <= version(known) {
                     return Ok(Checked {
+                        clear_release: false,
                         release: None,
                         etag: feed_etag,
                     });
@@ -198,12 +204,64 @@ fn check(
         })
         .unwrap_or_else(|| format!("{RELEASES}/tag/{tag}"));
     Ok(Checked {
+        clear_release: false,
         release: (version(tag) > version(known)).then(|| Release {
             tag: tag.into(),
             notes,
             download,
         }),
         etag: feed_etag,
+    })
+}
+
+fn check_package(
+    fetch: &impl Fn(&str, Option<&str>) -> Result<Response, String>,
+    install: &Install,
+    current: &str,
+    known: &str,
+    etag: Option<&str>,
+) -> Result<Checked, String> {
+    let source = install
+        .source()
+        .ok_or("No package metadata source was found.")?;
+    let Response::Body { bytes, etag } = fetch(source, etag)? else {
+        return Ok(Checked {
+            clear_release: false,
+            release: None,
+            etag: etag.map(str::to_owned),
+        });
+    };
+    let tag = package::parse_version(install, &bytes)?;
+    if version(&tag) <= version(current) {
+        return Ok(Checked {
+            clear_release: true,
+            release: None,
+            etag,
+        });
+    }
+    if tag == known {
+        return Ok(Checked {
+            clear_release: false,
+            release: None,
+            etag,
+        });
+    }
+    let notes = match fetch(FEED, None) {
+        Ok(Response::Body { bytes, .. }) => feed_entries(&bytes)
+            .ok()
+            .and_then(|entries| entries.into_iter().find(|entry| entry.tag == tag))
+            .map(|entry| entry.notes)
+            .unwrap_or_default(),
+        _ => String::new(),
+    };
+    Ok(Checked {
+        clear_release: false,
+        release: Some(Release {
+            download: format!("{RELEASES}/tag/{tag}"),
+            tag,
+            notes,
+        }),
+        etag,
     })
 }
 
@@ -263,23 +321,12 @@ fn now() -> u64 {
         .as_secs()
 }
 
-fn install_command(path: &Path) -> Option<&'static str> {
-    let path = path
-        .to_string_lossy()
-        .replace('\\', "/")
-        .to_ascii_lowercase();
-    if path.contains("/caskroom/") {
-        Some("brew upgrade --cask dutchman")
-    } else if path.contains("/cellar/dutchman/") || path.contains("/homebrew/opt/dutchman/") {
-        Some("brew upgrade dutchman-cad/tap/dutchman")
-    } else if path.contains("/scoop/apps/dutchman/") {
-        Some("scoop update dutchman")
-    } else {
-        None
-    }
-}
-
 pub struct Updater {
+    install: Install,
+    job: Job,
+    closing: bool,
+    scoop_confirm: bool,
+    scoop_failure: bool,
     automatic: bool,
     skipped: String,
     remind_at: u64,
@@ -297,7 +344,14 @@ pub struct Updater {
 impl Updater {
     pub fn new(settings: Option<&Value>) -> Self {
         let get = |key| settings.and_then(|v| v.get(key));
-        Self {
+        let install = Install::current();
+        let failure = package::scoop_startup(&install);
+        let mut updater = Self {
+            install,
+            job: Job::new(),
+            closing: false,
+            scoop_confirm: false,
+            scoop_failure: false,
             automatic: get("automatic").and_then(Value::as_bool).unwrap_or(true),
             skipped: get("skipped").and_then(Value::as_str).unwrap_or("").into(),
             remind_at: get("remind_at").and_then(Value::as_u64).unwrap_or(0),
@@ -313,7 +367,20 @@ impl Updater {
                 option_env!("DUTCHMAN_RELEASE_BUILD") == Some("1") && !cfg!(debug_assertions),
                 std::env::var("DUTCHMAN_UPDATE_CHECK").ok().as_deref(),
             ),
+        };
+        if let Some(failure) = failure {
+            updater.release = Some(Release {
+                download: format!("{RELEASES}/tag/{}", failure.tag),
+                tag: failure.tag.clone(),
+                notes: String::new(),
+            });
+            updater
+                .job
+                .preview(failure.tag, Phase::Failed(failure.error), &failure.output);
+            updater.open = true;
+            updater.scoop_failure = true;
         }
+        updater
     }
     pub fn saved(&self) -> Value {
         serde_json::json!({"automatic": self.automatic, "skipped": self.skipped, "remind_at": self.remind_at})
@@ -324,7 +391,7 @@ impl Updater {
             .is_some_and(|r| r.tag != self.skipped && time >= self.remind_at)
     }
     fn start(&mut self, ctx: &egui::Context, manual: bool) {
-        if !self.allowed || self.rx.is_some() {
+        if !self.allowed || self.rx.is_some() || self.job.holds_release() {
             return;
         }
         let known = self
@@ -333,17 +400,46 @@ impl Updater {
             .map(|r| r.tag.clone())
             .unwrap_or_else(|| format!("v{}", env!("CARGO_PKG_VERSION")));
         let etag = self.etag.clone();
+        let install = self.install.clone();
         let (tx, rx) = channel();
         self.rx = Some(rx);
         self.manual = manual;
         self.status = "Checking for updates…".into();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
-            let _ = tx.send(check(&fetch, &known, etag.as_deref()));
+            let result = if install.source().is_some() {
+                check_package(
+                    &fetch,
+                    &install,
+                    &format!("v{}", env!("CARGO_PKG_VERSION")),
+                    &known,
+                    etag.as_deref(),
+                )
+            } else {
+                check(&fetch, &known, etag.as_deref())
+            };
+            let _ = tx.send(result);
             ctx.request_repaint();
         });
     }
     pub fn tick(&mut self, ctx: &egui::Context) {
+        if self.job.busy() && ctx.input(|i| i.viewport().close_requested()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.open = true;
+            self.closing = true;
+        }
+        if self.job.snapshot().phase == Phase::Restarted {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+        if self.scoop_failure {
+            if self.open {
+                return;
+            }
+            self.scoop_failure = false;
+        }
+        if self.job.holds_release() {
+            return;
+        }
         if let Some(rx) = &self.rx {
             let result = match rx.try_recv() {
                 Ok(r) => Some(r),
@@ -358,6 +454,9 @@ impl Updater {
                 match result {
                     Ok(checked) => {
                         self.etag = checked.etag;
+                        if checked.clear_release {
+                            self.release = None;
+                        }
                         if let Some(release) = checked.release {
                             self.release = Some(release);
                         }
@@ -409,7 +508,7 @@ impl Updater {
             self.settings = true;
         }
     }
-    pub fn windows(&mut self, ctx: &egui::Context) {
+    pub fn windows(&mut self, ctx: &egui::Context, can_restart: bool) {
         let mut settings = self.settings;
         egui::Window::new("Settings")
             .open(&mut settings)
@@ -421,7 +520,7 @@ impl Updater {
                 );
                 if ui
                     .add_enabled(
-                        self.allowed && self.rx.is_none(),
+                        self.allowed && self.rx.is_none() && !self.job.holds_release(),
                         egui::Button::new("Check now"),
                     )
                     .clicked()
@@ -448,10 +547,11 @@ impl Updater {
                 .resizable(false)
                 .default_width(420.0)
                 .show(ctx, |ui| {
-                    ui.heading(format!(
-                        "Dutchman {} is available",
-                        release.tag.trim_start_matches('v')
-                    ));
+                    if matches!(self.job.snapshot().phase, Phase::Installed | Phase::Restarted) {
+                        ui.heading(format!("Dutchman {} is installed", self.job.tag.trim_start_matches('v')));
+                    } else {
+                        ui.heading(format!("Dutchman {} is available", release.tag.trim_start_matches('v')));
+                    }
                     egui::ScrollArea::vertical()
                         .max_height(240.0)
                         .show(ui, |ui| {
@@ -462,29 +562,20 @@ impl Updater {
                                 ui.label(notes_body(&release.notes, &release.tag));
                             }
                         });
-                    let exe = std::env::current_exe()
-                        .ok()
-                        .and_then(|p| p.canonicalize().ok().or(Some(p)));
-                    if let Some(command) = exe.as_deref().and_then(install_command) {
-                        ui.label("Run this command to update:");
-                        ui.code(command);
-                        if ui.button("Copy command").clicked() {
-                            ctx.copy_text(command.into());
-                        }
-                    }
+                    self.package_ui(ui, &release, can_restart);
                     ui.horizontal(|ui| {
-                        if install_command_for_current_exe().is_none()
+                        if self.install == Install::Direct
                             && ui
                                 .add(egui::Button::new("Download").fill(ui.visuals().selection.bg_fill))
                                 .clicked()
                         {
                             ctx.open_url(egui::OpenUrl::new_tab(&release.download));
                         }
-                        if ui.button("Skip this version").clicked() {
+                        if ui.add_enabled(!self.job.busy(), egui::Button::new("Skip this version")).clicked() {
                             self.skipped = release.tag.clone();
                             self.open = false;
                         }
-                        if ui.button("Remind me later").on_hover_text("Hide updates for three days").clicked() {
+                        if ui.add_enabled(!self.job.busy(), egui::Button::new("Remind me later")).on_hover_text("Hide updates for three days").clicked() {
                             self.remind_at = now().saturating_add(THREE_DAYS);
                             self.open = false;
                         }
@@ -493,9 +584,124 @@ impl Updater {
         }
         self.open = open && self.open;
     }
+    fn package_ui(&mut self, ui: &mut egui::Ui, release: &Release, can_restart: bool) {
+        let Some(command) = self.install.command() else {
+            return;
+        };
+        let progress = self.job.snapshot();
+        match &progress.phase {
+            Phase::Idle => {
+                if matches!(self.install, Install::Scoop(_)) {
+                    if self.scoop_confirm {
+                        ui.label("Dutchman closes, Scoop updates it, and Dutchman opens again.");
+                        ui.horizontal(|ui| {
+                            if ui
+                                .add_enabled(can_restart, egui::Button::new("Update and restart"))
+                                .clicked()
+                            {
+                                self.skipped.clear();
+                                self.remind_at = 0;
+                                self.scoop_confirm = false;
+                                self.job.handoff_scoop(
+                                    self.install.clone(),
+                                    release.tag.clone(),
+                                    ui.ctx(),
+                                );
+                            }
+                            if ui.button("Cancel").clicked() {
+                                self.scoop_confirm = false;
+                            }
+                        });
+                        if !can_restart {
+                            ui.label("Finish the current conversion before updating.");
+                        }
+                    } else if ui.button("Update with Scoop").clicked() {
+                        self.scoop_confirm = true;
+                    }
+                } else if ui.button(self.install.label()).clicked() {
+                    self.skipped.clear();
+                    self.remind_at = 0;
+                    self.job
+                        .start(self.install.clone(), release.tag.clone(), ui.ctx());
+                }
+            }
+            Phase::Running | Phase::Restarting => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(if progress.phase == Phase::Restarting {
+                        "Restarting Dutchman…"
+                    } else {
+                        "Updating Dutchman…"
+                    });
+                });
+                ui.label("You can close this update window; the update will keep running.");
+                if self.closing {
+                    ui.label("Finish updating before closing Dutchman.");
+                }
+            }
+            Phase::Installed | Phase::Restarted => {
+                if ui
+                    .add_enabled(can_restart, egui::Button::new("Restart Dutchman"))
+                    .clicked()
+                {
+                    self.job.restart(self.install.clone(), ui.ctx());
+                }
+                if !can_restart {
+                    ui.label("Finish the current conversion before restarting.");
+                }
+            }
+            Phase::Failed(error) => {
+                ui.label(error);
+            }
+        }
+        if !progress.tail.is_empty() {
+            egui::ScrollArea::vertical()
+                .id_salt("package-output")
+                .max_height(190.0)
+                .show(ui, |ui| {
+                    ui.monospace(progress.tail.iter().cloned().collect::<Vec<_>>().join("\n"));
+                });
+        }
+        ui.separator();
+        ui.label("Or run this command yourself:");
+        if matches!(self.install, Install::Scoop(_)) {
+            ui.label("Close Dutchman before running this command in PowerShell.");
+        }
+        ui.code(command);
+        if ui.button("Copy command").clicked() {
+            ui.ctx().copy_text(command.into());
+        }
+    }
+
+    /// Supplies a Homebrew job without starting any processes, for GPU screenshots.
+    pub fn preview_homebrew(&mut self, installed: bool) {
+        self.install = Install::Cask("/opt/homebrew".into());
+        self.open = true;
+        let output = "Running /opt/homebrew/bin/brew update\nAlready up-to-date.\nRunning /opt/homebrew/bin/brew upgrade --cask dutchman-cad/tap/dutchman-convert\n==> Downloading Dutchman Convert\n==> Upgrading dutchman-convert\n==> Moving App 'Dutchman Convert.app' to '/Applications/Dutchman Convert.app'";
+        self.job.preview(
+            self.release
+                .as_ref()
+                .map(|r| r.tag.clone())
+                .unwrap_or_default(),
+            if installed {
+                Phase::Installed
+            } else {
+                Phase::Running
+            },
+            output,
+        );
+    }
+    /// Supplies the Scoop confirmation without running any package-manager processes.
+    pub fn preview_scoop(&mut self) {
+        self.install = Install::Scoop("C:/Users/Owner/scoop/shims".into());
+        self.job = Job::new();
+        self.scoop_confirm = true;
+        self.open = true;
+    }
     /// Supplies a release without networking for UI previews and GPU screenshots.
     pub fn preview(&mut self, release: Release) {
         self.allowed = false;
+        self.install = Install::Direct;
         self.release = Some(release);
         self.skipped.clear();
         self.remind_at = 0;
@@ -504,14 +710,6 @@ impl Updater {
 
 #[cfg(test)]
 mod tests;
-
-/// The update command for how this copy was installed, when it was installed by a package manager.
-fn install_command_for_current_exe() -> Option<&'static str> {
-    let exe = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.canonicalize().ok().or(Some(p)))?;
-    install_command(&exe)
-}
 
 /// Release notes without a first line that only repeats the version the heading already names.
 fn notes_body<'a>(notes: &'a str, tag: &str) -> &'a str {

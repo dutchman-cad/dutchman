@@ -242,6 +242,31 @@ fn screenshots() {
             name,
             "The update window under the pill.",
         );
+        for (installed, state, description) in [
+            (false, "running", "Updating with Homebrew: progress and the output tail."),
+            (true, "installed", "Homebrew finished: Restart Dutchman."),
+        ] {
+            harness.state_mut().updater.preview_homebrew(installed);
+            harness.run_steps(4);
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("00-update-homebrew-{state}"),
+                name,
+                description,
+            );
+        }
+        harness.state_mut().updater.preview_scoop();
+        harness.run();
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "00-update-scoop-confirm",
+            name,
+            "Scoop: confirm closing Dutchman to update it.",
+        );
         harness.state_mut().updater.open = false;
         harness.run();
         shot(
@@ -536,4 +561,58 @@ fn update_pill_adapts_to_width_and_waits_for_a_click() {
             .query_by_label("Dutchman 0.2.6 is available")
             .is_none());
     }
+}
+
+#[test]
+fn homebrew_job_survives_window_close_and_offers_restart_on_success() {
+    let mut harness = harness();
+    harness
+        .state_mut()
+        .updater
+        .preview(dutchman_gui::update::Release {
+            tag: "v0.2.6".into(),
+            notes: "Release notes".into(),
+            download: "https://github.com/dutchman-cad/dutchman/releases/tag/v0.2.6".into(),
+        });
+    harness.state_mut().updater.preview_homebrew(false);
+    harness.run_steps(3);
+    assert!(harness.query_by_label("Updating Dutchman…").is_some());
+    harness.state_mut().updater.open = false;
+    harness.run_steps(3);
+    harness.get_by_label("Update").click();
+    harness.run_steps(3);
+    assert!(harness.query_by_label("Updating Dutchman…").is_some());
+    assert!(harness.query_by_label("Restart Dutchman").is_none());
+    harness.state_mut().updater.preview_homebrew(true);
+    harness.run_steps(3);
+    assert!(harness
+        .query_by_label("Dutchman 0.2.6 is installed")
+        .is_some());
+    assert!(harness.query_by_label("Restart Dutchman").is_some());
+    assert!(harness.query_by_label("Copy command").is_some());
+}
+
+#[test]
+fn scoop_confirmation_can_be_cancelled_without_starting_a_process() {
+    let mut harness = harness();
+    harness
+        .state_mut()
+        .updater
+        .preview(dutchman_gui::update::Release {
+            tag: "v0.2.6".into(),
+            notes: "Release notes".into(),
+            download: "https://github.com/dutchman-cad/dutchman/releases/tag/v0.2.6".into(),
+        });
+    harness.state_mut().updater.preview_scoop();
+    harness.run();
+    assert!(harness
+        .query_by_label("Dutchman closes, Scoop updates it, and Dutchman opens again.")
+        .is_some());
+    assert!(harness.query_by_label("Update and restart").is_some());
+    harness.get_by_label("Cancel").click();
+    harness.run();
+    assert!(harness.query_by_label("Update and restart").is_none());
+    harness.get_by_label("Update with Scoop").click();
+    harness.run();
+    assert!(harness.query_by_label("Update and restart").is_some());
 }
