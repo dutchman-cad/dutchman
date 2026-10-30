@@ -3430,6 +3430,134 @@ fn solidcraft_replays_a_native_annulus_with_its_hole() {
     assert!((volume[0] - expected).abs() / expected < dutchman_solidcraft::VOLUME_TOLERANCE);
 }
 
+/// A synthetic panel with twenty circular holes centred on an unused inner rectangle.
+/// The region selects the panel and circles; the inner rectangle is a layout helper.
+fn panel_region() -> Model {
+    let profile = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
+        "regions": [{"region": "loops", "outer": 0,
+            "holes": (2..22).rev().collect::<Vec<_>>()}]}});
+    let mut model = cube_with_history(10.0, profile, None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    m["sketch_constraints"] = json!([]);
+    let mut entities = vec![
+        line(1, [0.0, 0.0], [100.0, 0.0]),
+        line(2, [100.0, 0.0], [100.0, 100.0]),
+        line(3, [100.0, 100.0], [0.0, 100.0]),
+        line(4, [0.0, 100.0], [0.0, 0.0]),
+        line(5, [10.0, 10.0], [90.0, 10.0]),
+        line(6, [90.0, 10.0], [90.0, 90.0]),
+        line(7, [90.0, 90.0], [10.0, 90.0]),
+        line(8, [10.0, 90.0], [10.0, 10.0]),
+    ];
+    let boundary = |keys: Vec<u32>| {
+        json!(keys
+            .into_iter()
+            .map(|key| json!({
+                "entity": format!("f3d:model:sketch-entity#{key}")
+            }))
+            .collect::<Vec<_>>())
+    };
+    let mut profiles = vec![boundary((1..5).collect()), boundary((5..9).collect())];
+    for side in 0..4 {
+        for i in 0..5 {
+            let along = 20.0 + f64::from(i) * 15.0;
+            let center = match side {
+                0 => [along, 10.0],
+                1 => [90.0, along],
+                2 => [along, 90.0],
+                _ => [10.0, along],
+            };
+            let key = 9 + side * 5 + i;
+            entities.push(entity(
+                key,
+                json!({"kind": "circle",
+                "center": {"u": center[0], "v": center[1]}, "radius": 1.0}),
+            ));
+            profiles.push(boundary(vec![key]));
+        }
+    }
+    m["sketch_entities"] = json!(entities);
+    m["sketches"][0]["profiles"] = json!(profiles);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn explicit_regions_keep_unused_layout_lines_out_of_their_holes() {
+    let model = panel_region();
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    let (document, report) = convert(&model, &writer);
+    let curves = document["features"][0]["sketch"]["curves"]
+        .as_array()
+        .unwrap();
+    assert_eq!(
+        curves.iter().filter(|c| c["construction"] == true).count(),
+        4
+    );
+    assert!(curves[4..8].iter().all(|c| c["construction"] == true));
+    assert!(curves[8..].iter().all(|c| c["construction"] == false));
+    assert!(report
+        .losses()
+        .iter()
+        .any(|loss| { loss.severity == Severity::Info && loss.detail.contains("4 lines") }));
+
+    // Other selections, including an opaque pick depending on the sketch feature, prevent
+    // inference. Suppressed consumers do not change the sketch.
+    for profile in [
+        whole_sketch(),
+        json!({"kind": "native", "value": "unresolved profile"}),
+        json!({"kind": "feature", "value": "f3d:model:feature#1"}),
+        json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
+            "regions": [{"region": "loops", "outer": 1, "holes": []}]}}),
+        json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
+        "regions": [{"region": "trimmed", "outer_boundary": [{
+            "entity": "f3d:model:sketch-entity#9", "parameter_range": [0.0, 1.0]
+        }]}]}}),
+    ] {
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut other = wire["model"]["features"][1].clone();
+        other["id"] = json!("synthetic:panel:feature#3");
+        other["ordinal"] = json!(2);
+        other["definition"]["profile"] = profile;
+        if other["definition"]["profile"]["kind"] == "feature" {
+            other["dependencies"] = json!([]);
+        }
+        wire["model"]["features"]
+            .as_array_mut()
+            .unwrap()
+            .push(other);
+        let mut shared = model.clone();
+        shared.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (document, report) = convert(&shared, &writer);
+        if wire["model"]["features"][2]["definition"]["profile"]["kind"] == "native" {
+            assert!(history_line(&report).contains("native profiles are not mapped yet"));
+        }
+        assert!(document["features"][0]["sketch"]["curves"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["construction"] == false));
+        wire["model"]["features"][2]["suppressed"] = json!(true);
+        shared.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (document, _) = convert(&shared, &writer);
+        assert!(document["features"][0]["sketch"]["curves"]
+            .as_array()
+            .unwrap()[4..8]
+            .iter()
+            .all(|c| c["construction"] == true));
+    }
+}
+
+#[test]
+fn solidcraft_replays_a_panel_region_with_twenty_circular_holes() {
+    let Some(cli) = solidcraft() else { return };
+    let volume = volumes(&cli, &written(&panel_region()).0);
+    let expected = (10_000.0 - 20.0 * std::f64::consts::PI) * 10.0;
+    assert_eq!(volume.len(), 1);
+    assert!((volume[0] - expected).abs() / expected < dutchman_solidcraft::VOLUME_TOLERANCE);
+}
+
 /// The shape cadmpeg 0.6's Inventor decoder gives an extrude: its profile as native profile
 /// selections of the sketch, an explicit direction, a symmetric or through-next extent. In a
 /// sketch of one profile the selection can only be that profile; multiple loops must

@@ -327,7 +327,12 @@ fn split_loop(
     let sketch = ctx
         .row("sketches", sketch)
         .ok_or("its sketch has no profiles")?;
-    let construction = super::crossing::crossing(sketch, &source);
+    let mut construction = super::crossing::crossing(sketch, &source);
+    construction.extend(super::crossing::region_lines(
+        sketch,
+        &source,
+        ctx.arena("features"),
+    ));
     let entities: Vec<&Value> = source
         .into_iter()
         .filter(|entity| {
