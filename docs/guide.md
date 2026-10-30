@@ -103,11 +103,18 @@ unless `--quiet` is set. Estimates below 0.1 GB read `under 0.1 GB`, and times b
 Estimates use file size and format. For `.f3d`, `.f3z`, and
 `.FCStd`, a bounded ZIP pre-read counts members and uses their total uncompressed size; for
 Fusion archives it also reads each design's own directory, one design at a time, and never
-decodes a design. The figures are calibrated on measured conversions of Fusion assemblies and
-parts, Inventor parts, and SolidWorks parts: about 52 bytes of memory per byte of Fusion design
-content (57 with history) and 140 per byte of SolidWorks file. The band is ±60 % for Fusion,
-±40 % for SolidWorks, and ±100 % for formats without measurements. Times do not include the
-history check in SolidCraft, which can add several minutes on a large assembly.
+decodes a design. Memory estimates add a fixed process cost to a content-dependent cost;
+keeping history scales the content cost, not the fixed overhead. Tiny Inventor and SolidWorks
+parts start at about 18 MB with every preset. The Fusion content term is about 52 bytes per
+byte (57 with history). FreeCAD uses about 29 MB plus 150 bytes per byte of archive content,
+with a 1.04 history multiplier on that content term. The small-file fit uses synthetic parts
+and CC0 FreeCAD recipes from 0.21.2, 1.0.2 and 1.1.4, measured on Windows and macOS; the Mac
+measurements used an older nightly decoder. Larger Fusion assemblies retain their earlier
+calibration. The band is ±60 % for Fusion, ±40 % for SolidWorks, ±50 % for Inventor parts,
+and ±100 % for FreeCAD and formats without measurements. Time uses separate history factors;
+this memory refit does not change time estimates. Times are rounded up to whole seconds,
+so subsecond conversions are especially approximate. They leave out the history check in
+SolidCraft, which can add several minutes on a large assembly.
 Separate assembly part files are not pre-read, so their cost can be underestimated.
 An estimate is unknown for formats this build cannot convert, or when metadata cannot
 be read, including ZIP directories exceeding 10,000 members or 16 MiB, and unreadable

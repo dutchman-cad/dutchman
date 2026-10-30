@@ -199,11 +199,13 @@ pub(crate) fn may_be_assembly(input: &Path) -> bool {
 
 struct Coefficients {
     format: Format,
+    // Fixed process overhead; history scales the content term, not this floor.
     base_bytes: u64,
     bytes_per_byte: f64,
     base_seconds: f64,
     seconds_per_mib: f64,
     history_factor: f64,
+    history_seconds_factor: f64,
     band: f64,
 }
 
@@ -214,6 +216,10 @@ struct Coefficients {
 // and on, on Linux and Windows, with the default parallel part workers. Peak memory is about 52
 // bytes per byte of Fusion design content (57 with history) and 140 per byte of SolidWorks
 // file. Formats without measurements keep a conservative guess and a band of 100 %.
+// Small-file floors were refit on the synthetic Inventor and SolidWorks cubes and
+// FreeCAD recipe/fixture documents: exact-bundle Windows conversions and a pre-preset macOS
+// nightly (see guide.md). Fixed overhead is separate from content-dependent history memory.
+// Memory and time have separate history factors so a RAM fit does not change time estimates.
 // All format-dependent coefficients, including history factors and bands, live in this table.
 const COEFFICIENTS: &[Coefficients] = &[
     Coefficients {
@@ -223,6 +229,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         base_seconds: 0.2,
         seconds_per_mib: 1.4,
         history_factor: 1.1,
+        history_seconds_factor: 1.1,
         band: 0.6,
     },
     Coefficients {
@@ -232,15 +239,17 @@ const COEFFICIENTS: &[Coefficients] = &[
         base_seconds: 0.2,
         seconds_per_mib: 1.4,
         history_factor: 1.1,
+        history_seconds_factor: 1.1,
         band: 0.6,
     },
     Coefficients {
         format: Format::InventorPart,
-        base_bytes: 32_000_000,
+        base_bytes: 18_000_000,
         bytes_per_byte: 25.0,
         base_seconds: 0.1,
         seconds_per_mib: 2.0,
         history_factor: 2.0,
+        history_seconds_factor: 2.0,
         band: 0.5,
     },
     Coefficients {
@@ -250,15 +259,17 @@ const COEFFICIENTS: &[Coefficients] = &[
         base_seconds: 1.0,
         seconds_per_mib: 2.0,
         history_factor: 3.0,
+        history_seconds_factor: 3.0,
         band: 1.0,
     },
     Coefficients {
         format: Format::SolidWorksPart,
-        base_bytes: 40_000_000,
+        base_bytes: 18_000_000,
         bytes_per_byte: 25.0,
         base_seconds: 1.0,
         seconds_per_mib: 5.0,
         history_factor: 1.7,
+        history_seconds_factor: 1.7,
         band: 0.4,
     },
     Coefficients {
@@ -268,15 +279,17 @@ const COEFFICIENTS: &[Coefficients] = &[
         base_seconds: 1.0,
         seconds_per_mib: 5.0,
         history_factor: 3.0,
+        history_seconds_factor: 3.0,
         band: 1.0,
     },
     Coefficients {
         format: Format::FreeCadDocument,
-        base_bytes: 100_000_000,
-        bytes_per_byte: 30.0,
+        base_bytes: 29_000_000,
+        bytes_per_byte: 150.0,
         base_seconds: 1.0,
         seconds_per_mib: 2.0,
-        history_factor: 3.0,
+        history_factor: 1.04,
+        history_seconds_factor: 3.0,
         band: 1.0,
     },
     Coefficients {
@@ -286,6 +299,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         base_seconds: 1.0,
         seconds_per_mib: 2.0,
         history_factor: 3.0,
+        history_seconds_factor: 3.0,
         band: 1.0,
     },
     Coefficients {
@@ -295,6 +309,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         base_seconds: 1.0,
         seconds_per_mib: 2.0,
         history_factor: 3.0,
+        history_seconds_factor: 3.0,
         band: 1.0,
     },
     Coefficients {
@@ -304,6 +319,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         base_seconds: 1.0,
         seconds_per_mib: 2.0,
         history_factor: 3.0,
+        history_seconds_factor: 3.0,
         band: 1.0,
     },
     Coefficients {
@@ -313,6 +329,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         base_seconds: 1.0,
         seconds_per_mib: 2.0,
         history_factor: 3.0,
+        history_seconds_factor: 3.0,
         band: 1.0,
     },
     Coefficients {
@@ -322,6 +339,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         base_seconds: 1.0,
         seconds_per_mib: 2.0,
         history_factor: 3.0,
+        history_seconds_factor: 3.0,
         band: 1.0,
     },
     Coefficients {
@@ -331,6 +349,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         base_seconds: 1.0,
         seconds_per_mib: 2.0,
         history_factor: 3.0,
+        history_seconds_factor: 3.0,
         band: 1.0,
     },
     Coefficients {
@@ -340,6 +359,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         base_seconds: 1.0,
         seconds_per_mib: 1.0,
         history_factor: 2.0,
+        history_seconds_factor: 2.0,
         band: 1.0,
     },
     Coefficients {
@@ -349,6 +369,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         base_seconds: 1.0,
         seconds_per_mib: 1.0,
         history_factor: 2.0,
+        history_seconds_factor: 2.0,
         band: 1.0,
     },
     Coefficients {
@@ -358,6 +379,7 @@ const COEFFICIENTS: &[Coefficients] = &[
         base_seconds: 1.0,
         seconds_per_mib: 2.0,
         history_factor: 3.0,
+        history_seconds_factor: 3.0,
         band: 1.0,
     },
 ];
@@ -389,13 +411,18 @@ pub fn estimate(input: &Path, choices: &Choices) -> Option<Estimate> {
     } else {
         1.0
     };
+    let seconds_factor = if choices.history {
+        coefficients.history_seconds_factor
+    } else {
+        1.0
+    };
     Some(Estimate {
-        peak_bytes: ((coefficients.base_bytes as f64 + coefficients.bytes_per_byte * bytes as f64)
-            * factor)
+        peak_bytes: (coefficients.base_bytes as f64
+            + coefficients.bytes_per_byte * bytes as f64 * factor)
             .ceil() as u64,
         seconds: ((coefficients.base_seconds
             + coefficients.seconds_per_mib * bytes as f64 / (1 << 20) as f64)
-            * factor)
+            * seconds_factor)
             .ceil() as u64,
         band: coefficients.band,
     })
@@ -595,6 +622,7 @@ mod tests {
                     && c.seconds_per_mib > 0.0
             );
             assert!(c.history_factor.is_finite() && c.history_factor > 1.0);
+            assert!(c.history_seconds_factor.is_finite() && c.history_seconds_factor > 1.0);
             assert!(c.band.is_finite() && c.band > 0.0 && c.band <= 1.0);
         }
     }
@@ -622,6 +650,41 @@ mod tests {
         zip.finish().unwrap();
         assert_eq!(archive_size(&path, true), Some((4 << 20, 1)));
         assert_eq!(archive_size(&path, false), Some((inner.len() as u64, 1)));
+    }
+
+    #[test]
+    fn history_does_not_multiply_the_fixed_process_floor() {
+        let dir = tempfile::tempdir().unwrap();
+        for extension in ["ipt", "sldprt"] {
+            let path = dir.path().join(format!("synthetic.{extension}"));
+            std::fs::write(&path, []).unwrap();
+            let fast = estimate(&path, &Choices::of(Preset::Fast)).unwrap();
+            let full = estimate(&path, &Choices::of(Preset::Full)).unwrap();
+            assert_eq!(fast.peak_bytes, full.peak_bytes);
+            // Content still costs more when history is kept.
+            std::fs::write(&path, [0; 5120]).unwrap();
+            let fast_content = estimate(&path, &Choices::of(Preset::Fast)).unwrap();
+            let full_content = estimate(&path, &Choices::of(Preset::Full)).unwrap();
+            assert!(fast_content.peak_bytes > fast.peak_bytes);
+            assert!(full_content.peak_bytes > fast_content.peak_bytes);
+        }
+    }
+
+    #[cfg(feature = "freecad")]
+    #[test]
+    fn memory_history_fit_keeps_the_existing_time_multiplier() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("synthetic.FCStd");
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+        zip.start_file("synthetic", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        zip.write_all(&vec![0; 1 << 20]).unwrap();
+        zip.finish().unwrap();
+        let fast = estimate(&path, &Choices::of(Preset::Fast)).unwrap();
+        let full = estimate(&path, &Choices::of(Preset::Full)).unwrap();
+        // RAM's 1.04 multiplier must not replace the existing 3x time multiplier.
+        assert_eq!(fast.seconds, 3);
+        assert_eq!(full.seconds, 9);
     }
 
     #[test]

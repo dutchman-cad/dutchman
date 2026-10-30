@@ -106,7 +106,9 @@ The result contains `ok: true`, `estimate: {peak_bytes, seconds, band}`,
 `choices: {preset, history, sketches, joints}`, and `fits` (boolean, or `null` when
 memory or the estimate is unknown). `estimate` itself can be `null`. ZIP directory
 reads are bounded and no design is decoded. The band is ±60 % for Fusion, ±40 % for
-SolidWorks and ±100 % for formats without measurements (see guide.md). A pre-read cannot confirm archive assembly structure,
+SolidWorks, ±50 % for Inventor parts, and ±100 % for FreeCAD and formats without measurements
+(see guide.md). Memory includes fixed process overhead that is not multiplied by history;
+its content cost and the time estimate have separate history factors. A pre-read cannot confirm archive assembly structure,
 so Standard's budgeted choices are provisional until normal decoding. An over-budget
 dry run returns `fits: false`; it writes nothing and does not attempt conversion.
 Normal convert reports, including batch results, carry the same `estimate` and
