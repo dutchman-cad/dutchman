@@ -5,6 +5,8 @@ name: Public corpus sweep
 # Nothing is published: the results are workflow artifacts and the job summary.
 
 on:
+  pull_request:
+    paths: ['corpus/**']
   workflow_dispatch:
     inputs:
       sources:
@@ -47,8 +49,8 @@ jobs:
       cadmpeg: ${{ steps.version.outputs.cadmpeg }}
     env:
       GH_TOKEN: ${{ github.token }}
-      WHICH: ${{ inputs.dutchman }}
-      CADMPEG: ${{ inputs.cadmpeg }}
+      WHICH: ${{ inputs.dutchman || 'main' }}
+      CADMPEG: ${{ inputs.cadmpeg || 'pinned' }}
     steps:
       - name: Choose the source
         id: choose
@@ -135,9 +137,9 @@ jobs:
       - id: plan
         env:
           GH_TOKEN: ${{ github.token }}
-          SOURCES: ${{ inputs.sources }}
-          STEP: ${{ inputs.step }}
-          PRESET: ${{ inputs.preset }}
+          SOURCES: ${{ inputs.sources || 'PrintersForAnts/Crucible,PrintersForAnts/ColonyClacker' }}
+          STEP: ${{ inputs.step || 'true' }}
+          PRESET: ${{ inputs.preset || 'standard' }}
         run: |
           python3 scripts/corpus_plan.py --corpus corpus/public.toml --out plan.json \
             --sources "$SOURCES" --step "$STEP" --preset "$PRESET"
