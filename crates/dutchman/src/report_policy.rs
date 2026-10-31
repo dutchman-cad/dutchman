@@ -279,7 +279,7 @@ mod tests {
             PrivateLink {
                 design_mb: 300,
                 step_mb: 300,
-                zip_mb: 1500,
+                zip_mb: 1536,
                 hours: 72
             }
         );
