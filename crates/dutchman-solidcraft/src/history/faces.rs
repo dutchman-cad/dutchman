@@ -361,6 +361,9 @@ fn faces<'a>(ctx: &Context<'a>, body: &Value) -> Vec<&'a Value> {
 fn point_on(ctx: &Context, face: &Value) -> Option<V3> {
     let surface = ctx.row("surfaces", face.get("surface")?.as_str()?)?;
     let geometry = surface.get("geometry")?;
+    if geometry.get("kind")?.as_str()? == "cylinder" {
+        return cylinder_point(ctx, face, geometry);
+    }
     if geometry.get("kind")?.as_str()? != "plane" {
         return None;
     }
@@ -419,6 +422,89 @@ fn point_on(ctx: &Context, face: &Value) -> Option<V3> {
         .filter(|p| p.iter().all(|c| c.is_finite()))
 }
 
+/// A point on a cylindrical face, from where its boundary meets the cylinder: at the middle of
+/// its height, and at the angle opposite the seam of a face that goes all the way round, or the
+/// middle of the shorter way between its two sides. Faces whose corners leave that unclear
+/// (a hole in the cylinder, sides half a turn apart, corners all round) give none.
+fn cylinder_point(ctx: &Context, face: &Value, geometry: &Value) -> Option<V3> {
+    let origin = v3(geometry.get("origin"))?;
+    let axis = super::sketch::unit(v3(geometry.get("axis"))?)?;
+    let reference = v3(geometry.get("ref_direction"))?;
+    let radius = geometry.get("radius")?.as_f64().filter(|r| *r > 0.0)?;
+    let side = super::sketch::unit(super::sketch::cross(axis, reference))?;
+    let reference = super::sketch::unit(super::sketch::cross(side, axis))?;
+    let loops = face.pointer("/loops/loops")?.as_array()?;
+    if loops.is_empty() || loops.len() > 2 {
+        return None;
+    }
+    let mut heights = Vec::new();
+    let mut angles: Vec<f64> = Vec::new();
+    for lp in loops {
+        let lp = ctx.row("loops", lp.as_str()?)?;
+        for coedge in lp.pointer("/boundary/coedges")?.as_array()? {
+            let coedge = ctx.row("coedges", coedge.as_str()?)?;
+            let edge = ctx.row("edges", coedge.get("edge")?.as_str()?)?;
+            let vertex = edge.get("start")?.as_str()?;
+            let point = ctx.row(
+                "points",
+                ctx.row("vertices", vertex)?.get("point")?.as_str()?,
+            )?;
+            let p = v3(point.get("position"))?;
+            let d = [p[0] - origin[0], p[1] - origin[1], p[2] - origin[2]];
+            let height = dot(d, axis);
+            let radial = [
+                d[0] - height * axis[0],
+                d[1] - height * axis[1],
+                d[2] - height * axis[2],
+            ];
+            heights.push(height);
+            angles.push(dot(radial, side).atan2(dot(radial, reference)));
+        }
+    }
+    let low = heights.iter().copied().fold(f64::INFINITY, f64::min);
+    let high = heights.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    if !(high - low).is_finite() || high - low <= 1e-6 {
+        return None;
+    }
+    let tau = std::f64::consts::TAU;
+    angles.iter_mut().for_each(|a| *a = a.rem_euclid(tau));
+    angles.sort_by(f64::total_cmp);
+    angles.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
+    // The empty stretches between neighbouring corner angles, going round.
+    let n = angles.len();
+    let mut widest = (0.0, 0.0);
+    for i in 0..n {
+        let from = *angles.get(i)?;
+        let to = *angles.get((i + 1) % n)?;
+        let gap = if n == 1 {
+            tau
+        } else {
+            (to - from).rem_euclid(tau)
+        };
+        if gap > widest.0 {
+            widest = (gap, from);
+        }
+    }
+    let (gap, from) = widest;
+    let middle = if n == 1 {
+        from + std::f64::consts::PI
+    } else if gap > std::f64::consts::PI + 1e-6 {
+        // The face is the shorter way round, opposite the widest empty stretch.
+        from + gap + (tau - gap) / 2.0
+    } else {
+        return None;
+    };
+    let mid_height = (low + high) / 2.0;
+    let p = [0, 1, 2].map(|i| {
+        origin.get(i).copied().unwrap_or(0.0)
+            + mid_height * axis.get(i).copied().unwrap_or(0.0)
+            + radius
+                * (middle.cos() * reference.get(i).copied().unwrap_or(0.0)
+                    + middle.sin() * side.get(i).copied().unwrap_or(0.0))
+    });
+    p.iter().all(|c| c.is_finite()).then_some(p)
+}
+
 /// Whether `p` lies inside the polygon `poly` (even-odd rule).
 fn inside(poly: &[[f64; 2]], p: [f64; 2]) -> bool {
     let mut inside = false;
@@ -438,6 +524,8 @@ fn inside(poly: &[[f64; 2]], p: [f64; 2]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+
     use super::*;
 
     #[test]
@@ -453,5 +541,66 @@ mod tests {
         ];
         assert!(inside(&l, [1.0, 1.0]));
         assert!(!inside(&l, [3.0, 3.0]));
+    }
+
+    /// A cylinder face (radius 5 about z, from z 0 to 10) whose loops start at `corners`; each
+    /// loop is the next `per_loop` corners.
+    fn cylinder_face(corners: &[[f64; 3]], per_loop: usize) -> (Value, Value) {
+        let mut points = Vec::new();
+        let mut vertices = Vec::new();
+        let mut edges = Vec::new();
+        let mut coedges = Vec::new();
+        for (k, corner) in corners.iter().enumerate() {
+            points.push(json!({"id": format!("p{k}"),
+                "position": {"x": corner[0], "y": corner[1], "z": corner[2]}}));
+            vertices.push(json!({"id": format!("v{k}"), "point": format!("p{k}")}));
+            edges.push(json!({"id": format!("e{k}"), "start": format!("v{k}")}));
+            coedges.push(json!({"id": format!("c{k}"), "edge": format!("e{k}")}));
+        }
+        let loops: Vec<Value> = corners
+            .chunks(per_loop)
+            .enumerate()
+            .map(|(l, chunk)| {
+                let ids: Vec<String> = (0..chunk.len())
+                    .map(|k| format!("c{}", l * per_loop + k))
+                    .collect();
+                json!({"id": format!("l{l}"), "boundary": {"coedges": ids}})
+            })
+            .collect();
+        let ids: Vec<String> = (0..loops.len()).map(|l| format!("l{l}")).collect();
+        let model = json!({
+            "surfaces": [{"id": "s", "geometry": {"kind": "cylinder",
+                "origin": {"x": 0.0, "y": 0.0, "z": 0.0}, "axis": {"x": 0.0, "y": 0.0, "z": 1.0},
+                "ref_direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "radius": 5.0}}],
+            "faces": [{"id": "f", "surface": "s", "loops": {"loops": ids}}],
+            "loops": loops, "coedges": coedges, "edges": edges,
+            "vertices": vertices, "points": points,
+        });
+        let face = model["faces"][0].clone();
+        (model, face)
+    }
+
+    #[test]
+    fn a_full_cylinder_gets_a_point_opposite_its_seam() {
+        let (model, face) = cylinder_face(&[[5.0, 0.0, 0.0], [5.0, 0.0, 10.0]], 1);
+        let ctx = Context::new(&model);
+        let p = point_on(&ctx, &face).unwrap();
+        assert!((p[0] + 5.0).abs() < 1e-9 && p[1].abs() < 1e-9 && (p[2] - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_quarter_cylinder_gets_a_point_in_the_middle_of_its_arc() {
+        let corners = [
+            [5.0, 0.0, 0.0],
+            [0.0, 5.0, 0.0],
+            [0.0, 5.0, 10.0],
+            [5.0, 0.0, 10.0],
+        ];
+        let (model, face) = cylinder_face(&corners, 4);
+        let ctx = Context::new(&model);
+        let p = point_on(&ctx, &face).unwrap();
+        let half = 5.0 * std::f64::consts::FRAC_1_SQRT_2;
+        assert!((p[0] - half).abs() < 1e-9 && (p[1] - half).abs() < 1e-9);
+        assert!((p[2] - 5.0).abs() < 1e-9);
     }
 }
