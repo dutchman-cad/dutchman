@@ -347,10 +347,8 @@ impl App {
         };
         let link = present::ReportLink::new(dutchman::issue::issue(report, &out_dir, &run)?);
         let issue = link.issue;
-        if let Some(notice) = link.copy_notice {
-            ctx.copy_text(issue.anonymous_report.clone());
-            self.notice = Some(notice.to_owned());
-        }
+        ctx.copy_text(issue.anonymous_report.clone());
+        self.notice = Some(link.copy_notice.to_owned());
         ctx.open_url(egui::OpenUrl::new_tab(issue.url));
         Ok(())
     }

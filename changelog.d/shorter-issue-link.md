@@ -1,3 +1,3 @@
 ### Desktop app
 
-- **Report this on GitHub** opens a shorter link, so a report with a long error reaches the form for signed-in readers; the anonymous report is left to paste when it does not fit.
+- **Report this on GitHub** opens a short link, so GitHub no longer answers it with a 406 when you are signed in. The anonymous report is copied for you to paste into the form.

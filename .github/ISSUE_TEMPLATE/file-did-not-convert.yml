@@ -64,7 +64,7 @@ body:
     attributes:
       label: Anonymous report for this file
       description: |
-        The desktop app's **Report this on GitHub** fills this in. From the command line, run `dutchman convert-all --out-dir converted --report-anon report-anon.json part.f3d` with your file in place of `part.f3d`, read `report-anon.json`, and paste it here. See [the anonymous report](https://github.com/dutchman-cad/dutchman/blob/main/docs/report-anon.md) and [Testing Dutchman on your library](https://github.com/dutchman-cad/dutchman/blob/main/docs/testing-your-library.md). If you find a name in it, leave that line out and say so: it is a bug.
+        The desktop app's **Report this on GitHub** copies this for you to paste. From the command line, run `dutchman convert-all --out-dir converted --report-anon report-anon.json part.f3d` with your file in place of `part.f3d`, read `report-anon.json`, and paste it here. See [the anonymous report](https://github.com/dutchman-cad/dutchman/blob/main/docs/report-anon.md) and [Testing Dutchman on your library](https://github.com/dutchman-cad/dutchman/blob/main/docs/testing-your-library.md). If you find a name in it, leave that line out and say so: it is a bug.
       render: json
   - type: textarea
     id: notes

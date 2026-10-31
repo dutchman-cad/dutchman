@@ -89,21 +89,24 @@ pub const REPORT_HELP: &str =
 pub const MISSING_HELP: &str =
     "Choose the folder that holds them, or one of them, to convert this file again \
              searching there too.";
-pub const REPORT_TOO_LONG: &str =
-    "The anonymous report is too long for the link, so it is copied: paste it into \
-                 the form's \"Anonymous report for this file\" box.";
+pub const REPORT_COPIED: &str =
+    "The anonymous report is copied: paste it into the form's \"Anonymous report for this \
+     file\" box.";
 
 /// A pure issue-form action. Anonymization and random salt creation happen at the caller.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ReportLink {
     pub issue: issue::Issue,
-    pub copy_notice: Option<&'static str>,
+    /// What to tell the reporter once the anonymous report is on the clipboard.
+    pub copy_notice: &'static str,
 }
 
 impl ReportLink {
     pub fn new(issue: issue::Issue) -> Self {
-        let copy_notice = (!issue.report_in_url).then_some(REPORT_TOO_LONG);
-        Self { issue, copy_notice }
+        Self {
+            issue,
+            copy_notice: REPORT_COPIED,
+        }
     }
 }
 
@@ -682,18 +685,17 @@ mod tests {
             "os=",
             "what-happened=",
             "stage=stage%3A%20decode%2C%20upstream%3A%20cadmpeg",
-            "report-anon=",
+            "report-anon=Paste",
         ] {
             assert!(link.issue.url.contains(field));
         }
         assert!(!link.issue.url.contains("private"));
-        assert_eq!(link.copy_notice, None);
+        assert_eq!(link.copy_notice, REPORT_COPIED);
         let long = json!({"errors": [], "losses": [{"message": "x".repeat(issue::MAX_URL)}]});
         let link = report_link(&report, &long);
-        assert_eq!(link.copy_notice, Some(REPORT_TOO_LONG));
-        assert!(!link.issue.report_in_url);
+        assert_eq!(link.copy_notice, REPORT_COPIED);
         assert!(link.issue.url.len() <= issue::MAX_URL);
-        assert!(!link.issue.url.contains("report-anon="));
+        assert!(!link.issue.url.contains("xxxx"));
     }
 
     #[test]
