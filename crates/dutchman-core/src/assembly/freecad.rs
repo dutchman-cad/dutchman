@@ -178,6 +178,7 @@ pub(super) fn resolve(
                     held: Vec::new(),
                     joint_notes: Vec::new(),
                     stored_placements: Vec::new(),
+                    definitions: Vec::new(),
                 });
                 selected = holder;
             }

@@ -403,6 +403,7 @@ fn assembly_occurrences_keep_nested_placements_and_independent_bodies() {
             held: Vec::new(),
             joint_notes: Vec::new(),
             stored_placements: Vec::new(),
+            definitions: Vec::new(),
         }),
         ..part
     };
@@ -498,6 +499,7 @@ fn joint_model() -> Model {
             held: Vec::new(),
             joint_notes: Vec::new(),
             stored_placements: Vec::new(),
+            definitions: Vec::new(),
             left_out: Vec::new(),
         }),
         ..part
@@ -1093,6 +1095,7 @@ fn nested_model() -> Model {
             held: Vec::new(),
             joint_notes: Vec::new(),
             stored_placements: Vec::new(),
+            definitions: Vec::new(),
             left_out: Vec::new(),
         }),
         ..part.clone()
@@ -1121,6 +1124,7 @@ fn nested_model() -> Model {
             held: Vec::new(),
             joint_notes: Vec::new(),
             stored_placements: Vec::new(),
+            definitions: Vec::new(),
             left_out: Vec::new(),
         }),
         ..part
