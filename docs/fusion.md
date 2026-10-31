@@ -109,12 +109,18 @@ transform, and each component as a product definition.
   part where it was before its joints were solved, so Dutchman places joined parts where their
   joints put them: from the design's own root, each joint places the part at its other end; a
   joint neither of whose parts is placed yet moves its first part to its second, as Fusion moves
-  the first part picked for a joint; joints that reach nothing placed start from the outermost
-  occurrence they join, which stays where the file puts it. Of a joint between a component and a
+  the first part picked for a joint. A joint to a part inside an identity-placed component
+  places the outermost such component below the common ancestor, carrying its internal
+  joints with it. Internal joints solve first, so the outer joint uses the inner part's
+  solved connector position. A file pose, grounding joint, or earlier joint holds that component in
+  place instead; a conflicting outer joint is suppressed. Joints that reach nothing placed
+  start from the outermost occurrence they join, which stays where the file puts it. Of a joint
+  between a component and a
   part inside it, as a rigid group holds its members to its first, the inner part moves and the
-  component keeps its own placement; a component holding a part already placed is never moved,
-  as that would move the part, and a component a joint moves leaves the parts inside it that
-  other joints placed already where they are. A component the file stores at the pose it shows
+  component keeps its own placement; a component holding a part already placed by an outer
+  joint is never moved to meet that part, as that would move the part too. A component a joint
+  moves leaves the parts inside it that outer joints placed already where they are. Internal
+  joints alone do not fix their holder in the assembly. A component the file stores at the pose it shows
   it in starts placed: its joints are checked there instead of moving it back to where it was
   inserted. This also preserves a child component named by a contained pose inside an inserted
   design when that design has no current pose of its own. An inserted design's own current
