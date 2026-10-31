@@ -153,6 +153,7 @@ fn answer(method: &str, params: &Value) -> Result<Value, (i64, String)> {
                     crate::formats::SCHEMA,
                 ),
                 "convert_all" => (convert_all(arguments), crate::batch::SCHEMA),
+                "repro" => (repro(arguments), crate::repro::SCHEMA),
                 _ => return Err((INVALID_PARAMS, format!("no tool named {name}"))),
             };
             // Arguments the tool cannot take fail as the tool fails: a report with the reason,
@@ -325,12 +326,29 @@ fn tools() -> Value {
             "description": "Convert every native CAD file given, and those in the folders given, into SolidCraft designs under one folder. Returns the dutchman.convert-all/1 report, with one convert report per file.",
             "inputSchema": {"type": "object", "properties": all, "required": ["inputs", "out_dir"], "additionalProperties": false},
         },
+        {
+            "name": "repro", "title": "Make a minimum reproduction kit",
+            "description": "Run a local conversion and narrow structured check failures. Writes a kit under out and returns anonymous.json, a summary and kit paths. Never upload the original or local-key.json. include_local_key is only for a client keeping the returned names local.",
+            "inputSchema": {"type": "object", "properties": {
+                "input": input, "out": {"type": "string", "description": "Absolute path of a fresh local output folder."},
+                "include_local_key": {"type": "boolean", "default": false, "description": "Return private names for local use only. Keep this response local; never include it in an issue or send it to a remote assistant."}
+            }, "required": ["input", "out"], "additionalProperties": false}
+        },
     ])
 }
 
 type Arguments = Map<String, Value>;
 
 /// Refuses arguments outside `known`, so a misspelt option is not silently ignored.
+fn repro(arguments: &Arguments) -> Result<Value, String> {
+    only(arguments, &["input", "out", "include_local_key"])?;
+    crate::repro::run(
+        &path(arguments, "input")?,
+        &path(arguments, "out")?,
+        flag(arguments, "include_local_key", false)?,
+    )
+}
+
 fn only(arguments: &Arguments, known: &[&str]) -> Result<(), String> {
     match arguments.keys().find(|key| !known.contains(&key.as_str())) {
         Some(key) => Err(format!("unknown argument {key}")),

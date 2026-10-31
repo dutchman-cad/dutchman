@@ -18,6 +18,7 @@ pub mod parallel;
 pub mod placement;
 mod progress;
 mod report;
+pub mod repro;
 
 use std::path::Path;
 
@@ -354,6 +355,10 @@ fn convert_impl(
         stage(Stage::Decode);
     }
     let model = read_with_progress(format, input, search, &mut report, progress)?;
+
+    if let Some(sink) = progress.and_then(|p| p.members.as_ref()) {
+        sink.model(&model);
+    }
 
     // Encode in memory so a failed conversion never leaves a partial file behind.
     let mut bytes = Vec::new();

@@ -598,3 +598,27 @@ failure stage and error category. Model check failures add check-code counts and
 referenced curve-kind counts. A geometry-only recovery rechecks the decoded model in memory
 only when failing checks involve history, sketches, or parameters; geometry failures stop
 without repeating the decode. See [diagnostic fields](json.md#dutchmandiagnostics1).
+
+## `repro`: make a minimum reproduction
+
+```json
+{"name":"repro","arguments":{"input":"/models/part.f3d","out":"/results/reproduction"}}
+```
+
+Runs the default SolidCraft conversion with local diagnostics, then tests independent
+archive members and retained CADIR subsets where structured findings permit it. `input`
+and `out` are paths on the server; use a fresh output folder. Returns
+[`dutchman.repro/1`](json.md#dutchmanrepro1): summary, kit paths and `anonymous.json`
+content. `ok: true` means the kit was written; inspect `anonymous.status` to distinguish
+failure from `no_failure_to_reproduce`. Errors without structured finding codes cannot
+establish equivalent failures; the kit records narrowing limits.
+
+Only `kit/anonymous.json` is safe to share. `kit/local-key.json` maps ordinals to source
+names and stays with the user. Its content is omitted from the response by default.
+`include_local_key: true` explicitly returns it **for a client keeping the response local**.
+Do not enable that flag for a remote assistant, paste its response into an issue, or
+upload the key. The response envelope contains local output paths even without that flag.
+A chat assistant can coach from anonymous content while the user looks up names locally.
+Follow `kit/next-steps.md` to rebuild a small design and rerun `repro` in a fresh folder.
+Send anonymous.json and the rebuilt file only if it reproduces and the user is free to
+share it. Never send the original design or local-key.json. The tool uploads nothing.

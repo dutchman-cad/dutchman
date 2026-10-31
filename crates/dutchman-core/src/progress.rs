@@ -65,6 +65,9 @@ pub enum MemberEvent {
 /// Optional diagnostics sink. Paths are private decoder identities; the sink must hash
 /// them before publishing. Codes are fixed categories, never decoder messages.
 pub trait MemberObserver: Send + Sync {
+    /// Private, in-memory snapshot for local reproduction. Never publish the model.
+    fn model(&self, _model: &crate::Model) {}
+
     /// Fixed phase categories only. Bytes are the source container length, not inflated size.
     fn phase_event(&self, _phase: &'static str, _event: MemberEvent, _ms: u64, _bytes: u64) {}
 

@@ -514,3 +514,13 @@ available referenced curve kinds. Timed phase records distinguish container prep
 from member decoding and model validation. Geometry-only recovery reuses the decoded model
 and runs only for failures involving history, sketches, or parameters; a geometry failure
 says the retry was not needed. Do not suggest repeating a long decode to bypass those checks.
+
+## Local reproduction kits
+
+`dutchman repro FILE --out FOLDER` (MCP `repro` with `input` and `out`) runs a conversion
+and writes `kit/anonymous.json`, `kit/local-key.json` and `kit/next-steps.md`. Use a fresh
+folder. Only anonymous.json is shareable. The local key contains the user's names and must
+stay local; MCP omits it unless `include_local_key: true` explicitly requests a local-only
+response. The response envelope also contains local paths. A successful conversion says
+`no_failure_to_reproduce`. Narrowing limits are explicit; never claim that matching a
+broad error category proves the same failure when structured codes are unavailable.

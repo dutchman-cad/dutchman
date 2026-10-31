@@ -2400,3 +2400,50 @@ fn solidcraft_output_extensions_follow_the_target_and_accept_explicit_names() {
         }
     }
 }
+
+#[test]
+fn repro_cli_writes_a_private_kit_and_reports_success_or_failure() {
+    for (name, status) in [
+        ("generated_unit_cube.f3d", "no_failure_to_reproduce"),
+        ("container_metadata_only.f3d", "failure"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let output = dutchman(&[
+            "repro",
+            &fixture(name),
+            "--out",
+            dir.path().to_str().unwrap(),
+            "--json",
+        ]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["schema"], "dutchman.repro/1");
+        assert_eq!(result["anonymous"]["status"], status);
+        assert!(result.get("local_key").is_none());
+        assert!(
+            result["summary"]
+                .as_str()
+                .unwrap()
+                .contains("Do not share")
+                .then_some(())
+                .is_some()
+                || result["summary"].as_str().unwrap().contains("Never share")
+        );
+        let kit = dir.path().join("kit");
+        assert!(kit.join("anonymous.json").is_file());
+        assert!(kit.join("local-key.json").is_file());
+        assert!(kit.join("next-steps.md").is_file());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        let again = dutchman(&[
+            "repro",
+            &fixture(name),
+            "--out",
+            dir.path().to_str().unwrap(),
+        ]);
+        assert_eq!(again.status.code(), Some(1));
+    }
+}

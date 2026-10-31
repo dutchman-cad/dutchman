@@ -38,6 +38,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Make a private local reproduction kit; only kit/anonymous.json is safe to share.
+    Repro {
+        input: PathBuf,
+        /// Fresh folder for the kit and temporary local trials.
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long)]
+        json: bool,
+    },
     /// Convert files dropped into an inbox, polling until shutdown.
     Watch(dutchman::watch::Command),
     #[command(external_subcommand)]
@@ -215,6 +224,33 @@ fn main() -> ExitCode {
     let quiet = cli.quiet;
     let yes = cli.yes;
     match cli.command {
+        Command::Repro { input, out, json } => match dutchman::repro::run(&input, &out, false) {
+            Ok(report) => {
+                if json {
+                    println!("{report}");
+                } else {
+                    println!(
+                        "{}",
+                        report
+                            .get("summary")
+                            .and_then(Value::as_str)
+                            .unwrap_or("Reproduction kit written.")
+                    );
+                }
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                if json {
+                    println!(
+                        "{}",
+                        json::failure(dutchman::repro::SCHEMA, json::input(&input), &error)
+                    );
+                } else {
+                    eprintln!("dutchman: {error}");
+                }
+                ExitCode::FAILURE
+            }
+        },
         Command::Watch(command) => match dutchman::watch::run_with_progress(command, quiet) {
             Ok(true) => ExitCode::SUCCESS,
             Ok(false) => ExitCode::FAILURE,
