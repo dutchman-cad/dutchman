@@ -296,3 +296,9 @@ This page used to hold everything. Each part now has its own page:
 ### Presets and estimates
 
 [Presets and estimates](presets.md#presets-and-estimates)
+
+Anonymous diagnostic logs include timed decoder preparation phases and, on failure, the
+failure stage and error category. Model check failures add check-code counts and available
+referenced curve-kind counts. A geometry-only recovery rechecks the decoded model in memory
+only when failing checks involve history, sketches, or parameters; geometry failures stop
+without repeating the decode. See [diagnostic fields](json.md#dutchmandiagnostics1).

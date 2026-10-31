@@ -283,13 +283,21 @@ pub fn failure(schema: &str, input: Value, message: &str) -> Value {
 
 /// A report of a run that stopped with `error`.
 pub fn error(schema: &str, input: Value, error: &Error) -> Value {
-    failure_at(
+    let mut report = failure_at(
         schema,
         input,
         &error.to_string(),
         error.stage(),
         error.upstream(),
-    )
+    );
+    if let Some(fields) = report.get_mut("error").and_then(Value::as_object_mut) {
+        fields.insert("kind".into(), json!(error.kind()));
+        if let Error::Checks { facts, .. } = error {
+            fields.insert("findings".into(), json!(facts.findings));
+            fields.insert("curve_kinds".into(), json!(facts.curve_kinds));
+        }
+    }
+    report
 }
 
 /// A report of a run that stopped with `message` at `stage`, in `upstream`'s code when it is

@@ -620,7 +620,28 @@ conversion's start. A batch/watch log interleaves conversions; group by `file` a
 | `design` | `count` of successful designs read and `total` (null while unknown). Written when these counts change. |
 | `heartbeat` | `stage`; `rss_bytes`; `cpu_ticks` (process user + system CPU ticks); `cpu_ticks_per_second`; `cpu_ms` (derived process CPU time); `member` (last started member id, or null). Every 30 seconds from an independent timer. Linux reads `/proc`; unavailable resource measurements are null. Windows and macOS use sysinfo; their CPU ticks are milliseconds (`cpu_ticks_per_second`: 1000). |
 | `member` | `member` (salted id); `event`: `start`, `finish`, or `fail`; `ms` (0 at start, duration at finish/failure); `code` (fixed decoder error category on failure, else null). |
-| `end` | `ok` (boolean); `stage` last reached; `losses` (code-to-count object); `repeated_losses` (total extra occurrences of identical losses); `member_decodes` (member-id-to-start-count object); `redecoded` (sum of starts after each member's first start). |
+| `phase` | `phase` (fixed category); `event`: `start` or `finish`; `ms` (0 at start, elapsed duration at finish); `bytes` (source container length, not inflated bytes). |
+| `end` | `error` (anonymous failure facts, or null on success); `ok` (boolean); `stage` last reached; `losses` (code-to-count object); `repeated_losses` (total extra occurrences of identical losses); `member_decodes` (member-id-to-start-count object); `redecoded` (sum of starts after each member's first start). |
+
+`end.error` contains `stage` (failure stage, or null if unavailable), `kind` (fixed error
+category, or `other`), `findings` (cadmpeg check-code counts), and `curve_kinds` (counts of
+referenced carriers for parameter-domain, carrier-reachability, and geometry-consistency
+errors). Only error/blocking findings count. Curve categories are `procedural`, `nurbs`,
+`analytic`, `other`, and `unavailable`. Each carrier counts once per finding; counts are
+empty when no structured reference can be resolved. These fields contain no finding text,
+entity ids, names, paths, or geometry values. CLI/MCP JSON errors from the conversion core
+also add `kind` and, for check failures, `findings` and `curve_kinds`; their existing
+`message` stays private. Other failures use diagnostic kind `other`.
+Model check failures have failure stage `project`, independently of the last progress stage.
+
+Phase categories are `codec_selection`, `container_prepare` (codec entry to the first
+member start), `container_compose` (between member attempts and after the last one), and
+`model_validation` (including any geometry-only recheck). Without member callbacks,
+`container_prepare` covers the whole codec call. A finish closes the timed scope, including
+error returns; it does not claim success. Start records identify a phase even if the
+process is killed before it finishes. Cadmpeg currently supplies no callbacks within
+container preparation, so inflation, scanning, classification, and reference metadata
+work share that phase rather than claiming separate measured durations.
 
 Each `members` entry is `{id, compressed_bytes, uncompressed_bytes, nested_content_bytes}`.
 The last value is the sum of a nested design archive's declared uncompressed content sizes,

@@ -97,7 +97,8 @@ is cancelled gets an error `end` record; killing the supervising process can lea
 
 The schema is [`dutchman.diagnostics/1`](json.md#dutchmandiagnostics1). It holds versions,
 machine resources, selected conversion choices, input and archive byte sizes, timings,
-salted ids, and loss codes with counts. It contains no file or design names, paths, geometry,
+salted ids, preparation phase durations, anonymous failure categories, and check/loss codes
+with counts. Carrier check failures also count referenced curve kinds when available. It contains no file or design names, paths, geometry,
 file contents, or loss/error messages. Salts use the anonymous report's random source and
 hashing scheme; when `convert-all` also requests `--report-anon`, both share its salt and
 file ids, including `--report-salt` when supplied. Keep that salt and any report key private.
@@ -106,3 +107,31 @@ Review the JSONL file, then attach it to Dutchman's **A file didn't convert** is
 it with your problem report. No design file is needed. Diagnostics work while conversion
 is still running; [the anonymous report](report-anon.md) adds a batch summary after it ends.
 Ordinary `--log`, JSON conversion reports, and journals contain names and stay private.
+
+### Model checks and long Fusion archive preparation
+
+When cadmpeg's model fails checks involving history, sketches, or parameters, Dutchman
+removes those arenas and checks the existing decoded model as geometry alone. It keeps
+that geometry if the recheck passes. A failure confined to geometry/carriers stops
+immediately and says a geometry-only retry was not needed. Neither path reads the
+container again. Drawing conversions keep their drawing graph and do not take this retry.
+
+A long `container_prepare` phase before the first `.f3z` member starts belongs to cadmpeg.
+At the pinned revision, `container::scan` opens every outer ZIP entry, including temporarily
+inflating deferred document members and discarding their expanded bytes. Then
+`F3zSession::open_scanned` calls `archive::model_root` and `archive::classify_members`:
+classification opens and scans every F3D member, including unreachable members.
+`open_scanned` then calls `ArchiveSession::with_member_scan` again for each classified
+member to obtain cross-reference metadata through `xref::decode` and
+`design_model_selection`. `with_member_scan` expands the outer member and scans its
+nested container anew. These passes run before `decode_in_context` emits member start.
+The log cannot distinguish their individual costs without additional upstream callbacks.
+The actual member decode reopens its scan again. Final composition and document hashing
+after the last member are timed as `container_compose`.
+
+The estimate uses fixed overhead plus rates on declared archive content sizes, with a
+bounded nested-directory inspection. Large nested members beyond its metadata budget
+use their outer declared size. It has no separate size-dependent term for the repeated
+inflation, classification, and metadata scans above; a content-rate estimate can therefore
+miss lengthy preparation. Memory and time estimates are planning approximations, not
+measured limits. Diagnostic instrumentation does not change their calibration.

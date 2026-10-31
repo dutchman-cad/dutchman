@@ -25,7 +25,7 @@ pub use assembly::{
     frame_aligned, local_assembly, Assembly, Joint, JointNote, LeftOut, Motion, Placement,
     MAX_DEPTH, MAX_PARTS, MAX_PLACEMENTS,
 };
-pub use error::{Error, FILE_DID_NOT_CONVERT, RELEASES};
+pub use error::{CheckFacts, Error, FILE_DID_NOT_CONVERT, RELEASES};
 pub use format::Format;
 pub use locate::{PartSearch, MAX_SEARCHED};
 pub use memory::available_memory;
