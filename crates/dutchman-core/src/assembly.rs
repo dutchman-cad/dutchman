@@ -1122,6 +1122,7 @@ fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec
                 move_keeping_placed(
                     assembly,
                     &fixed,
+                    posed,
                     &joint.b,
                     &compose(&reach, &inverse(&joint.frame_b)),
                 );
@@ -1133,7 +1134,7 @@ fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec
                     &compose(&compose(&b, &joint.frame_b), &inverse(&joint.meeting())),
                     &inverse(&joint.frame_a),
                 );
-                move_keeping_placed(assembly, &fixed, &joint.a, &at);
+                move_keeping_placed(assembly, &fixed, posed, &joint.a, &at);
                 hold_in(&mut fixed, joint.a.clone(), &scope);
                 hold_in(&mut fixed, joint.b.clone(), &scope);
             }
@@ -1246,10 +1247,13 @@ fn world_at(assembly: &Assembly, path: &[usize]) -> Option<Placement3x4> {
 
 /// Moves the occurrence `path` leads to so that it is at `world`, keeping each occurrence
 /// inside it that an outside joint placed already where that joint put it. Parts held by
-/// internal joints travel with the component.
+/// internal joints travel with the component, and so do the ones inside it that the file
+/// poses (`posed`): their stored pose is relative to the component that holds them, so it
+/// moves them with it rather than leaving them where the component was.
 fn move_keeping_placed(
     assembly: &mut Assembly,
     fixed: &BTreeMap<Vec<usize>, Vec<usize>>,
+    posed: &BTreeSet<Vec<usize>>,
     path: &[usize],
     world: &Placement3x4,
 ) {
@@ -1257,7 +1261,10 @@ fn move_keeping_placed(
     let inside: Vec<(&Vec<usize>, Placement3x4)> = fixed
         .iter()
         .filter(|(placed, scope)| {
-            placed.len() > path.len() && placed.starts_with(path) && scope.len() < path.len()
+            placed.len() > path.len()
+                && placed.starts_with(path)
+                && scope.len() < path.len()
+                && !posed.contains(*placed)
         })
         .filter_map(|(placed, _)| Some((placed, world_at(assembly, placed)?)))
         .collect();
@@ -3627,6 +3634,147 @@ mod tests {
                     assert!(notes[0].contains("its parts are placed by other joints"));
                 }
             }
+        }
+    }
+
+    /// `model` with the `design_component_occurrences` records `ids` carrying current poses,
+    /// so the occurrences that name them as their `native_ref` are posed.
+    fn with_current_poses(model: Model, ids: &[&str]) -> Model {
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["native"]["f3d"]["design_component_occurrences"] = ids
+            .iter()
+            .map(|id| json!({"id": id, "current_pose": {"carrier_record_index": 3}}))
+            .collect();
+        Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        }
+    }
+
+    /// Adds a component `mid` to `model`'s definitions.
+    fn with_mid(model: Model) -> Model {
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["product_definitions"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": "f3d:model:component#mid", "kind": "part", "label": "Mid", "bodies": []}));
+        Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        }
+    }
+
+    fn posed_child(mut row: Value, native: &str) -> Value {
+        row["native_ref"] = json!(native);
+        row
+    }
+
+    #[test]
+    fn a_holder_a_joint_moves_carries_the_parts_the_file_poses_inside_it() {
+        // The holder sits at its own origin with two posed parts inside it at x = 5 and 30. A
+        // joint puts the first part at x = 100, so the holder goes to x = 95 and, in the world,
+        // the second part to x = 125: the parts' stored poses are relative to the holder.
+        let model = nested(
+            false,
+            Some(json!([
+                placed(0, "frame", root(), 0.0),
+                posed_child(
+                    placed(1, "block", inside(0), 5.0),
+                    "f3d:Design/BulkStream.dat:design-component-occurrence#11"
+                ),
+                posed_child(
+                    placed(2, "block", inside(0), 30.0),
+                    "f3d:Design/BulkStream.dat:design-component-occurrence#12"
+                ),
+                placed(3, "block", root(), 0.0),
+            ])),
+        );
+        let model = with_current_poses(
+            model,
+            &[
+                "f3d:Design/BulkStream.dat:design-component-occurrence#11",
+                "f3d:Design/BulkStream.dat:design-component-occurrence#12",
+            ],
+        );
+        let model = with_joints(
+            model,
+            json!([
+                joint(
+                    1,
+                    json!({"kind": "fixed"}),
+                    connector(None),
+                    connector_at(3, &[], facing(IDENTITY))
+                ),
+                joint(
+                    2,
+                    json!({"kind": "fixed"}),
+                    connector_at(3, &[], at([100.0, 0.0, 0.0], 0.0)),
+                    connector_at(1, &[], facing(IDENTITY))
+                ),
+            ]),
+        );
+        let (assembly, notes) = local_components(&model).unwrap().unwrap();
+        assert!(notes.is_empty(), "{notes:?}");
+        for (path, x) in [(vec![0], 95.0), (vec![0, 0], 100.0), (vec![0, 1], 125.0)] {
+            let world = world_at(&assembly, &path).unwrap();
+            assert!(near(&world, &at([x, 0.0, 0.0], 0.0)), "{path:?}: {world:?}");
+        }
+    }
+
+    #[test]
+    fn parts_the_file_poses_move_with_a_holder_through_two_levels_of_nesting() {
+        // A holder holds a middle component (at x = 10) which holds two posed parts (at 5 and
+        // 30). A joint puts the first part at x = 100: holder 85, middle 95, second part 125.
+        let model = nested(
+            false,
+            Some(json!([
+                placed(0, "frame", root(), 0.0),
+                placed(1, "mid", inside(0), 10.0),
+                posed_child(
+                    placed(2, "block", inside(1), 5.0),
+                    "f3d:Design/BulkStream.dat:design-component-occurrence#11"
+                ),
+                posed_child(
+                    placed(3, "block", inside(1), 30.0),
+                    "f3d:Design/BulkStream.dat:design-component-occurrence#12"
+                ),
+                placed(4, "block", root(), 0.0),
+            ])),
+        );
+        let model = with_current_poses(
+            with_mid(model),
+            &[
+                "f3d:Design/BulkStream.dat:design-component-occurrence#11",
+                "f3d:Design/BulkStream.dat:design-component-occurrence#12",
+            ],
+        );
+        let model = with_joints(
+            model,
+            json!([
+                joint(
+                    1,
+                    json!({"kind": "fixed"}),
+                    connector(None),
+                    connector_at(4, &[], facing(IDENTITY))
+                ),
+                joint(
+                    2,
+                    json!({"kind": "fixed"}),
+                    connector_at(4, &[], at([100.0, 0.0, 0.0], 0.0)),
+                    connector_at(2, &[], facing(IDENTITY))
+                ),
+            ]),
+        );
+        let (assembly, notes) = local_components(&model).unwrap().unwrap();
+        assert!(notes.is_empty(), "{notes:?}");
+        for (path, x) in [
+            (vec![0], 85.0),
+            (vec![0, 0], 95.0),
+            (vec![0, 0, 0], 100.0),
+            (vec![0, 0, 1], 125.0),
+        ] {
+            let world = world_at(&assembly, &path).unwrap();
+            assert!(near(&world, &at([x, 0.0, 0.0], 0.0)), "{path:?}: {world:?}");
         }
     }
 

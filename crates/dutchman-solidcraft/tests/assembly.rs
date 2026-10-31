@@ -2261,3 +2261,109 @@ fn reflection_validation_also_applies_to_restored_stored_placements() {
         .iter()
         .any(|n| n.subject == "placements" && n.severity == dutchman_core::Severity::Info));
 }
+
+/// Every placement in the world the assembly gives, one for each way of reaching a part.
+fn solver_worlds(
+    assembly: &Assembly,
+    outer: &dutchman_core::placement::Placement3x4,
+    out: &mut Vec<dutchman_core::placement::Placement3x4>,
+) {
+    use dutchman_core::placement::compose;
+    for placement in &assembly.placements {
+        let world = compose(outer, &placement.transform);
+        out.push(world);
+        if let Some(inner) = assembly.parts[placement.part].assembly.as_ref() {
+            solver_worlds(inner, &world, out);
+        }
+    }
+}
+
+/// Every occurrence's placement in the world as the written document composes it: its own
+/// transform after those of each occurrence of the component that holds it.
+fn written_worlds(
+    doc: &Value,
+    occurrence: &Value,
+    depth: usize,
+) -> Vec<dutchman_core::placement::Placement3x4> {
+    use dutchman_core::placement::compose;
+    let own = occurrence_rows(occurrence);
+    let parent = occurrence["parent"].as_u64().unwrap();
+    if parent == 0 {
+        return vec![own];
+    }
+    assert!(depth < 16, "occurrences nest inside themselves");
+    doc["occurrences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|holder| holder["component"].as_u64() == Some(parent))
+        .flat_map(|holder| written_worlds(doc, holder, depth + 1))
+        .map(|holder| compose(&holder, &own))
+        .collect()
+}
+
+#[test]
+fn composed_written_placements_equal_the_assemblys_world_placements() {
+    let inner = nested();
+    let cube = inner.assembly.as_ref().unwrap().parts[1].clone();
+    let turned = [
+        [0.0, -1.0, 0.0, 7.0],
+        [1.0, 0.0, 0.0, 3.0],
+        [0.0, 0.0, 1.0, 1.0],
+    ];
+    let moved = [
+        [1.0, 0.0, 0.0, -40.0],
+        [0.0, 1.0, 0.0, 12.0],
+        [0.0, 0.0, 1.0, 5.0],
+    ];
+    let top = Model {
+        name: "top2".to_owned(),
+        assembly: Some(Assembly {
+            own_part: None,
+            joints: Vec::new(),
+            left_out: Vec::new(),
+            held: Vec::new(),
+            joint_notes: Vec::new(),
+            stored_placements: Vec::new(),
+            parts: vec![inner, cube.clone()],
+            placements: [(0, turned), (0, moved), (1, turned)]
+                .into_iter()
+                .map(|(part, transform)| Placement {
+                    hidden: false,
+                    name: None,
+                    part,
+                    transform,
+                })
+                .collect(),
+        }),
+        ..cube
+    };
+    let mut expected = Vec::new();
+    solver_worlds(
+        top.assembly.as_ref().unwrap(),
+        &dutchman_core::placement::IDENTITY,
+        &mut expected,
+    );
+    let (bytes, _) = written(&top);
+    let doc = document(&bytes);
+    let mut found: Vec<_> = doc["occurrences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|o| written_worlds(&doc, o, 0))
+        .collect();
+    // Occurrences inside a component placed more than once are reached once per copy, as
+    // the solver reaches them; the multisets must agree.
+    let key = |t: &dutchman_core::placement::Placement3x4| {
+        t.iter()
+            .flatten()
+            .map(|v| (v * 1e6).round() as i64)
+            .collect::<Vec<_>>()
+    };
+    expected.sort_by_key(key);
+    found.sort_by_key(key);
+    assert_eq!(expected.len(), found.len());
+    for (a, b) in expected.iter().zip(&found) {
+        assert_eq!(key(a), key(b), "{a:?} != {b:?}");
+    }
+}
