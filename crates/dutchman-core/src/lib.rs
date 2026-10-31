@@ -168,8 +168,15 @@ pub fn read_with_progress(
     if let Some(searched) = finder.searched_note() {
         report.push_at(Stage::Input, Severity::Info, "parts search", searched);
     }
+    local_components(&mut model, finder.threads, report);
+    Ok(model)
+}
+
+/// Gathers the components a single file places itself into `model.assembly`, and records the
+/// assembly's completeness.
+fn local_components(model: &mut Model, threads: usize, report: &mut Report) {
     if model.assembly.is_none() {
-        match assembly::local(&model, finder.threads, report) {
+        match assembly::local(model, threads, report) {
             assembly::Components::None => {}
             // The writer reports the assembly's joint notes: what it leaves out depends on
             // what it can build.
@@ -197,7 +204,6 @@ pub fn read_with_progress(
     if let Some(assembly) = &model.assembly {
         report.set_completeness(assembly.completeness());
     }
-    Ok(model)
 }
 
 /// The part of `model` holding only `bodies` (CADIR body ids) and what they are made of, named
@@ -205,6 +211,33 @@ pub fn read_with_progress(
 pub fn with_bodies(model: &Model, bodies: &[&str], name: String) -> Result<Model, String> {
     let document = serde_json::to_value(&model.ir).map_err(|err| err.to_string())?;
     assembly::geometry_only(model, &document, bodies, name)
+}
+
+/// Reads a design from its contents alone, without the file system: for a sandboxed
+/// importer (such as a SolidCraft plugin) that is handed a file's bytes and nothing else.
+/// `name` is the file's name; only its stem and extension are used. Parts an assembly keeps in
+/// other files are not read: only what the file itself holds converts.
+pub fn read_bytes(
+    format: Format,
+    name: &Path,
+    bytes: &[u8],
+    report: &mut Report,
+) -> Result<Model, Error> {
+    if !format.can_convert() {
+        return Err(Error::NotSupportedYet { format });
+    }
+    if bytes.len() as u64 > MAX_INPUT_BYTES {
+        return Err(Error::TooLarge {
+            path: name.to_path_buf(),
+            bytes: bytes.len() as u64,
+            limit: MAX_INPUT_BYTES,
+        });
+    }
+    report.saw(&name.display().to_string());
+    names::saw_stored(&name.display().to_string(), report);
+    let mut model = decode_bytes(format, name, bytes, report, None)?;
+    local_components(&mut model, 1, report);
+    Ok(model)
 }
 
 /// Decodes one file, without reading the parts an assembly places.
@@ -226,10 +259,22 @@ fn decode_file(
         path: input.to_path_buf(),
         source,
     })?;
+    decode_bytes(format, input, &bytes, report, progress)
+}
+
+/// Decodes one file's `bytes` (named `input`) into the neutral model, the way
+/// [`decode_file`] does once it has read them.
+fn decode_bytes(
+    format: Format,
+    input: &Path,
+    bytes: &[u8],
+    report: &mut Report,
+    progress: Option<&Progress<'_>>,
+) -> Result<Model, Error> {
     if let Some(progress) = progress {
         progress.stage(Stage::Decode);
     }
-    let model = decode::decode_with_progress(format, input, &bytes, report, progress)?;
+    let model = decode::decode_with_progress(format, input, bytes, report, progress)?;
     names::saw_model(&model, report);
     if matches!(format, Format::FusionArchive | Format::FusionMultiDocument) {
         return Ok(hidden::fusion(model, report));

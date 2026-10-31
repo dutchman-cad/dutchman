@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use dutchman_core::{read, Error, Format, Report};
+use dutchman_core::{read, read_bytes, Error, Format, Report};
 
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -19,6 +19,42 @@ fn scratch(name: &str, bytes: &[u8]) -> PathBuf {
     let path = dir.join(name);
     std::fs::write(&path, bytes).unwrap();
     path
+}
+
+#[test]
+fn reading_a_files_bytes_gives_the_model_reading_its_path_does() {
+    let path = fixture("generated_unit_cube.f3d");
+    let from_path = read(Format::FusionArchive, &path, &mut Report::default()).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    let name = Path::new("generated_unit_cube.f3d");
+    let from_bytes =
+        read_bytes(Format::FusionArchive, name, &bytes, &mut Report::default()).unwrap();
+
+    assert_eq!(from_bytes.name, from_path.name);
+    assert_eq!(from_bytes.source_file, from_path.source_file);
+    assert_eq!(
+        serde_json::to_value(&from_bytes.ir).unwrap(),
+        serde_json::to_value(&from_path.ir).unwrap()
+    );
+
+    // A file whose extension names no format Dutchman reads is refused.
+    let unknown = Path::new("generated_unit_cube.xyz");
+    assert_eq!(Format::from_path(unknown), None);
+    assert!(read_bytes(
+        Format::UnclassifiedPart,
+        unknown,
+        &bytes,
+        &mut Report::default()
+    )
+    .is_err());
+    // So is one whose contents are another format than its extension says.
+    assert!(read_bytes(
+        Format::InventorPart,
+        Path::new("cube.ipt"),
+        &bytes,
+        &mut Report::default()
+    )
+    .is_err());
 }
 
 #[test]
