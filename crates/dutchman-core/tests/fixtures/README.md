@@ -11,7 +11,7 @@ None is a real design.
 | `design_sketch_constraints.f3d` | A Fusion design whose history is one sketch on XY: an arc, points, dimensions and two parameters. | Copied unchanged from cadmpeg `main` at `5d345a29ccd6`, same folder. |
 | `design_copy_paste.f3d` | A Fusion design placing one component twice (a copy and paste), whose component does not list its bodies. | Copied unchanged from cadmpeg `main` at `5d345a29ccd6`, same folder as the other Fusion files. |
 | `synthetic_cube.ipt` | An Inventor part envelope holding one solid 10 mm cube (one body, six faces) as its ASM kernel stream. | Generated (see below). |
-| `solidworks_cube.sldprt` | A SolidWorks part holding one solid 10 mm cube (one body, six faces) as a Parasolid partition in an authored native envelope, with no feature history. | Generated at cadmpeg `892efade6b496a0af7ac409568d4b165644b88d4` (see below). |
+| `solidworks_cube.sldprt` | A SolidWorks part holding one solid 10 mm cube (one body, six faces) as a Parasolid partition in an authored native envelope, with no feature history. | Generated at cadmpeg `f4f0e51c299a556c3359be91e9e325100c25b0eb` (see below). |
 | `body_history.sldprt` | A SolidWorks part with a one-triangle body and a Keywords history: a 12.5 mm `Boss` extrusion and its `EquationDrivenCurve` profile. | Copied unchanged from cadmpeg `892efade6b496a0af7ac409568d4b165644b88d4`, `crates/cadmpeg-codec-sldprt/tests/golden/fixtures/authored_complete_history.sldprt` (introduced in PR #286, commit `3134762abc`). |
 | `container_metadata.sldprt` | An authored SolidWorks native envelope with a synthetic metadata token and no geometry. | Generated with cadmpeg's test helpers at the same commit (see below). |
 | `core_design_product.FCStd` | A FreeCAD document: exact geometry (five bodies, 22 faces), persistent names, sketch constraints, design properties, a product link and a spreadsheet. | Copied unchanged from cadmpeg's corpus, `corpus/freecad_fcstd/fixtures/` at `main` `377eb82352dd`: authored in FreeCAD 1.1.1 by the cadmpeg project and dedicated CC0-1.0 (`corpus/manifest.toml`, SHA-256 `69c6aa00…989ba`). |
@@ -57,10 +57,13 @@ cadmpeg's own synthetic sources, at cadmpeg `main` `f816fb00fb54`:
    builder, `primary_envelope_fixture_with_kernel(EnvelopeDeclarations::default(), &stream)`
    (`src/test_support/test_fixtures.rs`).
 
+cadmpeg #589 corrected the SolidWorks coedge layout, so the earlier cube (written at
+`892efade6b`) read inside out on later revisions; this one is written with the corrected encoder.
+
 The original SolidWorks cube was regenerated at `f816fb00fb54` in Dutchman PR #42
 (`e73c5f0`). cadmpeg PR #286 replaced the old synthetic envelopes with conforming authored
 fixtures. The SolidWorks cube is now generated with cadmpeg's own encoder and test helpers
-at `892efade6b496a0af7ac409568d4b165644b88d4`:
+at `f4f0e51c299a556c3359be91e9e325100c25b0eb`:
 
 1. `cadmpeg_ir::examples::unit_cube()` (the 10 mm example cube), prepared as
    cadmpeg-codec-sldprt's test builder `source_less_cube()` does

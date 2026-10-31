@@ -149,18 +149,19 @@ fn seam_model(count: usize) -> Model {
         if serde_json::to_value(coedge.sense).unwrap() == "reversed" {
             std::mem::swap(&mut start, &mut end);
         }
-        // A closed periodic degree-one NURBS loop. At .75 it reaches the traversal
-        // start, and at 1.25 (wrapped to .25) it reaches the traversal end. Matching
+        // A closed periodic degree-one NURBS loop used over more than one period: at .75
+        // it reaches the traversal start, and at 1.80 (wrapped to .80) the traversal end.
+        // Crossing the seam alone is valid; a range wider than the period is not. Matching
         // endpoints avoid introducing a second geometric_consistency failure class.
         let mut curve = prototype.clone();
         curve.id = serde_json::from_value(json!(format!("secret:part1:curve#seam{i:06}"))).unwrap();
         curve.geometry = serde_json::from_value(json!({
-            "kind": "nurbs", "degree": 1, "knots": [0.0, 0.0, 0.25, 0.75, 1.0, 1.0],
-            "poles": {"form": "polynomial", "points": [{"x": 100.0, "y": 100.0, "z": 100.0}, end, start, {"x": 100.0, "y": 100.0, "z": 100.0}]},
+            "kind": "nurbs", "degree": 1, "knots": [0.0, 0.0, 0.25, 0.75, 0.8, 1.0, 1.0],
+            "poles": {"form": "polynomial", "points": [{"x": 100.0, "y": 100.0, "z": 100.0}, {"x": 100.0, "y": 100.0, "z": 100.0}, start, end, {"x": 100.0, "y": 100.0, "z": 100.0}]},
             "periodic": true
         })).unwrap();
         coedge.use_curve = Some(
-            serde_json::from_value(json!({"curve": curve.id, "parameter_range": [0.75, 1.25]}))
+            serde_json::from_value(json!({"curve": curve.id, "parameter_range": [0.75, 1.80]}))
                 .unwrap(),
         );
         model.ir.model.curves.push(curve);
