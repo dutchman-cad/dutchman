@@ -15,6 +15,9 @@ pub const CONVERT: &str = "dutchman.convert/1";
 /// The schema of `dutchman inspect --json`.
 pub const INSPECT: &str = "dutchman.inspect/1";
 
+/// The schema of `dutchman diagnose`'s report.
+pub const DIAGNOSE: &str = "dutchman.diagnose/1";
+
 /// The schema of a minimum-reproduction kit.
 pub const REPRO: &str = "dutchman.repro/1";
 

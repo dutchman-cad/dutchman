@@ -44,6 +44,16 @@ and requested reports.
 | `history: …; unverified: …` | Not an error: the history was written without the SolidCraft check. Install `solidcraft-cli`, or point `--solidcraft` or `SOLIDCRAFT_CLI` at it, and convert again. |
 | `history: flattened: replay differs (…)` | Not an error: the history did not rebuild the same shape in SolidCraft. A retained editable timeline is hidden beside the imported final shape when possible. `--no-verify` keeps the history, unchecked. |
 
+## A large file takes hours, runs out of memory, or fails in one part
+
+Run `dutchman diagnose big.f3z --out findings`. It converts the design part by part on your
+machine, each part under a time and memory limit, and writes a ranked report that names parts
+by number: which fail, which are slow, which take the most memory. Then
+`dutchman convert big.f3z --part 17` converts only that part, in seconds. A conversion that
+cannot fit in the machine's free memory stops early and names the largest parts by number
+instead of running for hours. `findings/diagnose/report.json` and `report.txt` are safe to
+share; `local-key.json` is not. See [Find what breaks in a large private file](diagnose.md).
+
 ## When you can't share the file
 
 Make a local reproduction kit:

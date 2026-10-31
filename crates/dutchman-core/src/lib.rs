@@ -15,6 +15,7 @@ mod locate;
 mod memory;
 mod names;
 pub mod parallel;
+pub mod parts;
 pub mod placement;
 mod progress;
 mod report;
@@ -343,7 +344,41 @@ pub fn convert_traced(
     search: &PartSearch,
     on_stage: &mut dyn FnMut(Stage),
 ) -> Result<Report, Error> {
-    convert_impl(input, output, writer, replace, search, on_stage, None)
+    convert_impl(input, output, writer, replace, search, on_stage, None, None)
+}
+
+/// Which part of a design to convert alone (see [`parts`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PartSelection {
+    /// The part's number, from 1.
+    pub number: usize,
+    /// For a sub-assembly: also the parts inside it.
+    pub children: bool,
+}
+
+/// [`convert_with_progress`] for one part of the design only, by its number. The whole
+/// design is still read; only the part is mapped and written.
+pub fn convert_part_with_progress(
+    input: &Path,
+    output: &Path,
+    writer: &dyn Writer,
+    replace: bool,
+    search: &PartSearch,
+    part: PartSelection,
+    progress: &Progress<'_>,
+) -> Result<Report, Error> {
+    progress.run(|| {
+        convert_impl(
+            input,
+            output,
+            writer,
+            replace,
+            search,
+            &mut |_| {},
+            Some(progress),
+            Some(part),
+        )
+    })
 }
 
 /// Converts with stage, document, and elapsed progress and a five-second heartbeat.
@@ -364,6 +399,7 @@ pub fn convert_with_progress(
             search,
             &mut |_| {},
             Some(progress),
+            None,
         )
     })
 }
@@ -377,6 +413,7 @@ fn convert_impl(
     search: &PartSearch,
     on_stage: &mut dyn FnMut(Stage),
     progress: Option<&Progress<'_>>,
+    part: Option<PartSelection>,
 ) -> Result<Report, Error> {
     let mut stage = |stage| {
         on_stage(stage);
@@ -399,7 +436,25 @@ fn convert_impl(
     if progress.is_none() {
         stage(Stage::Decode);
     }
-    let model = read_with_progress(format, input, search, &mut report, progress)?;
+    let mut model = read_with_progress(format, input, search, &mut report, progress)?;
+    if let Some(part) = part {
+        let total = parts::catalog(&model).len();
+        model = parts::select(&model, part.number, part.children)
+            .map_err(|why| Error::Assembly(why.to_string()))?;
+        report.push(
+            Severity::Info,
+            "part",
+            format!(
+                "only part {} of {total} was converted ({})",
+                part.number,
+                if part.children {
+                    "with the parts inside it"
+                } else {
+                    "alone"
+                }
+            ),
+        );
+    }
 
     if let Some(sink) = progress.and_then(|p| p.members.as_ref()) {
         sink.model(&model);

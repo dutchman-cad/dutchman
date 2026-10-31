@@ -76,7 +76,11 @@ struct WorkerArgs {
 pub fn run_if_worker() -> Option<ExitCode> {
     let mut args = std::env::args_os();
     let program = args.next()?;
-    if args.next()? != WORKER_ARG {
+    let first = args.next()?;
+    if first == crate::diagnose::WORKER_ARG {
+        return Some(crate::diagnose::run_worker(program, args));
+    }
+    if first != WORKER_ARG {
         return None;
     }
     let parsed = match WorkerArgs::try_parse_from(std::iter::once(program).chain(args)) {
@@ -207,7 +211,7 @@ impl ConvertOptions {
 }
 
 /// The flags that look for a job's part files as `search` says.
-fn search_args(search: &PartSearch) -> Vec<OsString> {
+pub(crate) fn search_args(search: &PartSearch) -> Vec<OsString> {
     let mut args = Vec::new();
     if let Some(project) = &search.project {
         args.push("--project".into());
@@ -514,7 +518,7 @@ fn stop(child: &mut Child) {
 
 /// The memory process `pid` holds, in bytes, when it can be measured.
 #[cfg(target_os = "linux")]
-fn resident_bytes(pid: u32) -> Option<u64> {
+pub(crate) fn resident_bytes(pid: u32) -> Option<u64> {
     let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
     let line = status.lines().find(|line| line.starts_with("VmRSS:"))?;
     let kb: u64 = line.split_whitespace().nth(1)?.parse().ok()?;
@@ -523,7 +527,7 @@ fn resident_bytes(pid: u32) -> Option<u64> {
 
 /// The memory process `pid` holds, in bytes, when it can be measured.
 #[cfg(all(unix, not(target_os = "linux")))]
-fn resident_bytes(pid: u32) -> Option<u64> {
+pub(crate) fn resident_bytes(pid: u32) -> Option<u64> {
     let out = Command::new("ps")
         .args(["-o", "rss=", "-p", &pid.to_string()])
         .stdin(Stdio::null())
@@ -536,7 +540,7 @@ fn resident_bytes(pid: u32) -> Option<u64> {
 
 /// The memory process `pid` holds, in bytes, when it can be measured.
 #[cfg(windows)]
-fn resident_bytes(pid: u32) -> Option<u64> {
+pub(crate) fn resident_bytes(pid: u32) -> Option<u64> {
     // `"name","pid","session","#","12,345 K"`
     let out = Command::new("tasklist")
         .args(["/FI", &format!("PID eq {pid}"), "/FO", "CSV", "/NH"])
@@ -557,6 +561,6 @@ fn resident_bytes(pid: u32) -> Option<u64> {
 
 /// The memory process `pid` holds: not measured on this system.
 #[cfg(not(any(unix, windows)))]
-fn resident_bytes(_pid: u32) -> Option<u64> {
+pub(crate) fn resident_bytes(_pid: u32) -> Option<u64> {
     None
 }

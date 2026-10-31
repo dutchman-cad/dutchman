@@ -2447,3 +2447,419 @@ fn repro_cli_writes_a_private_kit_and_reports_success_or_failure() {
         assert_eq!(again.status.code(), Some(1));
     }
 }
+
+// ---- dutchman diagnose, convert --part and the memory stop ----
+
+fn dutchman_with(args: &[&str], env: &[(&str, &str)]) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_dutchman"));
+    command.args(args);
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    command.test_output().unwrap()
+}
+
+fn diagnose_report(out: &std::path::Path) -> serde_json::Value {
+    serde_json::from_slice(&std::fs::read(out.join("diagnose/report.json")).unwrap()).unwrap()
+}
+
+/// A multi-part public fixture diagnosed once: its report and the private names of its parts.
+fn diagnosed_assembly(dir: &std::path::Path) -> (serde_json::Value, Vec<(u64, String)>) {
+    let out = dutchman(&[
+        "diagnose",
+        &fixture("product_assembly.FCStd"),
+        "--out",
+        dir.to_str().unwrap(),
+    ]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let key: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("diagnose/local-key.json")).unwrap())
+            .unwrap();
+    let names = key["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            (
+                p["part"].as_u64().unwrap(),
+                p["name"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    (diagnose_report(dir), names)
+}
+
+/// The number and name of a part of the fixture that has geometry of its own.
+fn leaf_part(report: &serde_json::Value, names: &[(u64, String)]) -> (u64, String) {
+    let part = report["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["kind"] == "part" && p["entities"].as_u64().unwrap() > 0)
+        .unwrap();
+    let number = part["part"].as_u64().unwrap();
+    let name = names.iter().find(|(n, _)| *n == number).unwrap().1.clone();
+    (number, name)
+}
+
+#[test]
+fn diagnose_ranks_the_failing_part_first_and_part_reproduces_it_alone() {
+    let clean = tempfile::tempdir().unwrap();
+    let (report, names) = diagnosed_assembly(clean.path());
+    assert_eq!(report["schema"], "dutchman.diagnose/1");
+    assert_eq!(report["status"], "complete");
+    assert!(report["parts"].as_array().unwrap().len() >= 3);
+    assert_eq!(report["summary"]["failed"], 0);
+    let (target, name) = leaf_part(&report, &names);
+
+    // The writer is made to fail on that one part, here and in `convert --part`.
+    let env = [("DUTCHMAN_TEST_FAIL_MODEL", name.as_str())];
+    let dir = tempfile::tempdir().unwrap();
+    let out = dutchman_with(
+        &[
+            "diagnose",
+            &fixture("product_assembly.FCStd"),
+            "--out",
+            dir.path().to_str().unwrap(),
+            "--json",
+        ],
+        &env,
+    );
+    let result = json_of(&out);
+    assert_eq!(result["schema"], "dutchman.diagnose/1");
+    let report = diagnose_report(dir.path());
+    let parts = report["parts"].as_array().unwrap();
+    // Parts that share a name fail together.
+    let failing: Vec<u64> = names
+        .iter()
+        .filter(|(n, part_name)| {
+            *part_name == name
+                && report["parts"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|p| p["part"] == *n && p["entities"].as_u64().unwrap() > 0)
+        })
+        .map(|(n, _)| *n)
+        .collect();
+    assert!(failing.contains(&target));
+    assert!(
+        failing.contains(&parts[0]["part"].as_u64().unwrap()),
+        "{report}"
+    );
+    assert_eq!(parts[0]["rank"], 1);
+    assert_eq!(parts[0]["outcome"], "failed");
+    assert_eq!(parts[0]["error_kind"], "restate");
+    assert_eq!(parts[0]["stage"], "write");
+    assert_eq!(report["summary"]["failed"], failing.len());
+    for other in &parts[failing.len()..] {
+        assert!(
+            matches!(other["outcome"].as_str(), Some("ok" | "container")),
+            "{other}"
+        );
+    }
+    let text = std::fs::read_to_string(dir.path().join("diagnose/report.txt")).unwrap();
+    assert!(
+        text.contains(&format!("--part {target}")),
+        "the text names the part: {text}"
+    );
+    assert!(result["summary"]
+        .as_str()
+        .unwrap()
+        .contains(&format!("--part {target}")));
+
+    // That part alone fails; the others convert.
+    let scratch = tempfile::tempdir().unwrap();
+    for (number, _) in &names {
+        let output = scratch.path().join(format!("part{number}.sc"));
+        let out = dutchman_with(
+            &[
+                "convert",
+                &fixture("product_assembly.FCStd"),
+                "--part",
+                &number.to_string(),
+                "-o",
+                output.to_str().unwrap(),
+                "--no-verify",
+                "--json",
+            ],
+            &env,
+        );
+        let result = json_of(&out);
+        let is_container = report["parts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["part"] == *number && p["outcome"] == "container");
+        if failing.contains(number) {
+            assert_eq!(result["ok"], false, "{result}");
+            assert_eq!(result["error"]["kind"], "restate");
+        } else if !is_container {
+            assert_eq!(result["ok"], true, "part {number}: {result}");
+            assert!(output.is_file());
+        }
+    }
+}
+
+#[test]
+fn diagnose_files_never_hold_names_paths_or_the_file_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let (report, names) = diagnosed_assembly(dir.path());
+    let (_, name) = leaf_part(&report, &names);
+    // Fail one part with a message that names it, so a leak through errors would show.
+    let secret_dir = tempfile::tempdir().unwrap();
+    let out = dutchman_with(
+        &[
+            "diagnose",
+            &fixture("product_assembly.FCStd"),
+            "--out",
+            secret_dir.path().to_str().unwrap(),
+        ],
+        &[("DUTCHMAN_TEST_FAIL_MODEL", name.as_str())],
+    );
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("report.json"), "{stdout}");
+    assert!(stdout.contains("local-key.json"), "{stdout}");
+    for shared in ["report.json", "report.txt"] {
+        let text =
+            std::fs::read_to_string(secret_dir.path().join("diagnose").join(shared)).unwrap();
+        for (_, part_name) in &names {
+            // Names the words of the report itself could match are not tested.
+            if part_name.chars().count() > 5 {
+                assert!(
+                    !text.contains(part_name.as_str()),
+                    "{part_name} in {shared}"
+                );
+            }
+        }
+        assert!(!text.contains("product_assembly"), "{shared}");
+        assert!(!text.contains("FCStd"), "{shared}");
+        assert!(
+            !text.contains(secret_dir.path().to_str().unwrap()),
+            "{shared}"
+        );
+        assert!(!text.contains("injected failure"), "{shared}");
+    }
+    let key = std::fs::read_to_string(secret_dir.path().join("diagnose/local-key.json")).unwrap();
+    assert!(key.contains(&name) && key.contains("Do not share"));
+    // A second run into the same folder is refused and changes nothing.
+    let again = dutchman(&[
+        "diagnose",
+        &fixture("product_assembly.FCStd"),
+        "--out",
+        secret_dir.path().to_str().unwrap(),
+    ]);
+    assert_eq!(again.status.code(), Some(1));
+}
+
+#[test]
+fn diagnose_stops_a_part_over_its_time_limit_and_carries_on() {
+    let clean = tempfile::tempdir().unwrap();
+    let (report, names) = diagnosed_assembly(clean.path());
+    let (target, _) = leaf_part(&report, &names);
+    let dir = tempfile::tempdir().unwrap();
+    let started = std::time::Instant::now();
+    let out = dutchman_with(
+        &[
+            "diagnose",
+            &fixture("product_assembly.FCStd"),
+            "--out",
+            dir.path().to_str().unwrap(),
+            "--time-limit",
+            "1",
+        ],
+        &[("DUTCHMAN_DIAGNOSE_TEST_FAULT", &format!("{target}:hang"))],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // The hang would have lasted an hour.
+    assert!(started.elapsed() < std::time::Duration::from_secs(120));
+    let report = diagnose_report(dir.path());
+    let parts = report["parts"].as_array().unwrap();
+    assert_eq!(parts[0]["part"], target);
+    assert_eq!(parts[0]["outcome"], "timed_out");
+    assert_eq!(parts[0]["stage"], "map");
+    assert!(parts[0]["time_ms"].as_u64().unwrap() >= 1000);
+    assert_eq!(report["summary"]["timed_out"], 1);
+    assert_eq!(report["summary"]["restarts"], 1);
+    assert_eq!(report["summary"]["not_run"], 0);
+    assert_eq!(report["limits"]["time_limit_s"], 1.0);
+    // Every other part still got its turn after the converter was started again.
+    assert!(parts[1..]
+        .iter()
+        .all(|p| matches!(p["outcome"].as_str(), Some("ok" | "container"))));
+}
+
+#[test]
+fn diagnose_survives_a_part_that_crashes_the_converter() {
+    let clean = tempfile::tempdir().unwrap();
+    let (report, names) = diagnosed_assembly(clean.path());
+    let (target, _) = leaf_part(&report, &names);
+    let dir = tempfile::tempdir().unwrap();
+    let out = dutchman_with(
+        &[
+            "diagnose",
+            &fixture("product_assembly.FCStd"),
+            "--out",
+            dir.path().to_str().unwrap(),
+        ],
+        &[("DUTCHMAN_DIAGNOSE_TEST_FAULT", &format!("{target}:crash"))],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report = diagnose_report(dir.path());
+    assert_eq!(report["parts"][0]["part"], target);
+    assert_eq!(report["parts"][0]["outcome"], "failed");
+    assert_eq!(report["parts"][0]["error_kind"], "crash");
+    assert_eq!(report["summary"]["restarts"], 1);
+    assert_eq!(report["summary"]["not_run"], 0);
+}
+
+#[test]
+fn convert_part_refuses_a_number_the_design_does_not_have() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = dutchman(&[
+        "convert",
+        &fixture("product_assembly.FCStd"),
+        "--part",
+        "99",
+        "-o",
+        dir.path().join("x.sc").to_str().unwrap(),
+        "--no-verify",
+    ]);
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("there is no part 99"), "{stderr}");
+    assert!(stderr.contains("numbered 1 to"), "{stderr}");
+    assert!(!dir.path().join("x.sc").exists());
+    let out = dutchman(&[
+        "convert",
+        &fixture("product_assembly.FCStd"),
+        "--with-children",
+    ]);
+    assert_eq!(out.status.code(), Some(2));
+}
+
+#[test]
+fn a_conversion_the_machine_cannot_finish_stops_early_naming_the_largest_parts() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("x.sc");
+    let clean = tempfile::tempdir().unwrap();
+    let (report, names) = diagnosed_assembly(clean.path());
+    let (leaf, _) = leaf_part(&report, &names);
+    let leaf = leaf.to_string();
+    let args = [
+        "convert",
+        &fixture("product_assembly.FCStd"),
+        "-o",
+        output.to_str().unwrap(),
+        "--no-verify",
+    ];
+    // The design holds 12 GB once read and 2 GB are free.
+    let env = [("DUTCHMAN_TEST_MEMORY", "12000000000,2000000000")];
+    let out = dutchman_with(&args, &env);
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("this conversion needs about 9.0 GB more memory and 2.0 GB are free"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("are the largest"), "{stderr}");
+    assert!(stderr.contains("dutchman diagnose"), "{stderr}");
+    assert!(stderr.contains("--part N"), "{stderr}");
+    assert!(!output.exists());
+    // The override converts anyway; so does converting one part.
+    let mut forced = args.to_vec();
+    forced.push("--no-memory-check");
+    assert!(dutchman_with(&forced, &env).status.success());
+    let mut one = args.to_vec();
+    one.extend(["--part", leaf.as_str()]);
+    assert!(dutchman_with(&one, &env).status.success());
+}
+
+#[test]
+fn repro_follows_a_diagnose_report_to_the_failing_part() {
+    let clean = tempfile::tempdir().unwrap();
+    let (report, names) = diagnosed_assembly(clean.path());
+    let (_, name) = leaf_part(&report, &names);
+    let env = [("DUTCHMAN_TEST_FAIL_MODEL", name.as_str())];
+    let dir = tempfile::tempdir().unwrap();
+    let out = dutchman_with(
+        &[
+            "diagnose",
+            &fixture("product_assembly.FCStd"),
+            "--out",
+            dir.path().to_str().unwrap(),
+        ],
+        &env,
+    );
+    assert!(out.status.success());
+    // Parts that share a name fail together; the first ranked is the one repro follows.
+    let target = diagnose_report(dir.path())["parts"][0]["part"]
+        .as_u64()
+        .unwrap();
+    // The report in --out is found; so is one named with --from-diagnose.
+    let out = dutchman_with(
+        &[
+            "repro",
+            &fixture("product_assembly.FCStd"),
+            "--out",
+            dir.path().to_str().unwrap(),
+            "--json",
+        ],
+        &env,
+    );
+    let result = json_of(&out);
+    assert_eq!(result["anonymous"]["status"], "failure", "{result}");
+    assert_eq!(result["anonymous"]["narrowing"]["from_diagnose"], true);
+    assert_eq!(result["anonymous"]["narrowing"]["path"][0]["unit"], "part");
+    assert_eq!(
+        result["anonymous"]["narrowing"]["path"][0]["ordinal"],
+        target
+    );
+    let steps = std::fs::read_to_string(dir.path().join("kit/next-steps.md")).unwrap();
+    assert!(steps.contains(&format!("part {target} of")), "{steps}");
+    let shared = result["anonymous"].to_string() + &steps;
+    assert!(
+        !shared.contains(&name) || name.chars().count() <= 5,
+        "{shared}"
+    );
+    let elsewhere = tempfile::tempdir().unwrap();
+    let out = dutchman_with(
+        &[
+            "repro",
+            &fixture("product_assembly.FCStd"),
+            "--out",
+            elsewhere.path().join("kit-here").to_str().unwrap(),
+            "--from-diagnose",
+            dir.path().to_str().unwrap(),
+            "--json",
+        ],
+        &env,
+    );
+    assert_eq!(
+        json_of(&out)["anonymous"]["narrowing"]["path"][0]["ordinal"],
+        target
+    );
+    // A folder with no report is refused.
+    let out = dutchman(&[
+        "repro",
+        &fixture("product_assembly.FCStd"),
+        "--out",
+        elsewhere.path().join("another").to_str().unwrap(),
+        "--from-diagnose",
+        elsewhere.path().to_str().unwrap(),
+    ]);
+    assert_eq!(out.status.code(), Some(1));
+}
