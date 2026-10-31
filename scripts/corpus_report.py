@@ -49,14 +49,16 @@ def normalize(text):
     """A failure message without the parts that differ between files."""
     text = (text or "").strip().splitlines()[0] if (text or "").strip() else "(no message)"
     text = re.sub(r"/[^\s'\"):,]+", "<path>", text)
-    text = re.sub(r"'[^']*'|\"[^\"]*\"", "<name>", text)
+    text = re.sub(r"(?<!\w)'[^']*'(?!\w)|\"[^\"]*\"", "<name>", text)
     text = re.sub(r"\b0x[0-9a-fA-F]+\b", "<hex>", text)
     text = re.sub(r"\d+(\.\d+)?", "N", text)
     return text[:200]
 
 
 def blocker_of(reason):
-    text = re.sub(r"(stopped at feature )[^:(]+", r"\1<feature>", reason or "")
+    """Why history stopped, without the feature's name or the count of features kept."""
+    text = re.sub(r"^history stopped at feature [^:]+: ", "", reason or "")
+    text = re.sub(r" \(\d+ of \d+ features kept\).*$", "", text)
     return normalize(text)
 
 
@@ -78,12 +80,14 @@ def summarize(meta, report, err_tail):
     }
     if meta["status"] == "converted":
         row["history"] = history_class(row)
+        # Only files whose history stopped: the verification reason names where and why.
         blockers = []
-        if row["history"] in ("partial", "flattened") and verification.get("reason"):
-            blockers.append(verification["reason"])
-        for feat in history.get("features") or []:
-            if feat.get("status") == "blocked" and feat.get("reason"):
-                blockers.append(feat["reason"])
+        if row["history"] in ("partial", "flattened"):
+            if verification.get("reason"):
+                blockers.append(verification["reason"])
+            else:
+                blockers += [f["reason"] for f in history.get("features") or []
+                             if f.get("status") == "blocked" and f.get("reason")][:1]
         row["blockers"] = blockers
     elif meta["status"] in ("failed", "timeout"):
         error = report.get("error")
