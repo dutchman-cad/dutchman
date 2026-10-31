@@ -57,7 +57,7 @@ jobs:
     needs: resolve
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Download and check the archive
         working-directory: ${{ runner.temp }}
         run: |
@@ -80,7 +80,7 @@ jobs:
     needs: resolve
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Download and check the archive
         working-directory: ${{ runner.temp }}
         run: |
@@ -157,7 +157,7 @@ jobs:
     needs: resolve
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Download and check the archive
         working-directory: ${{ runner.temp }}
         shell: pwsh
