@@ -16,6 +16,12 @@ content and as text, with `isError` set when `ok` is false. The schema is named 
 added: none is renamed, retyped or removed. A change that would break a reader gets a new
 version (`dutchman.convert/2`).
 
+Sketch losses describe unresolved distance operands and ambiguous curve-only coincidences
+specifically, including dimension values that match neither the line nor its finite endpoint. Cosmetic thread blockers distinguish missing diameter/pitch from historical
+faces without input surface geometry. Unspecified modeled construction, when an annotation
+can be placed, adds a Degraded loss explaining that only the cosmetic annotation is kept.
+These use the existing loss fields; no report schema or field changes.
+
 ## `dutchman.progress/1`
 
 `convert --json`, `convert-all --json`, `inspect --json`, and `watch --json` write progress

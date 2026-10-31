@@ -160,6 +160,12 @@ Dutchman can find`, and the rest of the assembly still converts.
 The first part of a subject such as `f3d/material.not-transferred` is a stable code from
 cadmpeg; in `--json` it is the `code` field, which scripts can match on.
 
+Sketch dimensions keep parameter expressions when their operands map, including
+point-to-line distances and parallel-line spacing. A loss saying a historical thread face
+has no input surface geometry means the thread annotation could not be placed safely;
+see [Feature history](history.md#feature-by-feature). Check size edits on the editable body
+when the result also contains the original imported shape.
+
 ## Open the result in SolidCraft
 
 In the SolidCraft app, use File, Open, or start it with the design:

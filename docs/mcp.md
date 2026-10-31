@@ -49,6 +49,12 @@ Desktop file cards show stage, elapsed time, and five-second heartbeats, with de
 counts and a determinate bar when the total is known. Fusion `.f3z` member counts are
 not available yet.
 
+Sketch point-to-line dimensions and parallel-line spacing retain their parameter expressions;
+point-on-curve coincidences also carry across. For a size edit, check the editable body's
+bbox or volume separately from the final imported shape. Cosmetic metric thread annotations
+require resolved cylindrical face geometry; a historical face ID alone is reported as
+having no resolved input surface geometry.
+
 When a feature blocks SolidCraft history conversion, earlier editable features and
 resolved sketches are kept in a hidden **Editable history (partial)** component. The
 original final shape remains visible as an Import after the kept history. Show the

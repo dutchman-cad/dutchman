@@ -35,6 +35,12 @@ show the same information, with a determinate bar when the design total is known
 attempts can repeat and do not establish a unique design completion count. MCP and web conversions return only their final reports; no
 progress stream is available.
 
+Sketch point-to-line dimensions and parallel-line spacing retain their parameter expressions;
+point-on-curve coincidences also carry across. For a size edit, check the editable body's
+bbox or volume separately from the final imported shape. Cosmetic metric thread annotations
+require resolved cylindrical face geometry; a historical face ID alone is reported as
+having no resolved input surface geometry.
+
 When a feature blocks SolidCraft history conversion, earlier editable features and
 resolved sketches are kept in a hidden **Editable history (partial)** component. The
 original final shape remains visible as an Import after the kept history. Show the

@@ -217,8 +217,9 @@ stages; ordered chains of feature-pattern stages containing mirrors (target Soli
 mirrors of earlier features across a
 plane; and body mirror patterns and body combines (join, cut or intersect, optionally keeping
 the tools) of bodies named by earlier features. Shells and drafts wait on input face geometry
-(their faces are known only on the final body, which the feature has changed); cosmetic
-thread standards and pitches and shape-replacing mirrors are not supported yet. Features are
+(their faces are known only on the final body, which the feature has changed);
+modeled threads and threads without resolved metric size, extent, and cylindrical face
+geometry, and shape-replacing mirrors are not supported yet. Features are
 named uniquely on the timeline, since SolidCraft patterns refer to them by name. Parameters
 keep their expressions where SolidCraft reads them the same way, else their evaluated values.
 
