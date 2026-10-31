@@ -208,6 +208,7 @@ impl Writer for FailsFor {
     }
 }
 
+#[cfg(feature = "freecad")]
 fn assembly_fixture() -> dutchman_core::Model {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../dutchman-core/tests/fixtures/product_assembly.FCStd");
@@ -220,6 +221,7 @@ fn assembly_fixture() -> dutchman_core::Model {
     .unwrap()
 }
 
+#[cfg(feature = "freecad")]
 #[test]
 fn one_failing_part_of_a_multi_part_design_fails_alone() {
     let model = assembly_fixture();
@@ -250,6 +252,7 @@ fn one_failing_part_of_a_multi_part_design_fails_alone() {
     }
 }
 
+#[cfg(feature = "freecad")]
 #[test]
 fn a_missing_part_is_refused_with_the_range() {
     let model = assembly_fixture();
@@ -265,6 +268,7 @@ fn a_missing_part_is_refused_with_the_range() {
     assert!(parts::select(&model, 0, false).is_err());
 }
 
+#[cfg(feature = "freecad")]
 #[test]
 fn a_part_selected_alone_holds_only_its_own_geometry() {
     let model = assembly_fixture();

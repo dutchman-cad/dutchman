@@ -2562,15 +2562,17 @@ fn diagnose_ranks_the_failing_part_first_and_part_reproduces_it_alone() {
             "{other}"
         );
     }
+    // Parts that fail alike rank by how they ran, so the first of them can be either.
+    let first = parts[0]["part"].as_u64().unwrap();
     let text = std::fs::read_to_string(dir.path().join("diagnose/report.txt")).unwrap();
     assert!(
-        text.contains(&format!("--part {target}")),
+        text.contains(&format!("--part {first}")),
         "the text names the part: {text}"
     );
     assert!(result["summary"]
         .as_str()
         .unwrap()
-        .contains(&format!("--part {target}")));
+        .contains(&format!("--part {first}")));
 
     // That part alone fails; the others convert.
     let scratch = tempfile::tempdir().unwrap();
