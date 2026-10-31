@@ -1587,9 +1587,7 @@ mod cli_tests {
 
     #[test]
     fn an_unblocked_probe_keeps_its_version_even_on_failure() {
-        let _turn = ONE_AT_A_TIME
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _turn = crate::testing::scripts();
         let dir = tempfile::tempdir().unwrap();
         let cli = dir.path().join("solidcraft-cli");
         std::fs::write(&cli, "#!/bin/sh\necho 'solidcraft-cli 0.1.0'\nexit 3\n").unwrap();
@@ -1654,15 +1652,8 @@ mod cli_tests {
         format!("case \"$design\" in *original*) {original};; *) {history};; esac")
     }
 
-    /// Held while a stand-in CLI is written and run. A script still open for writing when
-    /// another test forks is inherited by that child, and running it then fails with "text file
-    /// busy"; one at a time avoids that.
-    static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     fn run(script: &str, timeout: Duration) -> Outcome {
-        let _turn = ONE_AT_A_TIME
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _turn = crate::testing::scripts();
         let dir = tempfile::tempdir().unwrap();
         let cli = fake_cli(dir.path(), script);
         compare(
@@ -1786,9 +1777,7 @@ mod cli_tests {
     }
 
     fn import_check(script: &str) -> Shown {
-        let _turn = ONE_AT_A_TIME
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let _turn = crate::testing::scripts();
         let dir = tempfile::tempdir().unwrap();
         let cli = fake_cli(dir.path(), script);
         check_import(
@@ -1853,6 +1842,7 @@ mod cli_tests {
     #[cfg(unix)]
     #[test]
     fn target_defaults_to_the_found_cli_or_the_built_in_newest() {
+        let _turn = crate::testing::scripts();
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         for version in [
@@ -1903,6 +1893,7 @@ mod cli_tests {
     #[cfg(unix)]
     #[test]
     fn a_solidcraft_too_old_is_refused_with_the_reason() {
+        let _turn = crate::testing::scripts();
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         let cli = |name: &str, version: &str| {

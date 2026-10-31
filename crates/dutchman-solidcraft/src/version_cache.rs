@@ -161,6 +161,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn process_cache_shares_success_and_no_answer_across_callers() {
+        let _turn = crate::testing::scripts();
         let dir = tempfile::tempdir().unwrap();
         for (name, body, expected) in [
             (
@@ -188,6 +189,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn disk_hit_and_cache_only_lookup_never_spawn() {
+        let _turn = crate::testing::scripts();
         let dir = tempfile::tempdir().unwrap();
         let cli = script(dir.path(), "cli", "echo 'solidcraft-cli 0.26.0'");
         let cache = dir.path().join("cache.json");
@@ -208,6 +210,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn only_successful_versions_are_persisted_and_bad_cache_probes_live() {
+        let _turn = crate::testing::scripts();
         let dir = tempfile::tempdir().unwrap();
         for (name, body, persists) in [
             ("healthy", "echo 'solidcraft-cli 0.26.0'", true),
@@ -231,6 +234,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn timeout_is_bounded_and_remembered_only_in_process() {
+        let _turn = crate::testing::scripts();
         let dir = tempfile::tempdir().unwrap();
         let cli = script(dir.path(), "sleepy", "exec sleep 30");
         let cache = dir.path().join("cache.json");
