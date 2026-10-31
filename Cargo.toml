@@ -23,10 +23,10 @@ dutchman-pilot = { git = "https://github.com/dutchman-cad/pilot", rev = "a91cade
 aho-corasick = "1.1"
 # cadmpeg at one tested commit of its main branch, the same for every cadmpeg crate. Move it
 # after a batch of cadmpeg merges (docs/releasing.md); the nightly build takes cadmpeg's main.
-cadmpeg-codec-f3d = { git = "https://github.com/raykholo/cadmpeg", rev = "acae128a94320a613761e6af9d336bba024cf492" }
-cadmpeg-core = { git = "https://github.com/raykholo/cadmpeg", rev = "acae128a94320a613761e6af9d336bba024cf492" }
-cadmpeg-ir = { git = "https://github.com/raykholo/cadmpeg", rev = "acae128a94320a613761e6af9d336bba024cf492" }
-cadmpeg-registry = { git = "https://github.com/raykholo/cadmpeg", rev = "acae128a94320a613761e6af9d336bba024cf492", default-features = false, features = ["fcstd", "f3d", "inventor", "sldprt", "catia", "creo", "nx", "rhino", "step", "iges", "sat", "pvz"] }
+cadmpeg-codec-f3d = { git = "https://github.com/raykholo/cadmpeg", rev = "9e5015b258ca999308b9a169cecbdfb55b0d59c5" }
+cadmpeg-core = { git = "https://github.com/raykholo/cadmpeg", rev = "9e5015b258ca999308b9a169cecbdfb55b0d59c5" }
+cadmpeg-ir = { git = "https://github.com/raykholo/cadmpeg", rev = "9e5015b258ca999308b9a169cecbdfb55b0d59c5" }
+cadmpeg-registry = { git = "https://github.com/raykholo/cadmpeg", rev = "9e5015b258ca999308b9a169cecbdfb55b0d59c5", default-features = false, features = ["fcstd", "f3d", "inventor", "sldprt", "catia", "creo", "nx", "rhino", "step", "iges", "sat", "pvz"] }
 getrandom = "0.3"
 serde_json = "1"
 sha2 = "0.11"
