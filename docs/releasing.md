@@ -176,13 +176,13 @@ repository, and publishes nothing: the results are workflow artifacts and the ru
 Dispatch it from the Actions tab, or with the GitHub CLI:
 
 ```
-gh workflow run corpus-sweep.yml -f sources=PrintersForAnts/Crucible -f dutchman=main -f step=true
+gh workflow run corpus-sweep.yml -f sources=PrintersForAnts/Crucible -f step=true
 ```
 
 | Input | Meaning |
 |---|---|
 | `sources` | Comma list of `owner/name` to restrict the run to (default: every source). |
-| `dutchman` | `main`, `nightly` (the nightly release build), or a pull request number (that pull request's head). |
+| `dutchman` | `branch` (the code of the branch the run is on; the default) or `nightly` (the nightly release build). To sweep a pull request, run the workflow on its branch: `gh workflow run corpus-sweep.yml --ref <branch>`. |
 | `cadmpeg` | `pinned` (the commit Dutchman pins) or `main` (cadmpeg's main, as the nightly builds it). |
 | `step` | Include `.step` and `.stp` files. |
 | `preset` | `standard` (default), `fast` or `full`. |

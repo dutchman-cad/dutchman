@@ -13,8 +13,8 @@ on:
         description: "Only these sources (comma list of owner/name; empty: all of corpus/public.toml)"
         default: ""
       dutchman:
-        description: "Which Dutchman: main, nightly (the release build), or a pull request number"
-        default: main
+        description: "Which Dutchman: branch (the code of the branch this run is on) or nightly (the release build)"
+        default: branch
       cadmpeg:
         description: "Which cadmpeg: pinned (what Dutchman pins) or main (ignored for nightly)"
         type: choice
@@ -49,22 +49,22 @@ jobs:
       cadmpeg: ${{ steps.version.outputs.cadmpeg }}
     env:
       GH_TOKEN: ${{ github.token }}
-      WHICH: ${{ inputs.dutchman || 'main' }}
+      WHICH: ${{ inputs.dutchman || 'branch' }}
       CADMPEG: ${{ inputs.cadmpeg || 'pinned' }}
     steps:
       - name: Choose the source
         id: choose
         run: |
+          # To sweep a pull request, run this workflow on its branch (gh workflow run
+          # corpus-sweep.yml --ref <branch>). Checking out other code here would run it with
+          # this branch's cache access, so the job only builds the branch it runs on.
           case "$WHICH" in
-            main) echo "ref=main" >> "$GITHUB_OUTPUT" ;;
+            branch|main) echo "ref=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT" ;;
             nightly) echo "ref=" >> "$GITHUB_OUTPUT" ;;
-            ''|*[!0-9]*) echo "::error::dutchman must be main, nightly or a pull request number"; exit 1 ;;
-            *) echo "ref=refs/pull/$WHICH/head" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::dutchman must be branch or nightly"; exit 1 ;;
           esac
       - uses: actions/checkout@v4
         if: steps.choose.outputs.ref != ''
-        with:
-          ref: ${{ steps.choose.outputs.ref }}
       - name: Install build dependencies
         if: steps.choose.outputs.ref != ''
         run: |
@@ -73,8 +73,12 @@ jobs:
             libxcursor-dev libxrandr-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev
       - uses: dtolnay/rust-toolchain@stable
         if: steps.choose.outputs.ref != ''
-      # No build cache: this job can build a pull request's code, and a cache it wrote
-      # would be restored by runs on main.
+      # Restore the cache before the cadmpeg update, as the nightly does.
+      - uses: Swatinem/rust-cache@v2
+        if: steps.choose.outputs.ref != ''
+        with:
+          shared-key: corpus-sweep-release
+          cache-on-failure: true
       - name: Use cadmpeg main
         id: cadmpeg
         if: steps.choose.outputs.ref != '' && inputs.cadmpeg == 'main'
