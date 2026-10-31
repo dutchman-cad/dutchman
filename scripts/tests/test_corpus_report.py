@@ -36,7 +36,7 @@ class ReportTest(unittest.TestCase):
                "history": {"mapped": 3, "total": 3, "features": []}})
         write(d, meta("2-b", a, "cad/b.iam", "converted"),
               {"ok": True, "mode": "partial_history",
-               "verification": {"status": "partial", "reason": "history stopped at feature Loft 3: lofts are not mapped"},
+               "verification": {"status": "partial", "reason": "history stopped at feature Loft 3: lofts are not mapped (2 of 5 features kept); the rest is the imported final shape"},
                "completeness": {"placed": 8, "placements": 10}})
         write(d, meta("3-c", b, "c.f3d", "failed"),
               {"ok": False, "error": {"message": "unreadable record 12 in stream 'BREP'", "stage": "decode", "upstream": "cadmpeg"}})
@@ -66,7 +66,7 @@ class ReportTest(unittest.TestCase):
         self.assertIn("1 / 1 / 0 (0)", text)
         # The two cadmpeg failures differ only in numbers and names: one cause, count 2.
         self.assertIn("| 2 | cadmpeg | unreadable record N in stream <name> |", text)
-        self.assertIn("stopped at feature <feature>", text)
+        self.assertIn("| 1 | lofts are not mapped |", text)
         self.assertIn("owner/gone: licence is MIT", text)
 
     def test_memory_is_not_a_failure(self):
