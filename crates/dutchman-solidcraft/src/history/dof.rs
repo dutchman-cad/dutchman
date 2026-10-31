@@ -244,10 +244,20 @@ fn residuals(sketch: &Sketch, constraint: &Value, v: &[f64]) -> Option<Vec<f64>>
                 (Shape::Line(s, e), round) | (round, Shape::Line(s, e)) => {
                     let d = sub(point(v, e), point(v, s));
                     let c = point(v, centre(round)?);
-                    vec![
+                    let mut out = vec![
                         cross(d, sub(c, point(v, s))).abs() / norm(d).max(1e-12)
                             - radius(round, v)?,
-                    ]
+                    ];
+                    // Where the line and the arc share an end, that end is the touching
+                    // point: the line is square to the radius there.
+                    if let Shape::Arc(_, a, b) = round {
+                        for end in [a, b] {
+                            if end == s || end == e {
+                                out.push(dot(d, sub(point(v, end), c)));
+                            }
+                        }
+                    }
+                    out
                 }
                 _ => {
                     let gap = norm(sub(point(v, centre(x)?), point(v, centre(y)?)));

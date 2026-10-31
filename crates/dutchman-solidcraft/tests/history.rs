@@ -10187,7 +10187,7 @@ fn a_partial_revolve_angle_follows_the_parameter_that_sets_it() {
 }
 
 #[test]
-fn selecting_every_loop_of_a_nested_sketch_leaves_the_hole() {
+fn selecting_nested_loops_leaves_the_inner_one_a_hole() {
     let mut model = nested_native_profile(&[5.0, 3.0]);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     wire["model"]["features"][1]["definition"]["profile"] =
@@ -10197,7 +10197,10 @@ fn selecting_every_loop_of_a_nested_sketch_leaves_the_hole() {
         &model,
         &SolidCraftWriter::new().verification(Verification::Off),
     );
-    assert_eq!(document["features"][1]["profiles"], json!({"type": "all"}));
+    assert_eq!(
+        document["features"][1]["profiles"],
+        json!({"type": "whole_boundaries", "profiles": [{"outer": ["c1"], "holes": [["c2"]]}]})
+    );
     if let Some(cli) = solidcraft() {
         let volume = volumes(&cli, &written(&model).0);
         let expected = std::f64::consts::PI * 16.0 * 10.0;

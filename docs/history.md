@@ -120,7 +120,7 @@ height of a point of an earlier sketch, which that sketch's dimensions place, is
 that origin plane offset by those dimensions, so a cut on the end of a screw follows its
 length; the sketch's axes are turned back when the source drew them turned by a half or
 quarter turn, and a sketch with other curves than points, lines, circles and arcs keeps a fixed
-plane. When a sketch selects every loop of a nested sketch the inner loops stay holes. A sketch
+plane. When a selection holds loops that lie inside one another, each inner loop is a hole of the loop around it (an annulus is its outer and inner circle). A sketch
 with a parameter and at most four loose points (nothing in the source fixes them) keeps each
 where it was drawn, tied to the origin when it sits there and otherwise at its drawn distance
 from it, so one edit cannot move it across the profile.
