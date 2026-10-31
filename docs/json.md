@@ -719,7 +719,7 @@ to share. See [Find what breaks in a large private file](diagnose.md).
 | `schema` | `dutchman.diagnose/1`. |
 | `versions` | `dutchman` release and `cadmpeg` version. |
 | `input` | `format` (Dutchman's format id) and `size_class` (as in `dutchman.repro/1`). |
-| `status` | `running` (in progress, or interrupted), `complete`, or `read_failed` (the design could not be read within the limits, so no part was tried). |
+| `status` | `running` (in progress, or interrupted), `complete`, or `read_failed` (the design could not be read, so no part was tried). |
 | `limits` | `time_limit_s` per part and `memory_limit_mb` (null for none). |
 | `read` | How reading the design went: `outcome` (`ok`, `failed`, or null while reading), `time_ms`, `peak_memory_mb`, and, if it failed, `stage`, `error_kind` and `findings`. |
 | `summary` | Counts: `parts`, `finished`, `ok`, `failed`, `timed_out`, `out_of_memory`, `container`, `not_run`, `restarts` (how often the design was read again after a part stopped the converter) and `elapsed_ms`. |

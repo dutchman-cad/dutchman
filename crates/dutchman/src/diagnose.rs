@@ -961,7 +961,7 @@ pub fn text(report: &Value) -> String {
                 "Every part converted on its own. If the whole file still fails or runs out of\nmemory, the cause is in combining the parts or in their total size.\n",
             ),
             Some("read_failed") => out.push_str(
-                "The design could not be read within the limits, so no part was tried. Try a machine\nwith more memory, or a longer --time-limit.\n",
+                "The design could not be read, so no part was tried. If it ran out of time or memory, try\na machine with more memory or a longer --time-limit.\n",
             ),
             _ => {}
         }
@@ -981,7 +981,7 @@ fn summary_text(report: &Value, failing: Option<usize>) -> String {
         n("out_of_memory")
     );
     if report["status"] == "read_failed" {
-        text = "The design could not be read within the limits, so no part was tried.".to_owned();
+        text = "The design could not be read, so no part was tried.".to_owned();
     }
     if let Some(part) = failing {
         text.push_str(&format!(

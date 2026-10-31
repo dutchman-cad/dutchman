@@ -2450,6 +2450,7 @@ fn repro_cli_writes_a_private_kit_and_reports_success_or_failure() {
 
 // ---- dutchman diagnose, convert --part and the memory stop ----
 
+#[cfg(feature = "freecad")]
 fn dutchman_with(args: &[&str], env: &[(&str, &str)]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_dutchman"));
     command.args(args);
@@ -2459,11 +2460,13 @@ fn dutchman_with(args: &[&str], env: &[(&str, &str)]) -> Output {
     command.test_output().unwrap()
 }
 
+#[cfg(feature = "freecad")]
 fn diagnose_report(out: &std::path::Path) -> serde_json::Value {
     serde_json::from_slice(&std::fs::read(out.join("diagnose/report.json")).unwrap()).unwrap()
 }
 
 /// A multi-part public fixture diagnosed once: its report and the private names of its parts.
+#[cfg(feature = "freecad")]
 fn diagnosed_assembly(dir: &std::path::Path) -> (serde_json::Value, Vec<(u64, String)>) {
     let out = dutchman(&[
         "diagnose",
@@ -2494,6 +2497,7 @@ fn diagnosed_assembly(dir: &std::path::Path) -> (serde_json::Value, Vec<(u64, St
 }
 
 /// The number and name of a part of the fixture that has geometry of its own.
+#[cfg(feature = "freecad")]
 fn leaf_part(report: &serde_json::Value, names: &[(u64, String)]) -> (u64, String) {
     let part = report["parts"]
         .as_array()
@@ -2507,6 +2511,7 @@ fn leaf_part(report: &serde_json::Value, names: &[(u64, String)]) -> (u64, Strin
 }
 
 #[test]
+#[cfg(feature = "freecad")]
 fn diagnose_ranks_the_failing_part_first_and_part_reproduces_it_alone() {
     let clean = tempfile::tempdir().unwrap();
     let (report, names) = diagnosed_assembly(clean.path());
@@ -2608,6 +2613,7 @@ fn diagnose_ranks_the_failing_part_first_and_part_reproduces_it_alone() {
 }
 
 #[test]
+#[cfg(feature = "freecad")]
 fn diagnose_files_never_hold_names_paths_or_the_file_name() {
     let dir = tempfile::tempdir().unwrap();
     let (report, names) = diagnosed_assembly(dir.path());
@@ -2660,6 +2666,7 @@ fn diagnose_files_never_hold_names_paths_or_the_file_name() {
 }
 
 #[test]
+#[cfg(feature = "freecad")]
 fn diagnose_stops_a_part_over_its_time_limit_and_carries_on() {
     let clean = tempfile::tempdir().unwrap();
     let (report, names) = diagnosed_assembly(clean.path());
@@ -2701,6 +2708,7 @@ fn diagnose_stops_a_part_over_its_time_limit_and_carries_on() {
 }
 
 #[test]
+#[cfg(feature = "freecad")]
 fn diagnose_survives_a_part_that_crashes_the_converter() {
     let clean = tempfile::tempdir().unwrap();
     let (report, names) = diagnosed_assembly(clean.path());
@@ -2729,6 +2737,7 @@ fn diagnose_survives_a_part_that_crashes_the_converter() {
 }
 
 #[test]
+#[cfg(feature = "freecad")]
 fn convert_part_refuses_a_number_the_design_does_not_have() {
     let dir = tempfile::tempdir().unwrap();
     let out = dutchman(&[
@@ -2754,6 +2763,7 @@ fn convert_part_refuses_a_number_the_design_does_not_have() {
 }
 
 #[test]
+#[cfg(feature = "freecad")]
 fn a_conversion_the_machine_cannot_finish_stops_early_naming_the_largest_parts() {
     let dir = tempfile::tempdir().unwrap();
     let output = dir.path().join("x.sc");
@@ -2791,6 +2801,7 @@ fn a_conversion_the_machine_cannot_finish_stops_early_naming_the_largest_parts()
 }
 
 #[test]
+#[cfg(feature = "freecad")]
 fn repro_follows_a_diagnose_report_to_the_failing_part() {
     let clean = tempfile::tempdir().unwrap();
     let (report, names) = diagnosed_assembly(clean.path());

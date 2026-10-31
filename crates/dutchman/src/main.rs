@@ -674,7 +674,7 @@ fn diagnose(
                 dutchman_core::elapsed(ms / 1000)
             ),
             Event::ReadFailed { .. } => {
-                eprintln!("dutchman: the design could not be read within the limits")
+                eprintln!("dutchman: the design could not be read")
             }
             Event::Part {
                 done,
