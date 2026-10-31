@@ -14,6 +14,7 @@ history, with no flattened-history warning.
   original before keeping it. A face-count difference (SolidCraft merges faces that share a
   surface) or an open-shell warning alone does not fail that comparison. What maps, most of it from Fusion:
   - sketches: lines, arcs, circles, conics, splines, and many constraints and dimensions;
+    3D sketches of lines, arcs, circles, splines and points;
   - extrudes and revolves, with their end forms;
   - holes: counterbores, countersinks, chamfered entries, and thread labels on tapped holes;
     drill points on plain drilled holes only (SolidCraft ignores them on entry recesses);
@@ -134,8 +135,17 @@ For a counterbore, countersink, or chamfered entry with a drill point, the reaso
 points, but Dutchman retains this limit for compatibility with older releases. Conversion keeps the original geometry.
 
 
-Sweeps accept ordered sketch curves, or a whole sketch containing a single non-construction
-curve, for their path and optional guide rail. Taper, explicit right or round corners,
+3D sketches (Fusion spatial sketches) become SolidCraft sketches with 3D Sketch on, written at
+their solved positions: lines, exact arcs, full circles (as two half arcs), NURBS splines and
+points. A spline is written as a dense curve through the source curve with fit points along
+it, so it keeps its shape but a moved fit point redraws it as a SolidCraft spline. Constraints,
+links to model edges and vertices, construction styling, surfaces and source-native geometry
+are not carried; each is reported with the sketch, and a curve that cannot be written leaves
+out only that curve. A sweep path or guide rail picked from the sketch's curves resolves to
+its wires; one given by native selection records is reported and keeps the original geometry.
+
+Sweeps accept ordered sketch curves (planar, or curves picked in a 3D sketch), or a whole
+sketch containing a single non-construction curve, for their path and optional guide rail. Taper, explicit right or round corners,
 changing sections, tangent-path extension, and post-sweep simplification keep the original
 geometry and report the unsupported option. Twist, end scale, and the supported orientations
 remain editable; a guide rail requires the default orientation without twist or scale.
