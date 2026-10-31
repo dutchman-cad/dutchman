@@ -2,8 +2,8 @@
 
 use super::*;
 
-const SECRET: &str = "SecretPartName";
-const SECRET_PATH: &str = "/home/secret-user/Designs/Private.f3z";
+const PRIVATE_NAME: &str = "SecretPartName";
+const PRIVATE_PATH: &str = "/home/secret-user/Designs/Private.f3z";
 
 fn listed(number: usize, entities: u64, assembly: bool, parent: Option<usize>) -> Listed {
     Listed {
@@ -13,7 +13,7 @@ fn listed(number: usize, entities: u64, assembly: bool, parent: Option<usize>) -
         assembly,
         bodies: 1,
         entities,
-        name: format!("{SECRET} {number}"),
+        name: format!("{PRIVATE_NAME} {number}"),
     }
 }
 
@@ -27,7 +27,7 @@ fn run(outcome: Outcome, time_ms: u64) -> PartRun {
 fn state(dir: &Path) -> State {
     State {
         out: dir.to_path_buf(),
-        input: PathBuf::from(SECRET_PATH),
+        input: PathBuf::from(PRIVATE_PATH),
         settings: Settings {
             memory_limit: Some(2 << 30),
             ..Settings::default()
@@ -98,8 +98,8 @@ fn the_report_and_its_text_never_hold_a_name_or_a_path() {
     // A failure whose message names the user's file, folder and part, as real ones can.
     let error = wire::error(
         wire::CONVERT,
-        wire::input(Path::new(SECRET_PATH)),
-        &dutchman_core::Error::Encode(format!("{SECRET} 4 at {SECRET_PATH} has a bad edge")),
+        wire::input(Path::new(PRIVATE_PATH)),
+        &dutchman_core::Error::Encode(format!("{PRIVATE_NAME} 4 at {PRIVATE_PATH} has a bad edge")),
     );
     state.results.insert(4, classify(&error));
     state.results.insert(5, run(Outcome::TimedOut, 1000));
@@ -108,20 +108,20 @@ fn the_report_and_its_text_never_hold_a_name_or_a_path() {
     let json = std::fs::read_to_string(dir.path().join("report.json")).unwrap();
     let text = std::fs::read_to_string(dir.path().join("report.txt")).unwrap();
     for shared in [&json, &text] {
-        for secret in [
-            SECRET,
+        for private in [
+            PRIVATE_NAME,
             "secret-user",
             "Private",
             "Designs",
             ".f3z",
             "bad edge",
         ] {
-            assert!(!shared.contains(secret), "{secret} leaked into:\n{shared}");
+            assert!(!shared.contains(private), "private text in a shared report");
         }
     }
     // The key is the one file that names parts, and it is private.
     let key = std::fs::read_to_string(dir.path().join("local-key.json")).unwrap();
-    assert!(key.contains(&format!("{SECRET} 4")) && key.contains("Do not share"));
+    assert!(key.contains(&format!("{PRIVATE_NAME} 4")) && key.contains("Do not share"));
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
