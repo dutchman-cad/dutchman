@@ -708,7 +708,7 @@ exact input byte lengths, or timings.
 | `narrowing.path` | Ordered steps with `unit` (`member`, `component`, `occurrence`, `body`, `feature`, `sketch`), one-based `ordinal` and `total`. Each step is scoped to the previously retained unit. |
 | `narrowing.smallest_failing_unit_isolated` | True when a single body or smaller independent feature/sketch subset retained the same stage, category and complete finding-code set. Does not prove the globally smallest model or identify the native operation responsible. |
 | `narrowing.limits` | Fixed explanatory sentences for unavailable levels, unsuccessful trials or a trial budget. |
-| `retained_unit_kinds` | Null when no checked subset is available; otherwise `surface_kinds`, `feature_kinds` (fixed enum categories; unlisted kinds become `other`) `finding_entity_kinds` (arena names cited by structured errors, or null when unavailable), and `use_curve_outside_carrier` (structurally detected coedge range/carrier-domain mismatch count). Counts cover the retained unit, without carrier values. |
+| `retained_unit_kinds` | Null when no checked subset is available; otherwise `surface_kinds`, `feature_kinds` (fixed enum categories; unlisted kinds become `other`), `finding_entity_kinds` (arena names cited by structured errors, or null when unavailable), and `use_curve_outside_carrier` (structurally detected coedge range/carrier-domain mismatch count). Counts cover the retained unit, without carrier values. |
 
 For model check failures, only cadmpeg's checks run again on the retained model. The full
 code set must match; counts may decrease. For F3Z, cadmpeg's bounded independent-member

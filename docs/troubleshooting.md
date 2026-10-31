@@ -15,8 +15,8 @@ In the desktop app, **Report this on GitHub** on the failed file does this for y
 [**A file didn't convert**](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
 form on Dutchman's issues (for a whole library, the **Library test report** form). Keep
 ordinary logs, JSON output, the journal, the report key, and the salt private: they contain
-names, paths, or a way to identify files. Do not attach design files publicly. If you want to share a
-small reproducer you made yourself, offer it privately in the issue. See
+names, paths, or a way to identify files. Keep the original design private. You may attach a
+small rebuilt reproduction only if it reproduces and you are free to share it. See
 [Testing Dutchman on your library](testing-your-library.md#5-report-what-you-found).
 
 On Linux, run `dutchman-gui` from a terminal and confirm that your X11 or Wayland desktop
@@ -43,6 +43,33 @@ and requested reports.
 | `part.f3d: the file is … bytes, over Dutchman's 1073741824-byte limit` | Dutchman opens files up to 1 GiB. |
 | `history: …; unverified: …` | Not an error: the history was written without the SolidCraft check. Install `solidcraft-cli`, or point `--solidcraft` or `SOLIDCRAFT_CLI` at it, and convert again. |
 | `history: flattened: replay differs (…)` | Not an error: the history did not rebuild the same shape in SolidCraft. A retained editable timeline is hidden beside the imported final shape when possible. `--no-verify` keeps the history, unchecked. |
+
+## When you can't share the file
+
+Make a local reproduction kit:
+
+```sh
+dutchman repro part.f3d --out reproduction
+```
+
+Use a fresh output folder. Dutchman runs the conversion with diagnostics, then tests
+independent archive members and model subsets where the failure stage allows it. A
+successful conversion writes a kit saying **no failure to reproduce**. On failure, the
+kit gives finding codes and kinds, anonymous ordinals and explicit narrowing limits.
+
+- `reproduction/kit/anonymous.json` is safe to share: fixed categories, coarse size class
+  and counts, with no source names, paths, entity ids, geometry or parameter values.
+- `reproduction/kit/local-key.json` maps ordinals back to your own names. **Do not share it.**
+- `reproduction/kit/next-steps.md` tells you how to rebuild a small candidate in your CAD
+  program and compare the failure stage and complete code set. The recipe is a starting
+  point; a seam-crossing shape does not guarantee a decoder failure.
+
+Send anonymous.json and the small rebuilt file only if it reproduces and you are free
+to share it. Never send the original file or local-key.json. No file is uploaded by the
+command. A remote chat assistant can coach from anonymous.json while you look up names
+locally; the MCP tool returns private key content only with an explicit local-only flag.
+See the [worked example](minimum-reproduction.md) and
+[paste-ready AI prompt](testing-your-library.md#let-your-own-ai-make-a-minimum-reproduction).
 
 ## Diagnostic logs for unfinished runs
 

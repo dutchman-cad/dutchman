@@ -143,6 +143,7 @@ For other clients:
 - [The command line](docs/command-line.md): options, `inspect`, whole folders, and watching a folder.
 - [Choosing what to keep](docs/presets.md): Fast, Standard, Full, and the memory and time estimate.
 - [Troubleshooting](docs/troubleshooting.md): common problems and diagnostic logs.
+- [Make a minimum reproduction](docs/minimum-reproduction.md): isolate a failure locally and rebuild a small file you are free to share.
 
 **Formats and results**
 

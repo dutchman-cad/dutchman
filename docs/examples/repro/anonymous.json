@@ -1,0 +1,47 @@
+{
+  "failure": {
+    "curve_kinds": {
+      "nurbs": 88
+    },
+    "findings": {
+      "parameter_domain": 88
+    },
+    "kind": "cadmpeg_checks",
+    "stage": "project"
+  },
+  "input": {
+    "format": "fusion_archive",
+    "size_class": null
+  },
+  "narrowing": {
+    "limits": [
+      "Component or occurrence structure is unavailable in the retained unit.",
+      "Feature or sketch history is unavailable in the retained unit; stored geometry cannot identify the operation that made it."
+    ],
+    "members": [],
+    "path": [
+      {
+        "ordinal": 2,
+        "total": 3,
+        "unit": "body"
+      }
+    ],
+    "smallest_failing_unit_isolated": true
+  },
+  "retained_unit_kinds": {
+    "feature_kinds": {},
+    "finding_entity_kinds": {
+      "coedges": 88
+    },
+    "surface_kinds": {
+      "plane": 24
+    },
+    "use_curve_outside_carrier": 88
+  },
+  "schema": "dutchman.repro/1",
+  "status": "failure",
+  "versions": {
+    "cadmpeg": "0.6.7+9bc00b9",
+    "dutchman": "0.2.5"
+  }
+}

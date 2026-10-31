@@ -132,10 +132,10 @@ the issue when a Dutchman release fixes it.
   SolidWorks' year) if you know it, the cause as the report gives it (message or code, stage,
   upstream), the counts, a few file ids, and the `versions` block.
 - Attach the whole `report-anon.json` to one issue (or the first) if you are happy to.
-- **Never attach a design file to an issue.** If you are willing to let a maintainer see one
-  file privately, say so in the issue; we will reply with a private way to send it. That is
-  entirely your choice. Without files, a simple test part that shows the same problem, made
-  for the report, is just as useful.
+- **Never attach the original design or a private key to an issue.** You may attach a
+  small rebuilt reproduction only if it reproduces and you are free to share it. Use the
+  [minimum-reproduction procedure](minimum-reproduction.md) to compare its failure stage
+  and finding codes. Keep a body copied from the original local while investigating.
 
 ## Let your own Claude do the legwork
 
@@ -167,6 +167,44 @@ anywhere, and do not post anything to GitHub or elsewhere yourself.
    remove it.
 5. Save the drafts as Markdown files in <RESULTS FOLDER>/issues/ and list them for me. I will
    read them and post the ones I choose.
+```
+
+## Let your own AI make a minimum reproduction
+
+For one failing file you cannot share, use the
+[minimum-reproduction guide](minimum-reproduction.md). This prompt works with a local
+command-line assistant, any MCP client using `dutchman-mcp`, or a chat assistant coaching
+you while you run the command. A remote assistant needs only anonymous.json; look up
+private names yourself and do not paste them into chat.
+
+```text
+Help me make a minimum reproduction of a Dutchman conversion failure. My original CAD
+file and its contents must stay local. Do not upload, paste, attach or post any file,
+geometry, name, path, entity id or parameter value from it. Do not post an issue for me.
+
+1. If you can run local tools, run:
+   dutchman repro <ORIGINAL FILE> --out <FRESH RESULTS FOLDER>
+   or use the MCP repro tool with input and out. Otherwise coach me to run it locally.
+   Read kit/anonymous.json and kit/next-steps.md. If it says no_failure_to_reproduce,
+   explain that this run succeeded and stop.
+2. Keep kit/local-key.json local. Read it only if you are running locally and keeping
+   its contents local; otherwise ask me to look up the anonymous ordinal myself without
+   pasting names or key contents. Do not enable MCP include_local_key for a remote chat.
+   Never read or upload the original design, ordinary logs or journals.
+3. Explain the failure stage, complete finding-code set and narrowing limits. Coach me,
+   one step at a time, to build a small design in my CAD program using next-steps.md.
+   Save and run repro on each candidate into a fresh folder. Keep a candidate only when
+   the failure stage and complete code set match. Counts may decrease from 88 to 1.
+   A broad category without structured codes is only a candidate, not a proven match.
+4. Simplify until the remaining design reproduces with simple dimensions I am free to
+   share. A body copied from the original stays local unless I am free to share it;
+   prefer rebuilding the small shape from scratch.
+5. Draft an issue for dutchman-cad/dutchman for me to review and post. Use anonymous.json
+   facts only: versions, format, stage, category, finding codes/counts, kinds and anonymous
+   ordinals. If no rebuilt design reproduces, say so. Exclude private names, paths, ids,
+   geometry and parameter values, including the MCP response envelope's local paths.
+6. Tell me to attach anonymous.json and the small rebuilt file only if it reproduces
+   and I am free to share it. Never the original file. Never local-key.json. Upload nothing.
 ```
 
 ## Questions

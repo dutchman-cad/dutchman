@@ -1,6 +1,6 @@
 ---
 name: dutchman-converting
-description: Use when someone wants a CAD file (Fusion, Inventor, SolidWorks, FreeCAD, CATIA, Creo View, Rhino, ACIS or STEP) turned into a SolidCraft design (.sc) with Dutchman, through the dutchman-mcp tools or the dutchman command. Covers inspecting first, reader status and refusals (including IGES, Creo and NX), converting one file or a folder, checking the result in SolidCraft, and explaining losses in plain words.
+description: Use when someone wants a CAD file (Fusion, Inventor, SolidWorks, FreeCAD, CATIA, Creo View, Rhino, ACIS or STEP) turned into a SolidCraft design (.sc) with Dutchman, through the dutchman-mcp tools or the dutchman command. Covers inspecting first, reader status and refusals (including IGES, Creo and NX), converting one file or a folder, checking the result in SolidCraft, explaining losses in plain words, and making private minimum reproductions of failures.
 ---
 
 # Converting CAD files with Dutchman
@@ -16,7 +16,7 @@ choose `-o PATH` or use `--force` to replace it. `--force` conflicts with `--no-
 Explicit outputs retain their replacement behaviour. MCP output paths remain required.
 
 Dutchman converts native CAD files into SolidCraft designs. Use the `dutchman-mcp` tools when
-they are connected (`inspect`, `convert`, `convert_all`, `formats`); otherwise run the
+they are connected (`inspect`, `convert`, `convert_all`, `formats`, `repro`); otherwise run the
 `dutchman` command with `--json`. Both return the same reports, described in Dutchman's
 `docs/json.md`.
 
@@ -515,12 +515,39 @@ from member decoding and model validation. Geometry-only recovery reuses the dec
 and runs only for failures involving history, sketches, or parameters; a geometry failure
 says the retry was not needed. Do not suggest repeating a long decode to bypass those checks.
 
-## Local reproduction kits
+## Make a minimum reproduction
 
-`dutchman repro FILE --out FOLDER` (MCP `repro` with `input` and `out`) runs a conversion
-and writes `kit/anonymous.json`, `kit/local-key.json` and `kit/next-steps.md`. Use a fresh
-folder. Only anonymous.json is shareable. The local key contains the user's names and must
-stay local; MCP omits it unless `include_local_key: true` explicitly requests a local-only
-response. The response envelope also contains local paths. A successful conversion says
-`no_failure_to_reproduce`. Narrowing limits are explicit; never claim that matching a
-broad error category proves the same failure when structured codes are unavailable.
+Use this when a conversion fails and the original file must stay private.
+
+1. Run `dutchman repro FILE --out FRESH_FOLDER`, or MCP `repro` with `input` and `out`.
+   A kit with `status: no_failure_to_reproduce` means this conversion succeeded; stop
+   and explain that there is no failure to reproduce in this run.
+2. Read `kit/anonymous.json` and `kit/next-steps.md`. Use `kit/local-key.json` only in
+   a client keeping those names local. A remote chat assistant must ask the user to
+   look up the anonymous ordinal themselves, without pasting the key or names into chat.
+   MCP omits key content by default; `include_local_key: true` explicitly requests a
+   local-only response. Keep the response envelope's local paths out of the issue too.
+   Do not read, upload or paste the original design, geometry, ordinary logs or journals.
+3. Explain the stage, finding-code set, counts and narrowing limits. Coach one CAD step
+   at a time using `next-steps.md`: start a new design, build a simple body, save it,
+   and rerun `repro` into another fresh folder. Let the user do the native CAD operations
+   unless they have asked for local CAD automation. Do not claim a feature caused a
+   geometry check merely because it references the final body.
+4. Compare each candidate with the original anonymous report. Keep the same failure
+   stage and complete finding-code set; counts may decrease, such as 88 to 1. If no
+   structured codes are available, explain that a matching category is only a candidate
+   and cannot prove the same failure. Respect the reported limits instead of inventing
+   an isolated unit. Continue local reduction or follow the generic body-copy recipe.
+   A copied body is for local investigation; rebuild with simple, freely shareable
+   dimensions before proposing a shareable file.
+5. Once the small rebuilt design reproduces, draft an issue for the user to review and
+   post on Dutchman's issues. Use only anonymous.json for the title and technical facts:
+   versions, format, stage, category, finding codes/counts, kinds and anonymous narrowing
+   path. Remove source names, paths, entity ids and geometry/parameter values. If rebuilding
+   has not reproduced, draft an anonymous-facts-only issue and state that limit.
+6. List only anonymous.json and the small rebuilt file as proposed attachments, with the
+   file included only if it reproduces and the user is free to share it. Never attach the
+   original file or local-key.json. Do not post, attach or upload anything yourself.
+
+The [minimum-reproduction guide](../../docs/minimum-reproduction.md) has a worked
+synthetic example and a prompt usable with any chat assistant or MCP client.
