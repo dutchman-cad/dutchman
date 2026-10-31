@@ -1,0 +1,221 @@
+name: Public corpus sweep
+
+# Converts the CAD files of public, openly licensed repositories (corpus/public.toml) on
+# GitHub's free runners and reports what converted, what failed and why. Run it on demand.
+# Nothing is published: the results are workflow artifacts and the job summary.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sources:
+        description: "Only these sources (comma list of owner/name; empty: all of corpus/public.toml)"
+        default: ""
+      dutchman:
+        description: "Which Dutchman: branch (the code of the branch this run is on) or nightly (the release build)"
+        default: branch
+      cadmpeg:
+        description: "Which cadmpeg: pinned (what Dutchman pins) or main (ignored for nightly)"
+        type: choice
+        options: [pinned, main]
+        default: pinned
+      step:
+        description: Include STEP files
+        type: boolean
+        default: true
+      preset:
+        description: Preset to convert with
+        type: choice
+        options: [standard, fast, full]
+        default: standard
+      keep_sc:
+        description: "Keep the converted design of files whose path contains one of these (comma list)"
+        default: ""
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CADMPEG_REPO: https://github.com/cadmpeg/cadmpeg
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    outputs:
+      dutchman: ${{ steps.version.outputs.dutchman }}
+      cadmpeg: ${{ steps.version.outputs.cadmpeg }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      WHICH: ${{ inputs.dutchman }}
+      CADMPEG: ${{ inputs.cadmpeg }}
+    steps:
+      - name: Choose the source
+        id: choose
+        run: |
+          # To sweep a pull request, run this workflow on its branch (gh workflow run
+          # corpus-sweep.yml --ref <branch>). Checking out other code here would run it with
+          # this branch's cache access, so the job only builds the branch it runs on.
+          case "$WHICH" in
+            branch|main) echo "ref=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT" ;;
+            nightly) echo "ref=" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::dutchman must be branch or nightly"; exit 1 ;;
+          esac
+      - uses: actions/checkout@v4
+        if: steps.choose.outputs.ref != ''
+      - name: Install build dependencies
+        if: steps.choose.outputs.ref != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libx11-dev libxi-dev \
+            libxcursor-dev libxrandr-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.choose.outputs.ref != ''
+      # Restore the cache before the cadmpeg update, as the nightly does.
+      - uses: Swatinem/rust-cache@v2
+        if: steps.choose.outputs.ref != ''
+        with:
+          shared-key: corpus-sweep-release
+          cache-on-failure: true
+      - name: Use cadmpeg main
+        id: cadmpeg
+        if: steps.choose.outputs.ref != '' && inputs.cadmpeg == 'main'
+        run: |
+          sha=$(git ls-remote "$CADMPEG_REPO" refs/heads/main | cut -f1)
+          [ -n "$sha" ]
+          scripts/use-cadmpeg-main.sh "$sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Build Dutchman
+        if: steps.choose.outputs.ref != ''
+        run: |
+          locked=--locked
+          [ "$CADMPEG" = main ] && locked=
+          cargo build --release $locked -p dutchman
+          mkdir -p bin
+          cp target/release/dutchman bin/dutchman
+      - name: Fetch the nightly build
+        if: steps.choose.outputs.ref == ''
+        run: |
+          gh release download nightly --repo "$GITHUB_REPOSITORY" \
+            --pattern 'dutchman-nightly-x86_64-unknown-linux-gnu.tar.gz'
+          mkdir -p unpacked bin
+          tar xzf dutchman-nightly-x86_64-unknown-linux-gnu.tar.gz -C unpacked
+          cp "$(find unpacked -type f -name dutchman | head -n1)" bin/dutchman
+          gh release view nightly --repo "$GITHUB_REPOSITORY" --json body -q .body > nightly-notes.txt
+      - name: Record the versions
+        id: version
+        run: |
+          chmod +x bin/dutchman
+          bin/dutchman --version
+          if [ -n "${{ steps.choose.outputs.ref }}" ]; then
+            echo "dutchman=$WHICH @ $(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+            if [ "$CADMPEG" = main ]; then
+              echo "cadmpeg=main @ $(echo '${{ steps.cadmpeg.outputs.sha }}' | cut -c1-9)" >> "$GITHUB_OUTPUT"
+            else
+              echo "cadmpeg=pinned" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "dutchman=nightly" >> "$GITHUB_OUTPUT"
+            echo "cadmpeg=main (as the nightly was built)" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dutchman-bin
+          path: bin/dutchman
+          retention-days: 7
+
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      chunks: ${{ steps.plan.outputs.chunks }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCES: ${{ inputs.sources }}
+          STEP: ${{ inputs.step }}
+          PRESET: ${{ inputs.preset }}
+        run: |
+          python3 scripts/corpus_plan.py --corpus corpus/public.toml --out plan.json \
+            --sources "$SOURCES" --step "$STEP" --preset "$PRESET"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: plan
+          path: plan.json
+          retention-days: 14
+
+  convert:
+    name: convert ${{ matrix.chunk }} ${{ matrix.label }}
+    needs: [build, plan]
+    if: needs.plan.outputs.chunks != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dutchman-bin
+          path: bin
+      - uses: actions/download-artifact@v4
+        with:
+          name: plan
+          path: plan
+      - name: Convert
+        env:
+          KEEP_SC: ${{ inputs.keep_sc }}
+        run: |
+          chmod +x bin/dutchman
+          command -v /usr/bin/time > /dev/null || sudo apt-get install -y --no-install-recommends time
+          python3 scripts/corpus_convert.py --plan plan/plan.json --chunk "${{ matrix.chunk }}" \
+            --dutchman "$PWD/bin/dutchman" --out out --keep-sc "$KEEP_SC"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chunk-${{ matrix.chunk }}
+          path: out/
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.keep_sc != ''
+        with:
+          name: sc-${{ matrix.chunk }}
+          path: sc/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  report:
+    needs: [build, plan, convert]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: chunk-*
+          path: results
+      - uses: actions/download-artifact@v4
+        with:
+          name: plan
+          path: plan
+      - name: Build the report
+        env:
+          INPUTS: ${{ toJSON(inputs) }}
+          BUILT: ${{ toJSON(needs.build.outputs) }}
+        run: |
+          inputs=$(python3 -c 'import json,os; i=json.loads(os.environ["INPUTS"]); b=json.loads(os.environ["BUILT"]); print(json.dumps({"dutchman": b.get("dutchman"), "cadmpeg": b.get("cadmpeg"), "preset": i.get("preset"), "step": i.get("step"), "sources": i.get("sources") or "all"}))')
+          python3 scripts/corpus_report.py --results results --plan plan/plan.json \
+            --report REPORT.md --json results.json --inputs "$inputs"
+          cat REPORT.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corpus-report
+          path: |
+            REPORT.md
+            results.json
+          retention-days: 30
