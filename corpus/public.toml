@@ -1,0 +1,105 @@
+# Public corpus for the "Public corpus sweep" workflow (.github/workflows/corpus-sweep.yml).
+#
+# Only public repositories under an open licence are listed. The workflow reads each
+# repository's licence from the GitHub API and skips a source whose licence differs from the
+# one recorded here, so a relicensed repository drops out until someone looks at it.
+#
+# Fields of a [[source]]:
+#   repo          owner/name on GitHub
+#   license       SPDX id, must match the repository's LICENSE
+#   globs         optional; files to convert, matched case-insensitively against the path
+#                 (default: [defaults].globs)
+#   exclude       optional; globs to leave out (matched the same way)
+#   file_presets  optional; table of glob = preset for files that need another preset
+#
+# Repositories checked on 2026-10-31 whose licence GitHub does not report (no LICENSE file
+# or an unrecognised one) and which are therefore NOT listed:
+#   VoronDesign/Voron-Trident, VoronDesign/Afterburner, VoronDesign/Stealthburner,
+#   VoronDesign/Cascade, VoronDesign/Jetpack
+
+[defaults]
+globs = ["*.f3d", "*.f3z", "*.fcstd", "*.ipt", "*.iam", "*.sldprt", "*.step", "*.stp"]
+
+[[source]]
+repo = "PrintersForAnts/Voron-Construct"
+license = "MIT"
+
+[[source]]
+repo = "PrintersForAnts/Micron"
+license = "GPL-3.0"
+
+[[source]]
+repo = "PrintersForAnts/AntHead"
+license = "GPL-3.0"
+
+[[source]]
+repo = "PrintersForAnts/Salad_Fork"
+license = "GPL-3.0"
+
+[[source]]
+repo = "PrintersForAnts/Mini-AfterSherpa"
+license = "GPL-3.0"
+
+[[source]]
+repo = "PrintersForAnts/ColonyClacker"
+license = "GPL-3.0"
+
+[[source]]
+repo = "PrintersForAnts/Crucible"
+license = "GPL-3.0"
+
+[[source]]
+repo = "PrintersForAnts/PrintersForAntsExtras"
+license = "GPL-3.0"
+
+[[source]]
+repo = "PrintersForAnts/Tiny-T"
+license = "GPL-3.0"
+
+[[source]]
+repo = "PrintersForAnts/MetalBoop"
+license = "GPL-3.0"
+
+[[source]]
+repo = "PrintersForAnts/Boop"
+license = "GPL-3.0"
+
+[[source]]
+repo = "PrintersForAnts/StealthFork"
+license = "GPL-3.0"
+
+[[source]]
+repo = "PrintersForAnts/Baby-Legacy"
+license = "GPL-3.0"
+
+[[source]]
+repo = "VoronDesign/Voron-0"
+license = "GPL-3.0"
+
+[[source]]
+repo = "VoronDesign/Voron-1"
+license = "GPL-3.0"
+
+[[source]]
+repo = "VoronDesign/Voron-2"
+license = "GPL-3.0"
+
+[[source]]
+repo = "VoronDesign/Voron-Switchwire"
+license = "GPL-3.0"
+
+[[source]]
+repo = "VoronDesign/Voron-Legacy"
+license = "GPL-3.0"
+
+[[source]]
+repo = "VoronDesign/Mobius-Extruder"
+license = "GPL-3.0"
+
+[[source]]
+repo = "VoronDesign/Pocket-Watch"
+license = "GPL-3.0"
+
+[[source]]
+repo = "VoronDesign/Voron-Extras"
+license = "GPL-3.0"
