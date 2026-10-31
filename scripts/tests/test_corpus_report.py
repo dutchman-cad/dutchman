@@ -63,7 +63,7 @@ class ReportTest(unittest.TestCase):
         self.assertIn("owner/alpha", text)
         self.assertIn("owner/beta", text)
         self.assertIn("8 / 10", text)
-        self.assertIn("1 / 1 / 0", text)
+        self.assertIn("1 / 1 / 0 (0)", text)
         # The two cadmpeg failures differ only in numbers and names: one cause, count 2.
         self.assertIn("| 2 | cadmpeg | unreadable record N in stream <name> |", text)
         self.assertIn("stopped at feature <feature>", text)
