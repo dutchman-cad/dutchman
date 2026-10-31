@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
 # Points this checkout's build at cadmpeg's main branch, at commit <sha>, for the nightly
-# build: the cadmpeg `rev` the workspace Cargo.toml pins is replaced by <sha>, and Cargo.lock
-# follows. Never commit what it changes; stable releases keep the pinned commit.
+# build: every cadmpeg dependency the workspace Cargo.toml pins (from cadmpeg's repository
+# or a fork of it) is pointed at <repo> (default: cadmpeg's own repository) and <sha>, and
+# Cargo.lock follows. Never commit what it changes; stable releases keep the pinned commit.
 #
-#   scripts/use-cadmpeg-main.sh <cadmpeg commit sha>
+#   scripts/use-cadmpeg-main.sh <cadmpeg commit sha> [<repo url>]
 set -euo pipefail
 
 sha=$1
-repo=https://github.com/cadmpeg/cadmpeg
+repo=${2:-https://github.com/cadmpeg/cadmpeg}
 [[ $sha =~ ^[0-9a-f]{40}$ ]] || { echo "not a full commit sha: $sha" >&2; exit 1; }
-grep -q "git = \"$repo\", rev = \"" Cargo.toml || {
+pinned='git = "https://github\.com/[A-Za-z0-9_.-]+/cadmpeg", rev = "[0-9a-f]+"'
+grep -Eq "$pinned" Cargo.toml || {
     echo "Cargo.toml pins no cadmpeg commit to replace" >&2
     exit 1
 }
-sed -i.bak -E "s|(git = \"$repo\", rev = \")[0-9a-f]+\"|\1$sha\"|" Cargo.toml
+sed -i.bak -E "s|$pinned|git = \"$repo\", rev = \"$sha\"|" Cargo.toml
 rm -f Cargo.toml.bak
 
 crates=$(sed -n 's/^name = "\(cadmpeg[a-z0-9-]*\)"$/\1/p' Cargo.lock | sort -u)
