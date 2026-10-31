@@ -138,12 +138,14 @@ jobs:
           name: dutchman-bin
           path: bin
       - name: Add swap
-        # The conversion needs about 15 GB; a runner has 16 GB.
+        # The conversion needs about 15 GB; a runner has 16 GB. The image's own swap file is
+        # replaced by a larger one on the big temporary disk.
         run: |
-          sudo fallocate -l 12G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          sudo swapoff -a
+          sudo fallocate -l 12G /mnt/extra.swap
+          sudo chmod 600 /mnt/extra.swap
+          sudo mkswap /mnt/extra.swap
+          sudo swapon /mnt/extra.swap
           free -g
       - name: Fetch the source
         run: |
