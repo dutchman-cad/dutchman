@@ -86,9 +86,13 @@ design to SolidCraft in memory instead of as bytes). Neither crate changes.
   `cadmpeg-core`, `cadmpeg-registry`, the same `rev` for each); Cargo fetches it, so CI and
   `cargo install --git` work without a cadmpeg checkout. docs/releasing.md says when the pin
   moves; the nightly build takes cadmpeg's `main` instead.
-- `cadmpeg-registry` with `default-features = false` and every published codec feature:
-  `fcstd`, `f3d`, `inventor`, `sldprt`, `catia`, `creo`, `nx`, `rhino`, `step`, `iges`,
-  `sat` and `pvz`. Dutchman's `freecad` feature controls whether FreeCAD inputs are accepted.
+- `cadmpeg-registry` with `default-features = false`; each crate turns on the codecs it
+  needs. `dutchman-core` has a feature per input format (`fusion`, `inventor`, `solidworks`,
+  `catia`, `creo`, `nx`, `rhino`, `step`, `iges`, `sat`, `pvz`), all of them in its default
+  `formats` feature, which `dutchman`, `dutchman-gui` and `dutchman-web` turn on; its
+  `freecad` feature controls whether FreeCAD inputs are accepted. `dutchman-solidcraft` turns
+  on the `step` codec for the STEP its Imports keep. A build that reads only some formats (the
+  SolidCraft importer plugin) names just those and links only their codecs.
 - Unmerged cadmpeg work is tried locally with a `[patch."https://github.com/cadmpeg/cadmpeg"]`
   path override that is never committed. When the checkout's crate version differs from the
   pinned one, Cargo keeps the locked version and lists the override as unused

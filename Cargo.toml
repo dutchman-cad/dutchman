@@ -26,7 +26,9 @@ aho-corasick = "1.1"
 cadmpeg-codec-f3d = { git = "https://github.com/raykholo/cadmpeg", rev = "330150c5309b5cf3892dc6def8070eff2b17884f" }
 cadmpeg-core = { git = "https://github.com/raykholo/cadmpeg", rev = "330150c5309b5cf3892dc6def8070eff2b17884f" }
 cadmpeg-ir = { git = "https://github.com/raykholo/cadmpeg", rev = "330150c5309b5cf3892dc6def8070eff2b17884f" }
-cadmpeg-registry = { git = "https://github.com/raykholo/cadmpeg", rev = "330150c5309b5cf3892dc6def8070eff2b17884f", default-features = false, features = ["fcstd", "f3d", "inventor", "sldprt", "catia", "creo", "nx", "rhino", "step", "iges", "sat", "pvz"] }
+# Each crate turns on the cadmpeg codecs it needs: dutchman-core per input format (its
+# `formats` feature for all of them), dutchman-solidcraft the STEP writer.
+cadmpeg-registry = { git = "https://github.com/raykholo/cadmpeg", rev = "330150c5309b5cf3892dc6def8070eff2b17884f", default-features = false }
 getrandom = "0.3"
 serde_json = "1"
 sha2 = "0.11"

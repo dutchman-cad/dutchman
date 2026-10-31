@@ -10,7 +10,8 @@ publish = false
 
 [dependencies]
 cadmpeg-ir.workspace = true
-cadmpeg-registry.workspace = true
+# The STEP writer an Import keeps its geometry in.
+cadmpeg-registry = { workspace = true, features = ["step"] }
 dutchman-core.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -18,7 +19,7 @@ tempfile.workspace = true
 zip.workspace = true
 
 [dev-dependencies]
-dutchman-core = { workspace = true, features = ["freecad"] }
+dutchman-core = { workspace = true, features = ["formats", "freecad"] }
 tempfile.workspace = true
 cadmpeg-ir = { workspace = true, features = ["examples"] }
 serde_json.workspace = true
