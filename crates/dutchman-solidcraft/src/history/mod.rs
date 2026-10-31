@@ -28,6 +28,7 @@ mod sheet;
 mod sketch;
 mod spatial;
 mod sweep;
+mod thread;
 
 use std::collections::BTreeMap;
 
@@ -1017,9 +1018,7 @@ fn map_feature(
         {
             Err("threads whose construction is unresolved are not supported yet".to_owned())
         }
-        Some("cosmetic_thread") => Err(
-            "cosmetic threads without a resolved standard and pitch are not supported yet".to_owned(),
-        ),
+        Some("cosmetic_thread") => thread::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some("pattern")
             if definition.pointer("/pattern/kind").and_then(Value::as_str) == Some("mirror")
                 && definition
