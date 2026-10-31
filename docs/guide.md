@@ -19,7 +19,7 @@ What changed in each release: the [0.2.5 release notes](../release-notes/0.2.5.m
 [Install](install.md) has every option, checksums, and the one-time
 [first-run approval](install.md#opening-the-app-the-first-time) on macOS. Install
 [SolidCraft](install.md#solidcraft-optional-recommended) too: Dutchman uses it to check each
-converted history.
+converted history. The supported SolidCraft window is currently 0.18–0.28.
 
 ## Your first conversion
 
