@@ -165,6 +165,11 @@ names which.
 Whole-sketch hole placements exclude construction entities; explicit entity selections
 can still use construction points or circle centres.
 
+When every feature using a sketch selects whole-loop regions, curves that no closed loop of the
+sketch's profiles uses (open segments, lines laid across a region) are written as construction,
+so they do not divide the selected region; the report counts them. A curve a feature names, and
+any sketch another kind of feature uses, keep their curves as real geometry.
+
 Patterns can repeat earlier features or named bodies in one or two linear directions,
 around an axis, or at fixed spacing along curves of an earlier planar sketch. Explicit
 linear offsets and circular angles map when their intervals are equal; two linear composite

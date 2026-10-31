@@ -84,16 +84,11 @@ pub(super) fn crossing(sketch: &Value, entities: &[&Value]) -> BTreeSet<String> 
         .collect()
 }
 
-/// Unused lines crossing selected circles are helpers when all consumers of the sketch
-/// select whole-loop regions. Keeping them solid would split those circles.
-pub(super) fn region_lines(
-    sketch: &Value,
-    entities: &[&Value],
-    features: &[Value],
-) -> BTreeSet<String> {
-    let Some(id) = sketch.get("id").and_then(Value::as_str) else {
-        return BTreeSet::new();
-    };
+/// The curves that the sketch's consumers (every feature naming it) select whole-loop regions
+/// from, when every consumer is such a selection: the source entities of the selected loops.
+/// `None` when some consumer needs the sketch's curves as geometry, or nothing selects a region.
+fn whole_loop_uses(sketch: &Value, features: &[Value]) -> Option<BTreeSet<String>> {
+    let id = sketch.get("id").and_then(Value::as_str)?;
     let mut identities = vec![id];
     identities.extend(features.iter().filter_map(|feature| {
         let definition = super::operation(feature);
@@ -114,9 +109,7 @@ pub(super) fn region_lines(
         if definition.get("definition").and_then(Value::as_str) == Some("sketch") {
             continue;
         }
-        let Some(found) = region_uses(definition, id, &identities, sketch, &mut used, 0) else {
-            return BTreeSet::new();
-        };
+        let found = region_uses(definition, id, &identities, sketch, &mut used, 0)?;
         if !found
             && feature
                 .get("dependencies")
@@ -128,11 +121,90 @@ pub(super) fn region_lines(
                         .any(|id| identities.contains(&id))
                 })
         {
-            return BTreeSet::new();
+            return None;
         }
         selected |= found;
     }
-    if !selected || entities.len() > MAX_EDGES {
+    selected.then_some(used)
+}
+
+/// Curves no closed loop of the sketch's profile table uses, when every consumer of the sketch
+/// selects whole-loop regions and none of them names the curve. They bound no region, so
+/// solid they only divide the regions that are selected; they are construction.
+pub(super) fn stray_curves(
+    sketch: &Value,
+    entities: &[&Value],
+    features: &[Value],
+) -> BTreeSet<String> {
+    let in_loops: BTreeSet<&str> = loops(sketch)
+        .into_iter()
+        .flatten()
+        .filter_map(|member| member.get("entity").and_then(Value::as_str))
+        .collect();
+    if in_loops.is_empty() || whole_loop_uses(sketch, features).is_none() {
+        return BTreeSet::new();
+    }
+    let strays: BTreeSet<String> = entities
+        .iter()
+        .filter(|entity| entity.get("construction").and_then(Value::as_bool) != Some(true))
+        .filter(|entity| {
+            !matches!(
+                entity.pointer("/geometry/kind").and_then(Value::as_str),
+                None | Some("point")
+            )
+        })
+        .filter_map(|entity| entity.get("id").and_then(Value::as_str))
+        .filter(|id| !in_loops.contains(id))
+        .map(str::to_owned)
+        .collect();
+    if strays.is_empty() {
+        return strays;
+    }
+    // A consumer that names a curve itself (a path, a rail, a reference) keeps it real.
+    let mut named = BTreeSet::new();
+    for feature in features {
+        if super::operation(feature)
+            .get("definition")
+            .and_then(Value::as_str)
+            != Some("sketch")
+        {
+            named_in(feature, &strays, &mut named, 0);
+        }
+    }
+    strays.difference(&named).cloned().collect()
+}
+
+/// Adds to `found` each of `ids` that a string inside `value` names.
+fn named_in(value: &Value, ids: &BTreeSet<String>, found: &mut BTreeSet<String>, depth: usize) {
+    if depth > MAX_SELECTION_DEPTH {
+        found.extend(ids.iter().cloned());
+        return;
+    }
+    match value {
+        Value::String(s) if ids.contains(s.as_str()) => {
+            found.insert(s.clone());
+        }
+        Value::Array(values) => values
+            .iter()
+            .for_each(|v| named_in(v, ids, found, depth + 1)),
+        Value::Object(fields) => fields
+            .values()
+            .for_each(|v| named_in(v, ids, found, depth + 1)),
+        _ => {}
+    }
+}
+
+/// Unused lines crossing selected circles are helpers when all consumers of the sketch
+/// select whole-loop regions. Keeping them solid would split those circles.
+pub(super) fn region_lines(
+    sketch: &Value,
+    entities: &[&Value],
+    features: &[Value],
+) -> BTreeSet<String> {
+    let Some(used) = whole_loop_uses(sketch, features) else {
+        return BTreeSet::new();
+    };
+    if entities.len() > MAX_EDGES {
         return BTreeSet::new();
     }
     let circles: Vec<&Value> = entities
