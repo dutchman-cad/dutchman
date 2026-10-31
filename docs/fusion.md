@@ -115,6 +115,17 @@ transform, and each component as a product definition.
 - **When it does not,** the design converts as stored and the report says so (Degraded,
   `components`): the geometry is written once, so a placement whose geometry the file does
   not store separately is not shown.
+- **Instances that hold different layouts** are written as one definition per layout. When
+  two instances of a component hold different components, or the same ones at different local
+  placements (compared deepest first, within 1e-7 of each cell, so a difference anywhere below
+  makes every component above it differ), the component becomes `<component>` for the first
+  layout met and `<component> (2)`, `<component> (3)` for the others, in order of first
+  appearance; every instance sits at its resolved pose, and instances with the same layout
+  share one definition. The report notes how many components were written as how many
+  definitions. A component's own bodies are the same in every layout, but each definition
+  carries its own copy of them (the geometry and its STEP data are written once per
+  definition). Mirrored placements combine with this: a mirrored instance of a layout uses
+  that layout's `(mirrored)` copy.
 - **Mirrored placements** use a shared component named `<component> (mirrored)` with
   reflected geometry and outward-facing solids. Ordinary copies retain the original
   component and its history. Nested reflections compose, including pairs that cancel.
@@ -126,10 +137,10 @@ transform, and each component as a product definition.
   becomes a SolidCraft component with them beneath it, placed by occurrences inside it, and its
   own bodies as one more component at its origin. cadmpeg places the components a design's root
   component contains inside one occurrence of that root component, so such a design converts
-  as the root component with its components beneath it. A component placed several times must
-  hold the same components in the same places each time; when it does not, or when a placement
-  is inside an occurrence the design does not place, the design converts as stored and the
-  report says why.
+  as the root component with its components beneath it. A component placed several times that
+  holds different components in different instances is written once per layout (above); when
+  a placement is inside an occurrence the design does not place, the design converts as stored
+  and the report says why.
 - **Hidden components and bodies** stay hidden: a placement whose occurrence the design hides,
   or whose part holds only bodies the design hides (a design's own body hidden beside its
   components, say), is written as a SolidCraft occurrence hidden in every placement of what

@@ -671,6 +671,10 @@ fn local_components_with_threads(
         threads,
         report,
     );
+    let mut layouts = Layouts::default();
+    for occurrence in &occurrences {
+        layouts.classify(occurrence, &children, external, 0);
+    }
     let mut tree = Tree {
         prepared,
         external,
@@ -681,6 +685,9 @@ fn local_components_with_threads(
         document: &document,
         definitions,
         children,
+        layouts,
+        variants: BTreeMap::new(),
+        own_bodies: BTreeMap::new(),
         built: BTreeMap::new(),
         parts: Vec::new(),
         placed: 0,
@@ -689,6 +696,23 @@ fn local_components_with_threads(
         paths: BTreeMap::new(),
     };
     let mut placements = tree.placements(&roots, None)?;
+    let split: Vec<usize> = tree
+        .variants
+        .values()
+        .map(Vec::len)
+        .filter(|layouts| *layouts > 1)
+        .collect();
+    if !split.is_empty() {
+        report.push(
+            Severity::Info,
+            "assembly",
+            format!(
+                "{} components written as {} definitions because their instances hold different layouts",
+                split.len(),
+                split.iter().sum::<usize>()
+            ),
+        );
+    }
     if tree.placed != occurrences.len() {
         return Err(
             "some components are placed inside components the design does not place".to_owned(),
@@ -1724,10 +1748,99 @@ fn side_path(
     }
 }
 
-/// A definition built into a part: the part, the components it holds (each one's definition
-/// and placement), which every other occurrence of it at that level must match, and the
-/// placement path of the occurrence it was built for.
-type Built = (usize, Vec<(String, [[f64; 4]; 3])>, Vec<usize>);
+/// A definition's layout built into a part: the part, and the placement path of the first
+/// occurrence it was built for. Every other occurrence at that level with the same layout
+/// (see [`Layouts`]) is a copy of it.
+type Built = (usize, Vec<usize>);
+
+/// Two local transforms closer than this in every cell are the same placement: it absorbs the
+/// noise of composing nested poses without merging placements anyone could tell apart.
+const LAYOUT_TOLERANCE: f64 = 1e-7;
+
+/// What a layout holds: the layout and local placement of each child.
+type Held = Vec<(usize, [[f64; 4]; 3])>;
+
+/// The layouts occurrences of one component hold. Two occurrences of a component share a layout
+/// when they hold the same components (compared deepest first, so a difference anywhere below
+/// separates them) at the same local placements, within [`LAYOUT_TOLERANCE`].
+#[derive(Default)]
+struct Layouts<'a> {
+    /// Each layout: its component and what it holds, as the layout and placement of each child.
+    table: Vec<(String, Held)>,
+    /// The layouts of each component, by component.
+    of_component: BTreeMap<String, Vec<usize>>,
+    /// The layout of each occurrence, by its id.
+    of: BTreeMap<&'a str, usize>,
+}
+
+impl<'a> Layouts<'a> {
+    fn same(a: &[(usize, [[f64; 4]; 3])], b: &[(usize, [[f64; 4]; 3])]) -> bool {
+        a.len() == b.len()
+            && a.iter().zip(b).all(|((layout, t), (other, u))| {
+                layout == other
+                    && t.iter()
+                        .flatten()
+                        .zip(u.iter().flatten())
+                        .all(|(x, y)| (x - y).abs() <= LAYOUT_TOLERANCE)
+            })
+    }
+
+    /// The layout of `occurrence`, and of everything below it.
+    fn classify(
+        &mut self,
+        occurrence: &'a Value,
+        children: &BTreeMap<&'a str, Vec<&'a Value>>,
+        external: &ExternalParts,
+        depth: usize,
+    ) -> usize {
+        let id = occurrence.get("id").and_then(Value::as_str);
+        if let Some(layout) = id.and_then(|id| self.of.get(id)) {
+            return *layout;
+        }
+        let component = match id.and_then(|id| external.get(id)) {
+            Some(Ok((key, _))) => format!("external:{key}"),
+            Some(Err(_)) => definition_key(occurrence).unwrap_or("").to_owned(),
+            None => occurrence
+                .pointer("/prototype/definition")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
+        };
+        let held: Held = if depth > MAX_DEPTH {
+            // Too deep to compare: a layout of its own, which the build refuses.
+            vec![(usize::MAX, [[f64::NAN; 4]; 3])]
+        } else {
+            id.and_then(|id| children.get(id))
+                .into_iter()
+                .flatten()
+                .map(|child| {
+                    (
+                        self.classify(child, children, external, depth + 1),
+                        // A malformed placement never matches; the build reports it.
+                        transform(child).unwrap_or([[f64::NAN; 4]; 3]),
+                    )
+                })
+                .collect()
+        };
+        let known = self.of_component.get(&component).and_then(|layouts| {
+            layouts.iter().copied().find(|layout| {
+                self.table
+                    .get(*layout)
+                    .is_some_and(|(_, other)| Self::same(other, &held))
+            })
+        });
+        let layout = known.unwrap_or_else(|| {
+            self.table.push((component.clone(), held));
+            let layout = self.table.len() - 1;
+            self.of_component.entry(component).or_default().push(layout);
+            layout
+        });
+        if let Some(id) = id {
+            self.of.insert(id, layout);
+        }
+        layout
+    }
+}
 
 /// Where an occurrence is placed.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -1842,8 +1955,15 @@ struct Tree<'a> {
     definitions: BTreeMap<&'a str, &'a Value>,
     /// Occurrences placed inside each occurrence, by its id.
     children: BTreeMap<&'a str, Vec<&'a Value>>,
-    /// The definitions built so far at the level being built.
-    built: BTreeMap<&'a str, Built>,
+    /// The layouts of the occurrences, to build one definition per layout of a component.
+    layouts: Layouts<'a>,
+    /// The layouts of each component built so far, in the order first built: a layout's place
+    /// in it numbers its definition.
+    variants: BTreeMap<&'a str, Vec<usize>>,
+    /// The bodies of components with several layouts, sliced once for every definition of them.
+    own_bodies: BTreeMap<&'a str, Model>,
+    /// The definitions built so far at the level being built, by component and layout.
+    built: BTreeMap<(&'a str, usize), Built>,
     /// The parts of the level being built.
     parts: Vec<Model>,
     /// How many occurrences have been placed, to find those placed in nothing the design places.
@@ -1892,9 +2012,18 @@ impl<'a> Tree<'a> {
                 continue;
             }
             let index = placements.len();
+            let layout = |row: &Value| {
+                row.get("id")
+                    .and_then(Value::as_str)
+                    .and_then(|id| self.layouts.of.get(id))
+                    .copied()
+            };
             let copies = occurrences
                 .iter()
-                .filter(|other| definition(other) == definition(occurrence))
+                .filter(|other| {
+                    definition(other) == definition(occurrence)
+                        && layout(other) == layout(occurrence)
+                })
                 .count();
             self.path.push(index);
             if let Some(id) = occurrence.get("id").and_then(Value::as_str) {
@@ -1976,33 +2105,14 @@ impl<'a> Tree<'a> {
         let id = occurrence.get("id").and_then(Value::as_str).unwrap_or("");
         let external = scope(occurrence) == Some("external");
         let inner: Vec<&'a Value> = self.children.get(id).cloned().unwrap_or_default();
-        let signature = inner
-            .iter()
-            .map(|child| {
-                let definition = match child
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .and_then(|id| self.external.get(id))
-                {
-                    Some(Ok((key, _))) => format!("external:{key}"),
-                    Some(Err(_)) => definition_key(child).unwrap_or("").to_owned(),
-                    None => child
-                        .pointer("/prototype/definition")
-                        .and_then(Value::as_str)
-                        .unwrap_or("")
-                        .to_owned(),
-                };
-                transform(child).map(|t| (definition, t))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        if let Some((part, built_with, first)) = self.built.get(definition) {
-            return if *built_with == signature {
-                let (part, first) = (*part, first.clone());
-                self.reuse_inside(id, &first, shared);
-                Ok(part)
-            } else {
-                Err("one component holds different components where it is placed".to_owned())
-            };
+        for child in &inner {
+            transform(child)?;
+        }
+        let layout = self.layouts.of.get(id).copied().unwrap_or(usize::MAX);
+        if let Some((part, first)) = self.built.get(&(definition, layout)) {
+            let (part, first) = (*part, first.clone());
+            self.reuse_inside(id, &first, shared);
+            return Ok(part);
         }
         if self.open.contains(&id) || self.open.len() >= MAX_DEPTH {
             return Err("its components nest too deep or inside themselves".to_owned());
@@ -2029,6 +2139,21 @@ impl<'a> Tree<'a> {
             .or_else(|| name_of(row))
             .map(str::to_owned)
             .unwrap_or_else(|| format!("{} component {}", self.model.name, self.parts.len() + 1));
+        // A component whose occurrences hold different layouts is one definition per layout,
+        // the first as the component is named and the others numbered.
+        let seen = self.variants.entry(definition).or_default();
+        let number = match seen.iter().position(|seen| *seen == layout) {
+            Some(at) => at + 1,
+            None => {
+                seen.push(layout);
+                seen.len()
+            }
+        };
+        let name = if number > 1 {
+            format!("{name} ({number})")
+        } else {
+            name
+        };
         let model = if inner.is_empty() {
             if bodies.is_empty() && self.all_owned {
                 self.sliced(Slice::Empty, &[], name)?
@@ -2051,11 +2176,30 @@ impl<'a> Tree<'a> {
             self.open.pop();
             let mut placements = placed?;
             let own_part = if !bodies.is_empty() {
-                let own = self.sliced(
-                    Slice::Definition(definition),
-                    &bodies,
-                    format!("{name} bodies"),
-                )?;
+                // The component's own bodies are the same in every layout: sliced once.
+                let shared_bodies = self
+                    .layouts
+                    .of_component
+                    .get(definition)
+                    .is_some_and(|layouts| layouts.len() > 1);
+                let own = match self.own_bodies.get(definition) {
+                    Some(cached) => {
+                        let mut own = cached.clone();
+                        own.name = format!("{name} bodies");
+                        own
+                    }
+                    None => {
+                        let own = self.sliced(
+                            Slice::Definition(definition),
+                            &bodies,
+                            format!("{name} bodies"),
+                        )?;
+                        if shared_bodies {
+                            self.own_bodies.insert(definition, own.clone());
+                        }
+                        own
+                    }
+                };
                 let hidden = all_hidden(&own);
                 self.parts.push(own);
                 placements.push(Placement {
@@ -2087,7 +2231,7 @@ impl<'a> Tree<'a> {
         self.parts.push(model);
         let index = self.parts.len() - 1;
         self.built
-            .insert(definition, (index, signature, self.path.clone()));
+            .insert((definition, layout), (index, self.path.clone()));
         Ok(index)
     }
 }
@@ -4687,10 +4831,17 @@ mod tests {
         assert_eq!(inner.placements[2].transform, IDENTITY);
     }
 
+    /// The x of each block placed in the frame a placement holds, by the part it places.
+    fn block_xs(assembly: &Assembly, placement: usize) -> Vec<f64> {
+        let frame = &assembly.parts[assembly.placements[placement].part];
+        let inner = frame.assembly.as_ref().unwrap();
+        inner.placements.iter().map(|p| p.transform[0][3]).collect()
+    }
+
     #[test]
-    fn nested_components_that_do_not_hold_together_convert_as_stored() {
-        // Two frames, holding blocks in different places.
-        let err = local_assembly(&nested(
+    fn a_component_placed_twice_with_different_children_is_a_definition_per_layout() {
+        let mut report = Report::default();
+        let model = nested(
             false,
             Some(json!([
                 placed(0, "frame", root(), 0.0),
@@ -4698,12 +4849,133 @@ mod tests {
                 placed(2, "block", inside(0), 0.0),
                 placed(3, "block", inside(1), 30.0),
             ])),
-        ))
-        .unwrap_err();
-        assert_eq!(
-            err,
-            "one component holds different components where it is placed"
         );
+        let (assembly, _) = local_components_with_threads(&model, &BTreeMap::new(), 1, &mut report)
+            .unwrap()
+            .unwrap();
+        assert_eq!(assembly.parts.len(), 2);
+        assert_eq!(assembly.parts[0].name, "Frame");
+        assert_eq!(assembly.parts[1].name, "Frame (2)");
+        assert_eq!(assembly.placements[0].part, 0);
+        assert_eq!(assembly.placements[1].part, 1);
+        assert_eq!(block_xs(&assembly, 0), [0.0]);
+        assert_eq!(block_xs(&assembly, 1), [30.0]);
+        assert!(report.losses().iter().any(|l| l.detail
+            == "1 components written as 2 definitions because their instances hold different layouts"));
+    }
+
+    #[test]
+    fn a_different_set_of_children_is_a_different_layout() {
+        let model = nested(
+            true,
+            Some(json!([
+                placed(0, "frame", root(), 0.0),
+                placed(1, "frame", root(), 100.0),
+                placed(2, "block", inside(0), 0.0),
+                placed(3, "block", inside(0), 30.0),
+                placed(4, "block", inside(1), 0.0),
+            ])),
+        );
+        let assembly = local_assembly(&model).unwrap().unwrap();
+        assert_eq!(assembly.parts.len(), 2);
+        let counts: Vec<usize> = (0..2)
+            .map(|i| {
+                let sub = assembly.parts[assembly.placements[i].part]
+                    .assembly
+                    .as_ref()
+                    .unwrap();
+                // The children and the component's own bodies beside them.
+                assert!(sub.own_part.is_some());
+                sub.placements.len()
+            })
+            .collect();
+        assert_eq!(counts, [3, 2]);
+    }
+
+    #[test]
+    fn a_layout_that_differs_only_deep_inside_separates_every_level_above_it() {
+        // outer > frame > block, the block in a different place in the second outer.
+        let model = nested(
+            false,
+            Some(json!([
+                placed(0, "outer", root(), 0.0),
+                placed(1, "outer", root(), 500.0),
+                placed(2, "frame", inside(0), 10.0),
+                placed(3, "frame", inside(1), 10.0),
+                placed(4, "block", inside(2), 0.0),
+                placed(5, "block", inside(3), 30.0),
+            ])),
+        );
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["product_definitions"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": "f3d:model:component#outer", "kind": "part", "label": "Outer", "bodies": []}));
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        };
+        let assembly = local_assembly(&model).unwrap().unwrap();
+        assert_eq!(assembly.parts.len(), 2);
+        let names: Vec<&str> = assembly.parts.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["Outer", "Outer (2)"]);
+        let frames: Vec<&Assembly> = assembly
+            .parts
+            .iter()
+            .map(|outer| {
+                let sub = outer.assembly.as_ref().unwrap();
+                assert_eq!(sub.parts.len(), 1);
+                sub.parts[0].assembly.as_ref().unwrap()
+            })
+            .collect();
+        assert_eq!(frames[0].placements[0].transform[0][3], 0.0);
+        assert_eq!(frames[1].placements[0].transform[0][3], 30.0);
+        let named: Vec<&str> = assembly
+            .parts
+            .iter()
+            .map(|p| p.assembly.as_ref().unwrap().parts[0].name.as_str())
+            .collect();
+        assert_eq!(named, ["Frame", "Frame (2)"]);
+    }
+
+    #[test]
+    fn numeric_noise_below_the_tolerance_does_not_split_a_definition() {
+        let mut noisy = placed(3, "block", inside(1), 30.0 + 1e-10);
+        noisy["transform"][1][1] = json!(1.0 - 1e-12);
+        let mut report = Report::default();
+        let model = nested(
+            false,
+            Some(json!([
+                placed(0, "frame", root(), 0.0),
+                placed(1, "frame", root(), 100.0),
+                placed(2, "block", inside(0), 30.0),
+                noisy,
+            ])),
+        );
+        let (assembly, _) = local_components_with_threads(&model, &BTreeMap::new(), 1, &mut report)
+            .unwrap()
+            .unwrap();
+        assert_eq!(assembly.parts.len(), 1);
+        assert_eq!(assembly.placements[0].part, assembly.placements[1].part);
+        assert!(!report
+            .losses()
+            .iter()
+            .any(|l| l.detail.contains("different layouts")));
+        // A difference past the tolerance does split.
+        let model = nested(
+            false,
+            Some(json!([
+                placed(0, "frame", root(), 0.0),
+                placed(1, "frame", root(), 100.0),
+                placed(2, "block", inside(0), 30.0),
+                placed(3, "block", inside(1), 30.001),
+            ])),
+        );
+        assert_eq!(local_assembly(&model).unwrap().unwrap().parts.len(), 2);
+    }
+
+    #[test]
+    fn nested_components_inside_a_missing_parent_convert_as_stored() {
         // A block placed inside an occurrence the design does not have.
         let err = local_assembly(&nested(
             false,

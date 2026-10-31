@@ -2367,3 +2367,109 @@ fn composed_written_placements_equal_the_assemblys_world_placements() {
         assert_eq!(key(a), key(b), "{a:?} != {b:?}");
     }
 }
+
+/// A frame of two cubes, the second at `y`, with its own cube at the origin, as a part.
+fn frame_with_cube_at(name: &str, y: f64) -> Model {
+    let inner = nested();
+    let cube = inner.assembly.as_ref().unwrap().parts[1].clone();
+    let at = |x: f64, y: f64| [[1.0, 0.0, 0.0, x], [0.0, 1.0, 0.0, y], [0.0, 0.0, 1.0, 0.0]];
+    Model {
+        name: name.to_owned(),
+        assembly: Some(Assembly {
+            own_part: None,
+            joints: Vec::new(),
+            left_out: Vec::new(),
+            held: Vec::new(),
+            joint_notes: Vec::new(),
+            stored_placements: Vec::new(),
+            parts: vec![cube.clone()],
+            placements: vec![Placement {
+                hidden: false,
+                name: None,
+                part: 0,
+                transform: at(0.0, y),
+            }],
+        }),
+        ..cube
+    }
+}
+
+#[test]
+fn layout_variants_and_a_mirrored_instance_write_at_their_world_placements() {
+    let turned = [
+        [0.0, -1.0, 0.0, 7.0],
+        [1.0, 0.0, 0.0, 3.0],
+        [0.0, 0.0, 1.0, 1.0],
+    ];
+    let moved = [
+        [1.0, 0.0, 0.0, -40.0],
+        [0.0, 1.0, 0.0, 12.0],
+        [0.0, 0.0, 1.0, 5.0],
+    ];
+    let reflected = dutchman_core::placement::compose(&dutchman_core::placement::MIRROR_X, &moved);
+    // Two definitions of one frame, whose cube sits in a different place in each, placed
+    // three times: the second layout twice, once of them mirrored.
+    let (first, second) = (
+        frame_with_cube_at("Frame", 5.0),
+        frame_with_cube_at("Frame (2)", 60.0),
+    );
+    let cube = first.assembly.as_ref().unwrap().parts[0].clone();
+    let top = Model {
+        name: "variants".to_owned(),
+        assembly: Some(Assembly {
+            own_part: None,
+            joints: Vec::new(),
+            left_out: Vec::new(),
+            held: Vec::new(),
+            joint_notes: Vec::new(),
+            stored_placements: Vec::new(),
+            parts: vec![first, second],
+            placements: [(0, turned), (1, moved), (1, reflected)]
+                .into_iter()
+                .map(|(part, transform)| Placement {
+                    hidden: false,
+                    name: None,
+                    part,
+                    transform,
+                })
+                .collect(),
+        }),
+        ..cube
+    };
+    let mut expected = Vec::new();
+    solver_worlds(
+        top.assembly.as_ref().unwrap(),
+        &dutchman_core::placement::IDENTITY,
+        &mut expected,
+    );
+    let (bytes, _) = written(&top);
+    let doc = document(&bytes);
+    let names: Vec<&str> = doc["components"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c["name"].as_str())
+        .collect();
+    assert!(
+        names.contains(&"Frame") && names.contains(&"Frame (2)"),
+        "{names:?}"
+    );
+    assert!(names.iter().any(|n| n.contains("mirrored")), "{names:?}");
+    let found: Vec<_> = doc["occurrences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|o| written_worlds(&doc, o, 0))
+        .collect();
+    assert_eq!(expected.len(), found.len());
+    // The reflected instance is written as a mirrored definition at the rotation part of
+    // its placement, so its cube is compared by position rather than by matrix.
+    let origin = |t: &dutchman_core::placement::Placement3x4| {
+        [t[0][3], t[1][3], t[2][3]].map(|v| (v * 1e6).round() as i64)
+    };
+    let mut want: Vec<_> = expected.iter().map(origin).collect();
+    let mut have: Vec<_> = found.iter().map(origin).collect();
+    want.sort();
+    have.sort();
+    assert_eq!(want, have);
+}
