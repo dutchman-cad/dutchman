@@ -9,6 +9,17 @@ use std::path::Path;
 use dutchman_core::{read, Format, Model, Report};
 use serde_json::Value;
 
+/// Held by every test that writes a stand-in program and runs it. A script still open for
+/// writing when another test forks is inherited by that child, and running it then fails with
+/// "text file busy". One lock for the whole crate keeps every writer and runner apart; a lock
+/// per module did not, since tests in other modules wrote scripts at the same time.
+pub(crate) fn scripts() -> std::sync::MutexGuard<'static, ()> {
+    static SCRIPTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    SCRIPTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 /// The synthetic unit cube from the core fixtures.
 pub(crate) fn cube() -> Model {
     let path = Path::new(env!("CARGO_MANIFEST_DIR"))
