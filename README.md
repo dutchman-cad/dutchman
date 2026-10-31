@@ -8,6 +8,8 @@ Converts Fusion, Inventor, SolidWorks parts, FreeCAD, CATIA, Rhino, Creo View, A
 <a href="https://dutchman-cad.github.io/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-day.png&alt=Dutchman%20Convert%20in%20Day%20theme%3A%20a%20CC0%20FreeCAD%20bracket%20converted%2C%20with%20its%20mapped%20feature%20history%20and%20Open%20in%20SolidCraft"><img alt="Dutchman Convert in Day theme: a CC0 FreeCAD bracket converted, with its mapped feature history and Open in SolidCraft" src="docs/images/readme-result-day.png#gh-light-mode-only" width="100%"></a>
 <a href="https://dutchman-cad.github.io/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-night.png&alt=Dutchman%20Convert%20in%20Night%20theme%3A%20the%20same%20CC0%20bracket%20conversion%20and%20its%20result%20card"><img alt="Dutchman Convert in Night theme: the same CC0 bracket conversion and its result card" src="docs/images/readme-result-night.png#gh-dark-mode-only" width="100%"></a>
 
+See it first: [converted designs in your browser](https://dutchman-cad.github.io/demo/), including two complete 3D printers.
+
 ## Download
 
 - **Mac:** [download the app](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-macos-universal.dmg), or `brew install --cask dutchman-cad/tap/dutchman-convert`.
