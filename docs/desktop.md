@@ -60,7 +60,8 @@ Choose the target with the **Target SolidCraft** selector: it defaults to the fo
 
 ## Reporting a problem
 
-The window's title shows its version. **Report a problem**, at the top right beside the
+The window's title and top row show its version beside **Dutchman Convert**, for example
+**v0.2.6**; a nightly shows its nightly version. **Report a problem**, at the top right beside the
 **System / Day / Night** theme switch, opens the
 [A file didn't convert](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
 form. `dutchman-gui --version` and `dutchman-gui --help` print and exit without opening a

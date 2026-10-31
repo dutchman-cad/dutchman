@@ -744,13 +744,15 @@ impl App {
             ui.add_space(theme::SPACE_2);
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
-                if narrow {
-                    ui.label(RichText::new("Dutchman").heading());
-                } else if compact {
-                    ui.label(RichText::new(crate::APP_NAME).heading());
-                } else {
-                    ui.label(RichText::new(crate::APP_NAME).text_style(theme::title()));
-                }
+                ui.with_layout(Layout::left_to_right(Align::Max), |ui| {
+                    ui.spacing_mut().item_spacing.x = theme::SPACE_2;
+                    if compact {
+                        ui.label(RichText::new(crate::APP_NAME).heading());
+                    } else {
+                        ui.label(RichText::new(crate::APP_NAME).text_style(theme::title()));
+                    }
+                    ui.label(RichText::new(crate::version_label()).small().color(p.tide));
+                });
                 if !compact {
                     ui.label(
                         RichText::new("Converts native CAD designs into SolidCraft designs.")

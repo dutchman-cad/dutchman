@@ -245,8 +245,7 @@ fn remove_older_than(data_dir: &Path, keep: Duration) {
 
 #[derive(Template)]
 #[template(path = "index.html")]
-struct IndexPage<'a> {
-    version: &'a str,
+struct IndexPage {
     max_upload_mb: u64,
     keep_minutes: u64,
     extensions: String,
@@ -258,7 +257,6 @@ struct IndexPage<'a> {
 #[derive(Template)]
 #[template(path = "results.html")]
 struct ResultsPage<'a> {
-    version: &'a str,
     job: &'a str,
     converted: u64,
     failed: u64,
@@ -270,13 +268,13 @@ struct ResultsPage<'a> {
 #[derive(Template)]
 #[template(path = "problem.html")]
 struct ProblemPage<'a> {
-    version: &'a str,
     message: &'a str,
     /// The page's address, `<base>/`.
     home: &'a str,
 }
 
-const VERSION: &str = concat!("dutchman-web ", env!("CARGO_PKG_VERSION"));
+/// This build's version, for the page header and footer.
+const APP_VERSION: &str = dutchman::BUILD_VERSION;
 
 fn render(page: impl Template, status: StatusCode) -> Response {
     match page.render() {
@@ -297,7 +295,6 @@ async fn index(State(app): State<Shared>) -> Response {
         .join(" · ");
     render(
         IndexPage {
-            version: VERSION,
             max_upload_mb: app.config.max_upload >> 20,
             keep_minutes: app.config.keep.as_secs() / 60,
             extensions,
@@ -329,7 +326,6 @@ impl Problem {
     fn page(self, base: &str) -> Response {
         render(
             ProblemPage {
-                version: VERSION,
                 message: &self.message,
                 home: &format!("{base}/"),
             },
@@ -371,7 +367,6 @@ async fn job_page(State(app): State<Shared>, UrlPath(job): UrlPath<String>) -> R
             let count = |key: &str| report.get(key).and_then(Value::as_u64).unwrap_or(0);
             render(
                 ResultsPage {
-                    version: VERSION,
                     job: &job,
                     converted: count("converted"),
                     failed: count("failed"),

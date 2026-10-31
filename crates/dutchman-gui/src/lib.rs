@@ -12,8 +12,19 @@ pub use app::App;
 /// The app's name, as its window and the macOS app bundle show it.
 pub const APP_NAME: &str = "Dutchman Convert";
 
+/// The name eframe keeps the app's settings under. It follows the package version, not
+/// [`dutchman::BUILD_VERSION`], so one nightly's settings carry over to the next.
+pub const SETTINGS_NAME: &str = concat!("Dutchman Convert ", env!("CARGO_PKG_VERSION"));
+
+/// The version beside the app's name in its top row.
+pub fn version_label() -> String {
+    format!("v{}", dutchman::BUILD_VERSION)
+}
+
 /// The desktop window's title, including the version of this build.
-pub const WINDOW_TITLE: &str = concat!("Dutchman Convert ", env!("CARGO_PKG_VERSION"));
+pub fn window_title() -> String {
+    format!("{APP_NAME} {}", dutchman::BUILD_VERSION)
+}
 
 /// The issue form for a file that did not convert.
 pub const REPORT_PROBLEM_URL: &str = dutchman::issue::NEW_ISSUE;
@@ -21,7 +32,7 @@ pub const REPORT_PROBLEM_URL: &str = dutchman::issue::NEW_ISSUE;
 /// The window's options: its size, title and icon.
 pub fn options() -> eframe::NativeOptions {
     let mut viewport = eframe::egui::ViewportBuilder::default()
-        .with_title(WINDOW_TITLE)
+        .with_title(window_title())
         .with_app_id("dutchman")
         .with_inner_size([760.0, 680.0])
         .with_min_inner_size([520.0, 420.0])

@@ -28,6 +28,7 @@
   header.top svg { width: 40px; height: 40px; flex: none; }
   h1 { font: 600 26px/1.2 Spectral, Georgia, serif; margin: 0; }
   h1 a { color: inherit; text-decoration: none; }
+  .version { color: var(--tide); font-size: 13px; align-self: flex-end; padding-bottom: 3px; }
   .sub { color: var(--tide); margin: 0 0 24px; }
   .panel { background: var(--surface-2); border: 1px solid var(--hairline); border-radius: 12px; padding: 16px 18px; }
   .drop { display: block; border: 2px dashed var(--hairline); border-radius: 12px; padding: 28px 20px;
@@ -76,9 +77,10 @@
       <circle cx="32" cy="6.2" r="2.8" fill="var(--lantern)"/>
     </svg>
     <h1><a href="{% block home %}./{% endblock %}">Dutchman Convert</a></h1>
+    <span class="version">v{{ crate::APP_VERSION }}</span>
   </header>
   {% block content %}{% endblock %}
-  <footer>{{ version }} · <a href="https://github.com/dutchman-cad/dutchman">Dutchman on GitHub</a></footer>
+  <footer>dutchman-web {{ crate::APP_VERSION }} · <a href="https://github.com/dutchman-cad/dutchman">Dutchman on GitHub</a></footer>
 </main>
 </body>
 </html>

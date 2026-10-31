@@ -46,13 +46,35 @@ fn the_window_offers_the_file_problem_form_and_names_its_version() {
     assert!((report.center().y - night.center().y).abs() < 1.0);
     assert!(report.left() > night.right());
     assert_eq!(
-        dutchman_gui::WINDOW_TITLE,
-        format!("Dutchman Convert {}", env!("CARGO_PKG_VERSION"))
+        dutchman_gui::window_title(),
+        format!("Dutchman Convert {}", dutchman::BUILD_VERSION)
     );
+    let name = harness.get_by_label("Dutchman Convert").rect();
+    let version = harness
+        .get_by_label(&format!("v{}", dutchman::BUILD_VERSION))
+        .rect();
+    assert!(version.left() >= name.right());
+    assert!(version.height() < name.height());
     assert_eq!(
         dutchman_gui::REPORT_PROBLEM_URL,
         "https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml"
     );
+}
+
+#[test]
+fn the_top_row_names_the_app_and_its_version_at_the_narrowest_width() {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(520.0, 420.0))
+        .build_eframe(|cc| App::new(cc));
+    harness.run();
+    let name = harness.get_by_label("Dutchman Convert").rect();
+    let version = harness
+        .get_by_label(&format!("v{}", dutchman::BUILD_VERSION))
+        .rect();
+    let report = harness.get_by_label("Report a problem").rect();
+    assert!(version.left() >= name.right());
+    assert!(version.bottom() <= 80.0);
+    assert!(report.left() >= 0.0 && report.right() <= 520.0);
 }
 
 #[test]
