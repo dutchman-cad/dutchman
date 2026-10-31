@@ -1,4 +1,4 @@
-### Conversion
+### History
 
 - Stored-geometry features (Inventor stored bodies, Fusion base bodies, and other formats'
   directly stored geometry) import exactly the bodies they output, solids and sheets, at their
