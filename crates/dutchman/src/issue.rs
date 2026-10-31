@@ -1,7 +1,7 @@
 //! A GitHub issue about one file that did not convert, filled in from its convert report: the
-//! link that opens the "A file didn't convert" form with the Dutchman version, the system, the
-//! error, its stage and upstream, and the file's anonymous report. Nothing in it names or
-//! shows the file: the error comes from the anonymous report, which has had its paths and
+//! link that opens the "A file didn't convert" form with the Dutchman version, the system and
+//! the error's stage, upstream and code, and the file's anonymous report to paste into it.
+//! Nothing in it names or shows the file: the error comes from the anonymous report, which has had its paths and
 //! names taken out. See `docs/report-anon.md`.
 
 use std::path::Path;
@@ -14,25 +14,25 @@ use crate::anon;
 pub const NEW_ISSUE: &str =
     "https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml";
 
-/// The longest link the form is opened with. GitHub refuses a long link to a signed-in
-/// reader (406 Not Acceptable) well before 8 KB, as the session's cookies count too; past
-/// this, the anonymous report is left for the reporter to paste.
-pub const MAX_URL: usize = 4_000;
+/// The longest link the form is opened with. GitHub answers a long link to a signed-in reader
+/// with a 406 well before 8 KB, as the session's cookies count too, and how much they take
+/// differs by reader. So the link holds only short fields, and the report is pasted.
+pub const MAX_URL: usize = 2_000;
 
-/// The most of the error message the link carries; the whole message is in the anonymous
-/// report.
-const MAX_MESSAGE: usize = 1_000;
+/// The most of one field the link carries. The error's stage, upstream and code are short;
+/// this keeps the link's length bounded whatever a report holds.
+const MAX_FIELD: usize = 200;
+
+/// What the form's report box opens with.
+const PASTE_HERE: &str = "Paste the anonymous report here: Dutchman copied it to your clipboard.";
 
 /// The issue to file about the file `report` (a `dutchman.convert/1` report) is of.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Issue {
     /// The link that opens the form filled in.
     pub url: String,
-    /// The file's anonymous report, pretty-printed.
+    /// The file's anonymous report, pretty-printed, for the reporter to paste.
     pub anonymous_report: String,
-    /// Whether the anonymous report is in the link; when it is not, it is for the reporter
-    /// to paste.
-    pub report_in_url: bool,
 }
 
 /// The issue about the file `report` is of, converted into `out_dir` in a run `run`
@@ -61,17 +61,6 @@ pub fn fill(report: &Value, anonymous: &Value) -> Issue {
             .and_then(|error| error.get(key))
             .and_then(Value::as_str)
     };
-    let happened = match field("message") {
-        Some(message) if message.chars().count() > MAX_MESSAGE => {
-            let start: String = message.chars().take(MAX_MESSAGE).collect();
-            format!(
-                "The conversion failed with this message (shortened; the anonymous report \
-                 has all of it):\n\n{start}…"
-            )
-        }
-        Some(message) => format!("The conversion failed with this message:\n\n{message}"),
-        None => "The conversion failed.".to_owned(),
-    };
     let stage: Vec<String> = [
         ("stage", "stage"),
         ("upstream", "upstream"),
@@ -81,7 +70,7 @@ pub fn fill(report: &Value, anonymous: &Value) -> Issue {
     .filter_map(|(key, label)| field(key).map(|value| format!("{label}: {value}")))
     .collect();
     let anonymous_report = serde_json::to_string_pretty(anonymous).unwrap_or_default();
-    let mut fields = vec![
+    let fields = [
         ("title", format!("[file] {format} failed to convert")),
         ("format", format.to_owned()),
         (
@@ -89,22 +78,17 @@ pub fn fill(report: &Value, anonymous: &Value) -> Issue {
             format!("dutchman {}, desktop app", env!("CARGO_PKG_VERSION")),
         ),
         ("os", system()),
-        ("what-happened", happened),
+        (
+            "what-happened",
+            "The conversion failed. The anonymous report has the error.".to_owned(),
+        ),
         ("stage", stage.join(", ")),
+        ("report-anon", PASTE_HERE.to_owned()),
     ];
-    let without = url(&fields);
-    // Compact in the link, where every newline and indent costs encoded bytes; the copy to
-    // paste stays readable.
-    fields.push((
-        "report-anon",
-        serde_json::to_string(anonymous).unwrap_or_default(),
-    ));
-    let with = url(&fields);
-    let report_in_url = with.len() <= MAX_URL;
+    let fields = fields.map(|(id, value)| (id, value.chars().take(MAX_FIELD).collect()));
     Issue {
-        url: if report_in_url { with } else { without },
+        url: url(&fields),
         anonymous_report,
-        report_in_url,
     }
 }
 
@@ -192,7 +176,6 @@ mod tests {
         )
         .unwrap();
         assert!(issue.url.starts_with(NEW_ISSUE));
-        assert!(issue.report_in_url);
         assert_eq!(
             query(&issue.url, "title").unwrap(),
             "[file] Fusion archive (.f3d) failed to convert"
@@ -209,42 +192,34 @@ mod tests {
             query(&issue.url, "stage").unwrap(),
             "stage: decode, upstream: cadmpeg"
         );
-        let happened = query(&issue.url, "what-happened").unwrap();
-        assert!(happened.contains("malformed container"), "{happened}");
-        let pasted = query(&issue.url, "report-anon").unwrap();
-        let anonymous: Value = serde_json::from_str(&pasted).unwrap();
-        assert_eq!(
-            anonymous,
-            serde_json::from_str::<Value>(&issue.anonymous_report).unwrap()
-        );
+        assert!(query(&issue.url, "report-anon")
+            .unwrap()
+            .starts_with("Paste the anonymous report here"));
+        let anonymous: Value = serde_json::from_str(&issue.anonymous_report).unwrap();
         assert_eq!(anonymous["schema"], anon::SCHEMA);
         assert_eq!(anonymous["errors"][0]["stage"], "decode");
-        for text in [&issue.url, &issue.anonymous_report, &happened] {
+        for text in [&issue.url, &issue.anonymous_report] {
             assert!(!text.contains("Secret"), "{text}");
             assert!(!text.contains("someone"), "{text}");
         }
     }
 
     #[test]
-    fn a_report_too_long_for_the_link_is_left_to_paste() {
-        let long = json!({"errors": [{"message": "it failed", "stage": "decode"}],
-                          "losses": [{"message": "x".repeat(MAX_URL)}]});
-        let issue = fill(&failed(), &long);
-        assert!(!issue.report_in_url);
-        assert!(issue.url.len() <= MAX_URL);
-        assert!(query(&issue.url, "report-anon").is_none());
-        assert!(issue.anonymous_report.contains("xxxx"));
-    }
-
-    #[test]
-    fn a_long_error_message_is_shortened_in_the_link() {
-        let message = "y".repeat(MAX_URL * 2);
-        let long = json!({"errors": [{"message": message, "stage": "decode"}]});
-        let issue = fill(&failed(), &long);
+    fn the_longest_report_stays_short_in_the_link_and_whole_on_the_clipboard() {
+        // Every byte of these encodes to three in the link.
+        let code = "é".repeat(MAX_URL);
+        let long = json!({
+            "errors": [{"message": "y".repeat(MAX_URL * 4), "stage": code,
+                        "upstream": code, "code": code}],
+            "losses": [{"message": "x".repeat(MAX_URL * 4)}]
+        });
+        let mut report = failed();
+        report["input"]["format_name"] = json!("Fusion archive (.f3d)");
+        let issue = fill(&report, &long);
         assert!(issue.url.len() <= MAX_URL, "{}", issue.url.len());
-        let happened = query(&issue.url, "what-happened").unwrap();
-        assert!(happened.contains("shortened"), "{happened}");
-        assert!(issue.anonymous_report.contains(&message));
+        assert!(issue.url.is_ascii() && !issue.url.contains(['\'', '(', ')', ' ', ';']));
+        assert!(issue.anonymous_report.contains("xxxx"));
+        assert!(issue.anonymous_report.contains("yyyy"));
     }
 
     #[test]

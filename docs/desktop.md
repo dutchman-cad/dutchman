@@ -67,13 +67,11 @@ form. `dutchman-gui --version` and `dutchman-gui --help` print and exit without 
 window (on Windows, read the version with `dutchman --version`).
 
 When a file fails, its card says so and offers **Report this on GitHub**. It opens the same
-form in your browser, filled in: Dutchman's version, your system, the error with its stage
-and upstream, and the file's anonymous report, which names no file and no folder. Read it
-before you submit, and never attach the design; a link to a file that is already public is
-welcome. The link stays short enough for GitHub to open it while you are signed in: if the
-anonymous report does not fit, the app copies it for you to paste into the form's
-**Anonymous report for this file** box, and a very long error message is shortened in the
-form (the anonymous report has all of it).
+form in your browser with Dutchman's version, your system and the error's stage, upstream and
+code filled in, and copies the file's anonymous report, which names no file and no folder.
+Paste it into the form's **Anonymous report for this file** box and read it before you
+submit. Never attach the design; a link to a file that is already public is welcome. The
+link stays under 2,000 characters so GitHub opens it while you are signed in.
 
 ## Updates
 
