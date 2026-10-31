@@ -28,7 +28,7 @@ const MAX_CODE: usize = 80;
 const MAX_TEMPLATE: usize = 300;
 
 /// The message template's fields.
-const FIELDS: [&str; 5] = ["{version}", "{code}", "{id}", "{size}", "{step}"];
+const FIELDS: [&str; 5] = ["<version>", "<code>", "<id>", "<n>", "<yes|no|unknown>"];
 
 /// What the private upload link accepts.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -140,7 +140,7 @@ impl ReportPolicy {
         let rest = FIELDS
             .iter()
             .fold(template.clone(), |text, field| text.replace(field, ""));
-        if rest.contains(['{', '}']) {
+        if rest.contains(['<', '>']) {
             return Err("the policy's message has an unknown field".to_owned());
         }
         Ok(())
@@ -180,11 +180,11 @@ impl ReportPolicy {
             None => "unknown",
         };
         self.message_template
-            .replace("{version}", report_version())
-            .replace("{code}", &code_token(facts.code))
-            .replace("{id}", facts.report_id)
-            .replace("{size}", &size)
-            .replace("{step}", step)
+            .replace("<version>", report_version())
+            .replace("<code>", &code_token(facts.code))
+            .replace("<id>", facts.report_id)
+            .replace("<n>", &size)
+            .replace("<yes|no|unknown>", step)
     }
 }
 
@@ -369,6 +369,15 @@ mod tests {
     }
 
     #[test]
+    fn the_bundled_template_is_the_one_the_bot_parses() {
+        assert_eq!(
+            ReportPolicy::bundled().message_template,
+            "Dutchman <version> couldn't convert my file. Error: <code>. Report id: <id>. \
+             Size: <n> MB. STEP: <yes|no|unknown>."
+        );
+    }
+
+    #[test]
     fn a_policy_the_app_should_not_act_on_is_refused() {
         for (key, bad) in [
             ("inviteUrl", json!("https://example.com/yTcseBEdeu")),
@@ -378,11 +387,11 @@ mod tests {
             ("messageTemplate", json!("no fields at all")),
             (
                 "messageTemplate",
-                json!("{version}{code}{id}{size}{step}{path}"),
+                json!("<version><code><id><n><yes|no|unknown><path>"),
             ),
             (
                 "messageTemplate",
-                json!("{version}{code}{id}{size}\n{step}"),
+                json!("<version><code><id><n>\n<yes|no|unknown>"),
             ),
         ] {
             let mut value = valid();
