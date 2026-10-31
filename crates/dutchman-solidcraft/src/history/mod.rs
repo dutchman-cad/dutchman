@@ -12,6 +12,7 @@ mod blend;
 mod constraints;
 mod crossing;
 mod extrude;
+mod face_profile;
 mod faces;
 mod helix;
 mod helpers;
@@ -302,8 +303,10 @@ struct Context<'a> {
     builds: bool,
     /// The sheet thicknesses (mm) its sheet-metal features use, each with its rule's name.
     sheet_rules: Vec<(f64, String)>,
-    /// Blends mapped so far, waiting for their input edges to be proven.
+    /// Blends and face profiles mapped so far, waiting for SolidCraft's replay to prove them.
     blends: Vec<blend::Pending>,
+    /// Features the feature being mapped needs before it (a sketch of a face's boundary).
+    extra: Vec<Value>,
 }
 
 impl<'a> Context<'a> {
@@ -324,6 +327,7 @@ impl<'a> Context<'a> {
             builds: false,
             sheet_rules: Vec::new(),
             blends: Vec::new(),
+            extra: Vec::new(),
         }
     }
 
@@ -611,6 +615,13 @@ fn map_into(
             }
             Ok(Mapped::Feature(mut mapped)) => {
                 history.mapped += 1;
+                for mut extra in std::mem::take(&mut ctx.extra) {
+                    let name = ctx.unique_name(&extra, history.features.iter());
+                    if let Some(fields) = extra.as_object_mut() {
+                        fields.insert("name".to_owned(), Value::String(name));
+                    }
+                    history.features.push(extra);
+                }
                 if mapped.get("type").and_then(Value::as_str) == Some("sketch") {
                     references.features.push(mapped.clone());
                 }
@@ -631,6 +642,7 @@ fn map_into(
             }
             Err(reason) => {
                 ctx.builds = builds;
+                ctx.extra.clear();
                 history.features.truncate(before);
                 ctx.blends.truncate(blends);
                 blocked.get_or_insert_with(|| format!("{}: {reason}", describe(feature)));
@@ -776,7 +788,15 @@ pub(crate) fn sketches(model: &Model, report: &mut Report) -> (History, usize) {
 }
 
 /// What SolidCraft rebuilt before each blend, as [`crate::verify::replay_edges`] reports it.
-pub(crate) type Replayed = Result<Vec<Result<crate::verify::ReplayedBodies, String>>, String>;
+pub(crate) type Replayed = Result<Vec<Result<crate::verify::Replay, String>>, String>;
+
+/// What proving a pending feature settled.
+enum Proven {
+    /// The body a blend's edges are on.
+    Body(String),
+    /// A face profile's sketch rewritten on the other side of its plane, if it had to be.
+    Sketch(Option<Value>),
+}
 
 /// Proves the input edges of every blend of a history that maps, on the bodies `replay`
 /// gives for the history before each blend (`replay(history, after)` with the ids of the
@@ -784,7 +804,7 @@ pub(crate) type Replayed = Result<Vec<Result<crate::verify::ReplayedBodies, Stri
 /// the history with the reason; without a replay (`replay` returning `Err`) none can be.
 pub(crate) fn prove_blends(
     mapping: &mut Mapping,
-    replay: impl FnOnce(&History, &[u64]) -> Replayed,
+    replay: impl FnOnce(&History, &[u64], bool) -> Replayed,
 ) {
     let Ok(history) = &mut mapping.result else {
         return;
@@ -808,7 +828,8 @@ pub(crate) fn prove_blends(
     let replayed = if steps.is_empty() {
         Ok(Vec::new())
     } else {
-        replay(history, &steps)
+        let faces = history.blends.iter().any(|pending| pending.face.is_some());
+        replay(history, &steps, faces)
     };
     let blends = std::mem::take(&mut history.blends);
     let mut step = 0usize;
@@ -824,7 +845,17 @@ pub(crate) fn prove_blends(
                 let at = bodies.get(step);
                 step = step.saturating_add(1);
                 match at {
-                    Some(Ok(bodies)) => blend::prove(pending, bodies),
+                    Some(Ok(replay)) => match &pending.face {
+                        None => blend::prove(pending, &replay.bodies).map(Proven::Body),
+                        Some(face) => face_profile::prove(face, replay).and_then(|mirrored| {
+                            if mirrored {
+                                face.sketch(true)
+                                    .map(|(sketch, _)| Proven::Sketch(Some(sketch)))
+                            } else {
+                                Ok(Proven::Sketch(None))
+                            }
+                        }),
+                    },
                     Some(Err(why)) => Err(format!(
                         "SolidCraft cannot replay the history before it: {why}"
                     )),
@@ -835,13 +866,30 @@ pub(crate) fn prove_blends(
             }
         };
         match proven {
-            Ok(body) => {
+            Ok(Proven::Body(body)) => {
                 if let Some(fields) = history
                     .features
                     .get_mut(pending.feature)
                     .and_then(Value::as_object_mut)
                 {
                     fields.insert("body".to_owned(), Value::String(body));
+                }
+            }
+            // The face's sketch on the other side, which runs along the face's outward normal.
+            Ok(Proven::Sketch(mirrored)) => {
+                let id = pending.face.as_ref().map(|face| face.sketch);
+                let target = history
+                    .features
+                    .iter_mut()
+                    .find(|feature| feature.get("id").and_then(Value::as_u64) == id);
+                if let (Some(mirrored), Some(target)) = (mirrored, target) {
+                    for key in ["plane", "sketch"] {
+                        if let (Some(value), Some(fields)) =
+                            (mirrored.get(key), target.as_object_mut())
+                        {
+                            fields.insert(key.to_owned(), value.clone());
+                        }
+                    }
                 }
             }
             Err(reason) => {

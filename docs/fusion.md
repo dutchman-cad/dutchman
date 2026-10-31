@@ -46,6 +46,21 @@ Final-body faces cannot establish that timeline state. Tilted plane ends and nat
 generated, or historical vertex selections are not supported yet. Symmetric To Object ends
 and non-blind ends against the sketch normal on two-sided extrudes remain unsupported.
 
+An extrude whose profile is a face of the model as it was earlier in the timeline
+(`historical_faces`, "extrude this face") is rebuilt from that face's boundary. CADIR carries
+no surface for such a face, but it keeps the ends, midpoint and tangent of every edge around a
+selected face in the feature's own input topology. Dutchman reads those edges as straight lines,
+circular arcs and full circles in one plane, chains them into closed loops (a loop inside a loop
+is a hole) and writes a sketch of them on that plane, ahead of the extrude, taking every
+profile. The extrude runs along the face's outward normal, which only the body knows: after
+SolidCraft has replayed the history before the extrude, Dutchman finds the face among the
+rebuilt faces (same plane, same area, every boundary edge on it and named for it) and mirrors the
+sketch if it was written on the inner side. A face it cannot find exactly once, an edge that is
+not a line or circular arc, a boundary that does not close or is not flat, an input topology
+without edge geometry for the face, a direction of its own, and ends to or from an object
+leave the extrude unmapped with the reason. Faces that share an edge are refused. Without a
+SolidCraft CLI to replay the history, the extrude waits for one like a blend does.
+
 ## Appearances
 
 Body and face appearance bindings follow the component definition's own BREP ids into its

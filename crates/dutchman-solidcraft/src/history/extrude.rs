@@ -11,7 +11,30 @@ const ALONG_NORMAL: f64 = 1.0 - 1e-9;
 
 /// Maps an extrude feature whose operation is `definition`.
 pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Result<Value, String> {
-    let (sketch_id, profiles) = profile(definition.get("profile"), ctx)?;
+    let face_profile =
+        definition.pointer("/profile/kind").and_then(Value::as_str) == Some("historical_faces");
+    let (sketch_id, profiles) = if face_profile {
+        // The sketch of the face's boundary runs along the face's outward normal; mapping
+        // assumes that side and the replay corrects it, so nothing here may depend on the
+        // side beyond travelling along or against the profile normal.
+        if !matches!(
+            definition
+                .pointer("/direction/kind")
+                .and_then(Value::as_str),
+            None | Some("profile_normal" | "reversed_profile_normal")
+        ) {
+            return Err(
+                "an extrude of a face in a direction of its own is not mapped yet".to_owned(),
+            );
+        }
+        super::face_profile::map(
+            feature,
+            definition.pointer("/profile/value").unwrap_or(&Value::Null),
+            ctx,
+        )?
+    } else {
+        profile(definition.get("profile"), ctx)?
+    };
     let sketch = ctx
         .sketches
         .get(&sketch_id)
@@ -19,6 +42,13 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
     let sketch_feature = sketch.feature;
     let forward = forward(definition.get("direction"), sketch.normal)?;
     let mut extent = extent(definition.get("extent"), forward, ctx, sketch.normal)?;
+    if face_profile
+        && (extent.contains_key("to")
+            || extent.contains_key("from")
+            || definition.pointer("/start/kind").and_then(Value::as_str) == Some("from_face"))
+    {
+        return Err("an extrude of a face to or from an object is not mapped yet".to_owned());
+    }
     let mut start_height = 0.0;
     if let Some(offset) = start_offset(definition.get("start"))? {
         start_height = offset;
