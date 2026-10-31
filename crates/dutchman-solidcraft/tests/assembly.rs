@@ -40,6 +40,7 @@ fn placed_twice() -> Model {
             held: Vec::new(),
             joint_notes: Vec::new(),
             stored_placements: Vec::new(),
+            definitions: Vec::new(),
             parts: vec![part.clone()],
             placements: vec![
                 Placement {
@@ -520,6 +521,7 @@ fn nested() -> Model {
             held: Vec::new(),
             joint_notes: Vec::new(),
             stored_placements: Vec::new(),
+            definitions: Vec::new(),
             parts: vec![pair, cube.clone()],
             placements: vec![
                 Placement {
@@ -777,6 +779,168 @@ fn an_assemblys_own_sketches_are_kept_hidden_in_the_design() {
     assert_eq!(params, ["span"], "only the parameter the sketch uses");
     assert!(report.losses().iter().any(|loss| loss.subject == "sketches"
         && loss.detail == "kept 1 sketch in the design itself, for reference; 1 left out"));
+}
+
+/// [`with_sketches`] with a third sketch, resolved like the first, and component `Block`
+/// listing the first as its own.
+fn with_owned_sketch() -> Model {
+    let model = with_sketches();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["product_definitions"][0]["sketches"] = serde_json::json!(["f3d:model:sketch#1"]);
+    let mut third = wire["model"]["sketches"][0].clone();
+    third["id"] = "f3d:model:sketch#3".into();
+    third["name"] = "Layout 3".into();
+    wire["model"]["sketches"]
+        .as_array_mut()
+        .unwrap()
+        .push(third);
+    let mut model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    };
+    model.assembly = dutchman_core::local_assembly(&model).unwrap();
+    model
+}
+
+#[test]
+fn a_sketch_a_component_owns_is_written_once_under_it_and_the_rest_stay_at_the_root() {
+    let (bytes, report) = written(&with_owned_sketch());
+    let document = document(&bytes);
+    let block = document["components"][0]["id"].clone();
+    assert_eq!(document["components"][0]["name"], "Block");
+    assert_eq!(
+        document["occurrences"].as_array().unwrap().len(),
+        2,
+        "Block is placed twice"
+    );
+    let sketches: Vec<(&str, &Value)> = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|feature| feature["type"] == "sketch")
+        .map(|feature| (feature["name"].as_str().unwrap(), &feature["component"]))
+        .collect();
+    assert_eq!(sketches.len(), 2, "the unresolved one is left out");
+    assert!(sketches.contains(&("Layout 1", &block)), "{sketches:?}");
+    assert!(
+        sketches.contains(&("Layout 3", &Value::from(0))),
+        "{sketches:?}"
+    );
+    // Reference sketches start hidden, wherever they are.
+    let hidden = document["visibility"]["hidden_sketches"]
+        .as_array()
+        .unwrap();
+    assert_eq!(hidden.len(), 2);
+    assert!(report.losses().iter().any(|loss| loss.subject == "sketches"
+        && loss.detail == "kept 1 sketch in the design itself, for reference; 1 left out"));
+}
+
+/// [`with_components`] nested (component `Top`, which holds no bodies, places `Block` twice),
+/// with three resolved sketches: one `Top` owns, one a component the design does not place
+/// owns, and one with no owner.
+fn with_sketch_of_a_component_without_bodies() -> Model {
+    let model = with_components(true);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let ids = [
+        "f3d:model:sketch#1",
+        "f3d:model:sketch#2",
+        "f3d:model:sketch#3",
+    ];
+    wire["model"]["sketches"] = serde_json::json!(ids
+        .iter()
+        .enumerate()
+        .map(|(n, id)| serde_json::json!({
+            "id": id, "name": format!("Layout {}", n + 1),
+            "placement": {"kind": "resolved", "frame": {
+                "origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+                "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
+                "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0},
+            }},
+        }))
+        .collect::<Vec<_>>());
+    wire["model"]["sketch_entities"] = serde_json::json!(ids
+        .iter()
+        .enumerate()
+        .map(|(n, id)| serde_json::json!({
+            "id": format!("f3d:model:sketch-entity#{n}"), "sketch": id, "construction": false,
+            "geometry": {"kind": "line", "start": {"u": 0.0, "v": 0.0}, "end": {"u": 20.0, "v": 0.0}},
+        }))
+        .collect::<Vec<_>>());
+    let definitions = wire["model"]["product_definitions"].as_array_mut().unwrap();
+    definitions[1]["sketches"] = serde_json::json!([ids[0]]);
+    definitions.push(serde_json::json!({
+        "id": "f3d:model:component#ghost", "kind": "part", "label": "Ghost",
+        "bodies": [], "sketches": [ids[1]],
+    }));
+    let mut model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    };
+    model.assembly = dutchman_core::local_assembly(&model).unwrap();
+    model
+}
+
+#[test]
+fn a_sketch_of_a_component_without_bodies_sits_under_that_component() {
+    let (bytes, report) = written(&with_sketch_of_a_component_without_bodies());
+    let document = document(&bytes);
+    let top = document["components"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "Top")
+        .expect("Top is written")["id"]
+        .clone();
+    let sketches: Vec<(&str, &Value)> = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|feature| feature["type"] == "sketch")
+        .map(|feature| (feature["name"].as_str().unwrap(), &feature["component"]))
+        .collect();
+    assert_eq!(sketches.len(), 3, "{sketches:?}");
+    assert!(sketches.contains(&("Layout 1", &top)), "{sketches:?}");
+    assert!(
+        sketches.contains(&("Layout 2", &Value::from(0))),
+        "{sketches:?}"
+    );
+    assert!(
+        sketches.contains(&("Layout 3", &Value::from(0))),
+        "{sketches:?}"
+    );
+    assert!(report.losses().iter().any(|loss| loss.subject == "sketches"
+        && loss.detail
+            == "kept 2 sketches in the design itself, for reference; \
+                1 owned by a component the design does not write"));
+    assert!(report.losses().iter().any(|loss| loss.subject == "sketches"
+        && loss.detail == "kept 1 sketch under the component that holds them, for reference"));
+}
+
+#[test]
+fn solidcraft_replays_an_assembly_whose_sketch_sits_under_its_component() {
+    let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) else {
+        eprintln!("skipped: set {CLI_ENV} to check the sketches in SolidCraft");
+        return;
+    };
+    let (bytes, _) = written(&with_owned_sketch());
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("design.solidcraft");
+    let output = dir.path().join("eval.json");
+    std::fs::write(&input, bytes).unwrap();
+    let status = std::process::Command::new(cli)
+        .arg("eval")
+        .arg(&input)
+        .arg("--json-out")
+        .arg(&output)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let result: Value = serde_json::from_str(&std::fs::read_to_string(output).unwrap()).unwrap();
+    let sketches = result["sketches"].as_array().unwrap();
+    assert_eq!(sketches.len(), 2);
+    assert!(sketches.iter().all(|s| s["status"] == "solved"));
+    assert!(sketches.iter().all(|s| s["visible"] == false));
+    assert_eq!(result["bodies"].as_array().unwrap().len(), 2);
 }
 
 #[test]
@@ -2382,6 +2546,7 @@ fn composed_written_placements_equal_the_assemblys_world_placements() {
             held: Vec::new(),
             joint_notes: Vec::new(),
             stored_placements: Vec::new(),
+            definitions: Vec::new(),
             parts: vec![inner, cube.clone()],
             placements: [(0, turned), (0, moved), (1, turned)]
                 .into_iter()
@@ -2439,6 +2604,7 @@ fn frame_with_cube_at(name: &str, y: f64) -> Model {
             held: Vec::new(),
             joint_notes: Vec::new(),
             stored_placements: Vec::new(),
+            definitions: Vec::new(),
             parts: vec![cube.clone()],
             placements: vec![Placement {
                 hidden: false,
@@ -2480,6 +2646,7 @@ fn layout_variants_and_a_mirrored_instance_write_at_their_world_placements() {
             held: Vec::new(),
             joint_notes: Vec::new(),
             stored_placements: Vec::new(),
+            definitions: Vec::new(),
             parts: vec![first, second],
             placements: [(0, turned), (1, moved), (1, reflected)]
                 .into_iter()

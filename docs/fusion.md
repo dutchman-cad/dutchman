@@ -110,6 +110,11 @@ transform, and each component as a product definition.
   features come along, but timeline predecessors alone do not. A feature explicitly owned by
   another component stays out; without ownership, the existing body and sketch links still
   select history. Root-owned history goes to the design's loose-body component when it exists.
+  Each sketch is written under the part that owns it, once per part however often it is
+  placed, and a sketch owned by a component that holds no bodies goes under that component;
+  only sketches with no owner, or whose owner component is not written, stay in the assembly
+  root (counted in the report).
+  A sketch the part's history builds nothing on, or that the source hides, starts hidden.
   The component's history is then mapped and checked like a single part's; when it does not
   map, the component keeps its bodies as an import and the report names its first blocker.
 - **When it does not,** the design converts as stored and the report says so (Degraded,

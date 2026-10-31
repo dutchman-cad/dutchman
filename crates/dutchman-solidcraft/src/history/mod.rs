@@ -67,6 +67,8 @@ pub(crate) struct History {
     /// Blends whose input edges wait for SolidCraft's replay of the history before them
     /// ([`prove_blends`]); until then each has no body.
     pub(crate) blends: Vec<blend::Pending>,
+    /// Ids of sketch features whose source sketch is hidden in the source.
+    pub(crate) hidden: Vec<u64>,
 }
 
 /// Looks and explicit names for bodies carried by an Import, independent of feature history.
@@ -199,7 +201,42 @@ impl History {
                 }
             }
         }
+        for id in &mut self.hidden {
+            *id = id.saturating_add(offset);
+        }
         self.next_id = self.next_id.saturating_add(offset);
+    }
+
+    /// The sketch features that should start hidden: those the source hides, and those no
+    /// feature of the history is built on (kept for reference only).
+    pub(crate) fn hidden_sketches(&self) -> Vec<Value> {
+        let mut used = std::collections::BTreeSet::new();
+        for feature in &self.features {
+            for key in ["sketch", "path_sketch"] {
+                if let Some(id) = feature.get(key).and_then(Value::as_u64) {
+                    used.insert(id);
+                }
+            }
+            for key in ["sections", "rails"] {
+                for row in feature
+                    .get(key)
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                {
+                    if let Some(id) = row.get("sketch").and_then(Value::as_u64) {
+                        used.insert(id);
+                    }
+                }
+            }
+        }
+        self.features
+            .iter()
+            .filter(|feature| feature.get("type").and_then(Value::as_str) == Some("sketch"))
+            .filter_map(|feature| feature.get("id").and_then(Value::as_u64))
+            .filter(|id| !used.contains(id) || self.hidden.contains(id))
+            .map(Value::from)
+            .collect()
     }
 
     /// Renames each body this history names that `taken` already holds to `<name> (<label>)`,
@@ -625,6 +662,17 @@ fn map_into(
                 }
                 if mapped.get("type").and_then(Value::as_str) == Some("sketch") {
                     references.features.push(mapped.clone());
+                    let source = operation(feature)
+                        .pointer("/sketch/sketch")
+                        .and_then(Value::as_str)
+                        .and_then(|id| ctx.row("sketches", id));
+                    if let (Some(source), Some(id)) =
+                        (source, mapped.get("id").and_then(Value::as_u64))
+                    {
+                        if source.get("visible").and_then(Value::as_bool) == Some(false) {
+                            history.hidden.push(id);
+                        }
+                    }
                 }
                 let name = ctx.unique_name(&mapped, history.features.iter());
                 if let Some(fields) = mapped.as_object_mut() {
@@ -683,6 +731,11 @@ fn map_into(
                     fields.insert("name".to_owned(), Value::String(name));
                 }
                 references.features.push(mapped.clone());
+                if sketch.get("visible").and_then(Value::as_bool) == Some(false) {
+                    if let Some(id) = mapped.get("id").and_then(Value::as_u64) {
+                        history.hidden.push(id);
+                    }
+                }
                 history.features.push(mapped);
             }
             Err(why) => report.push(
@@ -723,8 +776,23 @@ fn map_into(
 /// no feature history carries (an assembly's): every planar sketch that maps, with the
 /// parameters their dimensions use, and how many sketches did not map.
 pub(crate) fn sketches(model: &Model, report: &mut Report) -> (History, usize) {
+    sketches_where(model, report, &|_| true)
+}
+
+/// [`sketches`] for the sketches whose ids `wanted` accepts; the count left out is of those.
+pub(crate) fn sketches_where(
+    model: &Model,
+    report: &mut Report,
+    wanted: &dyn Fn(&str) -> bool,
+) -> (History, usize) {
     let mut kept = History::default();
-    let count = model.ir.model.sketches.len();
+    let count = model
+        .ir
+        .model
+        .sketches
+        .iter()
+        .filter(|sketch| wanted(sketch.id.as_str()))
+        .count();
     if count == 0 {
         return (kept, 0);
     }
@@ -739,6 +807,9 @@ pub(crate) fn sketches(model: &Model, report: &mut Report) -> (History, usize) {
     ctx.params = param_names;
     let mut left_out = 0;
     for sketch in ctx.arena("sketches") {
+        if !sketch.get("id").and_then(Value::as_str).is_some_and(wanted) {
+            continue;
+        }
         let feature = serde_json::json!({ "name": sketch.get("name") });
         let definition = serde_json::json!({
             "sketch": { "space": "planar", "sketch": sketch.get("id") },
@@ -1145,6 +1216,25 @@ mod tests {
             "unsupported CADIR version \"11\" (Dutchman reads 6, 7, 8, 9, 10)"
         );
         assert!(check_version(&json!({})).is_err());
+    }
+
+    #[test]
+    fn sketches_nothing_is_built_on_or_the_source_hides_start_hidden() {
+        let history = History {
+            features: vec![
+                json!({"id": 1, "type": "sketch"}),
+                json!({"id": 2, "type": "sketch"}),
+                json!({"id": 3, "type": "sketch"}),
+                json!({"id": 4, "type": "sketch"}),
+                json!({"id": 5, "type": "extrude", "sketch": 1}),
+                json!({"id": 6, "type": "loft", "sections": [{"sketch": 3}]}),
+            ],
+            hidden: vec![3],
+            ..History::default()
+        };
+        // 1 is extruded and shown; 2 is built on by nothing; 3 is lofted but hidden in the
+        // source; 4 is built on by nothing.
+        assert_eq!(history.hidden_sketches(), [json!(2), json!(3), json!(4)]);
     }
 
     #[test]

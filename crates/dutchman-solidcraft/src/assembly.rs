@@ -137,6 +137,10 @@ pub(crate) fn write(
         hidden: BTreeSet::new(),
         partial_hidden: BTreeSet::new(),
         reference_sketches: Vec::new(),
+        slice_sketches: BTreeMap::new(),
+        definition_components: BTreeMap::new(),
+        written_sketches: BTreeSet::new(),
+        unused_sketches: Vec::new(),
     };
     let top = builder.assembly(assembly, 0)?;
     builder.hold(&assembly.held, &top);
@@ -153,6 +157,7 @@ pub(crate) fn write(
     let start = builder.features.len();
     let mut hidden = builder.sketches(model);
     hidden.append(&mut builder.reference_sketches);
+    hidden.append(&mut builder.unused_sketches);
     if builder.features.len() > start {
         let own = builder
             .own_group
@@ -669,6 +674,17 @@ struct Builder<'r> {
     /// Retained-history occurrences, distinguished from source-hidden placements in notes.
     partial_hidden: BTreeSet<u64>,
     reference_sketches: Vec<Value>,
+    /// The component of the first part whose slice of the source holds each sketch (by its
+    /// CADIR id): where a sketch no part wrote itself belongs.
+    slice_sketches: BTreeMap<String, u64>,
+    /// The component written for each component definition (CADIR product definition id), the
+    /// outermost one where a sub-assembly and its own bodies share a definition.
+    definition_components: BTreeMap<String, u64>,
+    /// The CADIR ids of the sketches some part wrote under its own component.
+    written_sketches: BTreeSet<String>,
+    /// Sketches of written histories that no feature is built on or the source hides: they
+    /// start hidden.
+    unused_sketches: Vec<Value>,
 }
 
 impl Builder<'_> {
@@ -682,9 +698,17 @@ impl Builder<'_> {
     /// placements as occurrences inside it; returns the occurrence each placement became.
     fn assembly(&mut self, assembly: &Assembly, parent: u64) -> Result<Vec<Option<u64>>, Error> {
         let mut components = Vec::with_capacity(assembly.parts.len());
+        let mut level = BTreeSet::new();
         for (index, part) in assembly.parts.iter().enumerate() {
             let start = self.features.len();
             let component = self.part(part, parent)?;
+            if let (Some((id, _)), Some(Some(definition))) =
+                (&component, assembly.definitions.get(index))
+            {
+                if level.insert(definition.clone()) {
+                    self.definition_components.insert(definition.clone(), *id);
+                }
+            }
             if parent == 0 {
                 if let Some((_, name)) = &component {
                     if assembly.own_part == Some(index) {
@@ -1061,8 +1085,14 @@ impl Builder<'_> {
         references: Option<(history::History, Report)>,
     ) -> Result<bool, Error> {
         let file = part.source_file.as_deref().unwrap_or(&part.name).to_owned();
+        for sketch in &part.ir.model.sketches {
+            self.slice_sketches
+                .entry(sketch.id.to_string())
+                .or_insert(component);
+        }
         if self.writer.import_only {
             if self.writer.sketches {
+                self.mark_written(part);
                 let mut references = match references {
                     Some((references, report)) => {
                         self.report.append(report);
@@ -1115,6 +1145,7 @@ impl Builder<'_> {
                 let kept = references.features.len();
                 let left_out = part.ir.model.sketches.len().saturating_sub(kept);
                 if kept > 0 {
+                    self.mark_written(part);
                     references.relocate(
                         self.next_id - 1,
                         component,
@@ -1233,6 +1264,8 @@ impl Builder<'_> {
         };
         history.relocate(self.next_id - 1, component, &prefix(name), &mut self.taken);
         history.rename_bodies(name, &mut self.bodies);
+        self.mark_written(part);
+        self.unused_sketches.extend(history.hidden_sketches());
         self.next_id = history.next_id;
         self.features.append(&mut history.features);
         self.params.append(&mut history.params);
@@ -1253,40 +1286,93 @@ impl Builder<'_> {
         Ok(!hidden)
     }
 
-    /// Adds the sketches of the assembly's own file, those that map, to the design itself
-    /// (SolidCraft's root component), hidden for reference as a flattened part's are; returns
-    /// their ids. CADIR places a sketch in model space without saying which component it
-    /// belongs to, so a component's sketch is kept where it was drawn, not moved with it.
+    /// Records that `part` wrote its slice's sketches under its own component.
+    fn mark_written(&mut self, part: &Model) {
+        self.written_sketches
+            .extend(part.ir.model.sketches.iter().map(|s| s.id.to_string()));
+    }
+
+    /// Adds the sketches of the assembly's own file that no part wrote, those that map, hidden
+    /// for reference as a flattened part's are, and returns their ids. A sketch in a part's
+    /// slice of the source (the sketches its component owns) goes under that part's
+    /// component, so a component's sketches sit with it; one that no part holds, such as a
+    /// sketch of the design's own root component, goes to the design itself (SolidCraft's root
+    /// component). The sketch is written once for the component, whatever number of times the
+    /// component is placed.
     fn sketches(&mut self, model: &Model) -> Vec<Value> {
         if !self.writer.sketches {
             return Vec::new();
         }
-        let (mut kept, left_out) = history::sketches(model, self.report);
-        let count = kept.features.len();
-        if count > 0 || left_out > 0 {
-            let noun = if count == 1 { "sketch" } else { "sketches" };
-            let detail = if left_out > 0 {
+        let owners = sketch_owners(model);
+        let mut groups: BTreeMap<u64, BTreeSet<String>> = BTreeMap::new();
+        let mut unplaced_owner = 0;
+        for sketch in &model.ir.model.sketches {
+            let id = sketch.id.to_string();
+            if self.written_sketches.contains(&id) {
+                continue;
+            }
+            let owner = owners.get(&id);
+            let component = match owner.and_then(|d| self.definition_components.get(d)) {
+                Some(component) => *component,
+                None => {
+                    let home = self.slice_sketches.get(&id).copied().unwrap_or(0);
+                    unplaced_owner += usize::from(owner.is_some() && home == 0);
+                    home
+                }
+            };
+            groups.entry(component).or_default().insert(id);
+        }
+        let mut hidden = Vec::new();
+        let (mut homed, mut homed_left_out) = (0, 0);
+        for (component, ids) in groups {
+            let (mut kept, left_out) =
+                history::sketches_where(model, self.report, &|id| ids.contains(id));
+            let count = kept.features.len();
+            if component == 0 {
+                if count > 0 || left_out > 0 {
+                    let noun = if count == 1 { "sketch" } else { "sketches" };
+                    let mut detail =
+                        format!("kept {count} {noun} in the design itself, for reference");
+                    if unplaced_owner > 0 {
+                        detail.push_str(&format!(
+                            "; {unplaced_owner} owned by a component the design does not write"
+                        ));
+                    }
+                    if left_out > 0 {
+                        detail.push_str(&format!("; {left_out} left out"));
+                    }
+                    self.report.push(Severity::Info, "sketches", detail);
+                }
+            } else {
+                homed += count;
+                homed_left_out += left_out;
+            }
+            if count == 0 {
+                continue;
+            }
+            let offset = self.next_id.saturating_sub(1);
+            kept.relocate(offset, component, &prefix(&model.name), &mut self.taken);
+            self.next_id = kept.next_id;
+            hidden.extend(
+                kept.features
+                    .iter()
+                    .filter_map(|feature| feature.get("id").cloned()),
+            );
+            self.features.append(&mut kept.features);
+            self.params.append(&mut kept.params);
+        }
+        if homed > 0 || homed_left_out > 0 {
+            let noun = if homed == 1 { "sketch" } else { "sketches" };
+            let detail = if homed_left_out > 0 {
                 format!(
-                    "kept {count} {noun} in the design itself, for reference; {left_out} left out"
+                    "kept {homed} {noun} under the component that holds them, for reference; \
+                     {homed_left_out} left out"
                 )
             } else {
-                format!("kept {count} {noun} in the design itself, for reference")
+                format!("kept {homed} {noun} under the component that holds them, for reference")
             };
             self.report.push(Severity::Info, "sketches", detail);
         }
-        if count == 0 {
-            return Vec::new();
-        }
-        let offset = self.next_id.saturating_sub(1);
-        kept.relocate(offset, 0, &prefix(&model.name), &mut self.taken);
-        self.next_id = kept.next_id;
-        let hidden = kept
-            .features
-            .iter()
-            .filter_map(|feature| feature.get("id").cloned())
-            .collect();
-        self.features.append(&mut kept.features);
-        self.params.append(&mut kept.params);
         hidden
     }
 
@@ -1323,6 +1409,45 @@ fn snap(frame: &[[f64; 4]; 3]) -> Value {
         })
     };
     json!({"type": "frame", "origin": column(3), "z": column(2), "x": column(0)})
+}
+
+/// The component definition that owns each sketch of `model`, by sketch id: the one listing
+/// it, else the one that owns the feature building it.
+fn sketch_owners(model: &Model) -> BTreeMap<String, String> {
+    let Ok(wire) = serde_json::to_value(&model.ir) else {
+        return BTreeMap::new();
+    };
+    let rows = |arena: &str| {
+        wire.pointer(&format!("/model/{arena}"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    let mut owners = BTreeMap::new();
+    for feature in rows("features") {
+        let sketch = feature
+            .pointer("/definition/sketch/sketch")
+            .and_then(Value::as_str);
+        let owner = feature.get("product_definition").and_then(Value::as_str);
+        if let (Some(sketch), Some(owner)) = (sketch, owner) {
+            owners.insert(sketch.to_owned(), owner.to_owned());
+        }
+    }
+    for definition in rows("product_definitions") {
+        let Some(id) = definition.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        for sketch in definition
+            .get("sketches")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+        {
+            owners.insert(sketch.to_owned(), id.to_owned());
+        }
+    }
+    owners
 }
 
 /// A component name as a parameter-name prefix: letters, digits and underscores.
@@ -1412,6 +1537,7 @@ mod prepare_tests {
             held: Vec::new(),
             joint_notes: Vec::new(),
             stored_placements: Vec::new(),
+            definitions: Vec::new(),
         });
         let serial = SolidCraftWriter::new()
             .verification(crate::Verification::Off)
