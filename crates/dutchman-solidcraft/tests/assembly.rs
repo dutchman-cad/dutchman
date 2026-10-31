@@ -722,6 +722,87 @@ fn an_assemblys_own_sketches_are_kept_hidden_in_the_design() {
         && loss.detail == "kept 1 sketch in the design itself, for reference; 1 left out"));
 }
 
+/// [`with_sketches`] with a third sketch, resolved like the first, and component `Block`
+/// listing the first as its own.
+fn with_owned_sketch() -> Model {
+    let model = with_sketches();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["product_definitions"][0]["sketches"] = serde_json::json!(["f3d:model:sketch#1"]);
+    let mut third = wire["model"]["sketches"][0].clone();
+    third["id"] = "f3d:model:sketch#3".into();
+    third["name"] = "Layout 3".into();
+    wire["model"]["sketches"]
+        .as_array_mut()
+        .unwrap()
+        .push(third);
+    let mut model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    };
+    model.assembly = dutchman_core::local_assembly(&model).unwrap();
+    model
+}
+
+#[test]
+fn a_sketch_a_component_owns_is_written_once_under_it_and_the_rest_stay_at_the_root() {
+    let (bytes, report) = written(&with_owned_sketch());
+    let document = document(&bytes);
+    let block = document["components"][0]["id"].clone();
+    assert_eq!(document["components"][0]["name"], "Block");
+    assert_eq!(
+        document["occurrences"].as_array().unwrap().len(),
+        2,
+        "Block is placed twice"
+    );
+    let sketches: Vec<(&str, &Value)> = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|feature| feature["type"] == "sketch")
+        .map(|feature| (feature["name"].as_str().unwrap(), &feature["component"]))
+        .collect();
+    assert_eq!(sketches.len(), 2, "the unresolved one is left out");
+    assert!(sketches.contains(&("Layout 1", &block)), "{sketches:?}");
+    assert!(
+        sketches.contains(&("Layout 3", &Value::from(0))),
+        "{sketches:?}"
+    );
+    // Reference sketches start hidden, wherever they are.
+    let hidden = document["visibility"]["hidden_sketches"]
+        .as_array()
+        .unwrap();
+    assert_eq!(hidden.len(), 2);
+    assert!(report.losses().iter().any(|loss| loss.subject == "sketches"
+        && loss.detail == "kept 1 sketch in the design itself, for reference; 1 left out"));
+}
+
+#[test]
+fn solidcraft_replays_an_assembly_whose_sketch_sits_under_its_component() {
+    let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) else {
+        eprintln!("skipped: set {CLI_ENV} to check the sketches in SolidCraft");
+        return;
+    };
+    let (bytes, _) = written(&with_owned_sketch());
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("design.solidcraft");
+    let output = dir.path().join("eval.json");
+    std::fs::write(&input, bytes).unwrap();
+    let status = std::process::Command::new(cli)
+        .arg("eval")
+        .arg(&input)
+        .arg("--json-out")
+        .arg(&output)
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let result: Value = serde_json::from_str(&std::fs::read_to_string(output).unwrap()).unwrap();
+    let sketches = result["sketches"].as_array().unwrap();
+    assert_eq!(sketches.len(), 2);
+    assert!(sketches.iter().all(|s| s["status"] == "solved"));
+    assert!(sketches.iter().all(|s| s["visible"] == false));
+    assert_eq!(result["bodies"].as_array().unwrap().len(), 2);
+}
+
 #[test]
 fn solidcraft_solves_an_assemblys_own_sketch_and_keeps_it_hidden() {
     let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) else {

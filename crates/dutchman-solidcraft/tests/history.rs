@@ -4233,6 +4233,35 @@ fn assembly_of_histories() -> Model {
 }
 
 #[test]
+fn each_sketch_sits_under_the_part_that_owns_it_and_a_consumed_one_stays_shown() {
+    let (document, _) = convert(
+        &assembly_of_histories(),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let features = document["features"].as_array().unwrap();
+    let components = document["components"].as_array().unwrap();
+    for name in ["First", "Second"] {
+        let id = components.iter().find(|c| c["name"] == name).unwrap()["id"].clone();
+        let sketches: Vec<_> = features
+            .iter()
+            .filter(|f| f["type"] == "sketch" && f["component"] == id)
+            .collect();
+        assert_eq!(sketches.len(), 1, "{name} holds its sketch");
+    }
+    assert!(
+        !features
+            .iter()
+            .any(|f| f["type"] == "sketch" && f["component"] == 0),
+        "no sketch is left in the assembly root"
+    );
+    // The extrude of each part is built on its sketch, so both start shown.
+    assert!(document.get("visibility").is_none_or(|v| v
+        .get("hidden_sketches")
+        .and_then(Value::as_array)
+        .is_none_or(Vec::is_empty)));
+}
+
+#[test]
 fn parts_keep_their_histories_inside_an_assembly() {
     let (document, report) = convert(
         &assembly_of_histories(),

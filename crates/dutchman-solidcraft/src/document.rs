@@ -356,6 +356,7 @@ mod history_tests {
             mapped: 2,
             total: 2,
             blends: Vec::new(),
+            hidden: Vec::new(),
             stop: None,
             sources: Default::default(),
         }
