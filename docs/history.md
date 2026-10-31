@@ -113,6 +113,18 @@ the sketch to force it. Disjoint parallel segments can likewise retain a uniquel
 endpoint pair when their source value identifies it. Infinite reference axes never gain
 artificial endpoint dimensions.
 
+A feature keeps the parameter that sets it: a blind extrude distance and a partial revolve
+angle take the parameter the source feature owns for that value (as `abs()` of it when the
+source signs it) when exactly one matches. A sketch lying parallel to an origin plane at the
+height of a point of an earlier sketch, which that sketch's dimensions place, is written as
+that origin plane offset by those dimensions, so a cut on the end of a screw follows its
+length; the sketch's axes are turned back when the source drew them turned by a half or
+quarter turn, and a sketch with other curves than points, lines, circles and arcs keeps a fixed
+plane. When a selection holds loops that lie inside one another, each inner loop is a hole of the loop around it (an annulus is its outer and inner circle). A sketch
+with a parameter and at most four loose points (nothing in the source fixes them) keeps each
+where it was drawn, tied to the origin when it sits there and otherwise at its drawn distance
+from it, so one edit cannot move it across the profile.
+
 Cosmetic thread features carry an exact ISO metric diameter and pitch, with a blind length
 or the whole cylindrical face. A missing standard or designation does not block a known
 metric size: `3 mm` and `0.5 mm` become `M3x0.5` without rounding. The face must resolve to a

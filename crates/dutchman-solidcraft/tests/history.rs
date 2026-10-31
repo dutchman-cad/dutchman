@@ -10103,3 +10103,274 @@ fn sketch_entity_distances_keep_expressions_driving_geometry() {
         }
     }
 }
+
+/// `cube_with_history` with the extrude's own parameter `d1` (an AlongDistance, as the source
+/// kind names it) reading a user parameter `Height`.
+fn cube_with_height_parameter(sign: f64) -> Model {
+    let mut model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let parameters = wire["model"]["parameters"].as_array_mut().unwrap();
+    parameters[0]["expression"] = json!("Height");
+    parameters[0]["value"]["value"] = json!(sign * 10.0);
+    parameters[0]["dependencies"] = json!(["f3d:model:parameter#3"]);
+    parameters[0]["properties"] = json!({"source_kind": "AlongDistance"});
+    parameters.push(json!({
+        "id": "f3d:model:parameter#3", "name": "Height", "expression": "10 mm",
+        "value": {"kind": "length", "value": 10.0}
+    }));
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn an_extrude_distance_follows_the_parameter_that_sets_it() {
+    for sign in [1.0, -1.0] {
+        let model = cube_with_height_parameter(sign);
+        let (document, _) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        let distance = document["features"][1]["extent"]["distance"]
+            .as_str()
+            .unwrap();
+        assert_eq!(distance, if sign > 0.0 { "d1" } else { "abs(d1)" });
+        if let Some(cli) = solidcraft() {
+            let bytes = written(&model).0;
+            assert!((volumes(&cli, &bytes)[0] - 1000.0).abs() < 0.01);
+            let edited = volumes(&cli, &with_param(&bytes, "Height", "20 mm"));
+            assert!((edited[0] - 2000.0).abs() < 0.01, "{edited:?}");
+        }
+    }
+}
+
+#[test]
+fn an_extrude_distance_keeps_its_value_when_no_single_parameter_matches() {
+    let mut model = cube_with_height_parameter(1.0);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["parameters"][0]["value"]["value"] = json!(7.0);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, _) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_eq!(document["features"][1]["extent"]["distance"], "10 mm");
+}
+
+#[test]
+fn a_partial_revolve_angle_follows_the_parameter_that_sets_it() {
+    let mut model = ring_history(json!({"kind": "one_sided",
+        "termination": {"kind": "angle", "angle": std::f64::consts::FRAC_PI_2}}));
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["parameters"] = json!([
+        {"id": "f3d:model:parameter#1", "owner": "f3d:model:feature#2", "name": "d1",
+         "expression": "Turn", "dependencies": ["f3d:model:parameter#2"],
+         "value": {"kind": "angle", "value": std::f64::consts::FRAC_PI_2},
+         "properties": {"source_kind": "AlongAngle"}},
+        {"id": "f3d:model:parameter#2", "name": "Turn", "expression": "90 deg",
+         "value": {"kind": "angle", "value": std::f64::consts::FRAC_PI_2}},
+    ]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, _) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let angle = document["features"][1]["angle"].as_str().unwrap();
+    assert!(angle == "d1" || angle == "-(d1)", "{angle}");
+    if let Some(cli) = solidcraft() {
+        let bytes = written(&model).0;
+        let ring = std::f64::consts::PI * (10.0_f64.powi(2) - 5.0_f64.powi(2)) * 10.0;
+        let quarter = volumes(&cli, &bytes)[0];
+        assert!((quarter - ring / 4.0).abs() / ring < 1e-3, "{quarter}");
+        let half = volumes(&cli, &with_param(&bytes, "Turn", "180 deg"))[0];
+        assert!((half - ring / 2.0).abs() / ring < 1e-3, "{half}");
+    }
+}
+
+#[test]
+fn selecting_nested_loops_leaves_the_inner_one_a_hole() {
+    let mut model = nested_native_profile(&[5.0, 3.0]);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"][1]["definition"]["profile"] =
+        json!({"kind": "sketch_profiles", "value": {"sketch": SKETCH, "profiles": [1, 0]}});
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, _) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_eq!(
+        document["features"][1]["profiles"],
+        json!({"type": "whole_boundaries", "profiles": [{"outer": ["c1"], "holes": [["c2"]]}]})
+    );
+    if let Some(cli) = solidcraft() {
+        let volume = volumes(&cli, &written(&model).0);
+        let expected = std::f64::consts::PI * 16.0 * 10.0;
+        assert!((volume[0] - expected).abs() / expected < 1e-3, "{volume:?}");
+    }
+}
+
+#[test]
+fn a_loose_corner_is_held_so_a_parameter_edit_moves_only_what_it_drives() {
+    let mut model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    // The square is drawn away from the origin and nothing pins where: its corner floats.
+    for entity in wire["model"]["sketch_entities"].as_array_mut().unwrap() {
+        for end in ["start", "end"] {
+            for axis in ["u", "v"] {
+                let at = entity["geometry"][end][axis].as_f64().unwrap();
+                entity["geometry"][end][axis] = json!(at + 5.0);
+            }
+        }
+    }
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, _) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let constraints = document["features"][0]["sketch"]["constraints"]
+        .as_array()
+        .unwrap();
+    let holds: Vec<&Value> = constraints
+        .iter()
+        .filter(|c| {
+            matches!(c["type"].as_str(), Some("distance_x" | "distance_y"))
+                && c.get("param").is_none()
+        })
+        .collect();
+    assert_eq!(holds.len(), 2, "{constraints:?}");
+    assert!(holds.iter().all(|c| c["value"].as_f64().unwrap() >= 5.0));
+    if let Some(cli) = solidcraft() {
+        let bytes = written(&model).0;
+        let edited = volumes(&cli, &with_param(&bytes, "side", "20 mm"));
+        assert!((edited[0] - 4000.0).abs() < 0.01, "{edited:?}");
+    }
+}
+
+/// A block, profiled on XZ and extruded, for a sketch on its end: the profile is 10 wide and
+/// `Height` tall with its top left corner tied to the sketch origin by a point entity there.
+fn block_with_height_parameter() -> Model {
+    let mut model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    m["sketches"][0]["placement"]["frame"]["normal"] = json!({"x": 0.0, "y": 1.0, "z": 0.0});
+    // On XZ, sketch v runs along -Z.
+    m["sketch_entities"] = json!([
+        line(1, [0.0, 0.0], [10.0, 0.0]),
+        line(2, [10.0, 0.0], [10.0, -10.0]),
+        line(3, [10.0, -10.0], [0.0, -10.0]),
+        line(4, [0.0, -10.0], [0.0, 0.0]),
+        entity(
+            11,
+            json!({"kind": "point", "position": {"u": 0.0, "v": 0.0}})
+        ),
+    ]);
+    let constraint = |key: u32, definition: Value| {
+        json!({"id": format!("f3d:model:sketch-constraint#{key}"), "sketch": SKETCH,
+               "definition": definition})
+    };
+    let at = |key: u32| format!("f3d:model:sketch-entity#{key}");
+    let locus = |kind: &str, key: u32| json!({"kind": kind, "entity": at(key)});
+    m["sketch_constraints"] = json!([
+        constraint(1, json!({"kind": "horizontal", "entity": at(1)})),
+        constraint(2, json!({"kind": "vertical", "entity": at(2)})),
+        constraint(3, json!({"kind": "horizontal", "entity": at(3)})),
+        constraint(4, json!({"kind": "vertical", "entity": at(4)})),
+        constraint(
+            5,
+            json!({"kind": "distance", "entities": [at(1), at(3)],
+            "parameter": "f3d:model:parameter#2"})
+        ),
+        constraint(
+            6,
+            json!({"kind": "coincident_loci",
+            "loci": [locus("start", 1), locus("entity", 11)]})
+        ),
+        constraint(
+            7,
+            json!({"kind": "coincident_loci",
+            "loci": [locus("end", 4), locus("entity", 11)]})
+        ),
+    ]);
+    m["parameters"] = json!([
+        {"id": "f3d:model:parameter#2", "owner": "f3d:model:feature#1", "ordinal": 0,
+         "name": "d2", "expression": "Height", "dependencies": ["f3d:model:parameter#3"],
+         "value": {"kind": "length", "value": 10.0}},
+        {"id": "f3d:model:parameter#3", "name": "Height", "expression": "10 mm",
+         "value": {"kind": "length", "value": 10.0}},
+    ]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn a_sketch_on_the_end_of_a_feature_moves_with_the_dimensions_that_place_it() {
+    let mut model = block_with_height_parameter();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    let pocket = "f3d:model:sketch#2";
+    // The pocket sketch lies at z = Height, drawn with its axes turned half a turn.
+    m["sketches"].as_array_mut().unwrap().push(json!({
+        "id": pocket, "name": "Pocket",
+        "placement": {"kind": "resolved", "frame": {
+            "origin": {"x": 0.0, "y": 0.0, "z": 10.0},
+            "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
+            "u_axis": {"x": -1.0, "y": 0.0, "z": 0.0},
+        }},
+        "profiles": [[{"entity": "f3d:model:sketch-entity#10"}]],
+    }));
+    let mut circle = entity(
+        10,
+        json!({"kind": "circle", "center": {"u": -4.0, "v": -3.0}, "radius": 1.0}),
+    );
+    circle["sketch"] = json!(pocket);
+    m["sketch_entities"].as_array_mut().unwrap().push(circle);
+    m["features"].as_array_mut().unwrap().push(json!({
+        "id": "f3d:model:feature#3", "ordinal": 2, "name": "Pocket sketch", "suppressed": false,
+        "definition": {"definition": "sketch", "sketch": {"space": "planar", "sketch": pocket}},
+    }));
+    m["features"].as_array_mut().unwrap().push(json!({
+        "id": "f3d:model:feature#4", "ordinal": 3, "name": "Pocket", "suppressed": false,
+        "dependencies": ["f3d:model:feature#2", "f3d:model:feature#3"],
+        "definition": {
+            "definition": "extrude",
+            "profile": {"kind": "sketch_profiles", "value": {"sketch": pocket, "profiles": [0]}},
+            "direction": {"kind": "reversed_profile_normal"},
+            "start": {"kind": "profile_plane"},
+            "extent": {"kind": "one_sided",
+                "side": {"termination": {"kind": "blind", "length": 2.0}}},
+            "op": "cut",
+        },
+    }));
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, _) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let sketch = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == "Pocket sketch")
+        .unwrap();
+    assert_eq!(sketch["plane"]["type"], "offset", "{sketch}");
+    assert_eq!(sketch["plane"]["base"]["name"], "XY");
+    let distance = sketch["plane"]["distance"].as_str().unwrap();
+    assert!(distance.contains("d2"), "{distance}");
+    // Turned half a turn, the circle's centre keeps its place on the model.
+    assert_eq!(sketch["sketch"]["points"][1]["pos"], json!([4.0, 3.0]));
+    if let Some(cli) = solidcraft() {
+        // Block 10 x 10 x 10 less the 2 mm deep pocket of radius 1: and the pocket still
+        // opens on the top face after the block is made taller.
+        let pocket_volume = std::f64::consts::PI * 2.0;
+        let bytes = written(&model).0;
+        let first = volumes(&cli, &bytes);
+        assert!(
+            (first[0] - (1000.0 - pocket_volume)).abs() < 0.05,
+            "{first:?}"
+        );
+        let taller = volumes(&cli, &with_param(&bytes, "Height", "20 mm"));
+        assert!(
+            (taller[0] - (2000.0 - pocket_volume)).abs() < 0.05,
+            "{taller:?}"
+        );
+    }
+}

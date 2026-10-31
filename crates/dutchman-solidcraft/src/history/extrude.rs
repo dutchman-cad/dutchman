@@ -49,6 +49,20 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
     {
         return Err("an extrude of a face to or from an object is not mapped yet".to_owned());
     }
+    // The blind distance of the first side keeps the parameter that sets it, so editing the
+    // parameter lengthens the extrude.
+    if !extent.contains_key("through_all") && !extent.contains_key("to") {
+        let first = ["/extent/side", "/extent/first"]
+            .iter()
+            .find_map(|path| number(definition.pointer(path)?.pointer("/termination/length")));
+        if let Some(expression) =
+            first.and_then(|length| ctx.owned_parameter(feature, "AlongDistance", length))
+        {
+            if extent.get("direction").and_then(Value::as_str) != Some("symmetric") {
+                extent.insert("distance".to_owned(), json!(expression));
+            }
+        }
+    }
     let mut start_height = 0.0;
     if let Some(offset) = start_offset(definition.get("start"))? {
         start_height = offset;

@@ -9,9 +9,11 @@
 
 pub(crate) mod base;
 mod blend;
+mod chain;
 mod constraints;
 mod crossing;
 mod delete_face;
+mod dof;
 mod extrude;
 mod face_profile;
 mod faces;
@@ -187,6 +189,23 @@ impl History {
                 }
             }
             fields.insert("component".to_owned(), Value::from(component));
+            // Feature distances and angles that name a parameter follow its renaming.
+            for (parent, key) in [
+                ("extent", "distance"),
+                ("extent", "distance2"),
+                ("", "angle"),
+            ] {
+                let slot = if parent.is_empty() {
+                    fields.get_mut(key)
+                } else {
+                    fields.get_mut(parent).and_then(|v| v.get_mut(key))
+                };
+                if let Some(slot) = slot {
+                    if let Some(expr) = slot.as_str() {
+                        *slot = Value::String(params::rename_in(expr, &renamed));
+                    }
+                }
+            }
             if let Some(constraints) = fields
                 .get_mut("sketch")
                 .and_then(|sketch| sketch.get_mut("constraints"))
@@ -325,6 +344,8 @@ struct Context<'a> {
     params: BTreeMap<String, String>,
     /// Mapped sketches by CADIR sketch id.
     sketches: BTreeMap<String, sketch::Mapped>,
+    /// Where the dimensions of each mapped sketch put its points, by CADIR sketch id.
+    coordinates: BTreeMap<String, Vec<[Option<chain::Coordinate>; 2]>>,
     /// Mapped 3D sketches by CADIR spatial sketch id.
     spatial: BTreeMap<String, spatial::Mapped>,
     /// SolidCraft looks of the bodies the history makes, by body name.
@@ -356,6 +377,7 @@ impl<'a> Context<'a> {
             next_id: 1,
             params: BTreeMap::new(),
             sketches: BTreeMap::new(),
+            coordinates: BTreeMap::new(),
             spatial: BTreeMap::new(),
             looks: BTreeMap::new(),
             feature_names: BTreeMap::new(),
@@ -402,6 +424,34 @@ impl<'a> Context<'a> {
         self.arena(arena)
             .iter()
             .find(|row| row.get("id").and_then(Value::as_str) == Some(id))
+    }
+
+    /// The SolidCraft expression of the one parameter `feature` owns for the source kind
+    /// `kind` (`AlongDistance`, `AlongAngle`) whose magnitude is `magnitude` (mm or radians):
+    /// the parameter's name, inside `abs()` when the source signs it, since the feature
+    /// carries its direction separately. `None` when no parameter, or several, match.
+    fn owned_parameter(&self, feature: &Value, kind: &str, magnitude: f64) -> Option<String> {
+        let owner = feature.get("id").and_then(Value::as_str)?;
+        let value = |row: &Value| row.pointer("/value/value").and_then(Value::as_f64);
+        let mut found = self.arena("parameters").iter().filter(|row| {
+            row.get("owner").and_then(Value::as_str) == Some(owner)
+                && row
+                    .pointer("/properties/source_kind")
+                    .and_then(Value::as_str)
+                    == Some(kind)
+                && value(row)
+                    .is_some_and(|v| (v.abs() - magnitude).abs() <= 1e-6 * magnitude.max(1.0))
+        });
+        let row = found.next()?;
+        if found.next().is_some() {
+            return None;
+        }
+        let name = self.params.get(row.get("id").and_then(Value::as_str)?)?;
+        Some(if value(row)? < 0.0 {
+            format!("abs({name})")
+        } else {
+            name.clone()
+        })
     }
 
     fn id(&mut self) -> u64 {
