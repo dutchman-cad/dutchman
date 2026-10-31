@@ -1,0 +1,107 @@
+name: SolidCraft window
+
+# Watches SolidCraft's releases. When a new minor (x.Y.0) is published, opens the pull request
+# "Refresh the SolidCraft window to 0.18–0.Y" by running scripts/solidcraft-window.py, then starts CI
+# on its branch. A patch release does nothing: Dutchman names SolidCraft by minor.
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: solidcraft-window
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: release
+        name: Find the newest SolidCraft minor
+        run: |
+          gh api --paginate "repos/tangency-labs/solidcraft/releases?per_page=100" | jq -s 'add' > "$RUNNER_TEMP/releases.json"
+          minor=$(jq -r '[.[] | select((.draft or .prerelease) | not) | .tag_name
+              | capture("^v0\\.(?<m>[0-9]+)\\.[0-9]+$").m | tonumber] | max // empty' "$RUNNER_TEMP/releases.json")
+          [ -n "$minor" ] || { echo "No stable SolidCraft 0.x release found" >&2; exit 1; }
+          patch=$(python3 scripts/solidcraft-release.py resolve "0.$minor" "$RUNNER_TEMP/releases.json")
+          known=$(sed -n 's/^pub const NEWEST_SOLIDCRAFT: \[u64; 2\] = \[0, \([0-9]*\)\];$/\1/p' crates/dutchman-solidcraft/src/verify.rs)
+          [[ $known =~ ^[0-9]+$ ]] || { echo "NEWEST_SOLIDCRAFT not found" >&2; exit 1; }
+          echo "minor=0.$minor" >> "$GITHUB_OUTPUT"
+          echo "patch=$patch" >> "$GITHUB_OUTPUT"
+          if [ "$minor" -le "$known" ]; then
+            echo "SolidCraft $patch is not a new minor (Dutchman knows 0.$known); nothing to do."
+            echo "open=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          branch="solidcraft-window-0.$minor"
+          if git ls-remote --exit-code --heads origin "$branch" > /dev/null \
+            || [ -n "$(gh pr list --state all --head "$branch" --json number --jq '.[].number')" ]; then
+            echo "Branch or pull request $branch already exists; nothing to do."
+            echo "open=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The release must publish checksum metadata for the archive CI downloads.
+          gh release download "v$patch" -R tangency-labs/solidcraft -p SHA256SUMS.txt -D "$RUNNER_TEMP"
+          python3 scripts/solidcraft-release.py checksum "solidcraft-$patch-linux-x86_64.tar.gz" "$RUNNER_TEMP/SHA256SUMS.txt" > /dev/null
+          echo "open=true" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+      - name: Update the window
+        if: steps.release.outputs.open == 'true'
+        run: python3 scripts/solidcraft-window.py "${{ steps.release.outputs.minor }}" "${{ steps.release.outputs.patch }}"
+      - name: Commit and push
+        if: steps.release.outputs.open == 'true'
+        env:
+          MINOR: ${{ steps.release.outputs.minor }}
+          PATCH: ${{ steps.release.outputs.patch }}
+          BRANCH: ${{ steps.release.outputs.branch }}
+        run: |
+          cat > "$RUNNER_TEMP/message.txt" <<MSG
+          Refresh the SolidCraft window to 0.18–$MINOR
+
+          Recognize $MINOR as the newest known minor for default targets, desktop
+          choices and compatibility reports. Check the latest $MINOR patch in CI
+          while keeping 0.18.2 pinned at the oldest end of the window.
+          MSG
+          git checkout -b "$BRANCH"
+          git add -A
+          git -c user.name=Ray -c user.email=raykholo@users.noreply.github.com commit -F "$RUNNER_TEMP/message.txt"
+          git push origin "$BRANCH"
+      - name: Open the pull request and start CI
+        if: steps.release.outputs.open == 'true'
+        env:
+          MINOR: ${{ steps.release.outputs.minor }}
+          PATCH: ${{ steps.release.outputs.patch }}
+          BRANCH: ${{ steps.release.outputs.branch }}
+        run: |
+          cat > "$RUNNER_TEMP/body.md" <<'BODY'
+          ## Summary
+
+          SolidCraft @PATCH@ is published ([release notes](https://github.com/tangency-labs/solidcraft/releases/tag/v@PATCH@)).
+          This recognizes @MINOR@ as the newest known minor and default target without an installed CLI,
+          and moves the upper end of the supported window to @MINOR@ in the constants, version fixtures,
+          docs, skill and changelog. CI checks the newest @MINOR@ patch and the pinned 0.18.2 release.
+
+          Check the design format against the release notes: the writer keeps its fixed format
+          (solidcraft/23) and this change does not alter it.
+
+          ## Testing
+
+          Opened by the SolidCraft window workflow with `scripts/solidcraft-window.py`. Because pull
+          requests opened with the default token do not start workflows, CI was dispatched on the
+          branch (`gh workflow run ci.yml --ref @BRANCH@`); its checks appear on this pull request.
+          BODY
+          sed -i -e "s/@PATCH@/${PATCH#v}/g" -e "s/@MINOR@/$MINOR/g" -e "s/@BRANCH@/$BRANCH/g" "$RUNNER_TEMP/body.md"
+          gh pr create --base main --head "$BRANCH" \
+            --title "Refresh the SolidCraft window to 0.18–$MINOR" --body-file "$RUNNER_TEMP/body.md"
+          gh workflow run ci.yml --ref "$BRANCH"

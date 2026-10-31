@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Started by hand, and by the SolidCraft window workflow for the pull request it opens (pull
+  # requests opened with the default token do not start workflows). Judged like a pull request.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -36,6 +39,9 @@ jobs:
         env:
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
         run: |
+          if [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            BASE=$(git merge-base origin/main HEAD)
+          fi
           if ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
             echo "rust=true" >> "$GITHUB_OUTPUT"
             echo "code=true" >> "$GITHUB_OUTPUT"
@@ -57,7 +63,7 @@ jobs:
           fi
           # The image is a full release build (40-80 minutes), so pull requests build it only when
           # the image itself or the web server it serves changes; every push to main builds it.
-          if [ "${{ github.event_name }}" != pull_request ]; then
+          if [ "${{ github.event_name }}" = push ]; then
             image='^(crates/|Cargo\.(toml|lock)$|Dockerfile$|\.dockerignore$|\.github/workflows/ci\.yml$)'
           else
             image='^(Dockerfile$|\.dockerignore$|crates/dutchman-web/|docs/docker\.md$|\.github/workflows/ci\.yml$)'
@@ -231,7 +237,7 @@ jobs:
         solidcraft:
           - version: 0.18.2
             sha256: 9d0c922ac72204f34ad22ca7a171be78016ab002e304ace3c07d34d187d830ff
-          - version: "0.28"
+          - version: newest
     env:
       SOLIDCRAFT_VERSION: ${{ matrix.solidcraft.version }}
       SOLIDCRAFT_SHA256: ${{ matrix.solidcraft.sha256 }}
@@ -244,6 +250,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
+          # "newest" is the minor named by NEWEST_SOLIDCRAFT, so a new minor never edits this file.
+          if [ "$SOLIDCRAFT_VERSION" = newest ]; then
+            SOLIDCRAFT_VERSION=$(sed -n 's/^pub const NEWEST_SOLIDCRAFT: \[u64; 2\] = \[0, \([0-9]*\)\];$/0.\1/p' crates/dutchman-solidcraft/src/verify.rs)
+            [[ $SOLIDCRAFT_VERSION =~ ^0\.[0-9]+$ ]] || { echo "NEWEST_SOLIDCRAFT not found" >&2; exit 1; }
+          fi
           version=$(scripts/solidcraft-window.sh --fetch "$SOLIDCRAFT_VERSION" "$SOLIDCRAFT_SHA256")
           echo "SOLIDCRAFT_VERSION=$version" >> "$GITHUB_ENV"
       # Each fixture holds cadmpeg's example 10 mm cube, which must read back as one.
