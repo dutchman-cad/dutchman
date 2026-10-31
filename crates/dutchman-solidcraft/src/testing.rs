@@ -13,6 +13,7 @@ use serde_json::Value;
 /// writing when another test forks is inherited by that child, and running it then fails with
 /// "text file busy". One lock for the whole crate keeps every writer and runner apart; a lock
 /// per module did not, since tests in other modules wrote scripts at the same time.
+#[cfg(unix)]
 pub(crate) fn scripts() -> std::sync::MutexGuard<'static, ()> {
     static SCRIPTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
     SCRIPTS
