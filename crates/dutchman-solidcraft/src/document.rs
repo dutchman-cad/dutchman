@@ -2,7 +2,7 @@
 //!
 //! - an **import design**: what SolidCraft makes of a file it imports as STEP;
 //! - a **history design**: the replayed history, then the original geometry as an import,
-//!   suppressed, at the end of the timeline.
+//!   suppressed, at the end of the timeline, unless the history already is that geometry.
 //!
 //! SolidCraft reads an import's assembly tree from the STEP itself. Imports receiving
 //! explicit looks also name their output bodies so each look has a stable target.
@@ -120,6 +120,8 @@ pub(crate) fn column_major(rows: &[[f64; 4]; 3]) -> [[f64; 4]; 4] {
 pub(crate) enum Live {
     /// The replayed history, as the design is written.
     History,
+    /// As `History`, for a history that already is the original geometry, which is left out.
+    Whole,
     /// Editable history in a hidden component; the final original remains visible.
     Partial,
     /// As `Partial`, for a whole history that could not be checked against the original.
@@ -166,14 +168,16 @@ pub(crate) fn history_design(
         }
     }
     let original = history.next_id;
-    features.push(import_feature(
-        model,
-        original,
-        ORIGINAL,
-        None,
-        live == Live::History,
-        step_blob,
-    ));
+    if live != Live::Whole {
+        features.push(import_feature(
+            model,
+            original,
+            ORIGINAL,
+            None,
+            live == Live::History,
+            step_blob,
+        ));
+    }
     let mut doc = json!({
         "format": FORMAT,
         "name": model.name,
@@ -379,6 +383,15 @@ mod history_tests {
         assert_eq!(doc["next_id"], 4);
         assert_eq!(doc["params"], json!(history().params));
         assert!(doc.get("components").is_none());
+    }
+
+    #[test]
+    fn a_whole_history_leaves_the_original_out() {
+        let model = crate::testing::cube();
+        let doc = history_design(&model, &history(), "", Live::Whole);
+        let features = doc["features"].as_array().unwrap();
+        assert_eq!(features.len(), 2);
+        assert!(features.iter().all(|f| f["name"] != ORIGINAL));
     }
 
     #[test]

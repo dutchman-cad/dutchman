@@ -87,6 +87,7 @@ impl Copies<'_> {
         }
         let mut parts = Vec::new();
         let mut definitions = Vec::new();
+        let mut identities = Vec::new();
         let mut indices = BTreeMap::new();
         // All original definitions first, then their mirrored variants.
         for mirrored in [false, true] {
@@ -138,6 +139,12 @@ impl Copies<'_> {
                 } else {
                     source.definitions.get(index).cloned().flatten()
                 });
+                let identity = source.identities.get(index).cloned().flatten();
+                identities.push(if mirrored {
+                    identity.map(|identity| format!("{identity} mirrored"))
+                } else {
+                    identity
+                });
                 parts.push(copy);
             }
         }
@@ -182,6 +189,7 @@ impl Copies<'_> {
             held: source.held.clone(),
             joint_notes: source.joint_notes.clone(),
             stored_placements: Vec::new(),
+            identities,
             definitions,
         })
     }

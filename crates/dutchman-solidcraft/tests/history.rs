@@ -4224,6 +4224,7 @@ fn assembly_of_histories() -> Model {
             held: Vec::new(),
             joint_notes: Vec::new(),
             stored_placements: Vec::new(),
+            identities: Vec::new(),
             definitions: Vec::new(),
             parts: vec![part("First"), part("Second")],
             placements: vec![placed(0, 0.0), placed(1, 30.0), placed(1, 60.0)],
@@ -6003,7 +6004,6 @@ fn stored_geometry_alone_becomes_an_import_without_lost_history() {
             ("import".to_owned(), false),
             ("sketch".to_owned(), false),
             ("sketch".to_owned(), false),
-            ("import".to_owned(), true),
         ]
     );
     let base = &document["features"][0];
@@ -6164,6 +6164,30 @@ fn a_base_feature_proven_to_hold_no_bodies_builds_nothing() {
         2,
         "the base body and the original geometry only"
     );
+}
+
+#[test]
+fn a_base_feature_holding_every_body_writes_no_second_copy() {
+    let mut model = based_cube();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|feature| feature["ordinal"] == 0);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    let (document, _) = convert(&model, &writer);
+    assert_eq!(types(&document)[0], ("import".to_owned(), false));
+    let features = document["features"].as_array().unwrap();
+    assert!(features
+        .iter()
+        .all(|f| f["name"] != "Original geometry (imported)"));
+    let (bytes, _) = written_with(&model, &writer);
+    let archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let blobs = archive
+        .file_names()
+        .filter(|name| name.starts_with("blobs/"));
+    assert_eq!(blobs.count(), 1, "only the base feature's STEP");
 }
 
 #[test]

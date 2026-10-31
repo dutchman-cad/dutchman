@@ -42,6 +42,10 @@ pub struct Assembly {
     /// The component definition (CADIR product definition id) each part was built from, by
     /// index in `parts`, when it names one; may be shorter than `parts`.
     pub definitions: Vec<Option<String>>,
+    /// What each part is, by index in `parts`, when that can be told; may be shorter than
+    /// `parts`. Two parts with the same identity, at any level of the assembly, come from one
+    /// source with the same layout below it, so a writer may write them as one definition.
+    pub identities: Vec<Option<String>>,
     /// Each placed part, in the assembly's order.
     pub placements: Vec<Placement>,
     /// Joints between its placements.
@@ -353,6 +357,7 @@ pub(crate) fn resolve(
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     let mut parts: Vec<Model> = Vec::new();
+    let mut identities = Vec::new();
     // Each file read, once: its part, or the stage and reason it could not be read.
     let mut by_file: BTreeMap<PathBuf, Result<usize, (Stage, String)>> = BTreeMap::new();
     let mut placements = Vec::new();
@@ -435,6 +440,7 @@ pub(crate) fn resolve(
                     report.append_prefixed(part_report, file);
                     result.map(|part| {
                         parts.push(part);
+                        identities.push(Some(format!("file {}", path.display())));
                         parts.len() - 1
                     })
                 };
@@ -513,6 +519,7 @@ pub(crate) fn resolve(
         held: Vec::new(),
         joint_notes: Vec::new(),
         stored_placements: Vec::new(),
+        identities,
         definitions: Vec::new(),
     })
 }
@@ -695,6 +702,7 @@ fn local_components_with_threads(
         built: BTreeMap::new(),
         parts: Vec::new(),
         part_definitions: Vec::new(),
+        part_identities: Vec::new(),
         placed: 0,
         open: Vec::new(),
         path: Vec::new(),
@@ -725,6 +733,7 @@ fn local_components_with_threads(
     }
     let mut parts = std::mem::take(&mut tree.parts);
     let mut definitions = std::mem::take(&mut tree.part_definitions);
+    let mut identities = std::mem::take(&mut tree.part_identities);
     let worlds = world_placements(&occurrences)?;
     let inserted = inserted_designs(&occurrences);
     let (joints, mut left_out) = joints(arena("assembly_joints"), &tree.paths, &worlds, &inserted);
@@ -732,6 +741,7 @@ fn local_components_with_threads(
     let own_part = if !loose.is_empty() {
         parts.push(tree.sliced(Slice::Loose, &loose, model.name.clone())?);
         definitions.push(None);
+        identities.push(None);
         placements.push(Placement {
             hidden: parts.last().is_some_and(all_hidden),
             name: None,
@@ -770,6 +780,7 @@ fn local_components_with_threads(
         held,
         joint_notes: Vec::new(),
         stored_placements: Vec::new(),
+        identities,
         definitions,
     };
     fn bindings(assembly: &Assembly, kept: &mut BTreeSet<String>) {
@@ -1976,6 +1987,8 @@ struct Tree<'a> {
     parts: Vec<Model>,
     /// The definition of each of `parts`.
     part_definitions: Vec<Option<String>>,
+    /// The identity of each of `parts`, for [`Assembly::identities`].
+    part_identities: Vec<Option<String>>,
     /// How many occurrences have been placed, to find those placed in nothing the design places.
     placed: usize,
     /// The occurrences being built, outermost first, to refuse a placement inside itself.
@@ -2071,6 +2084,15 @@ impl<'a> Tree<'a> {
         Ok(placements)
     }
 
+    /// The identity of what occurrence `id` places: its layout, the same for every occurrence
+    /// of one component that holds the same below it, at any level.
+    fn layout_identity(&self, id: &str) -> Option<String> {
+        self.layouts
+            .of
+            .get(id)
+            .map(|layout| format!("layout {layout}"))
+    }
+
     /// Counts and records the occurrences inside `id`, an occurrence of a definition already
     /// built at this level, whose own placements are that definition's: `first` is the path of
     /// the copy it matches, and `shared` as for [`Tree::placements`].
@@ -2107,6 +2129,7 @@ impl<'a> Tree<'a> {
             }
             self.parts.push(model.as_ref().clone());
             self.part_definitions.push(None);
+            self.part_identities.push(self.layout_identity(id));
             let part = self.parts.len() - 1;
             self.external_built.insert(*key, part);
             return Ok(part);
@@ -2181,6 +2204,7 @@ impl<'a> Tree<'a> {
             let outer_left_out = std::mem::take(&mut self.left_out);
             let outer = std::mem::take(&mut self.parts);
             let outer_definitions = std::mem::take(&mut self.part_definitions);
+            let outer_identities = std::mem::take(&mut self.part_identities);
             let outer_built = std::mem::take(&mut self.built);
             let outer_external = std::mem::take(&mut self.external_built);
             self.open.push(id);
@@ -2215,6 +2239,8 @@ impl<'a> Tree<'a> {
                 let hidden = all_hidden(&own);
                 self.parts.push(own);
                 self.part_definitions.push(Some(definition.to_owned()));
+                self.part_identities
+                    .push(Some(format!("bodies of {definition}")));
                 placements.push(Placement {
                     hidden,
                     name: None,
@@ -2228,6 +2254,7 @@ impl<'a> Tree<'a> {
             let parts = std::mem::replace(&mut self.parts, outer);
             let inner_definitions =
                 std::mem::replace(&mut self.part_definitions, outer_definitions);
+            let inner_identities = std::mem::replace(&mut self.part_identities, outer_identities);
             self.built = outer_built;
             self.external_built = outer_external;
             let mut holder = self.sliced(Slice::Empty, &[], name)?;
@@ -2240,12 +2267,14 @@ impl<'a> Tree<'a> {
                 held: Vec::new(),
                 joint_notes: Vec::new(),
                 stored_placements: Vec::new(),
+                identities: inner_identities,
                 definitions: inner_definitions,
             });
             holder
         };
         self.parts.push(model);
         self.part_definitions.push(Some(definition.to_owned()));
+        self.part_identities.push(self.layout_identity(id));
         let index = self.parts.len() - 1;
         self.built
             .insert((definition, layout), (index, self.path.clone()));
@@ -2772,6 +2801,7 @@ mod tests {
             held: Vec::new(),
             joint_notes: Vec::new(),
             stored_placements: Vec::new(),
+            identities: Vec::new(),
             definitions: Vec::new(),
         });
         assert_eq!((completeness.placed, completeness.placements()), (5, 6));

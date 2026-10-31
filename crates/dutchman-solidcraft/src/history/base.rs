@@ -5,6 +5,8 @@
 //! The bodies are the design's as it ends, so a base body a later feature changes is imported
 //! changed already; the check against the original geometry then finds the replay differs.
 
+use std::collections::BTreeSet;
+
 use serde_json::{json, Value};
 
 use dutchman_core::{Model, Report, Severity};
@@ -95,7 +97,7 @@ pub(crate) fn restate(history: &mut History, model: &Model) -> Result<(), String
         let Some(fields) = feature.as_object_mut() else {
             continue;
         };
-        let Some(bodies) = fields.remove(BODIES) else {
+        let Some(bodies) = fields.get(BODIES).cloned() else {
             continue;
         };
         let ids: Vec<&str> = bodies
@@ -121,6 +123,39 @@ pub(crate) fn restate(history: &mut History, model: &Model) -> Result<(), String
         fields.insert(STEP.to_owned(), Value::String(text));
     }
     Ok(())
+}
+
+/// Whether `history` holds nothing but Imports: nothing in it can be edited.
+pub(crate) fn only_stored(history: &History) -> bool {
+    history
+        .features
+        .iter()
+        .all(|feature| feature.get("type").and_then(Value::as_str) == Some("import"))
+}
+
+/// Whether `history` already is `model`'s final geometry: only base features holding every
+/// body of the model, and sketches. The original would repeat those Imports.
+pub(crate) fn whole(history: &History, model: &Model) -> bool {
+    let mut held = BTreeSet::new();
+    for feature in &history.features {
+        match feature.get("type").and_then(Value::as_str) {
+            Some("sketch") => {}
+            Some("import") => {
+                let Some(bodies) = feature.get(BODIES).and_then(Value::as_array) else {
+                    return false;
+                };
+                held.extend(bodies.iter().filter_map(Value::as_str));
+            }
+            _ => return false,
+        }
+    }
+    !held.is_empty()
+        && model
+            .ir
+            .model
+            .bodies
+            .iter()
+            .all(|body| held.contains(body.id.as_str()))
 }
 
 /// Stores the STEP text of each base feature in `features` in `container`, pointing the

@@ -40,6 +40,7 @@ fn placed_twice() -> Model {
             held: Vec::new(),
             joint_notes: Vec::new(),
             stored_placements: Vec::new(),
+            identities: Vec::new(),
             definitions: Vec::new(),
             parts: vec![part.clone()],
             placements: vec![
@@ -521,6 +522,7 @@ fn nested() -> Model {
             held: Vec::new(),
             joint_notes: Vec::new(),
             stored_placements: Vec::new(),
+            identities: Vec::new(),
             definitions: Vec::new(),
             parts: vec![pair, cube.clone()],
             placements: vec![
@@ -2450,9 +2452,10 @@ fn reflection_flattens_only_the_mirrored_definitions_history() {
     assert_eq!(copy_features.len(), 1);
     assert_eq!(copy_features[0]["type"], "import");
     assert_eq!(copy_features[0]["suppressed"], false);
-    assert!(features
-        .iter()
-        .any(|f| f["component"] == *original && f["suppressed"] == true));
+    // The original keeps its stored geometry as history, which already is the part.
+    assert!(features.iter().any(|f| f["component"] == *original
+        && f["suppressed"] == false
+        && f["name"] != "Original geometry (imported)"));
     assert!(report.losses().iter().any(|n| n.subject == "history"
         && n.detail
             .contains("mirrored definition written as imported geometry only")));
@@ -2546,6 +2549,7 @@ fn composed_written_placements_equal_the_assemblys_world_placements() {
             held: Vec::new(),
             joint_notes: Vec::new(),
             stored_placements: Vec::new(),
+            identities: Vec::new(),
             definitions: Vec::new(),
             parts: vec![inner, cube.clone()],
             placements: [(0, turned), (0, moved), (1, turned)]
@@ -2604,6 +2608,7 @@ fn frame_with_cube_at(name: &str, y: f64) -> Model {
             held: Vec::new(),
             joint_notes: Vec::new(),
             stored_placements: Vec::new(),
+            identities: Vec::new(),
             definitions: Vec::new(),
             parts: vec![cube.clone()],
             placements: vec![Placement {
@@ -2646,6 +2651,7 @@ fn layout_variants_and_a_mirrored_instance_write_at_their_world_placements() {
             held: Vec::new(),
             joint_notes: Vec::new(),
             stored_placements: Vec::new(),
+            identities: Vec::new(),
             definitions: Vec::new(),
             parts: vec![first, second],
             placements: [(0, turned), (1, moved), (1, reflected)]
@@ -2696,4 +2702,178 @@ fn layout_variants_and_a_mirrored_instance_write_at_their_world_placements() {
     want.sort();
     have.sort();
     assert_eq!(want, have);
+}
+
+fn placement(part: usize, name: &str, x: f64) -> Placement {
+    Placement {
+        hidden: false,
+        name: Some(name.to_owned()),
+        part,
+        transform: [
+            [1.0, 0.0, 0.0, x],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+        ],
+    }
+}
+
+/// `parts`, placed by `placements`, as a sub-assembly (or the design) named `name`.
+fn holder(
+    name: &str,
+    parts: Vec<(Model, &str)>,
+    placements: Vec<Placement>,
+    cube: &Model,
+) -> Model {
+    let (parts, identities): (Vec<Model>, Vec<&str>) = parts.into_iter().unzip();
+    Model {
+        name: name.to_owned(),
+        source_file: Some("repeats.f3d".to_owned()),
+        source_step: None,
+        assembly: Some(Assembly {
+            own_part: None,
+            joints: Vec::new(),
+            left_out: Vec::new(),
+            held: Vec::new(),
+            joint_notes: Vec::new(),
+            stored_placements: Vec::new(),
+            identities: identities
+                .into_iter()
+                .map(|identity| Some(identity.to_owned()))
+                .collect(),
+            definitions: Vec::new(),
+            parts,
+            placements,
+        }),
+        ..cube.clone()
+    }
+}
+
+/// Two towers with different layouts, both holding the same carriage, itself holding a cube.
+fn towers() -> Model {
+    let pair = placed_twice();
+    let cube = pair.assembly.as_ref().unwrap().parts[0].clone();
+    let carriage = holder(
+        "Carriage",
+        vec![(cube.clone(), "cube")],
+        vec![placement(0, "Block", 5.0)],
+        &cube,
+    );
+    let tower = |name: &str, x: f64| {
+        holder(
+            name,
+            vec![(carriage.clone(), "carriage"), (cube.clone(), "cube")],
+            vec![placement(0, "Carriage", x), placement(1, "Cube", 100.0)],
+            &cube,
+        )
+    };
+    holder(
+        "top",
+        vec![(tower("Tower", 0.0), "a"), (tower("Tower", 50.0), "b")],
+        vec![placement(0, "One", 0.0), placement(1, "Two", 200.0)],
+        &cube,
+    )
+}
+
+fn component_names(document: &Value) -> Vec<&str> {
+    let components = document["components"].as_array().unwrap();
+    components
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect()
+}
+
+#[test]
+fn a_part_repeated_across_layouts_is_one_definition_placed_in_each() {
+    let (bytes, report) = written(&towers());
+    let doc = document(&bytes);
+    assert_eq!(
+        component_names(&doc),
+        ["Tower", "Carriage", "synthetic_cube", "Tower (2)"]
+    );
+    let features = doc["features"].as_array().unwrap();
+    assert_eq!(features.len(), 1, "one Import for every placement");
+    let carriage = doc["components"][1]["id"].clone();
+    let cube = doc["components"][2]["id"].clone();
+    let tower_two = doc["components"][3]["id"].clone();
+    let occurrences = doc["occurrences"].as_array().unwrap();
+    let placed_in = |parent: &Value| -> Vec<(Value, Value)> {
+        occurrences
+            .iter()
+            .filter(|o| o["parent"] == *parent)
+            .map(|o| (o["component"].clone(), o["name"].clone()))
+            .collect()
+    };
+    assert_eq!(
+        placed_in(&tower_two),
+        [
+            (carriage.clone(), json!("Carriage")),
+            (cube.clone(), json!("Cube"))
+        ]
+    );
+    assert_eq!(placed_in(&carriage), [(cube, json!("Block"))]);
+    assert!(report.losses().iter().any(|loss| loss
+        .detail
+        .starts_with("3 repeated component(s) written once")));
+    if let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) {
+        assert_eq!(evaluate(&cli, &bytes).len(), 4);
+    }
+}
+
+#[test]
+fn a_sub_assembly_a_joint_reaches_inside_keeps_its_own_occurrences() {
+    let mut model = towers();
+    let frame = [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+    ];
+    model
+        .assembly
+        .as_mut()
+        .unwrap()
+        .joints
+        .push(dutchman_core::Joint {
+            a: vec![0, 0, 0],
+            b: vec![1, 0, 0],
+            frame_a: frame,
+            frame_b: frame,
+            suppressed: false,
+            motion: dutchman_core::Motion::Rigid,
+            flip: false,
+        });
+    let (bytes, _) = written(&model);
+    let doc = document(&bytes);
+    assert_eq!(
+        component_names(&doc),
+        [
+            "Tower",
+            "Carriage",
+            "synthetic_cube",
+            "Tower (2)",
+            "Carriage (2)"
+        ]
+    );
+    assert_eq!(doc["features"].as_array().unwrap().len(), 1);
+    let joint = &doc["assembly"]["joints"][0];
+    assert_ne!(joint["a"]["occurrence"], joint["b"]["occurrence"]);
+}
+
+#[test]
+fn a_part_placed_at_a_changed_layout_is_not_repeated() {
+    let mut model = towers();
+    let assembly = model.assembly.as_mut().unwrap();
+    let second = assembly.parts[1].assembly.as_mut().unwrap();
+    let carriage = second.parts[0].assembly.as_mut().unwrap();
+    carriage.placements[0].transform[0][3] = 6.0;
+    let (bytes, _) = written(&model);
+    assert_eq!(
+        component_names(&document(&bytes)),
+        [
+            "Tower",
+            "Carriage",
+            "synthetic_cube",
+            "Tower (2)",
+            "Carriage (2)"
+        ]
+    );
 }
