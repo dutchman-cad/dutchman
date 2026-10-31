@@ -212,6 +212,55 @@ jobs:
           test -s cube.solidcraft
           docker rm -f web
 
+  # Quick release builds of the three programs for each platform, kept as artifacts for 14 days
+  # (dutchman-<target>), so a change can be tried without building it: scripts/fetch-ci-binary.sh.
+  # No job waits on this one; it is not a gate. LTO is off and codegen units are 16 to build faster
+  # than a release; these are not the published release binaries.
+  binaries:
+    name: binaries (${{ matrix.target }})
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: binaries-${{ matrix.target }}
+          cache-on-failure: true
+      - name: Build
+        run: >
+          cargo build --release --locked -p dutchman -p dutchman-gui
+          --config profile.release.lto=false --config profile.release.codegen-units=16
+      - name: Stage
+        shell: bash
+        run: |
+          exe=""
+          [[ '${{ matrix.target }}' == *windows* ]] && exe=".exe"
+          mkdir -p stage
+          for program in dutchman dutchman-mcp dutchman-gui; do
+            cp "target/release/$program$exe" stage/
+          done
+          cp LICENSE NOTICE stage/
+          stage/dutchman$exe --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dutchman-${{ matrix.target }}
+          path: stage/
+          if-no-files-found: error
+          retention-days: 14
+
   msrv:
     needs: changes
     if: needs.changes.outputs.code == 'true'

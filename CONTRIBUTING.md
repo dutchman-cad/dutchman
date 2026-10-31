@@ -57,6 +57,24 @@ where `SOLIDCRAFT_CLI` points:
 SOLIDCRAFT_CLI=/path/to/solidcraft-cli cargo test -p dutchman-solidcraft --test history --test assembly
 ```
 
+### Use CI-built binaries instead of building locally
+
+Every pull request, and every push to main that changes code, has CI build `dutchman`,
+`dutchman-mcp` and `dutchman-gui` for Linux x86_64, macOS Apple silicon and Windows x86_64 and
+keep them for 14 days, as the artifacts `dutchman-x86_64-unknown-linux-gnu`,
+`dutchman-aarch64-apple-darwin` and `dutchman-x86_64-pc-windows-msvc`. They are quick builds
+without link-time optimisation, so they run slower than a release, and nothing waits on them.
+To try a change without building it:
+
+```sh
+scripts/fetch-ci-binary.sh 123 x86_64-unknown-linux-gnu /tmp/dutchman-pr-123   # pull request 123
+scripts/fetch-ci-binary.sh main aarch64-apple-darwin /tmp/dutchman-main        # latest push to main
+```
+
+The script needs the `gh` command, signed in, and prints the path of the unpacked `dutchman`.
+To fetch by hand: `gh run download <run> -n dutchman-x86_64-unknown-linux-gnu`; a downloaded
+artifact has lost its executable bit, so `chmod +x` the programs.
+
 ## Code style
 
 - **Never crash.** A damaged or unexpected file must come back as an error, never a panic.
