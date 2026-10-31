@@ -329,6 +329,259 @@ fn a_sweep_along_sketch_curves_becomes_a_solidcraft_sweep() {
     assert_eq!(sweep["twist"], "90 deg");
 }
 
+const SPATIAL: &str = "f3d:model:spatial-sketch#1";
+
+fn xyz(p: [f64; 3]) -> Value {
+    json!({"x": p[0], "y": p[1], "z": p[2]})
+}
+
+fn spatial_entity(key: u32, geometry: Value) -> Value {
+    json!({
+        "id": format!("f3d:model:spatial-sketch-entity#{key}"),
+        "sketch": SPATIAL,
+        "construction": false,
+        "geometry": geometry,
+    })
+}
+
+fn spatial_id(key: u32) -> String {
+    format!("f3d:model:spatial-sketch-entity#{key}")
+}
+
+/// The unit square swept along a 3D sketch: a 30 mm line up Z, a quarter arc of radius 20 mm
+/// turning toward +X, then a cubic Bezier spline; `change` edits the spatial sketch's entities
+/// and the sweep's definition.
+fn spatial_sweep_history(change: impl FnOnce(&mut Vec<Value>, &mut Value)) -> Model {
+    let base = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let model = &mut wire["model"];
+    model["spatial_sketches"] = json!([{"id": SPATIAL, "name": "Rail"}]);
+    let mut entities = vec![
+        spatial_entity(
+            1,
+            json!({"kind": "line", "start": xyz([0.0, 0.0, 0.0]), "end": xyz([0.0, 0.0, 30.0])}),
+        ),
+        spatial_entity(
+            2,
+            json!({"kind": "arc", "center": xyz([20.0, 0.0, 30.0]), "normal": xyz([0.0, 1.0, 0.0]),
+                   "reference_direction": xyz([-1.0, 0.0, 0.0]), "radius": 20.0,
+                   "start_angle": 0.0, "end_angle": std::f64::consts::FRAC_PI_2}),
+        ),
+        spatial_entity(
+            3,
+            json!({"kind": "nurbs", "curve": {
+                "degree": 3,
+                "knots": [0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0],
+                "poles": {"form": "polynomial", "points": [
+                    xyz([20.0, 0.0, 50.0]), xyz([30.0, 0.0, 50.0]),
+                    xyz([40.0, 5.0, 52.0]), xyz([50.0, 10.0, 60.0])]},
+                "periodic": false}}),
+        ),
+    ];
+    let mut definition = json!({
+        "definition": "sweep",
+        "shape": {"mode": "solid", "op": "new_body",
+                  "section": {"kind": "profile", "value": first_profile()}},
+        "path": {"kind": "spatial_sketch_curves",
+                 "value": {"sketch": SPATIAL, "curves": [spatial_id(1), spatial_id(2), spatial_id(3)]}},
+        "path_tangent": false,
+        "linearize": false,
+        "path_extent": {"along_fraction": 1.0, "against_fraction": 0.0},
+    });
+    change(&mut entities, &mut definition);
+    model["spatial_sketch_entities"] = Value::Array(entities);
+    model["features"] = json!([
+        model["features"][0].clone(),
+        {
+            "id": "f3d:model:feature#3",
+            "ordinal": 1,
+            "name": "Rail sketch",
+            "suppressed": false,
+            "definition": {"definition": "spatial_sketch", "sketch": SPATIAL},
+        },
+        {
+            "id": "f3d:model:feature#2",
+            "ordinal": 2,
+            "name": "Block",
+            "suppressed": false,
+            "dependencies": ["f3d:model:feature#1", "f3d:model:feature#3"],
+            "outputs": ["synthetic:cube:body#0"],
+            "definition": definition,
+        },
+    ]);
+    model["parameters"] = json!([model["parameters"][1].clone()]);
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    }
+}
+
+#[test]
+fn a_spatial_sketch_becomes_a_3d_sketch_and_a_sweep_follows_its_curves() {
+    let (document, report) = convert(
+        &spatial_sweep_history(|_, _| {}),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let features = document["features"].as_array().unwrap();
+    let rail = features
+        .iter()
+        .find(|f| f["name"] == "Rail sketch")
+        .unwrap();
+    assert_eq!(rail["type"], "sketch");
+    assert_eq!(rail["sketch"]["view"]["three_d"], true);
+    let wires = rail["sketch"]["wires"].as_array().unwrap();
+    assert_eq!(wires.len(), 3);
+    assert_eq!(wires[0]["fit"], json!([[0.0, 0.0, 0.0], [0.0, 0.0, 30.0]]));
+    assert_eq!(wires[1]["arc"]["radius"], 20.0);
+    assert_eq!(wires[1]["arc"]["end"][2], 50.0);
+    assert!(wires[2]["pts"].as_array().unwrap().len() > 20);
+    assert_eq!(wires[2]["pts"][0], json!([20.0, 0.0, 50.0]));
+    assert_eq!(
+        wires[2]["pts"].as_array().unwrap().last().unwrap(),
+        &json!([50.0, 10.0, 60.0])
+    );
+    assert_eq!(rail["sketch"]["counters"], json!({"q": 0, "w": 3}));
+    let sweep = features.iter().find(|f| f["type"] == "sweep").unwrap();
+    assert_eq!(sweep["path_sketch"], rail["id"]);
+    assert_eq!(sweep["path"], json!(["w1", "w2", "w3"]));
+    assert!(
+        history_line(&report).contains("3 of 3 features mapped"),
+        "{}",
+        history_line(&report)
+    );
+    assert!(
+        report
+            .losses()
+            .iter()
+            .any(|loss| loss.subject == "3D sketch \"Rail sketch\""
+                && loss.detail.contains("1 spline")),
+        "{report:?}"
+    );
+}
+
+#[test]
+fn circles_points_and_unmappable_geometry_in_a_spatial_sketch_are_reported() {
+    let model = spatial_sweep_history(|entities, definition| {
+        entities.push(spatial_entity(
+            4,
+            json!({"kind": "circle", "center": xyz([0.0, 0.0, 0.0]), "normal": xyz([0.0, 0.0, 1.0]),
+                   "reference_direction": xyz([1.0, 0.0, 0.0]), "radius": 3.0}),
+        ));
+        entities.push(spatial_entity(
+            5,
+            json!({"kind": "point", "position": xyz([1.0, 2.0, 3.0])}),
+        ));
+        entities.push(spatial_entity(
+            6,
+            json!({"kind": "native", "native_kind": "Helix"}),
+        ));
+        definition["path"]["value"]["curves"] =
+            json!([spatial_id(1), spatial_id(2), spatial_id(3), spatial_id(4)]);
+    });
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let rail = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["name"] == "Rail sketch")
+        .unwrap();
+    let wires = rail["sketch"]["wires"].as_array().unwrap();
+    // line, arc, spline, two half arcs of the circle, and the point
+    assert_eq!(wires.len(), 6, "{wires:?}");
+    assert_eq!(wires[3]["arc"]["radius"], 3.0);
+    assert_eq!(wires[5]["id"], "q1");
+    assert_eq!(rail["sketch"]["counters"], json!({"q": 1, "w": 5}));
+    let sweep = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["type"] == "sweep")
+        .unwrap();
+    assert_eq!(sweep["path"], json!(["w1", "w2", "w3", "w4", "w5"]));
+    let losses = report
+        .losses()
+        .iter()
+        .map(|loss| format!("{}: {}", loss.subject, loss.detail))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        losses.contains("1 curve left out: source geometry \"Helix\" has no neutral form"),
+        "{losses}"
+    );
+}
+
+#[test]
+fn a_sweep_along_a_curve_a_spatial_sketch_could_not_carry_stops_the_history_there() {
+    let model = spatial_sweep_history(|entities, _| {
+        entities[2] = spatial_entity(3, json!({"kind": "native", "native_kind": "Helix"}));
+    });
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let line = history_line(&report);
+    assert!(
+        line.contains("its path uses a curve the 3D sketch does not carry"),
+        "{line}"
+    );
+}
+
+#[test]
+fn a_sweep_selecting_spatial_curves_by_native_records_is_a_precise_reason() {
+    let model = spatial_sweep_history(|_, definition| {
+        definition["path"] = json!({"kind": "spatial_sketch_selection",
+            "value": {"sketch": SPATIAL, "selections": ["native"]}});
+    });
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("native selection records"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn a_sweep_along_a_spatial_sketch_replays_in_solidcraft() {
+    let Some(cli) = solidcraft() else { return };
+    let version =
+        dutchman_solidcraft::SolidCraftVersion::detected(&Verification::With(cli.clone()));
+    if version < "0.26.1".parse().unwrap() {
+        eprintln!("skipped: 3D sketches were checked from SolidCraft 0.26.1");
+        return;
+    }
+    // The line and arc entities are stored against the path direction in the second run.
+    for reversed in [false, true] {
+        let model = spatial_sweep_history(|entities, _| {
+            if reversed {
+                entities[0] = spatial_entity(
+                    1,
+                    json!({"kind": "line", "start": xyz([0.0, 0.0, 30.0]), "end": xyz([0.0, 0.0, 0.0])}),
+                );
+            }
+        });
+        let mut report = Report::default();
+        let mut bytes = Vec::new();
+        SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .write(&model, &mut bytes, &mut report)
+            .unwrap();
+        let body = bounds(&cli, &bytes);
+        assert_eq!(body.len(), 1);
+        let (min, max) = body[0];
+        assert!(min[2].abs() < 1e-6, "{min:?}");
+        assert!(max[2] > 59.0 && max[0] > 49.0, "{max:?}");
+        let volume = volumes(&cli, &bytes)[0];
+        // A 10 mm square swept some 80 mm along its path.
+        assert!(volume > 5000.0 && volume < 12000.0, "{volume}");
+    }
+}
+
 #[test]
 fn sweep_options_keep_their_units_and_result_mode() {
     for surface in [false, true] {

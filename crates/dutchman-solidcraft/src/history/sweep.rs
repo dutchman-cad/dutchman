@@ -222,8 +222,11 @@ pub(super) fn curves(
     }
     match path.get("kind").and_then(Value::as_str) {
         Some("sketch_curves") => {}
-        Some("spatial_sketch_curves" | "spatial_sketch_selection") => {
-            return Err(format!("a {what} in a 3D sketch is not mapped yet"))
+        Some("spatial_sketch_curves") => return spatial_curves(path.get("value"), ctx, what),
+        Some("spatial_sketch_selection") => {
+            return Err(format!(
+                "a {what} in a 3D sketch given by native selection records is not mapped yet"
+            ))
         }
         Some("unresolved") => return Err(format!("its {what} is not resolved")),
         Some("native") => {
@@ -264,6 +267,37 @@ pub(super) fn curves(
                 .ok_or_else(|| format!("its {what} uses a curve the sketch does not carry"))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    Ok((mapped.feature, ids))
+}
+
+/// The SolidCraft sketch feature and wire ids of curves picked in a 3D sketch.
+fn spatial_curves(
+    value: Option<&Value>,
+    ctx: &Context,
+    what: &str,
+) -> Result<(u64, Vec<String>), String> {
+    let value = value.unwrap_or(&Value::Null);
+    let sketch = value
+        .get("sketch")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("its {what} is malformed"))?;
+    let mapped = ctx
+        .spatial
+        .get(sketch)
+        .ok_or_else(|| format!("its {what} sketch is not an earlier mapped 3D sketch"))?;
+    let mut ids = Vec::new();
+    for entity in value
+        .get("curves")
+        .and_then(Value::as_array)
+        .filter(|curves| !curves.is_empty())
+        .ok_or_else(|| format!("its {what} is malformed"))?
+    {
+        let wires = entity
+            .as_str()
+            .and_then(|entity| mapped.wires.get(entity))
+            .ok_or_else(|| format!("its {what} uses a curve the 3D sketch does not carry"))?;
+        ids.extend(wires.iter().cloned());
+    }
     Ok((mapped.feature, ids))
 }
 

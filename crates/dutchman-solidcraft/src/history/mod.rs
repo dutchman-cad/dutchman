@@ -25,6 +25,7 @@ mod profile;
 mod revolve;
 mod sheet;
 mod sketch;
+mod spatial;
 mod sweep;
 
 use std::collections::BTreeMap;
@@ -284,6 +285,8 @@ struct Context<'a> {
     params: BTreeMap<String, String>,
     /// Mapped sketches by CADIR sketch id.
     sketches: BTreeMap<String, sketch::Mapped>,
+    /// Mapped 3D sketches by CADIR spatial sketch id.
+    spatial: BTreeMap<String, spatial::Mapped>,
     /// SolidCraft looks of the bodies the history makes, by body name.
     looks: BTreeMap<String, Value>,
     /// The timeline name each mapped source feature took, by CADIR feature id.
@@ -311,6 +314,7 @@ impl<'a> Context<'a> {
             next_id: 1,
             params: BTreeMap::new(),
             sketches: BTreeMap::new(),
+            spatial: BTreeMap::new(),
             looks: BTreeMap::new(),
             feature_names: BTreeMap::new(),
             pattern_features: BTreeMap::new(),
@@ -936,6 +940,9 @@ fn map_feature(
         // A component inserted, or a joint made, in the timeline: the assembly carries it.
         Some("insert_component" | "assembly_joint") => Ok(Mapped::Nothing),
         Some("sketch") => sketch::map(feature, definition, ctx, report).map(Mapped::Feature),
+        Some("spatial_sketch") => {
+            spatial::map(feature, definition, ctx, report).map(Mapped::Feature)
+        }
         Some("extrude") => extrude::map(feature, definition, ctx).map(Mapped::Feature),
         Some("revolve") => revolve::map(feature, definition, ctx).map(Mapped::Feature),
         Some("loft") => loft::map(feature, definition, ctx, preceding).map(Mapped::Feature),
