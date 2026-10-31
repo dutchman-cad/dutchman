@@ -23,7 +23,7 @@ axum = { version = "0.8", default-features = false, features = ["http1", "json",
 clap = { workspace = true, features = ["env"] }
 dutchman-serve = { path = "../dutchman-serve" }
 dutchman.workspace = true
-dutchman-core.workspace = true
+dutchman-core = { workspace = true, features = ["formats"] }
 getrandom.workspace = true
 serde_json.workspace = true
 tokio = { version = "1.47", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }

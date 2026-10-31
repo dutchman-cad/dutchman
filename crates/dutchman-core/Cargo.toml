@@ -18,7 +18,21 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 [features]
-default = []
+# Every input format but FreeCAD. A build may name only the formats it reads (as a
+# sandboxed importer does), so it links only those cadmpeg codecs.
+default = ["formats"]
+formats = ["fusion", "inventor", "solidworks", "catia", "creo", "nx", "rhino", "step", "iges", "sat", "pvz"]
+fusion = ["cadmpeg-registry/f3d"]
+inventor = ["cadmpeg-registry/inventor"]
+solidworks = ["cadmpeg-registry/sldprt"]
+catia = ["cadmpeg-registry/catia"]
+creo = ["cadmpeg-registry/creo"]
+nx = ["cadmpeg-registry/nx"]
+rhino = ["cadmpeg-registry/rhino"]
+step = ["cadmpeg-registry/step"]
+iges = ["cadmpeg-registry/iges"]
+sat = ["cadmpeg-registry/sat"]
+pvz = ["cadmpeg-registry/pvz"]
 # FreeCAD documents (.FCStd), through cadmpeg's fcstd codec. `dutchman` and `dutchman-gui`
 # turn it on by default; a build without it says FreeCAD files do not convert in that build.
 freecad = ["cadmpeg-registry/fcstd"]

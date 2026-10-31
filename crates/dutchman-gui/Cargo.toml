@@ -21,7 +21,7 @@ freecad = ["dutchman/freecad"]
 
 [dependencies]
 dutchman.workspace = true
-dutchman-core.workspace = true
+dutchman-core = { workspace = true, features = ["formats"] }
 dutchman-solidcraft.workspace = true
 eframe = { version = "0.33", features = ["persistence"] }
 egui_extras = { version = "0.33", default-features = false, features = ["svg"] }
