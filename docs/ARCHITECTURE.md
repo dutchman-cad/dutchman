@@ -359,8 +359,8 @@ and synthetic files from cadmpeg's public test suite (provenance in
   the joints put them (see fusion.md); Inventor joints wait on
   cadmpeg reading them.
 - **Appearances**: body and face colours carry across: through STEP for imports; as looks for
-  replayed bodies, with a planar face's own colour placed by a point inside the face (curved
-  faces keep their body's colour). Inside an assembly the point is in the part's own frame,
+  replayed bodies, with a planar or cylindrical face's own colour placed by a point on the face
+  (other curved faces keep their body's colour). Inside an assembly the point is in the part's own frame,
   which SolidCraft applies to every occurrence of the part. Materials come next, once cadmpeg
   gives physical materials (CADIR 0.6 carries appearances only).
 - More formats as cadmpeg's codecs mature. The state of each format and the upstream gaps that
