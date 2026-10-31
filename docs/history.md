@@ -95,6 +95,31 @@ an open shell is still reported. Sheets remain exempt from volume and closed-she
 
 ## Feature by feature
 
+Sketch entity distances carry line lengths, point pairs, point-to-line distances, and
+spacing between parallel lines (a parallel relation plus a point-to-line dimension).
+Point-on-curve coincidences carry across alongside point coincidences. Resolved construction
+and projected entities use the same mapping as drawn entities; unresolved external entities
+cannot supply operands. Dimensions link to named parameters, whose expressions (for example
+`Length` or `Head_Diameter / 2`) remain live. The stored numeric value initializes the solved
+sketch; the parameter supplies the driving value on recompute. Driven dimensions remain
+reference dimensions. Nonparallel line spacing and curve-only coincidences without identified
+point loci remain reported losses. A point beyond a finite line's end uses an endpoint
+point-pair dimension when the source value matches that distance instead of the perpendicular
+distance to the line. A value matching neither measurement is reported, without reshaping
+the sketch to force it. Disjoint parallel segments can likewise retain a uniquely nearest
+endpoint pair when their source value identifies it. Infinite reference axes never gain
+artificial endpoint dimensions.
+
+Cosmetic thread features carry an exact ISO metric diameter and pitch, with a blind length
+or the whole cylindrical face. A missing standard or designation does not block a known
+metric size: `3 mm` and `0.5 mm` become `M3x0.5` without rounding. The face must resolve to a
+complete cylindrical band between two circular rims. Historical face IDs without input
+surface geometry remain unresolved; Dutchman does not infer faces from opaque ID text.
+Modeled threads, conflicting designations, nonmetric standards, and unresolved extents or
+face geometry remain reported losses. When the source does not resolve whether the thread is
+modeled, the annotation is kept with a Degraded note; helical geometry is not reconstructed.
+Cosmetic annotations do not change the body's geometry.
+
 FreeCAD signed horizontal and vertical sketch distances convert to positive dimension
 magnitudes at their solved positions. Their signed parameters and expressions remain
 available; a dependent magnitude parameter drives each negative distance in SolidCraft.

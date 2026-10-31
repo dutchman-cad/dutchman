@@ -337,7 +337,7 @@ const ISO_COARSE: [(f64, f64); 34] = [
 /// The major diameter and pitch (mm) of an ISO metric designation such as `M6`, `M6x0.75`
 /// or `M6x1-6H`; a pitch the designation leaves out comes from `pitch`, then the coarse
 /// series. A class or hand after the size is not part of it.
-fn metric_thread(designation: &str, pitch: Option<f64>) -> Option<(f64, f64)> {
+pub(super) fn metric_thread(designation: &str, pitch: Option<f64>) -> Option<(f64, f64)> {
     let upper = designation.trim().to_ascii_uppercase();
     let body = upper.strip_prefix('M')?;
     let size: String = body

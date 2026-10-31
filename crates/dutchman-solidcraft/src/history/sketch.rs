@@ -169,6 +169,10 @@ pub(crate) fn map(
         &mut builder,
         report,
     );
+    let mut constraints = constraints;
+    if projected_origin(&entities) {
+        builder.anchor_at_origin(&mut constraints);
+    }
 
     ctx.sketches.insert(
         sketch_id.to_owned(),
@@ -250,6 +254,41 @@ pub(crate) fn synthesized(
         },
     });
     Ok((feature, mapped))
+}
+
+/// Whether a profile touching the sketch origin is tied to a point of the sketch's own there:
+/// more point entities lie on it than line and arc ends do, so one is the projected origin.
+fn projected_origin(entities: &[&Value]) -> bool {
+    let at_origin = |p: Option<P2>| p.is_some_and(|p| distance(p, [0.0, 0.0]) <= COINCIDENT);
+    let (mut points, mut ends) = (0usize, 0usize);
+    for entity in entities {
+        let geometry = entity.get("geometry").unwrap_or(&Value::Null);
+        match geometry.get("kind").and_then(Value::as_str) {
+            Some("point") => points += usize::from(at_origin(p2(geometry.get("position")))),
+            Some("line") => {
+                ends += usize::from(at_origin(p2(geometry.get("start"))))
+                    + usize::from(at_origin(p2(geometry.get("end"))));
+            }
+            Some("arc") => {
+                let (Some(c), Some(r), Some(a0), Some(a1)) = (
+                    p2(geometry.get("center")),
+                    geometry.get("radius").and_then(Value::as_f64),
+                    geometry.get("start_angle").and_then(Value::as_f64),
+                    geometry.get("end_angle").and_then(Value::as_f64),
+                ) else {
+                    continue;
+                };
+                for angle in [a0, a1] {
+                    ends += usize::from(at_origin(Some([
+                        c[0] + r * angle.cos(),
+                        c[1] + r * angle.sin(),
+                    ])));
+                }
+            }
+            _ => {}
+        }
+    }
+    ends > 0 && points > ends
 }
 
 /// A sketch plane in model space: its origin and unit axes.
@@ -452,6 +491,49 @@ impl Builder {
             }
         }
         self.curves.push(curve);
+    }
+
+    /// Pins a sketch that nothing anchors to the origin its geometry touches. A source sketch
+    /// is solved in place, so a profile that meets the sketch origin is tied to it there; the
+    /// tie is a projected origin point that is not carried over, and without it a dimension
+    /// edit slides the whole profile sideways (across a revolve axis, say). Only a sketch with
+    /// no fixed point or curve, no reference line and no constraint on the origin gains the
+    /// tie, to the first point lying exactly on it.
+    pub(crate) fn anchor_at_origin(&self, constraints: &mut Vec<Value>) {
+        let fixed = self
+            .points
+            .iter()
+            .skip(1)
+            .any(|p| p.get("fixed").and_then(Value::as_bool) == Some(true))
+            || self.curves.iter().any(|c| {
+                c.get("fixed").and_then(Value::as_bool) == Some(true)
+                    || c.get("infinite").and_then(Value::as_bool) == Some(true)
+            });
+        let on_origin = constraints.iter().any(|c| {
+            ["p", "q"]
+                .iter()
+                .any(|key| c.get(key).and_then(Value::as_u64) == Some(0))
+                || c.get("type").and_then(Value::as_str) == Some("fix")
+        });
+        if fixed || on_origin {
+            return;
+        }
+        let Some(point) = self
+            .positions
+            .iter()
+            .enumerate()
+            .skip(1)
+            .find(|(_, at)| distance(**at, [0.0, 0.0]) <= COINCIDENT)
+            .map(|(index, _)| index)
+        else {
+            return;
+        };
+        constraints.push(json!({
+            "id": format!("k{}", constraints.len() + 1),
+            "type": "coincident",
+            "p": point,
+            "q": 0,
+        }));
     }
 
     /// Locks a complete curve, including its independent radius or conic shape.
@@ -1224,6 +1306,57 @@ mod tests {
     fn line(a: P2, b: P2) -> Value {
         entity(json!({"kind": "line",
             "start": {"u": a[0], "v": a[1]}, "end": {"u": b[0], "v": b[1]}}))
+    }
+
+    fn point(key: &str, at: P2) -> Value {
+        json!({"id": key, "construction": false,
+            "geometry": {"kind": "point", "position": {"u": at[0], "v": at[1]}}})
+    }
+
+    #[test]
+    fn a_profile_tied_to_the_projected_origin_is_pinned_there() {
+        let mut builder = Builder::default();
+        let mut report = Report::default();
+        // A revolve profile touching the origin: its two line ends plus the projected origin.
+        let entities = [
+            line([0.0, 0.0], [10.0, 0.0]),
+            line([10.0, 0.0], [10.0, -30.0]),
+            line([10.0, -30.0], [0.0, -30.0]),
+            line([0.0, -30.0], [0.0, 0.0]),
+        ];
+        for e in &entities {
+            builder.entity(e, &mut report).unwrap();
+        }
+        // The source also lists a point per curve end, then the projected origin itself.
+        let mut with_origin: Vec<Value> = entities.to_vec();
+        with_origin.push(point("end1", [0.0, 0.0]));
+        with_origin.push(point("end2", [0.0, 0.0]));
+        let refs: Vec<&Value> = with_origin.iter().collect();
+        assert!(!projected_origin(&refs));
+        with_origin.push(point("origin", [0.0, 0.0]));
+        let refs: Vec<&Value> = with_origin.iter().collect();
+        assert!(projected_origin(&refs));
+        // A lone point at the origin with no curve there is not a tie.
+        assert!(!projected_origin(&[&point("origin", [0.0, 0.0])]));
+
+        let mut constraints = vec![json!({"id": "k1", "type": "vertical", "l": 3})];
+        builder.anchor_at_origin(&mut constraints);
+        assert_eq!(
+            constraints[1],
+            json!({"id": "k2", "type": "coincident", "p": 1, "q": 0})
+        );
+        // Anchored already, by a dimension from the origin: nothing is added.
+        let mut anchored =
+            vec![json!({"id": "k1", "type": "distance", "p": 0, "q": 2, "value": 5.0})];
+        builder.anchor_at_origin(&mut anchored);
+        assert_eq!(anchored.len(), 1);
+        // A sketch that does not touch the origin gains nothing.
+        let mut away = Builder::default();
+        away.entity(&line([1.0, 1.0], [5.0, 1.0]), &mut report)
+            .unwrap();
+        let mut none = Vec::new();
+        away.anchor_at_origin(&mut none);
+        assert!(none.is_empty());
     }
 
     #[test]
