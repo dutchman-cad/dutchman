@@ -9923,6 +9923,69 @@ fn face_extrude(up: bool, change: impl FnOnce(&mut Value)) -> Model {
     }
 }
 
+/// The example cube with a delete-face feature whose face is the top of the cube as it was
+/// before the feature, or a native selection.
+fn face_delete(selection: impl FnOnce(&str, &str) -> Value, heal: bool) -> Model {
+    face_extrude(true, |definition| {
+        *definition = json!({
+            "definition": "delete_face",
+            "faces": selection("test:face:feature-input#3", "test:face:historical-face#target"),
+            "heal": heal,
+        });
+    })
+}
+
+#[test]
+fn a_historical_face_is_deleted_by_a_point_inside_it() {
+    for heal in [true, false] {
+        let model = face_delete(
+            |state, face| {
+                json!({"kind": "historical", "value": {
+                    "state": state, "faces": [face], "native": "synthetic selection"}})
+            },
+            heal,
+        );
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        let feature = document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["type"] == "delete_face")
+            .unwrap_or_else(|| panic!("{}", history_line(&report)));
+        assert_eq!(feature["heal"], json!(heal));
+        let points = feature["faces"].as_array().unwrap();
+        assert_eq!(points.len(), 1);
+        let p: Vec<f64> = points[0]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_f64().unwrap())
+            .collect();
+        assert!((p[2] - 10.0).abs() < 1e-9, "{p:?}");
+        assert!(
+            p[0] > 1.0 && p[0] < 9.0 && p[1] > 1.0 && p[1] < 9.0,
+            "a point well inside the top face: {p:?}"
+        );
+    }
+}
+
+#[test]
+fn a_native_face_deletion_is_refused_for_its_selection() {
+    let model = face_delete(|_, _| json!({"kind": "native", "value": "synthetic"}), true);
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("cadmpeg does not resolve to faces"),
+        "{}",
+        history_line(&report)
+    );
+}
+
 #[test]
 fn a_historical_face_extrude_without_a_replay_waits_for_one() {
     let (_, report) = convert(

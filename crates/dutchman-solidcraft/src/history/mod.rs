@@ -11,6 +11,7 @@ pub(crate) mod base;
 mod blend;
 mod constraints;
 mod crossing;
+mod delete_face;
 mod extrude;
 mod face_profile;
 mod faces;
@@ -1107,6 +1108,7 @@ fn map_feature(
         Some("fillet" | "chamfer") => {
             blend::map(feature, definition, ctx, report).map(Mapped::Feature)
         }
+        Some("delete_face") => delete_face::map(feature, definition, ctx).map(Mapped::Feature),
         Some("hole") => hole::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some("sheet_metal_base_flange") => {
             sheet::base_flange(feature, definition, ctx).map(Mapped::Feature)
