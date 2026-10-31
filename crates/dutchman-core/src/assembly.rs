@@ -923,7 +923,9 @@ fn source_posed(document: &Value) -> BTreeSet<String> {
 /// Places the parts the joints join where the joints put them, as cadmpeg's own placements
 /// of joined parts may be where they were before the joints were solved; the occurrences
 /// the file places at the pose it shows them in (`posed`) are placed already. The design
-/// itself stays put; from it, each joint places the side not yet placed. A joint neither of whose
+/// itself stays put; from it, each joint places the side not yet placed. Across a component
+/// boundary, an identity holder below the common ancestor acts as the side to place; its
+/// internal joints stay relative to it. A joint neither of whose
 /// sides is placed yet keeps its second side and moves its first to it, as Fusion moves the
 /// first part picked for a joint to the second; of joints that reach nothing placed, the
 /// outermost occurrence they join stays put and places the rest. Of a joint between an occurrence and one
@@ -934,42 +936,124 @@ fn source_posed(document: &Value) -> BTreeSet<String> {
 /// slider joint whose parts already turn or slide on its axis where they are placed holds
 /// them there instead, at the value their placements give it.
 fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec<String> {
-    let joints = assembly.joints.clone();
+    let mut joints = assembly.joints.clone();
+    // An identity holder may need its placement from joints. A joint crossing its boundary
+    // places the holder, not only the exact child named by the connector. Joint islands
+    // must distinguish that holder from parts placed relative to it by internal joints.
+    for joint in &mut joints {
+        let common = joint
+            .a
+            .iter()
+            .zip(&joint.b)
+            .take_while(|(a, b)| a == b)
+            .count();
+        for path in [&mut joint.a, &mut joint.b] {
+            let original = path.clone();
+            for depth in common + 1..original.len() {
+                let Some(candidate) = original.get(..depth) else {
+                    continue;
+                };
+                let Some((_, parent)) = candidate.split_last() else {
+                    continue;
+                };
+                let (Some(at), Some(above)) =
+                    (world_at(assembly, candidate), world_at(assembly, parent))
+                else {
+                    continue;
+                };
+                if same(&compose(&inverse(&above), &at), &IDENTITY) {
+                    *path = candidate.to_vec();
+                    break;
+                }
+            }
+        }
+    }
     let mut notes = Vec::new();
-    let mut fixed: BTreeSet<Vec<usize>> = BTreeSet::from([Vec::new()]);
-    fixed.extend(posed.iter().cloned());
-    let mut pending: Vec<usize> = (0..joints.len()).collect();
-    let reaching = |pending: &[usize], fixed: &BTreeSet<Vec<usize>>| {
-        pending.iter().position(|&i| {
-            joints
-                .get(i)
-                .is_some_and(|j| fixed.contains(&j.a) || fixed.contains(&j.b))
+    // A placement is held relative to the common ancestor of the joint that placed
+    // it. Internal joints therefore do not anchor their holder in the outer design.
+    let mut fixed: BTreeMap<Vec<usize>, Vec<usize>> = BTreeMap::new();
+    fixed.insert(Vec::new(), Vec::new());
+    fixed.extend(posed.iter().cloned().map(|path| (path, Vec::new())));
+    let scopes: Vec<Vec<usize>> = joints
+        .iter()
+        .map(|joint| {
+            joint
+                .a
+                .iter()
+                .zip(&joint.b)
+                .take_while(|(a, b)| a == b)
+                .map(|(a, _)| *a)
+                .collect()
         })
-    };
+        .collect();
+    let mut pending: Vec<usize> = (0..joints.len()).collect();
     while !pending.is_empty() {
-        // Joints that reach nothing placed join parts only to each other: their outermost
-        // occurrence (of a joint's two, its second) stays where the file puts it, and they
-        // are placed from it, so a design placed by its stored pose holds its parts there.
-        if reaching(&pending, &fixed).is_none() {
+        // Solve the component's joints before using an inner connector to place its
+        // holder. Its connector must be measured after those internal joints solve.
+        let deepest = pending
+            .iter()
+            .filter_map(|&i| scopes.get(i))
+            .map(Vec::len)
+            .max()
+            .unwrap_or(0);
+        let scope = pending
+            .iter()
+            .filter_map(|&i| scopes.get(i))
+            .find(|scope| scope.len() == deepest)
+            .cloned()
+            .unwrap_or_default();
+        let reaching = |fixed: &BTreeMap<Vec<usize>, Vec<usize>>| {
+            pending.iter().position(|&i| {
+                scopes.get(i) == Some(&scope)
+                    && joints.get(i).is_some_and(|j| {
+                        placed_in(fixed, &j.a, &scope) || placed_in(fixed, &j.b, &scope)
+                    })
+            })
+        };
+        if reaching(&fixed).is_none() {
             let outermost = pending
                 .iter()
+                .filter(|&&i| scopes.get(i) == Some(&scope))
                 .filter_map(|&i| joints.get(i))
                 .flat_map(|j| [&j.b, &j.a])
                 .min_by_key(|path| path.len());
             if let Some(outermost) = outermost {
-                fixed.insert(outermost.clone());
+                hold_in(&mut fixed, outermost.clone(), &scope);
             }
         }
-        let next = reaching(&pending, &fixed).unwrap_or(0);
+        let next = reaching(&fixed).unwrap_or(0);
         let index = pending.remove(next);
-        let Some(joint) = joints.get(index) else {
+        let Some(mut joint) = joints.get(index).cloned() else {
             continue;
         };
+        // Internal joints may have refined the part's pose since island selection.
+        // Resolve its connector in the holder's current coordinates before placing it.
+        if let Some(exact) = assembly.joints.get(index) {
+            for (path, frame, original, original_frame) in [
+                (&joint.a, &mut joint.frame_a, &exact.a, &exact.frame_a),
+                (&joint.b, &mut joint.frame_b, &exact.b, &exact.frame_b),
+            ] {
+                if let (Some(holder), Some(part)) =
+                    (world_at(assembly, path), world_at(assembly, original))
+                {
+                    *frame = compose(&compose(&inverse(&holder), &part), original_frame);
+                }
+            }
+        }
         let (Some(a), Some(b)) = (world_at(assembly, &joint.a), world_at(assembly, &joint.b))
         else {
             continue;
         };
-        if let Some((motion, frame_b, note)) = as_built(&a, &b, joint) {
+        if let Some((motion, frame_b, note)) = as_built(&a, &b, &joint) {
+            // The solver may use a holder; the exported joint still names the exact
+            // part, so return the adjusted frame to that part's coordinates.
+            let frame_b = assembly
+                .joints
+                .get(index)
+                .and_then(|row| world_at(assembly, &row.b))
+                .map_or(frame_b, |exact| {
+                    compose(&compose(&inverse(&exact), &b), &frame_b)
+                });
             if let Some(row) = assembly.joints.get_mut(index) {
                 row.motion = motion;
                 row.frame_b = frame_b;
@@ -977,8 +1061,12 @@ fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec
             if let Some(note) = note {
                 notes.push(format!("joint {}: {note}", index + 1));
             }
-            fixed.insert(joint.a.clone());
-            fixed.insert(joint.b.clone());
+            hold_in(&mut fixed, joint.a.clone(), &scope);
+            hold_in(&mut fixed, joint.b.clone(), &scope);
+            if let Some(exact) = assembly.joints.get(index) {
+                hold_in(&mut fixed, exact.a.clone(), &scope);
+                hold_in(&mut fixed, exact.b.clone(), &scope);
+            }
             continue;
         }
         let reach = compose(&compose(&a, &joint.frame_a), &joint.meeting());
@@ -988,10 +1076,13 @@ fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec
             outer.len() < inner.len() && inner.starts_with(outer)
         };
         let (a_holds_b, b_holds_a) = (inside(&joint.a, &joint.b), inside(&joint.b, &joint.a));
-        if a_holds_b && !fixed.contains(&joint.b) {
-            fixed.insert(joint.a.clone());
+        if a_holds_b && !placed_in(&fixed, &joint.b, &scope) {
+            hold_in(&mut fixed, joint.a.clone(), &scope);
         }
-        let (a_fixed, b_fixed) = (fixed.contains(&joint.a), fixed.contains(&joint.b));
+        let (a_fixed, b_fixed) = (
+            placed_in(&fixed, &joint.a, &scope),
+            placed_in(&fixed, &joint.b, &scope),
+        );
         // Never move an occurrence that holds a placed one: check the joint instead.
         let (a_fixed, b_fixed) =
             if (a_fixed && !b_fixed && b_holds_a) || (b_fixed && !a_fixed && a_holds_b) {
@@ -1023,7 +1114,7 @@ fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec
                     &joint.b,
                     &compose(&reach, &inverse(&joint.frame_b)),
                 );
-                fixed.insert(joint.b.clone());
+                hold_in(&mut fixed, joint.b.clone(), &scope);
             }
             (false, _) => {
                 // A goes where B's frame, taken back through the joint, meets A's frame.
@@ -1032,12 +1123,39 @@ fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec
                     &inverse(&joint.frame_a),
                 );
                 move_keeping_placed(assembly, &fixed, &joint.a, &at);
-                fixed.insert(joint.a.clone());
-                fixed.insert(joint.b.clone());
+                hold_in(&mut fixed, joint.a.clone(), &scope);
+                hold_in(&mut fixed, joint.b.clone(), &scope);
             }
+        }
+        // An outer joint also holds its exact connector part. Later internal joints
+        // must solve from that part rather than move it away from the outer connector.
+        if let Some(exact) = assembly.joints.get(index).filter(|row| !row.suppressed) {
+            hold_in(&mut fixed, exact.a.clone(), &scope);
+            hold_in(&mut fixed, exact.b.clone(), &scope);
         }
     }
     notes
+}
+
+/// Whether a part is held in this joint's common ancestor, rather than only
+/// inside a component that the outer joint can still move.
+fn placed_in(fixed: &BTreeMap<Vec<usize>, Vec<usize>>, path: &[usize], scope: &[usize]) -> bool {
+    path == scope
+        || fixed
+            .get(path)
+            .is_some_and(|anchor| scope.starts_with(anchor))
+}
+
+/// Keep the outermost frame in which a part has already been placed.
+fn hold_in(fixed: &mut BTreeMap<Vec<usize>, Vec<usize>>, path: Vec<usize>, scope: &[usize]) {
+    fixed
+        .entry(path)
+        .and_modify(|anchor| {
+            if scope.len() < anchor.len() {
+                *anchor = scope.to_vec();
+            }
+        })
+        .or_insert_with(|| scope.to_vec());
 }
 
 /// A joint as it holds its parts where they are placed (`a` and `b`, in the world), when they
@@ -1116,18 +1234,21 @@ fn world_at(assembly: &Assembly, path: &[usize]) -> Option<Placement3x4> {
 }
 
 /// Moves the occurrence `path` leads to so that it is at `world`, keeping each occurrence
-/// inside it that another joint placed already where that joint put it.
+/// inside it that an outside joint placed already where that joint put it. Parts held by
+/// internal joints travel with the component.
 fn move_keeping_placed(
     assembly: &mut Assembly,
-    fixed: &BTreeSet<Vec<usize>>,
+    fixed: &BTreeMap<Vec<usize>, Vec<usize>>,
     path: &[usize],
     world: &Placement3x4,
 ) {
     // Outer before inner, as the set orders a path before those that extend it.
     let inside: Vec<(&Vec<usize>, Placement3x4)> = fixed
         .iter()
-        .filter(|placed| placed.len() > path.len() && placed.starts_with(path))
-        .filter_map(|placed| Some((placed, world_at(assembly, placed)?)))
+        .filter(|(placed, scope)| {
+            placed.len() > path.len() && placed.starts_with(path) && scope.len() < path.len()
+        })
+        .filter_map(|(placed, _)| Some((placed, world_at(assembly, placed)?)))
         .collect();
     set_world_at(assembly, path, world);
     for (placed, at) in inside {
@@ -3393,6 +3514,109 @@ mod tests {
         assert_eq!(sides, [(vec![0], vec![0, 0])]);
         let second = world_at(&assembly, &[1]).unwrap();
         assert!(near(&second, &at([100.0, 0.0, 0.0], 0.0)), "{second:?}");
+    }
+
+    #[test]
+    fn an_outer_joint_places_an_unposed_holder_with_its_internal_joint() {
+        for (posed, q, held_at) in [
+            (false, 35.0, None),
+            (false, 55.0, None),
+            (true, 35.0, None),
+            (false, 35.0, Some(0.0)),
+            (false, 35.0, Some(20.0)),
+        ] {
+            for outer_first in [false, true] {
+                let mut holder = placed(0, "frame", root(), 0.0);
+                holder["native_ref"] = json!("f3d:xref:reference#0");
+                let model = nested(
+                    false,
+                    Some(json!([
+                        holder,
+                        placed(1, "block", inside(0), 5.0),
+                        placed(2, "block", inside(0), q),
+                        placed(3, "block", root(), 0.0),
+                    ])),
+                );
+                let internal = joint(
+                    1,
+                    json!({"kind": "fixed"}),
+                    connector_at(1, &[], at([30.0, 0.0, 0.0], 0.0)),
+                    connector_at(2, &[], facing(IDENTITY)),
+                );
+                let outer = joint(
+                    2,
+                    json!({"kind": "fixed"}),
+                    connector_at(3, &[], at([100.0, 0.0, 0.0], 0.0)),
+                    connector_at(1, &[], facing(IDENTITY)),
+                );
+                // A is already placed before the outer joint reaches the holder.
+                let anchor = joint(
+                    3,
+                    json!({"kind": "fixed"}),
+                    connector(None),
+                    connector_at(3, &[], facing(IDENTITY)),
+                );
+                let mut rows = if outer_first {
+                    json!([anchor, outer, internal])
+                } else {
+                    json!([anchor, internal, outer])
+                };
+                if let Some(x) = held_at {
+                    // Ground the holder, or place it with an earlier joint.
+                    rows.as_array_mut().unwrap().insert(
+                        1,
+                        joint(
+                            4,
+                            json!({"kind": "fixed"}),
+                            connector(None),
+                            connector_at(0, &[], facing(at([-x, 0.0, 0.0], 0.0))),
+                        ),
+                    );
+                }
+                let mut wire = serde_json::to_value(&with_joints(model.clone(), rows).ir).unwrap();
+                if posed {
+                    wire["native"]["f3d"]["xref_references"] = json!([
+                        {"id": "f3d:xref:reference#0", "current_pose": {"carrier_record_index": 7}}
+                    ]);
+                }
+                let model = Model {
+                    ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+                    ..model
+                };
+                let (assembly, notes) = local_components(&model).unwrap().unwrap();
+                let held = posed || held_at.is_some();
+                let offset = held_at.unwrap_or(if posed { 0.0 } else { 130.0 - q });
+                for (path, x) in [
+                    (vec![0], offset),
+                    (vec![0, 0], offset + q - 30.0),
+                    (vec![0, 1], offset + q),
+                ] {
+                    assert!(
+                        near(
+                            &world_at(&assembly, &path).unwrap(),
+                            &at([x, 0.0, 0.0], 0.0)
+                        ),
+                        "posed={posed}, outer_first={outer_first}, path={path:?}"
+                    );
+                }
+                let start = 1 + usize::from(held_at.is_some());
+                let outer_index = start + usize::from(!outer_first);
+                assert_eq!(assembly.joints[outer_index].suppressed, held);
+                assert!(!assembly.joints[start + usize::from(outer_first)].suppressed);
+                assert_eq!(notes.len(), usize::from(held), "{notes:?}");
+                for joint in assembly.joints.iter().filter(|joint| !joint.suppressed) {
+                    let a = world_at(&assembly, &joint.a).unwrap();
+                    let b = world_at(&assembly, &joint.b).unwrap();
+                    assert!(near(
+                        &compose(&compose(&a, &joint.frame_a), &joint.meeting()),
+                        &compose(&b, &joint.frame_b)
+                    ));
+                }
+                if held {
+                    assert!(notes[0].contains("its parts are placed by other joints"));
+                }
+            }
+        }
     }
 
     #[test]
