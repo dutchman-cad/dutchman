@@ -105,21 +105,23 @@ pub(crate) fn map(
         .iter()
         .find(|row| row.get("id").and_then(Value::as_str) == Some(sketch_id))
         .ok_or("the sketch it binds is missing")?;
-    let (
-        plane,
-        Frame {
-            normal,
-            origin,
-            x,
-            y,
-        },
-    ) = plane(sketch)?;
-
+    let (plane, frame) = plane(sketch)?;
     let entities: Vec<&Value> = ctx
         .arena("sketch_entities")
         .iter()
         .filter(|row| row.get("sketch").and_then(Value::as_str) == Some(sketch_id))
         .collect();
+    // A plane at the height an earlier sketch's dimensions reach is offset by them.
+    let (plane, frame, turn) = match follow_plane(ctx, &frame, &entities) {
+        Some((plane, frame, turn)) => (plane, frame, Some(turn)),
+        None => (plane, frame, None),
+    };
+    let Frame {
+        normal,
+        origin,
+        x,
+        y,
+    } = frame;
     let mut crossing = super::crossing::crossing(sketch, &entities);
     crossing.extend(super::crossing::region_lines(
         sketch,
@@ -131,13 +133,15 @@ pub(crate) fn map(
     let crossing_count = crossing.len();
     crossing.extend(stray);
     let mut builder = Builder::default();
-    for entity in &entities {
+    for source in &entities {
+        let moved = turn.and_then(|turn| turned(source, turn));
+        let entity: &Value = moved.as_ref().unwrap_or(source);
         let is_crossing = entity
             .get("id")
             .and_then(Value::as_str)
             .is_some_and(|id| crossing.contains(id));
         if is_crossing {
-            let mut construction = (*entity).clone();
+            let mut construction = entity.clone();
             if let Some(fields) = construction.as_object_mut() {
                 fields.insert("construction".to_owned(), Value::Bool(true));
             }
@@ -184,9 +188,27 @@ pub(crate) fn map(
         report,
     );
     let mut constraints = constraints;
-    if projected_origin(&entities) {
+    let ties: Vec<&Value> = ctx
+        .arena("sketch_constraints")
+        .iter()
+        .filter(|row| row.get("sketch").and_then(Value::as_str) == Some(sketch_id))
+        .collect();
+    if projected_origin(&entities) || origin_point_tied(&entities, &ties) {
         builder.anchor_at_origin(&mut constraints);
     }
+    for mut hold in super::dof::holds(&builder.points, &builder.curves, &constraints) {
+        if let Some(fields) = hold.as_object_mut() {
+            fields.insert(
+                "id".to_owned(),
+                json!(format!("k{}", constraints.len() + 1)),
+            );
+        }
+        constraints.push(hold);
+    }
+    ctx.coordinates.insert(
+        sketch_id.to_owned(),
+        super::chain::coordinates(&builder.points, &builder.curves, &constraints),
+    );
 
     ctx.sketches.insert(
         sketch_id.to_owned(),
@@ -303,6 +325,186 @@ fn projected_origin(entities: &[&Value]) -> bool {
         }
     }
     ends > 0 && points > ends
+}
+
+/// Whether a point entity at the sketch origin is what two or more coincidences tie to: the
+/// projected origin of a sketch whose profile touches it, which the end-point count in
+/// `projected_origin` cannot tell from the profile's own points when each end has its own.
+fn origin_point_tied(entities: &[&Value], constraints: &[&Value]) -> bool {
+    entities.iter().any(|entity| {
+        let geometry = entity.get("geometry").unwrap_or(&Value::Null);
+        let at_origin = geometry.get("kind").and_then(Value::as_str) == Some("point")
+            && p2(geometry.get("position")).is_some_and(|p| distance(p, [0.0, 0.0]) <= COINCIDENT);
+        let Some(id) = entity
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|_| at_origin)
+        else {
+            return false;
+        };
+        constraints
+            .iter()
+            .filter(|row| {
+                let definition = row.get("definition").unwrap_or(&Value::Null);
+                matches!(
+                    definition.get("kind").and_then(Value::as_str),
+                    Some("coincident" | "coincident_loci")
+                ) && definition.to_string().contains(&format!("\"{id}\""))
+            })
+            .count()
+            >= 2
+    })
+}
+
+/// The origin planes, with their axes and normals in model space.
+const ORIGIN_PLANES: [(&str, V3, V3, V3); 3] = [
+    ("XY", [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]),
+    ("XZ", [1.0, 0.0, 0.0], [0.0, 0.0, -1.0], [0.0, 1.0, 0.0]),
+    ("YZ", [0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]),
+];
+
+/// The plane of a sketch lying parallel to an origin plane at the height of a point of an
+/// earlier sketch whose position the earlier sketch's dimensions set: that origin plane,
+/// offset by those dimensions, so the sketch moves with them. Also the frame it then has and
+/// how the source sketch's axes turn into that plane's (`[x.X, x.Y, y.X, y.Y]`; a sketch
+/// drawn with its axes turned, as a face sketch often is, is written turned back). `None`
+/// when the plane is not so placed or a curve could not be turned.
+fn follow_plane(
+    ctx: &Context,
+    frame: &Frame,
+    entities: &[&Value],
+) -> Option<(Value, Frame, [f64; 4])> {
+    let (name, xs, ys, ns) = ORIGIN_PLANES
+        .into_iter()
+        .find(|(_, _, _, ns)| same(frame.normal, *ns))?;
+    let turn = [
+        dot(frame.x, xs),
+        dot(frame.x, ys),
+        dot(frame.y, xs),
+        dot(frame.y, ys),
+    ];
+    if !turn
+        .iter()
+        .all(|v| v.abs() <= 1e-9 || (v.abs() - 1.0).abs() <= 1e-9)
+    {
+        return None;
+    }
+    let height = dot(frame.origin, ns);
+    if height.abs() <= COINCIDENT
+        || dot(frame.origin, xs).abs() > COINCIDENT
+        || dot(frame.origin, ys).abs() > COINCIDENT
+    {
+        return None;
+    }
+    let identity = (turn[0] - 1.0).abs() <= 1e-9 && (turn[3] - 1.0).abs() <= 1e-9;
+    if !identity && !entities.iter().all(|e| turned(e, turn).is_some()) {
+        return None;
+    }
+    let distance = earlier_height(ctx, ns, height)?;
+    Some((
+        json!({"type": "offset", "base": {"type": "origin", "name": name}, "distance": distance}),
+        Frame {
+            normal: ns,
+            origin: [ns[0] * height, ns[1] * height, ns[2] * height],
+            x: xs,
+            y: ys,
+        },
+        turn,
+    ))
+}
+
+/// The expression for `height` along `normal` (a principal axis) as an earlier sketch's
+/// dimensions give it: a point of that sketch lies there, at a distance they set.
+fn earlier_height(ctx: &Context, normal: V3, height: f64) -> Option<String> {
+    let k = (0..3).find(|k| normal.get(*k).is_some_and(|n| n.abs() > 0.5))?;
+    let sign = *normal.get(k)?;
+    let mut sketches: Vec<(&String, &Mapped)> = ctx.sketches.iter().collect();
+    sketches.sort_by_key(|(_, mapped)| std::cmp::Reverse(mapped.feature));
+    for (id, mapped) in sketches {
+        let Some(coordinates) = ctx.coordinates.get(id) else {
+            continue;
+        };
+        let (cx, cy) = (*mapped.x_dir.get(k)?, *mapped.y_dir.get(k)?);
+        let base = *mapped.origin.get(k)?;
+        let axis = if (cx.abs() - 1.0).abs() <= 1e-9 && cy.abs() <= 1e-9 {
+            0
+        } else if (cy.abs() - 1.0).abs() <= 1e-9 && cx.abs() <= 1e-9 {
+            1
+        } else {
+            continue;
+        };
+        let coefficient = if axis == 0 { cx } else { cy };
+        for (index, (_, at)) in mapped.points.iter().enumerate() {
+            let world = base + at.get(axis)? * coefficient;
+            let Some(coordinate) = coordinates
+                .get(index)
+                .and_then(|c| c.get(axis)?.as_ref())
+                .filter(|c| c.symbolic)
+            else {
+                continue;
+            };
+            if (world - height * sign).abs() > COINCIDENT {
+                continue;
+            }
+            let term = if coefficient > 0.0 {
+                coordinate.expression.clone()
+            } else {
+                format!("-({})", coordinate.expression)
+            };
+            let along = if base.abs() <= COINCIDENT {
+                term
+            } else {
+                format!("{base} mm + ({term})")
+            };
+            return Some(if sign > 0.0 {
+                along
+            } else {
+                format!("-({along})")
+            });
+        }
+    }
+    None
+}
+
+/// A source sketch entity with its coordinates in another plane's axes: `turn` is
+/// `[x.X, x.Y, y.X, y.Y]`. `None` for a kind that is not turned.
+fn turned(entity: &Value, turn: [f64; 4]) -> Option<Value> {
+    let [a, b, c, d] = turn;
+    let at = |value: Option<&Value>| -> Option<Value> {
+        let [u, v] = p2(value)?;
+        Some(json!({"u": a * u + c * v, "v": b * u + d * v}))
+    };
+    let angle =
+        |theta: f64| (b * theta.cos() + d * theta.sin()).atan2(a * theta.cos() + c * theta.sin());
+    let mut out = entity.clone();
+    let geometry = out.get_mut("geometry")?.as_object_mut()?;
+    match geometry.get("kind")?.as_str()? {
+        "point" => {
+            let position = at(geometry.get("position"))?;
+            geometry.insert("position".to_owned(), position);
+        }
+        "line" => {
+            let (start, end) = (at(geometry.get("start"))?, at(geometry.get("end"))?);
+            geometry.insert("start".to_owned(), start);
+            geometry.insert("end".to_owned(), end);
+        }
+        "circle" => {
+            let center = at(geometry.get("center"))?;
+            geometry.insert("center".to_owned(), center);
+        }
+        "arc" => {
+            let center = at(geometry.get("center"))?;
+            let (s, e) = (
+                angle(geometry.get("start_angle")?.as_f64()?),
+                angle(geometry.get("end_angle")?.as_f64()?),
+            );
+            geometry.insert("center".to_owned(), center);
+            geometry.insert("start_angle".to_owned(), json!(s));
+            geometry.insert("end_angle".to_owned(), json!(e));
+        }
+        _ => return None,
+    }
+    Some(out)
 }
 
 /// A sketch plane in model space: its origin and unit axes.

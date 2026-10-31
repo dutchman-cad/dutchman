@@ -50,6 +50,19 @@ pub(super) fn profile(profile: Option<&Value>, ctx: &Context) -> Result<(String,
             {
                 return Ok((sketch.to_owned(), selection));
             }
+            // Every loop of a sketch with several is one drawn region set: a loop inside
+            // another is its hole (an annulus is the outer loop and the inner one together),
+            // which SolidCraft's own default finds. Naming each loop as a profile of its own
+            // would fill the hole again.
+            if indices.len() > 1
+                && takes_every_loop(ctx, sketch, indices)
+                && indices
+                    .iter()
+                    .zip(&loops)
+                    .all(|(index, ring)| !needs_split(ctx, sketch, index, ring))
+            {
+                return Ok((sketch.to_owned(), json!({"type": "all"})));
+            }
             let mut selected = Vec::new();
             for (index, ring) in indices.iter().zip(loops) {
                 if needs_split(ctx, sketch, index, &ring) {

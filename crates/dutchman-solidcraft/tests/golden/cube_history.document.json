@@ -60,6 +60,12 @@
             "id": "k7",
             "l": 3,
             "type": "vertical"
+          },
+          {
+            "id": "k8",
+            "p": 1,
+            "q": 0,
+            "type": "coincident"
           }
         ],
         "curves": [

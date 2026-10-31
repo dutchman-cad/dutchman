@@ -54,11 +54,13 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
     let axis =
         sketch_line(construction.get("axis"), &sketch_id, sketch).unwrap_or_else(|| placed.clone());
     let (mut angle, symmetric) = sweep(construction.get("extent"))?;
+    let mut bound = None;
     if !symmetric && TAU - angle > FULL_TURN {
         if surface {
             return Err("one-sided partial surface revolves are not mapped yet (their sweep side is not proven)".to_owned());
         }
         angle *= sweep_sign(&placed, sketch, &sketch_id, &profiles, ctx)?;
+        bound = ctx.owned_parameter(feature, "AlongAngle", angle.abs());
     }
     if surface && TAU - angle <= FULL_TURN {
         return Err(
@@ -83,7 +85,10 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         "sketch": sketch_feature,
         "profiles": profiles,
         "axis": axis,
-        "angle": format!("{} deg", angle.to_degrees()),
+        "angle": bound.map_or_else(
+            || format!("{} deg", angle.to_degrees()),
+            |name| if angle < 0.0 { format!("-({name})") } else { name },
+        ),
         "operation": operation,
         "convention": "sketch_normal",
     });
