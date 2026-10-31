@@ -195,6 +195,11 @@ sketch's profiles uses (open segments, lines laid across a region) are written a
 so they do not divide the selected region; the report counts them. A curve a feature names, and
 any sketch another kind of feature uses, keep their curves as real geometry.
 
+A feature that takes a whole sketch, or a list of its profile loops, treats loops inside loops
+as holes (even-odd nesting), as Fusion does: two concentric circles are a ring, not a disc. The
+selection is written as whole boundaries (outer loop and its holes). Loops that touch or cross
+keep the previous selection.
+
 Patterns can repeat earlier features or named bodies in one or two linear directions,
 around an axis, or at fixed spacing along curves of an earlier planar sketch. Explicit
 linear offsets and circular angles map when their intervals are equal; two linear composite

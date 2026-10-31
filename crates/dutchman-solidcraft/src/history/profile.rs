@@ -15,6 +15,13 @@ pub(super) fn profile(profile: Option<&Value>, ctx: &Context) -> Result<(String,
     let value = profile.get("value").unwrap_or(&Value::Null);
     if kind == "sketch" {
         let sketch = value.as_str().ok_or("its profile sketch is malformed")?;
+        // Every loop of the sketch, as the extrude takes them: loops inside loops are holes.
+        if let Some(mapped) = ctx.sketches.get(sketch) {
+            let every: Vec<usize> = (0..profile_count(ctx, sketch)).collect();
+            if let Some(selection) = nested(ctx, sketch, &every, mapped) {
+                return Ok((sketch.to_owned(), selection));
+            }
+        }
         return Ok((sketch.to_owned(), json!({"type": "all"})));
     }
     let sketch = value
@@ -35,6 +42,14 @@ pub(super) fn profile(profile: Option<&Value>, ctx: &Context) -> Result<(String,
                 .iter()
                 .map(|index| source_loop(ctx, sketch, index, mapped))
                 .collect::<Result<Vec<_>, _>>()?;
+            let wanted: Option<Vec<usize>> = indices
+                .iter()
+                .map(|index| index.as_u64().and_then(|i| usize::try_from(i).ok()))
+                .collect();
+            if let Some(selection) = wanted.and_then(|wanted| nested(ctx, sketch, &wanted, mapped))
+            {
+                return Ok((sketch.to_owned(), selection));
+            }
             let mut selected = Vec::new();
             for (index, ring) in indices.iter().zip(loops) {
                 if needs_split(ctx, sketch, index, &ring) {
@@ -89,6 +104,31 @@ pub(super) fn profile(profile: Option<&Value>, ctx: &Context) -> Result<(String,
         other => return Err(format!("{other} profiles are not mapped yet")),
     };
     Ok((sketch.to_owned(), selection))
+}
+
+/// The selected source loops as whole boundaries when some lie inside others: a loop inside
+/// one selected loop is its hole, as Fusion's even-odd profile nesting has it, so concentric
+/// circles are a ring, not a disc. `None` when nothing nests, a loop is not followed whole, or
+/// the loops touch or cross.
+fn nested(ctx: &Context, sketch: &str, wanted: &[usize], mapped: &Mapped) -> Option<Value> {
+    let row = ctx.row("sketches", sketch)?;
+    let entities = sketch_entities(ctx, sketch);
+    let nesting = super::crossing::nesting(row, &entities, wanted)?;
+    let mut whole = Vec::with_capacity(nesting.len());
+    for (outer, holes) in nesting {
+        let outer = source_loop(ctx, sketch, &json!(outer), mapped).ok()?;
+        let holes = holes
+            .into_iter()
+            .map(|hole| {
+                source_loop(ctx, sketch, &json!(hole), mapped).map(|h| canonical_loop(h, mapped))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .ok()?;
+        whole.push(json!({"outer": canonical_loop(outer, mapped), "holes": holes}));
+    }
+    Some(sorted_whole(
+        json!({"type": "whole_boundaries", "profiles": whole}),
+    ))
 }
 
 /// A whole-boundary selection in the form every SolidCraft release validates when it loads a
@@ -915,6 +955,58 @@ mod tests {
         assert_eq!(
             canonical_loop(ring(&["l4", "l5", "l6", "l1"]), &rectangle),
             ring(&["l1", "l4", "l5", "l6"])
+        );
+    }
+
+    /// Concentric circles c1 (radius 3) and c2 (radius 6) as the sketch of a shim.
+    fn rings() -> (Value, Mapped) {
+        let mut mapped = mapped();
+        mapped.shapes.insert(
+            "outer".to_owned(),
+            Shape::Curve(Curve {
+                index: 7,
+                id: "c2".to_owned(),
+                kind: "circle",
+                start: None,
+                end: None,
+                center: Some(7),
+            }),
+        );
+        let circle = |id: &str, radius: f64| {
+            json!({"id": id, "sketch": "s", "geometry": {"kind": "circle",
+                "center": {"u": 0.0, "v": 0.0}, "radius": radius}})
+        };
+        let model = json!({
+            "sketches": [{"id": "s", "profiles": [
+                [{"entity": "outer"}], [{"entity": "circle"}],
+            ]}],
+            "sketch_entities": [circle("outer", 6.0), circle("circle", 3.0)],
+        });
+        (model, mapped)
+    }
+
+    #[test]
+    fn concentric_loops_taken_together_are_a_ring() {
+        let (model, mapped) = rings();
+        let mut ctx = Context::new(&model);
+        ctx.sketches.insert("s".to_owned(), mapped);
+        let by_index =
+            json!({"kind": "sketch_profiles", "value": {"sketch": "s", "profiles": [1, 0]}});
+        let whole = super::profile(Some(&by_index), &ctx).unwrap().1;
+        assert_eq!(
+            whole,
+            json!({"type": "whole_boundaries", "profiles": [
+                {"outer": ["c2"], "holes": [["c1"]]}
+            ]})
+        );
+        // The whole sketch is the same two loops.
+        let sketch = json!({"kind": "sketch", "value": "s"});
+        assert_eq!(super::profile(Some(&sketch), &ctx).unwrap().1, whole);
+        // The inner loop alone, or loops that do not nest, are not a ring.
+        let inner = json!({"kind": "sketch_profiles", "value": {"sketch": "s", "profiles": [1]}});
+        assert_eq!(
+            super::profile(Some(&inner), &ctx).unwrap().1,
+            json!({"type": "curves", "loops": [["c1"]]})
         );
     }
 }
