@@ -137,7 +137,7 @@ jobs:
       - id: plan
         env:
           GH_TOKEN: ${{ github.token }}
-          SOURCES: ${{ inputs.sources || 'PrintersForAnts/Crucible,PrintersForAnts/ColonyClacker' }}
+          SOURCES: ${{ inputs.sources || '' }}
           STEP: ${{ inputs.step || 'true' }}
           PRESET: ${{ inputs.preset || 'standard' }}
         run: |

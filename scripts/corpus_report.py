@@ -169,7 +169,7 @@ def build_report(rows, plan, inputs=None):
         by_source[r["source"]].append(r)
     lines += ["## Per source", ""]
     headers = ["Source", "Files", "By type", "Converted", "Failed", MEMORY_LABEL,
-               "History full / partial / flattened", "Assemblies placed / total", "Biggest file"]
+               "History full / partial / flattened (geometry only)", "Assemblies placed / total", "Biggest file"]
     table_rows = []
     for source in sorted(by_source):
         rs = by_source[source]
@@ -182,7 +182,7 @@ def build_report(rows, plan, inputs=None):
         table_rows.append([
             source, len(rs), ", ".join(f"{n} {e}" for e, n in sorted(types.items())),
             c["converted"], c["failed"] + c["timeout"], c["needs_memory"],
-            f"{hist['full']} / {hist['partial']} / {hist['flattened']}",
+            f"{hist['full']} / {hist['partial']} / {hist['flattened']} ({hist['geometry']})",
             f"{placed} / {total}" if total else "-",
             f"{duration(biggest['wall_s'])}, {gb(max((r['peak_rss_kb'] or 0) for r in rs))} peak",
         ])
