@@ -152,7 +152,8 @@ transform, and each component as a product definition.
   part inside it, as a rigid group holds its members to its first, the inner part moves and the
   component keeps its own placement; a component holding a part already placed by an outer
   joint is never moved to meet that part, as that would move the part too. A component a joint
-  moves leaves the parts inside it that outer joints placed already where they are. Internal
+  moves leaves the parts inside it that outer joints placed already where they are, and carries the
+  parts the file poses inside it, whose poses are relative to it. Internal
   joints alone do not fix their holder in the assembly. A component the file stores at the pose it shows
   it in starts placed: its joints are checked there instead of moving it back to where it was
   inserted. This also preserves a child component named by a contained pose inside an inserted
