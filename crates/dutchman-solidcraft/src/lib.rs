@@ -329,7 +329,7 @@ impl SolidCraftWriter {
     /// SolidCraft CLI would find their edges, as writing would refuse them.
     fn plan_blends(&self, mapping: &mut history::Mapping) {
         if let Err(why) = verify::find_cli(&self.replay) {
-            history::prove_blends(mapping, |_, _| Err(why));
+            history::prove_blends(mapping, |_, _, _| Err(why));
         }
     }
 
@@ -343,7 +343,7 @@ impl SolidCraftWriter {
         step: &str,
     ) -> Result<(), Error> {
         let mut failure = None;
-        history::prove_blends(mapping, |history, after| {
+        history::prove_blends(mapping, |history, after, faces| {
             let cli = verify::usable_cli(&self.replay).map_err(|why| why.to_string())?;
             let design = match self.history_design(model, history, step, Live::History) {
                 Ok(design) => design,
@@ -353,7 +353,7 @@ impl SolidCraftWriter {
                     return Err(why);
                 }
             };
-            verify::replay_edges(&cli, self.timeout, &design, after)
+            verify::replay_edges(&cli, self.timeout, &design, after, faces)
         });
         match failure {
             Some(err) => Err(err),
@@ -1017,7 +1017,7 @@ pub struct MappedHistory {
 pub fn mapped_history(model: &Model, report: &mut Report) -> MappedHistory {
     let mut mapping = history::map(model, report, SolidCraftVersion::default());
     // Blends are proven only on SolidCraft's replay of the history before them.
-    history::prove_blends(&mut mapping, |_, _| {
+    history::prove_blends(&mut mapping, |_, _, _| {
         Err("only a SolidCraft design is replayed to find them".to_owned())
     });
     MappedHistory {

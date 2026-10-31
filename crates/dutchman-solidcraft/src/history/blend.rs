@@ -44,14 +44,17 @@ pub(crate) struct Pending {
     pub(crate) outcome: usize,
     /// Its source feature, as the report names it.
     pub(crate) subject: String,
-    edges: Vec<Input>,
+    pub(super) edges: Vec<Input>,
     /// A 45-degree chamfer, written as an equal-distance one.
-    angle_chamfer: bool,
+    pub(super) angle_chamfer: bool,
+    /// For an extrude of a face of the model as it was earlier, instead of a blend: the face
+    /// to find ([`super::face_profile`]); `edges` is then empty.
+    pub(super) face: Option<super::face_profile::Proof>,
 }
 
 /// One selected input edge, from its feature input topology.
 #[derive(Clone, Debug)]
-struct Input {
+pub(super) struct Input {
     /// The point at the middle of its carrier's parameter interval.
     point: V3,
     ends: Segment,
@@ -161,6 +164,7 @@ pub(super) fn map(
         subject: String::new(),
         edges: inputs,
         angle_chamfer,
+        face: None,
     });
     if weighted {
         report.push(

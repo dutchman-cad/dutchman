@@ -204,6 +204,54 @@ pub(crate) fn map(
     }))
 }
 
+/// A sketch made by the writer rather than read from the source: SolidCraft's feature, and the
+/// mapped sketch later features refer to, for `entities` (CADIR sketch entity rows, in the
+/// frame `origin`, `x`, `y`) on an explicit plane.
+pub(crate) fn synthesized(
+    id: u64,
+    name: &str,
+    frame: (V3, V3, V3),
+    entities: &[Value],
+) -> Result<(Value, Mapped), String> {
+    let (origin, x, y) = frame;
+    let normal = unit(cross(x, y)).ok_or("its plane's axes are parallel")?;
+    let mut builder = Builder::default();
+    let mut report = Report::default();
+    for entity in entities {
+        builder.entity(entity, &mut report)?;
+    }
+    let mapped = Mapped {
+        feature: id,
+        normal,
+        origin,
+        x_dir: x,
+        y_dir: y,
+        points: builder
+            .points
+            .iter()
+            .zip(&builder.positions)
+            .map(|(point, at)| {
+                let id = point.get("id").and_then(Value::as_str).unwrap_or("");
+                (id.to_owned(), *at)
+            })
+            .collect(),
+        shapes: builder.shapes.clone(),
+    };
+    let feature = json!({
+        "id": id,
+        "name": name,
+        "type": "sketch",
+        "suppressed": false,
+        "plane": {"type": "custom", "plane": {"origin": origin, "x_dir": x, "y_dir": y}},
+        "sketch": {
+            "points": builder.points,
+            "curves": builder.curves,
+            "constraints": [],
+        },
+    });
+    Ok((feature, mapped))
+}
+
 /// A sketch plane in model space: its origin and unit axes.
 struct Frame {
     normal: V3,

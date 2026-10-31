@@ -9698,3 +9698,123 @@ fn sketch_choice_keeps_required_profiles_but_not_reference_sketches() {
         );
     }
 }
+
+/// The example cube (10 mm, built by the base extrude) with one more extrude that takes its
+/// top (`up`) or bottom face as it was before that extrude: a historical face, known only by
+/// the geometry of the edges around it. `change` edits the extrude's definition.
+fn face_extrude(up: bool, change: impl FnOnce(&mut Value)) -> Model {
+    let model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let z = if up { 10.0 } else { 0.0 };
+    let point = |x: f64, y: f64| json!({"x": x, "y": y, "z": z});
+    let state = "test:face:feature-input#3";
+    let face = "test:face:historical-face#target";
+    let side = |k: usize| format!("test:face:historical-face#side{k}");
+    let corners = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];
+    let geometry: Vec<Value> = (0..4)
+        .map(|k| {
+            let (a, b) = (corners[k], corners[(k + 1) % 4]);
+            let tangent = [(b.0 - a.0) / 10.0, (b.1 - a.1) / 10.0];
+            json!({
+                "edge": format!("test:face:historical-edge#{k}"),
+                "interior": point((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0),
+                "start": point(a.0, a.1), "end": point(b.0, b.1),
+                "tangent": {"x": tangent[0], "y": tangent[1], "z": 0.0},
+                "faces": [face, side(k)],
+            })
+        })
+        .collect();
+    let edges: Vec<String> = (0..4)
+        .map(|k| format!("test:face:historical-edge#{k}"))
+        .collect();
+    let mut faces: Vec<String> = (0..4).map(side).collect();
+    faces.push(face.to_owned());
+    wire["model"]["feature_input_topologies"] = json!([{
+        "id": state, "input_of": "f3d:model:feature#3", "edges": edges, "faces": faces,
+        "edge_geometry": geometry,
+    }]);
+    let mut definition = json!({
+        "definition": "extrude",
+        "profile": {"kind": "historical_faces", "value": {
+            "state": state, "faces": [face], "native": ["synthetic profile group"],
+        }},
+        "direction": {"kind": "profile_normal"},
+        "start": {"kind": "profile_plane"},
+        "extent": {"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": 5.0}}},
+        "op": "join",
+    });
+    change(&mut definition);
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "id": "f3d:model:feature#3", "ordinal": 2, "name": "Face extrude",
+            "suppressed": false, "dependencies": ["f3d:model:feature#2"], "definition": definition,
+        }));
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    }
+}
+
+#[test]
+fn a_historical_face_extrude_without_a_replay_waits_for_one() {
+    let (_, report) = convert(
+        &face_extrude(true, |_| {}),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("replay of the history before it"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn a_historical_face_without_edge_geometry_is_refused_for_that_reason() {
+    let model = face_extrude(true, |_| {});
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["feature_input_topologies"][0]["edge_geometry"] = json!([]);
+    let model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    };
+    let (_, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).contains("carries no edge geometry for the selected face"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn solidcraft_extrudes_a_historical_face_along_its_outward_normal() {
+    let Some(cli) = solidcraft() else { return };
+    let join = |model: Model| {
+        let (bytes, report) = written_with(&model, &replaying(&cli));
+        assert!(
+            history_line(&report).starts_with("3 of 3 features mapped"),
+            "{}",
+            history_line(&report)
+        );
+        volumes(&cli, &bytes)
+    };
+    // Out of the top, and out of the bottom: the sketch is on the outward side either way.
+    for up in [true, false] {
+        let volume = join(face_extrude(up, |_| {}));
+        assert_eq!(volume.len(), 1);
+        assert!((volume[0] - 1500.0).abs() < 1e-3, "{up}: {volume:?}");
+    }
+    // Against the profile normal, a cut goes into the cube.
+    for up in [true, false] {
+        let volume = join(face_extrude(up, |definition| {
+            definition["op"] = json!("cut");
+            definition["direction"] = json!({"kind": "reversed_profile_normal"});
+            definition["extent"]["side"]["termination"]["length"] = json!(3.0);
+        }));
+        assert!((volume[0] - 700.0).abs() < 1e-3, "{up}: {volume:?}");
+    }
+}

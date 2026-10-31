@@ -963,6 +963,26 @@ pub(crate) struct ReplayedEdge {
     pub end: [f64; 3],
     pub mid: [f64; 3],
     pub length: f64,
+    /// SolidCraft's name for it: the names of the faces it joins, separated by `|`.
+    pub name: String,
+}
+
+/// One face of a body SolidCraft replayed, as `model.faces` gives it. `normal` is the
+/// outward unit normal of a planar face, `None` for another surface.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ReplayedFace {
+    pub name: String,
+    pub area: f64,
+    pub normal: Option<[f64; 3]>,
+    pub point: [f64; 3],
+}
+
+/// What SolidCraft rebuilt at one point of a replayed timeline: the bodies with their edges,
+/// and when faces were asked for, each body's faces (in the order of the bodies).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Replay {
+    pub bodies: ReplayedBodies,
+    pub faces: Vec<Vec<ReplayedFace>>,
 }
 
 /// The bodies at one point of a replayed timeline, each by name with its edges.
@@ -982,7 +1002,8 @@ pub(crate) fn replay_edges(
     timeout: Duration,
     design: &[u8],
     after: &[u64],
-) -> Result<Vec<Result<ReplayedBodies, String>>, String> {
+    faces: bool,
+) -> Result<Vec<Result<Replay, String>>, String> {
     let deadline = Instant::now() + timeout;
     let dir = tempfile::tempdir().map_err(|err| format!("no scratch folder: {err}"))?;
     let input = dir.path().join("history.solidcraft");
@@ -1000,15 +1021,23 @@ pub(crate) fn replay_edges(
         let inspect = results
             .get(k.saturating_mul(2).saturating_add(1))
             .ok_or_else(|| format!("{CLI_NAME} result is missing a step"))?;
-        steps.push(step_bodies(inspect));
+        steps.push(step_bodies(inspect).map(|bodies| Replay {
+            bodies,
+            faces: Vec::new(),
+        }));
     }
     let mut script = Vec::new();
     for (id, step) in after.iter().zip(&steps) {
         script.push(roll(*id));
-        if let Ok(bodies) = step {
-            for (name, _) in bodies {
+        if let Ok(replay) = step {
+            for (name, _) in &replay.bodies {
                 script
                     .push(serde_json::json!({"command": "model.edges", "params": {"body": name}}));
+                if faces {
+                    script.push(
+                        serde_json::json!({"command": "model.faces", "params": {"body": name}}),
+                    );
+                }
             }
         }
     }
@@ -1016,9 +1045,9 @@ pub(crate) fn replay_edges(
     let mut at = 0usize;
     for step in &mut steps {
         at = at.saturating_add(1);
-        let Ok(bodies) = step else { continue };
+        let Ok(replay) = step else { continue };
         let mut total = 0usize;
-        for (name, edges) in bodies.iter_mut() {
+        for (name, edges) in replay.bodies.iter_mut() {
             let result = results
                 .get(at)
                 .ok_or_else(|| format!("{CLI_NAME} result is missing a step"))?;
@@ -1039,6 +1068,24 @@ pub(crate) fn replay_edges(
                 ));
             }
             *edges = rows.iter().map(replayed_edge).collect::<Result<_, _>>()?;
+            if faces {
+                let result = results
+                    .get(at)
+                    .ok_or_else(|| format!("{CLI_NAME} result is missing a step"))?;
+                at = at.saturating_add(1);
+                let rows = result
+                    .get("faces")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| format!("{CLI_NAME} result has no faces for {name:?}"))?;
+                if rows.len() > REPLAY_EDGES {
+                    return Err(format!(
+                        "the replayed bodies have more than {REPLAY_EDGES} faces"
+                    ));
+                }
+                replay
+                    .faces
+                    .push(rows.iter().map(replayed_face).collect::<Result<_, _>>()?);
+            }
         }
     }
     Ok(steps)
@@ -1083,6 +1130,32 @@ fn replayed_edge(row: &Value) -> Result<ReplayedEdge, String> {
     })
 }
 
+fn replayed_face(row: &Value) -> Result<ReplayedFace, String> {
+    let point = |key: &str| -> Option<[f64; 3]> {
+        let values = row.get(key)?.as_array()?;
+        if values.len() != 3 {
+            return None;
+        }
+        let mut out = [0.0; 3];
+        for (slot, value) in out.iter_mut().zip(values) {
+            *slot = value.as_f64().filter(|v| v.is_finite())?;
+        }
+        Some(out)
+    };
+    (|| {
+        Some(ReplayedFace {
+            name: row.get("name")?.as_str()?.to_owned(),
+            area: row
+                .get("area")
+                .and_then(Value::as_f64)
+                .filter(|v| v.is_finite() && *v >= 0.0)?,
+            normal: point("plane_normal"),
+            point: point("point")?,
+        })
+    })()
+    .ok_or_else(|| format!("{CLI_NAME} result has a face without its name, area or point"))
+}
+
 fn edge_fields(row: &Value) -> Option<ReplayedEdge> {
     let point = |key: &str| -> Option<[f64; 3]> {
         let values = row.get(key)?.as_array()?;
@@ -1103,6 +1176,11 @@ fn edge_fields(row: &Value) -> Option<ReplayedEdge> {
             .get("length")
             .and_then(Value::as_f64)
             .filter(|v| v.is_finite() && *v >= 0.0)?,
+        name: row
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
     })
 }
 
