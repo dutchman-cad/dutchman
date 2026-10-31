@@ -27,12 +27,12 @@ cadmpeg-codec-f3d = { git = "https://github.com/raykholo/cadmpeg", rev = "9bc00b
 cadmpeg-core = { git = "https://github.com/raykholo/cadmpeg", rev = "9bc00b92725db6398f1013698a752a56ce0d9c95" }
 cadmpeg-ir = { git = "https://github.com/raykholo/cadmpeg", rev = "9bc00b92725db6398f1013698a752a56ce0d9c95" }
 cadmpeg-registry = { git = "https://github.com/raykholo/cadmpeg", rev = "9bc00b92725db6398f1013698a752a56ce0d9c95", default-features = false, features = ["fcstd", "f3d", "inventor", "sldprt", "catia", "creo", "nx", "rhino", "step", "iges", "sat", "pvz"] }
-getrandom = "0.3"
+getrandom = "0.4"
 serde_json = "1"
 sha2 = "0.11"
 roxmltree = "0.21"
 thiserror = "2"
-sysinfo = { version = "0.37.2", default-features = false, features = ["system"] }
+sysinfo = { version = "0.39.6", default-features = false, features = ["system"] }
 tempfile = "3"
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
