@@ -17,10 +17,6 @@ on:
     - cron: "17 5 * * 1"
   release:
     types: [published]
-  # TEMPORARY: verify this workflow on the pull request; removed before merge.
-  pull_request:
-    paths:
-      - .github/workflows/first-run.yml
 
 permissions:
   contents: read
