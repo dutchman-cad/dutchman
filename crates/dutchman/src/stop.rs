@@ -9,8 +9,8 @@
 use dutchman_core::{parts, Model};
 
 /// What mapping and writing a decoded model needs on top of what it holds, as a share of it.
-/// Measured on large Fusion assemblies, where the extra work is more than the model itself;
-/// the lower figure here keeps a conversion that would only just fit from being stopped.
+/// An estimate, set low so a conversion that would only just fit is not stopped; calibrate it
+/// against peak memory on large assemblies.
 pub const EXTRA_SHARE: f64 = 0.75;
 
 /// A design holding less than this is never stopped: its extra work cannot matter.
