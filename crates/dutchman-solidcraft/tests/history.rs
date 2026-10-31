@@ -6186,7 +6186,7 @@ fn a_base_feature_holding_every_body_writes_no_second_copy() {
     let archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
     let blobs = archive
         .file_names()
-        .filter(|name| name.starts_with("blobs/"));
+        .filter(|name| name.as_ref().is_ok_and(|n| n.starts_with("blobs/")));
     assert_eq!(blobs.count(), 1, "only the base feature's STEP");
 }
 
