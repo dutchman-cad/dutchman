@@ -786,7 +786,7 @@ fn convert_says_what_it_wrote_and_cuts_long_notes_short() {
     );
     assert!(!stderr.contains("Agreement is consistency"), "{stderr}");
     assert!(
-        stderr.ends_with("--verbose prints them in full)\n"),
+        stderr.ends_with("--verbose prints every note in full)\n"),
         "{stderr}"
     );
 

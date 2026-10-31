@@ -107,7 +107,7 @@ macOS remembers this; Dutchman Convert opens normally from then on.
 
 Or, in Terminal, once:
 
-    xattr -dr com.apple.quarantine "/Applications/Dutchman Convert.app"
+    xattr -dr com.apple.quarantine "/Applications/Dutchman Convert.app" 2>/dev/null || true
 
 Command line
 ------------
@@ -119,7 +119,7 @@ from Terminal:
 NOTE
 ref=main
 [[ $label != nightly ]] && ref="v$label"
-printf '\nGetting started: https://github.com/dutchman-cad/dutchman/blob/%s/docs/guide.md\n' "$ref" \
+printf '\nFirst opening: https://github.com/dutchman-cad/dutchman/blob/%s/docs/install.md#opening-the-app-the-first-time\nCommand line: https://github.com/dutchman-cad/dutchman/blob/%s/docs/command-line.md\n' "$ref" "$ref" \
   >> "$stage/Read me first.txt"
 
 # Finder owns its view metadata. Configure a disposable writable image so a missing

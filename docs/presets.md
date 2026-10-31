@@ -52,8 +52,8 @@ unseen designs. Unmeasured formats retain their ±100% memory heuristic.
 Time has its own band: multipart Fusion is ±20%; other time bands are uncalibrated.
 Timing uses fractional `seconds_exact`; `seconds` remains its whole-second ceiling for
 compatibility. Fixed startup is separate from content work: Windows has different fast,
-history and verification startup terms; macOS has its own process floor and allows the
-ten-second version-probe timeout for history without an explicit target version. The estimator
+history and verification startup terms; macOS has its own process floor. A possible
+version-probe timeout is not included as normal conversion work. The estimator
 never runs SolidCraft to measure a probe. History may probe its version even with
 `--no-verify`. Old Mac probe durations were not recorded, Windows startup varies between runs, and
 FreeCAD assembly worker startup is poorly predicted by archive bytes, so these four formats keep uncalibrated time bands. Verification
@@ -69,6 +69,10 @@ count and free-memory worker policy. A serial component remains. Before native d
 the embedded design count and the converter's 256 MiB minimum worker budget are proxies;
 actual body counts can reduce conversion workers further. Single-design files keep their
 existing time model. The worker adjustment changes time estimates only.
+
+`threads.used` is the largest bounded Dutchman part-worker limit selected across conversion
+stages and embedded members. It excludes threads inside SolidCraft child processes and does
+not measure simultaneously busy CPU cores. Failed worker tasks can retry serially.
 
 Available memory comes from Linux `MemAvailable` bounded by remaining cgroup v2
 headroom (including ancestor limits), or safe system APIs through sysinfo on macOS and

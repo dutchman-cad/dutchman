@@ -245,9 +245,8 @@ struct Coefficients {
 }
 
 // Fixed elapsed startup is independent of content/history scaling. Windows history
-// includes the memory guard and CLI discovery. The older Mac binary exhibits both
-// immediate and ten-second CLI probes. Allow the ten-second version-probe timeout
-// until an explicit target version bypasses discovery; this remains a rough estimate.
+// includes the memory guard and CLI discovery. A possible CLI-probe timeout is not
+// normal startup work; only its ordinary startup cost belongs in the estimate.
 struct StartupTime {
     windows_shape: f64,
     windows_history: f64,
@@ -296,7 +295,7 @@ const COEFFICIENTS: &[Coefficients] = &[
             windows_shape: 0.160,
             windows_history: 1.535,
             mac_shape: 0.020,
-            mac_history: 10.040,
+            mac_history: 0.040,
             windows_verify_shape: 0.330,
             windows_verify_history: 1.690,
             content_rates: None,
@@ -335,7 +334,7 @@ const COEFFICIENTS: &[Coefficients] = &[
             windows_shape: 0.162,
             windows_history: 1.550,
             mac_shape: 0.010,
-            mac_history: 10.040,
+            mac_history: 0.040,
             windows_verify_shape: 0.335,
             windows_verify_history: 1.760,
             content_rates: None,
@@ -371,7 +370,7 @@ const COEFFICIENTS: &[Coefficients] = &[
             windows_shape: 0.170,
             windows_history: 1.668,
             mac_shape: 0.010,
-            mac_history: 10.040,
+            mac_history: 0.040,
             windows_verify_shape: 0.340,
             windows_verify_history: 1.660,
             content_rates: None,
@@ -407,7 +406,7 @@ const COEFFICIENTS: &[Coefficients] = &[
             windows_shape: 0.183,
             windows_history: 1.600,
             mac_shape: 0.025,
-            mac_history: 10.050,
+            mac_history: 0.050,
             windows_verify_shape: 0.350,
             windows_verify_history: 1.900,
             content_rates: Some((0.2, 0.01)),
@@ -563,24 +562,7 @@ pub fn estimate_with_options(
     let startup = Format::from_path(input)
         .and_then(|format| COEFFICIENTS.iter().find(|c| c.format == format))
         .and_then(|c| c.startup.as_ref());
-    if cfg!(target_os = "macos")
-        && startup.is_some()
-        && options.solidcraft_version.is_some()
-        && choices.history
-    {
-        result.seconds_exact = (result.seconds_exact - 10.0).max(0.001);
-        result.seconds = result.seconds_exact.ceil() as u64;
-    }
     if !options.no_verify {
-        if cfg!(target_os = "macos")
-            && startup.is_some()
-            && !choices.history
-            && options.solidcraft_version.is_none()
-        {
-            // Verification can discover a version even when history is not requested.
-            result.seconds_exact += 10.0;
-            result.seconds = result.seconds_exact.ceil() as u64;
-        }
         if cfg!(target_os = "windows") {
             if let Some(startup) = startup {
                 let (without, with) = if choices.history {
@@ -684,8 +666,8 @@ fn estimate_using_workers(
         };
         fixed + content_seconds
     } else {
-        // Preserve the already-calibrated multipart Fusion centre and worker model.
-        (coefficients.base_seconds * seconds_factor + content_seconds).ceil()
+        // Preserve fractional seconds; only the legacy integer field rounds up.
+        coefficients.base_seconds * seconds_factor + content_seconds
     };
     Some(Estimate {
         peak_bytes: (coefficients.base_bytes as f64
@@ -1299,5 +1281,56 @@ mod tests {
             estimate_text_with_bands(small),
             "under 0.1 GB, under a minute"
         );
+    }
+}
+
+#[cfg(test)]
+mod startup_regression_tests {
+    use super::*;
+
+    #[test]
+    fn tiny_mac_conversions_do_not_charge_a_probe_timeout() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tiny.f3d");
+        let mut archive = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+        archive
+            .start_file(
+                "Design/BulkStream.dat",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        archive.write_all(&[0; 16]).unwrap();
+        archive.finish().unwrap();
+        for preset in [Preset::Fast, Preset::Full] {
+            for no_verify in [false, true] {
+                let options = crate::ConvertOptions {
+                    preset,
+                    no_verify,
+                    ..Default::default()
+                };
+                let estimated = estimate_with_options(&path, &options.choices(), &options).unwrap();
+                if cfg!(target_os = "macos") {
+                    assert!(estimated.seconds_exact > 0.0 && estimated.seconds_exact < 1.0);
+                }
+                assert!(estimate_text(estimated).ends_with("under a minute"));
+            }
+        }
+    }
+
+    #[test]
+    fn multipart_exact_time_retains_subsecond_content_work() {
+        use std::io::Write;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tiny.f3z");
+        let mut archive = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+        archive
+            .start_file("synthetic", zip::write::SimpleFileOptions::default())
+            .unwrap();
+        archive.write_all(&[0; 16]).unwrap();
+        archive.finish().unwrap();
+        let estimated = estimate(&path, &Choices::of(Preset::Full)).unwrap();
+        assert!(estimated.seconds_exact > 0.0 && estimated.seconds_exact < 1.0);
+        assert_eq!(estimated.seconds, 1);
     }
 }

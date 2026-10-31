@@ -70,13 +70,16 @@ estimate fits. The decision is fixed before decoding. The dry run does
 not promise that decoding or conversion will succeed. `no_memory_check` permits a run
 without changing the physical-memory comparison in `fits`.
 
-
 Memory refusals from `convert` or `convert_all` carry the matching schema, `ok: false`,
 the offending `input`, `error`, `estimate`, and `choices`. A batch refuses before writing
 its designs when a pre-read exceeds the budget; it also includes that file's refusal in
 `results` with `converted: 0` and `failed: 1`.
 
 ## `dutchman.convert/1`
+
+Repeated stderr notes of the same kind are grouped with a count. `--verbose`, `--log`,
+and JSON retain each individual loss. Fusion’s material warning can also appear for a
+default material: the decoded model does not establish that no source appearance was lost.
 
 ```json
 {
@@ -111,8 +114,8 @@ unseen designs. Unmeasured formats retain their ±100% memory heuristic.
 Time has its own band: multipart Fusion is ±20%; other time bands are uncalibrated.
 Timing uses fractional `seconds_exact`; `seconds` remains its whole-second ceiling for
 compatibility. Fixed startup is separate from content work: Windows has different fast,
-history and verification startup terms; macOS has its own process floor and allows the
-ten-second version-probe timeout for history without an explicit target version. The estimator
+history and verification startup terms; macOS has its own process floor. A possible
+version-probe timeout is not included as normal conversion work. The estimator
 never runs SolidCraft to measure a probe. History may probe its version even with
 `--no-verify`. Old Mac probe durations were not recorded, Windows startup varies between runs, and
 FreeCAD assembly worker startup is poorly predicted by archive bytes, so these four formats keep uncalibrated time bands. Verification
@@ -129,9 +132,12 @@ the embedded design count and the converter's 256 MiB minimum worker budget are 
 actual body counts can reduce conversion workers further. Single-design files keep their
 existing time model. The worker adjustment changes time estimates only.
 
+`threads.used` is the largest bounded Dutchman part-worker limit selected across conversion
+stages and embedded members. It excludes threads inside SolidCraft child processes and does
+not measure simultaneously busy CPU cores. Failed worker tasks can retry serially.
+
 Default SolidCraft paths use `.sc`; targets before 0.25.1 use `.solidcraft`.
 Explicit output paths keep their given extension. The container format stays `solidcraft/23`.
-
 
 | Field | Meaning |
 |---|---|

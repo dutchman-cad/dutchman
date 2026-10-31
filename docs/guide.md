@@ -50,7 +50,7 @@ dutchman: Info: step/design.parametric-records-omitted: 1 parametric/design reco
 dutchman: Info: step/native.passthrough-record-omitted: 2 uninterpreted passthrough record(s) were not represented in STEP
 dutchman: Info: step/native.source-record-omitted: 1 source-native record(s) were not represented in STEP
 dutchman: Info: history: flattened: the design carries no feature history
-dutchman: (notes are cut to their first sentence; --verbose prints them in full)
+dutchman: (repeated notes are grouped and long notes shortened; --verbose prints every note in full)
 Want to help Dutchman read SolidWorks better? If you have SolidWorks, you can make a few small test files from short recipes: https://dutchman-cad.github.io/fixtures/ or type /volunteer in our Discord (https://discord.gg/yTcseBEdeu).
 ```
 
@@ -80,7 +80,7 @@ dutchman convert --json generated_unit_cube.f3d cube.sc
 {"history":{"features":[],"mapped":0,"total":0},
  "input":{"format":"fusion_archive","format_name":"Fusion archive (.f3d)","path":"generated_unit_cube.f3d"},
  "losses":[
-  {"code":"f3d/material.not-transferred","level":"Degraded","message":"Materials/appearances (.protein assets, ACT/design assignments) were not transferred.","subject":"f3d/material.not-transferred"},
+  {"code":"f3d/material.not-transferred","level":"Degraded","message":"Materials and appearances were not carried over.","subject":"f3d/material.not-transferred"},
   {"code":"step/attribute.source-record-not-written","level":"Info","message":"7 source attribute record(s) were not written to STEP","subject":"step/attribute.source-record-not-written"},
   {"code":"step/native.source-record-omitted","level":"Info","message":"45 source-native record(s) were not represented in STEP","subject":"step/native.source-record-omitted"},
   {"code":null,"level":"Info","message":"flattened: the design carries no feature history","subject":"history"}],
@@ -140,6 +140,10 @@ again, including parameter links on joints. A `Degraded: history` loss says thes
 and gives the original check failure. Duplicate parameter names therefore cannot block this
 retry; geometry checks still apply.
 
+Repeated stderr notes of the same kind are grouped with a count. `--verbose`, `--log`,
+and JSON retain each individual loss. Fusion’s material warning can also appear for a
+default material: the decoded model does not establish that no source appearance was lost.
+
 Lines from the examples above, in plain words:
 
 - `Info: history: flattened: the design carries no feature history`: the file has no
@@ -147,8 +151,9 @@ Lines from the examples above, in plain words:
 - `Info: step/native.source-record-omitted: 45 source-native record(s) were not represented
   in STEP`: internal records of the native file that have no place in the converted geometry.
   The shape is not affected.
-- `Degraded: f3d/material.not-transferred: Materials/appearances … were not transferred.`:
-  the shape converted, but the materials did not. Set them again in SolidCraft.
+- `Degraded: f3d/material.not-transferred: Materials and appearances were not carried over.`:
+  the decoder could not confirm that materials carried over. Set any missing materials
+  again in SolidCraft.
 - `Degraded: f3d/sketch.dimension-native: 1 sketch dimension(s) retain native operands …`:
   a sketch dimension could not be tied to the sketch geometry it measures. The sketch is at
   the right size, but that dimension may not drive it.

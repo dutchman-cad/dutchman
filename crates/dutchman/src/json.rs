@@ -93,6 +93,59 @@ pub fn loss_line(loss: &Value, verbose: bool) -> (String, bool) {
     )
 }
 
+/// Compact repeated losses for stderr while retaining every entry in JSON and logs.
+/// Appearance binding IDs identify individual faces, not different kinds of loss.
+pub fn loss_lines(losses: &[Value], verbose: bool) -> Vec<(String, bool)> {
+    if verbose {
+        return losses.iter().map(|loss| loss_line(loss, true)).collect();
+    }
+    let mut groups: BTreeMap<(String, String, String), usize> = BTreeMap::new();
+    let mut rows: Vec<(&Value, String, usize)> = Vec::new();
+    for loss in losses {
+        let field = |name| loss.get(name).and_then(Value::as_str).unwrap_or("");
+        let message = field("message");
+        let normalized = if field("subject").rsplit(": ").next() == Some("appearance") {
+            message
+                .strip_prefix("Appearance binding ")
+                .and_then(|binding| binding.split_once(" is left out: "))
+                .map(|(_, reason)| format!("appearance bindings left out: {reason}"))
+                .unwrap_or_else(|| message.to_owned())
+        } else {
+            message.to_owned()
+        };
+        let key = (
+            field("level").to_owned(),
+            field("subject").to_owned(),
+            normalized.clone(),
+        );
+        if let Some(row) = groups.get(&key).and_then(|index| rows.get_mut(*index)) {
+            row.2 += 1;
+        } else {
+            groups.insert(key, rows.len());
+            rows.push((loss, normalized, 1));
+        }
+    }
+    rows.into_iter()
+        .map(|(loss, message, count)| {
+            if count == 1 {
+                loss_line(loss, false)
+            } else {
+                let mut summary = loss.clone();
+                if let Some(fields) = summary.as_object_mut() {
+                    let counted = if message.starts_with("appearance bindings left out: ") {
+                        format!("{count} {message}")
+                    } else {
+                        format!("{count} notes: {message}")
+                    };
+                    fields.insert("message".to_owned(), json!(counted));
+                }
+                let (line, _) = loss_line(&summary, false);
+                (line, true)
+            }
+        })
+        .collect()
+}
+
 /// The first sentence of `text`, marked with "…" when more followed; and whether it was cut.
 /// A sentence ends at ". " before a capital letter, so "e.g. so" does not end one.
 pub fn first_sentence(text: &str) -> (String, bool) {
@@ -273,7 +326,8 @@ pub fn full_log(report: &Value, line: &str) -> String {
 }
 
 /// What the text reports say once when they cut a note short.
-pub const CUT_NOTE: &str = "notes are cut to their first sentence; --verbose prints them in full";
+pub const CUT_NOTE: &str =
+    "repeated notes are grouped and long notes shortened; --verbose prints every note in full";
 
 /// A report of a run that stopped with `message`, at the input stage (the file, or how it
 /// was asked for).
@@ -1214,5 +1268,42 @@ mod tests {
             "1 component, 1 joint (1 slider)"
         );
         assert_eq!(assembly_line(&json!({"losses": []})), None);
+    }
+}
+
+#[cfg(test)]
+mod compact_loss_tests {
+    use super::*;
+
+    #[test]
+    fn face_losses_group_by_reason_and_keep_full_verbose_details() {
+        let losses = ["face#1", "face#2", "face#3"].map(|id| json!({
+            "level": "Dropped", "subject": "part.f3d: appearance",
+            "message": format!("Appearance binding {id} is left out: its target has no written body name or resolved planar interior point")
+        }));
+        let compact = loss_lines(&losses, false);
+        assert_eq!(compact.len(), 1);
+        assert!(compact[0].0.contains("3 appearance bindings left out"));
+        assert!(compact[0].1);
+        let verbose = loss_lines(&losses, true);
+        assert_eq!(verbose.len(), 3);
+        for (line, id) in verbose.iter().zip(["face#1", "face#2", "face#3"]) {
+            assert!(line.0.contains(id));
+        }
+        let mut different = losses.to_vec();
+        different.push(json!({"level":"Dropped", "subject":"part.f3d: appearance", "message":"Appearance binding face#4 is left out: its component has no written geometry"}));
+        assert_eq!(loss_lines(&different, false).len(), 2);
+        assert_eq!(
+            loss_lines(&losses[..1], false)[0],
+            loss_line(&losses[0], false)
+        );
+        let repeated = json!({"level":"Info", "subject":"history", "message":"No feature history was decoded."});
+        let mut notes = vec![repeated.clone(), repeated.clone()];
+        assert_eq!(loss_lines(&notes, false).len(), 1);
+        assert!(loss_lines(&notes, false)[0].0.contains("2 notes:"));
+        notes.push(json!({"level":"Dropped", "subject":"history", "message":"No feature history was decoded."}));
+        notes.push(json!({"level":"Info", "subject":"other.f3d: history", "message":"No feature history was decoded."}));
+        assert_eq!(loss_lines(&notes, false).len(), 3);
+        assert_eq!(notes[0], repeated);
     }
 }

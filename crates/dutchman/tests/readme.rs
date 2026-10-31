@@ -57,3 +57,25 @@ fn the_readmes_format_table_matches_the_command() {
         "Update README's formats table: dutchman formats --markdown"
     );
 }
+
+#[test]
+fn macos_installation_has_complete_archive_steps_and_current_dmg_links() {
+    let install = include_str!("../../../docs/install.md");
+    for step in [
+        "releases/latest/download",
+        "curl -fLO \"$base/dutchman-macos-universal.tar.gz\"",
+        "curl -fLO \"$base/dutchman-macos-universal.tar.gz.sha256\"",
+        "shasum -a 256 -c dutchman-macos-universal.tar.gz.sha256",
+        "tar xzf dutchman-macos-universal.tar.gz",
+        "install -m 755 dutchman dutchman-mcp dutchman-gui",
+        "xattr -dr com.apple.quarantine . 2>/dev/null || true",
+        "dutchman --version",
+    ] {
+        assert!(install.contains(step), "missing macOS step: {step}");
+    }
+    let dmg = include_str!("../../../scripts/macos-dmg.sh");
+    assert!(dmg.contains("docs/install.md#opening-the-app-the-first-time"));
+    assert!(dmg.contains("docs/command-line.md"));
+    assert!(!dmg.contains("docs/guide.md"));
+    assert!(dmg.contains("2>/dev/null || true"));
+}
