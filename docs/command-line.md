@@ -39,7 +39,7 @@ CAD extension selects conversion.
 | `--diagnostics`, `--diagnostics-default` | Write an anonymous diagnostic log while converting (see [Diagnostic logs](troubleshooting.md#diagnostic-logs-for-unfinished-runs)). |
 | `--json` | One final JSON report on stdout, with progress JSON lines on stderr. |
 | `--quiet` | Hide conversion progress and the volunteer invitation. |
-| `--verbose` | Print every loss, each note in full. Without it, a file with more than 12 losses is summarised by component (below), and long notes are cut to their first sentence. The JSON report always has them all in full. |
+| `--verbose` | Print every loss, each note in full. Without it, a file with more than 12 losses is summarised by component (below), repeated notes of the same kind are grouped with a count, and long notes are cut to their first sentence. The JSON report always has them all in full. |
 | `--log FILE` | Also write the whole text report, every loss in full, grouped by component, to `FILE`. |
 
 ## Look before you convert: inspect
@@ -106,7 +106,7 @@ dutchman convert-all --jobs 2 --out-dir converted project
 ```text
 Fusion .f3d: reads geometry
 converted  project/generated_unit_cube.f3d -> converted/generated_unit_cube.sc (geometry without history)
-           Degraded: f3d/material.not-transferred: Materials/appearances (.protein assets, ACT/design assignments) were not transferred.
+           Degraded: f3d/material.not-transferred: Materials and appearances were not carried over.
            Info: step/attribute.source-record-not-written: 7 source attribute record(s) were not written to STEP
            Info: step/native.source-record-omitted: 45 source-native record(s) were not represented in STEP
            Info: history: flattened: the design carries no feature history

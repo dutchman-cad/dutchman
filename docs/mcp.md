@@ -125,8 +125,8 @@ unseen designs. Unmeasured formats retain their ±100% memory heuristic.
 Time has its own band: multipart Fusion is ±20%; other time bands are uncalibrated.
 Timing uses fractional `seconds_exact`; `seconds` remains its whole-second ceiling for
 compatibility. Fixed startup is separate from content work: Windows has different fast,
-history and verification startup terms; macOS has its own process floor and allows the
-ten-second version-probe timeout for history without an explicit target version. The estimator
+history and verification startup terms; macOS has its own process floor. A possible
+version-probe timeout is not included as normal conversion work. The estimator
 never runs SolidCraft to measure a probe. History may probe its version even with
 `--no-verify`. Old Mac probe durations were not recorded, Windows startup varies between runs, and
 FreeCAD assembly worker startup is poorly predicted by archive bytes, so these four formats keep uncalibrated time bands. Verification
@@ -143,6 +143,9 @@ the embedded design count and the converter's 256 MiB minimum worker budget are 
 actual body counts can reduce conversion workers further. Single-design files keep their
 existing time model. The worker adjustment changes time estimates only.
 
+`threads.used` is the largest bounded Dutchman part-worker limit selected across conversion
+stages and embedded members. It excludes threads inside SolidCraft child processes and does
+not measure simultaneously busy CPU cores. Failed worker tasks can retry serially.
 
 ## Set up a client
 
@@ -206,6 +209,10 @@ including `.exe`). `SOLIDCRAFT_CLI` is optional: without it, Dutchman looks on t
 provides a usable CLI.
 
 ## Tools
+
+Repeated stderr notes of the same kind are grouped with a count. `--verbose`, `--log`,
+and JSON retain each individual loss. Fusion’s material warning can also appear for a
+default material: the decoded model does not establish that no source appearance was lost.
 
 `formats` lists all recognised formats, their status `words`,
 and what Dutchman converts. Inputs without geometry support or a codec in this build
@@ -547,7 +554,6 @@ For self-hosted browser conversions, [Dutchman Web](web.md#settings) documents t
 zip budget, concurrent upload and saved-data limits, private data folder, and allowed browser
 origins. Uploads may be refused with 403 (origin check) or 503 (capacity); the CLI and MCP
 reports are unchanged.
-
 
 FreeCAD TechDraw drawing output is available from the CLI:
 `dutchman convert part.FCStd --to dxf [--page NAME]`. It writes one

@@ -94,8 +94,8 @@ unseen designs. Unmeasured formats retain their ±100% memory heuristic.
 Time has its own band: multipart Fusion is ±20%; other time bands are uncalibrated.
 Timing uses fractional `seconds_exact`; `seconds` remains its whole-second ceiling for
 compatibility. Fixed startup is separate from content work: Windows has different fast,
-history and verification startup terms; macOS has its own process floor and allows the
-ten-second version-probe timeout for history without an explicit target version. The estimator
+history and verification startup terms; macOS has its own process floor. A possible
+version-probe timeout is not included as normal conversion work. The estimator
 never runs SolidCraft to measure a probe. History may probe its version even with
 `--no-verify`. Old Mac probe durations were not recorded, Windows startup varies between runs, and
 FreeCAD assembly worker startup is poorly predicted by archive bytes, so these four formats keep uncalibrated time bands. Verification
@@ -112,6 +112,10 @@ the embedded design count and the converter's 256 MiB minimum worker budget are 
 actual body counts can reduce conversion workers further. Single-design files keep their
 existing time model. The worker adjustment changes time estimates only.
 
+`threads.used` is the largest bounded Dutchman part-worker limit selected across conversion
+stages and embedded members. It excludes threads inside SolidCraft child processes and does
+not measure simultaneously busy CPU cores. Failed worker tasks can retry serially.
+
 Both converting tools refuse an over-budget run with a message naming the estimate,
 free memory, and lighter preset. Prefer that lighter preset. Only use
 `no_memory_check: true` when running despite the estimate is intended; it bypasses the
@@ -120,7 +124,6 @@ The CLI equivalents are `--preset`, `--no-history`, `--no-sketches`, `--no-joint
 `--no-memory-check`. CLI scripts should use `--yes` to forbid interactive preset
 switches; `--yes` and `--json` refuse over-budget runs with exit 2 rather than accepting
 extra memory use. Normal JSON reports include `estimate` and effective `choices`.
-
 
 ## Ground rules
 
@@ -306,13 +309,18 @@ Never remove or change the quarantine attribute.
 
 ## 5. Explain the loss report
 
+Repeated stderr notes of the same kind are grouped with a count. `--verbose`, `--log`,
+and JSON retain each individual loss. Fusion’s material warning can also appear for a
+default material: the decoded model does not establish that no source appearance was lost.
+
 The raw messages are technical. Group them by level and translate:
 
 - **Info**: no effect on the shape. Usually say nothing, or "a few internal records that
   SolidCraft doesn't use were left out."
 - **Degraded**: carried across in a weaker form. Name the thing affected:
-  `f3d/material.not-transferred` means "the shape converted, but its materials did not
-  (check the colours too); you can set them again in SolidCraft." A sketch dimension "retaining native
+  `f3d/material.not-transferred` says "Materials and appearances were not carried over."
+  Ask the user to check the colours and set any missing materials in SolidCraft; the IR
+  cannot rule out a default-only material. A sketch dimension "retaining native
   operands" means "the sketch is the right size, but that dimension may not drive it."
 - **Dropped**: left out. Always mention these, with the part or feature named.
 - History: say which feature stopped it, from `verification.reason` or the first `blocked`
@@ -468,7 +476,6 @@ Existing unrelated outputs are skipped. SHA-256 state in `.dutchman-watch.json` 
 retries of recorded content, including failures, after restart. `--json` is an NDJSON stream
 of `dutchman.watch-event/1`, not a batch report. Ctrl-C/SIGTERM allows running work a
 30-second grace period and saves state. This command has no MCP counterpart.
-
 
 FreeCAD TechDraw drawing output is available from the CLI:
 `dutchman convert part.FCStd --to dxf [--page NAME]`. It writes one

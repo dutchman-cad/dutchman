@@ -67,7 +67,7 @@ Open, which older macOS versions offered, no longer gets past the box.
 Or clear the download's quarantine flag once, in Terminal:
 
 ```sh
-xattr -dr com.apple.quarantine "/Applications/Dutchman Convert.app"
+xattr -dr com.apple.quarantine "/Applications/Dutchman Convert.app" 2>/dev/null || true
 ```
 
 The app is signed ad hoc, so macOS never calls it “damaged”. If it does, the download was
@@ -131,14 +131,34 @@ On Linux, launch the desktop app with `dutchman-gui` from a terminal. It needs a
 Wayland desktop session with working OpenGL. See [Troubleshooting](troubleshooting.md) if no
 window appears.
 
-On macOS, `shasum -a 256 -c` takes the place of `sha256sum -c`. The programs are not signed
-with a Developer ID, so macOS blocks each the first time, as it does
-[the app](#opening-the-app-the-first-time); allow it in System Settings › Privacy & Security,
-or clear the quarantine flag:
+On macOS, download the latest universal archive and its checksum, check it, and unpack it.
+All three programs run on Apple silicon and Intel:
 
 ```sh
-xattr -d com.apple.quarantine dutchman dutchman-mcp dutchman-gui
+base=https://github.com/dutchman-cad/dutchman/releases/latest/download
+curl -fLO "$base/dutchman-macos-universal.tar.gz"
+curl -fLO "$base/dutchman-macos-universal.tar.gz.sha256"
+shasum -a 256 -c dutchman-macos-universal.tar.gz.sha256
+tar xzf dutchman-macos-universal.tar.gz
 ```
+
+The archive unpacks to `dutchman-<version>-macos-universal/`. In a folder containing just
+this unpacked release, install its programs and run the command:
+
+```sh
+cd dutchman-*-macos-universal
+xattr -dr com.apple.quarantine . 2>/dev/null || true
+mkdir -p "$HOME/.local/bin"
+install -m 755 dutchman dutchman-mcp dutchman-gui "$HOME/.local/bin/"
+export PATH="$HOME/.local/bin:$PATH"
+dutchman --version
+dutchman --help
+```
+
+Add the `export` line to `~/.zshrc` to keep it for new terminals. Clearing quarantine is
+quiet and succeeds when there is no flag, including downloads made with curl. If macOS
+blocks a program, you can also allow it in System Settings › Privacy & Security, as for
+[the app](#opening-the-app-the-first-time).
 
 On Windows, in PowerShell, compare the hash with the one in the `.sha256` file, then unpack
 the archive and add its folder to your `PATH`:

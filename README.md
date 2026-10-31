@@ -63,6 +63,8 @@ dutchman inspect part.ipt                  # what would carry across, without wr
 dutchman convert-all project/ --out-dir converted/
 ```
 
+[Install the macOS command-line archive](docs/install.md#from-a-release-archive), including
+checksum verification and adding the programs to your PATH.
 [The command line](docs/command-line.md) covers every option.
 
 ## What converts

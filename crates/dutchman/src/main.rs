@@ -760,8 +760,7 @@ fn print_json(value: &Value) {
 /// to see the ones cut short in full.
 fn print_losses(losses: &[Value], verbose: bool) {
     let mut cut = false;
-    for loss in losses {
-        let (line, shortened) = json::loss_line(loss, verbose);
+    for (line, shortened) in json::loss_lines(losses, verbose) {
         cut |= shortened;
         eprintln!("dutchman: {line}");
     }

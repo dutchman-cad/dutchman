@@ -273,7 +273,7 @@ pub enum FeatureStatus {
 }
 
 impl Report {
-    /// Requested and actual maximum simultaneous part workers.
+    /// Requested and bounded maximum Dutchman part workers, excluding child-process threads.
     pub fn threads(&self) -> Option<(usize, usize)> {
         self.threads
     }
@@ -337,23 +337,39 @@ impl Report {
         self.losses.push(Loss {
             severity: note.severity.into(),
             subject: code.clone(),
-            code: Some(code),
-            detail: note.message.clone(),
+            code: Some(code.clone()),
+            detail: if code == "f3d/material.not-transferred" {
+                "Materials and appearances were not carried over.".to_owned()
+            } else {
+                note.message.clone()
+            },
             stage,
         });
     }
 
-    /// Records every loss of `other`, after this report's own.
-    pub fn append(&mut self, other: Report) {
-        if let Some((requested, used)) = other.threads {
+    // A child report can have a different local limit. Keep the conversion's request
+    // and the largest part-worker count observed in any child or earlier phase.
+    fn merge_threads(&mut self, other: Option<(usize, usize)>) {
+        if let Some((requested, used)) = other {
+            let (requested, used) = self
+                .threads
+                .map_or((requested, used), |(parent, previous)| {
+                    (parent, previous.max(used))
+                });
             self.set_threads(requested, used);
         }
+    }
+
+    /// Records every loss of `other`, after this report's own.
+    pub fn append(&mut self, other: Report) {
+        self.merge_threads(other.threads);
         self.losses.extend(other.losses);
         self.names.extend(other.names);
     }
 
     /// Records every loss of `other` under `prefix` (`part.ipt: …`), after this report's own.
     pub fn append_prefixed(&mut self, other: Report, prefix: &str) {
+        self.merge_threads(other.threads);
         self.losses
             .extend(other.losses.into_iter().map(|loss| Loss {
                 subject: format!("{prefix}: {}", loss.subject),
@@ -464,5 +480,54 @@ mod tests {
         report.push_at(Stage::Project, Severity::Info, "validation", "a finding");
         let upstream: Vec<_> = report.losses().iter().map(Loss::upstream).collect();
         assert_eq!(upstream, [None, Some("solidcraft"), Some("cadmpeg")]);
+    }
+}
+
+#[cfg(test)]
+mod worker_report_tests {
+    use super::Report;
+
+    #[test]
+    fn fusion_material_notes_use_plain_language_and_keep_the_code() {
+        use cadmpeg_ir::report::loss::{
+            LossKind, LossNamespace, LossNote, LossTaxonomy, NamespacedLossKind,
+        };
+        let kind = LossKind::Namespaced(NamespacedLossKind::new(
+            LossNamespace::new("f3d").unwrap(),
+            "material.not-transferred",
+            LossTaxonomy::MaterialNotTransferred,
+        ));
+        let note = LossNote::new(
+            kind,
+            "Materials/appearances (.protein assets, ACT/design assignments) were not transferred.",
+        );
+        let mut report = Report::default();
+        report.extend_from_cadmpeg([&note]);
+        assert_eq!(
+            report.losses()[0].detail,
+            "Materials and appearances were not carried over."
+        );
+        assert_eq!(
+            report.losses()[0].code.as_deref(),
+            Some("f3d/material.not-transferred")
+        );
+    }
+
+    #[test]
+    fn child_reports_keep_peak_workers_and_the_conversion_request() {
+        let mut report = Report::default();
+        report.set_threads(0, 4);
+        let mut child = Report::default();
+        child.set_threads(1, 1);
+        report.append(child);
+        assert_eq!(report.threads(), Some((0, 4)));
+        let mut child = Report::default();
+        child.set_threads(0, 6);
+        report.append_prefixed(child, "part.f3d");
+        report.set_threads(0, 1);
+        assert_eq!(report.threads(), Some((0, 6)));
+        let mut outer = Report::default();
+        outer.append_prefixed(report, "assembly.f3z");
+        assert_eq!(outer.threads(), Some((0, 6)));
     }
 }
