@@ -272,4 +272,5 @@ final shape.
 A writer that can never run the check (the SolidCraft importer plugin, which runs Dutchman
 in a sandbox with no `solidcraft-cli`) keeps a whole unchecked history the same way, in a
 hidden **Editable history (unverified)** component beside the visible original, with
-`mode: partial_history` and verification `unverified`.
+`mode: partial_history` and verification `unverified`. In an assembly each part with a mapped
+history is written that way, inside the part's own component.
