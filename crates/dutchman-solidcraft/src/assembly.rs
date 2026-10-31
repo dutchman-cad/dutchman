@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 /// many times can be reached many ways.
 const MAX_HIDDEN_PATHS: usize = 4096;
 
-use dutchman_core::placement::{compose, IDENTITY};
+use dutchman_core::placement::{compose, rigid, IDENTITY};
 use dutchman_core::{Assembly, Joint, Motion};
 use dutchman_core::{
     Check, Error, FeatureOutcome, FeatureStatus, Mode, Model, Outcome, PartHistory, Report,
@@ -96,6 +96,9 @@ pub(crate) fn write(
     assembly: &Assembly,
     report: &mut Report,
 ) -> Result<Vec<u8>, Error> {
+    let admitted = crate::placements::prepare(assembly, writer.joints, report)?;
+    let assembly = &admitted;
+    report.set_completeness(assembly.completeness());
     if writer.joints {
         joint_notes(assembly, report);
     } else {
@@ -702,6 +705,18 @@ impl Builder<'_> {
                     .get(index)
                     .unwrap_or(&placement.transform)
             };
+            let transform = match rigid(transform) {
+                Ok((rotation, false)) => rotation,
+                result => {
+                    let kind = result.err().unwrap_or("unresolved reflected placement");
+                    self.report.push_at(Stage::Write, Severity::Dropped, "placements", format!(
+                        "Occurrence index {index} ({}) is left out: {kind}; check its source placement and convert again",
+                        placement.name.as_deref().unwrap_or("unnamed")
+                    ));
+                    occurrences.push(None);
+                    continue;
+                }
+            };
             let Some(Some((component, name))) = components.get(placement.part).cloned() else {
                 occurrences.push(None);
                 continue;
@@ -719,9 +734,9 @@ impl Builder<'_> {
                 "component": component,
                 "parent": parent,
                 "grounded": false,
-                "transform": column_major(transform),
+                "transform": column_major(&transform),
             }));
-            self.placements.insert(id, (component, *transform));
+            self.placements.insert(id, (component, transform));
             if placement.hidden {
                 self.hidden.insert(id);
             }

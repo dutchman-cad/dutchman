@@ -97,6 +97,13 @@ transform, and each component as a product definition.
 - **When it does not,** the design converts as stored and the report says so (Degraded,
   `components`): the geometry is written once, so a placement whose geometry the file does
   not store separately is not shown.
+- **Mirrored placements** use a shared component named `<component> (mirrored)` with
+  reflected geometry and outward-facing solids. Ordinary copies retain the original
+  component and its history. Nested reflections compose, including pairs that cancel.
+  Mirrored definitions keep imported geometry only; the report notes any history left out.
+  Joints touching a mirrored component are left out with a note and the placed pose retained.
+  Tiny numeric drift in placements is corrected. Non-finite, scaled, or sheared placements
+  beyond tolerance are left out with a Dropped note naming the occurrence index and kind.
 - **Components inside components** become sub-assemblies: a component that holds others
   becomes a SolidCraft component with them beneath it, placed by occurrences inside it, and its
   own bodies as one more component at its origin. cadmpeg places the components a design's root

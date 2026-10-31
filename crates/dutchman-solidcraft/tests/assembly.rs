@@ -1988,3 +1988,276 @@ fn component_appearance_bindings_do_not_colour_an_unpainted_namesake() {
         report.losses()
     );
 }
+
+fn occurrence_rows(o: &Value) -> dutchman_core::placement::Placement3x4 {
+    std::array::from_fn(|r| std::array::from_fn(|c| o["transform"][c][r].as_f64().unwrap()))
+}
+
+fn assert_proper_occurrences(doc: &Value) {
+    for o in doc["occurrences"].as_array().unwrap() {
+        let t = occurrence_rows(o);
+        let (r, reflected) = dutchman_core::placement::rigid(&t).unwrap();
+        assert!(!reflected, "{o}");
+        for (a, b) in t.iter().flatten().zip(r.iter().flatten()) {
+            assert!((a - b).abs() < 1e-12, "{o}");
+        }
+    }
+}
+
+fn definition_points(bytes: &[u8], component: &Value) -> Vec<[f64; 3]> {
+    let doc = document(bytes);
+    let feature = doc["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["component"] == *component && f["type"] == "import" && f["suppressed"] == false)
+        .unwrap();
+    let mut zip = ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut step = Vec::new();
+    zip.by_name(feature["step_blob"].as_str().unwrap())
+        .unwrap()
+        .read_to_end(&mut step)
+        .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("definition.step");
+    std::fs::write(&path, step).unwrap();
+    let model = read(Format::Step, &path, &mut Report::default()).unwrap();
+    model
+        .ir
+        .model
+        .points
+        .iter()
+        .map(|p| {
+            let p = p.position().get();
+            [p.x, p.y, p.z]
+        })
+        .collect()
+}
+
+fn placed_points(points: &[[f64; 3]], t: &dutchman_core::placement::Placement3x4) -> Vec<[f64; 3]> {
+    let mut points: Vec<_> = points
+        .iter()
+        .map(|p| std::array::from_fn(|r| (0..3).map(|c| t[r][c] * p[c]).sum::<f64>() + t[r][3]))
+        .collect();
+    points.sort_by(|a, b| {
+        a.iter()
+            .zip(b)
+            .map(|(a, b)| a.total_cmp(b))
+            .find(|c| !c.is_eq())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    points
+}
+
+fn assert_same_points(a: &[[f64; 3]], b: &[[f64; 3]]) {
+    assert_eq!(a.len(), b.len());
+    for (a, b) in a.iter().flatten().zip(b.iter().flatten()) {
+        assert!((a - b).abs() < 1e-7, "{a} != {b}");
+    }
+}
+
+#[test]
+fn reflection_definitions_share_geometry_and_write_only_proper_occurrences() {
+    use dutchman_core::placement::{compose, IDENTITY, MIRROR_X};
+    let mut model = placed_twice();
+    let a = model.assembly.as_mut().unwrap();
+    let turn = [
+        [0.0, -1.0, 0.0, 30.0],
+        [1.0, 0.0, 0.0, 4.0],
+        [0.0, 0.0, 1.0, 2.0],
+    ];
+    a.placements[1].transform = compose(&turn, &MIRROR_X);
+    let mut third = a.placements[1].clone();
+    third.transform = MIRROR_X;
+    a.placements.push(third);
+    let source = a.placements[1].transform;
+    let (bytes, report) = written(&model);
+    let doc = document(&bytes);
+    assert_proper_occurrences(&doc);
+    assert_eq!(doc["components"].as_array().unwrap().len(), 2);
+    let occurrences = doc["occurrences"].as_array().unwrap();
+    assert_ne!(occurrences[0]["component"], occurrences[1]["component"]);
+    assert_eq!(occurrences[1]["component"], occurrences[2]["component"]);
+    assert_eq!(occurrence_rows(&occurrences[0]), IDENTITY);
+    let original = definition_points(&bytes, &occurrences[0]["component"]);
+    let mirrored = definition_points(&bytes, &occurrences[1]["component"]);
+    assert_same_points(
+        &placed_points(&original, &MIRROR_X),
+        &placed_points(&mirrored, &IDENTITY),
+    );
+    assert_same_points(
+        &placed_points(&original, &source),
+        &placed_points(&mirrored, &occurrence_rows(&occurrences[1])),
+    );
+    assert!(report.losses().iter().any(|n| n.severity == dutchman_core::Severity::Info && n.detail == "2 occurrence(s) placed by a reflection were written with a mirrored copy of their component"));
+    if let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) {
+        let bodies = evaluate(&cli, &bytes);
+        assert_eq!(bodies.len(), 3);
+        for body in &bodies {
+            let volume = body["volume_mm3"].as_f64().unwrap();
+            assert!((volume - 1000.0).abs() < 1e-6, "{body}");
+        }
+        // The turned mirror image of the cube [0,10]^3 spans x 20..30, y -6..4, z 2..12.
+        assert!(bodies.iter().any(|b| {
+            let corners = [&b["bbox"]["min"], &b["bbox"]["max"]];
+            [[20.0, -6.0, 2.0], [30.0, 4.0, 12.0]]
+                .iter()
+                .zip(corners)
+                .all(|(want, got)| {
+                    (0..3).all(|i| (got[i].as_f64().unwrap() - want[i]).abs() < 1e-6)
+                })
+        }));
+    }
+}
+
+#[test]
+fn reflection_nested_placements_compose_and_cancel() {
+    use dutchman_core::placement::{compose, IDENTITY, MIRROR_X};
+    let mut model = nested();
+    let assembly = model.assembly.as_mut().unwrap();
+    assembly.placements[1].transform = MIRROR_X;
+    let inner = assembly.parts[0].assembly.as_mut().unwrap();
+    inner.placements[1].transform = compose(&inner.placements[1].transform, &MIRROR_X);
+    let (bytes, _) = written(&model);
+    let doc = document(&bytes);
+    assert_proper_occurrences(&doc);
+    let top = doc["occurrences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| {
+            o["parent"] == 0
+                && o["component"]
+                    == doc["components"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .find(|c| c["name"] == "pair (mirrored)")
+                        .unwrap()["id"]
+        })
+        .unwrap();
+    let children: Vec<_> = doc["occurrences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|o| o["parent"] == top["component"])
+        .collect();
+    assert_eq!(children.len(), 2);
+    let original = definition_points(&bytes, &doc["occurrences"][0]["component"]);
+    for (index, child) in children.iter().enumerate() {
+        let geometry = definition_points(&bytes, &child["component"]);
+        let source = model.assembly.as_ref().unwrap().parts[0]
+            .assembly
+            .as_ref()
+            .unwrap()
+            .placements[index]
+            .transform;
+        let expected = placed_points(&original, &compose(&MIRROR_X, &source));
+        let actual = placed_points(
+            &geometry,
+            &compose(&occurrence_rows(top), &occurrence_rows(child)),
+        );
+        assert_same_points(&expected, &actual);
+    }
+    assert_eq!(occurrence_rows(top), IDENTITY);
+    if let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) {
+        let bodies = evaluate(&cli, &bytes);
+        assert_eq!(bodies.len(), 5);
+        assert!(bodies
+            .iter()
+            .all(|b| (b["volume_mm3"].as_f64().unwrap() - 1000.0).abs() < 1e-6));
+    }
+}
+
+#[test]
+fn reflection_bad_placements_are_left_out_and_drift_is_repaired() {
+    let mut model = placed_twice();
+    let a = model.assembly.as_mut().unwrap();
+    a.placements[0].transform[0][0] += 1e-8;
+    a.placements[0].transform[1][0] += 1e-8;
+    a.placements[1].transform[0][3] = f64::NAN;
+    for t in [
+        [
+            [2.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+        ],
+        [
+            [1.0, 0.0001, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+        ],
+    ] {
+        let mut p = a.placements[0].clone();
+        p.transform = t;
+        a.placements.push(p);
+    }
+    let (bytes, report) = written(&model);
+    let doc = document(&bytes);
+    assert_proper_occurrences(&doc);
+    assert_eq!(doc["occurrences"].as_array().unwrap().len(), 1);
+    for (index, kind) in [(1, "non-finite"), (2, "scaled"), (3, "sheared")] {
+        assert!(
+            report
+                .losses()
+                .iter()
+                .any(|n| n.severity == dutchman_core::Severity::Dropped
+                    && n.detail.contains(&format!("Occurrence index {index}"))
+                    && n.detail.contains(kind)),
+            "{:?}",
+            report.losses()
+        );
+    }
+    assert_eq!(report.completeness().unwrap().placed, 1);
+    assert_eq!(report.completeness().unwrap().placements(), 4);
+}
+
+#[test]
+fn reflection_flattens_only_the_mirrored_definitions_history() {
+    let mut model = bound_components("body", true);
+    model.assembly.as_mut().unwrap().placements[1].transform = dutchman_core::placement::MIRROR_X;
+    let (bytes, report) = written(&model);
+    let doc = document(&bytes);
+    assert_proper_occurrences(&doc);
+    let original = &doc["occurrences"][0]["component"];
+    let mirrored = &doc["occurrences"][1]["component"];
+    let features = doc["features"].as_array().unwrap();
+    let copy_features: Vec<_> = features
+        .iter()
+        .filter(|f| f["component"] == *mirrored)
+        .collect();
+    assert_eq!(copy_features.len(), 1);
+    assert_eq!(copy_features[0]["type"], "import");
+    assert_eq!(copy_features[0]["suppressed"], false);
+    assert!(features
+        .iter()
+        .any(|f| f["component"] == *original && f["suppressed"] == true));
+    assert!(report.losses().iter().any(|n| n.subject == "history"
+        && n.detail
+            .contains("mirrored definition written as imported geometry only")));
+}
+
+#[test]
+fn reflection_validation_also_applies_to_restored_stored_placements() {
+    let mut model = placed_twice();
+    let a = model.assembly.as_mut().unwrap();
+    a.stored_placements = vec![
+        dutchman_core::placement::MIRROR_X,
+        dutchman_core::placement::IDENTITY,
+    ];
+    a.placements[0].transform[0][0] = f64::NAN;
+    let mut report = Report::default();
+    let mut bytes = Vec::new();
+    SolidCraftWriter::new()
+        .joints(false)
+        .verification(Verification::Off)
+        .write(&model, &mut bytes, &mut report)
+        .unwrap();
+    let doc = document(&bytes);
+    assert_proper_occurrences(&doc);
+    assert_eq!(doc["occurrences"].as_array().unwrap().len(), 2);
+    assert!(report
+        .losses()
+        .iter()
+        .any(|n| n.subject == "placements" && n.severity == dutchman_core::Severity::Info));
+}

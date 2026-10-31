@@ -581,6 +581,18 @@ are placed hidden`, counts the latter across repeated and nested placements. Bot
 the same bounded hidden-occurrence paths; a Degraded note reports paths left shown
 past the 4096-path limit.
 
+Assembly placement validation uses the existing `losses` and `completeness` fields.
+No placement-specific schema fields are added. An Info loss with subject `placements`
+says `N occurrence(s) placed by a reflection were written with a mirrored copy of their
+component`; the count covers occurrence records in the written component definitions.
+Mirrored definitions share reflected geometry and keep imported geometry only; a Degraded
+`history` loss explains discarded history, and a Dropped `joints` loss explains joints
+touching mirrored components. Non-finite, scaled, or sheared placements outside the 1e-6
+orthogonality/determinant tolerance produce Dropped `placements` losses with a zero-based
+occurrence index local to the containing assembly, name, and kind. They are excluded from
+`completeness.placed` and counted in `completeness.left_out` at stage `write`. Tiny numeric
+drift is re-orthonormalised before writing.
+
 ### DXF pages (additive to `dutchman.convert/1`)
 
 `convert --to dxf --json` adds `pages`, in source page order. Each entry has

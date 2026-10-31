@@ -286,6 +286,12 @@ Never remove or change the quarantine attribute.
   keeps the imported shape and any
   mapped sketches with resolved planes, hidden for reference with no features built on them.
   An Info `sketches` line counts sketches kept and, when applicable, left out.
+- Mirrored assembly placements use shared mirrored component geometry, including nested
+  reflections. Normal copies keep their original history; mirrored definitions use imported
+  geometry only and report history left out. Explain Info `placements` notes as preserved
+  reflections, and Dropped `placements` notes as non-finite, scaled, or sheared occurrences
+  omitted by zero-based index and kind. Ask the user to check those source placements and
+  convert again. Joints touching mirrored components are left out with their pose retained.
 - Assemblies with multiple top-level designs group each design's features in uniquely named
   timeline folders, keeping feature order and leaving joints outside folders. Each folder
   added has an Info `timeline folders` note: `"Name": N feature(s) grouped`. Parts and
