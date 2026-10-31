@@ -238,3 +238,8 @@ beside the imported shape for reference. A final shape mismatch preserves the ma
 timeline for correction when it replays; it does not identify which feature needs
 correction. SolidCraft's numerical eval includes hidden bodies as well as the visible
 final shape.
+
+A writer that can never run the check (the SolidCraft importer plugin, which runs Dutchman
+in a sandbox with no `solidcraft-cli`) keeps a whole unchecked history the same way, in a
+hidden **Editable history (unverified)** component beside the visible original, with
+`mode: partial_history` and verification `unverified`.

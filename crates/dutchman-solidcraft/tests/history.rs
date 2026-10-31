@@ -1678,6 +1678,35 @@ fn a_sketch_and_extrude_history_is_written() {
 }
 
 #[test]
+fn an_unverified_history_can_be_kept_hidden_beside_the_visible_original() {
+    let model = cube_with_history(10.0, first_profile(), None);
+    let writer = SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .hide_unverified_history(true);
+    let (document, report) = convert(&model, &writer);
+
+    assert!(history_line(&report).contains("unverified: verification turned off; kept hidden"));
+    // The original is the visible model; the history is all there, in a hidden part.
+    assert_eq!(
+        types(&document),
+        [
+            ("sketch".to_owned(), false),
+            ("extrude".to_owned(), false),
+            ("import".to_owned(), false)
+        ]
+    );
+    assert_eq!(
+        document["components"][0]["name"],
+        "Editable history (unverified)"
+    );
+    let occurrence = document["occurrences"][0]["id"].clone();
+    assert_eq!(
+        document["visibility"]["hidden_occurrences"],
+        json!([[occurrence]])
+    );
+}
+
+#[test]
 fn a_symmetric_through_all_extent_is_mapped() {
     let extent = json!({"kind": "symmetric", "side": {"termination": {"kind": "through_all"}}});
     let model = cube_with_history(10.0, whole_sketch(), Some(extent));
