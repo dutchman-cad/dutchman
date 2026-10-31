@@ -1103,6 +1103,13 @@ fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec
                 hold_in(&mut fixed, exact.a.clone(), &scope);
                 hold_in(&mut fixed, exact.b.clone(), &scope);
             }
+            // A joint that holds a side exactly where the file poses its other side shows
+            // the first side placed in the design as well, not only relative to its scope.
+            for (side, other) in [(&joint.a, &joint.b), (&joint.b, &joint.a)] {
+                if posed.contains(other) {
+                    hold_in(&mut fixed, side.clone(), &[]);
+                }
+            }
             continue;
         }
         let reach = compose(&compose(&a, &joint.frame_a), &joint.meeting());
@@ -3980,6 +3987,60 @@ mod tests {
             let world = world_at(&assembly, &path).unwrap();
             assert!(near(&world, &at([x, 0.0, 0.0], 0.0)), "{path:?}: {world:?}");
         }
+    }
+
+    #[test]
+    fn a_holder_whose_joint_holds_its_posed_part_stays_for_the_other_joints() {
+        // The first holder holds two posed blocks and the second holder one. A joint between
+        // the first holder and its second block holds as the file poses them, so the holder
+        // is placed where it is: the joint from it to the first block cannot hold, and the
+        // joint to the second holder's block does not move it.
+        let model = nested(
+            false,
+            Some(json!([
+                placed(0, "frame", root(), 0.0),
+                posed_child(
+                    placed(1, "block", inside(0), 5.0),
+                    "f3d:Design/BulkStream.dat:design-component-occurrence#11"
+                ),
+                posed_child(
+                    placed(2, "block", inside(0), 30.0),
+                    "f3d:Design/BulkStream.dat:design-component-occurrence#12"
+                ),
+                placed(3, "frame", root(), 0.0),
+                posed_child(
+                    placed(4, "block", inside(3), 70.0),
+                    "f3d:Design/BulkStream.dat:design-component-occurrence#13"
+                ),
+            ])),
+        );
+        let model = with_current_poses(
+            model,
+            &[
+                "f3d:Design/BulkStream.dat:design-component-occurrence#11",
+                "f3d:Design/BulkStream.dat:design-component-occurrence#12",
+                "f3d:Design/BulkStream.dat:design-component-occurrence#13",
+            ],
+        );
+        let fixed = |id: u32, from: f64, to: u32| {
+            joint(
+                id,
+                json!({"kind": "fixed"}),
+                connector_at(0, &[], at([from, 0.0, 0.0], 0.0)),
+                connector_at(to, &[], facing(IDENTITY)),
+            )
+        };
+        let model = with_joints(
+            model,
+            json!([fixed(1, 50.0, 1), fixed(2, 30.0, 2), fixed(3, 100.0, 4)]),
+        );
+        let (assembly, _) = local_components(&model).unwrap().unwrap();
+        for (path, x) in [(vec![0], 0.0), (vec![0, 0], 5.0), (vec![0, 1], 30.0)] {
+            let world = world_at(&assembly, &path).unwrap();
+            assert!(near(&world, &at([x, 0.0, 0.0], 0.0)), "{path:?}: {world:?}");
+        }
+        let suppressed: Vec<bool> = assembly.joints.iter().map(|j| j.suppressed).collect();
+        assert_eq!(suppressed[..2], [true, false]);
     }
 
     /// `model` with the `design_component_occurrences` records `ids` carrying current poses,
