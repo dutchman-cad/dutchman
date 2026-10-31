@@ -192,6 +192,12 @@ impl Log {
         Arc::new(self.sink.clone())
     }
 
+    pub fn phase_event(&self, phase: &str, event: MemberEvent, ms: u64, bytes: u64) {
+        if let Some(phase) = phase_code(phase) {
+            self.sink.phase_event(phase, event, ms, bytes);
+        }
+    }
+
     pub fn member_event(
         &self,
         member: &str,
@@ -267,7 +273,8 @@ impl Log {
         self.record(
             json!({"type": "end", "ok": report.get("ok") == Some(&Value::Bool(true)),
             "stage": stage.id(), "losses": counts, "repeated_losses": repeats,
-            "member_decodes": member_decodes, "redecoded": redecoded}),
+            "member_decodes": member_decodes, "redecoded": redecoded,
+            "error": anonymous_failure(report)}),
         );
         self.check()
     }
@@ -298,6 +305,20 @@ struct Sink {
 }
 
 impl MemberObserver for Sink {
+    fn phase_event(&self, phase: &'static str, event: MemberEvent, ms: u64, bytes: u64) {
+        if let Some(phase) = phase_code(phase) {
+            if let Ok(mut state) = self.state.lock() {
+                write_record(
+                    &mut state,
+                    &self.id,
+                    self.started,
+                    json!({"type": "phase", "phase": phase,
+                    "event": if event == MemberEvent::Start { "start" } else { "finish" },
+                    "ms": ms, "bytes": bytes}),
+                );
+            }
+        }
+    }
     fn member_event(&self, member: &str, event: MemberEvent, ms: u64, code: Option<&'static str>) {
         if let Ok(mut state) = self.state.lock() {
             let id = self.salt.member_id(member);
@@ -327,6 +348,68 @@ impl MemberObserver for Sink {
                 }),
             );
         }
+    }
+}
+
+/// Build from allowlisted categories even when the report came across a worker boundary.
+fn anonymous_failure(report: &Value) -> Value {
+    if report.get("ok") == Some(&Value::Bool(true)) {
+        return Value::Null;
+    }
+    let error = &report["error"];
+    let stage = error["stage"]
+        .as_str()
+        .and_then(|s| Stage::ALL.into_iter().find(|stage| stage.id() == s));
+    let kind = error["kind"]
+        .as_str()
+        .filter(|kind| {
+            matches!(
+                *kind,
+                "io" | "not_a_file"
+                    | "too_large"
+                    | "unknown_format"
+                    | "not_supported_yet"
+                    | "output_exists"
+                    | "wrong_output_extension"
+                    | "decode"
+                    | "cadmpeg_checks"
+                    | "memory_budget"
+                    | "encode"
+                    | "assembly"
+                    | "no_geometry"
+                    | "restate"
+            )
+        })
+        .unwrap_or("other");
+    let counts = |field: &str, accept: &dyn Fn(&str) -> bool| -> BTreeMap<String, u64> {
+        error[field]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter_map(|(key, value)| accept(key).then_some((key.clone(), value.as_u64()?)))
+            .collect()
+    };
+    let findings = counts("findings", &|key| {
+        // Display strings are fixed check codes; never pass through a source message.
+        dutchman_core::CheckFacts::recognizes_code(key)
+    });
+    let curve_kinds = counts("curve_kinds", &|key| {
+        matches!(
+            key,
+            "procedural" | "nurbs" | "analytic" | "other" | "unavailable"
+        )
+    });
+    json!({"stage": stage.map(|s| s.id()), "kind": kind, "findings": findings, "curve_kinds": curve_kinds})
+}
+
+/// The worker's stderr is private input, never a source of arbitrary log labels.
+fn phase_code(phase: &str) -> Option<&'static str> {
+    match phase {
+        "codec_selection" => Some("codec_selection"),
+        "container_prepare" => Some("container_prepare"),
+        "container_compose" => Some("container_compose"),
+        "model_validation" => Some("model_validation"),
+        _ => None,
     }
 }
 
@@ -634,6 +717,50 @@ mod tests {
         assert!(cpu_ms > 0 && cpu_ms < 1_000_000_000_000_000);
         let total = total_memory().unwrap();
         assert!(total > 0 && total < 1_000_000_000_000_000);
+    }
+
+    #[test]
+    fn failed_end_and_phase_records_allow_only_anonymous_categories() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("log.jsonl");
+        let mut log = Log::open(
+            &path,
+            Path::new("PrivateDesign.f3z"),
+            &ConvertOptions::default(),
+        )
+        .unwrap();
+        log.phase_event("container_prepare", MemberEvent::Start, 0, 396);
+        log.phase_event("container_prepare", MemberEvent::Finish, 1945, 396);
+        log.phase_event("PrivatePhase", MemberEvent::Finish, 1, 2);
+        let error = dutchman_core::Error::Checks {
+            message: "PrivateName /private/path 123.456".into(),
+            facts: dutchman_core::CheckFacts::default(),
+        };
+        let mut report = crate::json::error(crate::json::CONVERT, json!({}), &error);
+        report["error"]["findings"] = json!({"parameter_domain": 88, "PrivateName": 3});
+        report["error"]["curve_kinds"] = json!({"nurbs": 88, "PrivateCurve": 2});
+        log.end(&report).unwrap();
+        let records = lines(&path);
+        assert_eq!(records[1]["phase"], "container_prepare");
+        assert_eq!(records[2]["ms"], 1945);
+        assert_eq!(records[2]["bytes"], 396);
+        let end = records.last().unwrap();
+        assert_eq!(
+            end["error"],
+            json!({"stage": "project", "kind": "cadmpeg_checks",
+            "findings": {"parameter_domain": 88}, "curve_kinds": {"nurbs": 88}})
+        );
+        let text = std::fs::read_to_string(path).unwrap();
+        for private in ["Private", "/private/path", "123.456"] {
+            assert!(!text.contains(private));
+        }
+        assert_eq!(anonymous_failure(&json!({"ok": true})), Value::Null);
+        assert_eq!(
+            anonymous_failure(
+                &json!({"ok": false, "error": {"kind": "PrivateKind", "stage": "PrivateStage"}})
+            )["kind"],
+            "other"
+        );
     }
 
     #[test]

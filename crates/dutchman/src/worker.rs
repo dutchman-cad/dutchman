@@ -107,6 +107,23 @@ pub fn run_if_worker() -> Option<ExitCode> {
 struct MemberProgress;
 
 impl dutchman_core::MemberObserver for MemberProgress {
+    fn phase_event(
+        &self,
+        phase: &'static str,
+        event: dutchman_core::MemberEvent,
+        ms: u64,
+        bytes: u64,
+    ) {
+        let event = if event == dutchman_core::MemberEvent::Start {
+            "start"
+        } else {
+            "finish"
+        };
+        eprintln!(
+            "{}",
+            serde_json::json!({"dutchman_phase": phase, "event": event, "ms": ms, "bytes": bytes})
+        );
+    }
     fn member_event(
         &self,
         path: &str,
@@ -374,6 +391,22 @@ fn follow_stages(
     for line in std::io::BufReader::new(stream).lines() {
         let Ok(line) = line else { break };
         if let (Some(log), Ok(record)) = (log, serde_json::from_str::<Value>(&line)) {
+            if let Some(phase) = record.get("dutchman_phase").and_then(Value::as_str) {
+                let event = match record.get("event").and_then(Value::as_str) {
+                    Some("start") => Some(dutchman_core::MemberEvent::Start),
+                    Some("finish") => Some(dutchman_core::MemberEvent::Finish),
+                    _ => None,
+                };
+                if let Some(event) = event {
+                    log.phase_event(
+                        phase,
+                        event,
+                        record.get("ms").and_then(Value::as_u64).unwrap_or(0),
+                        record.get("bytes").and_then(Value::as_u64).unwrap_or(0),
+                    );
+                }
+                continue;
+            }
             if let Some(member) = record.get("dutchman_member").and_then(Value::as_str) {
                 let event = match record.get("event").and_then(Value::as_str) {
                     Some("start") => Some(dutchman_core::MemberEvent::Start),

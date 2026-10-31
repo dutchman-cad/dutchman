@@ -123,6 +123,29 @@ fn fusion_member_events_reach_both_direct_and_isolated_logs() {
         assert!(lines
             .iter()
             .any(|v| v["type"] == "member" && v["event"] == "finish" && v["member"] == id));
+        for phase in [
+            "codec_selection",
+            "container_prepare",
+            "container_compose",
+            "model_validation",
+        ] {
+            let timed: Vec<_> = lines
+                .iter()
+                .filter(|v| v["type"] == "phase" && v["phase"] == phase)
+                .collect();
+            assert_eq!(timed.len(), 2, "{phase}: {lines:?}");
+            assert_eq!(timed[0]["event"], "start");
+            assert_eq!(timed[1]["event"], "finish");
+            assert_eq!(timed[1]["bytes"], std::fs::metadata(&input).unwrap().len());
+        }
+        let prepared = lines
+            .iter()
+            .position(|v| {
+                v["type"] == "phase" && v["phase"] == "container_prepare" && v["event"] == "finish"
+            })
+            .unwrap();
+        let first_member = lines.iter().position(|v| v["type"] == "member").unwrap();
+        assert!(prepared < first_member);
         let end = lines.last().unwrap();
         assert_eq!(end["type"], "end");
         assert_eq!(end["member_decodes"][id], 1);

@@ -592,3 +592,9 @@ previous `x.y.z` representation. `solidcraft.found` keeps the full CLI release (
 and 0.17 is too old. Patch-sensitive writer gates and the internal 0.18.2 verification
 floor remain unchanged. Explicit `solidcraft_version` inputs still accept `x.y.z` for
 precise gate control.
+
+Anonymous diagnostic logs include timed decoder preparation phases and, on failure, the
+failure stage and error category. Model check failures add check-code counts and available
+referenced curve-kind counts. A geometry-only recovery rechecks the decoded model in memory
+only when failing checks involve history, sketches, or parameters; geometry failures stop
+without repeating the decode. See [diagnostic fields](json.md#dutchmandiagnostics1).

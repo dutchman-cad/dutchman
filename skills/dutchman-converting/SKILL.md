@@ -508,3 +508,9 @@ SolidCraft names and report targets use minors: `solidcraft.target` and
 `solidcraft.known_newest` are `x.y` strings such as `"0.27"`. `solidcraft.found`
 retains the full installed version. All patches of the newest minor count as current;
 writer gates still use full versions internally. Explicit target inputs remain `x.y.z`.
+
+Diagnostic end records include anonymous failure stage, category, check-code counts, and
+available referenced curve kinds. Timed phase records distinguish container preparation
+from member decoding and model validation. Geometry-only recovery reuses the decoded model
+and runs only for failures involving history, sketches, or parameters; a geometry failure
+says the retry was not needed. Do not suggest repeating a long decode to bypass those checks.

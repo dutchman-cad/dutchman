@@ -45,6 +45,9 @@ pub enum Error {
     /// The input is in a known format but its contents could not be decoded.
     #[error("cannot read this design: {0}")]
     Decode(String),
+    /// Structured, anonymous facts from cadmpeg's model checks.
+    #[error("cannot read this design: {message}")]
+    Checks { message: String, facts: CheckFacts },
     /// The conversion exceeds the selected memory budget.
     #[error("{0}")]
     MemoryBudget(String),
@@ -76,7 +79,7 @@ impl Error {
             | Error::WrongOutputExtension { .. }
             | Error::Assembly(_) => Stage::Input,
             Error::NotSupportedYet { .. } | Error::Decode(_) => Stage::Decode,
-            Error::NoGeometry(_) => Stage::Project,
+            Error::NoGeometry(_) | Error::Checks { .. } => Stage::Project,
             Error::Encode(_) | Error::Restate(_) => Stage::Write,
         }
     }
@@ -90,6 +93,7 @@ impl Error {
             } => None,
             Error::NotSupportedYet { .. }
             | Error::Decode(_)
+            | Error::Checks { .. }
             | Error::NoGeometry(_)
             | Error::Restate(_) => Some("cadmpeg"),
             _ => None,
@@ -126,5 +130,42 @@ fn not_supported(format: Format) -> String {
             format.name(),
             format.family()
         ),
+    }
+}
+
+/// Counts only: no source identities, messages, or geometry are retained here.
+#[derive(Clone, Debug, Default)]
+pub struct CheckFacts {
+    pub findings: std::collections::BTreeMap<String, u64>,
+    pub curve_kinds: std::collections::BTreeMap<String, u64>,
+    pub(crate) retry: bool,
+}
+
+impl Error {
+    /// A fixed category safe to include in anonymous diagnostics.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Io { .. } => "io",
+            Self::NotAFile { .. } => "not_a_file",
+            Self::TooLarge { .. } => "too_large",
+            Self::UnknownFormat { .. } => "unknown_format",
+            Self::NotSupportedYet { .. } => "not_supported_yet",
+            Self::OutputExists { .. } => "output_exists",
+            Self::WrongOutputExtension { .. } => "wrong_output_extension",
+            Self::Decode(_) => "decode",
+            Self::Checks { .. } => "cadmpeg_checks",
+            Self::MemoryBudget(_) => "memory_budget",
+            Self::Encode(_) => "encode",
+            Self::Assembly(_) => "assembly",
+            Self::NoGeometry(_) => "no_geometry",
+            Self::Restate(_) => "restate",
+        }
+    }
+}
+
+impl CheckFacts {
+    /// Accept only the pinned validator's fixed codes across process boundaries.
+    pub fn recognizes_code(code: &str) -> bool {
+        serde_json::from_value::<cadmpeg_ir::report::check::Check>(serde_json::json!(code)).is_ok()
     }
 }

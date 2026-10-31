@@ -69,11 +69,16 @@ pub(crate) fn decode_with_progress(
 ) -> Result<Model, Error> {
     let codec_id = format.codec_id().ok_or(Error::NotSupportedYet { format })?;
     catch_unwind(AssertUnwindSafe(|| {
-        with_fallback(report, |depth, report| {
-            decode_unguarded(
-                format, codec_id, path, bytes, depth, false, report, progress,
-            )
-        })
+        decode_unguarded(
+            format,
+            codec_id,
+            path,
+            bytes,
+            DecodeDepth::Full,
+            false,
+            report,
+            progress,
+        )
     }))
     .unwrap_or_else(|_| {
         Err(Error::Decode(format!(
@@ -103,10 +108,6 @@ pub(crate) fn drawings(
             report,
             None,
         )
-        .map_err(|failure| match failure {
-            Failed::Checks(why) => Error::Decode(why),
-            Failed::Other(err) => err,
-        })
     }))
     .unwrap_or_else(|_| {
         Err(Error::Decode(
@@ -115,56 +116,34 @@ pub(crate) fn drawings(
     })
 }
 
-/// Why a decode at one depth gave no model.
-#[derive(Debug)]
-enum Failed {
-    /// cadmpeg decoded the file, but its model fails cadmpeg's checks: why.
-    Checks(String),
-    /// Anything else.
-    Other(Error),
-}
-
-/// Decodes with `decode` in full; when cadmpeg's model of the design fails its checks,
-/// decodes the geometry alone (B-rep, product structure, placements, appearance: no
-/// features, sketches or parameters, where such failures lie) and, when that passes, keeps
-/// it with the full model's failure as a loss, rather than losing the file.
+/// Recheck the existing neutral model after discarding only data the retry can remove.
 fn with_fallback(
+    ir: &mut cadmpeg_ir::CadIr,
     report: &mut Report,
-    decode: impl Fn(DecodeDepth, &mut Report) -> Result<Model, Failed>,
-) -> Result<Model, Error> {
-    let mut full = Report::default();
-    let why = match decode(DecodeDepth::Full, &mut full) {
-        Ok(model) => {
-            report.append(full);
-            return Ok(model);
-        }
-        Err(Failed::Other(err)) => return Err(err),
-        Err(Failed::Checks(why)) => why,
+    policy: &DecodePolicy,
+    input_bytes: u64,
+) -> Result<(), Error> {
+    let why = match validate_decoded(ir, DecodeDepth::Full, policy, input_bytes, report) {
+        Ok(()) => return Ok(()),
+        Err(Error::Checks { message, facts }) if facts.retry => message,
+        Err(Error::Checks { message, facts }) => return Err(Error::Checks {
+            message: format!("{message}; a geometry-only retry was not needed: the failing checks do not involve history, sketches or parameters"),
+            facts,
+        }),
+        Err(error) => return Err(error),
     };
-    let mut geometry = Report::default();
-    match decode(DecodeDepth::Geometry, &mut geometry) {
-        Ok(model) => {
-            report.append(geometry);
-            report.push_at(
-                Stage::Project,
-                Severity::Degraded,
-                "history",
-                format!(
-                    "the feature history, sketches and parameters are left out and the geometry \
-                     is written alone: {why}"
-                ),
-            );
-            Ok(model)
+    match validate_decoded(ir, DecodeDepth::Geometry, policy, input_bytes, report) {
+        Ok(()) => {
+            report.push_at(Stage::Project, Severity::Degraded, "history", format!(
+                "the feature history, sketches and parameters are left out and the geometry is written alone: {why}"
+            ));
+            Ok(())
         }
-        // Say what each attempt found: the checks may fail the same way twice.
-        Err(Failed::Checks(again)) => Err(Error::Decode(format!(
-            "{why}; read again as geometry alone, without its history, sketches and parameters, \
-             it still fails them {}",
-            again.strip_prefix(CHECKS).unwrap_or(&again)
-        ))),
-        Err(Failed::Other(err)) => Err(Error::Decode(format!(
-            "{why}; reading it again as geometry alone failed too: {err}"
-        ))),
+        Err(Error::Checks { message, facts }) => Err(Error::Checks {
+            message: format!("{why}; checked as geometry alone, without its history, sketches and parameters, it still fails them {}", message.strip_prefix(CHECKS).unwrap_or(&message)),
+            facts,
+        }),
+        Err(error) => Err(error),
     }
 }
 
@@ -181,29 +160,41 @@ fn decode_unguarded(
     drawings: bool,
     report: &mut Report,
     progress: Option<&crate::Progress<'_>>,
-) -> Result<Model, Failed> {
-    let other = |err: Error| Failed::Other(err);
+) -> Result<Model, Error> {
     let policy = policy();
     let catalog = InputCatalog::with_builtins();
-    let codec = select_codec(&catalog, &policy, format, codec_id, bytes).map_err(other)?;
+    let selection = Phase::new(
+        progress.and_then(|p| p.members.clone()),
+        "codec_selection",
+        bytes.len() as u64,
+    );
+    let codec = select_codec(&catalog, &policy, format, codec_id, bytes)?;
+    drop(selection);
 
     if let Some(progress) = progress {
         progress.stage(Stage::Decode);
     }
     let options = DecodeOptions { depth, policy };
     let decode = || codec.decode(&mut Cursor::new(bytes), &options);
-    let decoded = match progress.and_then(|progress| progress.members.clone()) {
-        Some(sink) => cadmpeg_codec_f3d::observe_f3z_members(
-            std::rc::Rc::new(Members {
-                sink,
-                started: std::cell::RefCell::new(std::collections::BTreeMap::new()),
-            }),
-            decode,
-        ),
+    let members = progress.and_then(|p| p.members.clone()).map(|sink| {
+        std::rc::Rc::new(Members {
+            phase: std::cell::RefCell::new(Some(Phase::new(
+                Some(sink.clone()),
+                "container_prepare",
+                bytes.len() as u64,
+            ))),
+            sink,
+            bytes: bytes.len() as u64,
+            started: Default::default(),
+        })
+    });
+    let decoded = match &members {
+        Some(observer) => cadmpeg_codec_f3d::observe_f3z_members(observer.clone(), decode),
         None => decode(),
-    }
-    .map_err(|err| decode_failure(format, err))
-    .map_err(other)?;
+    };
+    // Also closes preparation on a refusal before the first member callback.
+    drop(members);
+    let decoded = decoded.map_err(|err| decode_failure(format, err))?;
     let (mut ir, decode_report, fidelity) = decoded.into_parts();
     // An assembly's geometry is in its parts' files, read afterwards.
     if !drawings
@@ -211,17 +202,26 @@ fn decode_unguarded(
         && !format.is_assembly()
         && !(format == Format::FreeCadDocument && !ir.model.occurrences.is_empty())
     {
-        return Err(other(Error::Decode(format!(
+        return Err(Error::Decode(format!(
             "no geometry could be read from this {} file",
             format.name()
-        ))));
+        )));
     }
     report.extend_from_cadmpeg(&decode_report.losses);
 
     if let Some(progress) = progress {
         progress.stage(Stage::Project);
     }
-    validate_decoded(&mut ir, depth, &policy, bytes.len() as u64, report)?;
+    let _validation = Phase::new(
+        progress.and_then(|p| p.members.clone()),
+        "model_validation",
+        bytes.len() as u64,
+    );
+    if drawings {
+        validate_decoded(&mut ir, depth, &policy, bytes.len() as u64, report)?;
+    } else {
+        with_fallback(&mut ir, report, &policy, bytes.len() as u64)?;
+    }
 
     Ok(Model {
         ir,
@@ -237,13 +237,55 @@ fn decode_unguarded(
     })
 }
 
+/// Scoped phase records survive error returns and caught decoder panics.
+struct Phase {
+    sink: Option<std::sync::Arc<dyn crate::MemberObserver>>,
+    name: &'static str,
+    bytes: u64,
+    started: std::time::Instant,
+}
+
+impl Phase {
+    fn new(
+        sink: Option<std::sync::Arc<dyn crate::MemberObserver>>,
+        name: &'static str,
+        bytes: u64,
+    ) -> Self {
+        if let Some(sink) = &sink {
+            sink.phase_event(name, crate::MemberEvent::Start, 0, bytes);
+        }
+        Self {
+            sink,
+            name,
+            bytes,
+            started: std::time::Instant::now(),
+        }
+    }
+}
+
+impl Drop for Phase {
+    fn drop(&mut self) {
+        if let Some(sink) = &self.sink {
+            sink.phase_event(
+                self.name,
+                crate::MemberEvent::Finish,
+                u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                self.bytes,
+            );
+        }
+    }
+}
+
 struct Members {
+    phase: std::cell::RefCell<Option<Phase>>,
+    bytes: u64,
     sink: std::sync::Arc<dyn crate::MemberObserver>,
     started: std::cell::RefCell<std::collections::BTreeMap<String, std::time::Instant>>,
 }
 
 impl cadmpeg_codec_f3d::F3zMemberObserver for Members {
     fn member_started(&self, path: &str) {
+        self.phase.borrow_mut().take();
         let mut started = self.started.borrow_mut();
         // The decoder also caps archive members; bound diagnostics independently.
         if started.len() < 100_000 {
@@ -262,6 +304,11 @@ impl cadmpeg_codec_f3d::F3zMemberObserver for Members {
             Err(error) => (crate::MemberEvent::Fail, Some(member_error_code(error))),
         };
         self.sink.member_event(path, event, ms, code);
+        *self.phase.borrow_mut() = Some(Phase::new(
+            Some(self.sink.clone()),
+            "container_compose",
+            self.bytes,
+        ));
     }
 }
 
@@ -326,14 +373,14 @@ fn validate_decoded(
     policy: &DecodePolicy,
     input_bytes: u64,
     report: &mut Report,
-) -> Result<(), Failed> {
+) -> Result<(), Error> {
     if depth == DecodeDepth::Geometry {
         geometry_only(ir);
     }
 
     // Check the model the way cadmpeg's own conversion does before anything is built on it.
     let arena = DecodeArena::new();
-    let decode_error = |err: &dyn std::fmt::Display| Failed::Other(Error::Decode(err.to_string()));
+    let decode_error = |err: &dyn std::fmt::Display| Error::Decode(err.to_string());
     let ctx = DecodeContext::for_loaded_input(&arena, policy, input_bytes)
         .map_err(|err| decode_error(&err))?;
     let validation =
@@ -346,10 +393,10 @@ fn validate_decoded(
             .find(|finding| finding.severity >= CadmpegSeverity::Error)
             .map(|finding| format!(": {}", finding.message))
             .unwrap_or_default();
-        return Err(Failed::Checks(format!(
-            "{CHECKS}({} errors){first}",
-            validation.error_count()
-        )));
+        return Err(Error::Checks {
+            message: format!("{CHECKS}({} errors){first}", validation.error_count()),
+            facts: check_facts(ir, &validation.findings),
+        });
     }
     for finding in &validation.findings {
         report.push_at(
@@ -361,6 +408,131 @@ fn validate_decoded(
     }
 
     Ok(())
+}
+
+/// Classify structured findings while the private model is still available.
+fn check_facts(
+    ir: &cadmpeg_ir::CadIr,
+    findings: &[cadmpeg_ir::report::check::Finding],
+) -> crate::CheckFacts {
+    use cadmpeg_ir::geometry::pcurve::PcurveGeometry;
+    use cadmpeg_ir::geometry::{CurveGeometry, SolvedCurveGeometry};
+    use cadmpeg_ir::report::check::Check;
+    use std::collections::{BTreeMap, BTreeSet};
+    let mut design = BTreeSet::new();
+    macro_rules! design_ids {
+        ($($arena:ident),+ $(,)?) => { $(
+            design.extend(ir.model.$arena.iter().map(|entity| entity.id.as_str()));
+        )+ };
+    }
+    design_ids!(
+        features,
+        feature_input_topologies,
+        feature_result_topologies,
+        configurations,
+        parameters,
+        sketches,
+        sketch_constraints,
+        spatial_sketches,
+        spatial_sketch_constraints,
+        spreadsheets
+    );
+    design.extend(
+        ir.model
+            .sketch_entities
+            .iter()
+            .map(|entity| entity.id().as_str()),
+    );
+    design.extend(
+        ir.model
+            .spatial_sketch_entities
+            .iter()
+            .map(|entity| entity.id().as_str()),
+    );
+    let curves: BTreeMap<_, _> = ir
+        .model
+        .curves
+        .iter()
+        .map(|c| (c.id.as_str(), &c.geometry))
+        .collect();
+    let pcurves: BTreeMap<_, _> = ir
+        .model
+        .pcurves
+        .iter()
+        .map(|c| (c.id.as_str(), &c.geometry))
+        .collect();
+    let edges: BTreeMap<_, _> = ir.model.edges.iter().map(|e| (e.id.as_str(), e)).collect();
+    let coedges: BTreeMap<_, _> = ir
+        .model
+        .coedges
+        .iter()
+        .map(|c| (c.id.as_str(), c))
+        .collect();
+    let mut facts = crate::CheckFacts::default();
+    for finding in findings
+        .iter()
+        .filter(|f| f.severity >= CadmpegSeverity::Error)
+    {
+        *facts.findings.entry(finding.check.to_string()).or_default() += 1;
+        let ids = finding
+            .entity
+            .iter()
+            .chain(&finding.related)
+            .map(String::as_str);
+        facts.retry |= ids.clone().any(|id| design.contains(id));
+        if !matches!(
+            finding.check,
+            Check::ParameterDomain | Check::CarrierReachability | Check::GeometricConsistency
+        ) {
+            continue;
+        }
+        // Count each referenced carrier once per finding, even if reached by two references.
+        let mut referenced = BTreeSet::new();
+        for id in ids {
+            if curves.contains_key(id) || pcurves.contains_key(id) {
+                referenced.insert(id);
+            }
+            if let Some(edge) = edges.get(id) {
+                if let Some(curve) = edge.curve() {
+                    referenced.insert(curve.as_str());
+                }
+            }
+            if let Some(coedge) = coedges.get(id) {
+                referenced.extend(coedge.pcurves.iter().map(|use_| use_.pcurve.as_str()));
+                if let Some(curve) = &coedge.use_curve {
+                    referenced.insert(curve.curve.as_str());
+                }
+            }
+        }
+        for id in referenced {
+            let kind = match curves.get(id) {
+                Some(CurveGeometry::Procedural { .. }) => "procedural",
+                Some(CurveGeometry::Solved(SolvedCurveGeometry::Nurbs(_))) => "nurbs",
+                Some(CurveGeometry::Solved(
+                    SolvedCurveGeometry::Line(_)
+                    | SolvedCurveGeometry::Circle(_)
+                    | SolvedCurveGeometry::Ellipse(_)
+                    | SolvedCurveGeometry::Parabola(_)
+                    | SolvedCurveGeometry::Hyperbola(_),
+                )) => "analytic",
+                Some(_) => "other",
+                None => match pcurves.get(id) {
+                    Some(PcurveGeometry::Nurbs { .. } | PcurveGeometry::PolarNurbs { .. }) => {
+                        "nurbs"
+                    }
+                    Some(
+                        PcurveGeometry::Transformed(_)
+                        | PcurveGeometry::Trimmed(_)
+                        | PcurveGeometry::Offset(_),
+                    ) => "other",
+                    Some(_) => "analytic",
+                    None => "unavailable",
+                },
+            };
+            *facts.curve_kinds.entry(kind.into()).or_default() += 1;
+        }
+    }
+    facts
 }
 
 /// Keep cadmpeg's cause, and give a recovery step for unreadable containers.
@@ -509,8 +681,8 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            matches!(failure, Failed::Checks(ref why)
-            if why.contains("repeats parameter name `HoleOffset`")),
+            matches!(failure, Error::Checks { ref message, .. }
+            if message.contains("repeats parameter name `HoleOffset`")),
             "{failure:?}"
         );
 
@@ -566,12 +738,8 @@ mod tests {
         source.ir.model.assembly_joints.push(joint.clone());
 
         let mut report = Report::default();
-        let model = with_fallback(&mut report, |depth, report| {
-            let mut model = source.clone();
-            validate_decoded(&mut model.ir, depth, &policy(), 0, report)?;
-            Ok(model)
-        })
-        .unwrap();
+        let mut model = source.clone();
+        with_fallback(&mut model.ir, &mut report, &policy(), 0).unwrap();
         assert_eq!(model.ir.model.bodies.len(), 1);
         assert_eq!(model.ir.model.bodies, source.ir.model.bodies);
         assert_eq!(
@@ -607,59 +775,145 @@ mod tests {
             &mut Report::default(),
         )
         .unwrap_err();
-        assert!(matches!(failure, Failed::Checks(_)), "{failure:?}");
+        assert!(matches!(failure, Error::Checks { .. }), "{failure:?}");
     }
 
     #[test]
-    fn a_design_failing_its_checks_is_written_as_its_geometry() {
-        let mut report = Report::default();
-        let model = with_fallback(&mut report, |depth, report| match depth {
-            DecodeDepth::Full => {
-                report.push(Severity::Info, "full", "not kept");
-                Err(Failed::Checks(
-                    "parameter scope None repeats a name".to_owned(),
-                ))
-            }
-            _ => {
-                report.push(Severity::Info, "geometry", "kept");
-                Ok(cube())
-            }
-        })
-        .unwrap();
-        assert_eq!(model.ir.model.bodies.len(), 1);
-        let losses: Vec<String> = report.losses().iter().map(ToString::to_string).collect();
-        assert_eq!(losses.len(), 2, "{losses:?}");
-        assert!(losses[0].contains("geometry: kept"), "{losses:?}");
-        assert!(
-            losses[1].contains("geometry is written alone: parameter scope None repeats a name"),
-            "{losses:?}"
-        );
-        assert_eq!(report.losses()[1].stage, Stage::Project);
+    fn geometry_errors_stop_without_discarding_history() {
+        let mut model = cube();
+        model.ir.model.bodies.push(model.ir.model.bodies[0].clone());
+        let error = with_fallback(&mut model.ir, &mut Report::default(), &policy(), 0).unwrap_err();
+        assert!(error.to_string().contains("retry was not needed"));
+        assert_eq!(error.stage(), Stage::Project);
+        let Error::Checks { facts, .. } = error else {
+            panic!("expected checks")
+        };
+        assert!(!facts.retry);
+        assert!(facts.findings.values().sum::<u64>() > 0);
     }
 
     #[test]
-    fn when_the_geometry_fails_too_both_failures_are_said() {
-        let err = with_fallback(&mut Report::default(), |depth, _| {
-            Err(Failed::Checks(match depth {
-                DecodeDepth::Full => format!("{CHECKS}(10 errors): scope repeats `x`"),
-                _ => format!("{CHECKS}(3 errors): scope repeats `y`"),
+    fn mixed_findings_recheck_only_the_existing_geometry() {
+        let mut model = cube();
+        for ordinal in 0..2 {
+            model.ir.model.parameters.push(
+                serde_json::from_value(serde_json::json!({
+                    "id": format!("test:design:parameter#{ordinal}"), "ordinal": ordinal,
+                    "name": "PrivateParameter", "expression": "2 mm"
+                }))
+                .unwrap(),
+            );
+        }
+        model.ir.model.bodies.push(model.ir.model.bodies[0].clone());
+        let error = with_fallback(&mut model.ir, &mut Report::default(), &policy(), 0).unwrap_err();
+        assert!(error.to_string().contains("checked as geometry alone"));
+        assert!(error.to_string().contains("it still fails them"));
+        assert!(model.ir.model.parameters.is_empty());
+        let Error::Checks { facts, .. } = error else {
+            panic!("expected checks")
+        };
+        assert!(!facts.retry);
+    }
+
+    #[test]
+    fn structured_findings_classify_references_and_never_keep_private_text() {
+        use cadmpeg_ir::report::check::{Check, Finding};
+        let mut model = cube();
+        model.ir.model.coedges[0].pcurves.clear();
+        let curve_id = model.ir.model.curves[0].id.clone();
+        model.ir.model.coedges[0].use_curve = Some(
+            serde_json::from_value(serde_json::json!({
+                "curve": curve_id, "parameter_range": [0.0, 1.0]
             }))
-        })
-        .unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            Error::Decode(format!(
-                "{CHECKS}(10 errors): scope repeats `x`; read again as geometry alone, without \
-                 its history, sketches and parameters, it still fails them (3 errors): scope \
-                 repeats `y`"
-            ))
-            .to_string()
+            .unwrap(),
         );
-        let other = with_fallback(&mut Report::default(), |_, _| {
-            Err(Failed::Other(Error::Decode("unreadable".to_owned())))
-        })
-        .unwrap_err();
-        assert!(other.to_string().contains("unreadable"));
+        let findings = vec![Finding {
+            check: Check::ParameterDomain,
+            severity: CadmpegSeverity::Error,
+            entity: Some(model.ir.model.coedges[0].id.to_string()),
+            related: Vec::new(),
+            message: "PrivateName 123.456 /private/design.f3z".into(),
+        }];
+        let facts = check_facts(&model.ir, &findings);
+        assert!(!facts.retry);
+        assert_eq!(facts.findings.get("parameter_domain"), Some(&1));
+        assert_eq!(facts.curve_kinds.get("analytic"), Some(&1));
+        model.ir.model.curves[0].geometry = serde_json::from_value(serde_json::json!({
+            "kind": "procedural", "construction": "test:model:procedural_curve#0"
+        }))
+        .unwrap();
+        assert_eq!(
+            check_facts(&model.ir, &findings)
+                .curve_kinds
+                .get("procedural"),
+            Some(&1)
+        );
+        model.ir.model.curves[0].geometry = serde_json::from_value(serde_json::json!({
+            "kind": "nurbs", "degree": 1, "knots": [0.0, 0.0, 1.0, 1.0],
+            "poles": {"form": "polynomial", "points": [{"x": 0.0, "y": 0.0, "z": 0.0}, {"x": 1.0, "y": 0.0, "z": 0.0}]},
+            "periodic": false
+        })).unwrap();
+        assert_eq!(
+            check_facts(&model.ir, &findings).curve_kinds.get("nurbs"),
+            Some(&1)
+        );
+        assert!(!format!("{facts:?}").contains("PrivateName"));
+        let mut warning = findings[0].clone();
+        warning.severity = CadmpegSeverity::Warning;
+        assert!(check_facts(&model.ir, &[warning]).findings.is_empty());
+    }
+
+    #[test]
+    fn phase_events_close_on_refusal_and_member_boundaries() {
+        use cadmpeg_codec_f3d::F3zMemberObserver;
+        use std::sync::{Arc, Mutex};
+        type Event = (&'static str, crate::MemberEvent, u64, u64);
+        #[derive(Default)]
+        struct Events(Mutex<Vec<Event>>);
+        impl crate::MemberObserver for Events {
+            fn member_event(
+                &self,
+                _: &str,
+                _: crate::MemberEvent,
+                _: u64,
+                _: Option<&'static str>,
+            ) {
+            }
+            fn phase_event(
+                &self,
+                phase: &'static str,
+                event: crate::MemberEvent,
+                ms: u64,
+                bytes: u64,
+            ) {
+                self.0.lock().unwrap().push((phase, event, ms, bytes));
+            }
+        }
+        let events = Arc::new(Events::default());
+        let make = || Members {
+            phase: std::cell::RefCell::new(Some(Phase::new(
+                Some(events.clone()),
+                "container_prepare",
+                42,
+            ))),
+            bytes: 42,
+            sink: events.clone(),
+            started: Default::default(),
+        };
+        drop(make()); // No member callback on a container refusal.
+        let members = make();
+        members.member_started("PrivateMember.f3d");
+        members.member_finished("PrivateMember.f3d", Ok(()));
+        drop(members);
+        let events = events.0.lock().unwrap();
+        assert_eq!(events.len(), 6);
+        for pair in events.as_chunks::<2>().0 {
+            assert_eq!(pair[0].0, pair[1].0);
+            assert_eq!(pair[0].1, crate::MemberEvent::Start);
+            assert_eq!(pair[1].1, crate::MemberEvent::Finish);
+            assert_eq!(pair[1].3, 42);
+        }
+        assert_eq!(events[4].0, "container_compose");
     }
 
     #[test]
@@ -683,6 +937,8 @@ mod tests {
         }
         let events = Arc::new(Events::default());
         let observer = Members {
+            phase: Default::default(),
+            bytes: 100,
             sink: events.clone(),
             started: Default::default(),
         };

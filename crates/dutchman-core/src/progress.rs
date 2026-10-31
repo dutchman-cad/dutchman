@@ -65,6 +65,9 @@ pub enum MemberEvent {
 /// Optional diagnostics sink. Paths are private decoder identities; the sink must hash
 /// them before publishing. Codes are fixed categories, never decoder messages.
 pub trait MemberObserver: Send + Sync {
+    /// Fixed phase categories only. Bytes are the source container length, not inflated size.
+    fn phase_event(&self, _phase: &'static str, _event: MemberEvent, _ms: u64, _bytes: u64) {}
+
     fn member_event(&self, path: &str, event: MemberEvent, ms: u64, code: Option<&'static str>);
 }
 
