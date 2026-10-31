@@ -152,3 +152,41 @@ docker run --rm ghcr.io/dutchman-cad/dutchman:X.Y.Z --version
 The manifest must include `linux/amd64` and `linux/arm64`; test `--version` on each
 architecture. On first publication, check that the GHCR package is public so anonymous
 pulls work. See [Docker](docker.md) for conversion, MCP and Compose examples.
+
+## Public corpus sweep
+
+The **Public corpus sweep** workflow (`.github/workflows/corpus-sweep.yml`) converts the CAD
+files of public repositories on GitHub's free runners, so a sweep over a real-world corpus does
+not need anyone's machine. `corpus/public.toml` lists the sources: only public repositories under
+an open licence, each with its SPDX licence. The workflow reads the licence from the GitHub API
+and skips a source whose licence no longer matches. A repository with no open licence is not
+listed (the file says which were left out). It fetches only the CAD files, never the whole
+repository, and publishes nothing: the results are workflow artifacts and the run summary.
+
+Dispatch it from the Actions tab, or with the GitHub CLI:
+
+```
+gh workflow run corpus-sweep.yml -f sources=PrintersForAnts/Crucible -f dutchman=main -f step=true
+```
+
+| Input | Meaning |
+|---|---|
+| `sources` | Comma list of `owner/name` to restrict the run to (default: every source). |
+| `dutchman` | `main`, `nightly` (the nightly release build), or a pull request number (that pull request's head). |
+| `cadmpeg` | `pinned` (the commit Dutchman pins) or `main` (cadmpeg's main, as the nightly builds it). |
+| `step` | Include `.step` and `.stp` files. |
+| `preset` | `standard` (default), `fast` or `full`. |
+| `keep_sc` | Comma list of path fragments: files matching keep their converted design as an `sc-*` artifact. Others are deleted after conversion. |
+
+The `build` job builds the Linux binary once, `plan` lists each repository's files and groups
+them into at most 256 chunks (files over 40 MB and `.f3z` alone, the rest about 20 at a time),
+and one `convert` job per chunk converts each file with `--no-verify`, a 90-minute limit per
+file, and records exit code, wall time and peak memory. A file that needs more memory than the
+runner has, refused by Dutchman's memory check or killed for memory, is reported as "needs more
+memory (runner)", not as a conversion failure. The `report` job builds `REPORT.md` (also shown in
+the run summary) and `results.json`, uploaded as the `corpus-report` artifact. The report has, per
+source, the files by type, converted, failed and needs-memory counts, how many kept full, partial
+or flattened history, assemblies placed against total, and the slowest file's time and peak
+memory; then the top failure causes with an example and the layer that owns each (cadmpeg,
+Dutchman or SolidCraft), and the top reasons history stopped. `scripts/corpus_report.py` is tested
+by `scripts/tests/test_corpus_report.py`.
