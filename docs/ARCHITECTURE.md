@@ -117,9 +117,11 @@ written shape count; unmatched bindings are reported rather than assigned by a g
 
 The adapter pins format `solidcraft/23`, the first in which an Import may name a non-STEP
 source. SolidCraft upgrades older formats on open and refuses newer ones, so a pinned older
-format provides the 0.18.2 compatibility floor. Feature mapping also respects the writer's
+format provides the 0.18.2 compatibility floor. This stays `solidcraft/23` for 0.28
+targets too: its format 45 additions (nested Browser groups, point cloud properties and
+filters, and print faces) are not used by Dutchman. Feature mapping also respects the writer's
 target SolidCraft release: the found CLI's version capped at newest known, even with verification off, else
-`NEWEST_SOLIDCRAFT` (currently 0.27), unless an explicit target is supplied.
+`NEWEST_SOLIDCRAFT` (currently 0.28), unless an explicit target is supplied.
 `WINDOW_OLDEST` (currently 0.18.2) marks the oldest release in the rolling 14-day window;
 older targets down to the floor remain accepted with the existing feature gates. The
 CLI's `--solidcraft-version x.y.z` selects a target on `convert`, `convert-all`, and `watch`.

@@ -39,7 +39,9 @@ use document::Live;
 
 /// The SolidCraft design format this adapter writes: the first in which an Import may name a
 /// non-STEP source file whose geometry it keeps as restated STEP text. Every newer
-/// SolidCraft upgrades it on open.
+/// SolidCraft upgrades it on open. Keep this fixed for every target, including 0.28:
+/// its format 45 adds nested Browser groups, point cloud properties/filters and print
+/// faces, which this writer does not use. Format 23 also keeps older targets readable.
 pub const FORMAT: &str = "solidcraft/23";
 
 /// The report subject of the lines that say what became of the history.

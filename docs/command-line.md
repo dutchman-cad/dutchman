@@ -27,7 +27,7 @@ CAD extension selects conversion.
 | `--no-memory-check` | Bypass the memory refusal and Standard's history budget. |
 | `--yes` | Never prompt to switch presets; refuse an over-budget conversion with exit 2. |
 | `--solidcraft PATH` | The `solidcraft-cli` that checks a converted history. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`, else the install folder recorded in the registry). |
-| `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the found CLI's version capped at newest known, even with `--no-verify`, else the newest known at build time (currently 0.27). |
+| `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the found CLI's version capped at newest known, even with `--no-verify`, else the newest known at build time (currently 0.28). |
 | `--no-verify` | Write the history without checking it in SolidCraft. Cannot be combined with `--solidcraft`. |
 | `--verify-timeout SECONDS` | How long each SolidCraft check may run before the history is written unverified. Default 120. |
 | `--no-clobber` | Do not replace an existing `.sc` file: that file's conversion fails instead. By default it is replaced. |
@@ -241,7 +241,7 @@ Dutchman is made for the current SolidCraft (any release from the last two weeks
 older versions get simplified features, or pass `--solidcraft-version x.y.z` on
 `convert`, `convert-all`, or `watch` (at least 0.18.2).
 The target defaults to the found CLI's version, even with `--no-verify`, else the
-newest minor known at build time (currently 0.27). The current window is 0.18–0.27.
+newest minor known at build time (currently 0.28). The current window is 0.18–0.28.
 Constant-radius FreeCAD helices keep editable sketch-profile coils only for targets
 0.25 patch 1 or newer; older targets preserve the original geometry and report the version needed.
 SolidCraft names and status comparisons use minors; patch-sensitive writer gates use full
@@ -251,10 +251,10 @@ Designs open in their target release and newer releases.
 
 
 SolidCraft conversion reports include the selected target and the discovered CLI version,
-even with verification off. Text output includes `Target SolidCraft 0.27 (found 0.27.1)`,
+even with verification off. Text output includes `Target SolidCraft 0.28 (found 0.28.0)`,
 or `(none found)` when no version can be read. `--solidcraft-version` overrides the target;
 otherwise the found supported version is used, capped at the newest known release, falling
-back to 0.27. Successful conversions print the same installed-version notice beside the
+back to 0.28. Successful conversions print the same installed-version notice beside the
 target line, with the SolidCraft download URL for too-old releases. The CLI never checks
 for Dutchman updates over the network. Failed or refused files print neither line.
 No installed release means no notice. Other output
