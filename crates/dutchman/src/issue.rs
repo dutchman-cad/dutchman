@@ -237,6 +237,29 @@ mod tests {
     }
 
     #[test]
+    fn a_check_failure_with_two_counts_stays_in_the_link_and_survives_encoding() {
+        let message = "cannot read this design: cadmpeg's model of it fails its checks (24 \
+                       errors): pcurve mapped through the face surface misses the edge's \
+                       vertex positions by 0.912455; read again as geometry alone, without \
+                       its history, sketches and parameters, it still fails them (83 \
+                       errors): pcurve mapped through the face surface misses the edge's \
+                       vertex positions by 0.912455";
+        let mut report = failed();
+        report["error"]["message"] = json!(message);
+        let issue = issue(
+            &report,
+            Path::new("/home/someone/out"),
+            &anon::Run::default(),
+        )
+        .unwrap();
+        assert!(issue.url.len() <= MAX_URL, "{}", issue.url.len());
+        assert!(issue.url.is_ascii() && !issue.url.contains(['\'', '(', ')', ' ', ';']));
+        assert!(query(&issue.url, "what-happened")
+            .unwrap()
+            .contains(message));
+    }
+
+    #[test]
     fn a_long_error_message_is_shortened_in_the_link() {
         let message = "y".repeat(MAX_URL * 2);
         let long = json!({"errors": [{"message": message, "stage": "decode"}]});
