@@ -1,0 +1,185 @@
+name: First run
+
+# Does what a new user does, on GitHub's runners: downloads a published release the way the
+# README and docs/install.md say, checks its checksum, unpacks it, clears quarantine on macOS,
+# runs the command and converts the repository's public fixtures. On macOS it also mounts the
+# disk image and checks the app's signature. Runs weekly, when a release is published, and on
+# demand for `latest` (the version-less files the README links), `nightly`, or a tag.
+
+on:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: latest, nightly, or a release tag such as v0.2.5
+        type: string
+        default: latest
+  schedule:
+    - cron: "17 5 * * 1"
+  release:
+    types: [published]
+  # TEMPORARY: verify this workflow on the pull request; removed before merge.
+  pull_request:
+    paths:
+      - .github/workflows/first-run.yml
+
+permissions:
+  contents: read
+
+env:
+  REPO_URL: https://github.com/dutchman-cad/dutchman
+
+jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      base: ${{ steps.pick.outputs.base }}
+      prefix: ${{ steps.pick.outputs.prefix }}
+      label: ${{ steps.pick.outputs.label }}
+    steps:
+      - id: pick
+        env:
+          CHOICE: ${{ github.event_name == 'workflow_dispatch' && inputs.release || github.event_name == 'release' && github.event.release.tag_name || 'latest' }}
+        run: |
+          choice=${CHOICE:-latest}
+          case "$choice" in
+            latest)
+              base="$REPO_URL/releases/latest/download"; prefix=dutchman ;;
+            nightly)
+              base="$REPO_URL/releases/download/nightly"; prefix=dutchman-nightly ;;
+            v[0-9]*)
+              base="$REPO_URL/releases/download/$choice"; prefix="dutchman-${choice#v}" ;;
+            *)
+              echo "Unknown release: $choice (use latest, nightly, or a tag such as v0.2.5)" >&2
+              exit 1 ;;
+          esac
+          echo "base=$base" >> "$GITHUB_OUTPUT"
+          echo "prefix=$prefix" >> "$GITHUB_OUTPUT"
+          echo "label=$choice" >> "$GITHUB_OUTPUT"
+
+  linux:
+    name: Linux x86_64 (${{ needs.resolve.outputs.label }})
+    needs: resolve
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and check the archive
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir -p dl && cd dl
+          archive="${{ needs.resolve.outputs.prefix }}-x86_64-unknown-linux-gnu.tar.gz"
+          curl -fLO "${{ needs.resolve.outputs.base }}/$archive"
+          curl -fLO "${{ needs.resolve.outputs.base }}/$archive.sha256"
+          sha256sum -c "$archive.sha256"
+          tar xzf "$archive"
+          ls
+          echo "DUTCHMAN=$PWD/$(ls -d dutchman-*/ | head -1)dutchman" >> "$GITHUB_ENV"
+      - name: Run and convert the fixtures
+        run: |
+          echo "## First run: Linux x86_64, ${{ needs.resolve.outputs.label }}" >> "$GITHUB_STEP_SUMMARY"
+          TIME_CMD="/usr/bin/time -v" scripts/first-run-check.sh "$DUTCHMAN" \
+            crates/dutchman-core/tests/fixtures "$RUNNER_TEMP/out"
+
+  macos:
+    name: macOS (${{ needs.resolve.outputs.label }})
+    needs: resolve
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and check the archive
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir -p dl && cd dl
+          prefix="${{ needs.resolve.outputs.prefix }}"
+          base="${{ needs.resolve.outputs.base }}"
+          # The nightly has per-chip archives only; this runner is Apple silicon.
+          if [[ $prefix == dutchman-nightly ]]; then
+            archive="$prefix-aarch64-apple-darwin.tar.gz"
+          else
+            archive="$prefix-macos-universal.tar.gz"
+          fi
+          curl -fLO "$base/$archive"
+          curl -fLO "$base/$archive.sha256"
+          shasum -a 256 -c "$archive.sha256"
+          tar xzf "$archive"
+          cd dutchman-*/
+          # The documented step (docs/install.md); it must succeed with no flag present.
+          xattr -dr com.apple.quarantine . 2>/dev/null || true
+          echo "DUTCHMAN=$PWD/dutchman" >> "$GITHUB_ENV"
+      - name: Run and convert the fixtures
+        run: |
+          echo "## First run: macOS archive, ${{ needs.resolve.outputs.label }}" >> "$GITHUB_STEP_SUMMARY"
+          TIME_CMD="/usr/bin/time -l" scripts/first-run-check.sh "$DUTCHMAN" \
+            crates/dutchman-core/tests/fixtures "$RUNNER_TEMP/out"
+      - name: Disk image and signature
+        working-directory: ${{ runner.temp }}
+        run: |
+          mkdir -p dmg && cd dmg
+          prefix="${{ needs.resolve.outputs.prefix }}"
+          base="${{ needs.resolve.outputs.base }}"
+          dmg="$prefix-macos-universal.dmg"
+          curl -fLO "$base/$dmg"
+          curl -fLO "$base/$dmg.sha256"
+          shasum -a 256 -c "$dmg.sha256"
+          mnt="$RUNNER_TEMP/mnt"
+          mkdir -p "$mnt"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mnt" "$dmg"
+          trap 'hdiutil detach "$mnt" || hdiutil detach -force "$mnt"' EXIT
+          app=$(ls -d "$mnt"/*.app | head -1)
+          echo "App: $app"
+          test -d "$app/Contents/MacOS"
+          test -d "$app/Contents/Helpers"
+          ls "$app/Contents/MacOS" "$app/Contents/Helpers"
+          "$app/Contents/Helpers/dutchman" --version
+          verify=ok
+          codesign --verify --deep --strict --verbose=2 "$app" || verify=FAILED
+          sig=$(codesign -dv "$app" 2>&1 || true)
+          echo "$sig"
+          spctl_out=$(spctl -a -vv "$app" 2>&1 || true)
+          echo "$spctl_out"
+          {
+            echo "## First run: macOS disk image, ${{ needs.resolve.outputs.label }}"
+            echo
+            echo "- App: \`$(basename "$app")\`, \`Contents/MacOS\` and \`Contents/Helpers\` present"
+            echo "- \`codesign --verify --deep --strict\`: $verify"
+            echo "- \`codesign -dv\`:"
+            echo '```'
+            echo "$sig"
+            echo '```'
+            echo "- \`spctl -a -vv\` (rejected is expected while the app is not notarised):"
+            echo '```'
+            echo "$spctl_out"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ $verify != ok ]]; then
+            echo "::error::codesign verification failed"
+            exit 1
+          fi
+          echo "$sig" | grep -q '^Signature\|^Identifier' || { echo "::error::no signature shown"; exit 1; }
+
+  windows:
+    name: Windows x86_64 (${{ needs.resolve.outputs.label }})
+    needs: resolve
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and check the archive
+        working-directory: ${{ runner.temp }}
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dl | Out-Null
+          Set-Location dl
+          $archive = "${{ needs.resolve.outputs.prefix }}-x86_64-pc-windows-msvc.zip"
+          $base = "${{ needs.resolve.outputs.base }}"
+          curl.exe -fLO "$base/$archive"
+          curl.exe -fLO "$base/$archive.sha256"
+          $want = ((Get-Content "$archive.sha256" -Raw).Trim() -split '\s+')[0]
+          $got = (Get-FileHash $archive -Algorithm SHA256).Hash
+          if ($want -ne $got) { Write-Error "Checksum mismatch: $got, expected $want"; exit 1 }
+          Expand-Archive $archive -DestinationPath .
+          $dir = Get-ChildItem -Directory -Filter "dutchman-*" | Select-Object -First 1
+          "DUTCHMAN=$($dir.FullName)\dutchman.exe" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      - name: Run and convert the fixtures
+        shell: bash
+        run: |
+          echo "## First run: Windows x86_64, ${{ needs.resolve.outputs.label }}" >> "$GITHUB_STEP_SUMMARY"
+          scripts/first-run-check.sh "$DUTCHMAN" crates/dutchman-core/tests/fixtures "$RUNNER_TEMP/out"
