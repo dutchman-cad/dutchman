@@ -229,6 +229,230 @@ impl Proof {
     }
 }
 
+/// One point on each face `value` selects, from the boundary samples of its input topology:
+/// inside a planar face (clear of its edges and its holes), on the middle of a cylindrical one.
+/// Faces of any other surface, and boundaries that are not lines, arcs and circles, are refused.
+pub(super) fn interior_points(
+    feature: &Value,
+    value: &Value,
+    ctx: &Context,
+) -> Result<Vec<V3>, String> {
+    let state = value.get("state").cloned().unwrap_or(Value::Null);
+    let ids = value
+        .get("faces")
+        .and_then(Value::as_array)
+        .filter(|ids| !ids.is_empty() && ids.len() <= FACES)
+        .ok_or("its face selection is empty or exceeds the face limit")?;
+    let mut points = Vec::new();
+    for id in ids {
+        let one = json!({"state": state, "faces": [id]});
+        let faces = boundaries(feature, &one, ctx)?;
+        let [face] = faces.as_slice() else {
+            return Err(BAD.to_owned());
+        };
+        points.push(point_in(face)?);
+    }
+    Ok(points)
+}
+
+/// A point on one face: planar when its boundary is flat, else the cylinder it is part of.
+fn point_in(face: &Boundary) -> Result<V3, String> {
+    let samples: Vec<V3> = face
+        .edges
+        .iter()
+        .flat_map(|edge| {
+            let (start, end) = edge.ends();
+            let mid = match edge {
+                Edge::Line { start, end } => scale(add(*start, *end), 0.5),
+                Edge::Arc { mid, .. } | Edge::Circle { mid, .. } => *mid,
+            };
+            [start, mid, end]
+        })
+        .collect();
+    match plane(std::slice::from_ref(face), &samples) {
+        Ok((origin, normal)) => planar_point(face, origin, normal),
+        Err(_) => cylinder_point(face),
+    }
+}
+
+/// The point of a planar face farthest from its boundary among the centres of the triangles
+/// its outline corners make that lie inside it, holes left out.
+fn planar_point(face: &Boundary, origin: V3, normal: V3) -> Result<V3, String> {
+    let helper = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        .into_iter()
+        .min_by(|a, b| dot(*a, normal).abs().total_cmp(&dot(*b, normal).abs()))
+        .ok_or("its face has no plane")?;
+    let x = unit(cross(helper, normal)).ok_or("its face has no plane")?;
+    let y = unit(cross(normal, x)).ok_or("its face has no plane")?;
+    let flat = |p: V3| {
+        let d = sub(p, origin);
+        [dot(d, x), dot(d, y)]
+    };
+    let mut rings: Vec<Vec<[f64; 2]>> = Vec::new();
+    for ring in loops(&face.edges)? {
+        let mut polygon = Vec::new();
+        for (index, forward) in ring {
+            let edge = face.edges.get(index).ok_or(BAD)?;
+            let (a, b) = edge.ends();
+            let from = if forward { a } else { b };
+            polygon.push(flat(from));
+            match edge {
+                Edge::Line { .. } => {}
+                Edge::Arc {
+                    center,
+                    radius,
+                    axis,
+                    ..
+                } => {
+                    let c = flat(*center);
+                    let p = flat(from);
+                    let turn = edge_sweep(edge) * dot(*axis, normal).signum();
+                    let turn = if forward { turn } else { -turn };
+                    let first = (p[1] - c[1]).atan2(p[0] - c[0]);
+                    for k in 1..ARC_STEPS {
+                        let at = first + turn * f64::from(k) / f64::from(ARC_STEPS);
+                        polygon.push([c[0] + radius * at.cos(), c[1] + radius * at.sin()]);
+                    }
+                }
+                Edge::Circle { center, radius, .. } => {
+                    let c = flat(*center);
+                    polygon.clear();
+                    for k in 0..CIRCLE_STEPS {
+                        let at = TAU * f64::from(k) / f64::from(CIRCLE_STEPS);
+                        polygon.push([c[0] + radius * at.cos(), c[1] + radius * at.sin()]);
+                    }
+                }
+            }
+        }
+        rings.push(polygon);
+    }
+    let inside_face = |p: [f64; 2]| rings.iter().filter(|ring| inside(ring, p)).count() % 2 == 1;
+    let clearance = |p: [f64; 2]| {
+        rings
+            .iter()
+            .flat_map(|ring| {
+                (0..ring.len()).filter_map(move |i| {
+                    Some(segment_distance(
+                        p,
+                        *ring.get(i)?,
+                        *ring.get((i + 1) % ring.len())?,
+                    ))
+                })
+            })
+            .fold(f64::INFINITY, f64::min)
+    };
+    let mut best: Option<([f64; 2], f64)> = None;
+    for ring in &rings {
+        let n = ring.len();
+        for i in 0..n {
+            let (Some(a), Some(b), Some(c)) = (
+                ring.get((i + n - 1) % n),
+                ring.get(i),
+                ring.get((i + 1) % n),
+            ) else {
+                continue;
+            };
+            let centre = [(a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0];
+            if !inside_face(centre) {
+                continue;
+            }
+            let room = clearance(centre);
+            if room > 1e-3 && best.is_none_or(|(_, most)| room > most) {
+                best = Some((centre, room));
+            }
+        }
+    }
+    let ([u, v], _) = best.ok_or("its face has no resolved planar interior point")?;
+    Ok(add(origin, add(scale(x, u), scale(y, v))))
+}
+
+/// How far `p` is from the segment `a`-`b`.
+fn segment_distance(p: [f64; 2], a: [f64; 2], b: [f64; 2]) -> f64 {
+    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+    let length = dx * dx + dy * dy;
+    let t = if length > 0.0 {
+        (((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / length).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    ((p[0] - a[0] - t * dx).powi(2) + (p[1] - a[1] - t * dy).powi(2)).sqrt()
+}
+
+/// A point in the middle of a cylindrical face: its boundary is circles or arcs of one radius
+/// about one axis, joined by straight edges along the axis. A full cylinder gets the point
+/// opposite its seam, a partial one the middle of its arcs.
+fn cylinder_point(face: &Boundary) -> Result<V3, String> {
+    const NOT: &str = "a face other than a plane or a cylinder is not supported yet";
+    let curved: Vec<(V3, f64, V3, bool)> = face
+        .edges
+        .iter()
+        .filter_map(|edge| match edge {
+            Edge::Arc {
+                mid,
+                center,
+                radius,
+                ..
+            } => Some((*center, *radius, *mid, false)),
+            Edge::Circle {
+                start,
+                center,
+                radius,
+                ..
+            } => Some((*center, *radius, *start, true)),
+            Edge::Line { .. } => None,
+        })
+        .collect();
+    let (first, rest) = curved.split_first().ok_or(NOT)?;
+    let far = rest
+        .iter()
+        .max_by(|a, b| norm(sub(a.0, first.0)).total_cmp(&norm(sub(b.0, first.0))))
+        .ok_or(NOT)?;
+    let axis = unit(sub(far.0, first.0)).ok_or(NOT)?;
+    let radius = first.1;
+    let seams = face
+        .edges
+        .iter()
+        .filter(|edge| matches!(edge, Edge::Line { .. }))
+        .count();
+    if seams == 0
+        || curved.iter().any(|(center, r, _, _)| {
+            (r - radius).abs() > NEAR * radius.max(1.0)
+                || norm(cross(axis, sub(*center, first.0))) > NEAR * radius.max(1.0)
+        })
+        || face.edges.iter().any(|edge| match edge {
+            Edge::Line { start, end } => {
+                unit(sub(*end, *start)).is_none_or(|line| norm(cross(line, axis)) > ANGLE)
+            }
+            _ => false,
+        })
+    {
+        return Err(NOT.to_owned());
+    }
+    let along: Vec<f64> = curved
+        .iter()
+        .map(|c| dot(sub(c.0, first.0), axis))
+        .collect();
+    let low = along.iter().copied().fold(f64::INFINITY, f64::min);
+    let high = along.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    if high - low <= NEAR {
+        return Err(NOT.to_owned());
+    }
+    let middle = add(first.0, scale(axis, (low + high) / 2.0));
+    let radial = |point: V3, center: V3| {
+        let d = sub(point, center);
+        sub(d, scale(axis, dot(d, axis)))
+    };
+    let direction = match curved.iter().find(|c| c.3) {
+        Some(circle) => scale(radial(circle.2, circle.0), -1.0),
+        None => curved
+            .iter()
+            .filter_map(|c| unit(radial(c.2, c.0)))
+            .fold([0.0; 3], add),
+    };
+    let direction = unit(direction).ok_or(NOT)?;
+    Ok(add(middle, scale(direction, radius)))
+}
+
 /// Reads the boundary of every selected face from the feature's input topology.
 fn boundaries(feature: &Value, value: &Value, ctx: &Context) -> Result<Vec<Boundary>, String> {
     let state_id = value
@@ -865,5 +1089,61 @@ mod tests {
         // Its tangent at the midpoint is not along the chord.
         let bad = edge(&row((0.0, 0.0), (5.0, 3.0), (10.0, 0.0), (1.0, 1.0)));
         assert!(bad.is_err());
+    }
+
+    fn arc_row(centre_z: f64, from: f64, to: f64) -> Value {
+        // A quarter arc of radius 5 about the z axis at height `centre_z`.
+        let at = |a: f64| json!({"x": 5.0 * a.cos(), "y": 5.0 * a.sin(), "z": centre_z});
+        let mid = (from + to) / 2.0;
+        json!({
+            "edge": "e", "interior": at(mid), "start": at(from), "end": at(to),
+            "tangent": {"x": -mid.sin(), "y": mid.cos(), "z": 0.0},
+        })
+    }
+
+    #[test]
+    fn a_partial_cylinder_gets_a_point_on_its_middle() {
+        let quarter = std::f64::consts::FRAC_PI_2;
+        let line = |angle: f64| {
+            let at = |z: f64| json!({"x": 5.0 * angle.cos(), "y": 5.0 * angle.sin(), "z": z});
+            json!({
+                "edge": "e", "interior": at(5.0), "start": at(0.0), "end": at(10.0),
+                "tangent": {"x": 0.0, "y": 0.0, "z": 1.0},
+            })
+        };
+        let rows = [
+            arc_row(0.0, 0.0, quarter),
+            arc_row(10.0, 0.0, quarter),
+            line(0.0),
+            line(quarter),
+        ];
+        let edges: Vec<Edge> = rows.iter().map(|r| edge(r).unwrap()).collect();
+        let p = point_in(&Boundary { edges, area: 1.0 }).unwrap();
+        let half = quarter / 2.0;
+        assert!((p[0] - 5.0 * half.cos()).abs() < 1e-6, "{p:?}");
+        assert!((p[1] - 5.0 * half.sin()).abs() < 1e-6, "{p:?}");
+        assert!((p[2] - 5.0).abs() < 1e-6, "{p:?}");
+    }
+
+    #[test]
+    fn a_square_face_gets_a_point_well_inside() {
+        let corners = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];
+        let edges: Vec<Edge> = (0..4)
+            .map(|k| {
+                let (a, b) = (corners[k], corners[(k + 1) % 4]);
+                edge(&row(
+                    a,
+                    ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0),
+                    b,
+                    ((b.0 - a.0) / 10.0, (b.1 - a.1) / 10.0),
+                ))
+                .unwrap()
+            })
+            .collect();
+        let p = point_in(&Boundary { edges, area: 100.0 }).unwrap();
+        assert!(
+            p[0] > 1.0 && p[0] < 9.0 && p[1] > 1.0 && p[1] < 9.0,
+            "{p:?}"
+        );
     }
 }
