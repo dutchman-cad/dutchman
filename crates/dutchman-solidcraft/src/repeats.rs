@@ -52,6 +52,7 @@ fn identity(assembly: &Assembly, part: usize) -> Option<&str> {
 
 /// Whether two sub-assemblies place the same things at the same placements, under the same
 /// names, shown or hidden alike: as they are now, whatever the source said of their layouts.
+/// An unnamed placement takes its name from its component, so it would change if shared.
 fn same_layout(a: &Assembly, b: &Assembly) -> bool {
     let close = |x: &[[f64; 4]; 3], y: &[[f64; 4]; 3]| {
         x.iter()
@@ -77,6 +78,7 @@ fn same_layout(a: &Assembly, b: &Assembly) -> bool {
                 _ => false,
             };
             p.hidden == q.hidden
+                && p.name.is_some()
                 && p.name == q.name
                 && close(&p.transform, &q.transform)
                 && identity(a, p.part).is_some()
