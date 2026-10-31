@@ -65,7 +65,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.changes.outputs.dutchman }}
       - uses: dtolnay/rust-toolchain@stable
@@ -78,7 +78,7 @@ jobs:
     if: needs.changes.outputs.build == 'true'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.changes.outputs.dutchman }}
       - uses: dtolnay/rust-toolchain@stable
@@ -128,7 +128,7 @@ jobs:
           apt-get install -y --no-install-recommends ca-certificates curl git build-essential \
             pkg-config python3 libx11-dev libxi-dev libxcursor-dev libxrandr-dev \
             libxkbcommon-dev libwayland-dev libgl1-mesa-dev
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.changes.outputs.dutchman }}
       - uses: dtolnay/rust-toolchain@stable
@@ -149,7 +149,7 @@ jobs:
         run: |
           archive=$(scripts/package-archive.sh ${{ matrix.target }} "dutchman-nightly-${{ matrix.target }}" "${{ needs.changes.outputs.dutchman }}")
           echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ARCHIVE }}
           path: |
@@ -167,7 +167,7 @@ jobs:
         target: [aarch64-apple-darwin, x86_64-apple-darwin]
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.changes.outputs.dutchman }}
       - uses: dtolnay/rust-toolchain@stable
@@ -187,7 +187,7 @@ jobs:
           fi
           archive=$(scripts/package-archive.sh ${{ matrix.target }} "dutchman-nightly-${{ matrix.target }}" "${{ needs.changes.outputs.dutchman }}")
           echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macos-archive-${{ matrix.target }}
           path: |
@@ -201,10 +201,10 @@ jobs:
     if: needs.changes.outputs.build == 'true'
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.changes.outputs.dutchman }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: macos-archive-*
           path: dist
@@ -223,7 +223,7 @@ jobs:
           scripts/macos-dmg.sh "$version" "nightly" \
             "dist/${name}-aarch64-apple-darwin" "dist/${name}-x86_64-apple-darwin" "dist/$dmg"
           (cd dist && shasum -a 256 "$dmg" > "$dmg.sha256")
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dutchman-nightly-macos
           path: |
@@ -243,12 +243,12 @@ jobs:
       DUTCHMAN_SHA: ${{ needs.changes.outputs.dutchman }}
       CADMPEG_SHA: ${{ needs.changes.outputs.cadmpeg }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: dutchman-nightly-*
           path: artifacts
           merge-multiple: true
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.changes.outputs.dutchman }}
           path: source
@@ -292,10 +292,10 @@ jobs:
     env:
       DUTCHMAN_SHA: ${{ needs.changes.outputs.dutchman }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.changes.outputs.dutchman }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: dutchman-*-unknown-linux-gnu.tar.gz
           path: artifacts
@@ -315,14 +315,14 @@ jobs:
               print(f"version={version}", file=f)
               print(f"licenses={package['license']}", file=f)
           PYMETA
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@v7
         with:
           context: build-context
           file: docker/release.Dockerfile

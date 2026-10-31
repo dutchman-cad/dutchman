@@ -69,7 +69,7 @@ jobs:
           apt-get install -y --no-install-recommends ca-certificates curl git build-essential \
             pkg-config python3 libx11-dev libxi-dev libxcursor-dev libxrandr-dev \
             libxkbcommon-dev libwayland-dev libgl1-mesa-dev
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -91,7 +91,7 @@ jobs:
             | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "dutchman"))')
           archive=$(scripts/package-archive.sh ${{ matrix.target }} "dutchman-${version}-${{ matrix.target }}" "v$version")
           echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ARCHIVE }}
           path: |
@@ -107,7 +107,7 @@ jobs:
         target: [aarch64-apple-darwin, x86_64-apple-darwin]
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -126,7 +126,7 @@ jobs:
           fi
           archive=$(scripts/package-archive.sh ${{ matrix.target }} "dutchman-${version}-${{ matrix.target }}" "v$version")
           echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: macos-archive-${{ matrix.target }}
           path: |
@@ -139,8 +139,8 @@ jobs:
     needs: macos-build
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: macos-archive-*
           path: dist
@@ -160,7 +160,7 @@ jobs:
             "dist/${name}-aarch64-apple-darwin" "dist/${name}-x86_64-apple-darwin" "dist/$dmg"
           (cd dist && shasum -a 256 "$dmg" > "$dmg.sha256")
           echo "VERSION=$version" >> "$GITHUB_ENV"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dutchman-${{ env.VERSION }}-macos
           path: |
@@ -179,10 +179,10 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Only the release archives: a Docker build record uploaded by an image build is not a
       # release file and cannot be downloaded as one.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: dutchman-[0-9]*
           path: artifacts
@@ -246,8 +246,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: dutchman-*-unknown-linux-gnu.tar.gz
           path: artifacts
@@ -266,9 +266,9 @@ jobs:
               print(f"version={version}", file=f)
               print(f"licenses={package['license']}", file=f)
           PYMETA
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/build-push-action@v7
         with:
           context: build-context
           file: docker/release.Dockerfile
