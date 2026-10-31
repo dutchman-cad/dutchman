@@ -1150,6 +1150,9 @@ impl Builder<'_> {
             }
         };
         let summary = self.writer.history_summary(&history);
+        // A history that could not be checked, written for a writer that keeps such a history
+        // hidden: the original stays the part's visible model, as for a single part.
+        let mut unverified_hidden = false;
         let check = if let Some(check) = partial_check {
             if let Check::Partial(why) = &check {
                 self.report
@@ -1165,6 +1168,18 @@ impl Builder<'_> {
                         format!("{file}: {summary}; verified against the original in SolidCraft"),
                     );
                     Check::Verified
+                }
+                verify::Outcome::Unverified(why) if self.writer.hide_unverified => {
+                    self.report.push_at(
+                        Stage::SolidCraft,
+                        Severity::Degraded,
+                        HISTORY,
+                        format!(
+                            "{file}: {summary}; unverified: {why}; kept hidden beside the original, which stays the visible model"
+                        ),
+                    );
+                    unverified_hidden = true;
+                    Check::Unverified(why)
                 }
                 verify::Outcome::Unverified(why) => {
                     self.report.push_at(
@@ -1196,13 +1211,18 @@ impl Builder<'_> {
         };
         let partial = history.stop.is_some();
         self.report.append_prefixed(part_report, &file);
-        let component = if partial {
+        let hidden = partial || unverified_hidden;
+        let component = if hidden {
             let child = self.id();
             let occurrence = self.id();
-            self.components.push(
-                json!({"id": child, "name": "Editable history (partial)", "parent": component}),
-            );
-            self.occurrences.push(json!({"id": occurrence, "name": "Editable history (partial):1", "component": child, "parent": component, "grounded": true, "transform": column_major(&IDENTITY)}));
+            let label = if partial {
+                "Editable history (partial)"
+            } else {
+                "Editable history (unverified)"
+            };
+            self.components
+                .push(json!({"id": child, "name": label, "parent": component}));
+            self.occurrences.push(json!({"id": occurrence, "name": format!("{label}:1"), "component": child, "parent": component, "grounded": true, "transform": column_major(&IDENTITY)}));
             // The prefix belongs to the part definition; each placement inherits its hide.
             self.placements.insert(occurrence, (child, IDENTITY));
             self.hidden.insert(occurrence);
@@ -1230,7 +1250,7 @@ impl Builder<'_> {
         self.report
             .push_part(part_history(part, &mapping.features, check.clone()));
         self.histories.push(check);
-        Ok(!partial)
+        Ok(!hidden)
     }
 
     /// Adds the sketches of the assembly's own file, those that map, to the design itself

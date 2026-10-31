@@ -233,6 +233,63 @@ fn folders_keep_mapped_history_and_its_suppressed_original() {
 }
 
 #[test]
+fn an_assembly_parts_unverified_history_can_be_kept_hidden_beside_its_original() {
+    let mut model = placed_twice();
+    let assembly = model.assembly.as_mut().unwrap();
+    let mut part = assembly.parts[0].clone();
+    let mut wire = serde_json::to_value(&part.ir).unwrap();
+    wire["model"]["features"] = serde_json::json!([{
+        "id": "f3d:model:feature#1", "ordinal": 0, "name": "Ball", "suppressed": false,
+        "outputs": [wire["model"]["bodies"][0]["id"]],
+        "definition": {"definition": "sphere", "center": {"x": 5.0, "y": 5.0, "z": 5.0},
+                       "radius": 5.0, "op": "new_body"},
+    }]);
+    part.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    assembly.parts.push(part);
+    assembly.placements[1].part = 1;
+    let mut report = Report::default();
+    let mut bytes = Vec::new();
+    SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .hide_unverified_history(true)
+        .write(&model, &mut bytes, &mut report)
+        .unwrap();
+    let doc = document(&bytes);
+    let features = doc["features"].as_array().unwrap();
+    // The original stays the part's visible model; the history is all there, hidden.
+    let original = features
+        .iter()
+        .find(|f| f["type"] == "import" && f["component"] != features[0]["component"])
+        .unwrap();
+    assert_eq!(original["suppressed"], false);
+    let ball = features.iter().find(|f| f["type"] == "sphere").unwrap();
+    let history = doc["components"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["id"] == ball["component"])
+        .unwrap();
+    assert_eq!(history["name"], "Editable history (unverified)");
+    assert_eq!(history["parent"], original["component"]);
+    let occurrence = doc["occurrences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|o| o["component"] == history["id"])
+        .unwrap();
+    let hidden = doc["visibility"]["hidden_occurrences"].as_array().unwrap();
+    assert!(hidden
+        .iter()
+        .any(|path| path.as_array().unwrap().last() == Some(&occurrence["id"])));
+    assert!(report.losses().iter().any(|note| note
+        .detail
+        .contains("unverified: verification turned off; kept hidden")));
+    if let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) {
+        assert_eq!(evaluate(&cli, &bytes).len(), 3);
+    }
+}
+
+#[test]
 fn root_bodies_and_sketches_share_a_folder_only_when_contiguous() {
     for own_first in [false, true] {
         let mut model = with_sketches();
