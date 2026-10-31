@@ -11,7 +11,8 @@ A release is cut from `main` once CI is green there.
    The script reads the authenticated GitHub releases list, selects the highest published
    stable patch of that minor, and checks its checksum metadata. It prints the constants,
    the oldest pinned checksum, and the newest minor's dynamic CI matrix entry. Copy those
-   into `crates/dutchman-solidcraft/src/verify.rs` and `.github/workflows/ci.yml`.
+   into `crates/dutchman-solidcraft/src/verify.rs`; the CI matrix's `newest` entry follows
+   that constant, so `.github/workflows/ci.yml` needs no edit for a new minor.
    CI resolves that newest minor again at each run with the workflow's `GITHUB_TOKEN`,
    downloads its `SHA256SUMS.txt`, and verifies the exact archive before extracting it.
    Drafts, prereleases, missing minors, and ambiguous checksums fail rather than falling back.
@@ -19,6 +20,15 @@ A release is cut from `main` once CI is green there.
    minor changes. Internal writer targets default to newest-minor.0; explicit and found
    targets retain patches for feature gates and the 0.18.2 verification floor.
    Run target-version and roundtrip checks at both window bounds in CI.
+
+   A new minor does not have to wait for a person: the `SolidCraft window` workflow
+   (`.github/workflows/solidcraft-window.yml`) checks SolidCraft's releases every day and,
+   when a new minor `x.Y.0` appears, runs `scripts/solidcraft-window.py 0.Y 0.Y.Z` and opens
+   the "Refresh the SolidCraft window to 0.18–0.Y" pull request, then starts CI on its
+   branch. The script moves the newest end of the window only; the oldest end and the design
+   format stay as they are, so check the release notes for a format change before merging.
+   Patch releases do nothing. The repository setting "Allow GitHub Actions to create and
+   approve pull requests" must be on for the workflow to open the pull request.
 2. Run `python3 scripts/changelog.py release X.Y.Z` to assemble the fragments into a dated
    `CHANGELOG.md` entry (use `--date YYYY-MM-DD` to override today). Review it, add any known
    issue, and stage the deleted fragments. Set the workspace `version` in `Cargo.toml`, along
