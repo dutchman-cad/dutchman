@@ -2,7 +2,7 @@
 //! shared batch code `dutchman convert-all` uses, sending each step back as a message and
 //! asking the window to repaint.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::sync::Arc;
@@ -31,10 +31,24 @@ pub enum Message {
         problems: Vec<Value>,
         jobs: Vec<Job>,
     },
+    /// A file that failed, and its size when it can be read.
+    Sized { input: PathBuf, size: Option<u64> },
     /// A job of the run started or finished.
     Progress(Event),
     /// The run is over: every job finished, or it was stopped.
     Done,
+}
+
+/// The size of the failed file at `input`, read here so the window never waits on a slow disk.
+fn sized(input: &Path) -> Message {
+    Message::Sized {
+        input: input.to_path_buf(),
+        size: std::fs::metadata(input).ok().map(|file| file.len()),
+    }
+}
+
+fn failed(report: &Value) -> bool {
+    report.get("ok") != Some(&Value::Bool(true))
 }
 
 /// A run in progress.
@@ -66,11 +80,24 @@ impl Run {
                     mut jobs, problems, ..
                 } = batch::plan(&inputs, &out_dir);
                 batch::prepare(&mut jobs, &options);
+                let refused: Vec<PathBuf> = problems
+                    .iter()
+                    .filter_map(|report| report.pointer("/input/path")?.as_str())
+                    .map(PathBuf::from)
+                    .collect();
                 send(Message::Planned {
                     problems,
                     jobs: jobs.clone(),
                 });
+                for input in &refused {
+                    send(sized(input));
+                }
                 batch::run_each(&jobs, &writer, batch::workers(None), &flag, |event| {
+                    if let Event::Finished(index, report) = &event {
+                        if let Some(job) = jobs.get(*index).filter(|_| failed(report)) {
+                            send(sized(&job.input));
+                        }
+                    }
                     send(Message::Progress(event));
                 });
             }));
@@ -90,6 +117,7 @@ impl Run {
         let stop = Arc::new(AtomicBool::new(false));
         let writer = options.writer();
         let flag = Arc::clone(&stop);
+        let input = job.input.clone();
         std::thread::spawn(move || {
             let send = |message: Message| {
                 let _ = messages.send(message);
@@ -97,6 +125,9 @@ impl Run {
             };
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 batch::run_each(&[job], &writer, 1, &flag, |event| {
+                    if matches!(&event, Event::Finished(_, report) if failed(report)) {
+                        send(sized(&input));
+                    }
                     send(Message::Progress(match event {
                         Event::Started(_) => Event::Started(index),
                         Event::Progress(_, event) => Event::Progress(index, event),

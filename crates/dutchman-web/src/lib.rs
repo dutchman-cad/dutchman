@@ -555,6 +555,9 @@ async fn convert_in(
         app.runs.acquire().await.map_err(|_| {
             Problem::new(StatusCode::SERVICE_UNAVAILABLE, "The server is stopping.")
         })?;
+    let salt = dutchman::anon::Salt::random()
+        .map_err(|message| Problem::new(StatusCode::INTERNAL_SERVER_ERROR, message))?;
+    options.diagnostics_salt = Some(salt.clone());
     let (inputs, out) = (vec![in_dir.clone()], out_dir.clone());
     let mut report = tokio::task::spawn_blocking(move || {
         dutchman::batch::convert_all(&inputs, &out, &options, &settings)
@@ -571,6 +574,7 @@ async fn convert_in(
         .await
         .map_err(|err| server_error(&err))?;
     }
+    report::mark_failures(&mut report, &salt);
     report::for_browser(&mut report, job, &in_dir, &out_dir);
     let saved = serde_json::to_vec(&report).map_err(|err| server_error(&err))?;
     tokio::fs::write(dir.join(REPORT_FILE), saved)

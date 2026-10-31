@@ -3,6 +3,9 @@
 
 use std::path::Path;
 
+use dutchman::anon::Salt;
+use dutchman::present::{self, FileView, SendSteps, Surface};
+use dutchman::report_policy::{MessageFacts, ReportPolicy};
 use serde_json::{json, Value};
 
 /// Takes the job's folders out of every string in `report`, so paths read as the uploaded
@@ -86,6 +89,30 @@ fn scrub(value: &mut Value, prefixes: &[String]) {
     }
 }
 
+/// Adds to each failed file of `report` a `private_report`: its id under the job's `salt` and
+/// its size, for the steps to send it privately. The files must still be in place.
+pub fn mark_failures(report: &mut Value, salt: &Salt) {
+    let Some(Value::Array(results)) = report.get_mut("results") else {
+        return;
+    };
+    for result in results {
+        if result.get("ok") == Some(&json!(true)) {
+            continue;
+        }
+        let Some(input) = result.pointer("/input/path").and_then(Value::as_str) else {
+            continue;
+        };
+        let input = Path::new(input);
+        let mark = json!({
+            "id": salt.file_id(input),
+            "size_bytes": std::fs::metadata(input).ok().map(|file| file.len()),
+        });
+        if let Some(fields) = result.as_object_mut() {
+            fields.insert("private_report".to_owned(), mark);
+        }
+    }
+}
+
 /// `path` with each segment percent-encoded for a URL, keeping the `/` between them.
 pub fn encode_path(path: &str) -> String {
     let mut out = String::with_capacity(path.len());
@@ -97,6 +124,17 @@ pub fn encode_path(path: &str) -> String {
         }
     }
     out
+}
+
+/// The steps to send a failed file privately, as the results page shows them.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Send {
+    pub invite_url: String,
+    pub dm_url: String,
+    pub dm_text: String,
+    pub step_card: bool,
+    /// The one-line message the DM button copies.
+    pub message: String,
 }
 
 /// One file's result, as the results page shows it.
@@ -123,6 +161,8 @@ pub struct Card {
     pub saved: Option<String>,
     /// Why the design could not be saved in the server's output folder.
     pub save_error: Option<String>,
+    /// For a failure worth reporting: how to send the file privately.
+    pub send: Option<Send>,
 }
 
 /// The cards of a browser-ready report (see [`for_browser`]), in the report's order.
@@ -132,6 +172,29 @@ pub fn cards(report: &Value) -> Vec<Card> {
         .and_then(Value::as_array)
         .map(|results| results.iter().map(card).collect())
         .unwrap_or_default()
+}
+
+/// The steps for the failed file `result`, marked by [`mark_failures`].
+fn send(result: &Value) -> Option<Send> {
+    let mark = result.get("private_report")?;
+    if !FileView::from_report(result).can_report {
+        return None;
+    }
+    let policy = ReportPolicy::bundled();
+    let size_bytes = mark.get("size_bytes").and_then(Value::as_u64);
+    let steps = SendSteps::new(policy, size_bytes, result, Surface::Web);
+    Some(Send {
+        invite_url: policy.invite_url.clone(),
+        dm_url: policy.dm_url(),
+        dm_text: steps.dm_text,
+        step_card: steps.step_card,
+        message: policy.message(&MessageFacts {
+            code: present::error_code(result),
+            report_id: mark.get("id").and_then(Value::as_str)?,
+            size_bytes,
+            step: present::step_known(result),
+        }),
+    })
 }
 
 fn card(result: &Value) -> Card {
@@ -207,6 +270,7 @@ fn card(result: &Value) -> Card {
         open: text("/output/open").filter(|_| ok),
         saved: text("/output/saved").filter(|_| ok),
         save_error: text("/output/save_error").filter(|_| ok),
+        send: send(result).filter(|_| !ok),
     }
 }
 
@@ -338,6 +402,50 @@ mod tests {
         assert_eq!(cards[1].stage.as_deref(), Some("decode"));
         assert_eq!(cards[1].download, None);
         assert_eq!(cards[0].saved, None);
+    }
+
+    #[test]
+    fn a_failed_card_offers_the_private_path_and_a_converted_one_does_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let small = dir.path().join("Secret Bracket.f3d");
+        std::fs::write(&small, vec![0; 3 << 19]).unwrap();
+        let large = dir.path().join("big.step");
+        std::fs::File::create(&large)
+            .unwrap()
+            .set_len(11 << 20)
+            .unwrap();
+        let mut report = json!({"results": [
+            {"ok": false, "input": {"path": small, "format": "fusion_archive"},
+             "error": {"message": "failed", "kind": "no_geometry"}},
+            {"ok": false, "input": {"path": large, "format": "step"},
+             "error": {"message": "two words: here"}},
+            {"ok": true, "input": {"path": small}, "output": {"path": "a.sc"}}
+        ]});
+        let salt = Salt::random().unwrap();
+        mark_failures(&mut report, &salt);
+        let cards = cards(&report);
+
+        let send = cards[0].send.as_ref().unwrap();
+        assert_eq!(send.dm_text, "Drag the file in (the file you picked).");
+        assert!(send.step_card);
+        assert_eq!(send.dm_url, ReportPolicy::bundled().dm_url());
+        assert_eq!(
+            send.message,
+            format!(
+                "Dutchman {} couldn't convert my file. Error: no_geometry. Report id: {}. \
+                 Size: 1.5 MB. STEP: unknown.",
+                env!("CARGO_PKG_VERSION"),
+                salt.file_id(&small)
+            )
+        );
+        assert!(!send.message.contains("Secret"));
+
+        let send = cards[1].send.as_ref().unwrap();
+        assert!(send.dm_text.contains("private upload link"));
+        assert!(!send.step_card);
+        assert!(send.message.contains("Error: unknown."));
+        assert!(send.message.ends_with("Size: 11 MB. STEP: yes."));
+        assert_eq!(cards[2].send, None);
     }
 
     #[test]

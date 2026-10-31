@@ -10,7 +10,7 @@ report (replace `part.f3d` with your file or folder):
 dutchman convert-all --out-dir converted --report-anon report-anon.json part.f3d
 ```
 
-In the desktop app, **Report this on GitHub** on the failed file does this for you. Review
+In the desktop app, **Report anonymously on GitHub** on the failed file does this for you. Review
 `report-anon.json`, then paste it into the
 [**A file didn't convert**](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
 form on Dutchman's issues (for a whole library, the **Library test report** form). Keep
@@ -53,6 +53,28 @@ by number: which fail, which are slow, which take the most memory. Then
 cannot fit in the machine's free memory stops early and names the largest parts by number
 instead of running for hours. `findings/diagnose/report.json` and `report.txt` are safe to
 share; `local-key.json` is not. See [Find what breaks in a large private file](diagnose.md).
+
+## Send the file privately
+
+If a file opens in the app that made it but Dutchman can't convert it, it's a bug in Dutchman,
+and the file is the quickest way to fix it. A failed file's card in the desktop and web apps
+has the steps:
+
+1. **Join our Discord server.** Already in? Skip this step.
+2. **DM Dutchy.** The button copies a one-line message and opens Dutchy's DM. Paste the message.
+   It gives Dutchman's version, the error's code, the report id, the file's size, and whether a
+   STEP is at hand. It names no file, and the report id is the one in the anonymous report and
+   the diagnostic log.
+   - A file of up to 10 MB: drag it in. The desktop app opens its folder.
+   - A larger file: Dutchy replies with a private upload link, for up to 300 MB for the design,
+     300 MB for its STEP, or a 1.5 GB zip, for 72 hours.
+3. **Have a STEP export?** If you can export a STEP of the same design, add it too. It helps us
+   compare, but it isn't required.
+
+Only the Dutchman team sees it. It's never published or used in public tests, and we delete it
+on request.
+
+To send no file, use **Report anonymously on GitHub** instead: no file, no names.
 
 ## When you can't share the file
 

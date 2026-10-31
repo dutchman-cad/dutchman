@@ -6,6 +6,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use dutchman::batch::{Event, Job};
 use dutchman::choices::{estimate_text, Choices, Estimate, MemoryCheck, Preset};
 use dutchman::present::FileView;
+use dutchman::report_policy::{MessageFacts, ReportPolicy};
 use dutchman::{json, present, ConvertOptions};
 use eframe::egui::{
     self, Align, CornerRadius, Frame, Layout, Margin, RichText, ScrollArea, Stroke, TextStyle,
@@ -29,6 +30,8 @@ pub struct Row {
     pub report: Option<Value>,
     /// The job that converts it; none for an input that could not be planned.
     pub job: Option<Job>,
+    /// The file's size once it has failed, for the steps to send it privately.
+    pub size: Option<u64>,
 }
 
 impl Row {
@@ -81,6 +84,13 @@ pub struct App {
     /// What to scroll into view on the next frame, so the results are seen without looking
     /// for them.
     reveal: Option<Reveal>,
+    /// Where a failed file can be sent privately.
+    report_policy: crate::report_policy::Refresher,
+    /// The salt of the results shown: their diagnostic log and anonymous reports share it,
+    /// so every report of a file gives it the one id.
+    salt: Option<dutchman::anon::Salt>,
+    /// Shows a file in the system's file manager.
+    file_manager: fn(&Path) -> Result<(), String>,
 }
 
 struct PendingRun {
@@ -246,6 +256,28 @@ impl App {
             found_version,
             detected_version,
             reveal: None,
+            report_policy: crate::report_policy::Refresher::new(
+                stored.as_ref().and_then(|v| v.get("report_policy")),
+            ),
+            salt: None,
+            file_manager: platform::reveal,
+        }
+    }
+
+    /// Replaces the system's file manager, so a test sees what would be shown.
+    pub fn set_file_manager(&mut self, reveal: fn(&Path) -> Result<(), String>) {
+        self.file_manager = reveal;
+    }
+
+    /// Writes the diagnostic log of the next runs to `path`.
+    pub fn set_diagnostic_log(&mut self, path: PathBuf) {
+        self.options.diagnostics = Some(path);
+    }
+
+    /// Supplies a failed row's size without a file of that size, for UI previews.
+    pub fn preview_size(&mut self, index: usize, size: u64) {
+        if let Some(row) = self.rows.get_mut(index) {
+            row.size = Some(size);
         }
     }
 
@@ -331,12 +363,15 @@ impl App {
         self.check_memory(ctx);
     }
 
-    /// Opens the GitHub issue form about the file of the row at `index`, filled in from its
-    /// report. When its anonymous report is too long for the link, it is copied for the
-    /// reporter to paste, and the notice says so.
-    pub fn report_on_github(&mut self, index: usize, ctx: &egui::Context) -> Result<(), String> {
+    /// The anonymous report of the file of the row at `index`, its id in it, and its convert
+    /// report.
+    fn anonymous(&self, index: usize) -> Result<Option<(Value, String, &Value)>, String> {
         let Some(report) = self.rows.get(index).and_then(|row| row.report.as_ref()) else {
-            return Ok(());
+            return Ok(None);
+        };
+        let salt = match &self.salt {
+            Some(salt) => salt.clone(),
+            None => dutchman::anon::Salt::random()?,
         };
         let out_dir = self.out_dir.clone().unwrap_or_default();
         let run = dutchman::anon::Run {
@@ -345,12 +380,50 @@ impl App {
             jobs: 1,
             ..dutchman::anon::Run::default()
         };
-        let link = present::ReportLink::new(dutchman::issue::issue(report, &out_dir, &run)?);
+        let (anonymous, id) = present::anonymous_report(report, &out_dir, &salt, &run);
+        Ok(Some((anonymous, id, report)))
+    }
+
+    /// Opens the GitHub issue form about the file of the row at `index`, filled in from its
+    /// report. When its anonymous report is too long for the link, it is copied for the
+    /// reporter to paste, and the notice says so.
+    pub fn report_on_github(&mut self, index: usize, ctx: &egui::Context) -> Result<(), String> {
+        let Some((anonymous, _, report)) = self.anonymous(index)? else {
+            return Ok(());
+        };
+        let link = present::report_link(report, &anonymous);
         let issue = link.issue;
         ctx.copy_text(issue.anonymous_report.clone());
         self.notice = Some(link.copy_notice.to_owned());
         ctx.open_url(egui::OpenUrl::new_tab(issue.url));
         Ok(())
+    }
+
+    /// Copies the one-line message about the file of the row at `index` and opens Dutchy's
+    /// DM. A file small enough to drag in has its folder shown too.
+    pub fn dm_dutchy(&mut self, index: usize, ctx: &egui::Context) -> Result<(), String> {
+        let Some((_, id, report)) = self.anonymous(index)? else {
+            return Ok(());
+        };
+        let Some(row) = self.rows.get(index) else {
+            return Ok(());
+        };
+        let policy = self.report_policy.policy();
+        let steps = present::SendSteps::new(policy, row.size, report, present::Surface::Desktop);
+        ctx.copy_text(policy.message(&MessageFacts {
+            code: present::error_code(report),
+            report_id: &id,
+            size_bytes: row.size,
+            step: present::step_known(report),
+        }));
+        ctx.open_url(egui::OpenUrl::new_tab(policy.dm_url()));
+        let shown = if steps.drag {
+            (self.file_manager)(&row.input)
+        } else {
+            Ok(())
+        };
+        self.notice = Some(present::SEND_COPIED.to_owned());
+        shown
     }
 
     /// Whether a run is in progress.
@@ -400,6 +473,19 @@ impl App {
         self.notice = None;
         self.diagnostic_stopped = false;
         self.diagnostic_path = None;
+        // A retry keeps its run's salt: the other rows' ids stay as they were given.
+        let salt = match (&pending.kind, &self.salt) {
+            (RunKind::Retry { .. }, Some(salt)) => salt.clone(),
+            _ => match dutchman::anon::Salt::random() {
+                Ok(salt) => salt,
+                Err(message) => {
+                    self.notice = Some(message);
+                    return;
+                }
+            },
+        };
+        pending.options.diagnostics_salt = Some(salt.clone());
+        self.salt = Some(salt);
         if pending.options.diagnostics_default {
             let threads = match &pending.kind {
                 RunKind::Batch { .. } => dutchman::batch::workers(None),
@@ -586,6 +672,7 @@ impl App {
                             report: Some(report),
                             progress: None,
                             job: None,
+                            size: None,
                         })
                         .chain(jobs.into_iter().map(|job| Row {
                             input: job.input.clone(),
@@ -594,8 +681,14 @@ impl App {
                             progress: None,
                             report: None,
                             job: Some(job),
+                            size: None,
                         }))
                         .collect();
+                }
+                Message::Sized { input, size } => {
+                    if let Some(row) = self.rows.iter_mut().find(|row| row.input == input) {
+                        row.size = size;
+                    }
                 }
                 Message::Progress(Event::Started(index)) => {
                     if let Some(row) = self.rows.get_mut(self.offset + index) {
@@ -655,6 +748,7 @@ impl App {
             self.refresh_blocked_checker();
         }
         self.updater.tick(ctx);
+        self.report_policy.tick(ctx, self.updater.automatic());
         self.receive(ctx);
         self.take_dropped_files(ctx);
         self.refresh_estimates(ctx);
@@ -1276,7 +1370,9 @@ impl App {
                 continue;
             };
             let shown = card(ui, &p, |ui| {
-                if let Some(chosen) = row_ui(ui, &p, index, row, file, self.has_app, running) {
+                let policy = self.report_policy.policy();
+                let chosen = row_ui(ui, &p, index, row, file, policy, self.has_app, running);
+                if let Some(chosen) = chosen {
                     action = Some(chosen);
                 }
             });
@@ -1293,6 +1389,12 @@ impl App {
                 Ok(())
             }
             Some(Action::Report(index)) => self.report_on_github(index, ui.ctx()),
+            Some(Action::Join) => {
+                let invite = self.report_policy.policy().invite_url.clone();
+                ui.ctx().open_url(egui::OpenUrl::new_tab(invite));
+                Ok(())
+            }
+            Some(Action::Dm(index)) => self.dm_dutchy(index, ui.ctx()),
             None => Ok(()),
         };
         if let Err(err) = result {
@@ -1325,6 +1427,7 @@ impl eframe::App for App {
         let mut settings = saved_choices(&self.options, self.custom);
         if let Some(object) = settings.as_object_mut() {
             object.insert("update".into(), self.updater.saved());
+            object.insert("report_policy".into(), self.report_policy.saved());
         }
         storage.set_string(SETTINGS_KEY, settings.to_string());
     }
@@ -1340,15 +1443,21 @@ enum Action {
     Pick(Pick),
     /// Open the GitHub issue form about the row's file, filled in.
     Report(usize),
+    /// Open the Discord invite.
+    Join,
+    /// Copy the message about the row's file and open Dutchy's DM.
+    Dm(usize),
 }
 
 /// One file's result: its status, what was written, and its losses.
+#[allow(clippy::too_many_arguments)]
 fn row_ui(
     ui: &mut egui::Ui,
     p: &Palette,
     index: usize,
     row: &Row,
     view: &FileView,
+    policy: &ReportPolicy,
     has_app: bool,
     running: bool,
 ) -> Option<Action> {
@@ -1437,9 +1546,12 @@ fn row_ui(
     if let Some(message) = &view.error {
         ui.label(RichText::new(message).color(p.danger));
         if view.can_report {
-            ui.label(RichText::new(present::REPORT_HELP).small().color(p.tide));
-            if ui.button("Report this on GitHub").clicked() {
-                action = Some(Action::Report(index));
+            if let Some(report) = &row.report {
+                let steps =
+                    present::SendSteps::new(policy, row.size, report, present::Surface::Desktop);
+                if let Some(chosen) = send_ui(ui, p, index, &steps) {
+                    action = Some(chosen);
+                }
             }
         }
         return action;
@@ -1502,6 +1614,87 @@ fn row_ui(
         }
     }
     action
+}
+
+/// The narrowest a step card gets before the cards wrap onto another line.
+const MIN_STEP_WIDTH: f32 = 190.0;
+
+/// The way to send a failed file privately, and the anonymous report beside it.
+fn send_ui(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    index: usize,
+    steps: &present::SendSteps,
+) -> Option<Action> {
+    let mut action = None;
+    ui.add_space(theme::SPACE_2);
+    ui.label(RichText::new(present::SEND_INTRO).color(p.ink));
+    ui.add_space(theme::SPACE_2);
+    let cards: &[usize] = if steps.step_card { &[0, 1, 2] } else { &[0, 1] };
+    let gap = ui.spacing().item_spacing.x;
+    let across = ((ui.available_width() + gap) / (MIN_STEP_WIDTH + gap)).floor() as usize;
+    let across = across.clamp(1, cards.len());
+    for (line, chunk) in cards.chunks(across).enumerate() {
+        // Cards on a line share the height of last frame's tallest.
+        let id = ui.id().with(("send-line", index, line, across));
+        let height = ui.data(|data| data.get_temp::<f32>(id)).unwrap_or(0.0);
+        let mut tallest = 0.0_f32;
+        ui.columns(across, |columns| {
+            for (ui, &card) in columns.iter_mut().zip(chunk) {
+                let fill = if card == 2 {
+                    egui::Color32::TRANSPARENT
+                } else {
+                    p.surface_2
+                };
+                framed(ui, p, fill, false, |ui| {
+                    ui.set_min_height(height);
+                    let shown = ui.scope(|ui| match card {
+                        0 => {
+                            step_title(ui, p, present::SEND_JOIN_TITLE);
+                            if ui.button(present::SEND_JOIN_BUTTON).clicked() {
+                                action = Some(Action::Join);
+                            }
+                            step_text(ui, p, present::SEND_JOIN_NOTE);
+                        }
+                        1 => {
+                            step_title(ui, p, present::SEND_DM_TITLE);
+                            if ui.button(present::SEND_DM_BUTTON).clicked() {
+                                action = Some(Action::Dm(index));
+                            }
+                            step_text(ui, p, &steps.dm_text);
+                        }
+                        _ => {
+                            ui.label(RichText::new(present::SEND_STEP_TITLE).color(p.tide));
+                            step_text(ui, p, present::SEND_STEP_TEXT);
+                        }
+                    });
+                    tallest = tallest.max(shown.response.rect.height());
+                });
+            }
+        });
+        ui.data_mut(|data| data.insert_temp(id, tallest));
+        ui.add_space(theme::SPACE_2);
+    }
+    ui.label(
+        RichText::new(present::SEND_SMALL_PRINT)
+            .small()
+            .color(p.tide),
+    );
+    let report = ui
+        .button(present::REPORT_BUTTON)
+        .on_hover_text(present::REPORT_HELP);
+    if report.clicked() {
+        action = Some(Action::Report(index));
+    }
+    action
+}
+
+fn step_title(ui: &mut egui::Ui, p: &Palette, text: &str) {
+    ui.label(RichText::new(text).strong().color(p.ink));
+}
+
+fn step_text(ui: &mut egui::Ui, p: &Palette, text: &str) {
+    ui.label(RichText::new(text).small().color(p.tide));
 }
 
 /// History decisions must be visible even while the full loss log is collapsed.
@@ -1890,6 +2083,7 @@ mod tests {
             status: Status::Converted,
             progress: None,
             job: None,
+            size: None,
             report: Some(json!({"ok": true, "mode": "import", "losses": [
                 {"level": "Info", "subject": "history", "message": message}
             ]})),
@@ -1899,7 +2093,16 @@ mod tests {
             .build_ui(|ui| {
                 theme::install(ui.ctx());
                 let p = *theme::palette(ui);
-                row_ui(ui, &p, 0, &row, &row.view(), true, false);
+                row_ui(
+                    ui,
+                    &p,
+                    0,
+                    &row,
+                    &row.view(),
+                    ReportPolicy::bundled(),
+                    true,
+                    false,
+                );
             });
         harness.run();
         assert!(harness.query_by_label(message).is_some());
@@ -1931,6 +2134,7 @@ mod tests {
                 report: Some(report),
                 progress: None,
                 job: None,
+                size: None,
             })
             .collect();
         let mut harness = egui_kittest::Harness::builder()
@@ -1940,7 +2144,16 @@ mod tests {
                 let p = *theme::palette(ui);
                 for (index, row) in rows.iter().enumerate() {
                     card(ui, &p, |ui| {
-                        row_ui(ui, &p, index, row, &row.view(), true, false);
+                        row_ui(
+                            ui,
+                            &p,
+                            index,
+                            row,
+                            &row.view(),
+                            ReportPolicy::bundled(),
+                            true,
+                            false,
+                        );
                     });
                     ui.add_space(theme::SPACE_2);
                 }
@@ -1954,7 +2167,7 @@ mod tests {
             "Losses: 1 Degraded",
             "Losses: 1 Dropped",
             "cannot read this design: no geometry could be read",
-            "Report this on GitHub",
+            "Report anonymously on GitHub",
         ] {
             assert!(harness.query_by_label(label).is_some(), "missing {label}");
         }
@@ -2014,13 +2227,23 @@ mod tests {
                 progress: Some(event),
                 report: None,
                 job: None,
+                size: None,
             };
             let mut harness = egui_kittest::Harness::builder()
                 .with_size(egui::vec2(1200.0, 400.0))
                 .build_ui(|ui| {
                     theme::install(ui.ctx());
                     let p = *theme::palette(ui);
-                    row_ui(ui, &p, 0, &row, &row.view(), true, false);
+                    row_ui(
+                        ui,
+                        &p,
+                        0,
+                        &row,
+                        &row.view(),
+                        ReportPolicy::bundled(),
+                        true,
+                        false,
+                    );
                 });
             harness.run_steps(2);
             assert!(harness.query_by_label(&event.to_string()).is_some());

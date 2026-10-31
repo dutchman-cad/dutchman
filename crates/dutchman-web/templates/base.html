@@ -57,6 +57,16 @@
   details ul { margin: 6px 0 0; padding-left: 18px; font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 12px; }
   .Info { color: var(--tide); } .Degraded { color: var(--lantern-text); } .Dropped { color: var(--danger); }
   .download { display: inline-block; margin-top: 10px; font-weight: 600; }
+  .send-intro { margin: 12px 0 8px; }
+  .steps { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
+  .step { flex: 1 1 200px; min-width: 0; padding: 12px 14px; border: 1px solid var(--hairline);
+          border-radius: 10px; background: var(--surface); }
+  .step.light { background: none; color: var(--tide); }
+  .step h3 { font-size: 14px; margin: 0 0 8px; }
+  .step .muted { margin: 8px 0 0; }
+  a.button { display: inline-block; background: var(--spectre); color: var(--on-spectre); border-radius: 9px;
+             padding: 10px 22px; font-weight: 600; text-decoration: none; }
+  .message { font-size: 13px; margin: 8px 0; overflow-wrap: anywhere; }
   table { border-collapse: collapse; width: 100%; font-size: 13px; }
   td { padding: 4px 8px 4px 0; vertical-align: top; border-top: 1px solid var(--hairline); }
   td:first-child { white-space: nowrap; font-weight: 600; }

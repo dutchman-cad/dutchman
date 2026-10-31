@@ -78,6 +78,13 @@ server or container that much memory, or lower them.
 - **SolidCraft design** writes `.sc` designs (`.solidcraft` for targets before 0.25.1); **FreeCAD macro (experimental)** writes
   `.FCMacro` rebuild macros (`--to freecad`). **Geometry only** is `--import-only`.
 
+## When a file fails
+
+A failed file's card offers to send it privately, as the desktop app does: join the
+[Discord server](https://discord.gg/yTcseBEdeu), then a button copies a one-line message and opens
+Dutchy's DM. The message names no file. The server sends nothing itself, and Discord opens in
+your browser. See [Send the file privately](troubleshooting.md#send-the-file-privately).
+
 ## Save to a shared folder
 
 With `--output-dir`, each converted design is also saved in that folder, such as a network
@@ -177,7 +184,7 @@ Scripts can use the same server. Paths are relative to the server's address, und
 
 | Request | Returns |
 |---|---|
-| `POST /api/convert`, a `multipart/form-data` body: `files` (one or more), and optionally `to` (`solidcraft` or `freecad`) and `import_only` (`true`) | The [`dutchman.convert-all/1`](json.md#dutchmanconvert-all1) report, with `job` and `designs_zip` added, and a `download` path added to each converted file's `output` (with `--output-dir`, `saved` or `save_error`; with `--solidcraft`, `open` for SolidCraft designs). Paths in it are relative to the upload. A refused upload is `{"error": "…"}` with status 400, 403, 413 or 503 |
+| `POST /api/convert`, a `multipart/form-data` body: `files` (one or more), and optionally `to` (`solidcraft` or `freecad`) and `import_only` (`true`) | The [`dutchman.convert-all/1`](json.md#dutchmanconvert-all1) report, with `job` and `designs_zip` added, a `private_report` (`id`, `size_bytes`) added to each failed file, and a `download` path added to each converted file's `output` (with `--output-dir`, `saved` or `save_error`; with `--solidcraft`, `open` for SolidCraft designs). Paths in it are relative to the upload. A refused upload is `{"error": "…"}` with status 400, 403, 413 or 503 |
 | `GET /jobs/<job>/report.json` | The same report again, while the job is kept |
 | `GET /jobs/<job>/files/<path>` | One design |
 | `GET /jobs/<job>/designs.zip` | Every design of the job, in one zip |

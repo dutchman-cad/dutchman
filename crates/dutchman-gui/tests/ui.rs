@@ -140,7 +140,7 @@ fn a_file_that_cannot_convert_says_why() {
     // The failed row says to report it, and its button opens the form filled in, without
     // the file's name.
     harness
-        .get_by_label("Report this on GitHub")
+        .get_by_label("Report anonymously on GitHub")
         .click_accesskit();
     harness.step();
     let opened = harness
@@ -161,6 +161,117 @@ fn a_file_that_cannot_convert_says_why() {
     assert!(opened.url.contains("&stage=stage%3A%20"), "{}", opened.url);
     assert!(opened.url.contains("&report-anon="), "{}", opened.url);
     assert!(!opened.url.contains("broken"), "{}", opened.url);
+}
+
+/// A failed run of a file named `name` holding `bytes` bytes, in a window `width` wide. What
+/// the file manager would show goes to `SHOWN`.
+fn failed_card(name: &str, bytes: usize, width: f32) -> (Harness<'static, App>, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let broken = dir.path().join(name);
+    std::fs::write(&broken, vec![b'x'; bytes]).unwrap();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(width, 1100.0))
+        .build_eframe(|cc| App::new(cc));
+    harness.state_mut().set_file_manager(|path| {
+        SHOWN.lock().unwrap().push(path.to_path_buf());
+        Ok(())
+    });
+    harness.state_mut().add_inputs([broken]);
+    harness.state_mut().set_out_dir(dir.path().join("out"));
+    harness
+        .state_mut()
+        .set_diagnostic_log(dir.path().join("log.jsonl"));
+    convert(&mut harness);
+    assert_eq!(harness.state().rows()[0].status, Status::Failed);
+    (harness, dir)
+}
+
+static SHOWN: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// Presses the DM button: what it copied and opened.
+fn press_dm(harness: &mut Harness<'static, App>) -> (String, String) {
+    harness.get_by_label("Copy and open DM").click_accesskit();
+    harness.step();
+    let commands = &harness.output().platform_output.commands;
+    let copied = commands.iter().find_map(|command| match command {
+        egui::OutputCommand::CopyText(text) => Some(text.clone()),
+        _ => None,
+    });
+    let opened = commands.iter().find_map(|command| match command {
+        egui::OutputCommand::OpenUrl(open) => Some(open.url.clone()),
+        _ => None,
+    });
+    (copied.unwrap(), opened.unwrap())
+}
+
+#[test]
+fn a_small_failed_file_is_dragged_into_the_dm_with_its_folder_open() {
+    let (mut harness, dir) = failed_card("small-broken.f3d", 2048, 760.0);
+    assert!(harness
+        .query_by_label(
+            "If this file opens in the app that made it, it's a bug in Dutchman. Help us fix it:"
+        )
+        .is_some());
+    assert!(harness
+        .query_by_label("Already in? Skip this step.")
+        .is_some());
+    assert!(harness
+        .query_by_label("Drag the file in (its folder is open).")
+        .is_some());
+    assert!(harness.query_by_label("Have a STEP export?").is_some());
+    let (message, opened) = press_dm(&mut harness);
+    assert!(opened.starts_with("https://discord.com/users/"), "{opened}");
+    assert!(message.contains("Size: 0.1 MB."), "{message}");
+    assert!(message.ends_with("STEP: unknown."), "{message}");
+    assert!(!message.contains("broken"), "{message}");
+    assert!(!message.contains('\n'), "{message}");
+    assert!(SHOWN
+        .lock()
+        .unwrap()
+        .contains(&dir.path().join("small-broken.f3d")));
+
+    // The card's id is the log's: the same run, the same salt.
+    let log = std::fs::read_to_string(dir.path().join("log.jsonl")).unwrap();
+    let first: serde_json::Value = serde_json::from_str(log.lines().next().unwrap()).unwrap();
+    let id = first["file"].as_str().unwrap();
+    assert!(message.contains(&format!("Report id: {id}.")), "{message}");
+}
+
+#[test]
+fn a_large_failed_file_takes_the_private_link_and_no_folder_opens() {
+    let (mut harness, dir) = failed_card("large-broken.f3d", 11 << 20, 760.0);
+    assert!(harness
+        .query_by_label_contains("Dutchy replies with a private upload link (up to 300 MB")
+        .is_some());
+    assert!(harness
+        .query_by_label_contains("Drag the file in")
+        .is_none());
+    let (message, _) = press_dm(&mut harness);
+    assert!(message.contains("Size: 11 MB."), "{message}");
+    assert!(!SHOWN
+        .lock()
+        .unwrap()
+        .contains(&dir.path().join("large-broken.f3d")));
+}
+
+#[test]
+fn the_step_cards_stand_side_by_side_and_wrap_when_narrow() {
+    let (harness, _dir) = failed_card("wide.f3d", 10, 1000.0);
+    let join = harness.get_by_label("Join our Discord server").rect();
+    let dm = harness.get_by_label("DM Dutchy").rect();
+    assert!((join.top() - dm.top()).abs() < 1.0 && join.right() < dm.left());
+    let (harness, _dir) = failed_card("narrow.f3d", 10, 520.0);
+    let join = harness.get_by_label("Join our Discord server").rect();
+    let step = harness.get_by_label("Have a STEP export?").rect();
+    assert!(step.top() > join.bottom());
+}
+
+#[test]
+fn a_step_file_is_not_asked_for_a_step_export() {
+    let (mut harness, _dir) = failed_card("broken.step", 2048, 760.0);
+    assert!(harness.query_by_label("Have a STEP export?").is_none());
+    let (message, _) = press_dm(&mut harness);
+    assert!(message.ends_with("STEP: yes."), "{message}");
 }
 
 #[test]
@@ -237,6 +348,44 @@ fn screenshots() {
     let failed_input = designs.join("container_metadata_only.f3d");
     std::fs::copy(fixture("container_metadata_only.f3d"), &failed_input).unwrap();
     let mut index = format!("# Dutchman desktop UI review\n\nBuilt from Dutchman {}. 1100 × 800 logical pixels, one PNG per state and theme. Day = light; Night = dark.\n\n", env!("CARGO_PKG_VERSION"));
+    for (theme, name) in [
+        (ThemePreference::Light, "light"),
+        (ThemePreference::Dark, "dark"),
+    ] {
+        for (case, size, description) in [
+            (
+                "small",
+                4 << 20,
+                "A failed file small enough to drag into the DM.",
+            ),
+            (
+                "large",
+                40 << 20,
+                "A failed file over Discord's limit: the private link.",
+            ),
+        ] {
+            let mut harness = screenshot_harness(theme);
+            harness.state_mut().add_inputs([failed_input.clone()]);
+            harness
+                .state_mut()
+                .set_out_dir(work.path().join(format!("card-{case}-{name}")));
+            convert(&mut harness);
+            harness.state_mut().preview_size(0, size);
+            harness.run();
+            harness
+                .get_by_label("Join our Discord server")
+                .scroll_to_me();
+            harness.run();
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("05-send-privately-{case}"),
+                name,
+                description,
+            );
+        }
+    }
     for (theme, name) in [
         (ThemePreference::Light, "light"),
         (ThemePreference::Dark, "dark"),

@@ -23,6 +23,7 @@ pub mod json;
 pub mod mcp;
 pub mod present;
 pub mod progress;
+pub mod report_policy;
 pub mod repro;
 pub mod stop;
 pub mod watch;

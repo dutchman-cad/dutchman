@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "inviteUrl": "https://discord.gg/yTcseBEdeu",
+  "dutchyUserId": "1563591265810129088",
+  "discordUploadLimitMb": 10,
+  "privateLink": {
+    "designMb": 300,
+    "stepMb": 300,
+    "zipMb": 1500,
+    "hours": 72
+  },
+  "messageTemplate": "Dutchman {version} couldn't convert my file. Error: {code}. Report id: {id}. Size: {size} MB. STEP: {step}."
+}

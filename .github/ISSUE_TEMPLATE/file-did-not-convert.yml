@@ -8,7 +8,7 @@ body:
       value: |
         Thank you for reporting it. One file per issue, please; for a whole library, use the **Library test report** form instead.
 
-        In the desktop app, Dutchman Convert, **Report this on GitHub** on the failed file opens this form filled in; read what it filled in before you submit.
+        In the desktop app, Dutchman Convert, **Report anonymously on GitHub** on the failed file opens this form filled in; read what it filled in before you submit.
 
         **Do not attach design files, logs, the key file, the salt, or the journal.** They hold names and paths. A link to a file that is already public (a GitHub repository, GrabCAD, a maker's site) is welcome: it lets us test the same file. If you are willing to let a maintainer see the file privately, say so below; we will reply with a private way to send it. File here even when the report says `upstream: cadmpeg` or `upstream: solidcraft`; we take it upstream.
   - type: dropdown
@@ -64,7 +64,7 @@ body:
     attributes:
       label: Anonymous report for this file
       description: |
-        The desktop app's **Report this on GitHub** copies this for you to paste. From the command line, run `dutchman convert-all --out-dir converted --report-anon report-anon.json part.f3d` with your file in place of `part.f3d`, read `report-anon.json`, and paste it here. See [the anonymous report](https://github.com/dutchman-cad/dutchman/blob/main/docs/report-anon.md) and [Testing Dutchman on your library](https://github.com/dutchman-cad/dutchman/blob/main/docs/testing-your-library.md). If you find a name in it, leave that line out and say so: it is a bug.
+        The desktop app's **Report anonymously on GitHub** copies this for you to paste. From the command line, run `dutchman convert-all --out-dir converted --report-anon report-anon.json part.f3d` with your file in place of `part.f3d`, read `report-anon.json`, and paste it here. See [the anonymous report](https://github.com/dutchman-cad/dutchman/blob/main/docs/report-anon.md) and [Testing Dutchman on your library](https://github.com/dutchman-cad/dutchman/blob/main/docs/testing-your-library.md). If you find a name in it, leave that line out and say so: it is a bug.
       render: json
   - type: textarea
     id: notes
