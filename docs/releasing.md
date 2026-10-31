@@ -123,7 +123,9 @@ A stable release depends on cadmpeg at one commit of its `main` branch, pinned a
 `rev` for every cadmpeg crate in the workspace `Cargo.toml`. Move the pin after a batch of
 cadmpeg merges: set the new commit, run `cargo update -p cadmpeg-core -p cadmpeg-ir -p
 cadmpeg-registry`, then the full tests, the SolidCraft round trip and the anonymous-report
-leak check on a real library before merging it. A fix merged on cadmpeg's `main` after the
+leak check on a real library before merging it. The pin pull request must pass the "Placements" check
+(`corpus/placements/`); if a golden legitimately changes, regenerate it in the same pull request
+after looking at the converted picture (see `corpus/placements/README.md`). A fix merged on cadmpeg's `main` after the
 pinned commit reaches users through the nightly channel: the `nightly` pre-release, rebuilt
 each day from Dutchman's `main` against cadmpeg's `main` (`scripts/use-cadmpeg-main.sh`, see
 `.github/workflows/nightly.yml`). The stable release after the pin moves carries it.
