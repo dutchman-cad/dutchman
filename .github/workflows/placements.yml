@@ -1,0 +1,179 @@
+name: Placements
+
+# Converts three public assemblies and checks where every part lands against the goldens in
+# corpus/placements/, so a change that scatters parts cannot merge. Pull requests run it only
+# when Rust code, the lockfile or a golden changes; a branch push runs it through its pull
+# request. The Voron assembly needs about 15 GB, so it runs only when the lockfile or
+# dutchman-core changes, or when started by hand.
+
+on:
+  pull_request:
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "corpus/placements/**"
+      - "scripts/placements.py"
+      - ".github/workflows/placements.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      voron: ${{ steps.diff.outputs.voron }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          # The large assembly: by hand always; on a pull request when the lockfile, the
+          # converter's core or its golden changed.
+          if [ "$EVENT" != pull_request ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "voron=true" >> "$GITHUB_OUTPUT"
+          elif git diff --name-only "$BASE" HEAD \
+            | grep -qE '^(Cargo\.lock$|crates/dutchman-core/|corpus/placements/voron\.json$|scripts/placements\.py$|\.github/workflows/placements\.yml$)'; then
+            echo "voron=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "voron=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: placements-release
+          cache-on-failure: true
+          # Only code of this repository writes the shared cache, never a fork's pull request.
+          save-if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository }}
+      - name: Build Dutchman
+        run: >
+          cargo build --release --locked -p dutchman
+          --config profile.release.lto=false --config profile.release.codegen-units=16
+      - run: target/release/dutchman --version
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dutchman-bin
+          path: target/release/dutchman
+          if-no-files-found: error
+          retention-days: 1
+
+  placements:
+    name: placements (${{ matrix.name }})
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Each source is fetched from a commit of its repository, by URL, and checked against
+          # the recorded SHA-256. The converted part names carry the file's name, so the file is
+          # saved under its original name.
+          - name: railcore
+            file: RailCore II 300ZL - Nov 2019.f3z
+            url: https://raw.githubusercontent.com/railcore/parts/81ef3be6c712e56782142dbce4b736994c4a1477/DXF/f3z/RailCore%20II%20300ZL%20-%20Nov%202019.f3z
+            sha256: eb4afd93e0a5bba9159090909532a91862385f8fcf17ee74c4b687fa45b434fe
+          - name: robot-arm
+            file: Assem1.f3z
+            url: https://raw.githubusercontent.com/Adriaeik/fusion2URDF/4411ffbdffc0364dc6f5922c40b3e14fd7b642f8/examples/Assem1_description/Assem1.f3z
+            sha256: 3fd57697437949374b76df74dbc69342d286512f0ef8f4580b5dca7c1d6dfe44
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: dutchman-bin
+          path: bin
+      - name: Fetch the source
+        run: |
+          mkdir in
+          curl -fsSL --retry 3 -o "in/${{ matrix.file }}" "${{ matrix.url }}"
+          echo "${{ matrix.sha256 }}  in/${{ matrix.file }}" | sha256sum -c -
+      - name: Convert and check the placements
+        run: |
+          chmod +x bin/dutchman
+          mkdir out
+          bin/dutchman convert "in/${{ matrix.file }}" -o out/${{ matrix.name }}.sc \
+            --preset standard --no-verify 2> out/convert.log
+          python3 scripts/placements.py out/${{ matrix.name }}.sc \
+            --out out/${{ matrix.name }}.json --check corpus/placements/${{ matrix.name }}.json
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: placements-${{ matrix.name }}
+          path: |
+            out/${{ matrix.name }}.json
+            out/convert.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  placements-voron:
+    name: placements (voron)
+    needs: [changes, build]
+    if: needs.changes.outputs.voron == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: dutchman-bin
+          path: bin
+      - name: Add swap
+        # The conversion needs about 15 GB; a runner has 16 GB.
+        run: |
+          sudo fallocate -l 12G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -g
+      - name: Fetch the source
+        run: |
+          mkdir in
+          curl -fsSL --retry 3 -o in/Voron_2.4r2_Assembly.f3d \
+            https://raw.githubusercontent.com/VoronDesign/Voron-2/a192410e27ea345644ae5c4b29b4c9c40cbe1a73/CAD/Voron_2.4r2_Assembly.f3d
+          echo "09ddd5561fed2f5f9cbcd13b9cda46b695d49af59240644ba164efa04ab0973f  in/Voron_2.4r2_Assembly.f3d" | sha256sum -c -
+      - name: Convert and check the placements
+        run: |
+          chmod +x bin/dutchman
+          mkdir out
+          status=0
+          bin/dutchman convert in/Voron_2.4r2_Assembly.f3d -o out/voron.sc \
+            --preset standard --no-verify 2> out/convert.log || status=$?
+          if [ "$status" -ne 0 ]; then
+            tail -n 5 out/convert.log
+            if [ "$status" -eq 137 ] || grep -qiE 'out of memory|memory allocation|needs about .* GB' out/convert.log; then
+              echo "::error title=Voron ran out of memory::The conversion needs about 15 GB and the runner has 16 GB; this is the runner's limit, not a placement difference (exit $status)."
+            else
+              echo "::error title=Voron did not convert::dutchman convert exited with $status; see convert.log."
+            fi
+            exit 1
+          fi
+          python3 scripts/placements.py out/voron.sc --out out/voron.json --check corpus/placements/voron.json
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: placements-voron
+          path: |
+            out/voron.json
+            out/convert.log
+          if-no-files-found: ignore
+          retention-days: 14
