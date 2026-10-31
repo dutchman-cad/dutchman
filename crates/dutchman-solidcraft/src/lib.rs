@@ -14,6 +14,7 @@ mod assembly;
 mod container;
 mod document;
 mod history;
+mod placements;
 mod step;
 #[cfg(test)]
 mod testing;

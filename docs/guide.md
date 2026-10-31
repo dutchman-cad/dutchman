@@ -103,6 +103,13 @@ assembly: 18 of 20 placements placed; 2 left out:
   pin.ipt ×2: not found at its stored path or in the project folder /work/Robot
 ```
 
+Mirrored assembly placements use a shared mirrored copy of the component's geometry;
+ordinary copies keep the original. An Info `placements` note counts the converted
+reflections. Mirrored copies retain imported geometry only, with a history note when
+needed. Non-finite, scaled, or sheared placements beyond tolerance are left out with a
+Dropped `placements` note naming the occurrence index and kind. Check those placements
+in the source and convert again. Tiny numeric drift is corrected.
+
 The count takes in every placement the assembly and its sub-assemblies record, each
 sub-assembly as often as it is placed. Each cause names the file and how many placements it
 cost. A part not found usually means its project folder is elsewhere: give it with

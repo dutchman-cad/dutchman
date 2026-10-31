@@ -135,13 +135,24 @@ impl Assembly {
                 .or_default();
             *count = count.saturating_add(times);
         }
-        let mut placed = times.saturating_mul(self.placements.len() as u64);
+        let mut placed = 0u64;
+        let mut uses: BTreeMap<usize, u64> = BTreeMap::new();
+        for (index, placement) in self.placements.iter().enumerate() {
+            if let Err(kind) = crate::placement::rigid(&placement.transform) {
+                let file = self
+                    .parts
+                    .get(placement.part)
+                    .and_then(|p| p.source_file.clone());
+                let reason = format!("Occurrence index {index} is left out: {kind}");
+                let count = groups.entry((file, reason, Stage::Write)).or_default();
+                *count = count.saturating_add(times);
+                continue;
+            }
+            placed = placed.saturating_add(times);
+            *uses.entry(placement.part).or_default() += 1;
+        }
         if depth >= MAX_DEPTH {
             return placed;
-        }
-        let mut uses: BTreeMap<usize, u64> = BTreeMap::new();
-        for placement in &self.placements {
-            *uses.entry(placement.part).or_default() += 1;
         }
         for (part, used) in uses {
             if let Some(sub) = self.parts.get(part).and_then(|part| part.assembly.as_ref()) {

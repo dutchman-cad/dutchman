@@ -239,6 +239,12 @@ resolved placement or binder source geometry remains a blocker, with its reason 
 These Info notes remain when another feature or a replay mismatch flattens the history.
 A body inside a hidden container is hidden even when its own flag says it is shown.
 
+SolidCraft assembly conversions retain reflections through shared mirrored component
+geometry, including nested placements. Mirrored copies use imported geometry only;
+`losses` explains any history or affected joints left out. Info `placements` notes count
+reflections; Dropped notes name each non-finite, scaled, or sheared occurrence left out by
+index and kind. Tiny numeric drift is corrected.
+
 FreeCAD external Body and Part links are resolved beside the assembly first, then through
 `project` and `search`. A missing linked `.FCStd` file is left out and named in losses and
 `completeness.left_out`; available components still convert. Link arrays place each element
