@@ -65,6 +65,7 @@ pub struct SolidCraftWriter {
     verification: Verification,
     replay: Verification,
     timeout: Duration,
+    hide_unverified: bool,
 }
 
 impl Default for SolidCraftWriter {
@@ -81,6 +82,7 @@ impl Default for SolidCraftWriter {
             verification: Verification::Auto,
             replay: Verification::Auto,
             timeout: DEFAULT_TIMEOUT,
+            hide_unverified: false,
         }
     }
 }
@@ -146,6 +148,15 @@ impl SolidCraftWriter {
     /// ([`Verification::Off`], or none found) blends are refused, saying why.
     pub fn replay(mut self, replay: Verification) -> Self {
         self.replay = replay;
+        self
+    }
+
+    /// Whether a history that could not be checked against the original is kept hidden:
+    /// the original geometry stays the visible model and the mapped history goes into a
+    /// hidden "Editable history (unverified)" part, as a history that fails the check is
+    /// kept. For a writer with no SolidCraft CLI at all, such as one running in a sandbox.
+    pub fn hide_unverified_history(mut self, hide: bool) -> Self {
+        self.hide_unverified = hide;
         self
     }
 
@@ -963,6 +974,28 @@ impl Writer for SolidCraftWriter {
                                 format!("{summary}; verified against the original in SolidCraft"),
                             );
                             (written, written_as(Check::Verified))
+                        }
+                        verify::Outcome::Unverified(why) if self.hide_unverified => {
+                            report.append(history_report);
+                            let message = format!(
+                                "{summary}; unverified: {why}; kept hidden beside the original, which stays the visible model"
+                            );
+                            report.push_at(
+                                Stage::SolidCraft,
+                                Severity::Degraded,
+                                HISTORY,
+                                &message,
+                            );
+                            let written =
+                                self.history_design(model, history, &step, Live::Unverified)?;
+                            (
+                                written,
+                                Outcome {
+                                    mode: Mode::PartialHistory,
+                                    check: Check::Unverified(why),
+                                    features: mapping.features.clone(),
+                                },
+                            )
                         }
                         verify::Outcome::Unverified(why) => {
                             report.append(history_report);

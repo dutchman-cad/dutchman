@@ -122,6 +122,8 @@ pub(crate) enum Live {
     History,
     /// Editable history in a hidden component; the final original remains visible.
     Partial,
+    /// As `Partial`, for a whole history that could not be checked against the original.
+    Unverified,
     /// The original geometry, with the history suppressed: what the replay is checked against.
     Original,
 }
@@ -150,7 +152,8 @@ pub(crate) fn history_design(
     let mut history = history.clone();
     let component = history.next_id;
     let occurrence = component.saturating_add(1);
-    if live == Live::Partial {
+    let hidden = matches!(live, Live::Partial | Live::Unverified);
+    if hidden {
         history.relocate(0, component, "", &mut Default::default());
         history.next_id = occurrence.saturating_add(1);
     }
@@ -185,12 +188,17 @@ pub(crate) fn history_design(
             json!({"active": first.get("name"), "rules": history.sheet_rules}),
         );
     }
-    if let (Live::Partial, Some(fields)) = (live, doc.as_object_mut()) {
+    if let (true, Some(fields)) = (hidden, doc.as_object_mut()) {
+        let part = if live == Live::Unverified {
+            "Editable history (unverified)"
+        } else {
+            "Editable history (partial)"
+        };
         fields.insert(
             "components".to_owned(),
-            json!([{"id": component, "name": "Editable history (partial)", "parent": 0}]),
+            json!([{"id": component, "name": part, "parent": 0}]),
         );
-        fields.insert("occurrences".to_owned(), json!([{"id": occurrence, "name": "Editable history (partial):1", "component": component, "parent": 0, "grounded": true, "transform": IDENTITY}]));
+        fields.insert("occurrences".to_owned(), json!([{"id": occurrence, "name": format!("{part}:1"), "component": component, "parent": 0, "grounded": true, "transform": IDENTITY}]));
         let sketches: Vec<Value> = history
             .features
             .iter()
