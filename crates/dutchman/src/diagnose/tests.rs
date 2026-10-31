@@ -185,8 +185,10 @@ fn the_text_names_the_part_to_convert_first() {
 
 /// A writer that fails for one part of a design, the way a real writer fails on a body it
 /// cannot restate.
+#[cfg(feature = "freecad")]
 struct FailsFor(String);
 
+#[cfg(feature = "freecad")]
 impl Writer for FailsFor {
     fn extension(&self) -> &'static str {
         "sc"
