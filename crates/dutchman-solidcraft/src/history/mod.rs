@@ -1216,6 +1216,49 @@ mod tests {
         assert_eq!(err, "feature \"Earlier\": native is not mapped yet");
     }
 
+    /// A stored-geometry feature imports exactly the bodies it outputs, solids and sheets.
+    fn stored_outputs(outputs: Value) -> Result<Value, String> {
+        let model = json!({
+            "bodies": [
+                {"id": "b#1", "name": "Solid", "kind": "solid"},
+                {"id": "b#2", "name": "Skin", "kind": "sheet"},
+                {"id": "b#3", "name": "Other", "kind": "sheet"},
+            ],
+            "regions": [
+                {"id": "r#1", "body": "b#1"},
+                {"id": "r#2", "body": "b#2"},
+                {"id": "r#3", "body": "b#3"},
+            ],
+        });
+        let mut ctx = Context::new(&model);
+        let stored = json!({
+            "id": "f#1", "ordinal": 0, "name": "Composite1", "suppressed": false,
+            "outputs": outputs,
+            "definition": {"definition": "stored_geometry"},
+        });
+        match map_feature(&stored, &mut ctx, &mut Report::default(), &mut Vec::new())? {
+            Mapped::Feature(mapped) => Ok(mapped),
+            Mapped::Nothing => Err("mapped to nothing".to_owned()),
+        }
+    }
+
+    #[test]
+    fn stored_geometry_imports_its_solid_and_sheet_outputs_only() {
+        let mapped = stored_outputs(json!(["b#1", "b#2"])).unwrap();
+        assert_eq!(mapped["type"], "import");
+        assert_eq!(mapped["name"], "Composite1");
+        assert_eq!(mapped["_bodies"], json!(["b#1", "b#2"]));
+        assert_eq!(mapped["body_names"], json!(["Solid", "Skin"]));
+        let sheets = stored_outputs(json!(["b#2", "b#3"])).unwrap();
+        assert_eq!(sheets["_bodies"], json!(["b#2", "b#3"]));
+        assert_eq!(sheets["body_names"], json!(["Skin", "Other"]));
+    }
+
+    #[test]
+    fn stored_geometry_without_outputs_is_reported_not_guessed() {
+        assert_eq!(stored_outputs(json!([])).unwrap_err(), "it holds no bodies");
+    }
+
     #[test]
     fn suppressed_features_are_left_out_and_reported() {
         let mut hidden = opaque(2, 1, "Hidden");
