@@ -15,6 +15,29 @@ pub const CONVERT: &str = "dutchman.convert/1";
 /// The schema of `dutchman inspect --json`.
 pub const INSPECT: &str = "dutchman.inspect/1";
 
+/// The schema of a minimum-reproduction kit.
+pub const REPRO: &str = "dutchman.repro/1";
+
+/// Shareable reproduction facts; callers supply only allowlisted failure facts and fixed
+/// anonymous narrowing categories, never a model, private key or raw conversion report.
+pub(crate) fn repro_anonymous(
+    input: &Path,
+    failure: &Value,
+    narrowing: Value,
+    kinds: &Value,
+) -> Value {
+    let size_class = std::fs::metadata(input).ok().map(|m| match m.len() {
+        0..=1_048_575 => "under_1_mib",
+        1_048_576..=16_777_215 => "1_to_16_mib",
+        16_777_216..=268_435_455 => "16_to_256_mib",
+        _ => "256_mib_or_more",
+    });
+    json!({"schema": REPRO, "versions": {"dutchman": env!("CARGO_PKG_VERSION"), "cadmpeg": crate::anon::CADMPEG_VERSION},
+        "input": {"format": Format::from_path(input).map(|f| f.id()), "size_class": size_class},
+        "status": if failure.is_null() { "no_failure_to_reproduce" } else { "failure" },
+        "failure": failure, "narrowing": narrowing, "retained_unit_kinds": kinds})
+}
+
 /// The input file as the reports describe it.
 pub fn input(path: &Path) -> Value {
     let format = Format::from_path(path);

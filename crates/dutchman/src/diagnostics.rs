@@ -352,7 +352,7 @@ impl MemberObserver for Sink {
 }
 
 /// Build from allowlisted categories even when the report came across a worker boundary.
-fn anonymous_failure(report: &Value) -> Value {
+pub(crate) fn anonymous_failure(report: &Value) -> Value {
     if report.get("ok") == Some(&Value::Bool(true)) {
         return Value::Null;
     }

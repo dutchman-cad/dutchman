@@ -122,3 +122,11 @@ resolved editable text, projected curves, dimensions, and text height.
 `DesignDescription.json` graph, following cadmpeg's public `test_support::assembly_test`
 recipe at `43fbc10c4910f2c549d7ca79001acb11429aea3f`. These temporary files exercise
 anonymous member lists and decode events; no third-party models are used or retained.
+
+Minimum-reproduction checks in `crates/dutchman/src/repro/tests.rs` combine independent
+copies of `generated_unit_cube.f3d` in memory, rename their identities, and add a periodic
+NURBS use-curve whose range crosses its carrier's stored parameter domain. The 88-finding
+case groups several cube regions into one body. These models use cadmpeg's public CADIR
+types and the existing synthetic cube only; no additional native design file is stored.
+The member-session check wraps two unchanged copies of that cube in a temporary F3Z using
+cadmpeg's public synthetic manifest recipe.

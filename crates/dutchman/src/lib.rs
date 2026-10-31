@@ -15,6 +15,7 @@ pub mod json;
 pub mod mcp;
 pub mod present;
 pub mod progress;
+pub mod repro;
 pub mod watch;
 pub mod worker;
 

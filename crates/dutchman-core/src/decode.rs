@@ -46,7 +46,7 @@ pub(crate) fn detect_part(path: &Path) -> Option<Format> {
 
 /// cadmpeg's desktop ceilings in salvage mode: a successful decode keeps going past a loss
 /// and reports it, rather than refusing the whole file. The input cap is Dutchman's own.
-fn policy() -> DecodePolicy {
+pub(crate) fn policy() -> DecodePolicy {
     DecodePolicy {
         limits: ResourceLimits {
             max_input_bytes: MAX_INPUT_BYTES,
@@ -217,13 +217,13 @@ fn decode_unguarded(
         "model_validation",
         bytes.len() as u64,
     );
-    if drawings {
-        validate_decoded(&mut ir, depth, &policy, bytes.len() as u64, report)?;
+    let checked = if drawings {
+        validate_decoded(&mut ir, depth, &policy, bytes.len() as u64, report)
     } else {
-        with_fallback(&mut ir, report, &policy, bytes.len() as u64)?;
-    }
+        with_fallback(&mut ir, report, &policy, bytes.len() as u64)
+    };
 
-    Ok(Model {
+    let model = Model {
         ir,
         fidelity: Some(fidelity),
         name: design_name(path),
@@ -234,6 +234,76 @@ fn decode_unguarded(
         source_step: (format == Format::Step)
             .then(|| String::from_utf8(bytes.to_vec()).ok())
             .flatten(),
+    };
+    if let Some(sink) = progress.and_then(|p| p.members.as_ref()) {
+        sink.model(&model);
+    }
+    checked?;
+    Ok(model)
+}
+
+/// Visit independent F3Z members through cadmpeg's bounded session API. Models are released
+/// after the callback; the caller may retain the first matching member. This is local only.
+pub fn repro_members(
+    input: &Path,
+    visit: &mut crate::repro::MemberVisitor<'_>,
+) -> Result<(), Error> {
+    catch_unwind(AssertUnwindSafe(|| {
+        crate::check_input(input)?;
+        let bytes = std::fs::read(input).map_err(|source| Error::Io {
+            path: input.into(),
+            source,
+        })?;
+        let arena = DecodeArena::new();
+        let policy = policy();
+        let (ctx, root) = DecodeContext::from_root_bytes(&bytes, &arena, &policy)
+            .map_err(|e| Error::Decode(e.to_string()))?;
+        let session = cadmpeg_codec_f3d::F3dCodec
+            .open_archive(&ctx, root)
+            .map_err(|e| Error::Decode(e.to_string()))?;
+        let count = session.members().len();
+        for (index, member) in session.members().iter().enumerate().take(256) {
+            use cadmpeg_codec_f3d::F3zMemberKind;
+            if !matches!(
+                member.kind(),
+                F3zMemberKind::Design | F3zMemberKind::PlacementOnly
+            ) {
+                continue;
+            }
+            let result = session
+                .decode_member(member.id())
+                .map_err(|e| Error::Decode(e.to_string()))?;
+            let model = match result.decoded() {
+                Some(Ok(decoded)) => {
+                    let mut ir = decoded.ir.clone();
+                    // Apply the same in-memory recovery as the original conversion. A
+                    // failed check still leaves its model available to the local visitor.
+                    let _ =
+                        with_fallback(&mut ir, &mut Report::default(), &policy, member.byte_size());
+                    Ok(Model {
+                        ir,
+                        fidelity: None,
+                        name: member.id().into(),
+                        source_file: Some(member.id().into()),
+                        assembly: None,
+                        source_step: None,
+                    })
+                }
+                Some(Err(error)) => Err(Error::Decode(error.to_string())),
+                None => continue,
+            };
+            if visit(index + 1, count, member.id(), model) {
+                break;
+            }
+        }
+        ctx.finish_session()
+            .map_err(|e| Error::Decode(e.to_string()))?;
+        Ok(())
+    }))
+    .unwrap_or_else(|_| {
+        Err(Error::Decode(
+            "the archive member decoder failed unexpectedly".into(),
+        ))
     })
 }
 
@@ -367,7 +437,7 @@ fn geometry_only(ir: &mut cadmpeg_ir::CadIr) {
     }
 }
 
-fn validate_decoded(
+pub(crate) fn validate_decoded(
     ir: &mut cadmpeg_ir::CadIr,
     depth: DecodeDepth,
     policy: &DecodePolicy,
@@ -411,7 +481,7 @@ fn validate_decoded(
 }
 
 /// Classify structured findings while the private model is still available.
-fn check_facts(
+pub(crate) fn check_facts(
     ir: &cadmpeg_ir::CadIr,
     findings: &[cadmpeg_ir::report::check::Finding],
 ) -> crate::CheckFacts {

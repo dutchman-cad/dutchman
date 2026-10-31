@@ -687,3 +687,64 @@ through sysinfo without launching a memory-probe command. Linux reads `/proc` an
 available memory by remaining cgroup headroom, including ancestor limits. Memory-budget
 refusals happen before decode, never at `map`; Standard accepts the history-free estimate
 when it fits.
+
+## `dutchman.repro/1`
+
+`dutchman repro INPUT --out FOLDER [--json]` and the MCP `repro` tool write a local kit.
+An existing `FOLDER/kit` is refused. Temporary conversion output and diagnostics live in a
+random temporary directory under `FOLDER` and are removed when the call returns normally,
+including on errors. A killed process can leave that directory behind; keep it private.
+The command performs the default SolidCraft conversion and its normal checks and recovery.
+It makes no network requests.
+
+`kit/anonymous.json` is the shareable artifact. It is built from fixed categories and
+counts, using the diagnostic log's allowlist for the failure object. It contains no source
+names, paths, entity identities, file hashes, geometry, parameter values, raw messages,
+exact input byte lengths, or timings.
+
+| Field | Meaning |
+|---|---|
+| `schema` | `dutchman.repro/1`. |
+| `versions` | `dutchman` release and pinned `cadmpeg` version plus commit. |
+| `input.format` | Stable Dutchman format id, or null. |
+| `input.size_class` | `under_1_mib`, `1_to_16_mib`, `16_to_256_mib`, `256_mib_or_more`, or null if unavailable. Boundaries are powers of two. |
+| `status` | `failure` or `no_failure_to_reproduce`. A recovered conversion is a success. |
+| `failure` | Null on success; otherwise fixed `stage`, `kind`, error `findings` by code and referenced `curve_kinds` by category, as in diagnostics. Counts describe the original failure. |
+| `narrowing.members` | Independent F3Z member trials with one-based `ordinal`, `total`, fixed `status` (`decoded` or `decode_failed`) and `trial_failure` (anonymous stage/category/check facts, or null). Includes tested members only. |
+| `narrowing.path` | Ordered steps with `unit` (`member`, `component`, `occurrence`, `body`, `feature`, `sketch`), one-based `ordinal` and `total`. Each step is scoped to the previously retained unit. |
+| `narrowing.smallest_failing_unit_isolated` | True when a single body or smaller independent feature/sketch subset retained the same stage, category and complete finding-code set. Does not prove the globally smallest model or identify the native operation responsible. |
+| `narrowing.limits` | Fixed explanatory sentences for unavailable levels, unsuccessful trials or a trial budget. |
+| `retained_unit_kinds` | Null when no checked subset is available; otherwise `surface_kinds`, `feature_kinds` (fixed enum categories; unlisted kinds become `other`), `finding_entity_kinds` (arena names cited by structured errors, or null when unavailable), and `use_curve_outside_carrier` (structurally detected coedge range/carrier-domain mismatch count). Counts cover the retained unit, without carrier values. |
+
+For model check failures, only cadmpeg's checks run again on the retained model. The full
+code set must match; counts may decrease. For F3Z, cadmpeg's bounded independent-member
+session decodes members before testing their models. Then dependency-closed component,
+occurrence, body, feature and sketch subsets are tried in arena order. Dependencies are
+retained, so a subset may require several bodies or features. A feature referencing the
+same final geometry does not isolate the feature that produced the fault. No native
+records are edited and feature regeneration is not supported. At most 256 trials and
+100,000 entities per subset are considered. Member composition errors and unstructured
+decoder/encoder errors have no check-code signature: no isolated unit is claimed for them.
+Writer failures are retried on component/body/feature/sketch subsets. Matching only their
+stage and category produces candidate steps, with isolation false and an explicit limit;
+the broad category alone does not establish equivalent failures. Mapping, restatement and
+any replay run together as one writer operation; this API cannot retry them separately.
+Unsupported stages are stated in `limits`.
+
+`kit/local-key.json` uses `dutchman.repro-local/1`, with `warning: "Do not share"` and
+the private `input` path, `source_document` name (or null), `members` (tested archive ordinals and names), and `ordinals`: selected steps with `unit`, `ordinal`, `total`, `parent_step` (zero-based index
+of the preceding scope, or null), `name` (or null) and a local lookup hint. Ordinals use
+CADIR arena order; native CAD programs may show a different order. Names come directly
+from the source model. This file must stay local.
+
+`kit/next-steps.md` contains fixed recipes chosen by finding code and carrier kinds,
+anonymous ordinal lookup instructions, limits, and exactly what may be sent. A recipe
+suggests a candidate; the rebuilt design must reproduce the same stage and code set.
+Unknown codes get the body-copy/rebuild recipe. Neither instructions nor anonymous JSON
+include local-key content.
+
+The CLI `--json` and MCP response envelope also uses `dutchman.repro/1`, with `ok` (kit
+creation succeeded), `summary`, `paths` (`anonymous`, `local_key`, `next_steps`), and
+`anonymous` (the artifact content). This envelope contains local output paths and stays
+local. A conversion failure still has `ok: true` when the kit was written. MCP includes
+`local_key` content only with explicit `include_local_key: true`; keep that response local.

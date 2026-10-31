@@ -307,3 +307,25 @@ failure stage and error category. Model check failures add check-code counts and
 referenced curve-kind counts. A geometry-only recovery rechecks the decoded model in memory
 only when failing checks involve history, sketches, or parameters; geometry failures stop
 without repeating the decode. See [diagnostic fields](json.md#dutchmandiagnostics1).
+
+## Make a minimum reproduction
+
+When a failing design must stay private, run:
+
+```sh
+dutchman repro part.f3d --out reproduction
+```
+
+Use a fresh output folder each time. This runs the default SolidCraft conversion with
+local diagnostics and writes `reproduction/kit/anonymous.json`, `local-key.json` and
+`next-steps.md`. `--json` returns the summary, kit paths and anonymous content. Exit 0
+means the kit was written, including when conversion failed; exit 1 means kit creation
+failed. A successful conversion says **no failure to reproduce**.
+
+Only `anonymous.json` is intended for sharing. `local-key.json` maps anonymous ordinals
+to your own names and is marked **Do not share**. Follow `next-steps.md` in your CAD
+program to rebuild a small design and compare the failure stage and finding-code set.
+Temporary conversion output and diagnostic logs are removed after the command returns.
+No files are uploaded. Narrowing uses retained CADIR subsets and stops where an independent
+subset cannot reproduce the same structured check codes; it does not regenerate features.
+The [kit schema](json.md#dutchmanrepro1) describes these limits.

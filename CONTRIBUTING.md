@@ -16,9 +16,11 @@ Replace `part.f3d` with your file or folder. Review `report-anon.json`, then ope
 with the cause, counts, and versions it records. Ordinary logs, JSON output, and journals
 contain file names and paths; keep them, the report key, and the salt private.
 
-Do not attach design files publicly. If you are willing to share a small reproducer you
-made yourself, say so in the issue and wait for a private way to send it. Do not share designs
-from your employer or customers, or models downloaded from libraries. See
+Keep the original design private. You may attach a small rebuilt reproduction if it
+reproduces and you are free to share it; follow the
+[minimum-reproduction guide](docs/minimum-reproduction.md). Never share the original or
+local-key.json. Do not share designs from your employer or customers, or models downloaded
+from libraries. See
 [Testing Dutchman on your library](docs/testing-your-library.md#5-report-what-you-found).
 
 Always report it here, on Dutchman, even when the report names cadmpeg or SolidCraft (an

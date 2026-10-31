@@ -93,7 +93,10 @@ fn an_mcp_client_converts_through_dutchman() {
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, ["convert", "inspect", "formats", "convert_all"]);
+    assert_eq!(
+        names,
+        ["convert", "inspect", "formats", "convert_all", "repro"]
+    );
 
     let formats = client.call("formats", json!({}));
     assert_eq!(formats["isError"], false);
@@ -377,4 +380,25 @@ fn diagnostics_paths_are_optional_on_both_converting_tools() {
     assert_eq!(result["isError"], true);
     assert!(!dir.path().join("refused.jsonl").exists());
     client.finish();
+}
+
+#[test]
+fn repro_returns_anonymous_content_and_only_explicitly_returns_the_local_key() {
+    let mut client = Client::start();
+    for include in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let result = client.call(
+            "repro",
+            json!({"input": fixture("generated_unit_cube.f3d"),
+            "out": dir.path(), "include_local_key": include}),
+        );
+        assert_eq!(result["isError"], false, "{result}");
+        let content = &result["structuredContent"];
+        assert_eq!(content["anonymous"]["status"], "no_failure_to_reproduce");
+        assert_eq!(content.get("local_key").is_some(), include);
+        assert!(content["paths"]["local_key"]
+            .as_str()
+            .unwrap()
+            .ends_with("local-key.json"));
+    }
 }
