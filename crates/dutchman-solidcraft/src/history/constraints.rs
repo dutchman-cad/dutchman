@@ -150,17 +150,7 @@ impl Mapper<'_> {
             "polar_distance" => self.polar_distance(definition),
             "equal_distance" => self.equal_distance(definition),
             "midpoint_coordinate" => self.midpoint_coordinate(definition),
-            "coincident" => {
-                let points = field("entities")
-                    .as_array()
-                    .map(|ids| {
-                        ids.iter()
-                            .map(|id| self.point(&json!({"kind": "entity", "entity": id})))
-                            .collect::<Option<Vec<_>>>()
-                    })
-                    .unwrap_or_default();
-                points.map(|points| coincident(&points))
-            }
+            "coincident" => self.entity_coincident(field("entities")),
             "coincident_loci" => field("loci")
                 .as_array()
                 .and_then(|loci| {
@@ -244,6 +234,8 @@ impl Mapper<'_> {
                 "text_frame" | "text_path" | "text" => "the source text has no mapped SolidCraft text link",
                 "group" => "SolidCraft has no source construction handle constraint",
                 "native" => "its native operands have no resolved neutral relation",
+                "distance" => "requires a resolved line length, point pair, point and line, or parallel line pair; nonparallel line spacing and unresolved external entities have no unambiguous distance; its value must match the solved line or endpoint measurement",
+                "coincident" => "requires resolved points or a point and curve; curve-only entity loci do not identify which points must coincide",
                 _ => "its operands or dimension value cannot be expressed by this SolidCraft constraint",
             };
             format!("{}: {reason}", unmapped())
@@ -892,23 +884,189 @@ impl Mapper<'_> {
         Some(self.dimension(constraint, definition))
     }
 
+    /// Entity coincidences include point-on-curve relations, not only point pairs.
+    fn entity_coincident(&self, entities: &Value) -> Option<Vec<Value>> {
+        let entities = entities.as_array()?;
+        let first = entities.first()?;
+        let mut out = Vec::new();
+        for second in entities.iter().skip(1) {
+            match (self.shape(first)?, self.shape(second)?) {
+                (Shape::Point(p), Shape::Point(q)) => out.extend(coincident(&[*p, *q])),
+                (Shape::Point(p), Shape::Curve(c)) | (Shape::Curve(c), Shape::Point(p))
+                    if c.kind != "compound_conic" =>
+                {
+                    out.push(json!({"type": "point_on_curve", "p": p, "c": c.index}));
+                }
+                _ => return None,
+            }
+        }
+        Some(out)
+    }
+
+    fn distance_value(&self, definition: &Value) -> Option<f64> {
+        definition
+            .get("parameter")
+            .and_then(Value::as_str)
+            .and_then(|id| self.ctx.row("parameters", id))
+            .and_then(|parameter| number(parameter.pointer("/value/value")))
+    }
+
+    /// A generic entity distance may refer to the infinite line or its finite end.
+    /// Use the source-evaluated dimension to distinguish them, never force a value
+    /// onto geometry that does not measure it.
+    fn point_entity_distance(
+        &self,
+        p: usize,
+        line: &Curve,
+        definition: &Value,
+    ) -> Option<Vec<Value>> {
+        let a = self.position(line.start?)?;
+        let b = self.position(line.end?)?;
+        let at = self.position(p)?;
+        let value = point_line(at, a, b)?;
+        let expected = self.distance_value(definition);
+        if let Some(expected) = expected {
+            if (expected - value).abs() > 1e-6 {
+                if self
+                    .builder_curve(line.index)?
+                    .get("infinite")
+                    .and_then(Value::as_bool)
+                    == Some(true)
+                {
+                    return None;
+                }
+                let delta = [b[0] - a[0], b[1] - a[1]];
+                let t = ((at[0] - a[0]) * delta[0] + (at[1] - a[1]) * delta[1])
+                    / (delta[0] * delta[0] + delta[1] * delta[1]);
+                let q = if t < 0.0 {
+                    line.start?
+                } else if t > 1.0 {
+                    line.end?
+                } else {
+                    return None;
+                };
+                let value = distance(at, self.position(q)?);
+                if (expected - value).abs() > 1e-6 {
+                    return None;
+                }
+                return Some(self.dimension(
+                    json!({"type": "distance", "p": p, "q": q, "value": value}),
+                    definition,
+                ));
+            }
+        }
+        Some(self.dimension(
+            json!({"type": "point_line_distance", "p": p, "l": line.index, "value": value}),
+            definition,
+        ))
+    }
+
+    /// Disjoint parallel finite segments can instead measure between their nearest ends.
+    /// A unique closest pair and the source value must both prove that interpretation.
+    fn parallel_end_distance(&self, a: &Curve, b: &Curve, definition: &Value) -> Option<Value> {
+        let expected = self.distance_value(definition)?;
+        for line in [a, b] {
+            if self
+                .builder_curve(line.index)?
+                .get("infinite")
+                .and_then(Value::as_bool)
+                == Some(true)
+            {
+                return None;
+            }
+        }
+        let start = self.position(a.start?)?;
+        let delta = self.direction(a)?;
+        let length = delta[0].hypot(delta[1]);
+        if length <= 1e-12 {
+            return None;
+        }
+        let project =
+            |p: P2| ((p[0] - start[0]) * delta[0] + (p[1] - start[1]) * delta[1]) / length;
+        let t = project(self.position(b.start?)?);
+        let u = project(self.position(b.end?)?);
+        if t.max(u) >= 0.0 && t.min(u) <= length {
+            return None;
+        }
+        let mut pairs = Vec::new();
+        for p in [a.start?, a.end?] {
+            for q in [b.start?, b.end?] {
+                pairs.push((p, q, distance(self.position(p)?, self.position(q)?)));
+            }
+        }
+        pairs.sort_by(|a, b| a.2.total_cmp(&b.2));
+        let (p, q, value) = *pairs.first()?;
+        if (value - expected).abs() > 1e-6
+            || pairs
+                .get(1)
+                .is_some_and(|other| (other.2 - value).abs() <= 1e-6)
+        {
+            return None;
+        }
+        Some(json!({"type": "distance", "p": p, "q": q, "value": value}))
+    }
+
     fn entity_distance(&self, definition: &Value) -> Option<Vec<Value>> {
         let entities = definition.get("entities")?.as_array()?;
-        let constraint = match entities.as_slice() {
+        match entities.as_slice() {
             [line] => {
                 let l = self.curve(line, &["line"])?;
                 let value = distance(self.position(l.start?)?, self.position(l.end?)?);
-                json!({"type": "length", "l": l.index, "value": value})
+                Some(self.dimension(
+                    json!({"type": "length", "l": l.index, "value": value}),
+                    definition,
+                ))
             }
             [first, second] => {
-                let p = self.point(&json!({"kind": "entity", "entity": first}))?;
-                let q = self.point(&json!({"kind": "entity", "entity": second}))?;
-                let value = distance(self.position(p)?, self.position(q)?);
-                json!({"type": "distance", "p": p, "q": q, "value": value})
+                match (self.shape(first)?, self.shape(second)?) {
+                    (Shape::Point(p), Shape::Curve(c)) | (Shape::Curve(c), Shape::Point(p))
+                        if c.kind == "line" =>
+                    {
+                        return self.point_entity_distance(*p, c, definition);
+                    }
+                    _ => {}
+                }
+                if let (Some(a), Some(b)) =
+                    (self.curve(first, &["line"]), self.curve(second, &["line"]))
+                {
+                    let u = self.direction(a)?;
+                    let v = self.direction(b)?;
+                    let scale = u[0].hypot(u[1]) * v[0].hypot(v[1]);
+                    if scale <= 1e-12 || (u[0] * v[1] - u[1] * v[0]).abs() > scale * 1e-9 {
+                        return None;
+                    }
+                    let p = a.start?;
+                    let value = point_line(
+                        self.position(p)?,
+                        self.position(b.start?)?,
+                        self.position(b.end?)?,
+                    )?;
+                    let mut out = vec![json!({"type": "parallel", "a": a.index, "b": b.index})];
+                    let constraint = if self
+                        .distance_value(definition)
+                        .is_some_and(|expected| (expected - value).abs() > 1e-6)
+                    {
+                        self.parallel_end_distance(a, b, definition)?
+                    } else {
+                        json!({"type": "point_line_distance", "p": p, "l": b.index, "value": value})
+                    };
+                    out.extend(self.dimension(constraint, definition));
+                    return Some(out);
+                }
+                let mut loci = definition.clone();
+                let fields = loci.as_object_mut()?;
+                fields.insert(
+                    "first".to_owned(),
+                    json!({"kind": "entity", "entity": first}),
+                );
+                fields.insert(
+                    "second".to_owned(),
+                    json!({"kind": "entity", "entity": second}),
+                );
+                self.loci_distance("distance_loci", &loci)
             }
-            _ => return None,
-        };
-        Some(self.dimension(constraint, definition))
+            _ => None,
+        }
     }
 
     fn radius(&self, kind: &str, definition: &Value) -> Option<Vec<Value>> {
@@ -1166,6 +1324,158 @@ mod tests {
         // The shared corner is one point already: its coincidence adds nothing.
         assert_eq!(out[0], json!({"id": "k1", "type": "horizontal", "l": 0}));
         assert_eq!(out[5]["c"], 5);
+    }
+
+    #[test]
+    fn entity_point_curve_coincidences_and_distances_map() {
+        let (out, report) = run(vec![
+            json!({"kind": "coincident", "entities": ["m", "b"]}),
+            json!({"kind": "coincident", "entities": ["b", "m"]}),
+            json!({"kind": "distance", "entities": ["m", "t"], "parameter": "f3d:model:parameter#1"}),
+            json!({"kind": "distance", "entities": ["t", "m"], "parameter": "f3d:model:parameter#1"}),
+            json!({"kind": "distance", "entities": ["b", "t"], "parameter": "f3d:model:parameter#1"}),
+        ]);
+        assert!(report.losses().is_empty(), "{:?}", report.losses());
+        assert_eq!(out[0]["type"], "point_on_curve");
+        assert_eq!(out[1]["type"], "point_on_curve");
+        for i in [2, 3, 5] {
+            assert_eq!(out[i]["type"], "point_line_distance");
+            assert_eq!(out[i]["value"], 30.0);
+            assert_eq!(out[i]["param"], "width");
+        }
+        assert_eq!(out[4]["type"], "parallel");
+    }
+
+    #[test]
+    fn construction_and_reference_entities_keep_driven_dimensions() {
+        let model = json!({"sketch_constraints": [{"sketch": SKETCH, "driving": false,
+            "definition": {"kind": "distance", "entities": ["m", "axis"], "parameter": "p"}}]});
+        let mut ctx = Context::new(&model);
+        ctx.params.insert("p".to_owned(), "Length".to_owned());
+        let mut builder = Builder::default();
+        let mut report = Report::default();
+        for e in entities() {
+            builder.entity(&e, &mut report).unwrap();
+        }
+        builder
+            .entity(
+                &entity(
+                    "axis",
+                    json!({"kind": "reference_line",
+            "origin": {"u": 0.0, "v": 5.0}, "direction": {"u": 1.0, "v": 0.0}}),
+                ),
+                &mut report,
+            )
+            .unwrap();
+        let out = map(SKETCH, "sketch", &ctx, &mut builder, &mut report);
+        assert!(report.losses().is_empty());
+        assert_eq!(out[0]["type"], "point_line_distance");
+        assert_eq!(out[0]["driven"], true);
+        assert_eq!(out[0]["param"], "Length");
+        assert_eq!(out[0]["value"], 5.0);
+    }
+
+    #[test]
+    fn finite_point_line_distance_uses_the_endpoint_only_when_its_value_matches() {
+        let model = json!({"parameters": [{"id": "p", "value": {"kind": "length", "value": 2.0}}]});
+        let mut ctx = Context::new(&model);
+        ctx.params.insert("p".to_owned(), "Length".to_owned());
+        let mut builder = Builder::default();
+        let mut report = Report::default();
+        builder
+            .entity(&line("segment", [0.0, 0.0], [10.0, 0.0]), &mut report)
+            .unwrap();
+        builder
+            .entity(
+                &entity(
+                    "outside",
+                    json!({"kind": "point", "position": {"u": 12.0, "v": 0.0}}),
+                ),
+                &mut report,
+            )
+            .unwrap();
+        let mut mapper = Mapper {
+            ctx: &ctx,
+            builder: &mut builder,
+        };
+        let d = json!({"kind": "distance", "entities": ["outside", "segment"], "parameter": "p"});
+        let out = mapper.map(&d).unwrap();
+        assert_eq!(out[0]["type"], "distance");
+        assert_eq!(out[0]["value"], 2.0);
+        assert_eq!(out[0]["q"], 2);
+        assert_eq!(out[0]["param"], "Length");
+        let mut reversed = d.clone();
+        reversed["entities"] = json!(["segment", "outside"]);
+        assert_eq!(mapper.map(&reversed).unwrap(), out);
+        let mismatch =
+            json!({"parameters": [{"id": "p", "value": {"kind": "length", "value": 3.0}}]});
+        let ctx = Context::new(&mismatch);
+        assert!(Mapper {
+            ctx: &ctx,
+            builder: &mut builder
+        }
+        .map(&d)
+        .is_err());
+    }
+
+    #[test]
+    fn reference_axes_have_no_artificial_finite_end_distance() {
+        let model = json!({"parameters": [{"id": "p", "value": {"kind": "length", "value": 2.0}}]});
+        let ctx = Context::new(&model);
+        let mut builder = Builder::default();
+        let mut report = Report::default();
+        builder.entity(&entity("axis", json!({"kind": "reference_line", "origin": {"u": 0.0, "v": 0.0}, "direction": {"u": 1.0, "v": 0.0}})), &mut report).unwrap();
+        builder
+            .entity(
+                &entity(
+                    "p",
+                    json!({"kind": "point", "position": {"u": 3.0, "v": 0.0}}),
+                ),
+                &mut report,
+            )
+            .unwrap();
+        assert!(Mapper {
+            ctx: &ctx,
+            builder: &mut builder
+        }
+        .map(&json!({"kind": "distance", "entities": ["p", "axis"], "parameter": "p"}))
+        .is_err());
+    }
+
+    #[test]
+    fn disjoint_parallel_segments_can_measure_their_unique_nearest_ends() {
+        let model = json!({"parameters": [{"id": "p", "value": {"kind": "length", "value": 5.0_f64.sqrt()}}]});
+        let ctx = Context::new(&model);
+        let mut builder = Builder::default();
+        let mut report = Report::default();
+        builder
+            .entity(&line("a", [0.0, 0.0], [1.0, 0.0]), &mut report)
+            .unwrap();
+        builder
+            .entity(&line("b", [2.0, 2.0], [3.0, 2.0]), &mut report)
+            .unwrap();
+        let out = Mapper {
+            ctx: &ctx,
+            builder: &mut builder,
+        }
+        .map(&json!({"kind": "distance", "entities": ["a", "b"], "parameter": "p"}))
+        .unwrap();
+        assert_eq!(out[0]["type"], "parallel");
+        assert_eq!(out[1]["type"], "distance");
+        assert_eq!(out[1]["p"], 2);
+        assert_eq!(out[1]["q"], 3);
+        assert_eq!(out[1]["value"], 5.0_f64.sqrt());
+    }
+
+    #[test]
+    fn nonparallel_entity_lines_have_no_spacing_dimension() {
+        let (out, report) = run(vec![
+            json!({"kind": "distance", "entities": ["b", "r"], "parameter": "p"}),
+        ]);
+        assert!(out.is_empty());
+        assert!(report.losses()[0]
+            .detail
+            .contains("nonparallel line spacing"));
     }
 
     #[test]

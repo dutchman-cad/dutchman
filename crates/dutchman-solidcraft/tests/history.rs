@@ -7733,7 +7733,7 @@ fn unsupported_modify_options_explain_what_stops_history() {
     cases.push((
         json!({"definition": "cosmetic_thread", "face": cube_faces(&["right"]),
         "diameter": 8.0, "extent": {"kind": "through"}}),
-        "cosmetic threads without a resolved standard and pitch are not supported yet",
+        "cosmetic threads require a resolved diameter and pitch",
     ));
     for family in ["thread", "detailed_thread"] {
         cases.push((
@@ -9443,5 +9443,61 @@ fn sketch_choice_keeps_required_profiles_but_not_reference_sketches() {
             2,
             "section, profile and path sketches stay"
         );
+    }
+}
+
+#[test]
+fn sketch_entity_distances_keep_expressions_driving_geometry() {
+    for operands in [
+        json!(["f3d:model:sketch-entity#1", "f3d:model:sketch-entity#3"]),
+        json!(["f3d:model:sketch-entity#5", "f3d:model:sketch-entity#3"]),
+        json!(["f3d:model:sketch-entity#3", "f3d:model:sketch-entity#5"]),
+        json!(["f3d:model:sketch-entity#5", "f3d:model:sketch-entity#6"]),
+        json!(["f3d:model:sketch-entity#7", "f3d:model:sketch-entity#5"]),
+    ] {
+        let mut model = cube_with_history(10.0, first_profile(), None);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let m = &mut wire["model"];
+        m["sketch_entities"].as_array_mut().unwrap().extend([
+            entity(
+                5,
+                json!({"kind": "point", "position": {"u": 0.0, "v": 0.0}}),
+            ),
+            entity(
+                6,
+                json!({"kind": "point", "position": {"u": 10.0, "v": 0.0}}),
+            ),
+        ]);
+        let mut carrier = line(7, [0.0, 20.0], [0.0, 10.0]);
+        carrier["construction"] = json!(true);
+        m["sketch_entities"].as_array_mut().unwrap().push(carrier);
+        m["sketch_constraints"][4]["definition"]["entities"] = operands;
+        m["parameters"][1]["expression"] = json!("Width / 2");
+        m["parameters"][1]["dependencies"] = json!(["f3d:model:parameter#3"]);
+        m["parameters"].as_array_mut().unwrap().push(json!({
+            "id": "f3d:model:parameter#3", "name": "Width", "expression": "20 mm",
+            "value": {"kind": "length", "value": 20.0}
+        }));
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (document, _) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(document["params"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["name"] == "side" && p["expr"] == "Width / 2"));
+        assert!(document["features"][0]["sketch"]["constraints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["param"] == "side"));
+        if let Some(cli) = solidcraft() {
+            let bytes = written(&model).0;
+            assert!((volumes(&cli, &bytes)[0] - 1000.0).abs() < 0.01);
+            let edited = volumes(&cli, &with_param(&bytes, "Width", "30 mm"));
+            assert!((edited[0] - 2250.0).abs() < 0.01, "{edited:?}");
+        }
     }
 }
