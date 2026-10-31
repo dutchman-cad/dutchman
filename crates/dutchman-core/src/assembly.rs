@@ -1106,7 +1106,8 @@ fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec
             // A joint that holds a side exactly where the file poses its other side shows
             // the first side placed in the design as well, not only relative to its scope.
             for (side, other) in [(&joint.a, &joint.b), (&joint.b, &joint.a)] {
-                if posed.contains(other) {
+                // A part inside a posed one travels with it, so only a holder is placed.
+                if posed.contains(other) && !posed.iter().any(|pose| side.starts_with(pose)) {
                     hold_in(&mut fixed, side.clone(), &[]);
                 }
             }
@@ -1424,17 +1425,17 @@ fn move_keeping_placed(
         })
         .filter_map(|(placed, _)| Some((placed, world_at(assembly, placed)?)))
         .collect();
-    let staying: Vec<(&Vec<usize>, Placement3x4)> = stay
+    let mut staying: Vec<(&Vec<usize>, Placement3x4)> = stay
         .iter()
         .filter(|held| held.len() > path.len() && held.starts_with(path))
         .filter_map(|held| Some((held, world_at(assembly, held)?)))
         .collect();
+    // Outer before inner, so an inner part is put back relative to its outer part's new place.
+    staying.extend(inside);
+    staying.sort_by_key(|(held, _)| held.len());
     set_world_at(assembly, path, world);
     for (held, at) in staying {
         set_world_at(assembly, held, &at);
-    }
-    for (placed, at) in inside {
-        set_world_at(assembly, placed, &at);
     }
 }
 
