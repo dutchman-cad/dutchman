@@ -79,6 +79,8 @@ jobs:
         with:
           shared-key: corpus-sweep-release
           cache-on-failure: true
+          # A pull request's code never writes the cache that main's runs restore.
+          save-if: ${{ steps.choose.outputs.ref == 'main' }}
       - name: Use cadmpeg main
         id: cadmpeg
         if: steps.choose.outputs.ref != '' && inputs.cadmpeg == 'main'
