@@ -189,7 +189,7 @@ fn local_components(model: &mut Model, threads: usize, report: &mut Report) {
                     && components.joints.is_empty()
                     && components.left_out.is_empty() => {}
             assembly::Components::Assembly(components) => {
-                model.assembly = Some(components);
+                model.assembly = Some(*components);
             }
             assembly::Components::Unplaceable(reason) => report.push(
                 Severity::Degraded,

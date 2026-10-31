@@ -558,7 +558,7 @@ pub(crate) enum Components {
     /// The design places no components of its own.
     None,
     /// They can be written as an assembly, which carries why each joint was left out.
-    Assembly(Assembly),
+    Assembly(Box<Assembly>),
     /// They cannot, for this reason; the design converts as stored.
     Unplaceable(String),
 }
@@ -567,7 +567,7 @@ pub(crate) enum Components {
 /// of part models each holding only its component's bodies, plus the design's loose bodies.
 pub(crate) fn local(model: &Model, threads: usize, report: &mut Report) -> Components {
     match local_components_with_threads(model, &BTreeMap::new(), threads, report) {
-        Ok(Some((assembly, _))) => Components::Assembly(assembly),
+        Ok(Some((assembly, _))) => Components::Assembly(Box::new(assembly)),
         Ok(None) => Components::None,
         Err(reason) => Components::Unplaceable(reason),
     }
