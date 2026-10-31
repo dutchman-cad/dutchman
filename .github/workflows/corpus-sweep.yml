@@ -73,14 +73,8 @@ jobs:
             libxcursor-dev libxrandr-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev
       - uses: dtolnay/rust-toolchain@stable
         if: steps.choose.outputs.ref != ''
-      # Restore the cache before the cadmpeg update, as the nightly does.
-      - uses: Swatinem/rust-cache@v2
-        if: steps.choose.outputs.ref != ''
-        with:
-          shared-key: corpus-sweep-release
-          cache-on-failure: true
-          # A pull request's code never writes the cache that main's runs restore.
-          save-if: ${{ steps.choose.outputs.ref == 'main' }}
+      # No build cache: this job can build a pull request's code, and a cache it wrote
+      # would be restored by runs on main.
       - name: Use cadmpeg main
         id: cadmpeg
         if: steps.choose.outputs.ref != '' && inputs.cadmpeg == 'main'
