@@ -798,6 +798,75 @@ pub(super) fn single_region(sketch: &Value, entities: &[&Value]) -> Option<usize
     (regions == 1).then_some(outer).flatten()
 }
 
+/// The outer loops and holes of the source loops `wanted` (indices into the sketch's profile
+/// table) under even-odd nesting: a selected loop inside an odd number of other selected
+/// loops is a hole of the nearest one around it, one inside an even number is material. `None`
+/// when no selected loop lies inside another (nothing to nest), or when the loops touch,
+/// cross or cannot be followed, so no unique nesting tree exists.
+pub(super) fn nesting(
+    sketch: &Value,
+    entities: &[&Value],
+    wanted: &[usize],
+) -> Option<Vec<(usize, Vec<usize>)>> {
+    let loops = loops(sketch);
+    if wanted.len() < 2 || wanted.len() > MAX_LINES || loops.len() > MAX_LINES {
+        return None;
+    }
+    let polygons = wanted
+        .iter()
+        .map(|&index| polygon(loops.get(index)?, entities))
+        .collect::<Option<Vec<_>>>()?;
+    if polygons.iter().map(Vec::len).sum::<usize>() > MAX_POINTS
+        || polygons.iter().any(|ring| self_crossing(ring))
+    {
+        return None;
+    }
+    // The same conservative clearance as `single_region`: loops that touch, cross or share a
+    // boundary supply no unique nesting tree.
+    for (i, a) in polygons.iter().enumerate() {
+        for b in polygons.iter().skip(i + 1) {
+            let clearance = tolerance(a).max(tolerance(b)) * 10_000.0;
+            if edges(a).any(|(p, q)| {
+                on_boundary(p, b, clearance)
+                    || edges(b)
+                        .any(|(r, s)| !intersection(p, q, r, s).is_ok_and(|hit| hit.is_none()))
+            }) || b.iter().any(|&p| on_boundary(p, a, clearance))
+            {
+                return None;
+            }
+        }
+    }
+    let around: Vec<Vec<usize>> = polygons
+        .iter()
+        .enumerate()
+        .map(|(i, ring)| {
+            let p = ring.first().copied();
+            polygons
+                .iter()
+                .enumerate()
+                .filter(|(j, other)| *j != i && p.is_some_and(|p| inside(p, other)))
+                .map(|(j, _)| j)
+                .collect()
+        })
+        .collect();
+    if around.iter().all(Vec::is_empty) {
+        return None;
+    }
+    let mut out = Vec::new();
+    for (i, containing) in around.iter().enumerate() {
+        if containing.len() % 2 == 0 {
+            let holes: Vec<usize> = around
+                .iter()
+                .enumerate()
+                .filter(|(_, other)| other.len() == containing.len() + 1 && other.contains(&i))
+                .filter_map(|(j, _)| wanted.get(j).copied())
+                .collect();
+            out.push((*wanted.get(i)?, holes));
+        }
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
