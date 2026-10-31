@@ -70,7 +70,7 @@ When a file fails, its card says so and offers **Report this on GitHub**. It ope
 form in your browser, filled in: Dutchman's version, your system, the error with its stage
 and upstream, and the file's anonymous report, which names no file and no folder. Read it
 before you submit, and never attach the design; a link to a file that is already public is
-welcome. The link stays short enough for GitHub to open it while you are signed in: if the
+welcome. The link stays under 3,000 characters so GitHub opens it while you are signed in: if the
 anonymous report does not fit, the app copies it for you to paste into the form's
 **Anonymous report for this file** box, and a very long error message is shortened in the
 form (the anonymous report has all of it).

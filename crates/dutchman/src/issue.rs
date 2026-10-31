@@ -15,13 +15,13 @@ pub const NEW_ISSUE: &str =
     "https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml";
 
 /// The longest link the form is opened with. GitHub refuses a long link to a signed-in
-/// reader (406 Not Acceptable) well before 8 KB, as the session's cookies count too; past
-/// this, the anonymous report is left for the reporter to paste.
-pub const MAX_URL: usize = 4_000;
+/// reader well before 8 KB, as the session's cookies count too, and how much they take
+/// differs by reader; past this, the anonymous report is left for the reporter to paste.
+pub const MAX_URL: usize = 3_000;
 
 /// The most of the error message the link carries; the whole message is in the anonymous
 /// report.
-const MAX_MESSAGE: usize = 1_000;
+const MAX_MESSAGE: usize = 800;
 
 /// The issue to file about the file `report` (a `dutchman.convert/1` report) is of.
 #[derive(Clone, Debug, PartialEq)]
