@@ -3785,6 +3785,113 @@ fn solidcraft_replays_only_the_selected_crossed_region() {
     }
 }
 
+/// The 10 mm square loop (curves 1 to 4) extruded as region `{outer: 0}`, with curves no loop
+/// uses: a line through the square past both sides, and an open segment inside it.
+fn stray_curve_history(change: impl FnOnce(&mut Value)) -> Model {
+    let profile = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
+        "regions": [{"region": "loops", "outer": 0}]}});
+    let mut model = cube_with_history(10.0, profile, None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["sketch_entities"]
+        .as_array_mut()
+        .unwrap()
+        .extend([
+            line(5, [-5.0, 5.0], [15.0, 5.0]),
+            line(6, [2.0, 2.0], [4.0, 3.0]),
+        ]);
+    change(&mut wire["model"]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+fn construction_flags(document: &Value) -> Vec<(String, bool)> {
+    document["features"][0]["sketch"]["curves"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|curve| {
+            (
+                curve["id"].as_str().unwrap().to_owned(),
+                curve["construction"] == true,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn curves_outside_every_profile_loop_are_written_as_construction() {
+    let (document, report) = convert(
+        &stray_curve_history(|_| {}),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(history_line(&report).starts_with("2 of 2 features mapped"));
+    let flags = construction_flags(&document);
+    assert_eq!(flags.len(), 6);
+    assert_eq!(
+        flags
+            .iter()
+            .filter(|(_, construction)| *construction)
+            .count(),
+        2
+    );
+    for (id, construction) in &flags {
+        assert_eq!(*construction, id == "l5" || id == "l6", "{id}");
+    }
+    assert!(
+        report.losses().iter().any(|loss| loss.detail
+            == "2 sketch curves outside every profile loop written as construction"),
+        "{report:?}"
+    );
+    // With the strays construction, the square's four curves are all the sketch has.
+    assert_eq!(document["features"][1]["profiles"]["type"], "all");
+}
+
+#[test]
+fn solidcraft_replays_a_region_beside_curves_no_loop_uses() {
+    let Some(cli) = solidcraft() else { return };
+    let volume = volumes(&cli, &written(&stray_curve_history(|_| {})).0);
+    assert_eq!(volume.len(), 1);
+    assert!((volume[0] - 1000.0).abs() < 1e-6, "{volume:?}");
+    // An open segment alone, inside the region.
+    let only_open = stray_curve_history(|model| {
+        model["sketch_entities"].as_array_mut().unwrap().remove(4);
+    });
+    let volume = volumes(&cli, &written(&only_open).0);
+    assert_eq!(volume.len(), 1);
+    assert!((volume[0] - 1000.0).abs() < 1e-6, "{volume:?}");
+}
+
+#[test]
+fn a_curve_another_feature_names_stays_real_geometry() {
+    // A sweep along curve 5 of the same sketch needs it as geometry, so nothing in the
+    // sketch is demoted.
+    let model = stray_curve_history(|model| {
+        let section = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
+            "regions": [{"region": "loops", "outer": 0}]}});
+        model["features"][1]["definition"] = json!({
+            "definition": "sweep",
+            "shape": {"mode": "solid", "op": "new_body",
+                      "section": {"kind": "profile", "value": section}},
+            "path": {"kind": "sketch_curves", "value": {
+                "sketch": SKETCH, "curves": ["f3d:model:sketch-entity#5"]}},
+            "path_tangent": false,
+            "linearize": false,
+            "path_extent": {"along_fraction": 1.0, "against_fraction": 0.0},
+        });
+    });
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(construction_flags(&document)
+        .iter()
+        .all(|(_, construction)| !construction));
+    assert!(!report
+        .losses()
+        .iter()
+        .any(|loss| loss.detail.contains("outside every profile loop")));
+}
+
 #[test]
 fn overlapping_crossing_curves_keep_the_refusal() {
     let mut model = crossed_profile_history(false);

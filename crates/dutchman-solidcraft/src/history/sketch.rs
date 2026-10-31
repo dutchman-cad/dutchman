@@ -126,6 +126,10 @@ pub(crate) fn map(
         &entities,
         ctx.arena("features"),
     ));
+    let stray = super::crossing::stray_curves(sketch, &entities, ctx.arena("features"));
+    let stray_count = stray.difference(&crossing).count();
+    let crossing_count = crossing.len();
+    crossing.extend(stray);
     let mut builder = Builder::default();
     for entity in &entities {
         let is_crossing = entity
@@ -146,19 +150,29 @@ pub(crate) fn map(
     let name = name(feature)
         .map(str::to_owned)
         .unwrap_or_else(|| format!("Sketch{id}"));
-    if !crossing.is_empty() {
+    if stray_count > 0 {
+        report.push(
+            Severity::Info,
+            format!("sketch \"{name}\""),
+            format!(
+                "{stray_count} sketch curve{} outside every profile loop written as construction",
+                if stray_count == 1 { "" } else { "s" },
+            ),
+        );
+    }
+    if crossing_count > 0 {
         report.push(
             Severity::Info,
             format!("sketch \"{name}\""),
             format!(
                 "{} drawn across a profile the sketch takes whole written as construction: \
                  solid, {} would split it",
-                if crossing.len() == 1 {
+                if crossing_count == 1 {
                     "1 line".to_owned()
                 } else {
-                    format!("{} lines", crossing.len())
+                    format!("{crossing_count} lines")
                 },
-                if crossing.len() == 1 { "it" } else { "they" },
+                if crossing_count == 1 { "it" } else { "they" },
             ),
         );
     }

@@ -370,6 +370,11 @@ fn split_loop(
         &source,
         ctx.arena("features"),
     ));
+    construction.extend(super::crossing::stray_curves(
+        sketch,
+        &source,
+        ctx.arena("features"),
+    ));
     let entities: Vec<&Value> = source
         .into_iter()
         .filter(|entity| {
