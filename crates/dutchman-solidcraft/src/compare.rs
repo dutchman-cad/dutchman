@@ -2,6 +2,7 @@
 use std::path::Path;
 use std::time::Duration;
 
+use cadmpeg_ir::geometry::SolvedSurfaceGeometry;
 use dutchman_core::{Model, Report, Writer};
 use serde_json::{json, Value};
 
@@ -13,6 +14,59 @@ const MAX_BODIES: usize = 4096;
 const RELATIVE: f64 = 0.01;
 /// Absolute placement/extent tolerance in millimetres, before relative size allowance.
 const POSITION_MM: f64 = 0.1;
+/// Keep a one millimetre move detectable even on a large body.
+const POSITION_CEILING_MM: f64 = 0.5;
+const POSITION_DIAGONAL_RELATIVE: f64 = 0.001;
+
+/// Find untrimmed tori sharing a shell with other faces. A whole torus is valid as
+/// a shell by itself, including a separate cavity shell; in a joined shell it
+/// suggests a trimmed patch has lost its boundary. Return anonymous entity numbers.
+pub fn topology(model: &Model) -> Vec<Value> {
+    let topology = &model.ir.model;
+    let surfaces: std::collections::BTreeSet<_> = topology
+        .surfaces
+        .iter()
+        .filter(|s| s.geometry.solved().is_some_and(is_torus))
+        .map(|s| &s.id)
+        .collect();
+    let shells: std::collections::BTreeMap<_, _> = topology
+        .shells
+        .iter()
+        .filter(|s| s.faces().len() > 1)
+        .map(|s| (&s.id, &s.region))
+        .collect();
+    let regions: std::collections::BTreeMap<_, _> =
+        topology.regions.iter().map(|r| (&r.id, &r.body)).collect();
+    let bodies: std::collections::BTreeMap<_, _> = topology
+        .bodies
+        .iter()
+        .enumerate()
+        .map(|(i, b)| (&b.id, i + 1))
+        .collect();
+    topology
+        .faces
+        .iter()
+        .enumerate()
+        .filter(|(_, face)| face.loops.is_empty() && surfaces.contains(&face.surface))
+        .filter_map(|(index, face)| {
+            let region = shells.get(&face.shell)?;
+            let body = bodies.get(regions.get(region)?)?;
+            Some(json!({"body": body, "face": index + 1, "code": "geometry_untrimmed_torus"}))
+        })
+        .collect()
+}
+
+fn is_torus(mut surface: &SolvedSurfaceGeometry) -> bool {
+    // Transformed carriers can nest; stop at the same depth as assembly placements.
+    for _ in 0..32 {
+        match surface {
+            SolvedSurfaceGeometry::Torus(_) => return true,
+            SolvedSurfaceGeometry::Transformed(placed) => surface = placed.basis(),
+            _ => return false,
+        }
+    }
+    false
+}
 
 #[derive(Clone, Debug)]
 struct Body {
@@ -75,9 +129,11 @@ pub fn models(
 /// Compare a written design with the original stored geometry, under one kernel.
 /// Preview files carry geometry and stay private. A partial-history design should not be
 /// passed here: its intentionally hidden editable bodies are included by CLI eval.
+/// `joints` must match the conversion choice so both sides use the same assembly pose.
 pub fn stored_output(
     source: &Model,
     design: &[u8],
+    joints: bool,
     verification: &Verification,
     timeout: Duration,
     preview: &Path,
@@ -88,7 +144,7 @@ pub fn stored_output(
         SolidCraftWriter::new()
             .import_only(true)
             .sketches(false)
-            .joints(false)
+            .joints(joints)
             .verification(Verification::Off)
             .write(source, &mut original, &mut Report::default())
             .map_err(|_| ())?;
@@ -330,7 +386,8 @@ fn compare_values(source: &Value, reference: &Value) -> Result<Value, ()> {
                     .map(|(a, b)| (a - b).abs())
                     .fold(0.0_f64, f64::max)
             });
-            let allowed = POSITION_MM.max(0.001 * body.size().max(want.size()));
+            let allowed = (POSITION_DIAGONAL_RELATIVE * body.size().max(want.size()))
+                .clamp(POSITION_MM, POSITION_CEILING_MM);
             for (code, delta, threshold) in [
                 ("step_volume", volume, RELATIVE),
                 ("step_area", area, RELATIVE),
@@ -385,7 +442,8 @@ fn compare_values(source: &Value, reference: &Value) -> Result<Value, ()> {
     rows.sort_by(|(a, _), (b, _)| b.total_cmp(a));
     Ok(json!({"status": "measured", "advisory": true,
         "thresholds": {"volume_relative": RELATIVE, "area_relative": RELATIVE,
-            "position_floor_mm": POSITION_MM, "position_diagonal_relative": 0.001,
+            "position_floor_mm": POSITION_MM, "position_diagonal_relative": POSITION_DIAGONAL_RELATIVE,
+            "position_ceiling_mm": POSITION_CEILING_MM,
             "faces": "informational; coplanar faces may merge"},
         "parts": rows.into_iter().map(|(_,row)| row).collect::<Vec<_>>() }))
 }
@@ -441,5 +499,177 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result["parts"][0]["looks_wrong"], false);
+    }
+
+    #[test]
+    fn one_millimetre_move_and_floating_part_are_detected_at_every_scale() {
+        for size in [10.0, 1000.0, 10_000.0] {
+            let source = json!({"volume_mm3": size * 100.0, "area_mm2": size * 40.0 + 200.0,
+                "bbox": {"min": [0.0, 0.0, 0.0], "max": [size, 10.0, 10.0]}});
+            for shift in [1.0, 1000.0] {
+                let mut moved = source.clone();
+                moved["bbox"]["min"][0] = json!(shift);
+                moved["bbox"]["max"][0] = json!(size + shift);
+                let report =
+                    compare_values(&json!({"bodies": [source]}), &json!({"bodies": [moved]}))
+                        .unwrap();
+                assert_eq!(
+                    report["parts"][0]["findings"],
+                    json!(["step_bbox", "step_placement"])
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn untrimmed_torus_in_joined_shell_is_advisory_but_whole_torus_is_allowed() {
+        use cadmpeg_ir::geometry::{analytic::TorusSurface, SurfaceGeometry};
+        use cadmpeg_ir::math::{Point3, Vector3};
+        use cadmpeg_ir::topology::{FaceLoops, Shell};
+
+        let mut model = dutchman_core::read_in(
+            dutchman_core::Format::FusionArchive,
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../dutchman-core/tests/fixtures/generated_unit_cube.f3d"),
+            &dutchman_core::PartSearch::default(),
+            &mut Report::default(),
+        )
+        .unwrap();
+        let face = model.ir.model.faces.first().unwrap();
+        let surface_id = face.surface.clone();
+        let face_id = face.id.clone();
+        let shell_id = face.shell.clone();
+        let surface = model
+            .ir
+            .model
+            .surfaces
+            .iter_mut()
+            .find(|s| s.id == surface_id)
+            .unwrap();
+        surface.geometry = SurfaceGeometry::Solved(SolvedSurfaceGeometry::Torus(
+            TorusSurface::try_new(
+                Point3::new(0.0, 0.0, 0.0),
+                Vector3::new(0.0, 0.0, 1.0),
+                Vector3::new(1.0, 0.0, 0.0),
+                5.0,
+                1.0,
+            )
+            .unwrap(),
+        ));
+        // A toroidal patch with trims is ordinary geometry.
+        assert!(topology(&model).is_empty());
+        model.ir.model.faces.first_mut().unwrap().loops = FaceLoops::unspecified(Vec::new());
+        let findings = topology(&model);
+        assert_eq!(
+            findings,
+            vec![json!({"body": 1, "face": 1, "code": "geometry_untrimmed_torus"})]
+        );
+        // A shell consisting only of that closed face is a legitimate whole torus.
+        let shell = model
+            .ir
+            .model
+            .shells
+            .iter_mut()
+            .find(|s| s.id == shell_id)
+            .unwrap();
+        *shell = Shell::new(
+            shell.id.clone(),
+            shell.region.clone(),
+            vec![face_id],
+            vec![],
+            vec![],
+        )
+        .unwrap();
+        assert!(topology(&model).is_empty());
+    }
+
+    #[test]
+    fn kernel_comparison_detects_planted_assembly_moves() {
+        let Some(cli) = std::env::var_os(crate::CLI_ENV) else {
+            return;
+        };
+        let mut source = dutchman_core::read_in(
+            dutchman_core::Format::FusionArchive,
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../dutchman-core/tests/fixtures/generated_unit_cube.f3d"),
+            &dutchman_core::PartSearch::default(),
+            &mut Report::default(),
+        )
+        .unwrap();
+        let part = source.clone();
+        let origin = dutchman_core::Placement {
+            name: None,
+            part: 0,
+            transform: dutchman_core::placement::IDENTITY,
+            hidden: false,
+        };
+        let mut second = origin.clone();
+        second.transform[0][3] = 50.0;
+        source.assembly = Some(dutchman_core::Assembly {
+            own_part: None,
+            parts: vec![part],
+            definitions: vec![],
+            identities: vec![],
+            placements: vec![origin, second],
+            joints: vec![],
+            left_out: vec![],
+            held: vec![],
+            joint_notes: vec![],
+            stored_placements: vec![],
+        });
+        for shift in [0.0, 1.0, 1000.0] {
+            let mut moved = source.clone();
+            moved.assembly.as_mut().unwrap().placements[1].transform[0][3] += shift;
+            let report = models(
+                &source,
+                &moved,
+                &Verification::With(cli.clone().into()),
+                Duration::from_secs(30),
+            );
+            assert_eq!(report["status"], "measured", "{report}");
+            let flags: Vec<_> = report["parts"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|r| r["looks_wrong"] == true)
+                .collect();
+            assert_eq!(flags.len(), usize::from(shift != 0.0), "{report}");
+            if let Some(flag) = flags.first() {
+                assert_eq!(flag["findings"], json!(["step_bbox", "step_placement"]));
+            }
+        }
+        // Joint solving can deliberately move an occurrence from its stored pose.
+        // The reference must follow the same choice as the converted design.
+        let assembly = source.assembly.as_mut().unwrap();
+        assembly.stored_placements = assembly.placements.iter().map(|p| p.transform).collect();
+        assembly.placements[1].transform[0][3] = 75.0;
+        let preview = tempfile::tempdir().unwrap();
+        for joints in [false, true] {
+            let mut design = Vec::new();
+            SolidCraftWriter::new()
+                .import_only(true)
+                .sketches(false)
+                .joints(joints)
+                .verification(Verification::Off)
+                .write(&source, &mut design, &mut Report::default())
+                .unwrap();
+            let report = stored_output(
+                &source,
+                &design,
+                joints,
+                &Verification::With(cli.clone().into()),
+                Duration::from_secs(30),
+                preview.path(),
+            );
+            assert_eq!(report["status"], "measured", "{report}");
+            assert!(
+                report["parts"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|r| r["looks_wrong"] == false),
+                "{report}"
+            );
+        }
     }
 }

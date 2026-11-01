@@ -988,9 +988,16 @@ only the top-level `report.json` is intended for sharing.
 Diagnose reports add nullable `target_part`, `placement_checks` and `step_comparison`.
 Placement checks have `status`, `advisory`, `coincident_transform_tolerance` (1e-9),
 `bounds` (explicitly unavailable without an independent source envelope), and numbered
-`findings` with `code` (`placement_nonfinite`, `placement_coincident`), `part`, and
+`findings` with `code` (`placement_nonfinite`, `placement_coincident`,
+`geometry_untrimmed_torus`), `part`, and
 optional body/placement/other-placement numbers. Coincidence requires the same part
-definition. Similar bounds alone do not establish duplicate geometry.
+definition. Similar bounds alone do not establish duplicate geometry. Placement
+sanity uses joint-solved transforms when joints are kept, and stored transforms
+when joints are omitted, matching the conversion.
+`geometry_untrimmed_torus` adds numbered `body` and `face` for a toroidal face with
+no trim loops in a shell with other faces; a single-face torus shell is allowed.
+Assembly findings name the owning extracted part; container copies of its faces
+do not produce duplicate findings.
 
 A STEP comparison has `status` (`measured` or `unavailable`), `parts` (body comparisons,
 worst first), `advisory`, and numeric `thresholds`. Each row has `body` and
@@ -1008,10 +1015,14 @@ recovery message and `unavailable`. A null comparison means no matching export w
 
 MCP `compare_step` wraps this as `schema: dutchman.compare-step/1`, `ok`, `comparison`.
 MCP diagnose omits local paths; errors from these three local-check tools are anonymous.
+Numeric comparison thresholds include `position_ceiling_mm` (0.5), in addition to
+`position_floor_mm` (0.1) and `position_diagonal_relative` (0.001). The position
+allowance is the diagonal fraction clamped to that floor and ceiling.
 See the guide for the thresholds and calibration limits.
 
 Doctor also fills `geometry_checks` with the same measurement structure, comparing
-stored source geometry with the converted SolidCraft design. Its finding codes use
+stored source geometry with the converted SolidCraft design, using the conversion's
+joint setting for the reference pose. Its finding codes use
 `geometry_` instead of `step_`. Partial-history outputs intentionally include extra
 hidden editable bodies, so this comparison is skipped for that mode; existing replay
 verification still runs. For flagged comparisons, `preview_status` says whether local

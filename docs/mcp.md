@@ -719,7 +719,14 @@ and measurements, worst first. Body numbers are not assembly diagnose part numbe
 ask for confirmation before treating a visual difference as a defect. Neither tool
 sends a file or opens a report. STEP files may be shared only through private sending.
 Doctor's `geometry_checks` use the same anonymous measurement structure for stored source
-versus converted bodies. Optional local snapshot pairs never enter the tool result.
+versus converted bodies, with the conversion's joint setting and assembly pose.
+Bounds and placement allowances have a 0.1 mm floor and
+a 0.5 mm ceiling; volume and area allow 1%. Structural findings also include
+`geometry_untrimmed_torus` for a toroidal face with no trim loops sharing a shell
+with other faces. A whole torus in its own shell is allowed. Placement sanity also
+uses the conversion's joint setting. See [calibration results](doctor-calibration.md)
+for the observed false-positive rate and coverage. Optional local snapshot
+pairs never enter the tool result.
 
 `report_preview` takes `folder` and, for a new report, `report_id`, `source_format`
 and `signature`. Reuse the diagnostic file id. The result shows parts and sizes,

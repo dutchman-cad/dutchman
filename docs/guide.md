@@ -415,14 +415,23 @@ STEP results use evaluated **body numbers**, which can differ from diagnose part
 numbers for assemblies and repeated occurrences. Matching uses geometry, placement
 and stable order, never names. Results are worst first and contain volume, area,
 bounding box, face counts where available, and placement differences. Current
-thresholds are 1% volume/area and the greater of 0.1 mm or 0.1% of the body diagonal
-for bounds/placement. Face counts alone never flag a difference. Missing measurements
-are explicit. These thresholds have synthetic coverage; a public-corpus false-positive
-rate has not been established, so they are advisory. No automatic report is sent.
+thresholds are 1% volume/area. Bounds/placement allow 0.1% of the body diagonal,
+with a 0.1 mm floor and a 0.5 mm ceiling, so a 1 mm move still flags on large bodies.
+Face counts alone never flag a difference. Missing measurements are explicit. Checks remain advisory; unavailable comparisons do not count as passes.
+No automatic report is sent. The observed false-positive rate for the two
+placement-golden assemblies is 0/329 evaluated body rows (0%);
+[calibration results and limits](doctor-calibration.md) give the coverage and denominators.
 The STEP itself stays local; use the private-send card if you choose to share it.
 
+The structural checks also flag `geometry_untrimmed_torus`: a toroidal face without
+trim loops sharing a shell with other faces. Review its boundary before reporting a
+defect. A whole torus in its own shell is allowed, including a separate cavity shell.
+An isolated part cannot be called floating without an independent placement reference;
+the comparison checks detect movement relative to stored geometry or a matching STEP.
+
 Every successful SolidCraft result also gets an advisory body comparison against the
-source's stored geometry. Partial-history outputs skip this comparison because eval
+source's stored geometry, using the same joint setting and assembly pose as the
+conversion. Partial-history outputs skip this comparison because eval
 includes intentionally hidden editable bodies; the normal history verification still
 runs. Where supported, SolidCraft writes private whole-design snapshot pairs for
 flagged comparisons under `diagnose/preview/`. Their PNGs and staged designs carry

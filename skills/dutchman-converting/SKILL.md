@@ -640,11 +640,16 @@ Unambiguous same-name adjacent STEP exports are discovered automatically. Tool o
 contains anonymous numbers only. STEP body numbers differ from assembly diagnose part
 numbers; never use a comparison body number as `convert --part` without resolving it
 locally. `--part` on doctor/diagnose records a target and does not limit comparison.
-Thresholds: 1% volume/area, max(0.1 mm, 0.1% diagonal) for bbox and placement. Face counts
-alone never flag differences. `incomplete`/`unavailable` is not a pass. Public-corpus
-calibration is pending, so ask the user to confirm findings. Nothing is sent; the STEP
-itself can be shared only through the private-send flow after the user chooses it.
-Doctor's `geometry_checks` compare converted bodies with stored source geometry, except
+Thresholds: 1% volume/area; 0.1% diagonal clamped to 0.1–0.5 mm for bbox and placement.
+Face counts alone never flag differences. `incomplete`/`unavailable` is not a pass.
+Checks are advisory; confirm findings before reporting them. The observed body-row
+false-positive rate on the two placement-golden assemblies is 0/329 (0%); incomplete
+rows are not full geometry passes. Placement sanity follows the selected joint pose.
+`geometry_untrimmed_torus` means a toroidal face with no trims shares a shell with
+other faces. Review the boundary; a whole torus in its own shell is allowed.
+Nothing is sent; the STEP itself can be shared only through the private-send flow after the user chooses it.
+Doctor's `geometry_checks` compare converted bodies with stored source geometry,
+using the conversion's joint setting and assembly pose, except
 partial-history outputs with intentionally extra hidden bodies. Private whole-design
 snapshot pairs may accompany flags when SolidCraft supports them; never attach these
 to an anonymous public report. A file check's Target part buttons save a local target.
