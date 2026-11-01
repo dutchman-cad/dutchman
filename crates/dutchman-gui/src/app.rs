@@ -553,6 +553,9 @@ impl App {
                 let palette = theme::palette(ui);
                 action = send_ui(ui, palette, index, &steps);
             });
+        if action.is_some() {
+            self.notice = None;
+        }
         let result = match action {
             Some(Action::Dm(index)) => self.dm_private(index, file.as_deref(), ctx),
             Some(Action::Join) => {
@@ -899,11 +902,17 @@ impl App {
 
     /// Draws the window, for eframe and for tests.
     pub fn ui(&mut self, ctx: &egui::Context) {
-        if let Some(page) = &mut self.doctor {
-            if page.ui(ctx) {
-                self.doctor = None;
-            }
-            return;
+        if ctx.input(|input| {
+            input.pointer.any_pressed()
+                || input.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::Key { pressed: true, .. }
+                            | egui::Event::AccessKitActionRequest(_)
+                    )
+                })
+        }) {
+            self.notice = None;
         }
         if ctx.input(|input| {
             input
@@ -935,6 +944,13 @@ impl App {
             .show_separator_line(false)
             .show(ctx, |ui| self.title(ui));
 
+        if let Some(page) = &mut self.doctor {
+            if page.ui(ctx) {
+                self.doctor = None;
+            }
+            return;
+        }
+
         egui::TopBottomPanel::bottom("conversion")
             .frame(
                 Frame::new()
@@ -958,7 +974,9 @@ impl App {
                     }),
             )
             .show(ctx, |ui| {
+                ui.style_mut().spacing.scroll = egui::style::ScrollStyle::solid();
                 ScrollArea::vertical()
+                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
                         if let Some(path) = self.unfinished_diagnostic.clone() {
@@ -986,6 +1004,7 @@ impl App {
                     });
             });
         if let Some(action) = self.consent.window(ctx) {
+            self.notice = None;
             let result = match action {
                 crate::report_consent::Action::Private(index, file) => {
                     self.private_send = Some((index, file));
@@ -1257,6 +1276,7 @@ impl App {
                         worker::pick(Pick::Files, self.sender.clone(), ui.ctx().clone());
                     }
                     if ui.button("Check a folder").clicked() {
+                        self.notice = None;
                         self.doctor = Some(crate::doctor::Page::new(None));
                     }
                     if ui.button("Add folder…").clicked() {
@@ -1520,7 +1540,12 @@ impl App {
             });
         });
         if let Some(notice) = &self.notice {
-            ui.label(RichText::new(notice).color(p.danger));
+            let colour = if notice == present::REPORT_COPIED || notice == present::SEND_COPIED {
+                p.spectre
+            } else {
+                p.danger
+            };
+            ui.label(RichText::new(notice).color(colour));
         }
     }
 
@@ -1571,6 +1596,9 @@ impl App {
                 shown.scroll_to_me(Some(Align::Min));
             }
             ui.add_space(theme::SPACE_2);
+        }
+        if action.is_some() {
+            self.notice = None;
         }
         let result = match action {
             Some(Action::Open(path)) => platform::open_in_solidcraft(&path),
@@ -2042,6 +2070,39 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn results_scroll_to_the_last_private_send_option() {
+        use egui_kittest::kittest::Queryable;
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(760.0, 680.0))
+            .build_eframe(|cc| {
+                let mut app = App::new(cc);
+                for index in 0..6 {
+                    app.rows.push(Row {
+                        input: PathBuf::from(format!("synthetic-{index}.f3d")),
+                        output: None, status: Status::Failed, progress: None, job: None,
+                        size: Some(100),
+                        report: Some(json!({"ok": false, "error": {"message": "Conversion stopped.", "stage": "decode", "kind": "decode"}})),
+                    });
+                }
+                app
+            });
+        harness.run_steps(8);
+        harness
+            .query_all_by_label(present::SEND_DM_BUTTON)
+            .last()
+            .unwrap()
+            .scroll_to_me();
+        harness.run_steps(12);
+        let button = harness
+            .query_all_by_label(present::SEND_DM_BUTTON)
+            .last()
+            .unwrap()
+            .rect();
+        assert!(button.top() > 80.0);
+        assert!(button.bottom() < 620.0);
+    }
 
     #[test]
     fn failed_card_offers_diagnosis_after_a_click() {

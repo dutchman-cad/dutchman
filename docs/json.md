@@ -1074,3 +1074,6 @@ notes as `<!-- dutchman-release {"fixes_reports":["<64 lower-case hex digits>"]}
 The update check reads that comment in the existing Atom feed, including for package
 installations, and hides it from displayed notes. Release JSON may also supply the
 same `fixes_reports` array directly. No report ids are sent during update checks.
+
+Desktop report review describes the summary in plain language; this does not change
+the report fields or consent values sent to the report service.

@@ -25,6 +25,8 @@ pub struct Card {
     summary: bool,
     public_test: bool,
     status: String,
+    failed: bool,
+    sent: bool,
     rx: Option<Receiver<Result<Value, String>>>,
 }
 
@@ -32,11 +34,13 @@ impl Card {
     pub fn new(row: usize, prepared: Prepared, folder: PathBuf) -> Self {
         Self {
             row,
-            prepared,
             folder,
-            summary: false,
+            summary: prepared.bundle_sha256.is_none(),
+            prepared,
             public_test: false,
             status: String::new(),
+            failed: false,
+            sent: false,
             rx: None,
         }
     }
@@ -49,6 +53,10 @@ impl Consent {
         if let Some(rx) = &card.rx {
             match rx.try_recv() {
                 Ok(result) => {
+                    card.sent = result.as_ref().is_ok_and(|value| {
+                        value.get("sent").and_then(Value::as_bool) == Some(true)
+                    });
+                    card.failed = !card.sent;
                     card.status = match result {
                         Ok(value) if value.get("sent").and_then(Value::as_bool) == Some(true) => {
                             "Sent. The report was received.".into()
@@ -63,6 +71,7 @@ impl Consent {
                     card.rx = None;
                 }
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    card.failed = true;
                     card.status = "It did not go through. Your report is kept locally.".into();
                     card.rx = None;
                 }
@@ -73,27 +82,30 @@ impl Consent {
         let mut private = None;
         egui::Window::new("Send a problem report").open(&mut open).show(ctx, |ui| {
             ui.label(format!("Report {}", card.prepared.report_id));
-            ui.label("Bundles contain geometry and are used privately to reproduce the problem.");
-            ui.radio_value(&mut card.summary, false, "Send the bundle");
+            if card.prepared.bundle_sha256.is_some() {
+                ui.label("Bundles contain geometry and are used privately to reproduce the problem.");
+                ui.radio_value(&mut card.summary, false, "Send the bundle");
+            }
             ui.radio_value(&mut card.summary, true, "Anonymous summary only");
             if card.prepared.bundle_sha256.is_none() {
-                ui.label("No bundle is available yet. Choose summary to send version, OS, format, source app and failure signature only.");
+                ui.label("No bundle is available yet. The summary contains no design geometry.");
             } else {
-                ui.label(format!("Gzip bundle: {} bytes (limit 25 MiB)", card.prepared.bundle_size));
+                ui.label(format!("Bundle: {} bytes (limit 25 MiB)", card.prepared.bundle_size));
                 for part in &card.prepared.parts { ui.label(format!("{}: {} bytes", part.role, part.bytes)); }
             }
-            ui.checkbox(&mut card.public_test, "You may quote these bytes in a public test case");
+            ui.checkbox(&mut card.public_test, "You may use this report in a public test case");
             if ui.button("Send the whole file privately").clicked() { private = Some(Action::Private(card.row, None)); }
-            ui.label(format!("Anonymous summary JSON: {} bytes — version, OS, format, source app, signature, consent and claim hash", card.prepared.metadata("summary", card.public_test).to_string().len()));
+            ui.label(format!("Anonymous summary: {} bytes — app version, operating system, file format, source app, failure details, your sharing choices and a code for updates", card.prepared.metadata("summary", card.public_test).to_string().len()));
             ui.label(format!("Kept locally: {}", card.folder.display()));
-            let can_send = card.rx.is_none() && (card.summary || card.prepared.bundle_sha256.is_some());
-            if ui.add_enabled(can_send, egui::Button::new("Send report / retry")).clicked() {
+            let can_send = card.rx.is_none() && !card.sent && (card.summary || card.prepared.bundle_sha256.is_some());
+            if ui.add_enabled(can_send, egui::Button::new(if card.failed { "Retry" } else { "Send" })).clicked() {
                 let prepared = card.prepared.clone();
                 let folder = card.folder.clone();
                 let choice = if card.summary { "summary" } else { "bundle" };
                 let public_test = card.public_test;
                 let (tx, rx) = channel();
                 card.rx = Some(rx);
+                card.failed = false;
                 card.status = "Sending…".into();
                 if !self.ids.contains(&prepared.report_id) { self.ids.push(prepared.report_id.clone()); }
                 let endpoint = report_send::endpoint();
@@ -113,7 +125,7 @@ impl Consent {
             if ui.button("Get updates on Discord").clicked() {
                 ctx.copy_text(card.prepared.claim());
                 ctx.open_url(egui::OpenUrl::new_tab(dutchman::report_policy::ReportPolicy::bundled().dm_url()));
-                card.status = "The claim command is copied. Paste it in Dutchy's DM to get updates.".into();
+                card.status = "The message for updates is copied. Paste it in Dutchy's DM to get updates.".into();
             }
             if ui.button("Open GitHub with anonymous summary only").clicked() { private = Some(Action::Github(card.row)); }
             ui.label("GitHub is public. Share only the anonymous summary there, never the bundle.");
@@ -134,7 +146,18 @@ mod tests {
     use egui_kittest::{kittest::Queryable, Harness};
 
     #[test]
-    fn consent_starts_with_bundle_and_an_unticked_permission() {
+    fn consent_with_bundle_selects_it_without_public_permission() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut prepared =
+            Prepared::new("0123456789abcdef", "f3d", "decode", None, dir.path()).unwrap();
+        prepared.bundle_sha256 = Some("synthetic-bundle".into());
+        let card = Card::new(0, prepared, dir.path().to_path_buf());
+        assert!(!card.summary);
+        assert!(!card.public_test);
+    }
+
+    #[test]
+    fn consent_without_bundle_selects_summary_and_an_unticked_permission() {
         let dir = tempfile::tempdir().unwrap();
         let prepared =
             Prepared::new("0123456789abcdef", "f3d", "decode", None, dir.path()).unwrap();
@@ -151,7 +174,10 @@ mod tests {
             state,
         );
         harness.run_steps(3);
-        assert!(!harness.state().card.as_ref().unwrap().summary);
+        assert!(harness.state().card.as_ref().unwrap().summary);
+        assert!(harness.query_by_label("Send the bundle").is_none());
+        harness.get_by_label("Send");
+        assert!(harness.query_by_label("Retry").is_none());
         assert!(!harness.state().card.as_ref().unwrap().public_test);
         harness
             .get_by_label("Anonymous summary only")
@@ -159,7 +185,7 @@ mod tests {
         harness.step();
         assert!(harness.state().card.as_ref().unwrap().summary);
         harness
-            .get_by_label("You may quote these bytes in a public test case")
+            .get_by_label("You may use this report in a public test case")
             .click_accesskit();
         harness.step();
         assert!(harness.state().card.as_ref().unwrap().public_test);

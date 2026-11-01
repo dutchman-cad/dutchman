@@ -459,13 +459,14 @@ produced. These small controls establish basic behavior, not a false-positive ra
 for large assemblies or arbitrary designs.
 
 Report consent is per report. In the desktop failed-file card, **Review and send report**
-opens a review with bundle or summary (bundle is the default). Until minimal repro
-extraction is available, explicitly choose summary: version, OS, format, source app and
+opens a review with bundle or summary. A bundle is selected when available; otherwise
+only the anonymous summary is offered and selected: version, OS, format, source app and
 failure signature only. Whole files use the private-send card on Discord. A separate box,
-**You may quote these bytes in a public test case**, starts unticked.
+**You may use this report in a public test case**, starts unticked.
 Nothing is sent before clicking Send. A report is sent only when a matching receipt
 arrives. A temporary failure gets one short retry, then keeps the report locally;
-retrying later requires a click. A daily cap asks you to try again tomorrow.
+retrying later requires clicking **Retry**, which appears after a failure. A daily cap
+asks you to try again tomorrow.
 GitHub accepts the anonymous summary only; never attach a geometry bundle there.
 
 Release builds send to Dutchman's report service; `DUTCHMAN_REPORT_ENDPOINT` at compile
@@ -475,3 +476,7 @@ and offers the same fallbacks, and development tests use a loopback HTTP stub.
 Report summaries identify the authoring app from the native format, such as Fusion or
 Inventor. Exchange formats and unclassified `.prt` use `unknown` because their authoring
 app cannot be inferred. The build version is included alongside this information.
+
+The desktop keeps its page scrollbar visible to reach every private-send option in the results.
+Copied-report notices use the success colour and clear on the next action.
+**Check a folder** keeps the app header; **Part to check** selects a part for local checks.
