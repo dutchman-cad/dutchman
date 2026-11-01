@@ -209,8 +209,15 @@ fn bounded_read(path: &Path, cap: usize) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
+/// Where a release build sends a report.
+const DEFAULT_ENDPOINT: &str = "https://dutchman-reports.dutchman-cad.workers.dev/api/reports";
+
+/// Where reports go: `DUTCHMAN_REPORT_ENDPOINT` at build time, else the service in a release
+/// build. A debug build has no default, so tests and development never reach the service.
 pub fn endpoint() -> Option<String> {
-    option_env!("DUTCHMAN_REPORT_ENDPOINT").map(str::to_owned)
+    option_env!("DUTCHMAN_REPORT_ENDPOINT")
+        .or((!cfg!(debug_assertions)).then_some(DEFAULT_ENDPOINT))
+        .map(str::to_owned)
 }
 
 /// Called only after a click or an explicit yes. Nothing schedules a later resend.

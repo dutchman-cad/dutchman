@@ -207,6 +207,5 @@ For report fix notices, include the portal's `fixes_reports` hashes in release n
 as the hidden `dutchman-release` JSON comment documented in [json.md](json.md).
 Use hashes of the exact diagnostic report ids, including their existing prefix.
 The app reads this through its normal release check and compares locally.
-Configure `DUTCHMAN_REPORT_ENDPOINT` at build time only when an HTTPS Worker URL is
-ready. Builds without that setting retain reports locally and offer private/GitHub
-fallbacks after a Send click.
+Release builds send reports to the service address in `crates/dutchman/src/report_send.rs`.
+`DUTCHMAN_REPORT_ENDPOINT` at build time replaces it, for example for a staging service.

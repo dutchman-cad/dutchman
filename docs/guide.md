@@ -450,7 +450,6 @@ arrives. A temporary failure gets one short retry, then keeps the report locally
 retrying later requires a click. A daily cap asks you to try again tomorrow.
 GitHub accepts the anonymous summary only; never attach a geometry bundle there.
 
-Report sending is enabled for a build by setting `DUTCHMAN_REPORT_ENDPOINT` at
-compile time to the Worker's HTTPS `/api/reports` URL. Without it, clicking Send
-keeps the report locally and offers the same fallbacks. Development tests use a
-loopback HTTP stub. The app does not assume a deployed endpoint exists.
+Release builds send to Dutchman's report service; `DUTCHMAN_REPORT_ENDPOINT` at compile
+time replaces it. A debug build has no default: clicking Send keeps the report locally
+and offers the same fallbacks, and development tests use a loopback HTTP stub.
