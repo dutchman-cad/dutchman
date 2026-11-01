@@ -178,6 +178,7 @@ Explicit output paths keep their given extension. The container format stays `so
 | `input.program`, `input.extension` | Program or format family, and the input's actual suffix without a dot, used for status text (`prt.12` for a numbered save). Unknown programs are `null`. |
 | `output.format` | The SolidCraft design format written. |
 | `mode` | `history`: editable feature history, with the original geometry kept beside it, suppressed. `partial_history`: retained editable features in a hidden component and the visible imported final shape. `import`: geometry, possibly with reference sketches. |
+| `history_check_skipped` | Present only when a requested SolidCraft history/geometry check was skipped for memory. Object with `needed_bytes` (estimated extra memory), `available_bytes` (free memory at the decision), and `reason`: `History check skipped: needs about N GB, M GB free`. The conversion can still have `ok: true`; retained history stays unverified or partial and the original shape remains usable. Absent when checking is explicitly off, forced, or not skipped. Applies to batch result objects and MCP as well. |
 | `verification.status` | `verified`: the history was replayed in SolidCraft, or the FreeCAD output was measured, and matches the original. `differs`: a FreeCAD rebuild differs or restored STEP (`reason` names the part). `unverified`: the history was written without that check (`reason` says why: no `solidcraft-cli`, a timeout, `--no-verify`). `partial`: only partial history is retained; `reason` names the blocker, gives kept/total source feature counts, and states whether retained features replayed or remain unverified. This never claims the full history matches the original. `flattened`: no body-building prefix was retained (`reason`: the blocker or replay failure). `not_applicable`: there was no history to write (none in the source, or none cadmpeg decodes: every feature is kept in its native form), or `--import-only`. |
 | `history.features` | Every source feature in timeline order. `status`: `mapped`, `not_needed` (the target needs no feature, e.g. a principal datum plane or an unused construction helper), `left_out` (suppressed in the source, or a reference sketch omitted by choice), `blocked` (does not map; `reason` says why). |
 | `history.mapped`, `history.total` | Mapped or not-needed features, out of all but left-out ones. |
@@ -193,6 +194,13 @@ Assembly holders are not empty leaves. A STEP finding with code
 `step/topology.region-solid-reduced-to-sheet` also adds a `Degraded` geometry loss
 at stage `write` with the count of affected solid regions. Intended sheets do not
 receive that loss.
+
+The conversion `estimate.peak_bytes` includes the requested SolidCraft check unless
+`--no-verify` / MCP `verify: false` is selected. Conversion-only preflight can allow a run
+whose check will not fit; `history_check_skipped` records the actual post-read decision.
+The check allowance uses the resident design and current free memory, independently of
+archive-size preflight. Automatic part workers use at most two workers and can reduce to
+serial work for a large per-part peak or retained preparation queue.
 
 Offset datum planes need no building feature when their support resolves or all their
 consumers carry independent resolved sketch placements. Otherwise the history reason

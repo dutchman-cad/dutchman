@@ -68,7 +68,8 @@ uses the requested threads (0 means auto), limited by the converter's shared CPU
 count and free-memory worker policy. A serial component remains. Before native decoding,
 the embedded design count and the converter's 256 MiB minimum worker budget are proxies;
 actual body counts can reduce conversion workers further. Single-design files keep their
-existing time model. The worker adjustment changes time estimates only.
+existing time model. Automatic workers are capped at two; detailed parts and retained
+preparations can reduce that further after reading.
 
 `threads.used` is the largest bounded Dutchman part-worker limit selected across conversion
 stages and embedded members. It excludes threads inside SolidCraft child processes and does
@@ -82,8 +83,9 @@ reservations; other processes and simultaneous conversions can change available 
 
 The memory check runs before decoding, using only the pre-read estimate. Standard
 leaves history out for any design whose history estimate exceeds free memory when
-its history-free estimate fits. That decision stays fixed through conversion; there
-is no second refusal after decode. Full refuses before decode when its estimate
+its history-free estimate fits. That retention decision stays fixed through conversion.
+After reading, a conversion can also stop when the resident design leaves too little
+memory for mapping and writing. Full refuses before decode when its estimate
 exceeds free memory. When Standard removes history, one Info line under `history` says:
 
 ```text
@@ -99,7 +101,8 @@ this conversion needs about N GB and M GB are free; try --preset <lighter> (or -
 ```
 
 `--yes` means no interactive preset switch. It does not bypass the memory guard.
-`--no-memory-check` bypasses both the refusal and Standard's automatic history budget.
+`--no-memory-check` bypasses the refusal, Standard's automatic history budget, and
+history-check skipping.
 Existing decoder input limits and batch worker memory limits still apply. Batch
 conversion checks each input; changing presets or narrowing switches also prevents a
 journal from reusing a result made with different choices.
@@ -107,3 +110,27 @@ journal from reusing a result made with different choices.
 ## Presets and estimates
 
 The presets, narrowing switches, and memory guard are described above; `dutchman convert --help` lists them too.
+
+History checking stays enabled by default, independently of the retention preset. Its
+second build needs memory on top of conversion: measured peaks for a 256-placement
+assembly were 8.6 GB in 22 seconds with checking off, 3.5 GB in 25 seconds with one worker
+and checking off, and over 17 GB with checking on before the run was stopped. The check
+needed about 9 GB extra. These measurements justify limiting automatic workers to two
+and budgeting dense single-body parts from their entity counts, with a separate allowance
+for all retained preparations. Small imported parts use serial SolidCraft preparation: a synthetic 256-cube
+assembly took about 2.9 seconds with either one or sixteen workers, while sixteen used
+about 14 MiB more peak memory. Explicit thread requests can still prepare those parts
+in parallel within the memory budget.
+
+The peak estimate includes the requested check. Conversion preflight and Standard's
+history budget use conversion-only memory so an expensive check does not discard history.
+Once read, the check allowance is three times the resident set plus the 15% mapping margin.
+Free memory is checked again before SolidCraft rebuilds geometry. If the allowance will
+not fit, that design skips checking, keeps the original shape visible and retained editable
+history unverified, and reports `History check skipped: needs about N GB, M GB free`.
+Unknown memory measurements allow checking. This is a conservative estimate, not a memory
+reservation; simultaneous work can change what is free.
+
+`--no-verify` keeps checking off. `--no-memory-check` forces requested checking even if
+memory is low. Desktop Advanced offers the same override as **Convert and check history
+even if memory is low**. CLI, desktop, web conversions and MCP use the same policy.

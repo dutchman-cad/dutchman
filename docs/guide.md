@@ -111,6 +111,15 @@ the assembly or give `--project DIR` and `--search DIR`. Missing or unreadable o
 are reported and left out; unavailable referenced configurations use the saved active
 configuration with a Degraded loss. See [SolidWorks assemblies](sldprt.md#assemblies-sldasm).
 
+History checks stay on by default and fit themselves to free memory. If a second build
+will not fit after reading the design, conversion still saves a usable original shape
+with retained history unverified; the card and report say
+`History check skipped: needs about N GB, M GB free`. Peak estimates include checking.
+Use `--no-verify` to keep checks off or `--no-memory-check` to force requested checks.
+Desktop Advanced has the matching **Convert and check history even if memory is low**
+control. Automatic assembly preparation uses at most two workers and reduces that count
+for detailed parts or large retained preparations. See [presets](presets.md).
+
 ## Reading the loss report
 
 An assembly's conversion first says how complete it is, under the line saying what was

@@ -14,6 +14,26 @@ use dutchman_core::{parts, Model};
 /// stopped. A swap file does not count as free.
 pub const EXTRA_SHARE: f64 = 0.15;
 
+/// Replay builds the design again in a separate SolidCraft process. A measured assembly
+/// peaked at 3.5 GB with serial conversion, 8.6 GB with parallel conversion, and needed
+/// about 9 GB more for replay. Reserve three times the post-read resident set, plus the
+/// conversion margin. This is a conservative proxy, not a reservation or a hard limit.
+pub const HISTORY_CHECK_SHARE: f64 = 3.0;
+
+/// Estimated additional memory for replay while mapping/writing still holds its copies.
+pub fn history_check_bytes(held: u64) -> u64 {
+    (held as f64 * (HISTORY_CHECK_SHARE + EXTRA_SHARE)).ceil() as u64
+}
+
+/// Shared card and report text for a check skipped to keep the design usable.
+pub fn history_check_message(needed: u64, available: u64) -> String {
+    format!(
+        "History check skipped: needs about {:.1} GB, {:.1} GB free",
+        crate::choices::gb(needed),
+        crate::choices::gb(available)
+    )
+}
+
 /// A design holding less than this is never stopped: its extra work cannot matter.
 pub const MIN_HELD: u64 = 1 << 30;
 
@@ -105,6 +125,17 @@ mod tests {
     }
 
     const GB: u64 = 1_000_000_000;
+
+    #[test]
+    fn history_check_allowance_covers_the_measured_replay_and_saturates() {
+        assert_eq!(history_check_bytes(3 * GB), 9_450_000_000);
+        assert_eq!(
+            history_check_message(9_450_000_000, 2 * GB),
+            "History check skipped: needs about 9.4 GB, 2.0 GB free"
+        );
+        // Saturates rather than wrapping a hostile or very large measurement.
+        assert_eq!(history_check_bytes(u64::MAX), u64::MAX);
+    }
 
     #[test]
     fn a_machine_with_room_is_not_stopped() {

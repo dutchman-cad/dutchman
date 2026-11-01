@@ -131,6 +131,17 @@ The CLI equivalents are `--preset`, `--no-history`, `--no-sketches`, `--no-joint
 switches; `--yes` and `--json` refuse over-budget runs with exit 2 rather than accepting
 extra memory use. Normal JSON reports include `estimate` and effective `choices`.
 
+Keep SolidCraft history checking on by default. The peak estimate includes checking;
+conversion-only preflight can allow a run whose check cannot fit. If memory after reading
+will not fit a second build, conversion keeps a usable original shape and unverified
+retained history. Explain `history_check_skipped` (`needed_bytes`, `available_bytes`,
+`reason`) when it appears: `History check skipped: needs about N GB, M GB free`.
+Use `verify: false` / `--no-verify` when checking is unwanted. Only use
+`no_memory_check: true` / `--no-memory-check` to force requested checks intentionally;
+it does not enable a check the user turned off. Desktop Advanced offers **Convert and
+check history even if memory is low**. Automatic assembly preparation uses at most two
+workers, reduced for dense parts or a large retained preparation queue.
+
 ## Ground rules
 
 - **The user's designs stay on the user's machine.** Never upload, paste, attach or send a

@@ -84,6 +84,20 @@ opens the update window, when the update check already knows a newer Dutchman. T
 
 Choose the target with the **Target SolidCraft** selector: it defaults to the found CLI's version, else the built-in newest (currently 0.29), even when history checking is off. **Automatic** follows the detected installation; **0.25 and newer** keeps supported FreeCAD helices as editable coils.
 
+History checking stays on by default. Before a SolidCraft rebuild, Dutchman compares the
+memory needed for a second build with free memory, using what the design holds after
+reading. If it will not fit, conversion still succeeds: the original shape stays visible,
+retained editable history stays hidden and unverified, and the card and report say
+**History check skipped: needs about N GB, M GB free**. Other designs are checked normally.
+
+Turning **Check feature history in SolidCraft** off stays off. Advanced also offers
+**Convert and check history even if memory is low**, the equivalent of CLI
+`--no-memory-check`. This forces the requested work and can run out of memory; it does
+not turn checking back on when you switched it off. The override lasts for the current
+app run. Automatic part preparation uses at most two workers, with fewer when a detailed
+part's temporary peak or the retained preparation queue would consume free memory.
+Small imports avoid extra preparation workers.
+
 ## Reporting a problem
 
 The window's title and top row show its version beside **Dutchman Convert**, for example

@@ -1384,6 +1384,10 @@ impl App {
                 {
                     self.options.no_verify = !verify;
                 }
+                ui.checkbox(
+                    &mut self.options.no_memory_check,
+                    "Convert and check history even if memory is low",
+                ).on_hover_text("Force the conversion and history check despite the memory estimate. This can run out of memory. Checking history off stays off.");
                 let checker = match &self.checker {
                     Ok(cli) => format!("Checks with {}.", display(cli)),
                     Err(dutchman_solidcraft::NoCli::Blocked(why)) => why.clone(),
@@ -2116,6 +2120,30 @@ mod tests {
         assert!(harness.state().private_send.is_some());
         assert!(harness.state().consent.card.is_none());
         assert!(!folder.join("submission.json").exists());
+    }
+
+    #[test]
+    fn checking_history_defaults_on_and_the_memory_override_respects_off() {
+        use egui_kittest::kittest::Queryable;
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1200.0, 1800.0))
+            .build_eframe(|cc| App::new(cc));
+        harness.run_steps(8);
+        assert!(!harness.state().options.no_verify);
+        assert!(!harness.state().options.no_memory_check);
+        harness.get_by_label("Advanced").click_accesskit();
+        harness.run_steps(8);
+        harness
+            .get_by_label("Check feature history in SolidCraft")
+            .click_accesskit();
+        harness.run_steps(8);
+        assert!(harness.state().options.no_verify);
+        harness
+            .get_by_label("Convert and check history even if memory is low")
+            .click_accesskit();
+        harness.run_steps(8);
+        assert!(harness.state().options.no_memory_check);
+        assert!(harness.state().options.no_verify);
     }
 
     #[test]

@@ -92,7 +92,7 @@ the same bounded hidden-occurrence paths; a Degraded note reports paths left sho
 past the 4096-path limit.
 
 Both `convert` and `convert_all` accept `threads`, a whole number at least zero.
-`0` (default) selects available CPU parallelism for assembly parts; `1`
+`0` (default) selects at most two workers for assembly parts; `1`
 uses the serial path. Part count and available memory cap the actual worker count.
 Component slices prepare independently and identical empty holders share a model.
 SolidCraft parts also prepare independently, including checks in separate temporary folders,
@@ -121,6 +121,17 @@ A conversion that exceeds available memory refuses with the same message as the 
 `no_memory_check: true` to bypass the guard and Standard's history budget. Existing
 input and batch worker limits still apply. Standard's automatic history decision is
 reported as one Info line under `history`, as described in the [guide](presets.md).
+
+Requested SolidCraft checking is included in `estimate.peak_bytes`. Conversion-only
+preflight can allow a run whose check will not fit. After reading, checking compares the
+second build's allowance with current free memory and rechecks before geometry replay.
+If it cannot fit, the successful report includes `history_check_skipped` with
+`needed_bytes`, `available_bytes`, and `reason`:
+`History check skipped: needs about N GB, M GB free`. The original shape stays usable
+and retained editable history stays unverified. This applies to `convert` and each
+`convert_all` result, as in the CLI, desktop and web. `verify: false` always keeps checking
+off; `no_memory_check: true` forces requested checks. Automatic part work uses at most two
+workers and budgets each detailed part's temporary peak and the retained preparation queue.
 
 Use `convert` with `dry_run: true` for a quick estimate without decoding or writing;
 `output` is optional:
@@ -342,7 +353,7 @@ The formats report includes each reader's status and cadmpeg's published headlin
 | `report_key` | path | Write the key from each anonymous id to its file's path there. Keep it private. |
 | `preset` | string | `fast`, `standard` (default), or `full`; see [Choosing what to keep](#choosing-what-to-keep-and-estimating-cost). |
 | `history`, `sketches`, `joints` | boolean | Narrow the preset; each defaults to true. |
-| `no_memory_check` | boolean | Bypass the estimate refusal and Standard's history budget; default false. |
+| `no_memory_check` | boolean | Bypass the estimate refusal, Standard's history budget, and automatic history-check skipping; default false. |
 | `dry_run` | boolean | `convert` only: return estimate, choices, and fits without decoding or writing; default false. `output` is optional when true. |
 | `import_only` | boolean | Leave feature history out; keep geometry and the preset's reference sketches. |
 | `verify` | boolean | Check a converted history in SolidCraft. Default `true`; skipped, and the history marked unverified, when no `solidcraft-cli` is found. |

@@ -4,6 +4,16 @@
 /// On Linux, use the smaller of MemAvailable and remaining cgroup v2 headroom,
 /// including ancestor limits (for example a systemd scope's MemoryMax).
 pub fn available_memory() -> Option<u64> {
+    // Share the debug-only memory fixture with post-read checks, so preflight and part
+    // workers can be exercised on a synthetic low-memory system too. Releases measure.
+    #[cfg(debug_assertions)]
+    if let Some(bytes) = std::env::var("DUTCHMAN_TEST_MEMORY").ok().and_then(|text| {
+        let (held, available) = text.split_once(',')?;
+        held.parse::<u64>().ok()?;
+        available.parse::<u64>().ok()
+    }) {
+        return Some(bytes);
+    }
     platform_available_memory()
 }
 

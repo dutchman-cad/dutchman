@@ -120,7 +120,7 @@ impl Writer for OutputWriter {
 /// How a design is converted.
 #[derive(Clone, Debug, clap::Args)]
 pub struct ConvertOptions {
-    /// Maximum assembly part workers (0: automatic, 1: serial), capped by available memory.
+    /// Maximum assembly part workers (0: automatic, at most two; 1: serial), capped by free memory.
     #[arg(long, value_name = "N", default_value_t = 0)]
     pub threads: usize,
     /// Append an anonymous live diagnostic log, including progress while a conversion runs.
@@ -152,7 +152,7 @@ pub struct ConvertOptions {
     /// Leave assembly joints out.
     #[arg(long)]
     pub no_joints: bool,
-    /// Convert even when the estimate says the conversion will not fit in free memory.
+    /// Convert and check history even when their estimates exceed free memory.
     #[arg(long)]
     pub no_memory_check: bool,
     /// The SolidCraft CLI that checks a written history against the original geometry
@@ -314,6 +314,7 @@ pub struct PreparedWriter {
     solidcraft: Option<Value>,
     /// Whether to stop, once the design is read, when the machine cannot finish converting it.
     memory_stop: bool,
+    check_history_memory: bool,
 }
 
 impl Writer for PreparedWriter {
@@ -331,8 +332,12 @@ impl Writer for PreparedWriter {
         out: &mut dyn std::io::Write,
         report: &mut Report,
     ) -> Result<(), Error> {
+        let (held, available) = if self.memory_stop || self.check_history_memory {
+            measured_memory()
+        } else {
+            (None, None)
+        };
         if self.memory_stop {
-            let (held, available) = measured_memory();
             if let Some(message) = stop::check(model, held, available) {
                 return Err(Error::MemoryBudget(message));
             }
@@ -340,7 +345,36 @@ impl Writer for PreparedWriter {
         if let Some(note) = &self.history_note {
             report.push(dutchman_core::Severity::Info, "history", note.clone());
         }
+        if self.check_history_memory {
+            if let (OutputWriter::SolidCraft(writer), Some(held)) = (&self.writer, held) {
+                let writer = writer
+                    .clone()
+                    .history_check_memory(stop::history_check_bytes(held), available);
+                writer.write(model, out, report)?;
+                if let Some((needed, available)) = writer.history_check_skipped() {
+                    record_history_check_skip(report, needed, available);
+                }
+                return Ok(());
+            }
+        }
         self.writer.write(model, out, report)
+    }
+}
+
+fn record_history_check_skip(report: &mut Report, needed: u64, available: u64) {
+    report.skip_history_check(needed, available);
+    let message = stop::history_check_message(needed, available);
+    if let Some(outcome) = report.outcome_mut() {
+        if outcome.check == dutchman_core::Check::Verified {
+            outcome.check = dutchman_core::Check::Unverified(message.clone());
+        }
+    }
+    if !report
+        .losses()
+        .iter()
+        .any(|loss| loss.subject == "history" && loss.detail == message)
+    {
+        report.push(dutchman_core::Severity::Info, "history", message);
     }
 }
 
@@ -371,7 +405,7 @@ impl ConvertOptions {
         let mut history_note = None;
         if !self.no_memory_check && self.choices().history_within_budget && self.choices().history {
             if let (Some(estimate), Some(available)) = (
-                choices::estimate_with_options(input, &self.choices(), self),
+                choices::conversion_estimate(input, &self.choices(), self),
                 available,
             ) {
                 if estimate.peak_bytes > available {
@@ -395,6 +429,9 @@ impl ConvertOptions {
             writer: options.output_writer(),
             history_note,
             solidcraft,
+            check_history_memory: !self.no_memory_check
+                && !self.no_verify
+                && self.to == OutputFormat::Solidcraft,
             memory_stop: !self.no_memory_check
                 && self.preset != choices::Preset::Fast
                 && self.part.is_none()
@@ -650,6 +687,56 @@ impl Inspection {
 #[cfg(test)]
 mod option_tests {
     use super::*;
+
+    #[test]
+    fn a_skipped_final_assembly_check_cannot_claim_overall_verification() {
+        use dutchman_core::{Check, Mode, Outcome};
+        for (before, after) in [
+            (
+                Check::Verified,
+                Check::Unverified(stop::history_check_message(9_000_000_000, 2_000_000_000)),
+            ),
+            (
+                Check::Partial("retained prefix unverified".into()),
+                Check::Partial("retained prefix unverified".into()),
+            ),
+        ] {
+            let mut report = Report::default();
+            report.set_outcome(Outcome {
+                mode: Mode::PartialHistory,
+                check: before,
+                features: Vec::new(),
+            });
+            record_history_check_skip(&mut report, 9_000_000_000, 2_000_000_000);
+            assert_eq!(report.outcome().unwrap().check, after);
+            assert_eq!(
+                report.history_check_skipped(),
+                Some((9_000_000_000, 2_000_000_000))
+            );
+        }
+    }
+
+    #[test]
+    fn memory_policy_never_enables_a_check_the_user_disabled() {
+        let input = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../dutchman-core/tests/fixtures/generated_unit_cube.f3d");
+        for (no_verify, no_memory_check, guarded) in [
+            (false, false, true),
+            (true, false, false),
+            (false, true, false),
+            (true, true, false),
+        ] {
+            let options = ConvertOptions {
+                no_verify,
+                no_memory_check,
+                ..Default::default()
+            };
+            assert_eq!(
+                options.prepare_writer(&input, None).check_history_memory,
+                guarded
+            );
+        }
+    }
 
     #[test]
     fn configured_batch_writers_apply_the_memory_guard_before_creating_output() {
