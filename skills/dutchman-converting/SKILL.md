@@ -620,4 +620,31 @@ Ask the user to rebuild the candidate recipe with simple round sizes. Run
 only then `make_report(input=<checked small file>, out=<original results>)`. The ZIP is
 local at `out/diagnose/dutchman-report.zip` and contains geometry. Do not read the design,
 local-key.json or the ZIP into model context. Have the user review it locally and choose
-what to share. No diagnostic tool sends anything. `doctor` is not available yet.
+what to share. No diagnostic tool sends anything. Use `doctor` for folder checks, as described below.
+
+## Folder doctor and matching STEP
+
+For a folder or ZIP, use MCP `doctor` (`input`, `out`, optional `jobs`, total `memory_mb`,
+per-part `time_limit`, `step_path`, `part`) or `dutchman doctor FOLDER --out CHECKED
+--jobs 2 --memory-mb 8192 --json`. Repeat the same command to resume. Only top-level
+`report.json` is anonymous; checkpoints, the local key and converted designs stay private.
+Findings group signatures locally with counts; broad categories are candidates only.
+
+MCP `diagnose` accepts `input`, `out`, optional `narrow`, `step_path`, `part`,
+`time_limit`, `memory_mb` (or `memory_limit_mb`, never both). Durations accept whole
+seconds or strings such as `30s`. `narrow: true` retains the recipe and known-problem
+results of `diagnose_narrow`; ordinary diagnosis returns an anonymous `report` wrapper.
+`compare_step` accepts the same measurement arguments without
+`out` or `narrow`. CLI: `dutchman diagnose FILE --step EXPORT.step --out CHECKED`.
+Unambiguous same-name adjacent STEP exports are discovered automatically. Tool output
+contains anonymous numbers only. STEP body numbers differ from assembly diagnose part
+numbers; never use a comparison body number as `convert --part` without resolving it
+locally. `--part` on doctor/diagnose records a target and does not limit comparison.
+Thresholds: 1% volume/area, max(0.1 mm, 0.1% diagonal) for bbox and placement. Face counts
+alone never flag differences. `incomplete`/`unavailable` is not a pass. Public-corpus
+calibration is pending, so ask the user to confirm findings. Nothing is sent; the STEP
+itself can be shared only through the private-send flow after the user chooses it.
+Doctor's `geometry_checks` compare converted bodies with stored source geometry, except
+partial-history outputs with intentionally extra hidden bodies. Private whole-design
+snapshot pairs may accompany flags when SolidCraft supports them; never attach these
+to an anonymous public report. A file check's Target part buttons save a local target.

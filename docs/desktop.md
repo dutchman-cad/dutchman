@@ -209,3 +209,18 @@ new file. The result says whether it fails the same way, converts fine, or diffe
 a local ZIP containing the small file, its signature and anonymous.json. **Open diagnosis
 folder** lets you review it. The ZIP contains geometry; share it only if you are free to
 share that small file. Nothing is sent by the wizard.
+
+## Check a folder and matching STEP
+
+Use **Check a folder** to run local folder diagnosis with concurrent-design and total
+memory controls. Completed folder checks resume on the next run. Results and converted
+designs are kept in a sibling `(Doctor)` folder. Only the top-level `report.json` is
+anonymous; keep all other output private. **Add matching STEP** on a result card opens
+local checking for that file. A same-name STEP is shown automatically; choose another
+export if needed, set a numbered report target, then click **Start local checks**.
+Comparisons are advisory measurements, not a rendered visual proof. Nothing is sent.
+
+When the installed SolidCraft CLI supports snapshots, flagged comparisons show stored
+source and matching STEP or converted geometry side by side. These are whole-design
+views. On a file check, click **Target part N** to save the report target. Comparison
+body numbers still need local resolution to the correct assembly part.

@@ -39,10 +39,12 @@ use serde_json::{json, Map, Value};
 use crate::json as wire;
 use crate::{diagnostics, worker, ConvertOptions};
 
+mod checks;
 pub mod known;
 pub mod narrow;
 pub mod recipes;
 pub mod signature;
+pub mod step;
 
 /// The schema of `diagnose/report.json`.
 pub const SCHEMA: &str = wire::DIAGNOSE;
@@ -90,6 +92,12 @@ pub struct Settings {
     pub options: ConvertOptions,
     /// The program the child is started from (default: the running program).
     pub program: Option<PathBuf>,
+    /// Matching STEP export; otherwise an adjacent same-name export is discovered.
+    pub step_path: Option<PathBuf>,
+    /// The numbered part to target in the report.
+    pub target_part: Option<usize>,
+    /// Written SolidCraft design to check against stored source geometry (doctor only).
+    pub converted_path: Option<PathBuf>,
 }
 
 impl Default for Settings {
@@ -99,6 +107,9 @@ impl Default for Settings {
             memory_limit: default_memory_limit(),
             options: ConvertOptions::default(),
             program: None,
+            step_path: None,
+            target_part: None,
+            converted_path: None,
         }
     }
 }
@@ -235,6 +246,9 @@ struct State {
     restarts: usize,
     started: Instant,
     written: Option<Instant>,
+    comparison: Value,
+    placement_checks: Value,
+    geometry_checks: Value,
 }
 
 /// Diagnoses `input`, writing `<out>/diagnose/report.json`, `report.txt` and `local-key.json`
@@ -255,6 +269,9 @@ pub fn run(
             folder.display()
         )
     })?;
+    if settings.target_part == Some(0) {
+        return Err("Part numbers start at 1.".into());
+    }
     let state = State::new(folder, input, settings);
     run_state(state, settings, on_event)
 }
@@ -324,6 +341,11 @@ fn run_state(
             }
         }
     }
+    if let Some(target) = settings.target_part {
+        if !state.listed.is_empty() && !state.listed.iter().any(|part| part.number == target) {
+            return Err("Choose a part number listed in the diagnose report.".into());
+        }
+    }
     state.save(status, true)?;
     let report = state.report(status);
     let failing = failing_part_in(&report);
@@ -380,6 +402,9 @@ enum Message {
         base: u64,
         error: Value,
     },
+    Comparison(Value),
+    Placements(Value),
+    Geometry(Value),
     Done,
 }
 
@@ -421,6 +446,9 @@ fn message(line: &str) -> Option<Message> {
             base: value["base"].as_u64().unwrap_or(0),
             error: value["error"].clone(),
         },
+        "comparison" => Message::Comparison(value.get("report")?.clone()),
+        "placements" => Message::Placements(value.get("report")?.clone()),
+        "geometry" => Message::Geometry(value.get("report")?.clone()),
         "done" => Message::Done,
         _ => return None,
     })
@@ -440,6 +468,9 @@ impl State {
             restarts: 0,
             started: Instant::now(),
             written: None,
+            comparison: Value::Null,
+            placement_checks: Value::Null,
+            geometry_checks: Value::Null,
         }
     }
 
@@ -449,6 +480,18 @@ impl State {
         let Ok(report) = report_from(&self.out) else {
             return;
         };
+        self.geometry_checks = report
+            .get("geometry_checks")
+            .cloned()
+            .unwrap_or(Value::Null);
+        self.placement_checks = report
+            .get("placement_checks")
+            .cloned()
+            .unwrap_or(Value::Null);
+        self.comparison = report
+            .get("step_comparison")
+            .cloned()
+            .unwrap_or(Value::Null);
         let key: Value = std::fs::read(self.out.join("local-key.json"))
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
@@ -527,6 +570,18 @@ impl State {
                     .join(","),
             );
         }
+        if let Some(step) = self
+            .settings
+            .step_path
+            .clone()
+            .or_else(|| step::matching(&self.input))
+        {
+            command.arg("--step").arg(step);
+        }
+        command.arg("--preview").arg(self.out.join("preview"));
+        if let Some(converted) = &self.settings.converted_path {
+            command.arg("--converted").arg(converted);
+        }
         command
             .args(self.settings.options.to_args())
             .args(worker::search_args(&self.settings.options.part_search()))
@@ -565,24 +620,21 @@ impl State {
             if let Some((_, since)) = ctx.current {
                 if since.elapsed() > self.settings.time_limit {
                     stopped_by = Some(Outcome::TimedOut);
-                    let _ = child.kill();
-                    let _ = child.wait();
+                    worker::stop(&mut child);
                     break None;
                 }
             } else if self.listed.is_empty() && started.elapsed() > read_limit {
                 stopped_by = Some(Outcome::TimedOut);
-                let _ = child.kill();
-                let _ = child.wait();
+                worker::stop(&mut child);
                 break None;
             }
             if measured.elapsed() >= MEMORY_POLL {
                 measured = Instant::now();
-                if let Some(held) = worker::resident_bytes(child.id()) {
+                if let Some(held) = worker::resident_tree_bytes(child.id()) {
                     ctx.seen_peak = ctx.seen_peak.max(held);
                     if self.settings.memory_limit.is_some_and(|limit| held > limit) {
                         stopped_by = Some(Outcome::OutOfMemory);
-                        let _ = child.kill();
-                        let _ = child.wait();
+                        worker::stop(&mut child);
                         break None;
                     }
                 }
@@ -689,6 +741,9 @@ impl State {
                 run.extra_bytes = peak.saturating_sub(base);
                 self.finished(part, run, on_event);
             }
+            Message::Comparison(report) => self.comparison = report,
+            Message::Placements(report) => self.placement_checks = report,
+            Message::Geometry(report) => self.geometry_checks = report,
             Message::Done => ctx.done = true,
         }
         Ok(())
@@ -818,6 +873,10 @@ impl State {
                 "elapsed_ms": u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX),
             },
             "parts": parts,
+            "target_part": self.settings.target_part,
+            "step_comparison": self.comparison,
+            "placement_checks": self.placement_checks,
+            "geometry_checks": self.geometry_checks,
         });
         let advice = advice(&report);
         if let Some(fields) = report.as_object_mut() {
@@ -864,7 +923,7 @@ fn killed_by_system(_status: Option<std::process::ExitStatus>) -> bool {
     false
 }
 
-fn write_file(path: &Path, bytes: &[u8], private: bool) -> Result<(), String> {
+pub(crate) fn write_file(path: &Path, bytes: &[u8], private: bool) -> Result<(), String> {
     use std::io::Write;
     let temporary = path.with_extension("tmp");
     let mut options = std::fs::OpenOptions::new();
@@ -945,6 +1004,33 @@ pub fn report_from(folder: &Path) -> Result<Value, String> {
     ))
 }
 
+/// Record a part chosen during local review. This does not claim that conversion failed.
+/// `folder` is the diagnose folder containing report.json.
+pub fn select_target(folder: &Path, number: usize) -> Result<Value, String> {
+    let mut report = report_from(folder)?;
+    let exists = report
+        .get("parts")
+        .and_then(Value::as_array)
+        .is_some_and(|parts| {
+            parts
+                .iter()
+                .any(|p| p.get("part").and_then(Value::as_u64) == Some(number as u64))
+        });
+    if !exists {
+        return Err("Choose a part number listed in this report.".into());
+    }
+    if let Some(fields) = report.as_object_mut() {
+        fields.insert("target_part".into(), json!(number));
+    }
+    write_file(
+        &folder.join("report.json"),
+        &serde_json::to_vec_pretty(&report).map_err(|e| e.to_string())?,
+        false,
+    )?;
+    write_file(&folder.join("report.txt"), text(&report).as_bytes(), false)?;
+    Ok(report)
+}
+
 /// The part to look at first in a written report (see [`report_from`]), with how many parts
 /// there are and how it ended: `None` when no part failed.
 pub fn failing_part(report: &Value) -> Option<FailingPart> {
@@ -995,6 +1081,9 @@ pub fn text(report: &Value) -> String {
         "Dutchman diagnose report. Safe to share: it has part numbers, outcomes and sizes, and no\n\
          names, paths or geometry. Do not share local-key.json or the design itself.\n\n",
     );
+    if let Some(part) = report.get("target_part").and_then(Value::as_u64) {
+        out.push_str(&format!("Report target: part {part}.\n"));
+    }
     let summary = &report["summary"];
     let n = |field: &str| summary[field].as_u64().unwrap_or(0);
     out.push_str(&format!(
@@ -1087,6 +1176,27 @@ pub fn text(report: &Value) -> String {
             _ => {}
         }
     }
+    if let Some(comparison) = report.get("step_comparison").filter(|v| !v.is_null()) {
+        out.push_str(&format!(
+            "\nMatching STEP: {} (advisory; confirm findings).\n",
+            comparison
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("unavailable")
+        ));
+        for row in comparison
+            .get("parts")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            out.push_str(&format!(
+                "Body {}: {}\n",
+                row.get("body").unwrap_or(&Value::Null),
+                row.get("findings").unwrap_or(&Value::Null)
+            ));
+        }
+    }
     out
 }
 
@@ -1130,6 +1240,12 @@ struct WorkerArgs {
     /// (see [`narrow`]).
     #[arg(long)]
     serve: bool,
+    #[arg(long)]
+    step: Option<PathBuf>,
+    #[arg(long)]
+    converted: Option<PathBuf>,
+    #[arg(long)]
+    preview: Option<PathBuf>,
     #[command(flatten)]
     options: ConvertOptions,
 }
@@ -1183,6 +1299,27 @@ fn work(args: &WorkerArgs) -> ExitCode {
             return ExitCode::SUCCESS;
         }
     };
+    emit(&json!({"dutchman_diagnose": "placements", "report": checks::placements(&model)}));
+    if let Some(step) = &args.step {
+        let comparison = step::compare(
+            &model,
+            step,
+            &args.options,
+            Duration::from_secs(args.options.verify_timeout),
+            args.preview.as_ref().map(|p| p.join("step")).as_deref(),
+        );
+        emit(&json!({"dutchman_diagnose": "comparison", "report": comparison}));
+    }
+    if let Some(converted) = &args.converted {
+        let comparison = std::fs::metadata(converted).ok().filter(|m| m.len() <= (512 << 20))
+            .and_then(|_| std::fs::read(converted).ok()).map(|bytes| {
+                dutchman_solidcraft::compare::stored_output(&model, &bytes,
+                    &args.options.solidcraft.clone().map_or(dutchman_solidcraft::Verification::Auto, dutchman_solidcraft::Verification::With),
+                    Duration::from_secs(args.options.verify_timeout),
+                    &args.preview.clone().unwrap_or_else(|| converted.with_extension("preview")).join("geometry"))
+            }).unwrap_or_else(|| json!({"status": "unavailable", "parts": [], "reason": "The converted design could not be staged within the size limit."}));
+        emit(&json!({"dutchman_diagnose": "geometry", "report": comparison}));
+    }
     let catalog = parts::catalog(&model);
     emit(&json!({
         "dutchman_diagnose": "catalog", "read_ms": read_ms, "peak": sampler.take(),

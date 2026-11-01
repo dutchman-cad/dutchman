@@ -971,3 +971,51 @@ including a conversion failure; `converted` tells whether conversion succeeded.
 The anonymous diagnostic MCP tools omit local `paths` from the existing CLI reports.
 On an argument or I/O error, they return `ok: false`, null input, and a fixed anonymous
 message in the corresponding schema, so even error responses do not reveal source names.
+
+## `dutchman.doctor/1` and `dutchman.compare-step/1`
+
+`doctor` writes and returns an anonymous report. `ok` means orchestration completed
+without planning or checkpoint errors, not that every conversion succeeded or all
+checks passed. `files` contains numbered `file`, `converted`, `check_status`,
+`target_part`, `placement_checks`, `history_replay` (conversion verification status),
+and `step_comparison`. `planning_failed` counts planning errors without names.
+`budget` records actual `jobs`, total `memory_bytes` and `per_worker_bytes`.
+`advisory: true` requires review. `findings` groups a `dutchman.signature/1` signature,
+`count` and numbered `occurrences` (`file`, nullable `part`). A broad signature only
+suggests related failures. Checkpoints contain private conversion results and paths;
+only the top-level `report.json` is intended for sharing.
+
+Diagnose reports add nullable `target_part`, `placement_checks` and `step_comparison`.
+Placement checks have `status`, `advisory`, `coincident_transform_tolerance` (1e-9),
+`bounds` (explicitly unavailable without an independent source envelope), and numbered
+`findings` with `code` (`placement_nonfinite`, `placement_coincident`), `part`, and
+optional body/placement/other-placement numbers. Coincidence requires the same part
+definition. Similar bounds alone do not establish duplicate geometry.
+
+A STEP comparison has `status` (`measured` or `unavailable`), `parts` (body comparisons,
+worst first), `advisory`, and numeric `thresholds`. Each row has `body` and
+`reference_body` (nullable for unmatched bodies), `matched`, `source` and `reference`
+(`volume_mm3`, `area_mm2`, `bbox_mm` as min XYZ then max XYZ, `faces`; missing measures
+are null), `differences` (`volume_relative`, `area_relative`, `bbox_max_mm`,
+`placement_mm`, `faces`), `status` (`measured`, `incomplete` or `unmatched`), `looks_wrong`, and
+`findings`. Codes are `step_volume`, `step_area`, `step_bbox`, `step_placement`, and
+`step_unmatched`. Face differences are informational. Placement is the Euclidean
+distance between bbox centres. Matching is one-to-one, by geometry with placement and
+order breaking ties; it is a heuristic, not proof of identical topology. Evaluated
+body numbers differ from diagnose part numbers in assemblies. No names, paths,
+CLI messages or geometry bytes are returned. Missing kernel support gives a fixed
+recovery message and `unavailable`. A null comparison means no matching export was used.
+
+MCP `compare_step` wraps this as `schema: dutchman.compare-step/1`, `ok`, `comparison`.
+MCP diagnose omits local paths; errors from these three local-check tools are anonymous.
+See the guide for the thresholds and calibration limits.
+
+Doctor also fills `geometry_checks` with the same measurement structure, comparing
+stored source geometry with the converted SolidCraft design. Its finding codes use
+`geometry_` instead of `step_`. Partial-history outputs intentionally include extra
+hidden editable bodies, so this comparison is skipped for that mode; existing replay
+verification still runs. For flagged comparisons, `preview_status` says whether local
+SolidCraft snapshots were produced. Preview paths and bytes stay private under the
+checkpoint's `diagnose/preview/{step,geometry}/` folders. They show the full design,
+not an isolated part. No preview is included in anonymous output or report submission.
+BBox coordinates beyond 1e12 mm are treated as unavailable measurements.

@@ -3,6 +3,7 @@
 //! `dutchman` command, on background threads, so the window never waits on them.
 
 pub mod app;
+mod doctor;
 pub mod platform;
 pub mod report_policy;
 pub mod theme;
