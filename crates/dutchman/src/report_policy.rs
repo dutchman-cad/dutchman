@@ -64,7 +64,7 @@ pub struct MessageFacts<'a> {
 
 /// The version the message names.
 pub fn report_version() -> &'static str {
-    env!("CARGO_PKG_VERSION")
+    crate::BUILD_VERSION
 }
 
 impl ReportPolicy {
@@ -298,7 +298,7 @@ mod tests {
             format!(
                 "Dutchman {} couldn't convert my file. Error: no_geometry. Report id: \
                  f0011223344556677. Size: 11.8 MB. STEP: unknown.",
-                env!("CARGO_PKG_VERSION")
+                crate::BUILD_VERSION
             )
         );
         assert!(!message.contains('\n'));
