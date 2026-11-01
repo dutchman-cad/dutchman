@@ -23,12 +23,12 @@ dutchman-pilot = { git = "https://github.com/dutchman-cad/pilot", rev = "a91cade
 aho-corasick = "1.1"
 # cadmpeg at one tested commit of its main branch, the same for every cadmpeg crate. Move it
 # after a batch of cadmpeg merges (docs/releasing.md); the nightly build takes cadmpeg's main.
-cadmpeg-codec-f3d = { git = "https://github.com/raykholo/cadmpeg", rev = "bde36ac45d250c0558d8ee47bd8ee4f7b64566f0" }
-cadmpeg-core = { git = "https://github.com/raykholo/cadmpeg", rev = "bde36ac45d250c0558d8ee47bd8ee4f7b64566f0" }
-cadmpeg-ir = { git = "https://github.com/raykholo/cadmpeg", rev = "bde36ac45d250c0558d8ee47bd8ee4f7b64566f0" }
+cadmpeg-codec-f3d = { git = "https://github.com/raykholo/cadmpeg", rev = "2a665a0dfeca1c820b2befebddd40c5b275e1e62" }
+cadmpeg-core = { git = "https://github.com/raykholo/cadmpeg", rev = "2a665a0dfeca1c820b2befebddd40c5b275e1e62" }
+cadmpeg-ir = { git = "https://github.com/raykholo/cadmpeg", rev = "2a665a0dfeca1c820b2befebddd40c5b275e1e62" }
 # Each crate turns on the cadmpeg codecs it needs: dutchman-core per input format (its
 # `formats` feature for all of them), dutchman-solidcraft the STEP writer.
-cadmpeg-registry = { git = "https://github.com/raykholo/cadmpeg", rev = "bde36ac45d250c0558d8ee47bd8ee4f7b64566f0", default-features = false }
+cadmpeg-registry = { git = "https://github.com/raykholo/cadmpeg", rev = "2a665a0dfeca1c820b2befebddd40c5b275e1e62", default-features = false }
 getrandom = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
