@@ -87,12 +87,12 @@ pub(crate) fn map(
 }
 
 /// Maps one constraint definition onto the sketch's points and curves.
-struct Mapper<'a> {
-    ctx: &'a Context<'a>,
+struct Mapper<'a, 'model> {
+    ctx: &'a Context<'model>,
     builder: &'a mut Builder,
 }
 
-impl Mapper<'_> {
+impl Mapper<'_, '_> {
     /// The SolidCraft constraints for one CADIR constraint definition (none when it is already
     /// true by construction), or the kind that did not map.
     fn map(&mut self, definition: &Value) -> Result<Vec<Value>, String> {
