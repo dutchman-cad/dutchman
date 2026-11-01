@@ -6,8 +6,9 @@
   <label class="drop" id="drop">
     <strong>Choose design files, or drop them here</strong>
     <span class="hint">{{ extensions }}, or a .zip of a project folder for an assembly and its parts</span>
-    <input type="file" name="files" id="files" multiple required>
+    <input type="file" name="files" id="files" multiple>
   </label>
+  <label>Choose a project folder <input type="file" name="folder" id="folder" webkitdirectory multiple></label>
   <div class="row">
     <button type="submit" id="go">Convert</button>
     <label><input type="radio" name="to" value="solidcraft" checked> SolidCraft design</label>

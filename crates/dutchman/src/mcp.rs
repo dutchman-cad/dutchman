@@ -264,7 +264,7 @@ fn tools() -> Value {
             "type": "array",
             "items": {"type": "string"},
             "minItems": 1,
-            "description": "Absolute paths of files, and of folders to search (with their subfolders) for files Dutchman knows.",
+            "description": "Absolute paths of design files, project ZIPs, and folders to search with their subfolders.",
         }),
     );
     all.insert(
@@ -323,7 +323,7 @@ fn tools() -> Value {
         {
             "name": "convert_all",
             "title": "Convert many CAD files",
-            "description": "Convert every native CAD file given, and those in the folders given, into SolidCraft designs under one folder. Returns the dutchman.convert-all/1 report, with one convert report per file.",
+            "description": "Convert CAD files, folders and project ZIPs into SolidCraft designs under one folder. Plans top-level assemblies and unused parts, ignores lock files, and keeps adjacent STEP exports as native-file fallbacks. Returns the dutchman.convert-all/1 report.",
             "inputSchema": {"type": "object", "properties": all, "required": ["inputs", "out_dir"], "additionalProperties": false},
         },
         {

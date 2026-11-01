@@ -1,10 +1,36 @@
 # The desktop app
 
+## Project inputs
+
+Files whose names start with `~$` are lock files. They are ignored in project planning
+and excluded from job, failure and skipped-file counts.
+
+ZIP directory data and ZIP64 extensible records are limited to 16 MiB each before
+the ZIP directory is allocated; entry budgets count every declared entry.
+
+Drop a CAD file, a folder, or a project `.zip`. The card shows assembly, part and STEP
+counts before conversion. A new folder beside the input, named `Project (SolidCraft)`,
+is selected automatically; **Choose…** can select another output folder. Existing folders
+receive a numbered alternative.
+
+ZIP projects unpack into a private temporary folder, limited to 10,000 entries and 4 GiB
+of extracted data. Paths outside the project are refused and symbolic links are skipped.
+Temporary files are removed when the conversion and its retained retry rows are released.
+Inventor assemblies convert from their top-level roots with referenced parts resolved
+inside the project; unused parts convert separately. SolidWorks assemblies are not read
+yet: the plan says so and their parts convert on their own. A same-name STEP export beside
+a native file is kept as a fallback if the native conversion fails.
+
+The Inventor project folder setting appears only for inputs containing Inventor files.
+Available memory is labelled as memory and hidden when unknown. Automatic SolidCraft
+selection compares the versions found on PATH and in installed applications, choosing
+the newest; `SOLIDCRAFT_CLI` remains an explicit override.
+
 Dutchman Convert (`dutchman-gui`) converts without a terminal. [How to use it](../README.md#how-to-use-it) shows it step by step.
 
 ## Converting
 
-Open `dutchman-gui`, add design files or folders, choose an output folder, and press
+Open `dutchman-gui`, add design files, folders or project ZIPs, and press
 **Convert**. Convert stays visible while you scroll through settings or results. The
 **Preset** selector starts at **Standard**:
 
@@ -22,7 +48,7 @@ history** unchecked and Standard as the base.
 
 Queued files show **about N GB, about M min** when an estimate is available. Files in queued
 folders are listed with their estimates too. Estimates below 0.1 GB show **under 0.1 GB**,
-and times below 60 seconds show **under a minute**, just as in the CLI. **M GB free** appears
+and times below 60 seconds show **under a minute**, just as in the CLI. **M GB of memory free** appears
 once when the machine's free memory can be read. These are estimates, not limits or promises; an unavailable estimate
 leaves no label. Planning and estimation run in the background.
 

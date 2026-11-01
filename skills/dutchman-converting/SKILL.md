@@ -583,3 +583,19 @@ Use this when a conversion fails and the original file must stay private.
 
 The [minimum-reproduction guide](../../docs/minimum-reproduction.md) has a worked
 synthetic example and a prompt usable with any chat assistant or MCP client.
+
+## Project inputs
+
+`convert_all` accepts ZIP projects in `inputs`, using private bounded extraction (10,000
+entries, 4 GiB). It selects top-level Inventor assemblies and unused parts; SolidWorks
+assemblies are not read yet and their parts convert independently. Adjacent same-name
+STEP exports are fallbacks when native conversion fails. Read the batch `plan` and the
+fallback result's `native_failure` when explaining outcomes. On the command line,
+`dutchman convert project.zip` or a folder works directly and defaults to a new
+`Project (SolidCraft)` folder beside the input; `convert-all --out-dir` is optional.
+
+Project planning ignores `~$` lock files for every format; they produce no conversion,
+failure or skipped-file count.
+
+ZIP directory data and ZIP64 extensible records are limited to 16 MiB each before
+the ZIP directory is allocated; entry budgets count every declared entry.

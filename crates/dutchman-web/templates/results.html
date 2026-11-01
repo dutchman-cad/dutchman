@@ -2,6 +2,7 @@
 {% block title %}Results · Dutchman Convert{% endblock %}
 {% block home %}../{% endblock %}
 {% block content %}
+<p class="muted">{{ plan }}</p>
 <div class="summary">
   <strong>{{ converted }} converted, {{ failed }} failed{% if skipped > 0 %}, {{ skipped }} skipped (not a format Dutchman knows){% endif %}</strong>
   {% if converted > 0 %}<a href="../jobs/{{ job }}/designs.zip">Download all (.zip)</a>{% endif %}

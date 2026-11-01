@@ -1,5 +1,21 @@
 # The MCP server
 
+## Project inputs
+
+Files whose names start with `~$` are lock files. They are ignored in project planning
+and excluded from job, failure and skipped-file counts.
+
+ZIP directory data and ZIP64 extensible records are limited to 16 MiB each before
+the ZIP directory is allocated; entry budgets count every declared entry.
+
+The `convert_all` tool accepts project ZIPs in `inputs` as well as files and folders;
+`out_dir` remains required for the tool. ZIPs unpack privately within 10,000 entries and
+4 GiB of extracted data, with traversal paths refused and symbolic links skipped.
+Planning selects top-level Inventor assemblies and unused parts. SolidWorks assemblies
+are not read yet, so their parts convert independently. Adjacent same-name STEP exports
+are used only when native conversion fails. The batch report adds `plan`; a fallback's
+conversion result adds `native_failure` with the original native report.
+
 The `dutchman` command also dispatches installed Dutchman CAD tools such as `pilot` and
 `fixtures` through `dutchman-<tool>` beside the command or on `PATH`. `dutchman --help`
 lists them. These external commands provide their own interfaces; the conversion MCP tools

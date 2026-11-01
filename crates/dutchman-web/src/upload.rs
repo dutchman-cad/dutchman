@@ -8,6 +8,21 @@ use std::path::Path;
 
 pub use dutchman_serve::upload::{safe_name, unique, unzip, ZipLimits};
 
+/// A folder upload's bounded relative path, retaining its project layout.
+pub fn project_path(name: &str) -> Result<std::path::PathBuf, String> {
+    if name.starts_with('/') || name.starts_with('\\') || name.contains(':') {
+        return Err("Choose a folder with paths relative to the project.".into());
+    }
+    let mut path = std::path::PathBuf::new();
+    for (index, part) in name.split(['/', '\\']).enumerate() {
+        if index >= 32 || part.is_empty() || part == "." || part == ".." {
+            return Err("Choose a smaller folder with paths inside the project.".into());
+        }
+        path.push(safe_name(part));
+    }
+    Ok(path)
+}
+
 /// Whether an uploaded file is a zip to unpack, by its name.
 pub fn is_zip(path: &Path) -> bool {
     path.extension()
@@ -26,6 +41,27 @@ pub fn read_small(path: &Path, max: u64) -> io::Result<Vec<u8>> {
 mod tests {
     use super::*;
     use std::io::Write as _;
+
+    #[test]
+    fn folder_paths_preserve_layout_and_refuse_traversal() {
+        assert_eq!(
+            project_path("project/parts/cube.ipt").unwrap(),
+            Path::new("project/parts/cube.ipt")
+        );
+        assert_eq!(
+            project_path("project\\parts\\cube.ipt").unwrap(),
+            Path::new("project/parts/cube.ipt")
+        );
+        for name in [
+            "../escape.ipt",
+            "/escape.ipt",
+            "C:\\escape.ipt",
+            "project/../escape.ipt",
+            "project//cube.ipt",
+        ] {
+            assert!(project_path(name).is_err(), "{name}");
+        }
+    }
 
     const LIMITS: ZipLimits = ZipLimits {
         entries: 100,

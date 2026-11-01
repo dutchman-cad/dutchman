@@ -46,8 +46,8 @@ const POLL: Duration = Duration::from_millis(20);
 /// How a written history is checked.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Verification {
-    /// With the SolidCraft CLI named by `SOLIDCRAFT_CLI`, else the one on `PATH`, else the
-    /// one an installed SolidCraft app carries (see [`find_cli`]).
+    /// With the SolidCraft CLI named by `SOLIDCRAFT_CLI`, else the newest found on `PATH`
+    /// or inside an installed SolidCraft app (see [`find_cli`]).
     Auto,
     /// With this SolidCraft CLI.
     With(PathBuf),
@@ -67,8 +67,8 @@ pub(crate) enum Outcome {
 }
 
 /// The SolidCraft CLI `verification` checks with: for [`Verification::Auto`], the one
-/// `SOLIDCRAFT_CLI` names, else `solidcraft-cli` on `PATH`, else the one inside an installed
-/// SolidCraft app: on macOS `SolidCraft*.app` in `/Applications` or `~/Applications`, newest
+/// `SOLIDCRAFT_CLI` names, else the newest `solidcraft-cli` found on `PATH` or inside an
+/// installed SolidCraft app: on macOS `SolidCraft*.app` in `/Applications` or `~/Applications`, newest
 /// version first; on Windows `SolidCraft\solidcraft-cli.exe` in Program Files or `%LOCALAPPDATA%`,
 /// else in the install folder the installer recorded in the registry (`InstallDir`, or beside
 /// the registered `solidcraft.exe`).
@@ -79,8 +79,14 @@ pub fn find_cli(verification: &Verification) -> Result<PathBuf, String> {
         Verification::Auto => std::env::var_os(CLI_ENV)
             .map(PathBuf::from)
             .filter(|path| !path.as_os_str().is_empty())
-            .or_else(on_path)
-            .or_else(installed)
+            .or_else(|| {
+                newest_cli(on_path().into_iter().chain(installed()), &|cli| {
+                    version_of(cli)
+                        .ok()
+                        .flatten()
+                        .and_then(|line| parse_version(&line))
+                })
+            })
             .ok_or_else(|| {
                 format!(
                     "no {CLI_NAME} found (install SolidCraft, set {CLI_ENV}, or add it to PATH)"
@@ -312,7 +318,7 @@ fn installed() -> Option<PathBuf> {
         }
         in_app_bundles(&folders)
     } else if cfg!(windows) {
-        ["ProgramFiles", "ProgramW6432", "LOCALAPPDATA"]
+        let candidates = ["ProgramFiles", "ProgramW6432", "LOCALAPPDATA"]
             .into_iter()
             .filter_map(std::env::var_os)
             .flat_map(|base| {
@@ -323,8 +329,14 @@ fn installed() -> Option<PathBuf> {
                 ]
             })
             .map(|folder| folder.join(format!("{CLI_NAME}.exe")))
-            .find(|cli| cli.is_file())
-            .or_else(registered)
+            .filter(|cli| cli.is_file())
+            .chain(registered());
+        newest_cli(candidates, &|cli| {
+            version_of(cli)
+                .ok()
+                .flatten()
+                .and_then(|line| parse_version(&line))
+        })
     } else {
         None
     }
@@ -651,11 +663,21 @@ fn launch_failure(cli: &Path, err: std::io::Error) -> String {
     blocked_failure(cli).unwrap_or_else(|| format!("cannot run {}: {err}", cli.display()))
 }
 
-fn on_path() -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
+fn newest_cli(
+    candidates: impl IntoIterator<Item = PathBuf>,
+    version: &impl Fn(&Path) -> Option<[u64; 3]>,
+) -> Option<PathBuf> {
+    candidates.into_iter().max_by_key(|cli| version(cli))
+}
+
+fn on_path() -> Vec<PathBuf> {
+    let Some(path) = std::env::var_os("PATH") else {
+        return Vec::new();
+    };
     std::env::split_paths(&path)
         .map(|dir| dir.join(format!("{CLI_NAME}{}", std::env::consts::EXE_SUFFIX)))
-        .find(|candidate| candidate.is_file())
+        .filter(|candidate| candidate.is_file())
+        .collect()
 }
 
 /// Compares `history` (the design as written) with `original` (the same design with the
@@ -1710,6 +1732,21 @@ mod cli_tests {
             "{cli:?}"
         );
         assert_eq!(in_app_bundles(&[dir.path().join("missing")]), None);
+    }
+
+    #[test]
+    fn automatic_cli_selection_compares_versions_across_locations() {
+        let path = PathBuf::from("path/solidcraft-cli");
+        let app = PathBuf::from("applications/solidcraft-cli");
+        let found = newest_cli([path.clone(), app.clone()], &|candidate| {
+            Some(if candidate == path.as_path() {
+                [0, 27, 0]
+            } else {
+                [0, 29, 0]
+            })
+        });
+        assert_eq!(found, Some(app));
+        assert_eq!(newest_cli([path.clone()], &|_| None), Some(path));
     }
 
     fn fake_cli(dir: &Path, script: &str) -> PathBuf {

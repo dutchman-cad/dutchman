@@ -703,6 +703,8 @@ fn convert_all_converts_a_folder_and_reports_each_file() {
     // Each converted file's losses are listed beneath it, as `convert` prints them, after the
     // SolidCraft version it targets.
     let lines = without_target_line(&stdout);
+    assert_eq!(lines[0], "0 assemblies, 1 part, 0 STEP files");
+    let lines = &lines[1..];
     assert_eq!(lines[0], "Fusion .f3d: reads geometry");
     assert!(lines[1].starts_with("converted  "), "{stdout}");
     assert!(
@@ -2322,14 +2324,18 @@ fn part_threads_keep_assembly_json_and_design_bytes_identical() {
     }
 }
 
-/// Output lines without the one "Target SolidCraft x.y.z (...)" line, which names whatever
-/// SolidCraft the machine has.
+/// Conversion lines without the target line and optional installed-version notice.
 fn without_target_line(stdout: &str) -> Vec<&str> {
     let (target, rest): (Vec<&str>, Vec<&str>) = stdout
         .lines()
         .partition(|line| line.starts_with("Target SolidCraft "));
     assert_eq!(target.len(), 1, "{stdout}");
-    rest
+    rest.into_iter()
+        .filter(|line| {
+            !(line.starts_with("SolidCraft ")
+                && line.contains("is newer than this Dutchman knows."))
+        })
+        .collect()
 }
 
 #[test]
@@ -3170,4 +3176,59 @@ fn repro_follows_a_diagnose_report_to_the_failing_part() {
         elsewhere.path().to_str().unwrap(),
     ]);
     assert_eq!(out.status.code(), Some(1));
+}
+
+#[test]
+fn folders_and_zips_convert_with_automatic_sibling_output_folders() {
+    use serde_json::Value;
+    use std::io::Write as _;
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    let bytes = std::fs::read(fixture("generated_unit_cube.f3d")).unwrap();
+    std::fs::write(project.join("cube.f3d"), &bytes).unwrap();
+    for (args, output) in [
+        (
+            vec![
+                "convert",
+                project.to_str().unwrap(),
+                "--json",
+                "--no-verify",
+            ],
+            "project (SolidCraft)",
+        ),
+        (
+            vec![project.to_str().unwrap(), "--json", "--no-verify"],
+            "project (SolidCraft 2)",
+        ),
+    ] {
+        let result = dutchman(&args);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert_eq!(report["schema"], "dutchman.convert-all/1");
+        assert_eq!(report["converted"], 1);
+        assert!(dir.path().join(output).join("cube.sc").is_file());
+    }
+    let archive = dir.path().join("archive.zip");
+    let mut zip = zip::ZipWriter::new(std::fs::File::create(&archive).unwrap());
+    zip.start_file("cube.f3d", zip::write::SimpleFileOptions::default())
+        .unwrap();
+    zip.write_all(&bytes).unwrap();
+    zip.finish().unwrap();
+    let result = dutchman(&[archive.to_str().unwrap(), "--json", "--no-verify"]);
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["converted"], 1);
+    assert!(dir
+        .path()
+        .join("archive (SolidCraft)/archive/cube.sc")
+        .is_file());
 }

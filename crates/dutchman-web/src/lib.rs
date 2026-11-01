@@ -258,6 +258,7 @@ struct IndexPage {
 #[template(path = "results.html")]
 struct ResultsPage<'a> {
     job: &'a str,
+    plan: &'a str,
     converted: u64,
     failed: u64,
     skipped: u64,
@@ -368,6 +369,10 @@ async fn job_page(State(app): State<Shared>, UrlPath(job): UrlPath<String>) -> R
             render(
                 ResultsPage {
                     job: &job,
+                    plan: report
+                        .get("plan")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
                     converted: count("converted"),
                     failed: count("failed"),
                     skipped: count("skipped"),
@@ -460,12 +465,37 @@ async fn convert_in(
             Err(err) => return Err(Problem::new(err.status(), err.body_text())),
         };
         match field.name() {
-            Some("files") => {
+            Some("files" | "folder") => {
                 let Some(name) = field.file_name().filter(|n| !n.is_empty()) else {
                     continue;
                 };
-                let path = upload::unique(&in_dir.join(upload::safe_name(name)))
-                    .map_err(|err| server_error(&err))?;
+                if files >= 10_000 {
+                    return Err(Problem::new(
+                        StatusCode::BAD_REQUEST,
+                        "The upload holds more than 10000 files; choose a smaller folder.",
+                    ));
+                }
+                let relative = if field.name() == Some("folder") {
+                    upload::project_path(name)
+                        .map_err(|message| Problem::new(StatusCode::BAD_REQUEST, message))?
+                } else {
+                    PathBuf::from(upload::safe_name(name))
+                };
+                let path =
+                    upload::unique(&in_dir.join(relative)).map_err(|err| server_error(&err))?;
+                if !upload::is_zip(&path) {
+                    zip_budget.entries = zip_budget.entries.checked_sub(1).ok_or_else(|| {
+                        Problem::new(
+                            StatusCode::BAD_REQUEST,
+                            "The project holds too many entries; choose a smaller folder.",
+                        )
+                    })?;
+                }
+                if let Some(parent) = path.parent() {
+                    tokio::fs::create_dir_all(parent)
+                        .await
+                        .map_err(|err| server_error(&err))?;
+                }
                 let mut out = tokio::fs::File::create(&path)
                     .await
                     .map_err(|err| server_error(&err))?;

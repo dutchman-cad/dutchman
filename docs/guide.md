@@ -1,5 +1,19 @@
 # Getting started
 
+## Project inputs
+
+Files whose names start with `~$` are lock files. They are ignored in project planning
+and excluded from job, failure and skipped-file counts.
+
+ZIP directory data and ZIP64 extensible records are limited to 16 MiB each before
+the ZIP directory is allocated; entry budgets count every declared entry.
+
+Folders and project ZIPs can be passed directly to `dutchman convert` or `convert-all`.
+The default output is a new `Project (SolidCraft)` folder beside the input. Project planning
+selects top-level Inventor assemblies and unused parts. SolidWorks assemblies are not read
+yet, so their parts convert independently. Same-name adjacent STEP exports are fallbacks
+for failed native conversions. See [Project inputs](command-line.md#project-inputs).
+
 Dutchman Convert turns native CAD files into [SolidCraft](https://github.com/tangency-labs/solidcraft)
 designs (`.sc`). This page takes you from install to an open design in four steps: install, convert, read the report, and open the result; the
 [docs list](../README.md#docs) has everything else.

@@ -31,6 +31,7 @@ tempfile.workspace = true
 aho-corasick.workspace = true
 clap = { workspace = true, features = ["suggestions"] }
 dutchman-launcher.workspace = true
+dutchman-serve = { path = "../dutchman-serve" }
 dutchman-core = { workspace = true, features = ["formats"] }
 dutchman-dxf.workspace = true
 dutchman-freecad.workspace = true

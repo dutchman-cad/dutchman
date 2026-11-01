@@ -1,5 +1,26 @@
 # Machine-readable reports
 
+## Project inputs
+
+Files whose names start with `~$` are lock files. They are ignored in project planning
+and excluded from job, failure and skipped-file counts.
+
+ZIP directory data and ZIP64 extensible records are limited to 16 MiB each before
+the ZIP directory is allocated; entry budgets count every declared entry.
+
+The `dutchman.convert-all/1` report adds `plan`, a sentence describing assembly, part and
+STEP counts and whether SolidWorks assemblies cannot be read yet. Project ZIPs use the
+same schema as folder inputs. Counts describe the project inventory before referenced parts are grouped into assemblies.
+Those parts do not get separate results. Paired STEP exports are included in the STEP
+count and identified as fallbacks.
+
+When native conversion fails and a same-name adjacent STEP export is tried, its
+`dutchman.convert/1` result adds `native_failure`, containing the full original native
+conversion report. The result's `input` describes the STEP export and its `output` uses
+the native job's planned destination. A successful native conversion never converts the
+paired STEP export separately. A `project/step-fallback` loss explains the fallback
+in desktop, web and text reports. Neither field changes the meaning of existing fields.
+
 The `dutchman` command also dispatches installed Dutchman CAD tools such as `pilot` and
 `fixtures` through `dutchman-<tool>` beside the command or on `PATH`. `dutchman --help`
 lists them. These external commands provide their own interfaces; the conversion MCP tools

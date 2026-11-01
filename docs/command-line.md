@@ -1,5 +1,27 @@
 # The command line
 
+## Project inputs
+
+Files whose names start with `~$` are lock files. They are ignored in project planning
+and excluded from job, failure and skipped-file counts.
+
+ZIP directory data and ZIP64 extensible records are limited to 16 MiB each before
+the ZIP directory is allocated; entry budgets count every declared entry.
+
+`dutchman convert project.zip` and `dutchman convert project-folder` convert a whole
+project. The short forms `dutchman project.zip` and `dutchman project-folder` also work.
+The default output is a new folder beside the input, named `project (SolidCraft)`;
+use `-o DIR` to choose another. `convert-all` also accepts ZIP inputs and its `--out-dir`
+is optional, defaulting beside the first input. ZIP extraction uses a private temporary
+folder, with a 10,000-entry and 4 GiB limit; traversal paths are refused, links are skipped,
+and extracted files are cleaned up after the run.
+
+The plan selects top-level Inventor assemblies and parts no assembly uses. SolidWorks
+assemblies are not read yet and remain failure results, while their parts convert
+independently. A STEP export beside a same-name native file is used only if native
+conversion fails. The batch report's `plan` describes its conversion list;
+`native_failure` retains the native report when a STEP fallback was attempted.
+
 Everything the desktop app does is also a command. `dutchman convert --help` lists every option.
 
 ## Output files
@@ -132,7 +154,7 @@ with an unknown total while parts are discovered. These updates do not change th
 
 `convert-all` converts every file named, and every file Dutchman knows inside the folders
 named (with their subfolders; symbolic links are not followed). The designs go to
-`--out-dir`, keeping the folder layout. A file that fails does not stop the others.
+`--out-dir` when supplied, otherwise a new folder beside the first input, keeping the folder layout. A file that fails does not stop the others.
 
 ```sh
 dutchman convert-all --jobs 2 --out-dir converted project

@@ -1,5 +1,21 @@
 # Dutchman Web
 
+## Project inputs
+
+Files whose names start with `~$` are lock files. They are ignored in project planning
+and excluded from job, failure and skipped-file counts.
+
+Use **Choose a project folder** to upload a folder with its relative paths preserved.
+Folder uploads share the ZIP entry budget and upload byte limit. At most 10,000
+individual files or archives can be uploaded at once.
+
+Project planning uses the same rules as the desktop app and command line: top-level
+Inventor assemblies convert with their parts, and unused parts convert separately.
+SolidWorks assemblies are not read yet; their parts convert independently. A same-name
+STEP export beside a native file is kept as a fallback if native conversion fails.
+The JSON result includes a plain `plan` describing the selected files. The web upload
+limits and retention settings below still apply.
+
 `dutchman-web` is Dutchman as a web page: run it on one server, and convert from any browser
 that can reach it, without installing Dutchman on each computer. Drop design files, or a `.zip`
 of a project folder, on the page and press **Convert**. Each file gets a card saying whether it
@@ -195,3 +211,6 @@ curl -u dutchman:choose-one -F files=@part.f3d -F files=@bracket.ipt http://serv
 ```
 
 The page itself posts to `/convert`, which sends the browser on to `/jobs/<job>`.
+
+ZIP directory data and ZIP64 extensible records are limited to 16 MiB each before
+the ZIP directory is allocated; entry budgets count every declared entry.
