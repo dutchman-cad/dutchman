@@ -178,6 +178,11 @@ fn restore_choices(options: &mut ConvertOptions, settings: &Value) -> bool {
         .get("no_joints")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    // The check runs a second full build in SolidCraft, so it is opt-in.
+    options.no_verify = !settings
+        .get("check_history")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     settings
         .get("custom")
         .and_then(Value::as_bool)
@@ -190,6 +195,7 @@ fn saved_choices(options: &ConvertOptions, custom: bool) -> Value {
         "save_diagnostics": options.diagnostics_default,
         "import_only": options.import_only,
         "no_sketches": options.no_sketches, "no_joints": options.no_joints,
+        "check_history": !options.no_verify,
     })
 }
 
@@ -225,6 +231,7 @@ impl App {
             .min(Default::default());
         let mut options = ConvertOptions {
             solidcraft_version: Some(detected_version),
+            no_verify: true,
             ..ConvertOptions::default()
         };
         let stored = cc
@@ -2148,10 +2155,12 @@ mod tests {
         }
         let mut options = ConvertOptions::default();
         assert!(!restore_choices(&mut options, &json!({})));
+        assert!(options.no_verify);
         select_preset(&mut options, Preset::Full);
         set_choices(&mut options, true, false, true);
         options.no_memory_check = true;
         options.diagnostics_default = true;
+        options.no_verify = false;
         let saved = saved_choices(&options, true);
         let mut restored = ConvertOptions::default();
         assert!(restore_choices(&mut restored, &saved));
@@ -2159,6 +2168,7 @@ mod tests {
         assert_eq!(restored.choices(), options.choices());
         assert!(!restored.no_memory_check);
         assert!(restored.diagnostics_default);
+        assert!(!restored.no_verify);
         assert!(restored.diagnostics.is_none());
     }
 
