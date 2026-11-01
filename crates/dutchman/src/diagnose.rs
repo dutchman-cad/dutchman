@@ -39,7 +39,9 @@ use serde_json::{json, Map, Value};
 use crate::json as wire;
 use crate::{diagnostics, worker, ConvertOptions};
 
+pub mod known;
 pub mod narrow;
+pub mod recipes;
 pub mod signature;
 
 /// The schema of `diagnose/report.json`.
@@ -1353,7 +1355,8 @@ pub fn parse_duration(text: &str) -> Result<Duration, String> {
     if !value.is_finite() || value <= 0.0 {
         return Err(format!("`{text}` is not a time above zero"));
     }
-    Ok(Duration::from_secs_f64(value * scale))
+    Duration::try_from_secs_f64(value * scale)
+        .map_err(|_| "the time limit is too large; use a smaller number of seconds".to_owned())
 }
 
 #[cfg(test)]

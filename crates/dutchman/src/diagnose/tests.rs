@@ -315,3 +315,10 @@ fn a_part_selected_alone_holds_only_its_own_geometry() {
     assert!(alone.assembly.is_none());
     assert_eq!(parts::entity_count(&alone), leaf.entities);
 }
+
+#[test]
+fn extremely_large_time_limits_are_refused_without_panicking() {
+    for limit in ["1e300", "1e300h", "999999999999999999999999999999s"] {
+        assert!(parse_duration(limit).is_err());
+    }
+}

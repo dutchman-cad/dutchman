@@ -711,24 +711,7 @@ pub fn next_steps(anonymous: &Value) -> String {
 
 /// The steps from a signature to a report: rebuild, check, make the report.
 fn rebuild_steps(signature: &Signature) -> String {
-    let what = match &signature.feature {
-        Some(feature) => format!("Make only what {} needs.", feature.describe()),
-        None => "Copy the failing shape alone into the new design, and keep only what it needs."
-            .to_owned(),
-    };
-    format!(
-        "Failure signature {}: it {}.\n\n\
-         1. In your CAD program, start a new design.\n\
-         2. {what} Use simple round sizes and new names.\n\
-         3. Save it, for example as small.f3d.\n\
-         4. Run `dutchman diagnose --same-failure small.f3d --out <this folder>`. It says the \
-         small file fails the same way, or that it converts fine, in which case change it to \
-         be closer to the description in step 2 and try again.\n\
-         5. Run `dutchman diagnose --make-report small.f3d --out <this folder>`. It makes one \
-         zip and a prefilled issue link. Nothing is sent until you send it.\n\n",
-        signature.short(),
-        signature.describe()
-    )
+    crate::diagnose::recipes::render(signature)
 }
 
 #[cfg(test)]

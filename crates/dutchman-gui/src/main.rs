@@ -56,6 +56,9 @@ fn graphics_timed_out(ready: Receiver<()>, timeout: Duration) -> bool {
 }
 
 fn main() -> ExitCode {
+    if let Some(code) = dutchman::worker::run_if_worker() {
+        return code;
+    }
     match parse_args(std::env::args_os().skip(1)) {
         Ok(Startup::Help) => {
             println!("{HELP}");

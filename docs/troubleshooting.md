@@ -209,3 +209,24 @@ use their outer declared size. It has no separate size-dependent term for the re
 inflation, classification, and metadata scans above; a content-rate estimate can therefore
 miss lengthy preparation. Memory and time estimates are planning approximations, not
 measured limits. Diagnostic instrumentation does not change their calibration.
+
+## Diagnose with an assistant
+
+Without an assistant, choose **Diagnose this file** on the desktop failure card, or run
+`dutchman diagnose --narrow FILE --out RESULTS` and follow `diagnose/kit/next-steps.md`.
+With dutchman-mcp configured locally, paste this prompt and substitute your local paths:
+
+> Use Dutchman's anonymous diagnostic tools on INPUT, writing local results under OUT.
+> Start with diagnose_narrow; it resumes a stopped run and checks shipped known problems.
+> Explain any workaround first. If useful, try convert_part with the anonymous part number,
+> optionally with neighbours, and stop_at_feature to test a history prefix. Show me the
+> numbered recipe for my CAD program and help me rebuild a small file with round sizes.
+> After I save it, use same_failure on that small file with the original OUT. If it converts
+> fine or differs, explain which recorded options or profile counts to revisit. Once checked,
+> use make_report to prepare the local ZIP. Tell me where to review it locally. Do not read
+> local-key.json, the original file, the rebuilt file or the ZIP into the conversation.
+> Do not upload anything or open a submission link; I will review and choose what to send.
+
+The assistant sees categories, counts and signatures. The report ZIP itself contains the
+small file's geometry. A broad matching error category alone does not prove the same
+failure; the check says when that limitation applies.

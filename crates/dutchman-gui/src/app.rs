@@ -53,6 +53,7 @@ impl Row {
 /// Dutchman Convert's window.
 pub struct App {
     pub updater: crate::update::Updater,
+    diagnosis: Option<crate::diagnose::Wizard>,
     inputs: Vec<PathBuf>,
     project_summary: String,
     has_inventor: bool,
@@ -245,6 +246,7 @@ impl App {
             memory_warning: None,
             out_dir: None,
             options,
+            diagnosis: None,
             diagnostic_path: None,
             diagnostic_stopped: false,
             unfinished_diagnostic: dutchman::diagnostics::unfinished_default_log(),
@@ -767,6 +769,9 @@ impl App {
         self.updater.tick(ctx);
         self.report_policy.tick(ctx, self.updater.automatic());
         self.receive(ctx);
+        if self.diagnosis.as_mut().is_some_and(|wizard| wizard.ui(ctx)) {
+            self.diagnosis = None;
+        }
         self.take_dropped_files(ctx);
         self.refresh_estimates(ctx);
         let view = self.view();
@@ -1383,7 +1388,7 @@ impl App {
         }
         let first = (reveal == Some(Reveal::FirstIssue)).then_some(view.first_to_show);
         let mut action = None;
-        let running = self.running();
+        let running = self.running() || self.diagnosis.is_some();
         let mut files: Vec<_> = view.files.iter().collect();
         files.sort_by_key(|(index, _)| *index);
         for (index, file) in files {
@@ -1408,6 +1413,18 @@ impl App {
             Some(Action::Reveal(path)) => platform::reveal(&path),
             Some(Action::Pick(pick)) => {
                 worker::pick(pick, self.sender.clone(), ui.ctx().clone());
+                Ok(())
+            }
+            Some(Action::Diagnose(index)) => {
+                if self.diagnosis.is_some() {
+                    return;
+                }
+                if let Some(row) = self.rows.get(index) {
+                    let mut wizard =
+                        crate::diagnose::Wizard::new(row.input.clone(), self.options.clone());
+                    wizard.start(ui.ctx());
+                    self.diagnosis = Some(wizard);
+                }
                 Ok(())
             }
             Some(Action::Report(index)) => self.report_on_github(index, ui.ctx()),
@@ -1460,6 +1477,7 @@ impl eframe::App for App {
 }
 
 enum Action {
+    Diagnose(usize),
     Open(PathBuf),
     Reveal(PathBuf),
     Pick(Pick),
@@ -1567,6 +1585,12 @@ fn row_ui(
     }
     if let Some(message) = &view.error {
         ui.label(RichText::new(message).color(p.danger));
+        if ui
+            .add_enabled(!running, egui::Button::new("Diagnose this file"))
+            .clicked()
+        {
+            action = Some(Action::Diagnose(index));
+        }
         if view.can_report {
             if let Some(report) = &row.report {
                 let steps =
@@ -1837,6 +1861,49 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn failed_card_offers_diagnosis_after_a_click() {
+        use egui_kittest::kittest::Queryable;
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(900.0, 1000.0))
+            .build_state(
+                |ctx, chosen| {
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        let row = Row {
+                            input: PathBuf::from("synthetic.f3d"),
+                            output: None,
+                            status: Status::Failed,
+                            progress: None,
+                            job: None,
+                            size: None,
+                            report: Some(
+                                json!({"ok": false, "error": {"message": "Conversion stopped."}}),
+                            ),
+                        };
+                        let view = row.view();
+                        if let Some(Action::Diagnose(0)) = row_ui(
+                            ui,
+                            theme::palette(ui),
+                            0,
+                            &row,
+                            &view,
+                            ReportPolicy::bundled(),
+                            false,
+                            false,
+                        ) {
+                            *chosen = true;
+                        }
+                    });
+                },
+                false,
+            );
+        harness.run_steps(2);
+        assert!(!harness.state());
+        harness.get_by_label("Diagnose this file").click();
+        harness.run_steps(2);
+        assert!(*harness.state());
+    }
 
     #[test]
     fn preset_and_advanced_choices_map_to_shared_options() {

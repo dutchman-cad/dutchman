@@ -202,3 +202,21 @@ anonymous.json, tell me in plain steps which feature to rebuild in my CAD progra
 small file with made-up dimensions, and how to check that the small file fails the same way
 (same stage and same finding codes).
 ```
+
+## Rebuild recipes and known problems
+
+Narrowing writes a numbered recipe for Fusion, Inventor, SolidWorks and FreeCAD in
+`diagnose/kit/next-steps.md`, and includes the same recipe in `narrow.json`. The recorded
+feature options and profile counts describe what to recreate. Sizes such as 10 mm and
+20 mm are invented starting sizes, never measurements from the design. A recipe is a
+candidate: **Check my small file** must confirm that it shows the same failure.
+Unknown feature classes get instructions built from the signature's fields.
+
+The release embeds versioned data in `crates/dutchman/data/rebuild-recipes-v1.json` and
+`known-failures-v1.json`. Known problems require both an exact full signature hash and its
+recipe class (feature kind, or `generic` when no feature is known). A match gives a
+workaround or says the problem is fixed in the next version. Ranking signatures are checked
+before isolation and bisection; a feature-specific signature is checked when recorded and
+before resuming narrowing. A feature-specific failure cannot be recognized from a broad
+ranking signature alone. There is no network lookup. The initial list is empty; only
+replay-confirmed entries should be added, with behavior and advice, never design information.

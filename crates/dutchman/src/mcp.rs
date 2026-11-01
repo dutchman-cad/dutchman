@@ -127,7 +127,7 @@ fn answer(method: &str, params: &Value) -> Result<Value, (i64, String)> {
                     "Converts native CAD files ({}) into SolidCraft designs (.sc). Use \
                      inspect to see what a file would carry across, convert for one file, \
                      convert_all for many. Paths are on the machine running this server; give \
-                     absolute paths.",
+                     absolute paths. Use diagnose_narrow for anonymous local failure narrowing and rebuild recipes; no diagnostic tool sends files.",
                     dutchman_core::Format::supported_names()
                 ),
             }))
@@ -154,11 +154,27 @@ fn answer(method: &str, params: &Value) -> Result<Value, (i64, String)> {
                 ),
                 "convert_all" => (convert_all(arguments), crate::batch::SCHEMA),
                 "repro" => (repro(arguments), crate::repro::SCHEMA),
+                "diagnose" | "diagnose_narrow" | "convert_part" | "stop_at_feature"
+                | "same_failure" | "make_report" => {
+                    (diagnostic(name, arguments), diagnostic_schema(name))
+                }
                 _ => return Err((INVALID_PARAMS, format!("no tool named {name}"))),
             };
             // Arguments the tool cannot take fail as the tool fails: a report with the reason,
             // so a client that reads only the structured content sees it too.
             Ok(result(&report.unwrap_or_else(|message| {
+                if is_diagnostic(name) {
+                    let safe = ["input is required", "input must be a path", "out is required", "out must be a path",
+                        "part is required", "part must be a whole number of at least 1",
+                        "feature must be a whole number of at least 0", "feature number is beyond this part's history",
+                        "time_limit must be a duration",
+                        "the time limit is too large; use a smaller number of seconds", "memory_limit_mb must be a whole number of at least 1",
+                        "memory_limit_mb is too large", "neighbours must be true or false"];
+                    let message = if safe.contains(&message.as_str()) { &message } else {
+                        "The diagnostic step could not finish. Check the arguments and local diagnose folder, then retry; no file was sent."
+                    };
+                    return crate::json::failure(schema, Value::Null, message);
+                }
                 let input = arguments
                     .get("input")
                     .and_then(Value::as_str)
@@ -299,7 +315,7 @@ fn tools() -> Value {
         "report_key".to_owned(),
         json!({"type": "string", "description": "Absolute path to write the key from each anonymous id to its file's path to. Keep it private."}),
     );
-    json!([
+    let mut listed = json!([
         {
             "name": "convert",
             "title": "Convert a CAD file",
@@ -334,7 +350,11 @@ fn tools() -> Value {
                 "include_local_key": {"type": "boolean", "default": false, "description": "Return private names for local use only. Keep this response local; never include it in an issue or send it to a remote assistant."}
             }, "required": ["input", "out"], "additionalProperties": false}
         },
-    ])
+    ]);
+    if let Some(list) = listed.as_array_mut() {
+        list.extend(diagnostic_tools());
+    }
+    listed
 }
 
 type Arguments = Map<String, Value>;
@@ -872,4 +892,130 @@ mod freecad_output_tests {
         let bad = json!({"to": "python"});
         assert!(super::options(bad.as_object().unwrap()).is_err());
     }
+}
+
+fn is_diagnostic(name: &str) -> bool {
+    matches!(
+        name,
+        "diagnose"
+            | "diagnose_narrow"
+            | "convert_part"
+            | "stop_at_feature"
+            | "same_failure"
+            | "make_report"
+    )
+}
+
+fn diagnostic_schema(name: &str) -> &'static str {
+    match name {
+        "diagnose" => crate::json::DIAGNOSE,
+        "convert_part" | "stop_at_feature" => crate::json::PART_TRIAL,
+        "same_failure" => crate::json::SAME_FAILURE,
+        "make_report" => crate::json::MADE_REPORT,
+        _ => crate::json::NARROW,
+    }
+}
+
+fn diagnostic_tools() -> Vec<Value> {
+    [
+        ("diagnose", "Rank numbered parts locally under time and memory limits.", vec!["input", "out"]),
+        ("diagnose_narrow", "Resume automatic narrowing, returning the anonymous signature and rebuild recipe.", vec!["input", "out"]),
+        ("convert_part", "Try one numbered part, optionally with neighbours; discard the converted geometry.", vec!["input", "part"]),
+        ("stop_at_feature", "Try a numbered part through a history feature (0 means stored shape only); discard geometry.", vec!["input", "part", "feature"]),
+        ("same_failure", "Check a freshly rebuilt small file against the signature in out.", vec!["input", "out"]),
+        ("make_report", "Prepare a local ZIP from the checked small file. It contains geometry. Nothing is sent; ask the user to review it locally before sharing.", vec!["input", "out"]),
+    ].into_iter().map(|(name, description, required)| {
+        let mut properties = Map::new();
+        for key in &required {
+            properties.insert((*key).to_owned(), if matches!(*key, "part" | "feature") {
+                json!({"type": "integer", "minimum": if *key == "part" { 1 } else { 0 }})
+            } else { json!({"type": "string", "description": "Absolute local path; never returned to the assistant."}) });
+        }
+        if matches!(name, "convert_part" | "stop_at_feature") {
+            properties.insert("neighbours".into(), json!({"type": "boolean", "default": false}));
+        }
+        if name != "make_report" {
+            properties.insert("time_limit".into(), json!({"type": "string", "description": "Time per trial, such as 30s or 5m."}));
+            properties.insert("memory_limit_mb".into(), json!({"type": "integer", "minimum": 1}));
+        }
+        json!({"name": name, "description": format!("{description} Results carry no names, paths or geometry."),
+            "inputSchema": {"type": "object", "properties": properties, "required": required, "additionalProperties": false}})
+    }).collect()
+}
+
+fn diagnostic(name: &str, arguments: &Arguments) -> Result<Value, String> {
+    use crate::diagnose::{self, narrow};
+    let mut allowed = vec!["input"];
+    if matches!(name, "convert_part" | "stop_at_feature") {
+        allowed.extend(["part", "neighbours"]);
+        if name == "stop_at_feature" {
+            allowed.push("feature");
+        }
+    } else {
+        allowed.push("out");
+    }
+    if name != "make_report" {
+        allowed.extend(["time_limit", "memory_limit_mb"]);
+    }
+    only(arguments, &allowed)?;
+    let input = path(arguments, "input")?;
+    let mut rank = diagnose::Settings::default();
+    if let Some(value) = arguments.get("time_limit") {
+        rank.time_limit =
+            diagnose::parse_duration(value.as_str().ok_or("time_limit must be a duration")?)?;
+    }
+    if let Some(mb) = count(arguments, "memory_limit_mb")? {
+        rank.memory_limit = Some(
+            (mb.get() as u64)
+                .checked_mul(1 << 20)
+                .ok_or("memory_limit_mb is too large")?,
+        );
+    }
+    let settings = narrow::NarrowSettings::new(rank, None);
+    if matches!(name, "convert_part" | "stop_at_feature") {
+        let part = count(arguments, "part")?.ok_or("part is required")?.get();
+        let feature = if name == "stop_at_feature" {
+            Some(
+                arguments
+                    .get("feature")
+                    .and_then(Value::as_u64)
+                    .and_then(|n| usize::try_from(n).ok())
+                    .ok_or("feature must be a whole number of at least 0")?,
+            )
+        } else {
+            None
+        };
+        return narrow::trial(
+            &input,
+            part,
+            flag(arguments, "neighbours", false)?,
+            feature,
+            &settings,
+        );
+    }
+    let out = path(arguments, "out")?;
+    let result = match name {
+        "diagnose" => diagnose::run(&input, &out, &settings.rank, &|_| {})?,
+        "diagnose_narrow" => narrow::run(&input, &out, &settings, &|_| {})?,
+        "same_failure" => return narrow::same_failure(&input, &out, &settings, &|_| {}),
+        "make_report" => narrow::make_report(&input, &out)?,
+        _ => return Err("unknown diagnostic step".into()),
+    };
+    // Explicit selection: paths and local keys never enter a diagnostic tool result.
+    let mut answer = Map::new();
+    for key in [
+        "schema",
+        "ok",
+        "summary",
+        "status",
+        "report",
+        "result",
+        "signature",
+        "bytes",
+    ] {
+        if let Some(value) = result.get(key) {
+            answer.insert(key.into(), value.clone());
+        }
+    }
+    Ok(Value::Object(answer))
 }

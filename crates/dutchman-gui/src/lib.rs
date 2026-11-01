@@ -79,3 +79,5 @@ fn icon() -> Option<eframe::egui::IconData> {
 }
 
 pub mod update;
+
+mod diagnose;

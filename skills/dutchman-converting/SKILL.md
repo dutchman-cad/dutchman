@@ -604,3 +604,20 @@ failure or skipped-file count.
 
 ZIP directory data and ZIP64 extensible records are limited to 16 MiB each before
 the ZIP directory is allocated; entry budgets count every declared entry.
+
+### Anonymous narrowing and rebuilds
+
+Use MCP `diagnose_narrow(input, out)` to rank, isolate and bisect with checkpoints. Results
+include a numbered recipe for Fusion, Inventor, SolidWorks and FreeCAD and any exact shipped
+known-failure advice. Prefer a workaround when one is reported. For individual trials use
+`convert_part(input, part, neighbours?)` and `stop_at_feature(input, part, feature,
+neighbours?)`; output geometry is discarded. Trial feature 0 keeps stored shape only.
+`diagnose(input, out)` ranks without narrowing. These tools accept `time_limit` and
+`memory_limit_mb`; their responses exclude names, paths and geometry.
+
+Ask the user to rebuild the candidate recipe with simple round sizes. Run
+`same_failure(input=<small file>, out=<original results>)`, explain any differences, and
+only then `make_report(input=<checked small file>, out=<original results>)`. The ZIP is
+local at `out/diagnose/dutchman-report.zip` and contains geometry. Do not read the design,
+local-key.json or the ZIP into model context. Have the user review it locally and choose
+what to share. No diagnostic tool sends anything. `doctor` is not available yet.

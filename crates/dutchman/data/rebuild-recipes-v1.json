@@ -1,0 +1,108 @@
+{
+  "schema": "dutchman.recipes/1",
+  "recipes": [
+    {
+      "class": "extrude",
+      "steps": [
+        "Draw a closed sketch, using a 20 mm square or a 10 mm circle as a starting size.",
+        "Keep the recorded loop counts and curve kinds. Add inner loops inside the outer loop, spaced apart.",
+        "Use {operation}. Match the recorded direction, operation, start and end conditions; make a simple support body or target face first if needed. Use 10 mm for a trial distance."
+      ]
+    },
+    {
+      "class": "revolve",
+      "steps": [
+        "Draw a closed profile beside a construction axis, using round sizes such as 10 mm and 20 mm.",
+        "Keep the recorded loop counts and curve kinds.",
+        "Use {operation} about that axis. Match the recorded direction, operation and extent; use 90 degrees for a partial turn or 360 degrees for a full turn."
+      ]
+    },
+    {
+      "class": "fillet",
+      "steps": [
+        "Make a 20 mm block with a 10 mm extrusion.",
+        "Use {operation} on an edge. Start with a 2 mm radius; match the recorded options and the arrangement of the selected edges."
+      ]
+    },
+    {
+      "class": "chamfer",
+      "steps": [
+        "Make a 20 mm block with a 10 mm extrusion.",
+        "Use {operation} on an edge. Start with a 2 mm distance; match the recorded options and the arrangement of the selected edges."
+      ]
+    },
+    {
+      "class": "hole",
+      "steps": [
+        "Make a 20 mm block with a 10 mm extrusion and a sketch point on its face.",
+        "Use {operation} at that point. Start with a 5 mm diameter; match the recorded hole type, operation and end condition."
+      ]
+    }
+  ],
+  "programs": [
+    {
+      "name": "Fusion",
+      "new": "Create a new design and sketch.",
+      "save": "Export the small design as .f3d.",
+      "operations": {
+        "extrude": "Extrude",
+        "revolve": "Revolve",
+        "fillet": "Fillet",
+        "chamfer": "Chamfer",
+        "hole": "Hole"
+      },
+      "hints": {
+        "extrude": "For two sided extrusion, choose Two Sides. For an end at a face, choose To Object and select the simple target face."
+      }
+    },
+    {
+      "name": "Inventor",
+      "new": "Create a new part and 2D Sketch.",
+      "save": "Save the small part as .ipt.",
+      "operations": {
+        "extrude": "Extrude",
+        "revolve": "Revolve",
+        "fillet": "Fillet",
+        "chamfer": "Chamfer",
+        "hole": "Hole"
+      },
+      "hints": {
+        "extrude": "For extrusion in both directions, enable the second direction. For an end at a face, use To and select the simple target face."
+      }
+    },
+    {
+      "name": "SolidWorks",
+      "new": "Create a new Part and Sketch.",
+      "save": "Save the small part as .sldprt.",
+      "operations": {
+        "extrude": "Extruded Boss/Base or Extruded Cut",
+        "revolve": "Revolved Boss/Base or Revolved Cut",
+        "fillet": "Fillet",
+        "chamfer": "Chamfer",
+        "hole": "Hole Wizard"
+      },
+      "hints": {
+        "extrude": "For extrusion in both directions, enable Direction 2. For an end at a face, use Up To Surface and select the simple target face."
+      }
+    },
+    {
+      "name": "FreeCAD",
+      "new": "Create a new document, Part Design Body and Sketch.",
+      "save": "Save the small document as .FCStd.",
+      "operations": {
+        "extrude": "Pad or Pocket",
+        "revolve": "Revolution or Groove",
+        "fillet": "Fillet",
+        "chamfer": "Chamfer",
+        "hole": "Hole"
+      },
+      "hints": {
+        "extrude": "For extrusion, use Pad for added material or Pocket for removed material. Use Up to face when the recorded end is a face; match both sides when available in your version."
+      }
+    }
+  ],
+  "generic": [
+    "Build one simple body using round sizes such as 10 mm and 20 mm.",
+    "Recreate only the recorded feature and its required sketches, supports or neighbours. Match the recorded options, profile loop counts and curve kinds. If no feature was identified, start with the simplest shape that shows the recorded error."
+  ]
+}
