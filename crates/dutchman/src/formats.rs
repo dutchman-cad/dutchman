@@ -24,7 +24,7 @@ pub fn converts(format: Format) -> &'static str {
             "as a Fusion archive, with referenced designs merged in by cadmpeg"
         }
         Format::InventorPart => "geometry; feature history when every feature maps",
-        Format::InventorAssembly => {
+        Format::InventorAssembly | Format::SolidWorksAssembly => {
             "placed parts and sub-assemblies, read from their files in the project"
         }
         Format::FreeCadDocument => {

@@ -7,6 +7,7 @@
 //! part file is read once, however often it is placed.
 
 mod freecad;
+mod solidworks;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -317,6 +318,8 @@ pub(crate) fn read(
         open.push(key);
         let resolved = if format == Format::FreeCadDocument {
             freecad::resolve(&model, input, report, decode, finder, open)
+        } else if format == Format::SolidWorksAssembly {
+            solidworks::resolve(&model, input, report, decode, finder, open)
         } else {
             resolve(&model, input, report, decode, finder, open).map(Some)
         };

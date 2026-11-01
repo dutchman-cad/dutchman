@@ -183,16 +183,12 @@ fn hostile_inputs_are_errors_not_panics() {
 }
 
 #[test]
-fn formats_without_a_decoder_are_not_supported_yet() {
+fn solidworks_assemblies_reach_the_reader() {
+    assert_eq!(Format::SolidWorksAssembly.codec_id(), Some("sldprt"));
+    assert!(Format::SolidWorksAssembly.can_convert());
     let path = scratch("assembly.sldasm", b"anything");
-    let mut report = Report::default();
-    let err = read(Format::SolidWorksAssembly, &path, &mut report).unwrap_err();
-    assert!(matches!(
-        err,
-        Error::NotSupportedYet {
-            format: Format::SolidWorksAssembly
-        }
-    ));
+    let err = read(Format::SolidWorksAssembly, &path, &mut Report::default()).unwrap_err();
+    assert!(!matches!(err, Error::NotSupportedYet { .. }));
 }
 
 #[test]
@@ -287,11 +283,7 @@ fn conversion_requires_geometry_and_an_available_codec() {
     for format in Format::ALL {
         let geometry = !matches!(
             format,
-            Format::CreoPart
-                | Format::NxPart
-                | Format::SolidWorksAssembly
-                | Format::UnclassifiedPart
-                | Format::Iges
+            Format::CreoPart | Format::NxPart | Format::UnclassifiedPart | Format::Iges
         );
         assert_eq!(format.reads_geometry(), geometry, "{}", format.name());
         assert_eq!(
@@ -312,7 +304,10 @@ fn published_headlines_are_independent_of_codec_availability() {
         Some("L5")
     );
     assert_eq!(Format::Iges.headline_level().as_deref(), Some("L9"));
-    assert_eq!(Format::SolidWorksAssembly.headline_level(), None);
+    assert_eq!(
+        Format::SolidWorksAssembly.headline_level(),
+        Format::SolidWorksPart.headline_level()
+    );
     assert_eq!(Format::UnclassifiedPart.headline_level(), None);
 }
 
@@ -405,4 +400,36 @@ fn progress_counts_successful_documents_and_preserves_read_results() {
         .unwrap()
         .iter()
         .all(|event| event.designs_read == 0));
+}
+
+#[test]
+fn solidworks_assembly_resolves_parts_and_keeps_reader_losses() {
+    let mut report = Report::default();
+    let model = read(
+        Format::SolidWorksAssembly,
+        &fixture("placed_cubes.sldasm"),
+        &mut report,
+    )
+    .unwrap();
+    let assembly = model.assembly.unwrap();
+    let parts = assembly.parts[0].assembly.as_ref().unwrap();
+    assert_eq!(parts.placements.len(), 2);
+    assert_eq!(parts.parts.len(), 1);
+    assert_eq!(
+        parts.placements[1].transform,
+        [
+            [0.0, -1.0, 0.0, 30.0],
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0]
+        ]
+    );
+    for word in ["suppressed", "mirrored"] {
+        assert!(
+            report
+                .losses()
+                .iter()
+                .any(|loss| loss.detail.to_lowercase().contains(word)),
+            "{report:?}"
+        );
+    }
 }

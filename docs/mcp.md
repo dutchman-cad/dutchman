@@ -251,6 +251,10 @@ geometry, including nested placements. Mirrored copies use imported geometry onl
 reflections; Dropped notes name each non-finite, scaled, or sheared occurrence left out by
 index and kind. Tiny numeric drift is corrected.
 
+SolidWorks `.sldasm` uses the same `project` and `search` arguments as Inventor assemblies.
+External parts and sub-assemblies resolve recursively; unreadable occurrences and unavailable
+referenced configurations appear in the shared conversion report.
+
 FreeCAD external Body and Part links are resolved beside the assembly first, then through
 `project` and `search`. A missing linked `.FCStd` file is left out and named in losses and
 `completeness.left_out`; available components still convert. Link arrays place each element
@@ -425,8 +429,8 @@ A conversion that fails is a tool error (`isError: true`) carrying its failure r
 ```json
 {"jsonrpc":"2.0","id":4,"result":{"isError":true,"content":"…","structuredContent":{
   "schema":"dutchman.convert/1","ok":false,
-  "input":{"format":"solidworks_assembly","format_name":"SolidWorks assembly (.sldasm)","path":"/home/me/designs/a.sldasm"},
-  "error":{"message":"SolidWorks assembly (.sldasm) files are not supported yet. Export a STEP file for SolidCraft to open; Dutchman's issues (https://github.com/dutchman-cad/dutchman/issues) say when SolidWorks files will convert."}}}}
+  "input":{"format":"unclassified_part","format_name":"Creo or NX part (.prt)","path":"/home/me/designs/a.prt"},
+  "error":{"message":"Creo or NX part (.prt): reading geometry is not supported yet. Export a STEP file for SolidCraft to open."}}}}
 ```
 
 Arguments a tool cannot take (a missing `output`, an unknown argument, a mistyped value) fail

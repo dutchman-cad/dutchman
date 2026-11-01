@@ -1,4 +1,4 @@
-//! Finding the files an Inventor assembly places, as Inventor does: at the path the assembly
+//! Finding the files an assembly places: at the path the assembly
 //! stores (relative to it, else absolute with the saving machine's drive or root moved onto
 //! this one), else by name in the project's folders: in the most of the stored folders, then
 //! nearest the assembly. The project's folders are the project folder, then the workspace,
@@ -53,7 +53,7 @@ impl PartSearch {
 
 /// Where an assembly's files are looked for: the project folder, given or found from the
 /// first assembly read, then the folders its Inventor project file names, then the other
-/// folders given, each with the Inventor files under it by name, listed once when first
+/// folders given, each with the part and assembly files under it by name, listed once when first
 /// needed.
 #[derive(Default)]
 pub(crate) struct Finder {
@@ -87,7 +87,7 @@ pub(crate) struct NamedFolder {
     pub(crate) path: Option<PathBuf>,
 }
 
-/// The Inventor files under the project folder, by lower-case file name.
+/// The part and assembly files under the project folder, by lower-case file name.
 #[derive(Default)]
 struct Index {
     by_name: BTreeMap<String, Vec<PathBuf>>,
@@ -430,7 +430,7 @@ fn pick(index: &Index, components: &[&str], folder: &Path, base: &Path) -> Optio
 }
 
 impl Index {
-    /// The Inventor files under `root`, leaving out Inventor's backup folders (`OldVersions`),
+    /// The part and assembly files under `root`, leaving out Inventor's backup folders (`OldVersions`),
     /// folders holding another project file, hidden folders and symbolic links, so a link
     /// cannot make the search loop.
     fn of(root: &Path) -> Index {
@@ -474,6 +474,8 @@ impl Index {
                 } else if kind.is_file()
                     && (name.ends_with(".ipt")
                         || name.ends_with(".iam")
+                        || name.ends_with(".sldprt")
+                        || name.ends_with(".sldasm")
                         || name.ends_with(".fcstd"))
                 {
                     index.by_name.entry(name).or_default().push(entry.path());

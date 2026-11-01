@@ -13,7 +13,7 @@ The desktop app's **Formats** list shows the same.
 | Inventor part | `.ipt` | Reads geometry | L3 | Geometry; feature history when every feature maps |
 | Inventor assembly | `.iam` | Reads geometry | L3 | Placed parts and sub-assemblies, read from their files in the project |
 | SolidWorks part | `.sldprt` | Reads geometry | L3 | Geometry; feature history waits on cadmpeg binding sketches and extrude profiles |
-| SolidWorks assembly | `.sldasm` | Recognised, not read yet | – | Not yet |
+| SolidWorks assembly | `.sldasm` | Reads geometry | L3 | Placed parts and sub-assemblies, read from their files in the project |
 | FreeCAD document | `.FCStd` | Reads geometry | L5 | Geometry and components; feature history and joints when they map |
 | CATIA part | `.CATPart` | Reads geometry | L3 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | Creo part | `.prt`, `.prt.N` | Opens, no geometry yet | L1 | Not yet |

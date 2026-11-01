@@ -290,12 +290,16 @@ cells produce an `Info` note. These are mapping observations, not additional sch
 `verification.status: verified` compares initial geometry and does not certify that every
 source expression was decoded or that edits reproduce the source design's dependencies.
 
+SolidWorks assembly reports use `input.format: "solidworks_assembly"` and
+`input.words: "reads geometry"`. The existing assembly completeness and loss fields report
+external occurrences left out and configuration fallbacks.
+
 A failure carries `"ok": false`, `input` and `error`, and exits 1:
 
 ```json
 {"schema": "dutchman.convert/1", "ok": false,
- "input": {"path": "assembly.sldasm", "format": "solidworks_assembly", "format_name": "SolidWorks assembly (.sldasm)"},
- "error": {"message": "SolidWorks assembly (.sldasm) files are not supported yet. …",
+ "input": {"path": "part.prt", "format": "creo_part", "format_name": "Creo part (.prt, .prt.N)"},
+ "error": {"message": "Creo part (.prt, .prt.N): reading geometry is not supported yet. …",
            "stage": "decode", "upstream": "cadmpeg"}}
 ```
 

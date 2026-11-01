@@ -109,7 +109,7 @@ fn scratch(name: &str) -> PathBuf {
 }
 
 #[test]
-fn convert_reports_unsupported_format_cleanly() {
+fn convert_reports_unreadable_solidworks_assembly_cleanly() {
     let input = scratch("assembly.sldasm");
     std::fs::write(&input, b"not really an assembly").unwrap();
     let output = scratch("assembly.solidcraft");
@@ -118,10 +118,7 @@ fn convert_reports_unsupported_format_cleanly() {
 
     assert_eq!(out.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("reading geometry is not supported yet. Export a STEP file"),
-        "{stderr}"
-    );
+    assert!(stderr.contains("cannot read"), "{stderr}");
     assert!(!output.exists(), "no output file is created on failure");
 }
 
@@ -590,6 +587,18 @@ fn formats_lists_what_converts() {
         .find(|f| f["id"] == "solidworks_part")
         .unwrap();
     assert_eq!(solidworks["status"], "converts");
+    let assembly = report["formats"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["id"] == "solidworks_assembly")
+        .unwrap();
+    assert_eq!(assembly["status"], "converts");
+    assert_eq!(assembly["words"], "reads geometry");
+    assert!(assembly["converts"]
+        .as_str()
+        .unwrap()
+        .contains("sub-assemblies"));
 
     let iges = report["formats"]
         .as_array()
@@ -2281,11 +2290,9 @@ fn threads_accepts_serial_and_auto_on_conversion_commands() {
     }
 }
 
+#[cfg(feature = "freecad")]
 #[test]
 fn part_threads_keep_assembly_json_and_design_bytes_identical() {
-    if !dutchman_core::Format::FreeCadDocument.can_convert() {
-        return;
-    }
     let dir = tempfile::tempdir().unwrap();
     let input = fixture("freecad-1.1.4-A01/A01a.FCStd");
     let output = dir.path().join("assembly.solidcraft");

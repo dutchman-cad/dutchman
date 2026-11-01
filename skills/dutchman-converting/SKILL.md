@@ -174,7 +174,12 @@ For anything else, don't try workarounds such as renaming the file. Tell the use
   and refused before decoding: "Dutchman doesn't convert IGES yet: open it in SolidCraft
   directly (File > Import)." Use SolidCraft's own importer. Batch results retain the same
   refusal; do not invite the user to make IGES test files.
-- **SolidWorks assemblies (`.sldasm`)**, Creo and NX: reading geometry is not supported yet.
+- **SolidWorks assemblies (`.sldasm`)** convert placed parts and sub-assemblies. Keep part
+  files beside the assembly, or use `project` / `search` (`--project` / `--search`). Missing
+  and unreadable occurrences are left out and reported. Unavailable referenced configurations
+  fall back to the saved active configuration with a Degraded loss. Suppressed and mirrored
+  components follow cadmpeg's loss notes.
+- **Creo and NX**: reading geometry is not supported yet.
   Suggest exporting STEP from the program that made the design and converting that.
 - **Inventor assemblies (`.iam`)** convert, but need their part files next to the assembly
   (or at the paths it stores). If parts are missing, the report lists them as `Dropped`.
