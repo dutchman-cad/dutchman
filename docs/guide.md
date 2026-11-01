@@ -387,3 +387,55 @@ In the desktop app, choose **Diagnose this file** on the failure card for progre
 the recipe, **Check my small file**, and **Make the report**. The report ZIP stays local
 and contains the small file's geometry. Review it before choosing to share it.
 The [MCP tools](mcp.md#anonymous-diagnostic-tools) provide the same steps for an assistant.
+
+## Check a folder locally
+
+`dutchman doctor designs --out checked --jobs 2 --memory-mb 8192 --json` plans
+folders and project ZIPs with the same rules as `convert-all`: top-level assemblies,
+their referenced parts, and unused parts. It converts in isolated workers, then runs
+part diagnosis. `--memory-mb` is the total converter budget, divided across concurrent
+designs; CPU availability caps `--jobs`. `--time-limit 5m` limits each diagnose part.
+Run the same command again to resume. Completed checks are reused when the project
+inventory, choices, budgets and matching STEP metadata agree. Keep the output outside
+the input folder. Default output is a stable sibling named `designs (Doctor)`.
+
+Only `checked/report.json` is anonymous. Converted designs, `local-key.json` and
+`private-checkpoints/` stay private. Findings are grouped locally by signature with
+counts. A broad error category is a candidate group, not proof of the same defect.
+Nothing is sent. Review advisory findings before making a report.
+
+`dutchman diagnose big.f3z --step big.step --out checked` compares stored geometry
+against an export of the same design. An unambiguous same-name `.step` or `.stp`
+beside a native file is found automatically, including inside a folder or ZIP.
+`doctor --step reference.step` accepts a project with one conversion job. Use
+`diagnose --part 17` or `doctor --part 17` to record a report target. This does not
+change the geometry being compared or replace `convert --part`.
+
+STEP results use evaluated **body numbers**, which can differ from diagnose part
+numbers for assemblies and repeated occurrences. Matching uses geometry, placement
+and stable order, never names. Results are worst first and contain volume, area,
+bounding box, face counts where available, and placement differences. Current
+thresholds are 1% volume/area and the greater of 0.1 mm or 0.1% of the body diagonal
+for bounds/placement. Face counts alone never flag a difference. Missing measurements
+are explicit. These thresholds have synthetic coverage; a public-corpus false-positive
+rate has not been established, so they are advisory. No automatic report is sent.
+The STEP itself stays local; use the private-send card if you choose to share it.
+
+Every successful SolidCraft result also gets an advisory body comparison against the
+source's stored geometry. Partial-history outputs skip this comparison because eval
+includes intentionally hidden editable bodies; the normal history verification still
+runs. Where supported, SolidCraft writes private whole-design snapshot pairs for
+flagged comparisons under `diagnose/preview/`. Their PNGs and staged designs carry
+geometry. Review them locally; they are excluded from anonymous tool results.
+
+Memory supervision includes kernel subprocesses on Linux, macOS and Windows; a stopped
+worker stops its process group/tree too. These are sampled resident-memory limits,
+not an operating-system reservation. The folder planner runs before worker supervision.
+Resume fingerprints include resolved external assembly references (up to 10,000 files);
+an incomplete dependency inventory is checked afresh.
+
+Real SolidCraft controls on the three published synthetic cube fixtures (Fusion,
+Inventor and SolidWorks) produced 0 flags in 3 comparisons against matching STEP.
+A planted 1 mm move in a two-instance assembly was detected, and snapshot pairs were
+produced. These small controls establish basic behavior, not a false-positive rate
+for large assemblies or arbitrary designs.

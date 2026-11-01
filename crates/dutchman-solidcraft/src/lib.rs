@@ -11,6 +11,7 @@
 //! so it carries none of SolidCraft's kernel or renderer.
 
 mod assembly;
+pub mod compare;
 mod container;
 mod document;
 mod history;

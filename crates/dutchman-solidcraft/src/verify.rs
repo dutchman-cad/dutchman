@@ -931,6 +931,20 @@ fn evaluate(
     name: &str,
     design: &[u8],
 ) -> Result<Evaluation, String> {
+    let value = evaluate_json(cli, timeout, dir, name, design)?;
+    if let Some(why) = value.get("evaluation_failed").and_then(Value::as_str) {
+        return Ok(Evaluation::Failed(why.to_owned()));
+    }
+    parse(&value).map(Evaluation::Done)
+}
+
+pub(crate) fn evaluate_json(
+    cli: &Path,
+    timeout: Duration,
+    dir: &Path,
+    name: &str,
+    design: &[u8],
+) -> Result<Value, String> {
     let input = dir.join(format!("{name}.solidcraft"));
     let output = dir.join(format!("{name}.json"));
     std::fs::write(&input, design).map_err(|err| format!("cannot stage the design: {err}"))?;
@@ -966,15 +980,24 @@ fn evaluate(
         if let Some(why) = blocked_failure(cli) {
             return Err(why);
         }
-        return Ok(Evaluation::Failed(format!(
-            "{CLI_NAME} exited with {status}"
-        )));
+        return Ok(
+            serde_json::json!({"evaluation_failed": format!("{CLI_NAME} exited with {status}")}),
+        );
     }
-    let text = std::fs::read_to_string(&output)
-        .map_err(|err| format!("{CLI_NAME} wrote no result: {err}"))?;
+    use std::io::Read;
+    let mut text = String::new();
+    std::fs::File::open(&output)
+        .map_err(|err| format!("{CLI_NAME} wrote no result: {err}"))?
+        .take((64 << 20) + 1)
+        .read_to_string(&mut text)
+        .map_err(|err| format!("{CLI_NAME} result could not be read: {err}"))?;
+    if text.len() > (64 << 20) {
+        return Err(format!("{CLI_NAME} result exceeds 64 MiB"));
+    }
+
     let value: Value =
         serde_json::from_str(&text).map_err(|err| format!("{CLI_NAME} result: {err}"))?;
-    parse(&value).map(Evaluation::Done)
+    Ok(value)
 }
 
 /// One edge of a body SolidCraft replayed, as `model.edges` gives it: its end vertices, the

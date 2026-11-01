@@ -16,6 +16,7 @@ pub mod batch;
 pub mod choices;
 pub mod diagnose;
 pub mod diagnostics;
+pub mod doctor;
 pub mod dxf;
 pub mod formats;
 pub mod issue;

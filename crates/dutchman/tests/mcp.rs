@@ -96,6 +96,8 @@ fn an_mcp_client_converts_through_dutchman() {
     assert_eq!(
         names,
         [
+            "doctor",
+            "compare_step",
             "convert",
             "inspect",
             "formats",
@@ -172,7 +174,13 @@ fn an_mcp_client_converts_through_dutchman() {
         .unwrap()
         .contains("already exists"));
     assert_eq!(std::fs::read(&output).unwrap(), b"SENTINEL");
-    let schema = tools["result"]["tools"][0]["inputSchema"]["properties"].clone();
+    let schema = tools["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "convert")
+        .unwrap()["inputSchema"]["properties"]
+        .clone();
     assert!(schema["output"]["description"]
         .as_str()
         .unwrap()
@@ -528,5 +536,46 @@ fn mcp_narrows_checks_and_builds_a_report_with_anonymous_results() {
         assert!(!text.contains(dir.path().to_str().unwrap()));
         assert!(!text.contains("design_history"));
     }
+    client.finish();
+}
+
+#[test]
+fn local_check_tools_return_anonymous_reports_and_fixed_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("private-project");
+    std::fs::create_dir(&input).unwrap();
+    let file = input.join("private-part.f3d");
+    std::fs::copy(fixture("generated_unit_cube.f3d"), &file).unwrap();
+    let mut client = Client::start();
+    for (tool, arguments) in [
+        (
+            "diagnose",
+            json!({"input": file,"out": dir.path().join("ranked"),"part":1,
+                "step_path":dir.path().join("private-missing.step"),
+                "time_limit":"30s","memory_limit_mb":2048}),
+        ),
+        (
+            "compare_step",
+            json!({"input": file,"step_path": dir.path().join("private-missing.step"),
+                "time_limit":30,"memory_mb":2048}),
+        ),
+        (
+            "doctor",
+            json!({"input": input,"out":dir.path().join("checked"),"jobs":1,"memory_mb":2048}),
+        ),
+    ] {
+        let result = client.call(tool, arguments);
+        assert_eq!(result["isError"], false, "{result}");
+        let text = result.to_string();
+        assert!(!text.contains("private-"), "{text}");
+        assert!(
+            !text.contains(&dir.path().to_string_lossy().to_string()),
+            "{text}"
+        );
+    }
+    let failed = client.call("diagnose", json!({"input":file,"out":false}));
+    assert_eq!(failed["isError"], true);
+    assert_eq!(failed["structuredContent"]["input"], Value::Null);
+    assert!(!failed.to_string().contains("private-"));
     client.finish();
 }

@@ -55,6 +55,7 @@ pub struct App {
     pub updater: crate::update::Updater,
     diagnosis: Option<crate::diagnose::Wizard>,
     inputs: Vec<PathBuf>,
+    doctor: Option<crate::doctor::Page>,
     project_summary: String,
     has_inventor: bool,
     custom: bool,
@@ -234,6 +235,7 @@ impl App {
         App {
             updater: crate::update::Updater::new(stored.as_ref().and_then(|v| v.get("update"))),
             inputs: Vec::new(),
+            doctor: None,
             project_summary: String::new(),
             has_inventor: false,
             custom,
@@ -758,6 +760,12 @@ impl App {
 
     /// Draws the window, for eframe and for tests.
     pub fn ui(&mut self, ctx: &egui::Context) {
+        if let Some(page) = &mut self.doctor {
+            if page.ui(ctx) {
+                self.doctor = None;
+            }
+            return;
+        }
         if ctx.input(|input| {
             input
                 .events
@@ -1095,6 +1103,9 @@ impl App {
                     if ui.button("Add files…").clicked() {
                         worker::pick(Pick::Files, self.sender.clone(), ui.ctx().clone());
                     }
+                    if ui.button("Check a folder").clicked() {
+                        self.doctor = Some(crate::doctor::Page::new(None));
+                    }
                     if ui.button("Add folder…").clicked() {
                         worker::pick(Pick::Folder, self.sender.clone(), ui.ctx().clone());
                     }
@@ -1411,6 +1422,12 @@ impl App {
         let result = match action {
             Some(Action::Open(path)) => platform::open_in_solidcraft(&path),
             Some(Action::Reveal(path)) => platform::reveal(&path),
+            Some(Action::Check(index)) => {
+                if let Some(row) = self.rows.get(index) {
+                    self.doctor = Some(crate::doctor::Page::new(Some(row.input.clone())));
+                }
+                Ok(())
+            }
             Some(Action::Pick(pick)) => {
                 worker::pick(pick, self.sender.clone(), ui.ctx().clone());
                 Ok(())
@@ -1478,6 +1495,7 @@ impl eframe::App for App {
 
 enum Action {
     Diagnose(usize),
+    Check(usize),
     Open(PathBuf),
     Reveal(PathBuf),
     Pick(Pick),
@@ -1566,6 +1584,9 @@ fn row_ui(
         } else {
             ui.add(egui::Spinner::new().size(14.0).color(p.lantern));
         }
+    }
+    if !running && row.report.is_some() && ui.button("Add matching STEP").clicked() {
+        action = Some(Action::Check(index));
     }
     if let Some(status) = &view.capability {
         ui.label(status);

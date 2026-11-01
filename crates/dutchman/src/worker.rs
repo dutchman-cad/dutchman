@@ -501,7 +501,7 @@ fn supervise(
         if let Some(limit) = limits.max_memory {
             if measured.elapsed() >= MEMORY_POLL {
                 measured = Instant::now();
-                if let Some(held) = resident_bytes(child.id()).filter(|held| *held > limit) {
+                if let Some(held) = resident_tree_bytes(child.id()).filter(|held| *held > limit) {
                     stop(child);
                     return Stopped::OverMemory(held);
                 }
@@ -511,9 +511,113 @@ fn supervise(
     }
 }
 
-fn stop(child: &mut Child) {
+pub(crate) fn stop(child: &mut Child) {
+    // Include kernels started by a worker, retaining the parent's normal signal group.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    if let Some(processes) = process_tree(child.id()) {
+        let _ = Command::new("kill")
+            .arg("-KILL")
+            .args(processes.into_iter().map(|(pid, _)| pid.to_string()))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+    }
+    #[cfg(windows)]
+    let _ = Command::new("taskkill")
+        .args(["/PID", &child.id().to_string(), "/T", "/F"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
     let _ = child.kill();
     let _ = child.wait();
+}
+
+/// Converter memory including kernel subprocesses where the process tree is available.
+#[cfg(target_os = "linux")]
+fn process_tree(pid: u32) -> Option<Vec<(u32, u64)>> {
+    let mut pending = vec![pid];
+    let mut seen = std::collections::BTreeSet::new();
+    let mut processes = Vec::new();
+    while let Some(current) = pending.pop() {
+        if !seen.insert(current) {
+            continue;
+        }
+        if seen.len() > 4096 {
+            return None;
+        }
+        processes.push((current, resident_bytes(current).unwrap_or(0)));
+        // Children are listed per thread, including kernels started by part workers.
+        if let Ok(tasks) = std::fs::read_dir(format!("/proc/{current}/task")) {
+            for task in tasks.take(4096).filter_map(Result::ok) {
+                if let Ok(children) = std::fs::read_to_string(task.path().join("children")) {
+                    pending.extend(
+                        children
+                            .split_whitespace()
+                            .filter_map(|p| p.parse::<u32>().ok()),
+                    );
+                    if pending.len() > 4096 {
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+    Some(processes)
+}
+
+#[cfg(any(target_os = "macos", windows))]
+fn process_tree(pid: u32) -> Option<Vec<(u32, u64)>> {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+    let mut system = System::new();
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        true,
+        ProcessRefreshKind::nothing().with_memory(),
+    );
+    let mut children = std::collections::BTreeMap::<Pid, Vec<Pid>>::new();
+    for (id, process) in system.processes() {
+        if let Some(parent) = process.parent() {
+            children.entry(parent).or_default().push(*id);
+        }
+    }
+    let mut pending = vec![Pid::from_u32(pid)];
+    let mut seen = std::collections::BTreeSet::new();
+    let mut processes = Vec::new();
+    while let Some(current) = pending.pop() {
+        if !seen.insert(current) {
+            continue;
+        }
+        if seen.len() > 4096 {
+            return None;
+        }
+        processes.push((
+            current.as_u32(),
+            system.process(current).map_or(0, |p| p.memory()),
+        ));
+        pending.extend(children.get(&current).into_iter().flatten().copied());
+    }
+    Some(processes)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", windows))]
+pub(crate) fn resident_tree_bytes(pid: u32) -> Option<u64> {
+    match process_tree(pid) {
+        Some(processes) => {
+            let bytes = processes
+                .into_iter()
+                .map(|(_, memory)| memory)
+                .fold(0u64, u64::saturating_add);
+            (bytes > 0).then_some(bytes)
+        }
+        None => Some(u64::MAX),
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+pub(crate) fn resident_tree_bytes(pid: u32) -> Option<u64> {
+    resident_bytes(pid)
 }
 
 /// The memory process `pid` holds, in bytes, when it can be measured.
@@ -563,4 +667,33 @@ pub(crate) fn resident_bytes(pid: u32) -> Option<u64> {
 #[cfg(not(any(unix, windows)))]
 pub(crate) fn resident_bytes(_pid: u32) -> Option<u64> {
     None
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tree_tests {
+    use super::*;
+    #[test]
+    fn a_worker_limit_counts_and_stops_its_kernel_children() {
+        use std::os::unix::process::CommandExt;
+        let mut command = Command::new("bash");
+        command.args(["-c", "sleep 30 & wait"]).process_group(0);
+        let mut child = command.spawn().unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        let own = resident_bytes(child.id()).unwrap();
+        let tree = resident_tree_bytes(child.id()).unwrap();
+        assert!(tree > own);
+        let children =
+            std::fs::read_to_string(format!("/proc/{}/task/{}/children", child.id(), child.id()))
+                .unwrap();
+        stop(&mut child);
+        for pid in children.split_whitespace() {
+            // A killed child may briefly remain a zombie until reaped, but holds no RSS.
+            let pid = pid.parse().unwrap();
+            let deadline = Instant::now() + Duration::from_secs(1);
+            while resident_bytes(pid).unwrap_or(0) > 0 && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            assert_eq!(resident_bytes(pid).unwrap_or(0), 0);
+        }
+    }
 }

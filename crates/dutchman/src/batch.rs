@@ -913,7 +913,7 @@ pub fn run_each(
 
 /// Runs `convert` on every job with `workers` threads, as [`run_each`] does, adding each
 /// file's time to its report as `elapsed_ms`.
-fn run_with(
+pub(crate) fn run_with(
     work: &[Job],
     workers: usize,
     stop: &AtomicBool,

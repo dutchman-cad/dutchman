@@ -158,6 +158,8 @@ fn answer(method: &str, params: &Value) -> Result<Value, (i64, String)> {
                 | "same_failure" | "make_report" => {
                     (diagnostic(name, arguments), diagnostic_schema(name))
                 }
+                "compare_step" => (compare_step(arguments), "dutchman.compare-step/1"),
+                "doctor" => (doctor_tool(arguments), crate::doctor::SCHEMA),
                 _ => return Err((INVALID_PARAMS, format!("no tool named {name}"))),
             };
             // Arguments the tool cannot take fail as the tool fails: a report with the reason,
@@ -181,7 +183,9 @@ fn answer(method: &str, params: &Value) -> Result<Value, (i64, String)> {
                     .map_or(Value::Null, |input| {
                         crate::json::input(std::path::Path::new(input))
                     });
-                crate::json::failure(schema, input, &message)
+                if matches!(name, "diagnose" | "doctor" | "compare_step") {
+                    crate::json::failure(schema, Value::Null, "The local check could not finish. Check the input, output folder and resource limits, then retry.")
+                } else { crate::json::failure(schema, input, &message) }
             })))
         }
         _ => Err((METHOD_NOT_FOUND, format!("no method {method}"))),
@@ -315,7 +319,31 @@ fn tools() -> Value {
         "report_key".to_owned(),
         json!({"type": "string", "description": "Absolute path to write the key from each anonymous id to its file's path to. Keep it private."}),
     );
+    let diagnostic = json!({
+        "input": input, "out": {"type": "string", "description": "Local checkpoint folder; keep private."},
+        "step_path": {"type": "string", "description": "Matching STEP export; otherwise an adjacent same-name STEP is found."},
+        "part": {"type": "integer", "minimum": 1, "description": "Anonymous report target."},
+        "time_limit": {"type": ["integer", "string"], "description": "Positive whole seconds or a duration such as 30s or 5m."},
+        "memory_mb": {"type": "integer", "minimum": 256, "description": "Converter memory budget in MiB."},
+        "jobs": {"type": "integer", "minimum": 1, "description": "Doctor only: maximum concurrent designs."},
+        "narrow": {"type": "boolean", "description": "Diagnose only: narrow a conversion failure."}
+    });
+    let mut diagnose_properties = diagnostic.as_object().cloned().unwrap_or_default();
+    diagnose_properties.remove("jobs");
+    let mut doctor_properties = diagnostic.as_object().cloned().unwrap_or_default();
+    doctor_properties.remove("narrow");
+    let mut compare_properties = diagnose_properties.clone();
+    compare_properties.remove("narrow");
+    compare_properties.remove("out");
+    compare_properties.insert(
+        "memory_limit_mb".into(),
+        json!({"type":"integer","minimum":1,"description":"Alias of memory_mb; choose one."}),
+    );
     let mut listed = json!([
+        {"name": "doctor", "title": "Check a folder", "description": "Check a folder or project ZIP locally with CPU and total memory budgets and private checkpoints. Returns anonymous findings grouped by signature. Nothing is sent.",
+            "inputSchema": {"type": "object", "properties": doctor_properties, "required": ["input", "out"], "additionalProperties": false}},
+        {"name": "compare_step", "title": "Compare matching STEP", "description": "Compare stored geometry with a STEP export under resource limits. Anonymous body numbers and measurements only; advisory, worst first. Nothing is sent.",
+            "inputSchema": {"type": "object", "properties": compare_properties, "required": ["input"], "additionalProperties": false}},
         {
             "name": "convert",
             "title": "Convert a CAD file",
@@ -366,6 +394,95 @@ fn repro(arguments: &Arguments) -> Result<Value, String> {
         &path(arguments, "input")?,
         &path(arguments, "out")?,
         flag(arguments, "include_local_key", false)?,
+    )
+}
+
+fn diagnostic_settings(arguments: &Arguments) -> Result<crate::diagnose::Settings, String> {
+    let mut settings = crate::diagnose::Settings::default();
+    if let Some(value) = arguments.get("time_limit").filter(|v| !v.is_null()) {
+        settings.time_limit = if let Some(text) = value.as_str() {
+            crate::diagnose::parse_duration(text)?
+        } else {
+            let seconds = value
+                .as_u64()
+                .filter(|n| *n > 0)
+                .ok_or("time_limit must be a duration")?;
+            crate::diagnose::parse_duration(&seconds.to_string())?
+        };
+    }
+    if arguments.get("memory_mb").is_some_and(|v| !v.is_null())
+        && arguments
+            .get("memory_limit_mb")
+            .is_some_and(|v| !v.is_null())
+    {
+        return Err("Choose memory_mb or memory_limit_mb, not both".into());
+    }
+    let key = if arguments.get("memory_mb").is_some_and(|v| !v.is_null()) {
+        "memory_mb"
+    } else {
+        "memory_limit_mb"
+    };
+    if let Some(mb) = count(arguments, key)? {
+        if key == "memory_mb" && mb.get() < 256 {
+            return Err("memory_mb must be at least 256".into());
+        }
+        settings.memory_limit = Some(
+            (mb.get() as u64)
+                .checked_mul(1 << 20)
+                .ok_or("memory_limit_mb is too large")?,
+        );
+    }
+    if arguments.get("step_path").is_some_and(|v| !v.is_null()) {
+        settings.step_path = Some(path(arguments, "step_path")?);
+    }
+    settings.target_part = count(arguments, "part")?.map(NonZeroUsize::get);
+    Ok(settings)
+}
+
+fn compare_step(arguments: &Arguments) -> Result<Value, String> {
+    only(
+        arguments,
+        &[
+            "input",
+            "step_path",
+            "time_limit",
+            "memory_mb",
+            "memory_limit_mb",
+            "part",
+        ],
+    )?;
+    let input = path(arguments, "input")?;
+    let settings = diagnostic_settings(arguments)?;
+    let scratch = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let result = crate::diagnose::run(&input, scratch.path(), &settings, &|_| {})?;
+    Ok(json!({"schema": "dutchman.compare-step/1", "ok": true,
+        "comparison": result.pointer("/report/step_comparison").filter(|v| !v.is_null()).cloned().unwrap_or_else(|| json!({"status": "unavailable", "parts": [], "reason": "No unique matching STEP was found. Choose a matching STEP export."}))}))
+}
+
+fn doctor_tool(arguments: &Arguments) -> Result<Value, String> {
+    only(
+        arguments,
+        &[
+            "input",
+            "out",
+            "jobs",
+            "memory_mb",
+            "time_limit",
+            "step_path",
+            "part",
+        ],
+    )?;
+    let diagnose = diagnostic_settings(arguments)?;
+    let settings = crate::doctor::Settings {
+        jobs: count(arguments, "jobs")?,
+        memory: diagnose.memory_limit.unwrap_or(8 << 30),
+        diagnose,
+    };
+    crate::doctor::run(
+        &path(arguments, "input")?,
+        &path(arguments, "out")?,
+        &settings,
+        &|_, _| {},
     )
 }
 
@@ -665,6 +782,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn diagnostic_limits_preserve_both_argument_styles() {
+        for arguments in [
+            json!({"time_limit": "30s", "memory_limit_mb": 512}),
+            json!({"time_limit": 30, "memory_mb": 512}),
+        ] {
+            let settings = diagnostic_settings(arguments.as_object().unwrap()).unwrap();
+            assert_eq!(settings.time_limit, std::time::Duration::from_secs(30));
+            assert_eq!(settings.memory_limit, Some(512 << 20));
+        }
+        for arguments in [
+            json!({"time_limit": u64::MAX}),
+            json!({"memory_mb": 512, "memory_limit_mb": 512}),
+            json!({"memory_mb": 255}),
+        ] {
+            assert!(diagnostic_settings(arguments.as_object().unwrap()).is_err());
+        }
+    }
+
+    #[test]
     fn part_threads_are_validated_and_forwarded() {
         for requested in [0, 1, 4] {
             let arguments = json!({"threads": requested});
@@ -935,9 +1071,15 @@ fn diagnostic_tools() -> Vec<Value> {
             properties.insert("neighbours".into(), json!({"type": "boolean", "default": false}));
         }
         if name != "make_report" {
-            properties.insert("time_limit".into(), json!({"type": "string", "description": "Time per trial, such as 30s or 5m."}));
+            properties.insert("time_limit".into(), json!({"type": ["string", "integer"], "description": "Time per trial, such as 30s or 5m, or positive whole seconds."}));
             properties.insert("memory_limit_mb".into(), json!({"type": "integer", "minimum": 1}));
         }
+        if matches!(name,"diagnose" | "diagnose_narrow") {
+            properties.insert("step_path".into(),json!({"type":"string","description":"Matching STEP export; otherwise a same-name adjacent export is found."}));
+            properties.insert("part".into(),json!({"type":"integer","minimum":1,"description":"Anonymous report target."}));
+            properties.insert("memory_mb".into(),json!({"type":"integer","minimum":256,"description":"Alias of memory_limit_mb; choose one."}));
+        }
+        if name == "diagnose" { properties.insert("narrow".into(),json!({"type":"boolean","default":false})); }
         json!({"name": name, "description": format!("{description} Results carry no names, paths or geometry."),
             "inputSchema": {"type": "object", "properties": properties, "required": required, "additionalProperties": false}})
     }).collect()
@@ -954,23 +1096,18 @@ fn diagnostic(name: &str, arguments: &Arguments) -> Result<Value, String> {
     } else {
         allowed.push("out");
     }
+    if matches!(name, "diagnose" | "diagnose_narrow") {
+        allowed.extend(["step_path", "part", "memory_mb"]);
+    }
+    if name == "diagnose" {
+        allowed.push("narrow");
+    }
     if name != "make_report" {
         allowed.extend(["time_limit", "memory_limit_mb"]);
     }
     only(arguments, &allowed)?;
     let input = path(arguments, "input")?;
-    let mut rank = diagnose::Settings::default();
-    if let Some(value) = arguments.get("time_limit") {
-        rank.time_limit =
-            diagnose::parse_duration(value.as_str().ok_or("time_limit must be a duration")?)?;
-    }
-    if let Some(mb) = count(arguments, "memory_limit_mb")? {
-        rank.memory_limit = Some(
-            (mb.get() as u64)
-                .checked_mul(1 << 20)
-                .ok_or("memory_limit_mb is too large")?,
-        );
-    }
+    let rank = diagnostic_settings(arguments)?;
     let settings = narrow::NarrowSettings::new(rank, None);
     if matches!(name, "convert_part" | "stop_at_feature") {
         let part = count(arguments, "part")?.ok_or("part is required")?.get();
@@ -995,6 +1132,9 @@ fn diagnostic(name: &str, arguments: &Arguments) -> Result<Value, String> {
     }
     let out = path(arguments, "out")?;
     let result = match name {
+        "diagnose" if flag(arguments, "narrow", false)? => {
+            narrow::run(&input, &out, &settings, &|_| {})?
+        }
         "diagnose" => diagnose::run(&input, &out, &settings.rank, &|_| {})?,
         "diagnose_narrow" => narrow::run(&input, &out, &settings, &|_| {})?,
         "same_failure" => return narrow::same_failure(&input, &out, &settings, &|_| {}),

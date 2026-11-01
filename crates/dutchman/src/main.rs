@@ -38,6 +38,31 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Check a folder or project ZIP locally, resuming completed checks on the next run.
+    Doctor {
+        input: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Maximum concurrent designs, capped by available CPUs.
+        #[arg(long)]
+        jobs: Option<std::num::NonZeroUsize>,
+        /// Total converter memory budget in MiB, shared across jobs.
+        #[arg(long, default_value_t = 8192)]
+        memory_mb: u64,
+        /// Longest one part may take.
+        #[arg(long, value_parser = dutchman::diagnose::parse_duration)]
+        time_limit: Option<std::time::Duration>,
+        /// Matching STEP for a project with one design; otherwise discovered beside each file.
+        #[arg(long)]
+        step: Option<PathBuf>,
+        /// Anonymous part number to target in the report.
+        #[arg(long, value_parser = clap::value_parser!(usize))]
+        part: Option<usize>,
+        #[arg(long)]
+        json: bool,
+        #[command(flatten)]
+        options: ConvertOptions,
+    },
     /// Make a private local reproduction kit; only kit/anonymous.json is safe to share.
     Repro {
         input: PathBuf,
@@ -54,6 +79,12 @@ enum Command {
     /// Find which parts of a large design fail, run slowly or take the memory, on this machine,
     /// and write a ranked report that names parts by number only; nothing leaves the machine.
     Diagnose {
+        /// Matching STEP export; a same-name export beside the file is found automatically.
+        #[arg(long, requires = "input")]
+        step: Option<PathBuf>,
+        /// Make this anonymous part number the report target.
+        #[arg(long, requires = "input")]
+        part: Option<usize>,
         /// The native design file to read.
         #[arg(required_unless_present_any = ["same_failure", "make_report"])]
         input: Option<PathBuf>,
@@ -282,7 +313,46 @@ fn main() -> ExitCode {
     let quiet = cli.quiet;
     let yes = cli.yes;
     match cli.command {
+        Command::Doctor {
+            input,
+            out,
+            jobs,
+            memory_mb,
+            time_limit,
+            step,
+            part,
+            json: as_json,
+            options,
+        } => {
+            let out = out.unwrap_or_else(|| dutchman::doctor::default_output(&input));
+            let mut settings = dutchman::doctor::Settings {
+                jobs,
+                memory: memory_mb.saturating_mul(1 << 20),
+                diagnose: dutchman::diagnose::Settings {
+                    options,
+                    step_path: step,
+                    target_part: part,
+                    ..dutchman::diagnose::Settings::default()
+                },
+            };
+            if let Some(time) = time_limit {
+                settings.diagnose.time_limit = time;
+            }
+            narrow_outcome(
+                dutchman::doctor::SCHEMA,
+                &input,
+                dutchman::doctor::run(&input, &out, &settings, &|done, total| {
+                    if !quiet && !as_json {
+                        eprintln!("dutchman: checked {done} of {total} designs");
+                    }
+                }),
+                as_json,
+                &|r| r.get("ok") == Some(&Value::Bool(true)),
+            )
+        }
         Command::Diagnose {
+            step,
+            part,
             input,
             narrow,
             same_failure,
@@ -305,6 +375,8 @@ fn main() -> ExitCode {
             };
             diagnose(
                 &job,
+                step,
+                part,
                 out.as_deref().unwrap_or(Path::new(".")),
                 time_limit,
                 memory_limit,
@@ -812,6 +884,8 @@ fn narrow_outcome(
 #[allow(clippy::too_many_arguments)]
 fn diagnose(
     job: &DiagnoseJob,
+    step_path: Option<PathBuf>,
+    target_part: Option<usize>,
     out: &Path,
     time_limit: Option<std::time::Duration>,
     memory_limit: Option<f64>,
@@ -822,7 +896,11 @@ fn diagnose(
 ) -> ExitCode {
     use dutchman::diagnose::{self, narrow, Event};
     let settings = match diagnose_settings(time_limit, memory_limit, options) {
-        Ok(settings) => settings,
+        Ok(mut settings) => {
+            settings.step_path = step_path;
+            settings.target_part = target_part;
+            settings
+        }
         Err(message) => {
             eprintln!("dutchman: {message}");
             return ExitCode::from(2);

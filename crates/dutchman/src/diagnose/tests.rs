@@ -47,6 +47,9 @@ fn state(dir: &Path) -> State {
         restarts: 1,
         started: Instant::now(),
         written: None,
+        comparison: Value::Null,
+        placement_checks: Value::Null,
+        geometry_checks: Value::Null,
     }
 }
 
@@ -321,4 +324,18 @@ fn extremely_large_time_limits_are_refused_without_panicking() {
     for limit in ["1e300", "1e300h", "999999999999999999999999999999s"] {
         assert!(parse_duration(limit).is_err());
     }
+}
+
+#[test]
+fn selecting_a_report_target_keeps_it_local_and_validates_the_number() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut state = state(dir.path());
+    state.save("complete", true).unwrap();
+    let report = select_target(dir.path(), 5).unwrap();
+    assert_eq!(report["target_part"], 5);
+    assert!(select_target(dir.path(), 999).is_err());
+    assert_eq!(report_from(dir.path()).unwrap()["target_part"], 5);
+    assert!(!std::fs::read_to_string(dir.path().join("report.json"))
+        .unwrap()
+        .contains(PRIVATE_NAME));
 }

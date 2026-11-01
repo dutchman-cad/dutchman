@@ -690,12 +690,33 @@ CLI locally for detailed errors. Paths supplied as arguments stay on the local m
 | `same_failure` | `input`, `out` | Check a small rebuild against the original signature in out. |
 | `make_report` | `input`, `out` | Write the checked small file and anonymous facts to a local ZIP; send nothing. |
 
-All except `make_report` accept `time_limit` (for example `30s` or `5m`) and a positive
+All except `make_report` accept `time_limit` (whole seconds or, for example, `30s` or `5m`) and a positive
 `memory_limit_mb`. The two part-trial tools also accept `neighbours: true`. They return
 `dutchman.part-trial/1`: `converted` records the trial outcome; `ok` says the tool ran.
 The other tools use the existing diagnose, narrow, same-failure and made-report schemas,
 with local `paths` omitted. No tool submits a report. The local report ZIP has the fixed
 name `diagnose/dutchman-report.zip` under `out`; ask the user to review it before sharing.
-`doctor` is not available yet.
+Use `doctor` for folder checks, as described below.
 
 See the [paste-in prompt](troubleshooting.md#diagnose-with-an-assistant).
+
+### Local folder and STEP checks
+
+`doctor` takes `input` (folder or ZIP), `out`, optional `jobs`, `memory_mb` (total
+converter memory), `time_limit` (seconds per part), `step_path`, and `part` (report
+target). It returns `dutchman.doctor/1` with anonymous file numbers and findings grouped
+by signature. Checkpoints, converted designs and the local key stay in `out`.
+
+`diagnose` also accepts `step_path`, `part`, `memory_mb` and `narrow`. Its anonymous
+`report` includes the STEP comparison; `narrow: true` returns the same recipe and
+known-problem results as `diagnose_narrow`. Both ranking tools and `compare_step` accept
+`memory_mb` (at least 256) as an alternative to `memory_limit_mb`; supply only one.
+`compare_step` takes `input`, optional `step_path`, `part`, `time_limit` and either
+memory limit, and returns `dutchman.compare-step/1`. Without `step_path`, an unambiguous
+same-name adjacent STEP is used. Comparisons return anonymous evaluated body numbers
+and measurements, worst first. Body numbers are not assembly diagnose part numbers.
+`unavailable` or `incomplete` is not a passing geometry check. Findings are advisory;
+ask for confirmation before treating a visual difference as a defect. Neither tool
+sends a file or opens a report. STEP files may be shared only through private sending.
+Doctor's `geometry_checks` use the same anonymous measurement structure for stored source
+versus converted bodies. Optional local snapshot pairs never enter the tool result.
