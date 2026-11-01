@@ -61,7 +61,7 @@ report schemas and field names are unchanged.
 
 | Code | Meaning |
 |---|---|
-| 0 | The design was converted (`convert`) or read (`inspect`). Losses do not change this. |
+| 0 | The design was converted (`convert`) or read (`inspect`). Losses do not change this. `diagnose --narrow`, `--same-failure` and `--make-report` say what their codes mean in their own schemas below. |
 | 1 | It could not be: unsupported or unreadable input, no geometry, an output that could not be written. With `--json`, the report has `"ok": false`. |
 | 2 | A usage error (unknown option, missing argument), or a memory-budget refusal. Usage errors print clap text on stderr. Memory refusals with `--json` return a failure report with `estimate` and `choices`. |
 
@@ -754,6 +754,98 @@ The `--json` result also uses `dutchman.diagnose/1` with `ok`, `summary` (text),
 `dutchman convert --part N` and the part-stop message of a conversion that cannot fit in memory
 use the same numbers.
 
+## `dutchman.narrow/1`
+
+`dutchman diagnose --narrow INPUT [--out FOLDER] [--time-limit T] [--memory-limit GB]
+[--step-time-limit T] [--json]` writes `FOLDER/diagnose/narrow.json` in this schema when it
+finishes. Every field is a number, a fixed category or a code, and the file is safe to share. See
+[Let Dutchman do all of it](diagnose.md#let-dutchman-do-all-of-it---narrow).
+
+| Field | Meaning |
+|---|---|
+| `schema` | `dutchman.narrow/1`. |
+| `versions` | `dutchman` release and `cadmpeg` version. |
+| `status` | `narrowed`, `read_failed` (the design could not be read), `not_repeated` (parts failed in the ranking, and none failed again), `nothing_to_narrow` (every part and the whole design converted) or `stopped` (a step ran past its limit). |
+| `parts`, `failing_parts` | How many parts the design has, and how many failed in the ranking. |
+| `part` | The number of the part narrowed to, or null. |
+| `scope` | Where it fails: `alone`, `neighbours` (only with the parts either side of it) or `design` (only in the whole design); null when no failure was isolated. |
+| `features` | How many features the part's history has (those not suppressed), or null. |
+| `first_failing_feature` | The first feature it fails at, from 1, in timeline order: its history up to there fails the same way and its history up to the one before does not. Null when no feature was found. |
+| `bracket` | When the bisection ran past its limit: `passes` and `fails`, the feature numbers it had got to. Otherwise null. |
+| `stored_shape` | True when the part fails with no history at all, so the failure is in its stored shape. |
+| `stopped_at_step` | The step that ran past its limit, or null. |
+| `trials` | How many tries it took, across resumes. |
+| `signature` | The failure's signature ([`dutchman.signature/1`](#dutchmansignature1)), or null. |
+
+Exit code 0 for `narrowed`, `read_failed` and `nothing_to_narrow`, 1 for `not_repeated` and
+`stopped` and for a run that could not go on. The `--json` result uses the same schema with `ok`,
+`status`, `summary` (text), `paths` (`result`, `state`, `report`, and with a signature
+`signature`, `anonymous`, `next_steps`) and `result` (the content of `narrow.json`). It holds
+local paths and stays local.
+
+`FOLDER/diagnose/narrow-state.json` (`dutchman.narrow-state/1`) is the checkpoint a stopped run
+resumes from. Its fields are internal and may change with a release. It holds numbers, fixed
+categories and the size and SHA-256 of the input, and no names or paths. `local-key.json` gains
+`feature` (`part`, `number` and the private `name`).
+
+## `dutchman.signature/1`
+
+`FOLDER/diagnose/signature.json`, and `narrowing.signature` in `kit/anonymous.json`. It says what
+kind of thing failed and how. Every value is a fixed category or a count of loops: it holds no
+name, path, identity or dimension, and is safe to share. The type is
+`dutchman::diagnose::signature::Signature`.
+
+| Field | Meaning |
+|---|---|
+| `schema` | `dutchman.signature/1`. |
+| `hash` | The SHA-256, in lowercase hex, of the signature's text form below. Two signatures with the same hash are the same signature. |
+| `error.outcome` | `failed`, `timed_out` or `out_of_memory`. |
+| `error.stage` | The stage it stopped at, or null. |
+| `error.kind` | The error's fixed category (`restate`, `encode`, `cadmpeg_checks`, `panic`, `crash`...), or null. |
+| `error.codes` | The check-finding codes, sorted, without counts. |
+| `feature` | The feature the failure was narrowed to, or null. |
+| `feature.kind` | Its operation (`extrude`, `fillet`, `hole`...). |
+| `feature.options` | The choices made in it, by option: `op`, `direction`, `start`, `extent`, `end`, `first_end`, `second_end`, `inner_wire_taper`, `pattern`, `family`, `type`, `solid`, `refine`, `draft` (`yes` when it has one). Each only where the feature has it. A feature in its source program's native form has none. |
+| `feature.profile` | For a feature with a profile: `source` (what it is made from), `loops`, `inner_loops` (how many sit inside another; null when that cannot be told), `curves` (the kinds of curve in it, sorted). |
+
+The text form is the schema, then one `field=value` line for each of `outcome`, `stage`, `kind`,
+`codes` (joined with commas), and, with a feature, `feature`, each `option.<name>` in name order,
+and, with a profile, `profile.source`, `profile.loops`, `profile.inner_loops` and `profile.curves`.
+An absent value is empty. A change to this form is a new schema version.
+
+## `dutchman.same-failure/1`
+
+`dutchman diagnose --same-failure SMALL --out FOLDER [--json]` compares a small rebuilt file with
+the signature in `FOLDER`. It exits 0 only when `verdict` is `same`.
+
+| Field | Meaning |
+|---|---|
+| `schema` | `dutchman.same-failure/1`. |
+| `ok` | True when the comparison ran. |
+| `verdict` | `same`, `converts_fine`, `different` or `too_broad` (same stage and category, with no feature or check code to prove it the same failure). |
+| `same` | True when `verdict` is `same`. |
+| `differs` | For `different`: the fields that differ, from `outcome`, `stage`, `kind`, `codes`, `feature`, `options`, `profile`. |
+| `expected`, `got` | The two signatures; `got` is null when the file converts. |
+| `summary` | What to do next, in words. |
+
+`FOLDER/diagnose/same-failure.json` keeps the verdict, with `small_file` (size and SHA-256) so
+that `--make-report` knows which file passed.
+
+## `dutchman.made-report/1`
+
+`dutchman diagnose --make-report SMALL --out FOLDER [--json]` sends nothing. It refuses a file
+that has not passed `--same-failure` (`same` or `too_broad`), and the original design.
+
+| Field | Meaning |
+|---|---|
+| `schema` | `dutchman.made-report/1`. |
+| `ok` | True. |
+| `summary` | What was made, in words. |
+| `paths` | `zip` (`dutchman-report.zip`, holding `anonymous.json`, `signature.json` and the small file as `small.<extension>`) and `issue_link` (`issue-link.txt`). Local paths. |
+| `issue_url` | The link that opens the GitHub issue form filled in. It carries the format, versions, system, the signature's short hash, stage and error kind, and no file. |
+| `private_send` | `text` and `url`: how to send the zip without GitHub. |
+| `signature` | The signature's hash. |
+
 ## `dutchman.repro/1`
 
 `dutchman repro INPUT --out FOLDER [--json]` and the MCP `repro` tool write a local kit.
@@ -780,6 +872,7 @@ exact input byte lengths, or timings.
 | `narrowing.path` | Ordered steps with `unit` (`part`, `member`, `component`, `occurrence`, `body`, `feature`, `sketch`), one-based `ordinal` and `total`, and for a `feature` its `kind` (a fixed category). `part` is the first step when the kit followed a [`dutchman diagnose`](diagnose.md) report, and its ordinal is diagnose's part number. Each step is scoped to the previously retained unit. |
 | `narrowing.from_diagnose` | True when the kit went straight to the failing part of a diagnose report (found in `--out`, or given with `--from-diagnose`). |
 | `narrowing.smallest_failing_unit_isolated` | True when a single body or smaller independent feature/sketch subset retained the same stage, category and complete finding-code set. Does not prove the globally smallest model or identify the native operation responsible. |
+| `narrowing.signature` | The failure's [signature](#dutchmansignature1) in a kit `dutchman diagnose --narrow` wrote; null in a `dutchman repro` kit. |
 | `narrowing.limits` | Fixed explanatory sentences for unavailable levels, unsuccessful trials or a trial budget. |
 | `retained_unit_kinds` | Null when no checked subset is available; otherwise `surface_kinds`, `feature_kinds` (fixed enum categories; unlisted kinds become `other`), `finding_entity_kinds` (arena names cited by structured errors, or null when unavailable), and `use_curve_outside_carrier` (structurally detected coedge range/carrier-domain mismatch count). Counts cover the retained unit, without carrier values. |
 

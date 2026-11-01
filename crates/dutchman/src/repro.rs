@@ -8,6 +8,7 @@ use dutchman_core::{
 };
 use serde_json::{json, Value};
 
+use crate::diagnose::signature::Signature;
 use crate::diagnose::{self, FailingPart};
 use crate::{diagnostics, ConvertOptions};
 
@@ -244,6 +245,49 @@ fn build_part(
     finish_kit(input, kit, include_local_key, &failure, &narrowed, None)
 }
 
+/// What `dutchman diagnose --narrow` found, for its kit.
+pub(crate) struct NarrowedFailure<'a> {
+    /// The design.
+    pub(crate) input: &'a Path,
+    /// The failure, as the anonymous facts of [`diagnostics::anonymous_failure`].
+    pub(crate) failure: &'a Value,
+    /// The part: its number, how many there are, and its private name.
+    pub(crate) part: Option<(usize, usize, String)>,
+    /// The first failing feature: its number, how many there are, its private name, its kind.
+    pub(crate) feature: Option<(usize, usize, Option<String>, String)>,
+    /// The failure's signature.
+    pub(crate) signature: &'a crate::diagnose::signature::Signature,
+    /// What the narrowing could not do.
+    pub(crate) limits: Vec<&'static str>,
+}
+
+/// Writes the kit for what `dutchman diagnose --narrow` found, into the new folder `kit`.
+pub(crate) fn narrowed_kit(found: &NarrowedFailure<'_>, kit: &Path) -> Result<Value, String> {
+    std::fs::create_dir(kit).map_err(|e| format!("cannot create the kit: {e}"))?;
+    let mut narrowed = Narrowed {
+        signature: serde_json::to_value(found.signature).map_err(|e| e.to_string())?,
+        ..Narrowed::default()
+    };
+    if let Some((number, total, name)) = &found.part {
+        narrowed.select("part", *number, *total, Some(name), None);
+    }
+    if let Some((number, total, name, kind)) = &found.feature {
+        narrowed.select_kind(
+            "feature",
+            *number,
+            *total,
+            name.as_deref(),
+            narrowed.path.len().checked_sub(1),
+            Some(kind),
+        );
+        narrowed.isolated = true;
+    }
+    for limit in &found.limits {
+        narrowed.limit(limit);
+    }
+    finish_kit(found.input, kit, false, found.failure, &narrowed, None)
+}
+
 /// Writes the kit's files and builds the result.
 fn finish_kit(
     input: &Path,
@@ -356,6 +400,8 @@ struct Narrowed {
     limits: Vec<&'static str>,
     isolated: bool,
     kinds: Value,
+    /// The failure's signature, when `dutchman diagnose --narrow` recorded one.
+    signature: Value,
 }
 impl Narrowed {
     fn limit(&mut self, message: &'static str) {
@@ -382,7 +428,7 @@ impl Narrowed {
         total: usize,
         name: Option<&str>,
         parent: Option<usize>,
-        kind: Option<&'static str>,
+        kind: Option<&str>,
     ) {
         let mut step = json!({"unit": unit, "ordinal": ordinal, "total": total});
         if let (Some(kind), Some(fields)) = (kind, step.as_object_mut()) {
@@ -576,6 +622,7 @@ fn anonymous(input: &Path, failure: &Value, narrowed: &Narrowed) -> Value {
         failure,
         json!({"path": narrowed.path, "smallest_failing_unit_isolated": narrowed.isolated,
             "limits": narrowed.limits, "members": narrowed.members,
+            "signature": narrowed.signature,
             "from_diagnose": narrowed.path.first().is_some_and(|p| p["unit"] == "part")}),
         &narrowed.kinds,
     )
@@ -610,6 +657,24 @@ pub fn next_steps(anonymous: &Value) -> String {
                 text.push_str(&format!("Look up {unit} #{ordinal} of {total} in local-key.json, following the preceding step's scope. Keep that name local.\n\n"));
             }
         }
+        if let Some(signature) = anonymous
+            .pointer("/narrowing/signature")
+            .filter(|value| !value.is_null())
+            .and_then(|value| serde_json::from_value::<Signature>(value.clone()).ok())
+        {
+            text.push_str(&rebuild_steps(&signature));
+            text.push_str("Send only the report zip that last step makes. Never send the original file. Never send local-key.json.\n");
+            for limit in anonymous
+                .pointer("/narrowing/limits")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+            {
+                text.push_str(&format!("\nLimit: {limit}\n"));
+            }
+            return text;
+        }
         let parameter = anonymous
             .pointer("/failure/findings/parameter_domain")
             .and_then(Value::as_u64)
@@ -642,6 +707,28 @@ pub fn next_steps(anonymous: &Value) -> String {
     }
     text.push_str("Send only anonymous.json, and the small rebuilt file if it reproduces and you are free to share it. Never send the original file. Never send local-key.json.\n");
     text
+}
+
+/// The steps from a signature to a report: rebuild, check, make the report.
+fn rebuild_steps(signature: &Signature) -> String {
+    let what = match &signature.feature {
+        Some(feature) => format!("Make only what {} needs.", feature.describe()),
+        None => "Copy the failing shape alone into the new design, and keep only what it needs."
+            .to_owned(),
+    };
+    format!(
+        "Failure signature {}: it {}.\n\n\
+         1. In your CAD program, start a new design.\n\
+         2. {what} Use simple round sizes and new names.\n\
+         3. Save it, for example as small.f3d.\n\
+         4. Run `dutchman diagnose --same-failure small.f3d --out <this folder>`. It says the \
+         small file fails the same way, or that it converts fine, in which case change it to \
+         be closer to the description in step 2 and try again.\n\
+         5. Run `dutchman diagnose --make-report small.f3d --out <this folder>`. It makes one \
+         zip and a prefilled issue link. Nothing is sent until you send it.\n\n",
+        signature.short(),
+        signature.describe()
+    )
 }
 
 #[cfg(test)]

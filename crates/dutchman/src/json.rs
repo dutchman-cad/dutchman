@@ -18,6 +18,15 @@ pub const INSPECT: &str = "dutchman.inspect/1";
 /// The schema of `dutchman diagnose`'s report.
 pub const DIAGNOSE: &str = "dutchman.diagnose/1";
 
+/// The schema of `dutchman diagnose --narrow`'s result.
+pub const NARROW: &str = "dutchman.narrow/1";
+
+/// The schema of `dutchman diagnose --same-failure`'s result.
+pub const SAME_FAILURE: &str = "dutchman.same-failure/1";
+
+/// The schema of `dutchman diagnose --make-report`'s result.
+pub const MADE_REPORT: &str = "dutchman.made-report/1";
+
 /// The schema of a minimum-reproduction kit.
 pub const REPRO: &str = "dutchman.repro/1";
 

@@ -19,6 +19,9 @@
 //! Library use: [`run`] takes the file, an output folder and [`Settings`] and returns the
 //! report; [`report_from`] reads a written report back; [`failing_part`] names the part to
 //! look at first.
+//!
+//! [`narrow`] goes on from such a report by itself, down to the first failing feature of the
+//! failing part, and records the failure's [`signature`].
 
 #![allow(clippy::indexing_slicing)]
 
@@ -35,6 +38,9 @@ use serde_json::{json, Map, Value};
 
 use crate::json as wire;
 use crate::{diagnostics, worker, ConvertOptions};
+
+pub mod narrow;
+pub mod signature;
 
 /// The schema of `diagnose/report.json`.
 pub const SCHEMA: &str = wire::DIAGNOSE;
@@ -149,6 +155,19 @@ impl Outcome {
         }
     }
 
+    /// The outcome with this report id. A part not run has none: it has yet to run.
+    fn from_id(id: &str) -> Option<Self> {
+        [
+            Self::Ok,
+            Self::Failed,
+            Self::TimedOut,
+            Self::OutOfMemory,
+            Self::Container,
+        ]
+        .into_iter()
+        .find(|outcome| outcome.id() == id)
+    }
+
     /// Where it sorts: failures, parts not run, parts that converted, containers.
     fn order(self) -> u8 {
         match self {
@@ -234,19 +253,36 @@ pub fn run(
             folder.display()
         )
     })?;
-    let mut state = State {
-        out: folder,
-        input: input.to_path_buf(),
-        settings: settings.clone(),
-        listed: Vec::new(),
-        results: BTreeMap::new(),
-        read: None,
-        read_ms: 0,
-        read_peak: 0,
-        restarts: 0,
-        started: Instant::now(),
-        written: None,
-    };
+    let state = State::new(folder, input, settings);
+    run_state(state, settings, on_event)
+}
+
+/// [`run`] in a folder a stopped run may have left: the parts it finished are kept and only the
+/// others are converted. A finished run's report is returned as it is.
+pub(crate) fn run_resuming(
+    input: &Path,
+    out: &Path,
+    settings: &Settings,
+    on_event: &(dyn Fn(Event) + Sync),
+) -> Result<Value, String> {
+    let folder = out.join(FOLDER);
+    std::fs::create_dir_all(&folder)
+        .map_err(|e| format!("cannot create {}: {e}", folder.display()))?;
+    if let Ok(report) = report_from(&folder) {
+        if report["status"] != "running" {
+            return Ok(json!({"status": report["status"], "report": report}));
+        }
+    }
+    let mut state = State::new(folder, input, settings);
+    state.restore();
+    run_state(state, settings, on_event)
+}
+
+fn run_state(
+    mut state: State,
+    settings: &Settings,
+    on_event: &(dyn Fn(Event) + Sync),
+) -> Result<Value, String> {
     state.save("running", true)?;
     let program = match &settings.program {
         Some(program) => program.clone(),
@@ -254,7 +290,7 @@ pub fn run(
             .map_err(|err| format!("cannot find the running program: {err}"))?,
     };
     let mut status = "complete";
-    let mut skip: Vec<usize> = Vec::new();
+    let mut skip: Vec<usize> = state.results.keys().copied().collect();
     loop {
         on_event(Event::Reading);
         match state.work(&program, &skip, on_event)? {
@@ -389,6 +425,89 @@ fn message(line: &str) -> Option<Message> {
 }
 
 impl State {
+    fn new(out: PathBuf, input: &Path, settings: &Settings) -> Self {
+        State {
+            out,
+            input: input.to_path_buf(),
+            settings: settings.clone(),
+            listed: Vec::new(),
+            results: BTreeMap::new(),
+            read: None,
+            read_ms: 0,
+            read_peak: 0,
+            restarts: 0,
+            started: Instant::now(),
+            written: None,
+        }
+    }
+
+    /// Takes up what a stopped run wrote to this folder: its parts, and the results of the
+    /// parts it finished. A part it was on when it stopped runs again.
+    fn restore(&mut self) {
+        let Ok(report) = report_from(&self.out) else {
+            return;
+        };
+        let key: Value = std::fs::read(self.out.join("local-key.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or(Value::Null);
+        let names: BTreeMap<u64, &str> = key["parts"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|p| Some((p["part"].as_u64()?, p["name"].as_str()?)))
+            .collect();
+        let number = |v: &Value| v.as_u64().and_then(|n| usize::try_from(n).ok());
+        let mut rows: Vec<&Value> = report["parts"].as_array().into_iter().flatten().collect();
+        rows.sort_by_key(|row| row["part"].as_u64());
+        for row in rows {
+            let Some(part) = number(&row["part"]) else {
+                continue;
+            };
+            self.listed.push(Listed {
+                number: part,
+                parent: number(&row["parent"]),
+                depth: number(&row["depth"]).unwrap_or(0),
+                assembly: row["kind"] == "assembly",
+                bodies: number(&row["bodies"]).unwrap_or(0),
+                entities: row["entities"].as_u64().unwrap_or(0),
+                name: names
+                    .get(&(part as u64))
+                    .copied()
+                    .unwrap_or_default()
+                    .to_owned(),
+            });
+            let Some(outcome) = row["outcome"].as_str().and_then(Outcome::from_id) else {
+                continue;
+            };
+            let text = |key: &str| row[key].as_str().map(str::to_owned);
+            let map = |key: &str| row[key].as_object().cloned().unwrap_or_default();
+            self.results.insert(
+                part,
+                PartRun {
+                    outcome,
+                    stage: text("stage"),
+                    kind: text("error_kind"),
+                    findings: map("findings"),
+                    curve_kinds: map("curve_kinds"),
+                    time_ms: row["time_ms"].as_u64().unwrap_or(0),
+                    peak_bytes: row["peak_memory_mb"].as_u64().unwrap_or(0) << 20,
+                    extra_bytes: row["extra_memory_mb"].as_u64().unwrap_or(0) << 20,
+                },
+            );
+        }
+        self.read_ms = report
+            .pointer("/read/time_ms")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        self.read_peak = report
+            .pointer("/read/peak_memory_mb")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            << 20;
+        self.restarts = number(&report["summary"]["restarts"]).unwrap_or(0);
+    }
+
     /// Runs one child until it ends or is stopped.
     fn work(
         &mut self,
@@ -1005,6 +1124,10 @@ struct WorkerArgs {
     /// Parts already finished or given up, by number.
     #[arg(long, value_delimiter = ',')]
     skip: Vec<usize>,
+    /// Once the design is read, take trials on standard input instead of converting each part
+    /// (see [`narrow`]).
+    #[arg(long)]
+    serve: bool,
     #[command(flatten)]
     options: ConvertOptions,
 }
@@ -1067,6 +1190,9 @@ fn work(args: &WorkerArgs) -> ExitCode {
         })).collect::<Vec<_>>(),
     }));
     let writer = options.writer();
+    if args.serve {
+        return narrow::serve(&model, &writer);
+    }
     for part in &catalog {
         if args.skip.contains(&part.number) {
             continue;
@@ -1102,14 +1228,55 @@ fn convert_part(model: &dutchman_core::Model, number: usize, writer: &dyn Writer
         // A component with no geometry: the conversion skips it, so there is nothing to try.
         return json!({"container": true});
     }
+    write_model(&part, number, writer)
+}
+
+/// Writes a model into nothing, and says how it went, as [`convert_part`] does.
+fn write_model(part: &dutchman_core::Model, number: usize, writer: &dyn Writer) -> Value {
+    #[cfg(debug_assertions)]
+    if test_feature_fault(number, parts::history_length(part)) {
+        return wire::error(
+            wire::CONVERT,
+            Value::Null,
+            &dutchman_core::Error::Restate("injected failure".into()),
+        );
+    }
+    #[cfg(not(debug_assertions))]
+    let _ = number;
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        writer.write(&part, &mut std::io::sink(), &mut Report::default())
+        writer.write(part, &mut std::io::sink(), &mut Report::default())
     }));
     match result {
         Ok(Ok(())) => Value::Null,
         Ok(Err(err)) => wire::error(wire::CONVERT, Value::Null, &err),
         Err(_) => json!({"panic": true}),
     }
+}
+
+/// Tests make a part fail once its history reaches a feature: the value
+/// `<part>:feature:<n>:<fail, crash or hang>`. True to fail; release builds have no such switch.
+#[cfg(debug_assertions)]
+fn test_feature_fault(number: usize, kept: usize) -> bool {
+    let Ok(value) = std::env::var("DUTCHMAN_DIAGNOSE_TEST_FAULT") else {
+        return false;
+    };
+    let mut fields = value.split(':');
+    let (part, word, feature, fault) = (fields.next(), fields.next(), fields.next(), fields.next());
+    if part.and_then(|p| p.parse().ok()) != Some(number) || word != Some("feature") {
+        return false;
+    }
+    if feature
+        .and_then(|f| f.parse::<usize>().ok())
+        .is_none_or(|feature| kept < feature)
+    {
+        return false;
+    }
+    match fault {
+        Some("hang") => std::thread::sleep(Duration::from_secs(3600)),
+        Some("crash") => std::process::abort(),
+        _ => {}
+    }
+    true
 }
 
 /// Tests make one part hang or crash, to see the others carry on; release builds have

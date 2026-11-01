@@ -54,6 +54,21 @@ cannot fit in the machine's free memory stops early and names the largest parts 
 instead of running for hours. `findings/diagnose/report.json` and `report.txt` are safe to
 share; `local-key.json` is not. See [Find what breaks in a large private file](diagnose.md).
 
+To have Dutchman narrow it all the way down by itself, with no AI assistant:
+
+```sh
+dutchman diagnose --narrow big.f3z --out findings            # run it again to resume after a stop
+dutchman diagnose --same-failure small.f3d --out findings    # after rebuilding the failure
+dutchman diagnose --make-report small.f3d --out findings     # one zip and a prefilled issue link
+```
+
+`--narrow` finds the failing part and the first feature it fails at, and records the failure's
+signature (kind of feature, options, profile shape, error code; never names, paths or real
+dimensions). `findings/diagnose/kit/next-steps.md` tells you what to rebuild. `--same-failure`
+says whether your small file fails the same way, and `--make-report` gathers the report.
+Nothing is sent: the zip stays on your machine until you send it. See
+[Let Dutchman do all of it](diagnose.md#let-dutchman-do-all-of-it---narrow).
+
 ## When you can't share the file
 
 Make a local reproduction kit:

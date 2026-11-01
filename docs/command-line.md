@@ -56,6 +56,27 @@ share; the key is not. `dutchman convert big.f3z --part N` then converts one par
 `dutchman repro big.f3z --out findings` goes straight to the first failing part. See
 [Find what breaks in a large private file](diagnose.md).
 
+```sh
+dutchman diagnose --narrow big.f3z --out findings [--step-time-limit 2h]
+dutchman diagnose --same-failure small.f3d --out findings
+dutchman diagnose --make-report small.f3d --out findings
+```
+
+`--narrow` runs the rest by itself: it ranks the parts, isolates a failing part, alone and then
+with its neighbours, bisects its history to the first failing feature, and records the failure's
+signature, printing `step 3 of 5: narrowing part 17 (feature 41 of 80)` as it goes. Each step has
+its own limits. Run it again with the same `--out` to resume after a stop.
+`--same-failure` converts a small rebuilt file and compares its signature; it exits 0 only for
+the same failure. `--make-report` writes one zip and a prefilled issue link for a file that
+passed that check, and sends nothing. `--json` prints
+[`dutchman.narrow/1`](json.md#dutchmannarrow1),
+[`dutchman.same-failure/1`](json.md#dutchmansame-failure1) or
+[`dutchman.made-report/1`](json.md#dutchmanmade-report1).
+
+`dutchman convert big.f3z --part 17 --stop-at-feature 41` converts part 17 with its history cut
+after feature 41 (0: no history), counting the features not suppressed, in timeline order. Its
+stored shape stays whole.
+
 ## Look before you convert: inspect
 
 `inspect` reads a file and says what converting it would carry across. It writes nothing and
