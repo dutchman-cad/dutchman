@@ -277,6 +277,8 @@ impl App {
                     .and_then(|v| serde_json::from_value(v.clone()).ok())
                     .unwrap_or_default(),
                 card: None,
+                #[cfg(feature = "test-support")]
+                test_transport: None,
             },
             salt: None,
             file_manager: platform::reveal,
@@ -328,6 +330,13 @@ impl App {
     /// Whether written histories are checked in SolidCraft.
     pub fn set_verify(&mut self, verify: bool) {
         self.options.no_verify = !verify;
+    }
+
+    /// Injects report transport and an optional synthetic signature for UI tests only.
+    #[cfg(feature = "test-support")]
+    #[doc(hidden)]
+    pub fn set_report_transport_for_test(&mut self, endpoint: String, signature: Option<String>) {
+        self.consent.test_transport = Some((endpoint, signature));
     }
 
     /// Injects a memory decision for headless UI review without allocating a huge design.
@@ -440,10 +449,18 @@ impl App {
             &self.out_dir.clone().unwrap_or_else(std::env::temp_dir),
             &id,
         );
+        let signature = signature.hash;
+        #[cfg(feature = "test-support")]
+        let signature = self
+            .consent
+            .test_transport
+            .as_ref()
+            .and_then(|(_, signature)| signature.clone())
+            .unwrap_or(signature);
         let prepared = if folder.join("prepared.json").exists() {
             dutchman::report_send::Prepared::load(&folder)?
         } else {
-            dutchman::report_send::Prepared::new(&id, &format, &signature.hash, None, &folder)?
+            dutchman::report_send::Prepared::new(&id, &format, &signature, None, &folder)?
         };
         self.consent.card = Some(crate::report_consent::Card::new(index, prepared, folder));
         Ok(())

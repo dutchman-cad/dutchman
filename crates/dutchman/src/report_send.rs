@@ -58,6 +58,27 @@ fn valid_id(id: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
+/// Native formats identify their authoring app; exchange formats and shared `.prt` do not.
+fn source_app(source_format: &str) -> &'static str {
+    use dutchman_core::Format;
+    let format = Format::ALL
+        .into_iter()
+        .find(|format| {
+            format.id().eq_ignore_ascii_case(source_format)
+                || format.extensions().iter().any(|extension| {
+                    !matches!(*extension, "prt" | "prt.N")
+                        && extension.eq_ignore_ascii_case(source_format)
+                })
+        })
+        .or_else(|| Format::from_codec_id(source_format));
+    match format {
+        None | Some(Format::Step | Format::Iges | Format::Acis | Format::UnclassifiedPart) => {
+            "unknown"
+        }
+        Some(format) => format.family(),
+    }
+}
+
 impl Prepared {
     /// Reuses the diagnostic file id. No native design file is opened here.
     pub fn new(
@@ -143,12 +164,12 @@ impl Prepared {
 
     /// Safe for MCP: sizes and roles only, never geometry or the claim secret.
     pub fn preview(&self) -> Value {
-        json!({"schema": SCHEMA, "ok": true, "report_id": self.report_id, "source_format": self.source_format, "signature": self.signature, "parts": self.parts, "bundle_size": self.bundle_size, "bundle_available": self.bundle_sha256.is_some(), "summary_size": self.metadata("summary", false).to_string().len(), "default_choice": "bundle", "public_test": false, "summary": if self.bundle_sha256.is_some() { "Review the bundle parts and sizes. Bundles contain private geometry." } else { "No bundle is available until repro extraction is supported. Choose summary to send only version, OS, format and failure signature." }})
+        json!({"schema": SCHEMA, "ok": true, "report_id": self.report_id, "source_format": self.source_format, "signature": self.signature, "parts": self.parts, "bundle_size": self.bundle_size, "bundle_available": self.bundle_sha256.is_some(), "summary_size": self.metadata("summary", false).to_string().len(), "default_choice": "bundle", "public_test": false, "summary": if self.bundle_sha256.is_some() { "Review the bundle parts and sizes. Bundles contain private geometry." } else { "No bundle is available until repro extraction is supported. Choose summary to send only version, OS, format, source app and failure signature." }})
     }
 
     /// The exact bounded envelope, without the private secret or local paths.
     pub fn metadata(&self, choice: &str, public_test: bool) -> Value {
-        let mut report = json!({"schema": 1, "report_id": self.report_id, "dutchman_version": crate::BUILD_VERSION, "os": std::env::consts::OS, "source_format": self.source_format, "source_app": "unknown", "signature": self.signature, "claim_hash": hash(self.claim_secret.as_bytes()), "consent": {"choice": choice, "text_version": 1, "public_test": public_test}});
+        let mut report = json!({"schema": 1, "report_id": self.report_id, "dutchman_version": crate::BUILD_VERSION, "os": std::env::consts::OS, "source_format": self.source_format, "source_app": source_app(&self.source_format), "signature": self.signature, "claim_hash": hash(self.claim_secret.as_bytes()), "consent": {"choice": choice, "text_version": 1, "public_test": public_test}});
         if choice == "bundle" {
             if let Some(map) = report.as_object_mut() {
                 map.insert("bundle_size".into(), json!(self.bundle_size));

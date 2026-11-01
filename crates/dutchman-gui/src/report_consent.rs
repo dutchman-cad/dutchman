@@ -9,6 +9,8 @@ use std::sync::mpsc::{channel, Receiver};
 pub struct Consent {
     pub ids: Vec<String>,
     pub card: Option<Card>,
+    #[cfg(feature = "test-support")]
+    pub test_transport: Option<(String, Option<String>)>,
 }
 
 pub enum Action {
@@ -75,14 +77,14 @@ impl Consent {
             ui.radio_value(&mut card.summary, false, "Send the bundle");
             ui.radio_value(&mut card.summary, true, "Anonymous summary only");
             if card.prepared.bundle_sha256.is_none() {
-                ui.label("No bundle is available yet. Choose summary to send version, OS, format and failure signature only.");
+                ui.label("No bundle is available yet. Choose summary to send version, OS, format, source app and failure signature only.");
             } else {
                 ui.label(format!("Gzip bundle: {} bytes (limit 25 MiB)", card.prepared.bundle_size));
                 for part in &card.prepared.parts { ui.label(format!("{}: {} bytes", part.role, part.bytes)); }
             }
             ui.checkbox(&mut card.public_test, "You may quote these bytes in a public test case");
             if ui.button("Send the whole file privately").clicked() { private = Some(Action::Private(card.row, None)); }
-            ui.label(format!("Anonymous summary JSON: {} bytes — version, OS, format, signature, consent and claim hash", card.prepared.metadata("summary", card.public_test).to_string().len()));
+            ui.label(format!("Anonymous summary JSON: {} bytes — version, OS, format, source app, signature, consent and claim hash", card.prepared.metadata("summary", card.public_test).to_string().len()));
             ui.label(format!("Kept locally: {}", card.folder.display()));
             let can_send = card.rx.is_none() && (card.summary || card.prepared.bundle_sha256.is_some());
             if ui.add_enabled(can_send, egui::Button::new("Send report / retry")).clicked() {
@@ -94,9 +96,12 @@ impl Consent {
                 card.rx = Some(rx);
                 card.status = "Sending…".into();
                 if !self.ids.contains(&prepared.report_id) { self.ids.push(prepared.report_id.clone()); }
+                let endpoint = report_send::endpoint();
+                #[cfg(feature = "test-support")]
+                let endpoint = self.test_transport.as_ref().map(|(url, _)| url.clone()).or(endpoint);
                 let ctx = ctx.clone();
                 std::thread::spawn(move || {
-                    let result = report_send::submit(&prepared, &folder, choice, public_test, true, report_send::endpoint().as_deref());
+                    let result = report_send::submit(&prepared, &folder, choice, public_test, true, endpoint.as_deref());
                     let _ = tx.send(result);
                     ctx.request_repaint();
                 });
@@ -136,6 +141,8 @@ mod tests {
         let state = Consent {
             ids: Vec::new(),
             card: Some(Card::new(0, prepared, dir.path().to_path_buf())),
+            #[cfg(feature = "test-support")]
+            test_transport: None,
         };
         let mut harness = Harness::new_state(
             |ctx, state: &mut Consent| {

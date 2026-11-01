@@ -670,3 +670,7 @@ box defaults false. Whole-file sending uses the private-send card. On delivery f
 keep the local report; retry later only when the user asks. GitHub gets the anonymous
 summary only, never a geometry bundle. Until extraction is available choose summary
 explicitly. Optional Discord claims are copied locally and pasted by the user.
+
+Report summaries identify the authoring app from the native format, such as Fusion or
+Inventor. Exchange formats and unclassified `.prt` use `unknown` because their authoring
+app cannot be inferred. The build version is included alongside this information.

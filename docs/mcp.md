@@ -744,3 +744,7 @@ preview currently offers summary only. Nothing is sent.
 (default false) and `explicit_yes`. Ask the user for explicit consent to this exact
 preview and choice before passing true. A failure does not authorize a later resend.
 No tool accepts whole files for anonymous upload. Use the private-send card instead.
+
+Report summaries identify the authoring app from the native format, such as Fusion or
+Inventor. Exchange formats and unclassified `.prt` use `unknown` because their authoring
+app cannot be inferred. The build version is included alongside this information.

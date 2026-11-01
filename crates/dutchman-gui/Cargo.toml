@@ -13,7 +13,7 @@ name = "dutchman-gui"
 path = "src/main.rs"
 
 [features]
-# Inject memory decisions for GPU screenshots without large input files.
+# Inject memory decisions and report transport for headless UI tests.
 test-support = []
 default = ["freecad"]
 # FreeCAD documents (.FCStd); see dutchman-core's feature of the same name.
