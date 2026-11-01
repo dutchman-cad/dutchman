@@ -159,7 +159,13 @@ When every active feature of the model maps onto SolidCraft features, the design
 history: SolidCraft parameters (`params`) and features at the root, then the original
 geometry as an Import named "Original geometry (imported)", **suppressed**, at the end of the
 timeline. The replayed history is the live result; the original is there to compare with and
-to fall back on, so a history design is never worse than an import design.
+to fall back on, so a history design is never worse than an import design. A history made
+only of base features that hold every body already is the original, so it is not written twice.
+
+In an assembly, a part that repeats one written earlier (same source, same layout below it) is
+one definition placed wherever it repeats, at any level. Sub-assemblies follow the same rule
+when everything inside them is named and no joint reaches inside them: SolidCraft joints name
+an occurrence, so those stay apart.
 
 Unused construction helpers need no target feature. Later active consumers carry resolved
 datum frames in sketches, pattern axes, and later datum constructions; unresolved helper

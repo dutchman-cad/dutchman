@@ -15,6 +15,7 @@ mod container;
 mod document;
 mod history;
 mod placements;
+mod repeats;
 mod step;
 #[cfg(test)]
 mod testing;
@@ -329,7 +330,11 @@ impl SolidCraftWriter {
         step: &str,
         live: Live,
     ) -> Result<Vec<u8>, Error> {
-        let mut design = container::Container::new(step.as_bytes())?;
+        let mut design = if live == Live::Whole {
+            container::Container::empty()
+        } else {
+            container::Container::new(step.as_bytes())?
+        };
         let mut history = history.clone();
         history::base::store(&mut history.features, &mut design)?;
         let doc: Value = document::history_design(model, &history, design.step_blob(), live);
@@ -581,6 +586,16 @@ fn report_sketches(features: &[FeatureOutcome], report: &mut Report) {
                 feature.reason.clone().unwrap_or_default()
             },
         );
+    }
+}
+
+/// How a design whose history is live ends: with the original geometry, unless the history
+/// already is that geometry.
+fn final_live(history: &history::History, model: &Model) -> Live {
+    if history::base::whole(history, model) {
+        Live::Whole
+    } else {
+        Live::History
     }
 }
 
@@ -949,7 +964,8 @@ impl Writer for SolidCraftWriter {
                 }
                 (Ok(history), _) if only_stored_geometry(&mapping.features) => {
                     report.append(history_report);
-                    let written = self.history_design(model, history, &step, Live::History)?;
+                    let written =
+                        self.history_design(model, history, &step, final_live(history, model))?;
                     let outcome = Outcome {
                         mode: Mode::Import,
                         check: Check::NotApplicable(history::base::STORED_SOLID.to_owned()),
@@ -958,7 +974,8 @@ impl Writer for SolidCraftWriter {
                     (written, outcome)
                 }
                 (Ok(history), _) => {
-                    let written = self.history_design(model, history, &step, Live::History)?;
+                    let written =
+                        self.history_design(model, history, &step, final_live(history, model))?;
                     let summary = self.history_summary(history);
                     let written_as = |check| Outcome {
                         mode: Mode::History,

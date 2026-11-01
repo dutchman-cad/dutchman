@@ -1,8 +1,10 @@
 //! Assemblies, as SolidCraft components and occurrences.
 //!
 //! Each part becomes a component holding the part's feature history, when it maps and checks
-//! out as a single part's would, followed by its geometry as a suppressed Import; else its
-//! geometry as a live Import. Each sub-assembly
+//! out as a single part's would, followed by its geometry as a suppressed Import unless the
+//! history already is that geometry; else its geometry as a live Import. A part that repeats
+//! one written earlier in the assembly (see [`crate::repeats`]) places that component. Each
+//! sub-assembly
 //! becomes a component whose own parts are components beneath it. Each placement becomes an
 //! occurrence of the placed component inside the component of the assembly that places it
 //! (the root for the top assembly), at the placement's transform.
@@ -23,6 +25,7 @@ use serde_json::{json, Value};
 
 use crate::container::Container;
 use crate::document::{column_major, component_name, feature_name, import_feature, Live, ORIGINAL};
+use crate::repeats::{self, PartPath};
 use crate::{history, step, verify, SolidCraftWriter, FORMAT, HISTORY};
 
 /// Public callers may build an assembly without the core's read report. Account for
@@ -109,7 +112,18 @@ pub(crate) fn write(
         );
     }
     let has_appearances = report_appearance_bindings(model, report);
-    let prepared = prepare_parts(writer, assembly, report).into_iter();
+    let repeats = repeats::find(assembly);
+    if !repeats.is_empty() {
+        report.push(
+            Severity::Info,
+            "assembly",
+            format!(
+                "{} repeated component(s) written once: each places the definition it repeats",
+                repeats.len()
+            ),
+        );
+    }
+    let prepared = prepare_parts(writer, assembly, &repeats, report).into_iter();
     let mut builder = Builder {
         writer,
         prepared,
@@ -128,6 +142,9 @@ pub(crate) fn write(
         bodies: BTreeSet::new(),
         names: Vec::new(),
         placed: BTreeMap::new(),
+        repeats,
+        written: BTreeMap::new(),
+        path: Vec::new(),
         histories: Vec::new(),
         outcomes: Vec::new(),
         inner: BTreeMap::new(),
@@ -348,22 +365,21 @@ pub(crate) fn plan(writer: &SolidCraftWriter, assembly: &Assembly, report: &mut 
     }
     let mut checks = Vec::new();
     let mut features = Vec::new();
-    plan_parts(writer, assembly, report, &mut checks, &mut features);
+    let repeats = repeats::find(assembly);
+    let mut parts = Vec::new();
+    repeats::leaves(assembly, &repeats, &mut Vec::new(), &mut parts);
+    plan_parts(writer, &parts, report, &mut checks, &mut features);
     outcome(&checks, features)
 }
 
 fn plan_parts(
     writer: &SolidCraftWriter,
-    assembly: &Assembly,
+    parts: &[&Model],
     report: &mut Report,
     checks: &mut Vec<Check>,
     features: &mut Vec<FeatureOutcome>,
 ) {
-    for part in &assembly.parts {
-        if let Some(sub) = &part.assembly {
-            plan_parts(writer, sub, report, checks, features);
-            continue;
-        }
+    for part in parts {
         if writer.import_only {
             continue;
         }
@@ -485,6 +501,17 @@ fn outcome(histories: &[Check], features: Vec<FeatureOutcome>) -> Outcome {
     }
 }
 
+/// What became of a part's history in its component.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Replay {
+    /// No history is live: the part's geometry is its live Import.
+    None,
+    /// The history is live, and the original geometry follows it, suppressed.
+    BesideOriginal,
+    /// The history is live and is the original geometry itself.
+    IsOriginal,
+}
+
 /// Owned work for one leaf part. IDs, names, and all shared state belong to Builder.
 struct PreparedPart {
     step: Option<String>,
@@ -582,19 +609,10 @@ fn prepare_part(writer: &SolidCraftWriter, part: &Model) -> Result<PreparedPart,
     })
 }
 
-fn leaf_parts<'a>(assembly: &'a Assembly, parts: &mut Vec<&'a Model>) {
-    for part in &assembly.parts {
-        if let Some(sub) = &part.assembly {
-            leaf_parts(sub, parts);
-        } else {
-            parts.push(part);
-        }
-    }
-}
-
 fn prepare_parts(
     writer: &SolidCraftWriter,
     assembly: &Assembly,
+    repeats: &BTreeMap<PartPath, PartPath>,
     report: &mut Report,
 ) -> Vec<Option<PreparedPart>> {
     if writer.threads == 1 {
@@ -602,7 +620,7 @@ fn prepare_parts(
         return Vec::new();
     }
     let mut parts = Vec::new();
-    leaf_parts(assembly, &mut parts);
+    repeats::leaves(assembly, repeats, &mut Vec::new(), &mut parts);
     // Reserve mapping, STEP and replay temporaries, with a floor for a CLI process.
     let largest = parts
         .iter()
@@ -659,8 +677,14 @@ struct Builder<'r> {
     outcomes: Vec<FeatureOutcome>,
     /// Component names given so far, kept unique.
     names: Vec<String>,
-    /// Occurrences made so far of each component, for naming the next.
-    placed: BTreeMap<u64, usize>,
+    /// Occurrences made so far under each component name, for naming the next.
+    placed: BTreeMap<String, usize>,
+    /// The parts that repeat a part before them, with where that one is.
+    repeats: BTreeMap<PartPath, PartPath>,
+    /// The component each part became (`None` for a part left out), by where the part is.
+    written: BTreeMap<PartPath, Option<(u64, String)>>,
+    /// Where the part being written is.
+    path: PartPath,
     /// The occurrence each placement of a sub-assembly's became, by the sub-assembly's
     /// component (`None` for a part left out).
     inner: BTreeMap<u64, Vec<Option<u64>>>,
@@ -701,7 +725,19 @@ impl Builder<'_> {
         let mut level = BTreeSet::new();
         for (index, part) in assembly.parts.iter().enumerate() {
             let start = self.features.len();
-            let component = self.part(part, parent)?;
+            self.path.push(index);
+            let component = match self.repeats.get(&self.path) {
+                Some(first) => {
+                    let first = self.written.get(first).cloned().flatten();
+                    first.map(|(id, _)| (id, self.unique(component_name(&part.name))))
+                }
+                None => {
+                    let component = self.part(part, parent)?;
+                    self.written.insert(self.path.clone(), component.clone());
+                    component
+                }
+            };
+            self.path.pop();
             if let (Some((id, _)), Some(Some(definition))) =
                 (&component, assembly.definitions.get(index))
             {
@@ -745,7 +781,7 @@ impl Builder<'_> {
                 occurrences.push(None);
                 continue;
             };
-            let count = self.placed.entry(component).or_insert(0);
+            let count = self.placed.entry(name.clone()).or_insert(0);
             *count += 1;
             let label = placement
                 .name
@@ -1033,7 +1069,6 @@ impl Builder<'_> {
                 self.inner.insert(component, occurrences);
             }
             (None, Some(step)) => {
-                let blob = self.container.add_step(step.as_bytes())?;
                 let replayed = self.history(
                     part,
                     &step,
@@ -1042,15 +1077,19 @@ impl Builder<'_> {
                     prepared_history,
                     prepared_references,
                 )?;
+                if replayed == Replay::IsOriginal {
+                    return Ok(Some((component, name)));
+                }
+                let blob = self.container.add_step(step.as_bytes())?;
                 let id = self.id();
-                let (label, suppressed) = if replayed {
+                let (label, suppressed) = if replayed == Replay::BesideOriginal {
                     (ORIGINAL.to_owned(), true)
                 } else {
                     (feature_name(part), false)
                 };
                 let mut imported =
                     import_feature(part, id, &label, Some(component), suppressed, &blob);
-                if !replayed {
+                if replayed == Replay::None {
                     let mut looks =
                         history::imported(part, &step, self.report, self.has_appearances)?;
                     looks.rename_bodies(&name, &mut self.bodies);
@@ -1083,7 +1122,7 @@ impl Builder<'_> {
         name: &str,
         prepared: Option<PreparedHistory>,
         references: Option<(history::History, Report)>,
-    ) -> Result<bool, Error> {
+    ) -> Result<Replay, Error> {
         let file = part.source_file.as_deref().unwrap_or(&part.name).to_owned();
         for sketch in &part.ir.model.sketches {
             self.slice_sketches
@@ -1111,7 +1150,7 @@ impl Builder<'_> {
                 self.features.append(&mut references.features);
                 self.params.append(&mut references.params);
             }
-            return Ok(false);
+            return Ok(Replay::None);
         }
         let PreparedHistory {
             mapping,
@@ -1177,7 +1216,7 @@ impl Builder<'_> {
                     &mapping.features,
                     unwritten(&mapping.features, reason),
                 ));
-                return Ok(false);
+                return Ok(Replay::None);
             }
         };
         let summary = self.writer.history_summary(&history);
@@ -1236,13 +1275,26 @@ impl Builder<'_> {
                         Check::Flattened(reason.clone()),
                     ));
                     self.histories.push(Check::Flattened(reason));
-                    return Ok(false);
+                    return Ok(Replay::None);
                 }
             }
         };
         let partial = history.stop.is_some();
         self.report.append_prefixed(part_report, &file);
+        if partial && history::base::only_stored(&history) {
+            // Nothing in it could be edited: the visible Import already is the part.
+            self.report.push(
+                Severity::Info,
+                HISTORY,
+                format!("{file}: the kept history is only stored bodies; no hidden copy written"),
+            );
+            self.report
+                .push_part(part_history(part, &mapping.features, check.clone()));
+            self.histories.push(check);
+            return Ok(Replay::None);
+        }
         let hidden = partial || unverified_hidden;
+        let whole = !hidden && history::base::whole(&history, part);
         let component = if hidden {
             let child = self.id();
             let occurrence = self.id();
@@ -1283,7 +1335,11 @@ impl Builder<'_> {
         self.report
             .push_part(part_history(part, &mapping.features, check.clone()));
         self.histories.push(check);
-        Ok(!hidden)
+        Ok(match (hidden, whole) {
+            (true, _) => Replay::None,
+            (false, true) => Replay::IsOriginal,
+            (false, false) => Replay::BesideOriginal,
+        })
     }
 
     /// Records that `part` wrote its slice's sketches under its own component.
@@ -1537,6 +1593,7 @@ mod prepare_tests {
             held: Vec::new(),
             joint_notes: Vec::new(),
             stored_placements: Vec::new(),
+            identities: Vec::new(),
             definitions: Vec::new(),
         });
         let serial = SolidCraftWriter::new()
