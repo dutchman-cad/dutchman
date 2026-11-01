@@ -221,6 +221,39 @@ async fn a_project_zip_keeps_its_folders() {
 }
 
 #[tokio::test]
+async fn a_folder_upload_preserves_project_paths_and_rejects_traversal() {
+    let data = tempfile::tempdir().unwrap();
+    let app = server(data.path());
+    let bytes = std::fs::read(fixture("generated_unit_cube.f3d")).unwrap();
+    let (status, _, body) = send(
+        &app,
+        post(
+            "/api/convert",
+            form(&[], &[("folder", "project/parts/cube.f3d", bytes.clone())]),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", text(&body));
+    let report: Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(report["converted"], 1);
+    assert_eq!(
+        report["results"][0]["output"]["path"],
+        "project/parts/cube.sc"
+    );
+    assert!(report["plan"].as_str().unwrap().contains("1 part"));
+    let (status, _, _) = send(
+        &app,
+        post(
+            "/api/convert",
+            form(&[], &[("folder", "../escape.f3d", bytes)]),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(!data.path().join("escape.f3d").exists());
+}
+
+#[tokio::test]
 async fn unsafe_zips_and_empty_uploads_are_refused() {
     let data = tempfile::tempdir().unwrap();
     let app = server(data.path());

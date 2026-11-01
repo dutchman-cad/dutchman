@@ -54,6 +54,8 @@ impl Row {
 pub struct App {
     pub updater: crate::update::Updater,
     inputs: Vec<PathBuf>,
+    project_summary: String,
+    has_inventor: bool,
     custom: bool,
     estimate_key: Option<(Vec<PathBuf>, Choices)>,
     estimate_generation: u64,
@@ -231,6 +233,8 @@ impl App {
         App {
             updater: crate::update::Updater::new(stored.as_ref().and_then(|v| v.get("update"))),
             inputs: Vec::new(),
+            project_summary: String::new(),
+            has_inventor: false,
             custom,
             estimate_key: None,
             estimate_generation: 0,
@@ -292,6 +296,9 @@ impl App {
     /// Adds design files and folders to convert, each once.
     pub fn add_inputs(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
         for path in paths {
+            if self.out_dir.is_none() {
+                self.out_dir = Some(dutchman::batch::default_output(&path));
+            }
             if !self.inputs.contains(&path) {
                 self.inputs.push(path);
             }
@@ -637,6 +644,16 @@ impl App {
     fn receive(&mut self, ctx: &egui::Context) {
         while let Ok(message) = self.messages.try_recv() {
             match message {
+                Message::ProjectSummary {
+                    generation,
+                    text,
+                    inventor,
+                } => {
+                    if generation == self.estimate_generation {
+                        self.project_summary = text;
+                        self.has_inventor = inventor;
+                    }
+                }
                 Message::Estimated {
                     generation,
                     files,
@@ -1005,7 +1022,7 @@ impl App {
             if self.inputs.is_empty() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(theme::SPACE_4);
-                    ui.label(RichText::new("Drop design files or folders here").heading());
+                    ui.label(RichText::new("Drop design files, folders or ZIPs here").heading());
                     ui.label(
                         RichText::new("Fusion, Inventor, SolidWorks, FreeCAD, CATIA, Creo, NX, Creo View, Rhino, ACIS, STEP and IGES")
                         .small()
@@ -1057,9 +1074,12 @@ impl App {
                     self.inputs.remove(index);
                 }
             }
-            if let Some(available) = self.available {
+            if !self.inputs.is_empty() && !self.project_summary.is_empty() {
+                ui.label(RichText::new(&self.project_summary).small().color(p.tide));
+            }
+            if let Some(available) = self.available.filter(|bytes| *bytes > 0) {
                 ui.label(
-                    RichText::new(format!("{:.1} GB free", gigabytes(available)))
+                    RichText::new(format!("{:.1} GB of memory free", gigabytes(available)))
                         .small()
                         .color(p.tide),
                 );
@@ -1215,16 +1235,17 @@ impl App {
                     ui.add(label.truncate()).on_hover_text(checker);
                 }
                 ui.add_space(theme::SPACE_2);
-                let chosen = self.options.project.clone();
-                let mut find = false;
-                egui::Sides::new().shrink_left().truncate().show(
-                    ui,
-                    |ui| {
-                        let project = match &chosen {
-                            Some(dir) => display(dir),
-                            None => "found from each assembly".to_owned(),
-                        };
-                        ui.add(
+                if !self.inputs.is_empty() && self.has_inventor {
+                    let chosen = self.options.project.clone();
+                    let mut find = false;
+                    egui::Sides::new().shrink_left().truncate().show(
+                        ui,
+                        |ui| {
+                            let project = match &chosen {
+                                Some(dir) => display(dir),
+                                None => "found from each assembly".to_owned(),
+                            };
+                            ui.add(
                             egui::Label::new(
                                 RichText::new(format!("Inventor project folder: {project}"))
                                     .small()
@@ -1238,20 +1259,21 @@ impl App {
                              above it holding an .ipj, else two folders up; a folder you add is \
                              its files' project.",
                         );
-                    },
-                    |ui| {
-                        if chosen.is_some()
-                            && ui.button(RichText::new("Automatic").small()).clicked()
-                        {
-                            find = true;
-                        }
-                        if ui.button(RichText::new("Choose…").small()).clicked() {
-                            worker::pick(Pick::Project, self.sender.clone(), ctx.clone());
-                        }
-                    },
-                );
-                if find {
-                    self.options.project = None;
+                        },
+                        |ui| {
+                            if chosen.is_some()
+                                && ui.button(RichText::new("Automatic").small()).clicked()
+                            {
+                                find = true;
+                            }
+                            if ui.button(RichText::new("Choose…").small()).clicked() {
+                                worker::pick(Pick::Project, self.sender.clone(), ctx.clone());
+                            }
+                        },
+                    );
+                    if find {
+                        self.options.project = None;
+                    }
                 }
             });
             ui.horizontal_wrapped(|ui| {
@@ -1888,7 +1910,7 @@ mod tests {
                     Some(PathBuf::from("diagnostics/2026-10-29_201500.jsonl"));
                 app
             });
-        harness.run();
+        harness.run_steps(8);
         harness.get_by_label("Open diagnostics folder");
         harness.get_by_label("Open folder");
         harness.get_by_label("The last run didn't finish. Its diagnostic log is here:");
@@ -1898,10 +1920,10 @@ mod tests {
         harness
             .get_by_label("Save a diagnostic log (no names or contents from your file)")
             .click_accesskit();
-        harness.run();
+        harness.run_steps(8);
         assert_ne!(harness.state().options.diagnostics_default, before);
         harness.get_by_label("Dismiss").click_accesskit();
-        harness.run();
+        harness.run_steps(8);
         assert!(harness.state().unfinished_diagnostic.is_none());
     }
 
@@ -1911,11 +1933,11 @@ mod tests {
         let mut harness = egui_kittest::Harness::builder()
             .with_size(egui::vec2(1000.0, 1400.0))
             .build_eframe(|cc| App::new(cc));
-        harness.run();
+        harness.run_steps(8);
         harness.get_by_label("Advanced").click_accesskit();
-        harness.run();
+        harness.run_steps(8);
         harness.get_by_label("Feature history").click_accesskit();
-        harness.run();
+        harness.run_steps(8);
         assert!(harness.state().custom);
         assert!(harness.state().options.import_only);
         assert_eq!(harness.state().options.preset, Preset::Standard);
@@ -1967,7 +1989,7 @@ mod tests {
                 ));
                 app
             });
-        harness.run();
+        harness.run_steps(8);
         assert!(harness
             .query_by_label("synthetic.f3z may use about 8.0 GB of memory while converting. Your computer has about 4.0 GB free, so it may not have enough.")
             .is_some());
@@ -1981,7 +2003,7 @@ mod tests {
         assert!(use_fast.right() < anyway.left());
         assert!(anyway.right() < cancel.left());
         harness.get_by_label("Cancel").click_accesskit();
-        harness.run();
+        harness.run_steps(8);
         assert!(!harness.state().running());
         assert!(harness.state().memory_warning.is_none());
         assert!(!harness.state().options.no_memory_check);
@@ -2010,7 +2032,7 @@ mod tests {
                 )];
                 app
             });
-        harness.run();
+        harness.run_steps(8);
         assert!(harness
             .query_by_label("under 0.1 GB, under a minute")
             .is_some());
@@ -2063,14 +2085,34 @@ mod tests {
                     .unwrap();
                 app
             });
-        harness.run();
+        harness.run_steps(8);
         assert!(harness
             .query_by_label("about 2.5 GB, about 3 min")
             .is_some());
-        assert!(harness.query_by_label("4.0 GB free").is_some());
+        assert!(harness.query_by_label("4.0 GB of memory free").is_some());
         assert!(harness
             .query_by_label("about 90.0 GB, about 1 min")
             .is_none());
+    }
+
+    #[test]
+    fn unknown_or_zero_memory_has_no_free_memory_label() {
+        use egui_kittest::kittest::Queryable;
+        for available in [None, Some(0)] {
+            let mut harness = egui_kittest::Harness::builder().build_eframe(|cc| {
+                let mut app = App::new(cc);
+                app.available = available;
+                app.estimate_key = Some((app.inputs.clone(), app.options.choices()));
+                app
+            });
+            harness.run_steps(8);
+            assert_eq!(
+                harness
+                    .query_all_by_label_contains("GB of memory free")
+                    .count(),
+                0
+            );
+        }
     }
 
     #[test]
@@ -2104,7 +2146,7 @@ mod tests {
                     false,
                 );
             });
-        harness.run();
+        harness.run_steps(8);
         assert!(harness.query_by_label(message).is_some());
     }
 
@@ -2158,7 +2200,7 @@ mod tests {
                     ui.add_space(theme::SPACE_2);
                 }
             });
-        harness.run();
+        harness.run_steps(8);
         for label in [
             "Editable history, 3 of 3 features mapped; verified in SolidCraft.",
             "Geometry without history (flattened: fillet is not mapped yet).",
@@ -2262,7 +2304,7 @@ mod tests {
                 app.checker = Err(dutchman_solidcraft::NoCli::Blocked(message.to_owned()));
                 app
             });
-        harness.run();
+        harness.run_steps(8);
         assert!(harness.query_by_label(message).is_some());
     }
 }

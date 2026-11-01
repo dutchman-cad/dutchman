@@ -662,6 +662,8 @@ mod option_tests {
             .unwrap();
         let folder = dir.path().join("never-created");
         let job = batch::Job {
+            project_files: None,
+            fallback: None,
             input,
             output: folder.join("synthetic.solidcraft"),
             replace: true,

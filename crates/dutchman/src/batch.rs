@@ -38,6 +38,10 @@ const DEFAULT_JOBS: usize = 8;
 /// One file to convert, and where its design goes.
 #[derive(Clone, Debug)]
 pub struct Job {
+    /// Keeps privately extracted project files alive through conversion and retries.
+    pub project_files: Option<std::sync::Arc<tempfile::TempDir>>,
+    /// Same-name STEP export, used only if the native conversion fails.
+    pub fallback: Option<PathBuf>,
     pub input: PathBuf,
     pub output: PathBuf,
     /// Whether an existing design at `output` is replaced.
@@ -137,6 +141,7 @@ pub fn convert_all_with_progress(
         skipped,
         skipped_by_extension,
         skipped_revisions,
+        description: project_plan,
     } = plan(inputs, out_dir);
     prepare(&mut work, options);
     for job in &work {
@@ -237,6 +242,7 @@ pub fn convert_all_with_progress(
     all.extend(results);
     Ok(json!({
         "schema": SCHEMA,
+        "plan": project_plan,
         "ok": failed == 0,
         "converted": converted,
         "failed": failed,
@@ -265,6 +271,10 @@ pub fn workers(jobs: Option<NonZeroUsize>) -> usize {
 pub fn text(report: &Value, verbose: bool) -> String {
     let mut out = String::new();
     let mut cut = false;
+    if let Some(plan) = report.get("plan").and_then(Value::as_str) {
+        out.push_str(plan);
+        out.push('\n');
+    }
     for result in report
         .get("results")
         .and_then(Value::as_array)
@@ -366,6 +376,10 @@ pub const LOG_NAME: &str = "dutchman.log";
 /// file's line, how complete it is and its losses by component, then the counts.
 pub fn full_log(report: &Value) -> String {
     let mut out = String::new();
+    if let Some(plan) = report.get("plan").and_then(Value::as_str) {
+        out.push_str(plan);
+        out.push('\n');
+    }
     for result in report
         .get("results")
         .and_then(Value::as_array)
@@ -453,6 +467,8 @@ pub fn line(result: &Value) -> String {
 /// What a run will convert.
 #[derive(Debug)]
 pub struct Plan {
+    /// Inventory and conversion strategy before referenced parts are grouped into roots.
+    pub description: String,
     /// The files to convert, with their output paths.
     pub jobs: Vec<Job>,
     /// Failure reports for inputs that are neither a known file nor a readable folder.
@@ -490,9 +506,37 @@ fn plan_with_limit(
     let mut skipped_revisions = Vec::new();
     let mut outputs = BTreeSet::new();
     for input in inputs {
+        if input.is_file() && is_lock_file(input) {
+            continue;
+        }
         let mut found = Vec::new();
-        if input.is_dir() {
-            search(input, input, 0, &mut found, &mut skipped, include);
+        let project_files = if extension_of(input) == "zip" {
+            match unpack_project(input) {
+                Ok(dir) => Some(std::sync::Arc::new(dir)),
+                Err(message) => {
+                    problems.push(report::failure(
+                        report::CONVERT,
+                        report::input(input),
+                        &message,
+                    ));
+                    continue;
+                }
+            }
+        } else {
+            None
+        };
+        let extracted = project_files.as_ref().map(|dir| dir.path().join("files"));
+        let root = extracted.as_deref().unwrap_or(input.as_path());
+        if root.is_dir() {
+            let mut left = dutchman_core::MAX_SEARCHED;
+            search(root, root, 0, &mut found, &mut skipped, include, &mut left);
+            if left == 0 {
+                problems.push(report::failure(
+                    report::CONVERT,
+                    report::input(input),
+                    "project search reached 200000 entries; choose a smaller folder",
+                ));
+            }
             newest_revisions(&mut found, &mut skipped_revisions);
         } else if input.is_file() {
             let name = input.file_name().map(PathBuf::from).unwrap_or_default();
@@ -505,6 +549,21 @@ fn plan_with_limit(
             ));
             continue;
         }
+        let natives: BTreeSet<_> = found
+            .iter()
+            .filter(|(path, _)| !is_step(path))
+            .map(|(path, _)| path.with_extension("").to_string_lossy().to_lowercase())
+            .collect();
+        let mut fallbacks = BTreeMap::new();
+        found.retain(|(path, _)| {
+            let key = path.with_extension("").to_string_lossy().to_lowercase();
+            if is_step(path) && natives.contains(&key) {
+                fallbacks.insert(key, path.clone());
+                false
+            } else {
+                true
+            }
+        });
         for (path, relative) in found {
             if jobs.len() >= max_files {
                 problems.push(report::failure(
@@ -525,24 +584,190 @@ fn plan_with_limit(
             );
             let replace = Format::part_revision(&path).is_none();
             jobs.push(Job {
+                project_files: project_files.clone(),
+                fallback: fallbacks
+                    .get(&path.with_extension("").to_string_lossy().to_lowercase())
+                    .cloned(),
                 input: path,
                 output,
                 replace,
                 search: PartSearch {
                     threads: 0,
-                    project: input.is_dir().then(|| input.clone()),
+                    project: root.is_dir().then(|| root.to_path_buf()),
                     also: Vec::new(),
                 },
             });
         }
     }
+    let description = summary(&jobs);
+    project_roots(&mut jobs);
     Plan {
+        description,
         jobs,
         problems,
         skipped: skipped.values().sum::<usize>() + skipped_revisions.len(),
         skipped_by_extension: skipped,
         skipped_revisions,
     }
+}
+
+// Retain roots and unused parts. Keep cycles visible so conversion can report them.
+fn project_roots(jobs: &mut Vec<Job>) {
+    let canonical = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let mut edges = BTreeMap::new();
+    for job in jobs
+        .iter()
+        .filter(|job| Format::from_path(&job.input).is_some_and(Format::is_assembly))
+    {
+        if let Ok(references) = dutchman_core::assembly_references(&job.input, &job.search) {
+            edges.insert(
+                canonical(&job.input),
+                references
+                    .iter()
+                    .map(|path| canonical(path))
+                    .collect::<Vec<_>>(),
+            );
+        }
+    }
+    retain_roots(jobs, &edges);
+}
+
+fn retain_roots(jobs: &mut Vec<Job>, edges: &BTreeMap<PathBuf, Vec<PathBuf>>) {
+    let referenced: BTreeSet<_> = edges.values().flatten().cloned().collect();
+    let mut covered = BTreeSet::new();
+    let mut pending: Vec<_> = edges
+        .keys()
+        .filter(|path| !referenced.contains(*path))
+        .cloned()
+        .collect();
+    while let Some(path) = pending.pop() {
+        if let Some(children) = edges.get(&path) {
+            for child in children {
+                if covered.insert(child.clone()) {
+                    pending.push(child.clone());
+                }
+            }
+        }
+    }
+    jobs.retain(|job| {
+        !covered.contains(
+            &job.input
+                .canonicalize()
+                .unwrap_or_else(|_| job.input.clone()),
+        )
+    });
+}
+
+fn is_lock_file(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|name| name.to_string_lossy().starts_with("~$"))
+}
+
+fn is_step(path: &Path) -> bool {
+    matches!(extension_of(path).as_str(), "step" | "stp")
+}
+
+fn unpack_project(input: &Path) -> Result<tempfile::TempDir, String> {
+    let dir = tempfile::Builder::new()
+        .prefix("dutchman-project-")
+        .tempdir()
+        .map_err(|err| format!("cannot create a private project folder: {err}"))?;
+    let name = input
+        .file_name()
+        .map(|name| dutchman_serve::upload::safe_name(&name.to_string_lossy()))
+        .unwrap_or_else(|| "project.zip".into());
+    let archive = dir.path().join(name);
+    let size = std::fs::metadata(input)
+        .map_err(|err| format!("cannot read project zip: {err}"))?
+        .len();
+    if size > 4 * 1024 * 1024 * 1024 {
+        return Err("project zip is over 4 GB; zip a smaller folder".into());
+    }
+    let source =
+        std::fs::File::open(input).map_err(|err| format!("cannot read project zip: {err}"))?;
+    let mut source = std::io::Read::take(source, 4 * 1024 * 1024 * 1024 + 1);
+    let mut destination = std::fs::File::create(&archive)
+        .map_err(|err| format!("cannot stage project zip: {err}"))?;
+    let copied = std::io::copy(&mut source, &mut destination)
+        .map_err(|err| format!("cannot read project zip: {err}"))?;
+    if copied > 4 * 1024 * 1024 * 1024 {
+        return Err("project zip is over 4 GB; zip a smaller folder".into());
+    }
+    drop(destination);
+    dutchman_serve::upload::unzip(
+        &archive,
+        &dir.path().join("files"),
+        &mut dutchman_serve::upload::ZipLimits {
+            entries: 10_000,
+            bytes: 4 * 1024 * 1024 * 1024,
+        },
+    )?;
+    Ok(dir)
+}
+
+/// A new output folder beside an input, leaving existing folders untouched.
+pub fn default_output(input: &Path) -> PathBuf {
+    let name = if input.is_dir() {
+        input.file_name()
+    } else {
+        input.file_stem()
+    }
+    .unwrap_or_default()
+    .to_string_lossy();
+    let base = input.with_file_name(format!("{name} (SolidCraft)"));
+    if !base.exists() {
+        return base;
+    }
+    for n in 2..10_000 {
+        let path = input.with_file_name(format!("{name} (SolidCraft {n})"));
+        if !path.exists() {
+            return path;
+        }
+    }
+    base
+}
+
+/// Plain project counts shown before conversion.
+pub fn summary(jobs: &[Job]) -> String {
+    let mut assemblies = 0;
+    let mut parts = 0;
+    let mut steps = 0;
+    let mut unread = 0;
+    let fallbacks = jobs.iter().filter(|job| job.fallback.is_some()).count();
+    for job in jobs {
+        match extension_of(&job.input).as_str() {
+            "sldasm" => {
+                assemblies += 1;
+                unread += 1;
+            }
+            "iam" | "f3z" => assemblies += 1,
+            "step" | "stp" => steps += 1,
+            _ => parts += 1,
+        }
+    }
+    steps += fallbacks;
+    let assembly_word = if assemblies == 1 {
+        "assembly"
+    } else {
+        "assemblies"
+    };
+    let part_word = if parts == 1 { "part" } else { "parts" };
+    let file_word = if steps == 1 { "file" } else { "files" };
+    let mut text =
+        format!("{assemblies} {assembly_word}, {parts} {part_word}, {steps} STEP {file_word}");
+    if unread > 0 {
+        text.push_str(&format!(
+            "; {unread} SolidWorks assemblies not read yet; converting their parts on their own"
+        ));
+    } else if assemblies > 0 {
+        text.push_str("; converting assemblies with their parts");
+    }
+    if fallbacks > 0 {
+        text.push_str(&format!(
+            "; {fallbacks} same-name STEP exports kept as fallbacks"
+        ));
+    }
+    text
 }
 
 /// Keeps the highest numeric revision for each part found in a directory search.
@@ -591,6 +816,7 @@ pub fn extension_of(path: &Path) -> String {
 
 /// The files Dutchman knows under `folder`, with their paths relative to `root`. Symbolic
 /// links are not followed, so a link cannot make the search loop.
+#[allow(clippy::too_many_arguments)]
 fn search(
     root: &Path,
     folder: &Path,
@@ -598,14 +824,20 @@ fn search(
     out: &mut Vec<(PathBuf, PathBuf)>,
     skipped: &mut BTreeMap<String, usize>,
     include: fn(&Path) -> bool,
+    left: &mut usize,
 ) {
-    if depth > MAX_DEPTH {
+    if depth > MAX_DEPTH || *left == 0 {
         return;
     }
     let Ok(entries) = std::fs::read_dir(folder) else {
         return;
     };
-    let mut entries: Vec<PathBuf> = entries.filter_map(Result::ok).map(|e| e.path()).collect();
+    let mut entries: Vec<PathBuf> = entries
+        .take(*left)
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .collect();
+    *left = left.saturating_sub(entries.len());
     entries.sort();
     for path in entries {
         if !path.strip_prefix(root).is_ok_and(include) {
@@ -614,8 +846,11 @@ fn search(
         let Ok(meta) = std::fs::symlink_metadata(&path) else {
             continue;
         };
+        if meta.is_file() && is_lock_file(&path) {
+            continue;
+        }
         if meta.is_dir() {
-            search(root, &path, depth + 1, out, skipped, include);
+            search(root, &path, depth + 1, out, skipped, include, left);
         } else if meta.is_file() && Format::from_path(&path).is_none() {
             *skipped.entry(extension_of(&path)).or_insert(0) += 1;
         } else if meta.is_file() {
@@ -811,7 +1046,7 @@ fn convert_options_job_with_progress(
     if let Some(message) = crate::choices::memory_check(&job.input, options).refusal() {
         return report::memory_failure(report::CONVERT, &job.input, options, &message);
     }
-    match make_folder(job) {
+    let result = match make_folder(job) {
         Some(failure) => failure,
         None => crate::convert_options_with_progress(
             &job.input,
@@ -821,7 +1056,35 @@ fn convert_options_job_with_progress(
             &job.search,
             on_progress,
         ),
+    };
+    with_fallback(job, result, |fallback| {
+        convert_options_job_with_progress(fallback, options, on_progress)
+    })
+}
+
+fn with_fallback(job: &Job, result: Value, convert: impl FnOnce(&Job) -> Value) -> Value {
+    if result.get("ok").and_then(Value::as_bool) == Some(true) {
+        return result;
     }
+    let Some(input) = &job.fallback else {
+        return result;
+    };
+    let mut fallback = job.clone();
+    fallback.input = input.clone();
+    fallback.fallback = None;
+    let mut recovered = convert(&fallback);
+    if let Some(fields) = recovered.as_object_mut() {
+        fields.insert("native_failure".into(), result);
+        let losses = fields.entry("losses").or_insert_with(|| json!([]));
+        if let Some(losses) = losses.as_array_mut() {
+            losses.push(json!({
+                "level": "Degraded", "stage": "input", "upstream": "dutchman",
+                "code": "project/step-fallback", "subject": "STEP fallback",
+                "message": "The native file could not be converted; tried its same-name STEP export."
+            }));
+        }
+    }
+    recovered
 }
 
 fn convert_job_with_progress(
@@ -876,7 +1139,9 @@ pub fn convert_isolated_job_with_progress(
             json!(u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)),
         );
     }
-    report
+    with_fallback(job, report, |fallback| {
+        convert_isolated_job_with_progress(program, fallback, options, limits, stop, on_progress)
+    })
 }
 
 /// Makes the folder `job`'s design goes in; a failure report when it cannot be made.
@@ -895,6 +1160,242 @@ fn make_folder(job: &Job) -> Option<Value> {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+
+    fn project_zip(path: &Path, entries: &[(&str, &[u8])]) {
+        let mut zip = zip::ZipWriter::new(std::fs::File::create(path).unwrap());
+        for (name, bytes) in entries {
+            zip.start_file(*name, zip::write::SimpleFileOptions::default())
+                .unwrap();
+            zip.write_all(bytes).unwrap();
+        }
+        zip.finish().unwrap();
+    }
+
+    #[test]
+    fn lock_files_are_absent_from_folder_zip_explicit_and_service_plans() {
+        let dir = tempfile::tempdir().unwrap();
+        let inputs = dir.path().join("inputs");
+        std::fs::create_dir(&inputs).unwrap();
+        let mut names: Vec<_> = Format::ALL
+            .into_iter()
+            .flat_map(|format| {
+                format
+                    .extensions()
+                    .iter()
+                    .map(|ext| format!("~$part.{ext}"))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        names.push("~$part.unknown".into());
+        names.sort();
+        names.dedup();
+        for name in &names {
+            std::fs::write(inputs.join(name), b"lock").unwrap();
+        }
+        std::fs::write(inputs.join("part.sldprt"), b"synthetic").unwrap();
+        let archive = dir.path().join("project.zip");
+        let mut entries: Vec<(&str, &[u8])> = names
+            .iter()
+            .map(|name| (name.as_str(), b"lock".as_slice()))
+            .collect();
+        entries.push(("part.sldprt", b"synthetic"));
+        project_zip(&archive, &entries);
+        let explicit: Vec<_> = names.iter().map(|name| inputs.join(name)).collect();
+        for planned in [
+            plan(std::slice::from_ref(&inputs), &dir.path().join("out")),
+            plan(&[archive], &dir.path().join("out")),
+            plan_filtered(&[inputs], &dir.path().join("out"), |_| true),
+        ] {
+            assert_eq!(planned.jobs.len(), 1);
+            assert!(planned.problems.is_empty());
+            assert_eq!(planned.skipped, 0);
+            assert!(planned.skipped_by_extension.is_empty());
+        }
+        let planned = plan(&explicit, &dir.path().join("out"));
+        assert!(planned.jobs.is_empty());
+        assert!(planned.problems.is_empty());
+        assert_eq!(planned.skipped, 0);
+    }
+
+    #[test]
+    fn assemblies_group_referenced_parts_and_keep_unused_parts_and_cycles() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "root.iam",
+            "nested.iam",
+            "leaf.ipt",
+            "unused.ipt",
+            "cyclea.iam",
+            "cycleb.iam",
+        ] {
+            std::fs::write(dir.path().join(name), b"synthetic placeholder").unwrap();
+        }
+        let mut planned = plan(&[dir.path().to_path_buf()], &dir.path().join("out"));
+        let path = |name: &str| dir.path().join(name).canonicalize().unwrap();
+        retain_roots(
+            &mut planned.jobs,
+            &BTreeMap::from([
+                (path("root.iam"), vec![path("nested.iam")]),
+                (path("nested.iam"), vec![path("leaf.ipt")]),
+                (path("cyclea.iam"), vec![path("cycleb.iam")]),
+                (path("cycleb.iam"), vec![path("cyclea.iam")]),
+            ]),
+        );
+        let names: BTreeSet<_> = planned
+            .jobs
+            .iter()
+            .map(|job| {
+                job.input
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        assert_eq!(
+            names,
+            BTreeSet::from([
+                "root.iam".into(),
+                "unused.ipt".into(),
+                "cyclea.iam".into(),
+                "cycleb.iam".into()
+            ])
+        );
+    }
+
+    #[test]
+    fn zip_projects_keep_sources_alive_until_the_last_job_is_released() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("project.zip");
+        let fixture = std::fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../dutchman-core/tests/fixtures/generated_unit_cube.f3d"),
+        )
+        .unwrap();
+        project_zip(&archive, &[("parts/cube.f3d", &fixture)]);
+        let planned = plan(std::slice::from_ref(&archive), &dir.path().join("out"));
+        assert!(planned.problems.is_empty());
+        assert_eq!(planned.jobs.len(), 1);
+        let job = planned.jobs.first().unwrap().clone();
+        let source = job.input.clone();
+        drop(planned);
+        assert!(source.is_file());
+        let options = ConvertOptions {
+            no_verify: true,
+            ..Default::default()
+        };
+        let result = convert_options_job_with_progress(&job, &options, &|_| {});
+        assert_eq!(result["ok"], true, "{result}");
+        assert!(archive.is_file());
+        drop(job);
+        assert!(!source.exists());
+    }
+
+    #[test]
+    fn zip_projects_refuse_traversal_without_removing_the_original() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("project.zip");
+        project_zip(&archive, &[("../escape.ipt", b"x")]);
+        let planned = plan(std::slice::from_ref(&archive), &dir.path().join("out"));
+        assert!(planned.jobs.is_empty());
+        assert_eq!(planned.problems.len(), 1);
+        assert!(!dir.path().join("escape.ipt").exists());
+        assert!(archive.is_file());
+    }
+
+    #[test]
+    fn a_zip_project_recovers_a_failed_native_conversion_using_its_step_export() {
+        use std::io::Read as _;
+        let dir = tempfile::tempdir().unwrap();
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../dutchman-core/tests/fixtures/generated_unit_cube.f3d");
+        let seed = dir.path().join("seed.sc");
+        let options = ConvertOptions {
+            preset: crate::choices::Preset::Fast,
+            no_verify: true,
+            ..Default::default()
+        };
+        let report = crate::convert_options_with_progress(
+            &fixture,
+            &seed,
+            &options,
+            true,
+            &PartSearch::default(),
+            &|_| {},
+        );
+        assert_eq!(report["ok"], true, "{report}");
+        let mut design = zip::ZipArchive::new(std::fs::File::open(&seed).unwrap()).unwrap();
+        let mut step = None;
+        for index in 0..design.len() {
+            let mut member = design.by_index(index).unwrap();
+            if member.name().unwrap().ends_with(".step") {
+                let mut bytes = Vec::new();
+                member.read_to_end(&mut bytes).unwrap();
+                step = Some(bytes);
+                break;
+            }
+        }
+        let archive = dir.path().join("project.zip");
+        project_zip(
+            &archive,
+            &[
+                ("cube.sldprt", b"synthetic unreadable native"),
+                ("cube.step", &step.unwrap()),
+            ],
+        );
+        let output = dir.path().join("out");
+        let report = convert_all(&[archive], &output, &options, &Settings::default()).unwrap();
+        assert_eq!(report["converted"], 1, "{report}");
+        assert_eq!(report["failed"], 0, "{report}");
+        assert_eq!(report["results"][0]["native_failure"]["ok"], false);
+        assert_eq!(report["results"][0]["input"]["format"], "step");
+        assert!(report["results"][0]["output"]["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("cube.sc"));
+    }
+
+    #[test]
+    fn project_prefers_native_and_preserves_step_for_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("cube.SLDPRT"), b"native").unwrap();
+        std::fs::write(dir.path().join("cube.step"), b"export").unwrap();
+        std::fs::write(dir.path().join("main.SLDASM"), b"assembly").unwrap();
+        let planned = plan(&[dir.path().to_path_buf()], &dir.path().join("out"));
+        assert_eq!(planned.jobs.len(), 2);
+        assert!(summary(&planned.jobs).contains("SolidWorks assemblies not read yet"));
+        let job = planned
+            .jobs
+            .iter()
+            .find(|job| job.fallback.is_some())
+            .unwrap();
+        let failure = json!({"ok": false, "error": {"message": "native cannot be read"}});
+        let result = with_fallback(job, failure.clone(), |fallback| {
+            assert_eq!(fallback.input, dir.path().join("cube.step"));
+            assert_eq!(fallback.output, job.output);
+            assert!(fallback.fallback.is_none());
+            json!({"ok": true})
+        });
+        assert_eq!(result["ok"], true);
+        assert_eq!(result["native_failure"], failure);
+        let result = with_fallback(job, json!({"ok": true}), |_| {
+            panic!("STEP must not run when native succeeds")
+        });
+        assert_eq!(result["ok"], true);
+    }
+
+    #[test]
+    fn default_folder_is_beside_the_input_and_avoids_existing_folders() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("project.zip");
+        let first = default_output(&input);
+        assert_eq!(first, dir.path().join("project (SolidCraft)"));
+        std::fs::create_dir(&first).unwrap();
+        assert_eq!(
+            default_output(&input),
+            dir.path().join("project (SolidCraft 2)")
+        );
+    }
 
     #[test]
     fn a_file_recorded_by_another_version_or_journal_format_is_converted_again() {

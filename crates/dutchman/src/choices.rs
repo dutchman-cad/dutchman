@@ -709,81 +709,11 @@ fn estimate_using_workers(
 
 /// Open a zip only after bounding its directory and entry count.
 pub(crate) fn bounded_archive<R: std::io::Read + std::io::Seek>(
-    mut file: R,
+    file: R,
 ) -> Option<zip::ZipArchive<R>> {
-    use std::io::SeekFrom;
-    let length = file.seek(SeekFrom::End(0)).ok()?;
-    // Bound directory allocation, including ZIP64's extensible record, before zip reads it.
-    let tail_len = length.min(65_633);
-    file.seek(SeekFrom::End(-i64::try_from(tail_len).ok()?))
-        .ok()?;
-    let mut tail = vec![0; usize::try_from(tail_len).ok()?];
-    file.read_exact(&mut tail).ok()?;
-    let start = tail.windows(4).rposition(|w| w == b"PK\x05\x06")?;
-    let end = tail.get(start..)?;
-    let word = |offset: usize| -> Option<u16> {
-        Some(u16::from_le_bytes(
-            end.get(offset..offset + 2)?.try_into().ok()?,
-        ))
-    };
-    let dword = |offset: usize| -> Option<u32> {
-        Some(u32::from_le_bytes(
-            end.get(offset..offset + 4)?.try_into().ok()?,
-        ))
-    };
-    if end.len() != 22 + usize::from(word(20)?) || word(4)? != 0 || word(6)? != 0 {
-        return None;
-    }
-    let locator = start
-        .checked_sub(20)
-        .and_then(|offset| tail.get(offset..start));
-    let (members, directory_bytes, directory_offset) =
-        if let Some(locator) = locator.filter(|l| l.starts_with(b"PK\x06\x07")) {
-            let disk = u32::from_le_bytes(locator.get(4..8)?.try_into().ok()?);
-            let offset = u64::from_le_bytes(locator.get(8..16)?.try_into().ok()?);
-            let disks = u32::from_le_bytes(locator.get(16..20)?.try_into().ok()?);
-            if disk != 0 || disks != 1 || offset.checked_add(56)? > length {
-                return None;
-            }
-            file.seek(SeekFrom::Start(offset)).ok()?;
-            let mut record = [0; 56];
-            file.read_exact(&mut record).ok()?;
-            if !record.starts_with(b"PK\x06\x06") {
-                return None;
-            }
-            let value = |at: usize| -> Option<u64> {
-                Some(u64::from_le_bytes(record.get(at..at + 8)?.try_into().ok()?))
-            };
-            let size = value(4)?;
-            if !(44..=16 << 20).contains(&size)
-                || offset.checked_add(12)?.checked_add(size)? > length
-                || record.get(16..24)? != [0; 8]
-                || value(24)? != value(32)?
-            {
-                return None;
-            }
-            (value(32)?, value(40)?, value(48)?)
-        } else {
-            if word(8)? != word(10)? {
-                return None;
-            }
-            (
-                u64::from(word(10)?),
-                u64::from(dword(12)?),
-                u64::from(dword(16)?),
-            )
-        };
-    if members > 10_000
-        || directory_bytes > 16 << 20
-        || directory_offset.checked_add(directory_bytes)? > length
-    {
-        return None;
-    }
-    let archive = zip::ZipArchive::new(file).ok()?;
-    if archive.len() > 10_000 {
-        return None;
-    }
-    Some(archive)
+    dutchman_serve::upload::bounded_archive(file, 10_000)
+        .ok()
+        .map(|(archive, _)| archive)
 }
 
 fn archive_size(input: &Path, fusion: bool) -> Option<(u64, u64, usize)> {

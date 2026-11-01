@@ -96,6 +96,49 @@ pub fn read(format: Format, input: &Path, report: &mut Report) -> Result<Model, 
     read_in(format, input, &PartSearch::default(), report)
 }
 
+/// Resolves the direct external references of an assembly without reading its parts.
+/// Uses the same guarded decoder and part search as conversion.
+pub fn assembly_references(
+    input: &Path,
+    search: &PartSearch,
+) -> Result<Vec<std::path::PathBuf>, Error> {
+    let format = Format::from_path(input).ok_or_else(|| Error::UnknownFormat {
+        path: input.to_path_buf(),
+    })?;
+    if !format.is_assembly() || !format.can_convert() {
+        return Ok(Vec::new());
+    }
+    let model = decode_file(format, input, &mut Report::default(), None)?;
+    let value = serde_json::to_value(&model.ir.model.occurrences)
+        .map_err(|err| Error::Decode(format!("cannot read assembly references: {err}")))?;
+    let finder = locate::Finder::new(search);
+    let folder = input.parent().unwrap_or(Path::new("."));
+    Ok(value
+        .as_array()
+        .into_iter()
+        .flatten()
+        .take(MAX_PLACEMENTS)
+        // Nested placements come from each sub-assembly's own file during conversion.
+        .filter(|row| {
+            row.pointer("/parent/kind")
+                .and_then(serde_json::Value::as_str)
+                == Some("root")
+        })
+        .filter_map(|row| {
+            row.pointer("/prototype/document/path")
+                .and_then(serde_json::Value::as_str)
+        })
+        .filter(|stored| {
+            let name = stored.rsplit(['/', '\\']).next().unwrap_or_default();
+            matches!(
+                Format::from_path(Path::new(name)),
+                Some(Format::InventorPart | Format::InventorAssembly)
+            )
+        })
+        .filter_map(|stored| finder.locate(stored, folder).ok().map(|found| found.path))
+        .collect())
+}
+
 /// Reads the full drawing graph without requiring a 3D body or filtering hidden bodies.
 pub fn read_drawings(input: &Path, report: &mut Report) -> Result<Model, Error> {
     let format = Format::from_path(input).ok_or_else(|| Error::UnknownFormat {

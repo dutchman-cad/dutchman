@@ -104,12 +104,12 @@ enum Command {
     #[cfg(feature = "pilot")]
     #[command(name = "pilot")]
     Pilot(dutchman_pilot::cli::Command),
-    /// Convert a native CAD file into a SolidCraft design, FreeCAD output or DXF pages.
+    /// Convert CAD files, a folder or a project ZIP into SolidCraft designs or other output.
     Convert {
-        /// The native design file to read (for example a `.f3d`, `.ipt` or `.sldprt`).
+        /// A design file, folder of designs or project ZIP.
         input: PathBuf,
         /// The output file to write, matching --to; DXF also accepts an existing directory.
-        /// Omit to write beside the input with the extension chosen by --to.
+        /// Omit to write beside the input; folders and ZIPs get a new (SolidCraft) folder.
         /// An explicit output is replaced, unless --no-clobber; an existing default needs --force.
         #[arg(conflicts_with = "output_flag")]
         output: Option<PathBuf>,
@@ -141,16 +141,15 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Convert every native CAD file given, and those in the folders given, into SolidCraft
-    /// designs under one folder.
+    /// Convert CAD files, folders and project ZIPs into designs under one output folder.
     ConvertAll {
-        /// Files, and folders to search (with their subfolders) for files Dutchman knows.
+        /// Design files, project ZIPs, and folders to search with their subfolders.
         #[arg(required = true)]
         inputs: Vec<PathBuf>,
-        /// The folder to write the designs to, keeping each input folder's layout. Designs
-        /// already there are replaced, unless --no-clobber.
+        /// Output folder, keeping each project's layout (default: a new (SolidCraft) folder
+        /// beside the first input). Existing designs are replaced unless --no-clobber.
         #[arg(long, value_name = "DIR")]
-        out_dir: PathBuf,
+        out_dir: Option<PathBuf>,
         /// How many files to convert at once (default: the machine's cores, at most 8).
         #[arg(long, value_name = "N")]
         jobs: Option<std::num::NonZeroUsize>,
@@ -418,6 +417,44 @@ fn main() -> ExitCode {
                 eprintln!("dutchman: --page requires --to dxf");
                 return ExitCode::from(2);
             }
+            if input.is_dir() || batch::extension_of(&input) == "zip" {
+                let out_dir = explicit.unwrap_or_else(|| batch::default_output(&input));
+                let settings = match batch::Settings::isolated() {
+                    Ok(settings) => settings,
+                    Err(err) => {
+                        eprintln!("dutchman: {err}");
+                        return ExitCode::FAILURE;
+                    }
+                };
+                if !json && !quiet {
+                    println!(
+                        "{}",
+                        batch::plan(std::slice::from_ref(&input), &out_dir).description
+                    );
+                }
+                let report = match batch::convert_all(
+                    std::slice::from_ref(&input),
+                    &out_dir,
+                    &options,
+                    &settings,
+                ) {
+                    Ok(report) => report,
+                    Err(err) => {
+                        eprintln!("dutchman: {err}");
+                        return ExitCode::FAILURE;
+                    }
+                };
+                if json {
+                    print_json(&report);
+                } else {
+                    print!("{}", batch::text(&report, verbose));
+                }
+                let log = log.unwrap_or_else(|| out_dir.join(batch::LOG_NAME));
+                if let Err(err) = std::fs::write(&log, batch::full_log(&report)) {
+                    eprintln!("dutchman: cannot write {}: {err}", log.display());
+                }
+                return exit(&report);
+            }
             let derived = explicit.is_none();
             if options.to == dutchman::OutputFormat::Dxf {
                 let output = explicit.unwrap_or_else(|| {
@@ -520,7 +557,17 @@ fn main() -> ExitCode {
             log,
             json,
         } => {
-            for job in batch::plan(&inputs, &out_dir).jobs {
+            let out_dir = out_dir.unwrap_or_else(|| {
+                inputs
+                    .first()
+                    .map(|input| batch::default_output(input))
+                    .unwrap_or_else(|| PathBuf::from("SolidCraft"))
+            });
+            let preview = batch::plan(&inputs, &out_dir);
+            if !json && !quiet {
+                println!("{}", preview.description);
+            }
+            for job in preview.jobs {
                 if !memory_cli(&job.input, &mut options, json, quiet, yes, batch::SCHEMA) {
                     return ExitCode::from(2);
                 }
@@ -660,9 +707,9 @@ fn main() -> ExitCode {
     }
 }
 
-/// Recognise files and known CAD suffixes for the conversion shorthand.
+/// Recognise files, folders and known CAD suffixes for the conversion shorthand.
 fn is_input(path: &Path) -> bool {
-    path.is_file() || Format::from_path(path).is_some()
+    path.is_file() || path.is_dir() || Format::from_path(path).is_some()
 }
 
 fn run_tool(path: &Path, args: &[OsString]) -> ExitCode {

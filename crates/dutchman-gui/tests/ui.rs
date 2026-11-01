@@ -31,7 +31,7 @@ fn harness() -> Harness<'static, App> {
 
 /// Presses Convert and runs the window until the run is over.
 fn convert(harness: &mut Harness<'static, App>) {
-    harness.run();
+    harness.run_steps(8);
     harness.get_by_label("Convert").click_accesskit();
     harness.step();
     wait_for_conversion(harness);
@@ -40,7 +40,7 @@ fn convert(harness: &mut Harness<'static, App>) {
 #[test]
 fn the_window_offers_the_file_problem_form_and_names_its_version() {
     let mut harness = harness();
-    harness.run();
+    harness.run_steps(8);
     let report = harness.get_by_label("Report a problem").rect();
     let night = harness.get_by_label("Night").rect();
     assert!((report.center().y - night.center().y).abs() < 1.0);
@@ -66,7 +66,7 @@ fn the_top_row_names_the_app_and_its_version_at_the_narrowest_width() {
     let mut harness = Harness::builder()
         .with_size(egui::vec2(520.0, 420.0))
         .build_eframe(|cc| App::new(cc));
-    harness.run();
+    harness.run_steps(8);
     let name = harness.get_by_label("Dutchman Convert").rect();
     let version = harness
         .get_by_label(&format!("v{}", dutchman::BUILD_VERSION))
@@ -108,9 +108,9 @@ fn the_format_list_shows_headlines_beside_reader_status() {
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1200.0, 1800.0))
         .build_eframe(|cc| App::new(cc));
-    harness.run();
+    harness.run_steps(8);
     harness.get_by_label("Formats").click_accesskit();
-    harness.run();
+    harness.run_steps(8);
     assert!(harness.query_by_label("Fusion archive (.f3d)").is_some());
     assert!(harness.query_all_by_label("L5").count() >= 1);
     assert!(harness.query_by_label("IGES (.igs, .iges)").is_some());
@@ -295,7 +295,7 @@ fn a_file_converts_again_searching_a_folder_chosen_for_it() {
         std::thread::sleep(Duration::from_millis(20));
         harness.step();
     }
-    harness.run();
+    harness.run_steps(8);
     let row = &harness.state().rows()[0];
     assert_eq!(row.status, Status::Converted);
     assert_eq!(row.job.as_ref().unwrap().search.also, [parts]);
@@ -303,15 +303,16 @@ fn a_file_converts_again_searching_a_folder_chosen_for_it() {
 }
 
 #[test]
-fn convert_waits_for_designs_and_a_folder() {
+fn adding_a_design_selects_an_output_folder() {
     let mut harness = harness();
-    harness.run();
+    harness.run_steps(8);
     assert!(harness.query_by_label("Add designs to convert.").is_some());
     harness
         .state_mut()
         .add_inputs([fixture("synthetic_cube.ipt")]);
-    harness.run();
-    assert!(harness.query_by_label("Choose an output folder.").is_some());
+    harness.run_steps(8);
+    assert!(harness.query_by_label("Choose an output folder.").is_none());
+    assert!(harness.query_by_label("Convert").is_some());
 }
 
 #[test]
@@ -396,7 +397,7 @@ fn screenshots() {
             notes: "Dutchman 0.2.6\n\nImproved desktop conversion progress and clearer reports.\nUpdated native format readers.".into(),
             download: "https://github.com/dutchman-cad/dutchman/releases/tag/v0.2.6".into(),
         });
-        harness.run();
+        harness.run_steps(8);
         shot(
             &mut harness,
             &dir,
@@ -430,7 +431,7 @@ fn screenshots() {
                             .into(),
                     });
             }
-            preview.run();
+            preview.run_steps(8);
             let label = if width < 850.0 {
                 found
                     .and_then(dutchman_solidcraft::solidcraft_minor)
@@ -447,7 +448,7 @@ fn screenshots() {
                 )
             };
             preview.get_by_label(&label).click_accesskit();
-            preview.run();
+            preview.run_steps(8);
             assert!(preview
                 .query_by_label_contains(match case {
                     "newer-update" | "narrow" => "Update Dutchman",
@@ -465,7 +466,7 @@ fn screenshots() {
             ));
         }
         harness.get_by_label("Update to 0.2.6").click_accesskit();
-        harness.run();
+        harness.run_steps(8);
         shot(
             &mut harness,
             &dir,
@@ -494,7 +495,7 @@ fn screenshots() {
             );
         }
         harness.state_mut().updater.preview_scoop();
-        harness.run();
+        harness.run_steps(8);
         shot(
             &mut harness,
             &dir,
@@ -504,7 +505,7 @@ fn screenshots() {
             "Scoop: confirm closing Dutchman to update it.",
         );
         harness.state_mut().updater.open = false;
-        harness.run();
+        harness.run_steps(8);
         shot(
             &mut harness,
             &dir,
@@ -533,7 +534,7 @@ fn screenshots() {
             ("05", "Standard", "Full"),
         ] {
             harness.get_by_value(previous).click_accesskit();
-            harness.run();
+            harness.run_steps(8);
             harness.get_by_label(preset).click_accesskit();
             wait_for_estimate(&mut harness);
             shot(
@@ -546,7 +547,7 @@ fn screenshots() {
             );
         }
         harness.get_by_label("Advanced").click_accesskit();
-        harness.run();
+        harness.run_steps(8);
         harness.get_by_label("Sketches").click_accesskit();
         wait_for_estimate(&mut harness);
         assert!(harness.query_by_value("Custom (based on Full)").is_some());
@@ -560,7 +561,7 @@ fn screenshots() {
         );
         // Collapse before conversion so the ordinary 800-pixel window shows more results.
         harness.get_by_label("Advanced").click_accesskit();
-        harness.run();
+        harness.run_steps(8);
         #[cfg(feature = "test-support")]
         harness.state_mut().show_memory_check_for_test(
             input.clone(),
@@ -577,11 +578,11 @@ fn screenshots() {
                 lighter: Some(dutchman::choices::Preset::Fast),
             },
         );
-        harness.run();
+        harness.run_steps(8);
         harness.get_by_label("This conversion may need more memory");
         shot(&mut harness, &dir, &mut index, "07-memory-dialog", name, "Injected TooBig memory decision: 8 GB estimated, 4 GB free, Use Fast / Convert anyway / Cancel.");
         harness.get_by_label("Cancel").click_accesskit();
-        harness.run();
+        harness.run_steps(8);
 
         harness.get_by_label("Convert").click_accesskit();
         // Do not settle frames here: the tiny cube may finish before the next frame.
@@ -598,7 +599,7 @@ fn screenshots() {
         assert_eq!(harness.state().rows().len(), 1);
         assert_eq!(harness.state().rows()[0].status, Status::Converted);
         harness.get_by_label("RESULTS").scroll_to_me();
-        harness.run();
+        harness.run_steps(8);
         shot(
             &mut harness,
             &dir,
@@ -617,7 +618,7 @@ fn screenshots() {
         convert(&mut harness);
         assert_eq!(harness.state().rows()[0].status, Status::Failed);
         harness.get_by_label("RESULTS").scroll_to_me();
-        harness.run();
+        harness.run_steps(8);
         shot(
             &mut harness,
             &dir,
@@ -636,7 +637,7 @@ fn screenshots() {
         harness
             .state_mut()
             .set_out_dir(work.path().join(format!("Converted-{name}")));
-        harness.run();
+        harness.run_steps(8);
         harness.get_by_label("The last run didn't finish. Its diagnostic log is here:");
         shot(
             &mut harness,
@@ -649,25 +650,25 @@ fn screenshots() {
         harness
             .get_by_label("Save a diagnostic log (no names or contents from your file)")
             .scroll_to_me();
-        harness.run();
+        harness.run_steps(8);
         harness
             .get_by_label("Save a diagnostic log (no names or contents from your file)")
             .click_accesskit();
-        harness.run();
+        harness.run_steps(8);
         harness.get_by_label("Open diagnostics folder");
         shot(&mut harness, &dir, &mut index, "12-diagnostics", name, "Diagnostics checkbox on and Open diagnostics folder button; scrolled to show the controls.");
         harness
             .get_by_label("The last run didn't finish. Its diagnostic log is here:")
             .scroll_to_me();
-        harness.run();
+        harness.run_steps(8);
         harness.get_by_label("Dismiss").click_accesskit();
-        harness.run();
+        harness.run_steps(8);
         std::fs::remove_file(unfinished).unwrap();
         harness.get_by_label("OUTPUT FOLDER").scroll_to_me();
-        harness.run();
+        harness.run_steps(8);
         shot(&mut harness, &dir, &mut index, "13-settings", name, "Output folder, SolidCraft output and target, history checking, assembly project folder, and diagnostics settings; scrolled to the output section.");
         harness.get_by_label("Formats").click_accesskit();
-        harness.run();
+        harness.run_steps(8);
         harness.get_by_label("Fusion archive (.f3d)");
         shot(
             &mut harness,
@@ -714,7 +715,7 @@ fn shot(
 }
 
 fn wait_for_estimate(harness: &mut Harness<'static, App>) {
-    harness.run();
+    harness.run_steps(8);
     let started = Instant::now();
     while harness.query_all_by_label_contains("GB, ").count() == 0 {
         assert!(
@@ -724,7 +725,7 @@ fn wait_for_estimate(harness: &mut Harness<'static, App>) {
         std::thread::sleep(Duration::from_millis(20));
         harness.step();
     }
-    harness.run();
+    harness.run_steps(8);
 }
 
 fn wait_for_conversion(harness: &mut Harness<'static, App>) {
@@ -737,7 +738,7 @@ fn wait_for_conversion(harness: &mut Harness<'static, App>) {
         std::thread::sleep(Duration::from_millis(20));
         harness.step();
     }
-    harness.run();
+    harness.run_steps(8);
 }
 
 #[test]
@@ -752,7 +753,7 @@ fn dropped_files_and_results_show_format_status_and_one_invitation() {
         .build_eframe(|cc| App::new(cc));
     harness.state_mut().add_inputs([first, second]);
     harness.state_mut().set_out_dir(dir.path().join("out"));
-    harness.run();
+    harness.run_steps(8);
     for program in ["Creo", "NX"] {
         assert!(harness
             .query_by_label(&format!("{program} .prt: opens, no geometry yet  L1"))
@@ -794,7 +795,7 @@ fn solidcraft_status_panel_waits_for_a_click_and_shares_version_notices() {
             .with_size(egui::vec2(1120.0, 680.0))
             .build_eframe(|cc| App::new(cc));
         harness.state_mut().preview_solidcraft(found);
-        harness.run();
+        harness.run_steps(8);
         assert!(harness.query_by_label("SolidCraft version").is_none());
         let label = found.map_or_else(
             || "SolidCraft not found".into(),
@@ -806,7 +807,7 @@ fn solidcraft_status_panel_waits_for_a_click_and_shares_version_notices() {
             },
         );
         harness.get_by_label(&label).click_accesskit();
-        harness.run();
+        harness.run_steps(8);
         assert!(harness.query_by_label_contains(expected).is_some());
         if found.is_none() || found == Some("0.17.9") {
             assert!(harness.query_by_label("Download SolidCraft").is_some());
@@ -828,17 +829,17 @@ fn update_pill_adapts_to_width_and_waits_for_a_click() {
                 notes: "Release notes".into(),
                 download: "https://github.com/dutchman-cad/dutchman/releases/tag/v0.2.6".into(),
             });
-        harness.run();
+        harness.run_steps(8);
         assert!(harness
             .query_by_label("Dutchman 0.2.6 is available")
             .is_none());
         harness.get_by_label(label).click_accesskit();
-        harness.run();
+        harness.run_steps(8);
         assert!(harness
             .query_by_label("Dutchman 0.2.6 is available")
             .is_some());
         harness.get_by_label("Skip this version").click_accesskit();
-        harness.run();
+        harness.run_steps(8);
         assert!(harness.query_by_label(label).is_none());
         assert!(harness
             .query_by_label("Dutchman 0.2.6 is available")
@@ -896,21 +897,21 @@ fn scoop_confirmation_can_be_cancelled_without_starting_a_process() {
             download: "https://github.com/dutchman-cad/dutchman/releases/tag/v0.2.6".into(),
         });
     harness.state_mut().updater.preview_scoop();
-    harness.run();
+    harness.run_steps(8);
     assert!(harness
         .query_by_label("Dutchman closes, Scoop updates it, and Dutchman opens again.")
         .is_some());
     assert!(harness.query_by_label("Update and restart").is_some());
     harness.get_by_label("Cancel").click_accesskit();
-    harness.run();
+    harness.run_steps(8);
     assert!(harness.query_by_label("Update and restart").is_none());
     harness.get_by_label("Update with Scoop").click_accesskit();
-    harness.run();
+    harness.run_steps(8);
     assert!(harness.query_by_label("Update and restart").is_some());
 }
 
 /// Public documentation images: real CC0 conversion, isolated paths, and both themes.
-#[cfg(target_os = "linux")]
+#[cfg(all(target_os = "linux", feature = "freecad"))]
 #[test]
 #[ignore = "renders README images with a GPU; set DUTCHMAN_GUI_SCREENSHOTS"]
 fn readme_screenshots() {
@@ -955,7 +956,7 @@ fn readme_screenshots() {
         (ThemePreference::Dark, "night"),
     ] {
         let mut harness = screenshot_harness(theme);
-        harness.run();
+        harness.run_steps(8);
         if name == "day" {
             shot(
                 &mut harness,
@@ -992,7 +993,7 @@ fn readme_screenshots() {
             "{report}"
         );
         harness.get_by_label("RESULTS").scroll_to_me();
-        harness.run();
+        harness.run_steps(8);
         shot(
             &mut harness,
             &dir,
@@ -1003,4 +1004,110 @@ fn readme_screenshots() {
         );
         std::fs::remove_dir_all("~/Designs/Converted").unwrap();
     }
+}
+
+#[test]
+fn solidworks_folder_shows_the_plan_and_hides_inventor_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("cube.sldprt"), b"synthetic").unwrap();
+    std::fs::write(dir.path().join("main.sldasm"), b"synthetic").unwrap();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1100.0, 1200.0))
+        .build_eframe(|cc| App::new(cc));
+    harness.state_mut().add_inputs([dir.path().to_path_buf()]);
+    let started = Instant::now();
+    loop {
+        harness.run_steps(2);
+        if harness
+            .query_all_by_label_contains("SolidWorks assemblies not read yet")
+            .count()
+            > 0
+        {
+            break;
+        }
+        assert!(started.elapsed() < Duration::from_secs(30));
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        harness
+            .query_all_by_label_contains("Inventor project folder:")
+            .count(),
+        0
+    );
+    assert!(harness.query_by_label("Choose an output folder.").is_none());
+}
+
+#[test]
+#[ignore = "renders a supplied project zip with a GPU; set DUTCHMAN_GUI_SCREENSHOTS and DUTCHMAN_PROJECT_ZIP"]
+fn project_zip_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    let input = PathBuf::from(std::env::var_os("DUTCHMAN_PROJECT_ZIP").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut harness = screenshot_harness(ThemePreference::Light);
+    let expected_plan =
+        dutchman::batch::plan(std::slice::from_ref(&input), Path::new("")).description;
+    harness.state_mut().add_inputs([input]);
+    harness.state_mut().set_verify(false);
+    let started = Instant::now();
+    loop {
+        harness.run_steps(2);
+        if harness.query_by_label(&expected_plan).is_some() {
+            break;
+        }
+        assert!(started.elapsed() < Duration::from_secs(120));
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let mut index = String::new();
+    shot(
+        &mut harness,
+        &dir,
+        &mut index,
+        "project-added",
+        "day",
+        "Project plan before conversion.",
+    );
+    harness.state_mut().set_out_dir(dir.join("converted"));
+    harness.run_steps(2);
+    harness.get_by_label("Convert").click_accesskit();
+    harness.step();
+    let started = Instant::now();
+    let mut reported = None;
+    while harness.state().running() || harness.state().rows().is_empty() {
+        if harness.query_by_label("Use Fast").is_some() {
+            eprintln!("Using Fast for the project memory check");
+            harness.get_by_label("Use Fast").click_accesskit();
+            harness.step();
+        }
+        assert!(
+            harness.query_by_label("Convert anyway").is_none(),
+            "project exceeds the available memory for this screenshot run"
+        );
+        let rows = harness.state().rows();
+        let completed = rows
+            .iter()
+            .filter(|row| matches!(row.status, Status::Converted | Status::Failed))
+            .count();
+        let counts = (completed, rows.len());
+        if reported != Some(counts) {
+            eprintln!("Project conversion: {completed} of {} finished", rows.len());
+            reported = Some(counts);
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(3600),
+            "project conversion did not finish"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+        harness.run_steps(2);
+    }
+    harness.get_by_label("RESULTS").scroll_to_me();
+    harness.run_steps(8);
+    shot(
+        &mut harness,
+        &dir,
+        &mut index,
+        "project-converted",
+        "day",
+        "Project conversion results.",
+    );
+    std::fs::write(dir.join("project-screenshots.md"), index).unwrap();
 }

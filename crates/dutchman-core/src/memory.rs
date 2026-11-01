@@ -61,7 +61,13 @@ fn linux_available_memory(
 fn platform_available_memory() -> Option<u64> {
     let mut system = sysinfo::System::new();
     system.refresh_memory_specifics(sysinfo::MemoryRefreshKind::nothing().with_ram());
-    Some(system.available_memory())
+    let available = system.available_memory();
+    let available = if available == 0 {
+        system.free_memory()
+    } else {
+        available
+    };
+    (available > 0).then_some(available)
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]

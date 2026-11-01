@@ -16,6 +16,12 @@ use serde_json::Value;
 /// What the background work tells the window.
 #[derive(Debug)]
 pub enum Message {
+    /// Project plan and whether Inventor settings apply.
+    ProjectSummary {
+        generation: u64,
+        text: String,
+        inventor: bool,
+    },
     /// Files and folders chosen in a dialog, for what it was opened for.
     Picked { pick: Pick, paths: Vec<PathBuf> },
     /// Estimates for one snapshot of the queued inputs and choices.
@@ -156,6 +162,14 @@ pub fn estimates(
 ) {
     std::thread::spawn(move || {
         let plan = batch::plan(&inputs, std::path::Path::new(""));
+        let _ = messages.send(Message::ProjectSummary {
+            generation,
+            text: plan.description,
+            inventor: plan
+                .jobs
+                .iter()
+                .any(|job| matches!(batch::extension_of(&job.input).as_str(), "ipt" | "iam")),
+        });
         let files = plan
             .jobs
             .into_iter()
@@ -204,7 +218,7 @@ pub fn pick(kind: Pick, messages: Sender<Message>, ctx: egui::Context) {
                         &[
                             "f3d", "f3z", "ipt", "iam", "sldprt", "sldasm", "FCStd", "fcstd",
                             "CATPart", "catpart", "prt", "pvz", "3dm", "sat", "sab", "smt", "smb",
-                            "step", "stp", "igs", "iges",
+                            "step", "stp", "igs", "iges", "zip",
                         ],
                     )
                     .pick_files()
@@ -295,6 +309,9 @@ mod tests {
             send,
             egui::Context::default(),
         );
+        let _ = receive
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
         match receive
             .recv_timeout(std::time::Duration::from_secs(10))
             .unwrap()
