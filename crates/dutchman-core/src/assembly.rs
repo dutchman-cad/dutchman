@@ -302,9 +302,71 @@ pub(crate) fn read(
     finder: &Finder,
     open: &mut Vec<PathBuf>,
 ) -> Result<Model, Error> {
-    let mut model = decode(format, input, report)?;
+    read_cached(
+        format,
+        input,
+        report,
+        decode,
+        finder,
+        open,
+        &mut SolidWorksReads::new(),
+    )
+}
+
+/// Release saved display meshes after decode validation, before any conversion-side
+/// serialization. SolidWorks conversion uses exact bodies and history instead.
+pub(crate) fn release_solidworks_display(model: &mut Model, report: &mut Report) {
+    // Preserve the names used to redact anonymous loss reports, without expanding
+    // vertex/triangle arrays into a JSON value just to visit their metadata.
+    for mesh in &model.ir.model.tessellations {
+        if let Some(source) = &mesh.source_object {
+            if let Some(name) = &source.name {
+                crate::names::saw_stored(name, report);
+            }
+            for path in &source.instance_path {
+                crate::names::saw_stored(path, report);
+            }
+        }
+        for coordinates in mesh.texture_coordinates() {
+            crate::names::saw_stored(coordinates.name.as_str(), report);
+        }
+    }
+    model.ir.model.tessellations = Vec::new();
+    model.ir.model.appearance_bindings.retain(|binding| {
+        !matches!(
+            binding.target,
+            cadmpeg_ir::appearance::AppearanceTarget::Tessellation(_)
+                | cadmpeg_ir::appearance::AppearanceTarget::TriangleGroup { .. }
+        )
+    });
+}
+
+// The SolidWorks reader supplies only the saved active configuration. All requests
+// that fall back to it share this cache, across sibling assemblies too. Cache
+// decoded models, not resolved trees: cycle and depth checks depend on the ancestors.
+type SolidWorksReads = BTreeMap<PathBuf, Result<std::rc::Rc<Model>, (Stage, String)>>;
+
+fn read_cached(
+    format: Format,
+    input: &Path,
+    report: &mut Report,
+    decode: &Decode,
+    finder: &Finder,
+    open: &mut Vec<PathBuf>,
+    reads: &mut SolidWorksReads,
+) -> Result<Model, Error> {
+    let key = input.canonicalize().unwrap_or_else(|_| input.to_path_buf());
+    let mut model = match reads.get(&key) {
+        Some(Ok(source)) => source.as_ref().clone(),
+        _ => decode(format, input, report)?,
+    };
+    if matches!(format, Format::SolidWorksPart | Format::SolidWorksAssembly) {
+        release_solidworks_display(&mut model, report);
+        reads
+            .entry(key.clone())
+            .or_insert_with(|| Ok(std::rc::Rc::new(model.clone())));
+    }
     if format.is_assembly() || format == Format::FreeCadDocument {
-        let key = input.canonicalize().unwrap_or_else(|_| input.to_path_buf());
         if open.contains(&key) {
             return Err(Error::Assembly(
                 "the assembly places itself through its sub-assemblies".to_owned(),
@@ -319,7 +381,7 @@ pub(crate) fn read(
         let resolved = if format == Format::FreeCadDocument {
             freecad::resolve(&model, input, report, decode, finder, open)
         } else if format == Format::SolidWorksAssembly {
-            solidworks::resolve(&model, input, report, decode, finder, open)
+            solidworks::resolve(&model, input, report, decode, finder, open, reads)
         } else {
             resolve(&model, input, report, decode, finder, open).map(Some)
         };

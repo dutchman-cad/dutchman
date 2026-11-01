@@ -81,7 +81,10 @@ case-insensitively, beside the assembly first, then through the project and `--s
 See [finding part files](inventor.md#finding-the-part-files) for the shared search rules.
 
 Local sub-assemblies keep their component tree. Referenced assembly files are read recursively,
-with cycle protection and a depth limit of 32. Repeated references to one file share its read.
+with cycle protection and a depth limit of 32. Repeated references to the saved active
+configuration share one read across the whole assembly tree, including sibling sub-assemblies.
+Saved display tessellations are released before building that tree; exact geometry and feature
+history are kept.
 Parts that cannot be found or read are left out and reported for every affected occurrence;
 the remaining parts still convert. Virtual components without readable geometry are reported.
 
