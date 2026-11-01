@@ -1299,7 +1299,9 @@ fn work(args: &WorkerArgs) -> ExitCode {
             return ExitCode::SUCCESS;
         }
     };
-    emit(&json!({"dutchman_diagnose": "placements", "report": checks::placements(&model)}));
+    emit(
+        &json!({"dutchman_diagnose": "placements", "report": checks::placements(&model, args.options.choices().joints)}),
+    );
     if let Some(step) = &args.step {
         let comparison = step::compare(
             &model,
@@ -1313,7 +1315,7 @@ fn work(args: &WorkerArgs) -> ExitCode {
     if let Some(converted) = &args.converted {
         let comparison = std::fs::metadata(converted).ok().filter(|m| m.len() <= (512 << 20))
             .and_then(|_| std::fs::read(converted).ok()).map(|bytes| {
-                dutchman_solidcraft::compare::stored_output(&model, &bytes,
+                dutchman_solidcraft::compare::stored_output(&model, &bytes, args.options.choices().joints,
                     &args.options.solidcraft.clone().map_or(dutchman_solidcraft::Verification::Auto, dutchman_solidcraft::Verification::With),
                     Duration::from_secs(args.options.verify_timeout),
                     &args.preview.clone().unwrap_or_else(|| converted.with_extension("preview")).join("geometry"))
