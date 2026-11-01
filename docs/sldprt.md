@@ -1,6 +1,6 @@
 # SolidWorks: what converts today, and what stands in the way
 
-Dutchman reads SolidWorks parts through cadmpeg's SolidWorks codec (cadmpeg-registry's
+Dutchman reads SolidWorks parts and assemblies through cadmpeg's SolidWorks codec (cadmpeg-registry's
 `sldprt` feature, at the same pin as f3d and Inventor). Improvements to SolidWorks
 decoding land in cadmpeg and reach Dutchman when the pin is bumped. This page says what
 Dutchman makes of what that codec gives, and which upstream gaps keep SolidWorks history from
@@ -74,8 +74,23 @@ placement is reported.
 
 ## Assemblies (`.sldasm`)
 
-Not supported yet: cadmpeg has no SolidWorks assembly codec. `dutchman convert` says so and
-suggests exporting a STEP file.
+Assemblies convert as placed parts and nested components. cadmpeg supplies product definitions,
+occurrences and placements; Dutchman resolves external `.sldprt` and `.sldasm` references
+through the shared assembly file finder. Absolute Windows paths are matched by file name,
+case-insensitively, beside the assembly first, then through the project and `--search` folders.
+See [finding part files](inventor.md#finding-the-part-files) for the shared search rules.
+
+Local sub-assemblies keep their component tree. Referenced assembly files are read recursively,
+with cycle protection and a depth limit of 32. Repeated references to one file share its read.
+Parts that cannot be found or read are left out and reported for every affected occurrence;
+the remaining parts still convert. Virtual components without readable geometry are reported.
+
+The part reader supplies its saved active configuration. A reference to that configuration
+uses it; when the requested configuration cannot be confirmed or selected, Dutchman places
+the available active configuration and reports a Degraded loss. Mates are not converted yet.
+Suppressed components and mirrored placements follow cadmpeg's projection and loss notes:
+Dutchman does not reconstruct components that the reader leaves out. Reader resource limits
+still apply, so an assembly can be refused before any parts are resolved.
 
 ## Testing without real SolidWorks files
 

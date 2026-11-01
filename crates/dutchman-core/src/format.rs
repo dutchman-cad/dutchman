@@ -136,8 +136,8 @@ impl Format {
         match self {
             Self::FusionArchive | Self::FusionMultiDocument => Some("f3d"),
             Self::InventorPart | Self::InventorAssembly => Some("inventor"),
-            Self::SolidWorksPart => Some("sldprt"),
-            Self::SolidWorksAssembly | Self::UnclassifiedPart => None,
+            Self::SolidWorksPart | Self::SolidWorksAssembly => Some("sldprt"),
+            Self::UnclassifiedPart => None,
             Self::FreeCadDocument => Some("fcstd"),
             Self::CatiaPart => Some("catia"),
             Self::CreoPart => Some("creo"),
@@ -170,11 +170,7 @@ impl Format {
     pub fn reads_geometry(self) -> bool {
         !matches!(
             self,
-            Self::CreoPart
-                | Self::NxPart
-                | Self::SolidWorksAssembly
-                | Self::UnclassifiedPart
-                | Self::Iges
+            Self::CreoPart | Self::NxPart | Self::UnclassifiedPart | Self::Iges
         )
     }
 

@@ -106,6 +106,11 @@ dutchman convert --json generated_unit_cube.f3d cube.sc
 
 (Printed on one line; wrapped here.)
 
+SolidWorks assemblies (`.sldasm`) convert with their external part files. Keep parts beside
+the assembly or give `--project DIR` and `--search DIR`. Missing or unreadable occurrences
+are reported and left out; unavailable referenced configurations use the saved active
+configuration with a Degraded loss. See [SolidWorks assemblies](sldprt.md#assemblies-sldasm).
+
 ## Reading the loss report
 
 An assembly's conversion first says how complete it is, under the line saying what was
