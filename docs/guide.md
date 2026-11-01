@@ -374,3 +374,16 @@ Temporary conversion output and diagnostic logs are removed after the command re
 No files are uploaded. Narrowing uses retained CADIR subsets and stops where an independent
 subset cannot reproduce the same structured check codes; it does not regenerate features.
 The [kit schema](json.md#dutchmanrepro1) describes these limits.
+
+## Rebuild a small failing example
+
+`dutchman diagnose --narrow FILE --out RESULTS` now includes a numbered rebuild recipe for
+Fusion, Inventor, SolidWorks and FreeCAD in `RESULTS/diagnose/kit/next-steps.md`. Recipes
+use round starting sizes and the signature's options and profile counts. Unknown feature
+classes get a generic recipe. An exact match in the release's known-problem list gives a
+workaround or next-version fix advice before further narrowing when enough fields are known.
+
+In the desktop app, choose **Diagnose this file** on the failure card for progress, resume,
+the recipe, **Check my small file**, and **Make the report**. The report ZIP stays local
+and contains the small file's geometry. Review it before choosing to share it.
+The [MCP tools](mcp.md#anonymous-diagnostic-tools) provide the same steps for an assistant.

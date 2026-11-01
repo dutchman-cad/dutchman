@@ -27,6 +27,9 @@ pub const SAME_FAILURE: &str = "dutchman.same-failure/1";
 /// The schema of `dutchman diagnose --make-report`'s result.
 pub const MADE_REPORT: &str = "dutchman.made-report/1";
 
+/// The schema of an anonymous, bounded part/history trial.
+pub const PART_TRIAL: &str = "dutchman.part-trial/1";
+
 /// The schema of a minimum-reproduction kit.
 pub const REPRO: &str = "dutchman.repro/1";
 

@@ -946,3 +946,28 @@ creation succeeded), `summary`, `paths` (`anonymous`, `local_key`, `next_steps`)
 `anonymous` (the artifact content). This envelope contains local output paths and stays
 local. A conversion failure still has `ok: true` when the kit was written. MCP includes
 `local_key` content only with explicit `include_local_key: true`; keep that response local.
+
+## Recipes and known failures
+
+`dutchman.narrow/1` adds `recipe` (Markdown text, or null without a signature) and
+`known_failure` (null or an object with `hash`, `class`, `status`, `message`) to its findings
+object, also returned under `result`. Status `known_failure` means an exact shipped match
+was found; no further isolation or bisection is needed. `status` in a known-failure record
+is `fixed_next_version` or `workaround`. Class is the feature kind, or `generic` without a
+feature. Full signature hash and class must both match. Existing checkpoint files remain
+readable; a missing `known_failure` is treated as null.
+
+The embedded catalogs use `dutchman.recipes/1` and `dutchman.known-failures/1` and are
+versioned independently of signatures. Recipes contain no source dimensions or geometry.
+
+## `dutchman.part-trial/1`
+
+MCP `convert_part` and `stop_at_feature` discard geometry and return `schema`, `ok`,
+`part` (one-based), `neighbours` (boolean), `stop_at_feature` (null or a zero-based count
+of retained features), `features` (full history length), `converted` (boolean) and
+`signature` (null on success, otherwise `dutchman.signature/1`). `ok` means the trial ran,
+including a conversion failure; `converted` tells whether conversion succeeded.
+
+The anonymous diagnostic MCP tools omit local `paths` from the existing CLI reports.
+On an argument or I/O error, they return `ok: false`, null input, and a fixed anonymous
+message in the corresponding schema, so even error responses do not reveal source names.

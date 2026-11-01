@@ -685,3 +685,42 @@ fn the_kit_of_a_narrowed_failure_names_numbers_and_keeps_names_in_the_key() {
     let key = std::fs::read_to_string(kit.join("local-key.json")).unwrap();
     assert!(key.contains("SecretFeature") && key.contains("SecretPart"));
 }
+
+#[test]
+fn known_failure_stops_before_any_isolation_or_bisection() {
+    let mut state = Checkpoint {
+        step: 2,
+        candidates: vec![Candidate {
+            part: 17,
+            failure: restate(),
+        }],
+        ..Default::default()
+    };
+    let signature = Signature::new(restate().code(), None);
+    let expected = signature.clone();
+    assert!(known_before_narrowing(&mut state, &|got| {
+        (got == &expected).then(|| super::super::known::KnownFailure {
+            hash: got.hash.clone(),
+            class: "generic".into(),
+            status: "fixed_next_version".into(),
+            message: "This known problem is fixed in the next version.".into(),
+        })
+    }));
+    assert_eq!(state.step, 5);
+    assert_eq!(state.signature, Some(signature));
+    assert_eq!(status(&state), "known_failure");
+    let mut fake = Fake::design();
+    let settings = NarrowSettings::new(Settings::default(), None);
+    Drive {
+        state: &mut state,
+        trials: &mut fake,
+        settings: &settings,
+        save: &|_| Ok(()),
+        on_progress: &|_| {},
+        step_started: Instant::now(),
+        spent_before: 0,
+    }
+    .run()
+    .unwrap();
+    assert!(fake.tried.is_empty());
+}

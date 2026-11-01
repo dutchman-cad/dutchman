@@ -194,3 +194,18 @@ file contents. Clicking an update button also runs the package manager, which co
 own configured package sources and download hosts using its own network and privacy settings. GitHub sees the connecting IP address, ordinary HTTPS request metadata,
 the app version in the User-Agent, and the public feed or package ETag. Clicking **Download** opens
 the release asset or page in the default browser, under that browser's privacy settings.
+
+## Diagnose a failed file
+
+Choose **Diagnose this file** on a failed conversion card. The wizard runs the same local
+narrowing as `dutchman diagnose --narrow`, showing numbered steps and feature progress.
+Its checkpoint and reports live beside the source, in `<filename>.diagnosis/diagnose`.
+After a crash or restart, choose the action for that same file again to resume. An open
+wizard also has **Resume diagnosis** to rerun from its checkpoint.
+
+Follow the recipe for your CAD program, then choose **Check my small file** and pick the
+new file. The result says whether it fails the same way, converts fine, or differs.
+**Make the report** becomes available after a matching or explicitly broad check. It writes
+a local ZIP containing the small file, its signature and anonymous.json. **Open diagnosis
+folder** lets you review it. The ZIP contains geometry; share it only if you are free to
+share that small file. Nothing is sent by the wizard.

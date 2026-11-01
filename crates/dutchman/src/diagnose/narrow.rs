@@ -306,6 +306,8 @@ struct Checkpoint {
     stored_shape: bool,
     first_failing: Option<usize>,
     signature: Option<Signature>,
+    #[serde(default)]
+    known_failure: Option<super::known::KnownFailure>,
     /// Milliseconds each step has taken, across resumes, by step.
     spent_ms: BTreeMap<usize, u64>,
     /// A step stopped at its limit: which.
@@ -430,6 +432,12 @@ impl<T: Trials> Drive<'_, T> {
             .collect();
         self.state.failing_parts = failing.len();
         self.state.candidates = failing.into_iter().take(MAX_CANDIDATES).collect();
+        // Ranking already supplies a signature for stored-shape/check failures. Check it
+        // before any isolation or history trials. Feature-specific matches are checked
+        // when a signature exists on resume and after recording the feature.
+        if known_before_narrowing(self.state, &super::known::lookup) {
+            return self.checkpoint();
+        }
         self.begin_step(2);
         self.checkpoint()
     }
@@ -598,9 +606,44 @@ impl<T: Trials> Drive<'_, T> {
     }
 }
 
+/// Prefer an already recorded feature signature, then the ranking's read/part failures.
+/// Matching both keys happens before the first isolation or bisection trial.
+fn known_before_narrowing(
+    state: &mut Checkpoint,
+    lookup: &dyn Fn(&Signature) -> Option<super::known::KnownFailure>,
+) -> bool {
+    let signatures = state
+        .signature
+        .clone()
+        .into_iter()
+        .chain(
+            state
+                .read_failure
+                .as_ref()
+                .map(|failure| Signature::new(failure.code(), None)),
+        )
+        .chain(
+            state
+                .candidates
+                .iter()
+                .map(|candidate| Signature::new(candidate.failure.code(), None)),
+        );
+    for signature in signatures {
+        if let Some(known) = lookup(&signature) {
+            state.known_failure = Some(known);
+            state.signature = Some(signature);
+            state.step = 5;
+            return true;
+        }
+    }
+    false
+}
+
 /// How a run came out.
 fn status(state: &Checkpoint) -> &'static str {
-    if state.read_failure.is_some() {
+    if state.known_failure.is_some() {
+        "known_failure"
+    } else if state.read_failure.is_some() {
         "read_failed"
     } else if state.stopped_at_step.is_some() {
         "stopped"
@@ -632,11 +675,16 @@ fn findings(state: &Checkpoint) -> Value {
         "stopped_at_step": state.stopped_at_step,
         "trials": state.trials.len(),
         "signature": state.signature,
+        "known_failure": state.known_failure,
+        "recipe": state.signature.as_ref().map(super::recipes::render),
     })
 }
 
 /// What the run found, in plain words.
 fn summary(found: &Value, state: &Checkpoint) -> String {
+    if let Some(known) = &state.known_failure {
+        return format!("Known problem: {}", known.message);
+    }
     let signature = state.signature.as_ref();
     let said = signature.map_or(String::new(), |s| format!(" It {}.", s.describe()));
     match found["status"].as_str() {
@@ -757,6 +805,7 @@ pub fn run(
     if fresh {
         save_state(&path, &state)?;
     }
+    known_before_narrowing(&mut state, &super::known::lookup);
     let mut trials = Children::new(input, out, settings)?;
     let save = |state: &Checkpoint| save_state(&path, state);
     Drive {
@@ -774,9 +823,56 @@ pub fn run(
         step: 5,
         text: "writing the results".to_owned(),
     });
+    if state.known_failure.is_none() {
+        state.known_failure = state.signature.as_ref().and_then(super::known::lookup);
+    }
     let result = write_results(input, &folder, &mut state)?;
     save_state(&path, &state)?;
     Ok(result)
+}
+
+/// Converts a numbered part (optionally with neighbours), discarding geometry. A history
+/// prefix uses the same guarded worker and limits as automatic narrowing.
+pub fn trial(
+    input: &Path,
+    part: usize,
+    neighbours: bool,
+    stop_at: Option<usize>,
+    settings: &NarrowSettings,
+) -> Result<Value, String> {
+    if part == 0 {
+        return Err("part numbers start at 1".to_owned());
+    }
+    let scratch = tempfile::tempdir().map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(scratch.path().join(FOLDER)).map_err(|e| e.to_string())?;
+    let mut children = Children::new(input, scratch.path(), settings)?;
+    let attempt = children.attempt(
+        Trial {
+            part: Some(part),
+            scope: if neighbours {
+                Scope::Neighbours
+            } else {
+                Scope::Alone
+            },
+            stop_at,
+        },
+        &settings.isolate,
+    )?;
+    if stop_at.is_some_and(|n| n > attempt.features) {
+        return Err("feature number is beyond this part's history".to_owned());
+    }
+    let shape = match stop_at.filter(|n| *n > 0) {
+        Some(feature) if attempt.failure.is_some() => {
+            children.describe(part, feature, &settings.describe)?
+        }
+        _ => None,
+    };
+    let signature = attempt
+        .failure
+        .map(|failure| Signature::new(failure.code(), shape));
+    Ok(json!({"schema": wire::PART_TRIAL, "ok": true, "part": part,
+        "neighbours": neighbours, "stop_at_feature": stop_at, "features": attempt.features,
+        "converted": signature.is_none(), "signature": signature}))
 }
 
 /// A plain `dutchman diagnose` report in the folder is used only if it is of this design.

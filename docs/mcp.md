@@ -27,8 +27,8 @@ choose `-o PATH` or use `--force` to replace it. `--force` conflicts with `--no-
 Explicit outputs retain their replacement behaviour. MCP output paths remain required except for `convert` with `dry_run: true`.
 
 `dutchman-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server. It lets
-an AI assistant convert CAD files with Dutchman on your machine: it gives the assistant four
-tools, and each returns the same JSON report as the matching `dutchman … --json` command
+an AI assistant convert CAD files with Dutchman on your machine: it provides conversion and diagnosis
+tools. Conversion tools return the same JSON report as the matching `dutchman … --json` command
 ([json.md](json.md)).
 
 It comes in every release archive and with `cargo install` (see the [guide](install.md)).
@@ -673,3 +673,29 @@ A chat assistant can coach from anonymous content while the user looks up names 
 Follow `kit/next-steps.md` to rebuild a small design and rerun `repro` in a fresh folder.
 Send anonymous.json and the rebuilt file only if it reproduces and the user is free to
 share it. Never send the original design or local-key.json. The tool uploads nothing.
+
+## Anonymous diagnostic tools
+
+These tools reuse the CLI diagnosis engine. Their results contain part numbers, counts,
+fixed error categories and signatures; they exclude source paths, design names and geometry.
+Argument or I/O failures return a fixed anonymous error; inspect the local folder or use the
+CLI locally for detailed errors. Paths supplied as arguments stay on the local machine.
+
+| Tool | Required arguments | Behavior |
+|---|---|---|
+| `diagnose` | `input`, `out` | Rank parts; return the anonymous report. |
+| `diagnose_narrow` | `input`, `out` | Rank, isolate and bisect; resume from checkpoints; return signature, known-problem advice and recipe. |
+| `convert_part` | `input`, `part` | Try a numbered part and discard output geometry. |
+| `stop_at_feature` | `input`, `part`, `feature` | Try history through that feature; 0 tries stored shape only. |
+| `same_failure` | `input`, `out` | Check a small rebuild against the original signature in out. |
+| `make_report` | `input`, `out` | Write the checked small file and anonymous facts to a local ZIP; send nothing. |
+
+All except `make_report` accept `time_limit` (for example `30s` or `5m`) and a positive
+`memory_limit_mb`. The two part-trial tools also accept `neighbours: true`. They return
+`dutchman.part-trial/1`: `converted` records the trial outcome; `ok` says the tool ran.
+The other tools use the existing diagnose, narrow, same-failure and made-report schemas,
+with local `paths` omitted. No tool submits a report. The local report ZIP has the fixed
+name `diagnose/dutchman-report.zip` under `out`; ask the user to review it before sharing.
+`doctor` is not available yet.
+
+See the [paste-in prompt](troubleshooting.md#diagnose-with-an-assistant).

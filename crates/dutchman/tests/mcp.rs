@@ -95,7 +95,19 @@ fn an_mcp_client_converts_through_dutchman() {
         .collect();
     assert_eq!(
         names,
-        ["convert", "inspect", "formats", "convert_all", "repro"]
+        [
+            "convert",
+            "inspect",
+            "formats",
+            "convert_all",
+            "repro",
+            "diagnose",
+            "diagnose_narrow",
+            "convert_part",
+            "stop_at_feature",
+            "same_failure",
+            "make_report"
+        ]
     );
 
     let formats = client.call("formats", json!({}));
@@ -401,4 +413,120 @@ fn repro_returns_anonymous_content_and_only_explicitly_returns_the_local_key() {
             .unwrap()
             .ends_with("local-key.json"));
     }
+}
+
+#[test]
+fn diagnostic_tools_use_guarded_workers_and_do_not_return_local_paths() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut client = Client::start();
+    for tool in ["diagnose", "diagnose_narrow"] {
+        let result = client.call(
+            tool,
+            json!({"input": fixture("generated_unit_cube.f3d"), "out": dir.path().join(tool)}),
+        );
+        assert_eq!(result["isError"], false, "{result}");
+        let text = result.to_string();
+        assert!(!text.contains(dir.path().to_str().unwrap()), "{text}");
+        assert!(!text.contains("generated_unit_cube"), "{text}");
+        assert!(result["structuredContent"]["paths"].is_null());
+    }
+    for (tool, args) in [
+        (
+            "convert_part",
+            json!({"input": fixture("generated_unit_cube.f3d"), "part": 1}),
+        ),
+        (
+            "stop_at_feature",
+            json!({"input": fixture("generated_unit_cube.f3d"), "part": 1, "feature": 0}),
+        ),
+    ] {
+        let result = client.call(tool, args);
+        assert_eq!(result["isError"], false, "{result}");
+        assert_eq!(result["structuredContent"]["converted"], true, "{result}");
+        assert_eq!(
+            result["structuredContent"]["schema"],
+            "dutchman.part-trial/1"
+        );
+    }
+    for tool in [
+        "diagnose",
+        "diagnose_narrow",
+        "same_failure",
+        "make_report",
+        "convert_part",
+        "stop_at_feature",
+    ] {
+        let error = client.call(
+            tool,
+            json!({"input": "/private/design-name.f3d", "out": dir.path()}),
+        );
+        assert_eq!(error["isError"], true);
+        assert!(!error.to_string().contains("design-name"));
+        assert!(!error.to_string().contains(dir.path().to_str().unwrap()));
+    }
+    client.finish();
+}
+
+#[test]
+#[cfg(feature = "freecad")]
+fn mcp_narrows_checks_and_builds_a_report_with_anonymous_results() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_dutchman-mcp"))
+        .env("DUTCHMAN_DIAGNOSE_TEST_FAULT", "1:feature:2:fail")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut client = Client {
+        stdin: child.stdin.take(),
+        stdout: BufReader::new(child.stdout.take().unwrap()),
+        child,
+        next_id: 1,
+    };
+    let original = fixture("design_history.FCStd");
+    let result = client.call(
+        "diagnose_narrow",
+        json!({"input": original, "out": dir.path()}),
+    );
+    assert_eq!(result["isError"], false, "{result}");
+    assert_eq!(
+        result["structuredContent"]["result"]["first_failing_feature"],
+        2
+    );
+    let recipe = result["structuredContent"]["result"]["recipe"]
+        .as_str()
+        .unwrap();
+    assert!(recipe.contains("Fusion"));
+    let next_steps =
+        std::fs::read_to_string(dir.path().join("diagnose/kit/next-steps.md")).unwrap();
+    assert!(next_steps.contains(recipe));
+    // Repack a synthetic fixture, giving it different bytes without adding any CAD source.
+    let small = dir.path().join("private-small.FCStd");
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(&original).unwrap()).unwrap();
+    let mut copy = zip::ZipWriter::new(std::fs::File::create(&small).unwrap());
+    copy.set_comment("synthetic rebuilt file").unwrap();
+    for at in 0..archive.len() {
+        let mut member = archive.by_index(at).unwrap();
+        let mut bytes = Vec::new();
+        std::io::Read::read_to_end(&mut member, &mut bytes).unwrap();
+        copy.start_file(
+            member.name().unwrap(),
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+        copy.write_all(&bytes).unwrap();
+    }
+    copy.finish().unwrap();
+    let checked = client.call("same_failure", json!({"input": small, "out": dir.path()}));
+    assert_eq!(checked["structuredContent"]["verdict"], "same", "{checked}");
+    let made = client.call("make_report", json!({"input": small, "out": dir.path()}));
+    assert_eq!(made["isError"], false, "{made}");
+    assert!(dir.path().join("diagnose/dutchman-report.zip").exists());
+    for value in [result, checked, made] {
+        let text = value.to_string();
+        assert!(!text.contains("private-small"));
+        assert!(!text.contains(dir.path().to_str().unwrap()));
+        assert!(!text.contains("design_history"));
+    }
+    client.finish();
 }
