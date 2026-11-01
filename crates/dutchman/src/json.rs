@@ -30,6 +30,9 @@ pub const MADE_REPORT: &str = "dutchman.made-report/1";
 /// The schema of an anonymous, bounded part/history trial.
 pub const PART_TRIAL: &str = "dutchman.part-trial/1";
 
+/// The schema of report consent previews and sending receipts.
+pub const REPORT_SEND: &str = "dutchman.report-send/1";
+
 /// The schema of a minimum-reproduction kit.
 pub const REPRO: &str = "dutchman.repro/1";
 

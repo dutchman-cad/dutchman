@@ -1529,8 +1529,8 @@ pub fn make_report(small: &Path, out: &Path) -> Result<Value, String> {
         "schema": wire::MADE_REPORT, "ok": true,
         "summary": format!(
             "The report is ready and nothing was sent. It holds anonymous.json, signature.json \
-             and your small file, under the name small.{extension}: send it only if you are \
-             free to share that file."
+             and your small file, under the name small.{extension}. Keep the zip private and use \
+             the private-send card. Share only anonymous.json on GitHub."
         ),
         "paths": {"zip": zip_path, "issue_link": link_path},
         "issue_url": link,

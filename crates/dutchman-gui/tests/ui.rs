@@ -372,11 +372,11 @@ fn screenshots() {
                 .set_out_dir(work.path().join(format!("card-{case}-{name}")));
             convert(&mut harness);
             harness.state_mut().preview_size(0, size);
-            harness.run();
+            harness.run_steps(8);
             harness
                 .get_by_label("Join our Discord server")
                 .scroll_to_me();
-            harness.run();
+            harness.run_steps(8);
             shot(
                 &mut harness,
                 &dir,
@@ -393,6 +393,7 @@ fn screenshots() {
     ] {
         let mut harness = screenshot_harness(theme);
         harness.state_mut().updater.preview(dutchman_gui::update::Release {
+            fixes_reports: Vec::new(),
             tag: "v0.2.6".into(),
             notes: "Dutchman 0.2.6\n\nImproved desktop conversion progress and clearer reports.\nUpdated native format readers.".into(),
             download: "https://github.com/dutchman-cad/dutchman/releases/tag/v0.2.6".into(),
@@ -425,6 +426,7 @@ fn screenshots() {
                     .state_mut()
                     .updater
                     .preview(dutchman_gui::update::Release {
+                        fixes_reports: Vec::new(),
                         tag: "v0.2.6".into(),
                         notes: "Release notes".into(),
                         download: "https://github.com/dutchman-cad/dutchman/releases/tag/v0.2.6"
@@ -825,6 +827,7 @@ fn update_pill_adapts_to_width_and_waits_for_a_click() {
             .state_mut()
             .updater
             .preview(dutchman_gui::update::Release {
+                fixes_reports: Vec::new(),
                 tag: "v0.2.6".into(),
                 notes: "Release notes".into(),
                 download: "https://github.com/dutchman-cad/dutchman/releases/tag/v0.2.6".into(),
@@ -854,6 +857,7 @@ fn homebrew_job_survives_window_close_and_offers_restart_on_success() {
         .state_mut()
         .updater
         .preview(dutchman_gui::update::Release {
+            fixes_reports: Vec::new(),
             tag: "v0.2.6".into(),
             notes: "Release notes".into(),
             download: "https://github.com/dutchman-cad/dutchman/releases/tag/v0.2.6".into(),
@@ -892,6 +896,7 @@ fn scoop_confirmation_can_be_cancelled_without_starting_a_process() {
         .state_mut()
         .updater
         .preview(dutchman_gui::update::Release {
+            fixes_reports: Vec::new(),
             tag: "v0.2.6".into(),
             notes: "Release notes".into(),
             download: "https://github.com/dutchman-cad/dutchman/releases/tag/v0.2.6".into(),

@@ -133,6 +133,7 @@ fn environment_and_source_builds_disable_even_manual_checks() {
 fn skip_and_three_day_reminder_survive_settings_restore() {
     let mut updater = Updater::new(None);
     updater.preview(Release {
+        fixes_reports: Vec::new(),
         tag: "v9.0.0".into(),
         notes: String::new(),
         download: RELEASES.into(),
@@ -224,6 +225,7 @@ fn completed_checks_schedule_an_hour_and_only_manual_checks_open_the_window() {
         tx.send(Ok(Checked {
             clear_release: false,
             release: Some(Release {
+                fixes_reports: Vec::new(),
                 tag: "v9.0.0".into(),
                 notes: "Notes".into(),
                 download: RELEASES.into(),
@@ -362,4 +364,33 @@ fn missing_feed_entry_or_failed_feed_still_offers_the_available_package() {
         assert!(release.notes.is_empty());
         assert!(release.download.ends_with("/tag/v0.2.5"));
     }
+}
+
+#[test]
+fn release_metadata_reads_only_lowercase_report_hashes_without_an_extra_request() {
+    let id = "0123456789aba3f2";
+    let hash = dutchman::report_send::hash(id.as_bytes());
+    let fetch = |url: &str, _: Option<&str>| {
+        if url == FEED {
+            return Err("No feed".into());
+        }
+        assert_eq!(url, API);
+        Ok(Response::Body { bytes: serde_json::json!({"tag_name": "v9.0.0", "assets": [], "fixes_reports": [hash, "A".repeat(64), "bad"]}).to_string().into_bytes(), etag: None })
+    };
+    let release = check(&fetch, "v1.0.0", None).unwrap().release.unwrap();
+    assert_eq!(release.fixes_reports, vec![hash]);
+    assert_eq!(
+        dutchman::report_send::fixed_notice(&[id.into()], &release.fixes_reports).unwrap(),
+        "This update fixes a problem you reported (A3F2)."
+    );
+}
+
+#[test]
+fn github_atom_release_metadata_keeps_fixes_without_showing_machine_text() {
+    let hash = "a".repeat(64);
+    let feed = format!("<feed><entry><id>v9.0.0</id><content>&lt;p&gt;A conversion fix.&lt;/p&gt;&lt;!-- dutchman-release {{&quot;fixes_reports&quot;:[&quot;{hash}&quot;]}} --&gt;</content></entry></feed>");
+    let release = parse_feed(feed.as_bytes()).unwrap().unwrap();
+    assert_eq!(release.fixes_reports, vec![hash]);
+    assert!(!release.notes.contains("fixes_reports"));
+    assert!(release.notes.contains("A conversion fix."));
 }

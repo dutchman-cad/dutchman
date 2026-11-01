@@ -202,3 +202,11 @@ or flattened history, assemblies placed against total, and the slowest file's ti
 memory; then the top failure causes with an example and the layer that owns each (cadmpeg,
 Dutchman or SolidCraft), and the top reasons history stopped. `scripts/corpus_report.py` is tested
 by `scripts/tests/test_corpus_report.py`.
+
+For report fix notices, include the portal's `fixes_reports` hashes in release notes
+as the hidden `dutchman-release` JSON comment documented in [json.md](json.md).
+Use hashes of the exact diagnostic report ids, including their existing prefix.
+The app reads this through its normal release check and compares locally.
+Configure `DUTCHMAN_REPORT_ENDPOINT` at build time only when an HTTPS Worker URL is
+ready. Builds without that setting retain reports locally and offer private/GitHub
+fallbacks after a Send click.
