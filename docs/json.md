@@ -166,6 +166,19 @@ Explicit output paths keep their given extension. The container format stays `so
 | `names` | Every name the conversion met, sorted: the paths and folders it read from, and the names the design gives its parts, components, bodies, features, sketches, parameters and properties. For tools that take names out of a report before it is shared (the anonymous report does); absent when there were none. |
 | `losses` | What did not survive intact. `level` is `Info` (no effect on geometry), `Degraded` (carried in a weaker form) or `Dropped` (left out). `code` is cadmpeg's stable loss code when cadmpeg reported it, else `null`; `subject` says what was affected; `message` is for people. `stage` and `upstream` say where it arose (below). |
 
+Offset datum planes need no building feature when their support resolves or all their
+consumers carry independent resolved sketch placements. Otherwise the history reason
+names the unresolved plane reference; resolved skipped planes count as `not_needed`.
+
+Shells require removed faces from their own historical input topology, a resolved
+thickness and inward or outward direction, and one earlier named body. A shell input-face
+blocker means the source selection or historical boundary is not supported yet; final-body
+faces cannot establish which face existed before shelling.
+
+A through-all cut with no earlier named body is `blocked` before replay, with a reason
+asking for its body-producing feature to resolve first. Source storage order does not
+change replay order: the neutral ordinal controls it.
+
 SolidCraft version presentation uses minors: `solidcraft.target` and
 `solidcraft.known_newest` now contain `x.y` strings (for example, `"0.29"`), changing their
 previous `x.y.z` representation. `solidcraft.found` keeps the full CLI release (for example,

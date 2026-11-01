@@ -22,7 +22,7 @@ fn members<'a>(selection: &'a Value, kind: &str) -> Result<&'a [Value], String> 
         .ok_or_else(|| format!("its {kind} are not resolved"))
 }
 
-fn body_names(selection: &Value, ctx: &Context) -> Result<Vec<String>, String> {
+pub(super) fn body_names(selection: &Value, ctx: &Context) -> Result<Vec<String>, String> {
     let mut names = Vec::new();
     for value in members(selection, "bodies")? {
         let id = value.as_str().ok_or("its body reference is malformed")?;
@@ -264,11 +264,9 @@ pub(super) fn split(
     let datum = tool
         .pointer("/value/plane")
         .and_then(Value::as_str)
-        .and_then(|id| ctx.row("features", id))
-        .ok_or("its splitting plane is not an earlier feature")?;
-    let frame = super::operation(datum)
-        .get("frame")
-        .ok_or("its splitting plane is not placed")?;
+        .and_then(|id| ctx.planes.get(id))
+        .ok_or("its splitting plane is not an earlier resolved datum plane")?;
+    let frame = super::datum::value(datum);
     let origin = v3(frame.get("origin")).ok_or("its splitting plane is not placed")?;
     let normal = v3(frame.get("normal"))
         .and_then(unit)

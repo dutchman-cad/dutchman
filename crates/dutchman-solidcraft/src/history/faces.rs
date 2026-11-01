@@ -267,6 +267,15 @@ pub(super) fn import_names(ctx: &mut Context, ids: &[&str], step: Option<&str>) 
         else {
             continue;
         };
+        // STEP emits no shape for a region without shells (including an empty
+        // exterior/void region). It must not consume a name in the import order.
+        if region
+            .get("shells")
+            .and_then(Value::as_array)
+            .is_some_and(Vec::is_empty)
+        {
+            continue;
+        }
         let Some(body) = ctx.row("bodies", body_id) else {
             continue;
         };
@@ -602,5 +611,39 @@ mod tests {
         let half = 5.0 * std::f64::consts::FRAC_1_SQRT_2;
         assert!((p[0] - half).abs() < 1e-9 && (p[1] - half).abs() < 1e-9);
         assert!((p[2] - 5.0).abs() < 1e-9);
+    }
+}
+
+#[cfg(test)]
+mod import_tests {
+    use super::*;
+
+    #[test]
+    fn import_names_validate_before_committing_and_skip_empty_regions() {
+        let model = json!({
+            "bodies": [{"id": "a", "name": "Body", "kind": "solid"},
+                       {"id": "b", "name": "Body", "kind": "solid"}],
+            "regions": [{"id": "empty", "body": "a", "shells": []},
+                        {"id": "ra", "body": "a", "shells": ["sa"]},
+                        {"id": "rb", "body": "b", "shells": ["sb"]}]
+        });
+        let mut ctx = Context::new(&model);
+        let one = "#1=MANIFOLD_SOLID_BREP('a',#2);";
+        assert!(import_names(&mut ctx, &["a", "b"], Some(one)).is_empty());
+        assert!(ctx.named_bodies.is_empty());
+        assert!(ctx.imported_regions.is_empty());
+        let two = format!("{one}\n#3=MANIFOLD_SOLID_BREP('b',#4);");
+        assert_eq!(
+            import_names(&mut ctx, &["a", "b"], Some(&two)),
+            ["Body", "Body (2)"]
+        );
+        assert_eq!(
+            ctx.imported_regions.get("Body").map(String::as_str),
+            Some("ra")
+        );
+        assert_eq!(
+            ctx.imported_regions.get("Body (2)").map(String::as_str),
+            Some("rb")
+        );
     }
 }

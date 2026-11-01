@@ -74,7 +74,14 @@ fn import(feature: &Value, ids: &[&str], ctx: &mut Context) -> Result<Value, Str
     let name = name(feature)
         .map(str::to_owned)
         .unwrap_or_else(|| format!("Base Feature{id}"));
-    let names = super::faces::import_names(ctx, ids, None);
+    // Validate the emitted sequence before committing body names to later selections
+    // or colours. A colour correspondence gap must not discard usable history.
+    let model = ctx.source.ok_or("its source geometry is not available")?;
+    let part = dutchman_core::with_bodies(model, ids, name.clone())
+        .map_err(|why| format!("base feature \"{name}\": {why}"))?;
+    let text = step::restate(&part, &mut Report::default())
+        .map_err(|err| format!("base feature \"{name}\": {err}"))?;
+    let names = super::faces::import_names(ctx, ids, Some(&text));
     let mut mapped = json!({
         "id": id,
         "name": name,
@@ -83,6 +90,7 @@ fn import(feature: &Value, ids: &[&str], ctx: &mut Context) -> Result<Value, Str
         "file": format!("{name}.step"),
         "step": "",
         BODIES: ids,
+        STEP: text,
     });
     if let (false, Some(fields)) = (names.is_empty(), mapped.as_object_mut()) {
         fields.insert("body_names".to_owned(), json!(names));
@@ -97,6 +105,9 @@ pub(crate) fn restate(history: &mut History, model: &Model) -> Result<(), String
         let Some(fields) = feature.as_object_mut() else {
             continue;
         };
+        if fields.get(STEP).and_then(Value::as_str).is_some() {
+            continue;
+        }
         let Some(bodies) = fields.get(BODIES).cloned() else {
             continue;
         };

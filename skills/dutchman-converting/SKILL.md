@@ -343,6 +343,19 @@ or "You have the solid shape, without its feature history"), then what is missin
 call the user's file corrupt or invalid; when Dutchman cannot read something, it is not
 supported yet.
 
+Offset datum planes need no building feature when their support resolves or all their
+consumers carry independent resolved sketch placements. Otherwise the history reason
+names the unresolved plane reference; resolved skipped planes count as `not_needed`.
+
+Shells require removed faces from their own historical input topology, a resolved
+thickness and inward or outward direction, and one earlier named body. A shell input-face
+blocker means the source selection or historical boundary is not supported yet; final-body
+faces cannot establish which face existed before shelling.
+
+A through-all cut with no earlier named body is `blocked` before replay, with a reason
+asking for its body-producing feature to resolve first. Source storage order does not
+change replay order: the neutral ordinal controls it.
+
 ## Command line equivalents
 
 ```sh
