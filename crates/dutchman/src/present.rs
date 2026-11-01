@@ -3,7 +3,8 @@
 //! Builders accept the stable JSON reports, so serialized reports and freshly converted
 //! reports follow the same rules. They never change the report or add text to JSON output.
 
-use crate::{issue, json};
+use crate::report_policy::ReportPolicy;
+use crate::{anon, issue, json};
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
@@ -113,6 +114,100 @@ impl ReportLink {
 pub fn report_link(report: &Value, anonymous: &Value) -> ReportLink {
     let issue = issue::fill(report, anonymous);
     ReportLink::new(issue)
+}
+
+/// The secondary way to report a failed file: nothing of the file, no names.
+pub const REPORT_BUTTON: &str = "Report anonymously on GitHub";
+pub const SEND_INTRO: &str =
+    "If this file opens in the app that made it, it's a bug in Dutchman. Help us fix it:";
+pub const SEND_JOIN_TITLE: &str = "Join our Discord server";
+pub const SEND_JOIN_BUTTON: &str = "Open invite";
+pub const SEND_JOIN_NOTE: &str = "Already in? Skip this step.";
+pub const SEND_DM_TITLE: &str = "DM Dutchy";
+pub const SEND_DM_BUTTON: &str = "Copy and open DM";
+pub const SEND_STEP_TITLE: &str = "Have a STEP export?";
+pub const SEND_STEP_TEXT: &str = "If you can export a STEP of the same design, add it too. \
+     It helps us compare, but it isn't required.";
+pub const SEND_SMALL_PRINT: &str = "Only the Dutchman team sees it. It's never published or \
+     used in public tests, and we delete it on request.";
+pub const SEND_COPIED: &str = "The message is copied: paste it into the DM with Dutchy.";
+
+/// Which app shows the steps, as they say where the file is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Surface {
+    Desktop,
+    Web,
+}
+
+/// The steps that vary on the "send the file privately" path, from the policy and the file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SendSteps {
+    /// What to do in the DM.
+    pub dm_text: String,
+    /// Whether the file goes in by hand, so the desktop app shows its folder.
+    pub drag: bool,
+    /// Whether to ask for a STEP export too.
+    pub step_card: bool,
+}
+
+impl SendSteps {
+    pub fn new(
+        policy: &ReportPolicy,
+        size_bytes: Option<u64>,
+        report: &Value,
+        surface: Surface,
+    ) -> Self {
+        let drag = policy.fits_discord(size_bytes);
+        let dm_text = match (drag, surface) {
+            (true, Surface::Desktop) => "Drag the file in (its folder is open).".to_owned(),
+            (true, Surface::Web) => "Drag the file in (the file you picked).".to_owned(),
+            (false, _) => format!(
+                "Paste the message. Dutchy replies with a private upload link (up to {}).",
+                policy.link_limits()
+            ),
+        };
+        Self {
+            dm_text,
+            drag,
+            step_card: !source_is_step(report),
+        }
+    }
+}
+
+/// Whether the file of `report` is itself a STEP file.
+fn source_is_step(report: &Value) -> bool {
+    report.pointer("/input/format").and_then(Value::as_str) == Some("step")
+}
+
+/// Whether a STEP of the file of `report` is known to be at hand.
+pub fn step_known(report: &Value) -> Option<bool> {
+    source_is_step(report).then_some(true)
+}
+
+/// The fixed word for the failure in `report`, if it has one.
+pub fn error_code(report: &Value) -> Option<&str> {
+    ["/error/code", "/error/kind"]
+        .into_iter()
+        .find_map(|key| report.pointer(key).and_then(Value::as_str))
+}
+
+/// The anonymous report of the file `report` is of, and the file's id in it, under the run's
+/// `salt`: the same id the run's diagnostic log gives the file.
+pub fn anonymous_report(
+    report: &Value,
+    out_dir: &Path,
+    salt: &anon::Salt,
+    run: &anon::Run,
+) -> (Value, String) {
+    let input = report
+        .pointer("/input/path")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .unwrap_or_default();
+    let id = salt.file_id(&input);
+    let batch = json!({"results": [report]});
+    let (anonymous, _) = anon::report(&batch, &[input], out_dir, salt, run);
+    (anonymous, id)
 }
 
 pub fn loss_line(loss: &Value) -> LossLine {
@@ -672,6 +767,66 @@ mod tests {
             "7 part files were not found: 0, 1, 2, 3, 4 and 2 more"
         );
         assert!(!incomplete(&json!({"completeness": {"left_out": []}})));
+    }
+
+    fn failed_on(format: &str) -> Value {
+        json!({"ok": false, "input": {"path": "/tmp/part.x", "format": format},
+               "error": {"message": "failed", "kind": "no_geometry"}})
+    }
+
+    #[test]
+    fn the_steps_follow_the_size_and_the_surface() {
+        let policy = ReportPolicy::bundled();
+        let report = failed_on("fusion_archive");
+        let small = SendSteps::new(policy, Some(1 << 20), &report, Surface::Desktop);
+        assert_eq!(small.dm_text, "Drag the file in (its folder is open).");
+        assert!(small.drag);
+        let web = SendSteps::new(policy, Some(1 << 20), &report, Surface::Web);
+        assert_eq!(web.dm_text, "Drag the file in (the file you picked).");
+        let big = SendSteps::new(policy, Some(11 << 20), &report, Surface::Desktop);
+        assert!(!big.drag);
+        assert_eq!(
+            big.dm_text,
+            "Paste the message. Dutchy replies with a private upload link (up to 300 MB for \
+             the design, 300 MB for its STEP, or a 1.5 GB zip, for 72 hours)."
+        );
+        assert!(!big.dm_text.contains("Drag"));
+    }
+
+    #[test]
+    fn only_a_step_source_skips_the_step_card_and_counts_as_known() {
+        let policy = ReportPolicy::bundled();
+        let step = failed_on("step");
+        assert!(!SendSteps::new(policy, None, &step, Surface::Web).step_card);
+        assert_eq!(step_known(&step), Some(true));
+        let other = failed_on("inventor_part");
+        assert!(SendSteps::new(policy, None, &other, Surface::Web).step_card);
+        assert_eq!(step_known(&other), None);
+        assert_eq!(error_code(&other), Some("no_geometry"));
+    }
+
+    #[test]
+    fn the_card_and_the_log_name_a_file_by_one_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("Secret Bracket.f3d");
+        std::fs::write(&input, b"not a design").unwrap();
+        let salt = anon::Salt::random().unwrap();
+        let log_path = dir.path().join("log.jsonl");
+        let options = crate::ConvertOptions {
+            diagnostics_salt: Some(salt.clone()),
+            ..crate::ConvertOptions::default()
+        };
+        drop(crate::diagnostics::Log::open(&log_path, &input, &options).unwrap());
+        let log = std::fs::read_to_string(&log_path).unwrap();
+        let first: Value = serde_json::from_str(log.lines().next().unwrap()).unwrap();
+        let report = json!({"ok": false, "input": {"path": input},
+                            "error": {"message": "failed"}});
+        let run = anon::Run::default();
+        let (anonymous, id) = anonymous_report(&report, dir.path(), &salt, &run);
+        assert_eq!(first["file"], id.as_str());
+        assert!(!anonymous.to_string().contains("Secret"));
+        // A second link for the same file under the same salt says the same id.
+        assert_eq!(anonymous_report(&report, dir.path(), &salt, &run).1, id);
     }
 
     #[test]

@@ -67,12 +67,24 @@ The window's title and top row show its version beside **Dutchman Convert**, for
 form. `dutchman-gui --version` and `dutchman-gui --help` print and exit without opening a
 window (on Windows, read the version with `dutchman --version`).
 
-When a file fails, its card says so and offers **Report this on GitHub**. It opens the same
-form in your browser with Dutchman's version, your system and the error's stage, upstream and
-code filled in, and copies the file's anonymous report, which names no file and no folder.
-Paste it into the form's **Anonymous report for this file** box and read it before you
-submit. Never attach the design; a link to a file that is already public is welcome. The
-link stays under 2,000 characters so GitHub opens it while you are signed in.
+When a file fails, its card offers two routes. To send the file, follow the steps on the card:
+join the Discord server, then **Copy and open DM** copies a one-line message and opens Dutchy's
+DM. A file within Discord's upload limit is dragged in, and its folder opens for that; for a
+larger one, Dutchy replies with a private upload link. See
+[Send the file privately](troubleshooting.md#send-the-file-privately).
+
+**Report anonymously on GitHub** sends no file and no names. It opens the same form in your
+browser with Dutchman's version, your system and the error's stage, upstream and code filled
+in, and copies the file's anonymous report, which names no file and no folder. Paste it into
+the form's **Anonymous report for this file** box and read it before you submit. Never attach
+the design; a link to a file that is already public is welcome. The link stays under 2,000
+characters so GitHub opens it while you are signed in.
+
+The card takes the invite, the limits, and the message from a small policy built into the app.
+Once a day at most, where update checks run, the app reads a newer copy from
+<https://dutchman-cad.github.io/report-policy.json> in the background. The request says nothing
+about your files. `DUTCHMAN_UPDATE_CHECK=0`, turning off automatic update checks, and source
+builds all stop it, and the built-in copy is used.
 
 ## Updates
 

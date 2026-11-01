@@ -713,3 +713,29 @@ async fn designs_open_in_solidcraft_when_configured() {
         }
     }
 }
+
+#[tokio::test]
+async fn a_failed_file_offers_the_private_steps_with_its_message() {
+    let data = tempfile::tempdir().unwrap();
+    let app = server(data.path());
+    let upload = form(&[], &[("files", "Secret.f3d", b"not a design".to_vec())]);
+    let (_, headers, _) = send(&app, post("/convert", upload)).await;
+    let location = headers[header::LOCATION].to_str().unwrap().to_owned();
+    let (_, _, page) = send(&app, get(&format!("/{location}"))).await;
+    let page = text(&page);
+    for wanted in [
+        "Join our Discord server",
+        "https://discord.gg/yTcseBEdeu",
+        "https://discord.com/users/",
+        "Drag the file in (the file you picked).",
+        "Have a STEP export?",
+        "Report anonymously on GitHub",
+    ] {
+        assert!(page.contains(wanted), "{wanted}: {page}");
+    }
+    assert!(page.contains("Report id: f"), "{page}");
+    assert!(page.contains("STEP: unknown."), "{page}");
+    let message = page.split("data-message=\"").nth(1).unwrap();
+    let message = message.split('"').next().unwrap();
+    assert!(!message.contains("Secret"), "{message}");
+}

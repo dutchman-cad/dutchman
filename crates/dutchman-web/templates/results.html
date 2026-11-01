@@ -18,6 +18,30 @@
   {% else %}
   <p class="error">{{ card.outcome }}</p>
   {% if let Some(stage) = card.stage %}<p class="muted">Stopped in the {{ stage }} stage.</p>{% endif %}
+  {% if let Some(send) = card.send %}
+  <p class="send-intro">{{ dutchman::present::SEND_INTRO }}</p>
+  <div class="steps">
+    <div class="step">
+      <h3>{{ dutchman::present::SEND_JOIN_TITLE }}</h3>
+      <a class="button" href="{{ send.invite_url }}" target="_blank" rel="noopener">{{ dutchman::present::SEND_JOIN_BUTTON }}</a>
+      <p class="muted">{{ dutchman::present::SEND_JOIN_NOTE }}</p>
+    </div>
+    <div class="step">
+      <h3>{{ dutchman::present::SEND_DM_TITLE }}</h3>
+      <button type="button" class="dm" data-message="{{ send.message }}" data-dm="{{ send.dm_url }}">{{ dutchman::present::SEND_DM_BUTTON }}</button>
+      <p class="muted">{{ send.dm_text }}</p>
+    </div>
+    {% if send.step_card %}
+    <div class="step light">
+      <h3>{{ dutchman::present::SEND_STEP_TITLE }}</h3>
+      <p class="muted">{{ dutchman::present::SEND_STEP_TEXT }}</p>
+    </div>
+    {% endif %}
+  </div>
+  <p class="message" hidden>{{ dutchman::present::SEND_COPIED }}<br><code>{{ send.message }}</code></p>
+  <p class="muted">{{ dutchman::present::SEND_SMALL_PRINT }}</p>
+  <a class="download" href="{{ dutchman::issue::NEW_ISSUE }}" target="_blank" rel="noopener">{{ dutchman::present::REPORT_BUTTON }}</a>
+  {% endif %}
   {% endif %}
   {% if !card.blocked.is_empty() %}
   <details>
@@ -37,6 +61,30 @@
   {% if let Some(error) = card.save_error %}<p class="error">{{ error }}</p>{% endif %}
 </section>
 {% endfor %}
+
+<script>
+  // Over plain http a browser has no clipboard API; the fallback copies the shown line.
+  for (const button of document.querySelectorAll("button.dm")) {
+    button.addEventListener("click", () => {
+      const note = button.closest(".steps").nextElementSibling;
+      note.hidden = false;
+      window.open(button.dataset.dm, "_blank", "noopener");
+      const selected = () => {
+        const range = document.createRange();
+        range.selectNodeContents(note.querySelector("code"));
+        const selection = getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+        try { document.execCommand("copy"); } catch { /* the line stays selected and shown */ }
+      };
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(button.dataset.message).catch(selected);
+      } else {
+        selected();
+      }
+    });
+  }
+</script>
 
 <p class="muted">These results and designs are deleted {{ keep_minutes }} minutes after the upload. <a href="../">Convert more</a></p>
 {% endblock %}

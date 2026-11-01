@@ -117,7 +117,7 @@ fn feed_entries(body: &[u8]) -> Result<Vec<Release>, String> {
     Ok(releases)
 }
 
-enum Response {
+pub(crate) enum Response {
     Unchanged,
     Body {
         bytes: Vec<u8>,
@@ -280,7 +280,7 @@ fn matches_asset(name: &str, os: &str, arch: &str, appimage: bool) -> bool {
     }
 }
 
-fn fetch(url: &str, etag: Option<&str>) -> Result<Response, String> {
+pub(crate) fn fetch(url: &str, etag: Option<&str>) -> Result<Response, String> {
     let agent = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(20))
         .build();
@@ -314,7 +314,15 @@ fn fetch(url: &str, etag: Option<&str>) -> Result<Response, String> {
 fn permitted(release_build: bool, env: Option<&str>) -> bool {
     release_build && env != Some("0")
 }
-fn now() -> u64 {
+/// Whether this build may reach the network on its own: a release build, unless
+/// `DUTCHMAN_UPDATE_CHECK=0`.
+pub(crate) fn network_allowed() -> bool {
+    permitted(
+        option_env!("DUTCHMAN_RELEASE_BUILD") == Some("1") && !cfg!(debug_assertions),
+        std::env::var("DUTCHMAN_UPDATE_CHECK").ok().as_deref(),
+    )
+}
+pub(crate) fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -363,10 +371,7 @@ impl Updater {
             open: false,
             settings: false,
             status: String::new(),
-            allowed: permitted(
-                option_env!("DUTCHMAN_RELEASE_BUILD") == Some("1") && !cfg!(debug_assertions),
-                std::env::var("DUTCHMAN_UPDATE_CHECK").ok().as_deref(),
-            ),
+            allowed: network_allowed(),
         };
         if let Some(failure) = failure {
             updater.release = Some(Release {
@@ -381,6 +386,10 @@ impl Updater {
             updater.scoop_failure = true;
         }
         updater
+    }
+    /// Whether the reader leaves automatic checks on.
+    pub fn automatic(&self) -> bool {
+        self.automatic
     }
     pub fn newer_known(&self) -> bool {
         self.release.is_some()
