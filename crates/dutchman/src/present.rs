@@ -525,6 +525,29 @@ pub fn missing_summary(missing: &[String]) -> String {
 
 /// What was written, in a sentence.
 pub fn outcome(report: &Value) -> String {
+    let mut text = outcome_without_memory_note(report);
+    if let Some(reason) = report
+        .pointer("/history_check_skipped/reason")
+        .and_then(Value::as_str)
+    {
+        if !text.contains(reason) {
+            text.push(' ');
+            text.push_str(reason);
+            text.push('.');
+        }
+        if report
+            .pointer("/history/mapped")
+            .and_then(Value::as_u64)
+            .is_some_and(|count| count > 0)
+            && !text.contains("unverified")
+        {
+            text.push_str(" Retained history unverified.");
+        }
+    }
+    text
+}
+
+fn outcome_without_memory_note(report: &Value) -> String {
     let field = |pointer: &str| report.pointer(pointer).and_then(Value::as_str);
     let history = |mapped: u64, total: u64| format!("{mapped} of {total} features mapped");
     let counts = (
@@ -586,6 +609,18 @@ pub fn loss_counts(losses: &[&Value]) -> String {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_partial_history_card_shows_a_memory_skip() {
+        let reason = "History check skipped: needs about 9.4 GB, 2.0 GB free";
+        let report = serde_json::json!({"ok": true, "mode": "partial_history",
+            "history": {"mapped": 2, "total": 3},
+            "verification": {"status": "partial", "reason": "prefix unverified"},
+            "history_check_skipped": {"reason": reason}});
+        assert!(outcome(&report).contains(reason));
+        assert!(outcome(&report).contains("unverified"));
+    }
+
     use serde_json::json;
 
     #[test]

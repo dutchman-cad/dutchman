@@ -678,10 +678,17 @@ mod tree_tests {
         let mut command = Command::new("bash");
         command.args(["-c", "sleep 30 & wait"]).process_group(0);
         let mut child = command.spawn().unwrap();
-        std::thread::sleep(Duration::from_millis(50));
-        let own = resident_bytes(child.id()).unwrap();
-        let tree = resident_tree_bytes(child.id()).unwrap();
-        assert!(tree > own);
+        // The child appears, and then gains memory, some time after the spawn.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let counted = loop {
+            let own = resident_bytes(child.id()).unwrap();
+            let tree = resident_tree_bytes(child.id()).unwrap();
+            if tree > own || Instant::now() > deadline {
+                break tree > own;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert!(counted);
         let children =
             std::fs::read_to_string(format!("/proc/{}/task/{}/children", child.id(), child.id()))
                 .unwrap();

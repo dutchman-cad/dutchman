@@ -2187,7 +2187,13 @@ fn prepare_slices<'a>(
         .map(|(_, bodies)| bodies.len())
         .max()
         .unwrap_or(0);
-    let estimate = (largest as u64).saturating_mul(1 << 20).max(256 << 20);
+    // Slicing clones geometry and history arenas; a single dense body can dominate.
+    let entities = crate::parts::entity_count(model);
+    let entities_per_body = entities.div_ceil(model.ir.model.bodies.len().max(1) as u64);
+    // Each slice also indexes all source rows before following the selected bodies.
+    let estimate =
+        crate::parallel::part_peak_bytes(entities_per_body.saturating_mul(largest as u64), largest)
+            .saturating_add(entities.saturating_mul(128));
     // The shared empty template is a helper, not another part worker slot.
     let workers = crate::parallel::workers(threads, jobs.len().saturating_sub(1), estimate);
     report.set_threads(threads, workers);

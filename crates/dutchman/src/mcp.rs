@@ -208,7 +208,7 @@ fn result(report: &Value) -> Value {
 /// The options every converting tool takes, as JSON Schema properties.
 fn option_properties() -> Map<String, Value> {
     let properties = json!({
-        "threads": {"type": "integer", "minimum": 0, "default": 0, "description": "Maximum assembly part workers (0: automatic, 1: serial); capped by available memory."},
+        "threads": {"type": "integer", "minimum": 0, "default": 0, "description": "Maximum assembly part workers (0: automatic, at most two; 1: serial); capped by available memory."},
         "diagnostics_default": {"type": "boolean", "default": false, "description": "Save in the platform diagnostics folder, retaining the newest ten logs. Cannot be combined with diagnostics."},
         "diagnostics": {"type": "string", "description": "Absolute path to append an anonymous live diagnostic JSONL log. Includes progress and resource samples even if a conversion never finishes; no names or file contents."},
         "to": {"type": "string", "enum": ["solidcraft", "freecad"], "default": "solidcraft", "description": "Output format: SolidCraft design or self-contained FreeCAD rebuild macro."},
@@ -216,14 +216,14 @@ fn option_properties() -> Map<String, Value> {
         "history": {"type": "boolean", "default": true, "description": "Keep feature history when the preset allows it; false narrows the preset like import_only."},
         "sketches": {"type": "boolean", "default": true, "description": "Keep reference sketches when the preset allows it. Sketches needed by retained history stay."},
         "joints": {"type": "boolean", "default": true, "description": "Keep assembly joints when the preset allows it; false keeps stored placements."},
-        "no_memory_check": {"type": "boolean", "default": false, "description": "Run even when estimated peak memory exceeds available memory; also disables Standard's history budget."},
+        "no_memory_check": {"type": "boolean", "default": false, "description": "Run and check history even when estimated peak memory exceeds available memory; also disables Standard's history budget and history-check skipping."},
         "import_only": {
             "type": "boolean",
             "description": "Leave feature history out; keep geometry and the preset's reference sketches.",
         },
         "verify": {
             "type": "boolean",
-            "description": "Replay retained history in SolidCraft and compare a complete history with the original geometry (default true; the report says when no SolidCraft CLI is available).",
+            "description": "Replay retained history in SolidCraft and compare a complete history with the original geometry (default true; history_check_skipped reports a check that cannot fit in free memory, unless no_memory_check forces it; the report also says when no SolidCraft CLI is available).",
         },
         "solidcraft": {
             "type": "string",

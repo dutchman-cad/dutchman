@@ -143,6 +143,7 @@ const MAX_NAMES: usize = 100_000;
 #[derive(Clone, Debug, Default)]
 pub struct Report {
     threads: Option<(usize, usize)>,
+    history_check_skipped: Option<(u64, u64)>,
     losses: Vec<Loss>,
     outcome: Option<Outcome>,
     parts: Vec<PartHistory>,
@@ -278,6 +279,16 @@ pub enum FeatureStatus {
 }
 
 impl Report {
+    /// Memory needed and available, in bytes, when a writer skipped the history check.
+    pub fn history_check_skipped(&self) -> Option<(u64, u64)> {
+        self.history_check_skipped
+    }
+
+    /// Record a history check skipped for memory; the converted design is still usable.
+    pub fn skip_history_check(&mut self, needed: u64, available: u64) {
+        self.history_check_skipped = Some((needed, available));
+    }
+
     /// Requested and bounded maximum Dutchman part workers, excluding child-process threads.
     pub fn threads(&self) -> Option<(usize, usize)> {
         self.threads
@@ -365,9 +376,21 @@ impl Report {
         }
     }
 
+    fn merge_history_check(&mut self, other: Option<(u64, u64)>) {
+        if let Some((needed, available)) = other {
+            if self
+                .history_check_skipped
+                .is_none_or(|(previous, _)| needed > previous)
+            {
+                self.skip_history_check(needed, available);
+            }
+        }
+    }
+
     /// Records every loss of `other`, after this report's own.
     pub fn append(&mut self, other: Report) {
         self.merge_threads(other.threads);
+        self.merge_history_check(other.history_check_skipped);
         self.losses.extend(other.losses);
         self.names.extend(other.names);
     }
@@ -375,6 +398,7 @@ impl Report {
     /// Records every loss of `other` under `prefix` (`part.ipt: …`), after this report's own.
     pub fn append_prefixed(&mut self, other: Report, prefix: &str) {
         self.merge_threads(other.threads);
+        self.merge_history_check(other.history_check_skipped);
         self.losses
             .extend(other.losses.into_iter().map(|loss| Loss {
                 subject: format!("{prefix}: {}", loss.subject),
@@ -406,6 +430,11 @@ impl Report {
     /// What the writer made of the design, when it said.
     pub fn outcome(&self) -> Option<&Outcome> {
         self.outcome.as_ref()
+    }
+
+    /// Update the writer's recorded outcome after a final check, without copying its features.
+    pub fn outcome_mut(&mut self) -> Option<&mut Outcome> {
+        self.outcome.as_mut()
     }
 
     /// Records what became of one assembly part's history.

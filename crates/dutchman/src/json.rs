@@ -432,6 +432,16 @@ pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value
             }
         }
     }
+    if let Some((needed, available)) = report.history_check_skipped() {
+        out.insert(
+            "history_check_skipped".to_owned(),
+            json!({
+                "needed_bytes": needed,
+                "available_bytes": available,
+                "reason": crate::stop::history_check_message(needed, available),
+            }),
+        );
+    }
     if let Some(completeness) = report.completeness() {
         out.insert("completeness".to_owned(), completeness_json(completeness));
     }
@@ -1031,6 +1041,27 @@ mod tests {
         }));
         assert_eq!(timed["time_band"], json!(0.2));
         assert!(estimate(None).is_null());
+    }
+
+    #[test]
+    fn skipped_history_check_survives_nested_reports_without_changing_the_schema() {
+        let mut member = Report::default();
+        member.skip_history_check(9_450_000_000, 2_000_000_000);
+        let mut nested = Report::default();
+        nested.append_prefixed(member, "synthetic member");
+        let mut report = Report::default();
+        report.append(nested);
+        let fields = success(CONVERT, serde_json::json!({}), &report);
+        assert_eq!(fields["schema"], CONVERT);
+        assert_eq!(fields["ok"], true);
+        assert_eq!(
+            fields["history_check_skipped"]["needed_bytes"],
+            9_450_000_000u64
+        );
+        assert_eq!(
+            fields["history_check_skipped"]["available_bytes"],
+            2_000_000_000u64
+        );
     }
 
     #[test]

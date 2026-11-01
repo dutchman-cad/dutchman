@@ -59,6 +59,8 @@ pub struct SolidCraftWriter {
     threads: usize,
     #[cfg(test)]
     prepare_hook: Option<fn(&Model)>,
+    #[cfg(test)]
+    prepare_available: Option<u64>,
     import_only: bool,
     sketches: bool,
     joints: bool,
@@ -68,6 +70,8 @@ pub struct SolidCraftWriter {
     replay: Verification,
     timeout: Duration,
     hide_unverified: bool,
+    memory_budget: Option<u64>,
+    memory_skip: OnceLock<(u64, u64)>,
 }
 
 impl Default for SolidCraftWriter {
@@ -76,6 +80,8 @@ impl Default for SolidCraftWriter {
             threads: 0,
             #[cfg(test)]
             prepare_hook: None,
+            #[cfg(test)]
+            prepare_available: None,
             import_only: false,
             sketches: true,
             joints: true,
@@ -85,6 +91,8 @@ impl Default for SolidCraftWriter {
             replay: Verification::Auto,
             timeout: DEFAULT_TIMEOUT,
             hide_unverified: false,
+            memory_budget: None,
+            memory_skip: OnceLock::new(),
         }
     }
 }
@@ -100,6 +108,14 @@ impl SolidCraftWriter {
     pub fn threads(mut self, threads: usize) -> Self {
         self.threads = threads;
         self
+    }
+
+    fn preparation_memory(&self) -> Option<u64> {
+        #[cfg(test)]
+        if let Some(available) = self.prepare_available {
+            return Some(available);
+        }
+        dutchman_core::available_memory()
     }
 
     /// Target this SolidCraft release, or detect the installed CLI's version when absent.
@@ -160,6 +176,44 @@ impl SolidCraftWriter {
     pub fn hide_unverified_history(mut self, hide: bool) -> Self {
         self.hide_unverified = hide;
         self
+    }
+
+    /// Additional memory estimated after reading the design. Recheck current free memory
+    /// immediately before every geometry replay; a skipped check stays skipped for this design.
+    pub fn history_check_memory(mut self, needed: u64, available: Option<u64>) -> Self {
+        self.memory_budget = Some(needed);
+        self.memory_skip = OnceLock::new();
+        if let Some(available) = available.filter(|free| needed > *free) {
+            let _ = self.memory_skip.set((needed, available));
+        }
+        self
+    }
+
+    /// Bytes needed and free when replay was skipped for memory.
+    pub fn history_check_skipped(&self) -> Option<(u64, u64)> {
+        self.memory_skip.get().copied()
+    }
+
+    fn memory_refusal(&self) -> Option<String> {
+        let needed = self.memory_budget?;
+        if self.memory_skip.get().is_none() {
+            let available = dutchman_core::available_memory()?;
+            if needed <= available {
+                return None;
+            }
+            let _ = self.memory_skip.set((needed, available));
+        }
+        self.memory_skip.get().map(|(needed, available)| {
+            format!(
+                "History check skipped: needs about {:.1} GB, {:.1} GB free",
+                *needed as f64 / 1_000_000_000.0,
+                *available as f64 / 1_000_000_000.0,
+            )
+        })
+    }
+
+    fn keep_unverified_hidden(&self) -> bool {
+        self.hide_unverified || self.memory_skip.get().is_some()
     }
 
     /// How long each SolidCraft evaluation may run before the check gives up.
@@ -361,6 +415,9 @@ impl SolidCraftWriter {
     ) -> Result<(), Error> {
         let mut failure = None;
         history::prove_blends(mapping, |history, after, faces| {
+            if let Some(why) = self.memory_refusal() {
+                return Err(why);
+            }
             let cli = verify::usable_cli(&self.replay).map_err(|why| why.to_string())?;
             let design = match self.history_design(model, history, step, Live::History) {
                 Ok(design) => design,
@@ -403,6 +460,11 @@ impl SolidCraftWriter {
         for _ in 0..64 {
             let Ok(history) = &mapping.result else { break };
             let summary = partial_summary(history);
+            if let Some(why) = self.memory_refusal() {
+                return Ok(Check::Partial(format!(
+                    "{summary}; prefix unverified: {why}"
+                )));
+            }
             let cli = match &cli {
                 Ok(cli) => cli,
                 Err(why) => {
@@ -417,6 +479,9 @@ impl SolidCraftWriter {
                 )));
             };
             let design = self.history_design(model, history, step, Live::History)?;
+            if let Some(why) = self.memory_refusal() {
+                return Ok(Check::Partial(format!("{summary}; {why}")));
+            }
             match verify::replay(cli, remaining, &design) {
                 verify::Outcome::Matches => return Ok(Check::Partial(format!("{summary}; retained features replay in SolidCraft; the full history is not verified"))),
                 verify::Outcome::Unverified(why) => return Ok(Check::Partial(format!("{summary}; prefix unverified: {why}"))),
@@ -539,11 +604,17 @@ impl SolidCraftWriter {
         step: &str,
         written: &[u8],
     ) -> Result<verify::Outcome, Error> {
+        if let Some(why) = self.memory_refusal() {
+            return Ok(verify::Outcome::Unverified(why));
+        }
         let cli: PathBuf = match verify::usable_cli(&self.verification) {
             Ok(cli) => cli,
             Err(why) => return Ok(verify::Outcome::Unverified(why.to_string())),
         };
         let original = self.history_design(model, history, step, Live::Original)?;
+        if let Some(why) = self.memory_refusal() {
+            return Ok(verify::Outcome::Unverified(why));
+        }
         let result = verify::compare(
             &cli,
             self.timeout,
@@ -741,6 +812,10 @@ impl SolidCraftWriter {
     }
 
     fn check_geometry(&self, design: &[u8], expected: verify::Expected, report: &mut Report) {
+        if let Some(why) = self.memory_refusal() {
+            report.push(Severity::Info, HISTORY, why);
+            return;
+        }
         let cli = match verify::usable_cli(&self.verification) {
             Ok(cli) => cli,
             // Report a CLI that was found but cannot check the design.
@@ -755,6 +830,10 @@ impl SolidCraftWriter {
             }
             Err(verify::NoCli::NotFound(_)) => return,
         };
+        if let Some(why) = self.memory_refusal() {
+            report.push(Severity::Info, HISTORY, why);
+            return;
+        }
         let shown = verify::check_import(&cli, self.timeout, design, expected);
         if expected.sheets > 0 && !matches!(shown, verify::Shown::Unchecked(_)) {
             report.push_at(
@@ -993,7 +1072,7 @@ impl Writer for SolidCraftWriter {
                             );
                             (written, written_as(Check::Verified))
                         }
-                        verify::Outcome::Unverified(why) if self.hide_unverified => {
+                        verify::Outcome::Unverified(why) if self.keep_unverified_hidden() => {
                             report.append(history_report);
                             let message = format!(
                                 "{summary}; unverified: {why}; kept hidden beside the original, which stays the visible model"
@@ -1107,5 +1186,40 @@ mod extension_tests {
         }
         let newest = SolidCraftWriter::new().target_version(Some(SolidCraftVersion::default()));
         assert_eq!(newest.extension(), "sc");
+    }
+}
+
+#[cfg(test)]
+mod memory_tests {
+    use super::*;
+
+    #[test]
+    fn a_post_read_skip_is_sticky_and_keeps_unverified_history_hidden() {
+        let writer =
+            SolidCraftWriter::new().history_check_memory(9_000_000_000, Some(2_000_000_000));
+        assert_eq!(
+            writer.history_check_skipped(),
+            Some((9_000_000_000, 2_000_000_000))
+        );
+        assert_eq!(
+            writer.memory_refusal().as_deref(),
+            Some("History check skipped: needs about 9.0 GB, 2.0 GB free")
+        );
+        assert!(writer.keep_unverified_hidden());
+        // Current host headroom cannot undo the decision made for this design.
+        assert!(writer.memory_refusal().is_some());
+    }
+
+    #[test]
+    fn a_check_rechecks_free_memory_before_replay() {
+        assert!(SolidCraftWriter::new().memory_refusal().is_none());
+        let writer = SolidCraftWriter::new().history_check_memory(u64::MAX, None);
+        if dutchman_core::available_memory().is_some() {
+            assert!(writer.memory_refusal().is_some());
+            assert!(writer.history_check_skipped().is_some());
+        }
+        let fits = SolidCraftWriter::new().history_check_memory(0, Some(0));
+        assert!(fits.memory_refusal().is_none());
+        assert!(!fits.keep_unverified_hidden());
     }
 }

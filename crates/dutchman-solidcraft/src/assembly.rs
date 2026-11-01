@@ -631,14 +631,50 @@ fn prepare_parts(
     }
     let mut parts = Vec::new();
     repeats::leaves(assembly, repeats, &mut Vec::new(), &mut parts);
-    // Reserve mapping, STEP and replay temporaries, with a floor for a CLI process.
-    let largest = parts
+    // Include geometry density, not just bodies: preparing one detailed body can keep
+    // STEP, history and a replay child alive together. Prepared results stay resident
+    // until the coordinator writes them, so also budget the whole retained queue.
+    let peaks: Vec<_> = parts
         .iter()
-        .map(|part| part.ir.model.bodies.len())
-        .max()
-        .unwrap_or(0);
-    let estimate = (largest as u64).saturating_mul(1 << 20).max(256 << 20);
-    let workers = dutchman_core::parallel::workers(writer.threads, parts.len(), estimate);
+        .map(|part| {
+            dutchman_core::parallel::part_peak_bytes(
+                dutchman_core::parts::entity_count(part),
+                part.ir.model.bodies.len(),
+            )
+        })
+        .collect();
+    let estimate = peaks.iter().copied().max().unwrap_or(256 << 20).max(
+        if writer.history_check_skipped().is_none() {
+            writer.memory_budget.unwrap_or(0)
+        } else {
+            0
+        },
+    );
+    // The process floor belongs to a live worker, not to every queued result.
+    let retained = parts.iter().fold(0u64, |total, part| {
+        total.saturating_add(dutchman_core::parts::entity_count(part).saturating_mul(4 << 10))
+    });
+    // Small imported parts do not repay thread overhead. In a 256-cube benchmark,
+    // 16 workers used about 14 MiB more than serial preparation without saving time.
+    let light_imports = parts.iter().zip(&peaks).all(|(part, peak)| {
+        *peak == (256 << 20)
+            && part.ir.model.bodies.len() <= 1
+            && (writer.import_only || part.ir.model.features.is_empty())
+            && (!writer.sketches || part.ir.model.sketches.is_empty())
+    });
+    let available = writer.preparation_memory();
+    let workers = if (writer.threads == 0 && light_imports)
+        || available.is_some_and(|free| retained > free / 2)
+    {
+        1
+    } else {
+        dutchman_core::parallel::workers_with_memory(
+            writer.threads,
+            parts.len(),
+            estimate,
+            available,
+        )
+    };
     report.set_threads(writer.threads, workers);
     if workers == 1 {
         return Vec::new();
@@ -1227,7 +1263,7 @@ impl Builder<'_> {
                     );
                     Check::Verified
                 }
-                verify::Outcome::Unverified(why) if self.writer.hide_unverified => {
+                verify::Outcome::Unverified(why) if self.writer.keep_unverified_hidden() => {
                     self.report.push_at(
                         Stage::SolidCraft,
                         Severity::Degraded,
@@ -1588,6 +1624,8 @@ mod prepare_tests {
             .verification(crate::Verification::Off)
             .threads(1);
         let mut parallel = serial.clone().threads(4);
+        // Exercise actual workers even when the surrounding test suite has little free memory.
+        parallel.prepare_available = Some(8 << 30);
         parallel.prepare_hook = Some(|part| {
             if part.name == "Forced panic" {
                 panic!("forced part preparation panic");
@@ -1605,6 +1643,15 @@ mod prepare_tests {
             .unwrap();
         assert_eq!(expected, actual);
         assert_eq!(actual_report.threads(), Some((4, 2)));
+        let mut automatic = Vec::new();
+        let mut automatic_report = Report::default();
+        serial
+            .clone()
+            .threads(0)
+            .write(&model, &mut automatic, &mut automatic_report)
+            .unwrap();
+        assert_eq!(automatic, expected);
+        assert_eq!(automatic_report.threads(), Some((0, 1)));
         actual_report.set_threads(1, 1);
         assert_eq!(format!("{expected_report:?}"), format!("{actual_report:?}"));
     }

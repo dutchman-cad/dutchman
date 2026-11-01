@@ -188,21 +188,28 @@ pub(crate) fn memory_check_with(
     options: &crate::ConvertOptions,
     available: Option<u64>,
 ) -> MemoryCheck {
-    let choices = options.choices();
+    let mut choices = options.choices();
     let estimate = estimate_with_options(input, &choices, options);
     if options.no_memory_check || options.preset == Preset::Fast {
         return MemoryCheck::Ok(estimate);
     }
-    let (Some(full), Some(available)) = (estimate, available) else {
+    let (Some(full), Some(conversion), Some(available)) = (
+        estimate,
+        conversion_estimate(input, &choices, options),
+        available,
+    ) else {
         return MemoryCheck::Ok(estimate);
     };
-    if full.peak_bytes <= available {
+    // Display includes checking, but a check that cannot fit is skipped after reading.
+    // It must not prevent conversion or consume Standard's history-retention budget.
+    if conversion.peak_bytes <= available {
         return MemoryCheck::Ok(estimate);
     }
     if choices.history && choices.history_within_budget {
         let reduced = estimate_without_history(input, choices, options);
         if reduced.is_some_and(|e| e.peak_bytes <= available) {
-            return MemoryCheck::Ok(reduced);
+            choices.history = false;
+            return MemoryCheck::Ok(estimate_with_options(input, &choices, options));
         }
     }
     MemoryCheck::TooBig {
@@ -244,7 +251,24 @@ fn estimate_without_history(
     options: &crate::ConvertOptions,
 ) -> Option<Estimate> {
     choices.history = false;
-    estimate_with_options(input, &choices, options)
+    conversion_estimate(input, &choices, options)
+}
+
+/// Conversion-only preflight. A history check that cannot fit is skipped after reading;
+/// its extra memory must not make Standard discard otherwise usable editable history.
+pub(crate) fn conversion_estimate(
+    input: &Path,
+    choices: &Choices,
+    options: &crate::ConvertOptions,
+) -> Option<Estimate> {
+    estimate_with_options(
+        input,
+        choices,
+        &crate::ConvertOptions {
+            no_verify: true,
+            ..options.clone()
+        },
+    )
 }
 
 // Independent embedded designs expose parallel work before native decoding. The serial
@@ -578,7 +602,8 @@ pub fn estimate_with_threads(input: &Path, choices: &Choices, threads: usize) ->
 }
 
 /// Estimate with verification and preflight context, without running a CLI probe.
-/// Verification replay has not been measured, so it never inherits a conversion-only band.
+/// Replay adds a second build. Its memory allowance uses the measured assembly peaks;
+/// replay time remains uncalibrated.
 pub fn estimate_with_options(
     input: &Path,
     choices: &Choices,
@@ -588,7 +613,17 @@ pub fn estimate_with_options(
     let startup = Format::from_path(input)
         .and_then(|format| COEFFICIENTS.iter().find(|c| c.format == format))
         .and_then(|c| c.startup.as_ref());
-    if !options.no_verify {
+    if !options.no_verify && options.to == crate::OutputFormat::Solidcraft {
+        // The 256-placement assembly needed about 9 GB beyond its 8.6 GB conversion
+        // peak. The serial peak was 3.5 GB; use three times that conversion allowance
+        // when a smaller worker count makes the conversion itself cheaper.
+        let share = if options.threads == 1 {
+            crate::stop::HISTORY_CHECK_SHARE
+        } else {
+            1.1
+        };
+        let replay = (result.peak_bytes as f64 * share).ceil() as u64;
+        result.peak_bytes = result.peak_bytes.saturating_add(replay);
         if cfg!(target_os = "windows") {
             if let Some(startup) = startup {
                 let (without, with) = if choices.history {
@@ -959,9 +994,28 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(verified.peak_bytes, fast.peak_bytes);
+        assert!(verified.peak_bytes > fast.peak_bytes);
         assert!(verified.seconds_exact >= fast.seconds_exact);
         assert!(verified.time_band.is_none());
+    }
+
+    #[test]
+    fn replay_memory_is_printed_but_does_not_refuse_a_conversion_that_fits() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("synthetic.ipt");
+        std::fs::write(&input, [0u8; 1024]).unwrap();
+        let options = crate::ConvertOptions::default();
+        let choices = options.choices();
+        let conversion = conversion_estimate(&input, &choices, &options).unwrap();
+        let checked = estimate_with_options(&input, &choices, &options).unwrap();
+        assert!(checked.peak_bytes > conversion.peak_bytes);
+        assert_eq!(
+            memory_check_with(&input, &options, Some(conversion.peak_bytes)),
+            MemoryCheck::Ok(Some(checked))
+        );
+        let prepared = options.prepare_writer(&input, Some(conversion.peak_bytes));
+        assert!(prepared.history_note.is_none());
+        assert!(prepared.check_history_memory);
     }
 
     #[test]
@@ -1102,7 +1156,10 @@ mod tests {
         let part = dir.path().join("synthetic.ipt");
         std::fs::write(&assembly, b"synthetic").unwrap();
         std::fs::write(&part, b"synthetic").unwrap();
-        let mut options = ConvertOptions::default();
+        let mut options = ConvertOptions {
+            no_verify: true,
+            ..Default::default()
+        };
         let full = estimate(&assembly, &options.choices()).unwrap();
         let reduced = estimate_without_history(&assembly, options.choices(), &options).unwrap();
         assert_eq!(

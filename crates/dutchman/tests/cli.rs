@@ -1186,6 +1186,68 @@ mod external_tools {
     }
 
     #[test]
+    fn memory_skipping_launches_no_rebuild_and_forcing_really_checks() {
+        let dir = tempfile::tempdir().unwrap();
+        let cli = dir.path().join("solidcraft-cli");
+        let marker = dir.path().join("replay-called");
+        executable(&cli, |file| {
+            file.write_all(
+                br#"#!/bin/sh
+if [ "$1" = "--version" ]; then
+    printf 'solidcraft-cli 0.29.0\n'
+    exit 0
+fi
+printf 'replay\n' >> "$DUTCHMAN_TEST_REPLAY_MARKER"
+exit 1
+"#,
+            )
+            .unwrap();
+        });
+        let input = fixture("generated_unit_cube.f3d");
+        let output = dir.path().join("cube.sc");
+        let args = [
+            "convert",
+            &input,
+            "-o",
+            output.to_str().unwrap(),
+            "--solidcraft-version",
+            "0.29.0",
+            "--json",
+        ];
+        let env = [
+            ("DUTCHMAN_TEST_MEMORY", "3000000000,2000000000"),
+            ("SOLIDCRAFT_CLI", cli.to_str().unwrap()),
+            ("DUTCHMAN_TEST_REPLAY_MARKER", marker.to_str().unwrap()),
+        ];
+        let skipped = dutchman_with(&args, &env);
+        assert!(skipped.status.success());
+        assert!(json_of(&skipped)["history_check_skipped"].is_object());
+        assert!(!marker.exists());
+        let ample = [
+            ("DUTCHMAN_TEST_MEMORY", "3000000000,20000000000"),
+            ("SOLIDCRAFT_CLI", cli.to_str().unwrap()),
+            ("DUTCHMAN_TEST_REPLAY_MARKER", marker.to_str().unwrap()),
+        ];
+        let checked_by_default = dutchman_with(&args, &ample);
+        assert!(checked_by_default.status.success());
+        assert!(json_of(&checked_by_default)
+            .get("history_check_skipped")
+            .is_none());
+        assert!(marker.exists());
+        std::fs::remove_file(&marker).unwrap();
+        let mut forced = args.to_vec();
+        forced.push("--no-memory-check");
+        let checked = dutchman_with(&forced, &env);
+        assert!(checked.status.success());
+        assert!(json_of(&checked).get("history_check_skipped").is_none());
+        assert!(marker.exists());
+        std::fs::remove_file(&marker).unwrap();
+        forced.push("--no-verify");
+        assert!(dutchman_with(&forced, &env).status.success());
+        assert!(!marker.exists());
+    }
+
+    #[test]
     fn dispatch_preserves_stdin_arguments_and_exit_code() {
         let dir = tempfile::tempdir().unwrap();
         script(
@@ -2463,7 +2525,6 @@ fn repro_cli_writes_a_private_kit_and_reports_success_or_failure() {
 
 // ---- dutchman diagnose, convert --part and the memory stop ----
 
-#[cfg(feature = "freecad")]
 fn dutchman_with(args: &[&str], env: &[(&str, &str)]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_dutchman"));
     command.args(args);
@@ -3238,4 +3299,145 @@ fn folders_and_zips_convert_with_automatic_sibling_output_folders() {
         .path()
         .join("archive (SolidCraft)/archive/cube.sc")
         .is_file());
+}
+
+#[test]
+fn history_check_skips_for_low_memory_but_off_and_force_remain_explicit() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("cube.sc");
+    let input = fixture("generated_unit_cube.f3d");
+    // Reading/mapping fits (0.45 GB extra), but replay needs another 9.45 GB.
+    let env = [("DUTCHMAN_TEST_MEMORY", "3000000000,2000000000")];
+    let args = [
+        "convert",
+        &input,
+        "-o",
+        output.to_str().unwrap(),
+        "--solidcraft-version",
+        "0.29.0",
+        "--json",
+    ];
+    let out = dutchman_with(&args, &env);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report = json_of(&out);
+    assert!(output.is_file());
+    assert_eq!(
+        report["history_check_skipped"]["needed_bytes"],
+        9_450_000_000u64
+    );
+    assert_eq!(
+        report["history_check_skipped"]["available_bytes"],
+        2_000_000_000u64
+    );
+    let reason = report["history_check_skipped"]["reason"].as_str().unwrap();
+    assert!(reason.starts_with("History check skipped: needs about 9.4 GB, 2.0 GB free"));
+    assert!(dutchman::present::outcome(&report).contains(reason));
+    for flags in [
+        vec!["--no-verify"],
+        vec!["--no-memory-check", "--no-verify"],
+        vec!["--no-memory-check"],
+    ] {
+        let mut selected = args.to_vec();
+        selected.extend(flags);
+        let out = dutchman_with(&selected, &env);
+        assert!(out.status.success());
+        assert!(json_of(&out).get("history_check_skipped").is_none());
+    }
+    // The shared batch path also skips each input independently.
+    let out = dutchman_with(
+        &[
+            "convert-all",
+            &input,
+            "--out-dir",
+            dir.path().to_str().unwrap(),
+            "--solidcraft-version",
+            "0.29.0",
+            "--json",
+        ],
+        &env,
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(json_of(&out)["results"][0]["history_check_skipped"].is_object());
+}
+
+#[test]
+#[cfg(feature = "freecad")]
+fn low_memory_keeps_editable_history_unverified_and_the_original_shape_visible() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("history.sc");
+    let out = dutchman_with(
+        &[
+            "convert",
+            &fixture("design_history.FCStd"),
+            "-o",
+            output.to_str().unwrap(),
+            "--solidcraft-version",
+            "0.29.0",
+            "--part",
+            "1",
+            "--stop-at-feature",
+            "3",
+            "--json",
+        ],
+        &[("DUTCHMAN_TEST_MEMORY", "3000000000,2000000000")],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report = json_of(&out);
+    assert_eq!(report["verification"]["status"], "unverified");
+    assert!(report["history_check_skipped"].is_object());
+    assert!(report["history"]["mapped"].as_u64().unwrap() > 0);
+    let mut zip = zip::ZipArchive::new(std::fs::File::open(output).unwrap()).unwrap();
+    let doc: serde_json::Value =
+        serde_json::from_reader(zip.by_name("document.json").unwrap()).unwrap();
+    assert!(doc.to_string().contains("Editable history (unverified)"));
+    assert!(doc["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|feature| feature["type"] == "import" && feature["suppressed"] == false));
+    assert!(doc
+        .pointer("/visibility/hidden_occurrences")
+        .as_ref()
+        .is_some_and(|v| !v.as_array().unwrap().is_empty()));
+}
+
+#[test]
+#[cfg(feature = "freecad")]
+fn automatic_assembly_workers_use_the_synthetic_free_memory_budget() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("assembly.sc");
+    let out = dutchman_with(
+        &[
+            "convert",
+            &fixture("product_assembly.FCStd"),
+            "-o",
+            output.to_str().unwrap(),
+            "--no-verify",
+            "--solidcraft-version",
+            "0.29.0",
+            "--json",
+        ],
+        &[("DUTCHMAN_TEST_MEMORY", "100000000,500000000")],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let report = json_of(&out);
+    assert_eq!(report["threads"]["requested"], 0);
+    assert_eq!(report["threads"]["used"], 1);
+    assert!(report.get("history_check_skipped").is_none());
 }

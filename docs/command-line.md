@@ -46,7 +46,7 @@ CAD extension selects conversion.
 | `--no-history`, `--import-only` | Leave feature history out; keep geometry and the preset's reference sketches. |
 | `--no-sketches` | Leave reference sketches out; sketches needed by retained history stay. |
 | `--no-joints` | Leave assembly joints out and retain stored placements. |
-| `--no-memory-check` | Bypass the memory refusal and Standard's history budget. |
+| `--no-memory-check` | Bypass the memory refusal, Standard's history budget, and automatic history-check skipping. |
 | `--yes` | Never prompt to switch presets; refuse an over-budget conversion with exit 2. |
 | `--solidcraft PATH` | The `solidcraft-cli` that checks a converted history. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`, else the install folder recorded in the registry). |
 | `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the found CLI's version capped at newest known, even with `--no-verify`, else the newest known at build time (currently 0.29). |
@@ -64,6 +64,16 @@ CAD extension selects conversion.
 | `--verbose` | Print every loss, each note in full. Without it, a file with more than 12 losses is summarised by component (below), repeated notes of the same kind are grouped with a count, and long notes are cut to their first sentence. The JSON report always has them all in full. |
 | `--part N`, `--with-children` | Convert only part N, as `dutchman diagnose` numbers it (with the parts inside it, for a sub-assembly). See [Find what breaks in a large private file](diagnose.md). |
 | `--log FILE` | Also write the whole text report, every loss in full, grouped by component, to `FILE`. |
+
+History checks remain enabled by default. After reading, Dutchman estimates the extra
+memory needed for a SolidCraft rebuild from resident memory, then rechecks free memory
+before replay. If it cannot fit, the design is saved with its original shape visible and
+retained history unverified. Text output and JSON report
+`History check skipped: needs about N GB, M GB free`; JSON also includes
+`history_check_skipped` with byte counts. The printed peak estimate includes checking
+unless `--no-verify` is selected. A check that cannot fit does not by itself refuse conversion
+or remove otherwise retainable history. `--no-memory-check` forces the requested check;
+`--no-verify` still keeps checking off, including with that override.
 
 ## Find what breaks in a large file: diagnose
 
@@ -270,10 +280,13 @@ a conversion are skipped without recording that hash, then settled again on a la
 
 ## Assembly workers
 
-`convert`, `convert-all`, and `watch` accept `--threads N` for assembly part work. `0` (the default) uses available CPU parallelism; `1` runs the
-serial path. The actual count is limited by the number of leaf parts and free memory,
-using the largest part's CADIR body count to estimate temporary memory, with a floor
-for mapping and a SolidCraft check process. Workers share only the memory that stays free
+`convert`, `convert-all`, and `watch` accept `--threads N` for assembly part work.
+`0` (the default) uses at most two workers; `1` runs the serial path. A positive number
+requests a larger limit. The actual count is limited by the number of leaf parts and
+free memory, using CADIR entity counts as well as body counts to estimate each part's
+temporary peak, with a floor for mapping and a SolidCraft check process. Preparation
+falls back to serial work when its retained results would use more than half of free memory.
+Small imported parts use serial SolidCraft preparation to avoid worker overhead. Workers share only the memory that stays free
 after a quarter of it (at least 1 GiB) is kept back for the rest of the conversion. The core precomputes component slices and
 reuses an identical empty model for assembly holders, then builds the tree in its
 original order. SolidCraft STEP restatement, history mapping, blend proving, and per-part

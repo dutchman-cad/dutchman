@@ -290,45 +290,24 @@ fn severity(level: &str) -> u8 {
 
 /// What was written, in a sentence, as the desktop app says it.
 pub fn outcome(report: &Value) -> String {
-    let field = |pointer: &str| report.pointer(pointer).and_then(Value::as_str);
-    let counts = (
-        report.pointer("/history/mapped").and_then(Value::as_u64),
-        report.pointer("/history/total").and_then(Value::as_u64),
-    );
-    match field("/mode") {
-        Some("history") => {
-            let check = match (field("/verification/status"), field("/verification/reason")) {
-                (Some("verified"), _) => {
-                    if field("/output/format").is_some_and(|format| format.starts_with("freecad-"))
-                    {
-                        "verified in FreeCAD".to_owned()
-                    } else {
-                        "verified in SolidCraft".to_owned()
-                    }
-                }
-                (Some("differs"), Some(reason)) => format!("rebuild differs: {reason}"),
-                (_, Some(reason)) => format!("unverified: {reason}"),
-                _ => "unverified".to_owned(),
-            };
-            match counts {
-                (Some(m), Some(t)) => {
-                    format!("Editable history, {m} of {t} features mapped; {check}.")
-                }
-                _ => format!("Editable history; {check}."),
-            }
-        }
-        _ => match (field("/verification/status"), field("/verification/reason")) {
-            (Some("flattened"), Some(reason)) => {
-                format!("Geometry without history (flattened: {reason}).")
-            }
-            _ => "Geometry without history.".to_owned(),
-        },
-    }
+    dutchman::present::outcome(report)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_partial_history_card_shows_a_memory_skip() {
+        let reason = "History check skipped: needs about 9.4 GB, 2.0 GB free";
+        let report = serde_json::json!({"ok": true, "mode": "partial_history",
+            "history": {"mapped": 2, "total": 3},
+            "verification": {"status": "partial", "reason": "prefix unverified"},
+            "history_check_skipped": {"reason": reason}});
+        assert!(outcome(&report).contains(reason));
+        assert!(outcome(&report).contains("unverified"));
+    }
+
     use std::path::PathBuf;
 
     #[test]
