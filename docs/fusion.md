@@ -161,7 +161,10 @@ transform, and each component as a product definition.
   joint neither of whose parts is placed yet moves its first part to its second, as Fusion moves
   the first part picked for a joint. A joint to a part inside an identity-placed component
   places the outermost such component below the common ancestor, carrying its internal
-  joints with it. Internal joints solve first, so the outer joint uses the inner part's
+  joints with it, when internal joints bind the rest of its parts to the joined one and the
+  joints that reach into the component agree on where it goes; otherwise (parts nothing binds,
+  or each part joined to the origin at a place of its own) the component stays and each joint
+  places its part. Internal joints solve first, so the outer joint uses the inner part's
   solved connector position. A file pose, grounding joint, or earlier joint holds that component in
   place instead; a conflicting outer joint is suppressed. Joints that reach nothing placed
   start from the outermost occurrence they join, which stays where the file puts it. Of a joint

@@ -1022,12 +1022,37 @@ fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec
             }
         }
     }
+    keep_holders_the_joints_agree_on(assembly, posed, &mut joints);
     let mut notes = Vec::new();
     // A placement is held relative to the common ancestor of the joint that placed
     // it. Internal joints therefore do not anchor their holder in the outer design.
     let mut fixed: BTreeMap<Vec<usize>, Vec<usize>> = BTreeMap::new();
     fixed.insert(Vec::new(), Vec::new());
     fixed.extend(posed.iter().cloned().map(|path| (path, Vec::new())));
+    // A joint between two components holding parts the file poses, which already holds as the
+    // file places them, shows both placed in the design: no other joint moves them.
+    for (index, row) in assembly.joints.iter().enumerate() {
+        let poses_inside = |path: &[usize]| posed.iter().any(|pose| pose.starts_with(path));
+        if row.a.starts_with(&row.b)
+            || row.b.starts_with(&row.a)
+            || !poses_inside(&row.a)
+            || !poses_inside(&row.b)
+        {
+            continue;
+        }
+        let (Some(a), Some(b)) = (world_at(assembly, &row.a), world_at(assembly, &row.b)) else {
+            continue;
+        };
+        if as_built(&a, &b, row).is_some() {
+            let holders = joints.get(index).map(|joint| [&joint.a, &joint.b]);
+            for path in [&row.a, &row.b]
+                .into_iter()
+                .chain(holders.into_iter().flatten())
+            {
+                hold_in(&mut fixed, path.clone(), &[]);
+            }
+        }
+    }
     let scopes: Vec<Vec<usize>> = joints
         .iter()
         .map(|joint| {
@@ -1144,6 +1169,38 @@ fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec
             } else {
                 (a_fixed, b_fixed)
             };
+        // A pending outer joint may place, from something placed already (a part joined to
+        // the origin, say), the part this joint would move or a part inside it. That joint
+        // places the part where it goes: this joint then only checks a part it would move, and
+        // moves what holds the others without them.
+        let moving = match (a_fixed, b_fixed) {
+            (true, false) => Some(&joint.b),
+            (false, _) => Some(&joint.a),
+            (true, true) => None,
+        };
+        let placed_by_outer: Vec<Vec<usize>> = moving.map_or_else(Vec::new, |moving| {
+            pending
+                .iter()
+                .filter_map(|&k| Some((joints.get(k)?, scopes.get(k)?)))
+                .filter(|(_, outer)| outer.len() < scope.len())
+                .flat_map(|(other, outer)| {
+                    [(&other.a, &other.b), (&other.b, &other.a)]
+                        .into_iter()
+                        .filter(|(from, to)| {
+                            placed_in(&fixed, from, outer)
+                                && to.starts_with(moving)
+                                && (posed.contains(to.as_slice()) || !placed_in(&fixed, to, outer))
+                        })
+                        .map(|(_, to)| to.clone())
+                        .collect::<Vec<_>>()
+                })
+                .collect()
+        });
+        let (a_fixed, b_fixed) = if moving.is_some_and(|moving| placed_by_outer.contains(moving)) {
+            (true, true)
+        } else {
+            (a_fixed, b_fixed)
+        };
         match (a_fixed, b_fixed) {
             (true, true) => {
                 let b_frame = compose(&b, &joint.frame_b);
@@ -1166,6 +1223,7 @@ fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec
                     assembly,
                     &fixed,
                     posed,
+                    &placed_by_outer,
                     &joint.b,
                     &compose(&reach, &inverse(&joint.frame_b)),
                 );
@@ -1177,7 +1235,7 @@ fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec
                     &compose(&compose(&b, &joint.frame_b), &inverse(&joint.meeting())),
                     &inverse(&joint.frame_a),
                 );
-                move_keeping_placed(assembly, &fixed, posed, &joint.a, &at);
+                move_keeping_placed(assembly, &fixed, posed, &placed_by_outer, &joint.a, &at);
                 hold_in(&mut fixed, joint.a.clone(), &scope);
                 hold_in(&mut fixed, joint.b.clone(), &scope);
             }
@@ -1190,6 +1248,96 @@ fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec
         }
     }
     notes
+}
+
+/// Puts back the exact part a joint names where moving its identity holder would not be right.
+/// A holder is placed as one piece, which carries the rest of what it holds with the part the
+/// joint names, so it is moved only when internal joints or file poses bind that rest to the part, and when
+/// the joints that reach into it agree on where it goes. Parts nothing binds stay where the
+/// file puts them; and when each of many joints (a part to the origin, say) asks for a place
+/// of its own, the holder is only an organiser of parts that each joint places, and moving it
+/// for the first would carry the rest away from their joints.
+fn keep_holders_the_joints_agree_on(
+    assembly: &Assembly,
+    posed: &BTreeSet<Vec<usize>>,
+    joints: &mut [Joint],
+) {
+    // For each holder, the places the joints that reach into it ask for it, per joint side.
+    let mut asked: BTreeMap<Vec<usize>, Vec<(usize, bool, Placement3x4)>> = BTreeMap::new();
+    let mut reverted: Vec<(usize, bool)> = Vec::new();
+    for (index, joint) in joints.iter().enumerate() {
+        let Some(exact) = assembly.joints.get(index) else {
+            continue;
+        };
+        let (Some(wa), Some(wb)) = (world_at(assembly, &exact.a), world_at(assembly, &exact.b))
+        else {
+            continue;
+        };
+        for is_a in [true, false] {
+            let (holder, part, frame) = if is_a {
+                (&joint.a, &exact.a, &exact.frame_a)
+            } else {
+                (&joint.b, &exact.b, &exact.frame_b)
+            };
+            if holder == part {
+                continue;
+            }
+            // Nothing binds the rest of a holder to the part the joint names, so the rest has
+            // no reason to follow it: the joint places that part alone.
+            // The file places both parts a joint names: it checks them and moves neither.
+            if posed.contains(&exact.a) && posed.contains(&exact.b) {
+                reverted.push((index, is_a));
+                continue;
+            }
+            let bound = posed.iter().any(|path| path.starts_with(holder))
+                || assembly
+                    .joints
+                    .iter()
+                    .any(|inner| inner.a.starts_with(holder) && inner.b.starts_with(holder));
+            if !bound {
+                reverted.push((index, is_a));
+                continue;
+            }
+            let (Some(at), Some(held)) = (world_at(assembly, holder), world_at(assembly, part))
+            else {
+                continue;
+            };
+            let meet = if is_a {
+                compose(
+                    &compose(&compose(&wb, &exact.frame_b), &inverse(&exact.meeting())),
+                    &inverse(frame),
+                )
+            } else {
+                compose(
+                    &compose(&compose(&wa, &exact.frame_a), &exact.meeting()),
+                    &inverse(frame),
+                )
+            };
+            let place = compose(&meet, &inverse(&compose(&inverse(&at), &held)));
+            asked
+                .entry(holder.clone())
+                .or_default()
+                .push((index, is_a, place));
+        }
+    }
+    for requests in asked.values() {
+        let Some((_, _, first)) = requests.first() else {
+            continue;
+        };
+        if !requests.iter().all(|(_, _, place)| same(place, first)) {
+            reverted.extend(requests.iter().map(|(index, is_a, _)| (*index, *is_a)));
+        }
+    }
+    for (index, is_a) in reverted {
+        let (Some(exact), Some(joint)) = (assembly.joints.get(index), joints.get_mut(index)) else {
+            continue;
+        };
+        if is_a {
+            joint.a.clone_from(&exact.a);
+        } else {
+            joint.b.clone_from(&exact.b);
+        }
+    }
 }
 
 /// Whether a part is held in this joint's common ancestor, rather than only
@@ -1297,6 +1445,7 @@ fn move_keeping_placed(
     assembly: &mut Assembly,
     fixed: &BTreeMap<Vec<usize>, Vec<usize>>,
     posed: &BTreeSet<Vec<usize>>,
+    stay: &[Vec<usize>],
     path: &[usize],
     world: &Placement3x4,
 ) {
@@ -1311,9 +1460,17 @@ fn move_keeping_placed(
         })
         .filter_map(|(placed, _)| Some((placed, world_at(assembly, placed)?)))
         .collect();
+    let mut staying: Vec<(&Vec<usize>, Placement3x4)> = stay
+        .iter()
+        .filter(|held| held.len() > path.len() && held.starts_with(path))
+        .filter_map(|held| Some((held, world_at(assembly, held)?)))
+        .collect();
+    // Outer before inner, so an inner part is put back relative to its outer part's new place.
+    staying.extend(inside);
+    staying.sort_by_key(|(held, _)| held.len());
     set_world_at(assembly, path, world);
-    for (placed, at) in inside {
-        set_world_at(assembly, placed, &at);
+    for (held, at) in staying {
+        set_world_at(assembly, held, &at);
     }
 }
 
@@ -3827,6 +3984,127 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn joints_that_place_the_parts_of_a_holder_apart_do_not_move_the_holder() {
+        // An identity holder whose two blocks are each joined to the origin at a place of its
+        // own: the holder is an organiser, so each joint places its block and the holder stays.
+        let mut holder = placed(0, "frame", root(), 0.0);
+        holder["native_ref"] = json!("f3d:xref:reference#0");
+        let model = nested(
+            false,
+            Some(json!([
+                holder,
+                placed(1, "block", inside(0), 5.0),
+                placed(2, "block", inside(0), 60.0),
+            ])),
+        );
+        let to_origin = |id: u32, key: u32, x: f64| {
+            let mut origin = connector(None);
+            origin["frame"] = json!(at([x, 0.0, 0.0], 0.0));
+            joint(
+                id,
+                json!({"kind": "fixed"}),
+                origin,
+                connector_at(key, &[], facing(IDENTITY)),
+            )
+        };
+        let rows = json!([to_origin(1, 1, 100.0), to_origin(2, 2, 200.0)]);
+        let (assembly, notes) = local_components(&with_joints(model, rows))
+            .unwrap()
+            .unwrap();
+        assert!(notes.is_empty(), "{notes:?}");
+        for (path, x) in [(vec![0], 0.0), (vec![0, 0], 100.0), (vec![0, 1], 200.0)] {
+            let world = world_at(&assembly, &path).unwrap();
+            assert!(near(&world, &at([x, 0.0, 0.0], 0.0)), "{path:?}: {world:?}");
+        }
+        assert!(assembly.joints.iter().all(|joint| !joint.suppressed));
+    }
+
+    #[test]
+    fn a_joint_to_a_part_of_a_holder_leaves_the_parts_nothing_binds_to_it() {
+        // An identity holder of two blocks and no joint between them: the joint from the
+        // origin to the first places that block alone, and the second stays where it is.
+        let mut holder = placed(0, "frame", root(), 0.0);
+        holder["native_ref"] = json!("f3d:xref:reference#0");
+        let model = nested(
+            false,
+            Some(json!([
+                holder,
+                placed(1, "block", inside(0), 5.0),
+                placed(2, "block", inside(0), 60.0),
+            ])),
+        );
+        let mut origin = connector(None);
+        origin["frame"] = json!(at([100.0, 0.0, 0.0], 0.0));
+        let rows = json!([joint(
+            1,
+            json!({"kind": "fixed"}),
+            origin,
+            connector_at(1, &[], facing(IDENTITY)),
+        )]);
+        let (assembly, notes) = local_components(&with_joints(model, rows))
+            .unwrap()
+            .unwrap();
+        assert!(notes.is_empty(), "{notes:?}");
+        for (path, x) in [(vec![0], 0.0), (vec![0, 0], 100.0), (vec![0, 1], 60.0)] {
+            let world = world_at(&assembly, &path).unwrap();
+            assert!(near(&world, &at([x, 0.0, 0.0], 0.0)), "{path:?}: {world:?}");
+        }
+    }
+
+    #[test]
+    fn a_holder_whose_joint_to_another_holds_as_placed_is_not_moved_by_others() {
+        // Two identity holders of posed blocks, joined to each other by a joint that holds as
+        // the file places them. A joint from the first to the second's block that cannot hold
+        // is kept suppressed rather than moving the first holder to meet it.
+        let model = nested(
+            false,
+            Some(json!([
+                placed(0, "frame", root(), 0.0),
+                posed_child(
+                    placed(1, "block", inside(0), 5.0),
+                    "f3d:Design/BulkStream.dat:design-component-occurrence#11"
+                ),
+                placed(2, "frame", root(), 0.0),
+                posed_child(
+                    placed(3, "block", inside(2), 70.0),
+                    "f3d:Design/BulkStream.dat:design-component-occurrence#12"
+                ),
+            ])),
+        );
+        let model = with_current_poses(
+            model,
+            &[
+                "f3d:Design/BulkStream.dat:design-component-occurrence#11",
+                "f3d:Design/BulkStream.dat:design-component-occurrence#12",
+            ],
+        );
+        let model = with_joints(
+            model,
+            json!([
+                joint(
+                    1,
+                    json!({"kind": "fixed"}),
+                    connector_at(0, &[], IDENTITY),
+                    connector_at(2, &[], facing(IDENTITY))
+                ),
+                joint(
+                    2,
+                    json!({"kind": "fixed"}),
+                    connector_at(0, &[], at([100.0, 0.0, 0.0], 0.0)),
+                    connector_at(3, &[], facing(IDENTITY))
+                ),
+            ]),
+        );
+        let (assembly, _) = local_components(&model).unwrap().unwrap();
+        for (path, x) in [(vec![0], 0.0), (vec![0, 0], 5.0), (vec![1, 0], 70.0)] {
+            let world = world_at(&assembly, &path).unwrap();
+            assert!(near(&world, &at([x, 0.0, 0.0], 0.0)), "{path:?}: {world:?}");
+        }
+        let suppressed: Vec<bool> = assembly.joints.iter().map(|j| j.suppressed).collect();
+        assert_eq!(suppressed, [false, true]);
     }
 
     /// `model` with the `design_component_occurrences` records `ids` carrying current poses,
