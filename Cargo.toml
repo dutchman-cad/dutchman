@@ -19,7 +19,7 @@ dutchman-solidcraft = { path = "crates/dutchman-solidcraft", version = "0.2.5", 
 dutchman-dxf = { path = "crates/dutchman-dxf", version = "0.2.4" }
 dutchman-freecad = { path = "crates/dutchman-freecad", version = "0.2.1", default-features = false }
 clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
-dutchman-pilot = { git = "https://github.com/dutchman-cad/pilot", rev = "a91cadeeaadf22b343e936c38f9dd4fc007dcfc3" }
+dutchman-pilot = { git = "https://github.com/dutchman-cad/pilot", rev = "7cad971d4f69dc954fc6654f19eedbbf59084a30" }
 aho-corasick = "1.1"
 # cadmpeg at one tested commit of its main branch, the same for every cadmpeg crate. Move it
 # after a batch of cadmpeg merges (docs/releasing.md); the nightly build takes cadmpeg's main.
