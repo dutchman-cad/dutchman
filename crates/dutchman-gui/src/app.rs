@@ -2421,7 +2421,7 @@ mod tests {
                 "verification": {"status": "verified"}, "losses": []}),
             json!({"ok": true, "mode": "import", "verification": {"status": "flattened", "reason": "fillet is not mapped yet"},
                 "losses": [{"level": "Degraded", "subject": "history", "message": "flattened: fillet is not mapped yet"}]}),
-            json!({"ok": true, "completeness": {"placed": 1, "placements": 2, "left_out": [{"file": "pin.ipt", "count": 1, "reason": "not found", "stage": "input"}]},
+            json!({"ok": true, "completeness": {"placed": 1, "placed_empty": 1, "placements": 3, "left_out": [{"file": "pin.ipt", "count": 1, "reason": "not found", "stage": "input"}]},
                 "losses": [{"level": "Dropped", "subject": "occurrence", "message": "pin.ipt: not found at its stored path"}]}),
             json!({"ok": false, "error": {"message": "cannot read this design: no geometry could be read", "stage": "decode", "upstream": "cadmpeg"}}),
         ];
@@ -2468,6 +2468,7 @@ mod tests {
             "Editable history, 3 of 3 features mapped; verified in SolidCraft.",
             "Geometry without history (flattened: fillet is not mapped yet).",
             "Incomplete",
+            "1 of 3 components placed; 1 placed empty, no joints",
             "1 part file was not found: pin.ipt",
             "Losses: 1 Degraded",
             "Losses: 1 Dropped",

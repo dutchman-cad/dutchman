@@ -702,6 +702,14 @@ See the [paste-in prompt](troubleshooting.md#diagnose-with-an-assistant).
 
 ### Local folder and STEP checks
 
+Assembly completeness separates `placed` (geometry or child holders) from
+`placed_empty` (leaf parts with no bodies), with both included in `placements`.
+The summary and desktop and web cards show empty placements separately and mark the
+assembly incomplete. Empty leaves add Degraded losses naming their anonymous part
+numbers; child holders do not. Solid regions reduced to open sheets add a counted
+Degraded geometry line; intended sheets do not. Doctor includes anonymous placement
+counts and findings for empty placements and solids reduced to sheets.
+
 `doctor` takes `input` (folder or ZIP), `out`, optional `jobs`, `memory_mb` (total
 converter memory), `time_limit` (seconds per part), `step_path`, and `part` (report
 target). It returns `dutchman.doctor/1` with anonymous file numbers and findings grouped

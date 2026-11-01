@@ -122,6 +122,15 @@ assembly: 18 of 20 placements placed; 2 left out:
   pin.ipt ×2: not found at its stored path or in the project folder /work/Robot
 ```
 
+Empty leaf parts are counted separately as `placed empty`, and make the desktop and
+web result card Incomplete. For example, `67 of 88 placements placed; 13 placed empty;
+8 left out` means 13 component placements retain their joints but have no bodies.
+Each empty leaf adds a Degraded line naming its anonymous part number, as used by
+`diagnose` and `--part`. An assembly holder of children is not an empty leaf.
+When a solid region becomes an open sheet, a Degraded geometry line counts the
+affected regions. Intended surface bodies are not reported as degraded for being open.
+Doctor includes these findings and the assembly's placement counts.
+
 Mirrored assembly placements use a shared mirrored copy of the component's geometry;
 ordinary copies keep the original. An Info `placements` note counts the converted
 reflections. Mirrored copies retain imported geometry only, with a history note when

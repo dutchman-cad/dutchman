@@ -396,10 +396,66 @@ fn a_part_with_no_bodies_is_an_empty_component_its_joints_still_join() {
         .losses()
         .iter()
         .any(|loss| loss.detail.contains("left out")));
-    assert!(report
-        .losses()
-        .iter()
-        .any(|loss| loss.detail == "Spacer: placed as an empty component: it has no bodies"));
+    assert!(report.losses().iter().any(|loss| loss.subject == "part 2"
+        && loss.severity == dutchman_core::Severity::Degraded
+        && loss
+            .detail
+            .starts_with("placed as an empty component: it has no bodies")));
+    let completeness = report.completeness().unwrap();
+    assert_eq!(completeness.placed, 1);
+    assert_eq!(completeness.placed_empty, 1);
+    assert_eq!(completeness.placements(), 2);
+    assert_eq!(completeness.left_out_count(), 0);
+    assert!(!completeness.is_complete());
+}
+
+#[test]
+fn empty_leaf_numbers_include_holders_and_are_stable_across_workers() {
+    let mut model = placed_twice();
+    let top = model.assembly.as_mut().unwrap();
+    let mut empty = top.parts[0].clone();
+    let mut wire = serde_json::to_value(&empty.ir).unwrap();
+    for arena in wire["model"].as_object_mut().unwrap().values_mut() {
+        if arena.is_array() {
+            *arena = json!([]);
+        }
+    }
+    empty.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    empty.name = "Synthetic empty leaf".into();
+    let mut holder = empty.clone();
+    holder.name = "Synthetic holder".into();
+    holder.assembly = Some(Assembly {
+        parts: vec![empty],
+        ..top.clone()
+    });
+    top.parts.push(holder);
+    top.placements[1].part = 1;
+    assert_eq!(dutchman_core::parts::catalog(&model)[2].number, 3);
+    let mut results = Vec::new();
+    for threads in [1, 4] {
+        let mut bytes = Vec::new();
+        let mut report = Report::default();
+        SolidCraftWriter::new()
+            .threads(threads)
+            .verification(Verification::Off)
+            .write(&model, &mut bytes, &mut report)
+            .unwrap();
+        let counts = report.completeness().unwrap();
+        assert_eq!(
+            (counts.placed, counts.placed_empty, counts.placements()),
+            (2, 2, 4)
+        );
+        let empty_losses: Vec<_> = report
+            .losses()
+            .iter()
+            .filter(|loss| loss.detail.starts_with("placed as an empty component"))
+            .collect();
+        assert_eq!(empty_losses.len(), 1);
+        assert_eq!(empty_losses[0].subject, "part 3");
+        assert_eq!(empty_losses[0].severity, dutchman_core::Severity::Degraded);
+        results.push((bytes, report.losses().to_vec()));
+    }
+    assert_eq!(results[0], results[1]);
 }
 
 #[test]

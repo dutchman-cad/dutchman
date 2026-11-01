@@ -143,6 +143,10 @@ pub struct Card {
     /// The uploaded file, as uploaded (`project/part.ipt`).
     pub name: String,
     pub ok: bool,
+    /// Whether placements were left out or placed empty.
+    pub incomplete: bool,
+    /// Shared assembly placement summary and causes.
+    pub assembly_lines: Vec<String>,
     /// What was written, in a sentence; or, for a failure, why it failed.
     pub outcome: String,
     /// For a failure: the stage it stopped in.
@@ -257,6 +261,8 @@ fn card(result: &Value) -> Card {
     Card {
         name: text("/input/path").unwrap_or_else(|| "file".to_owned()),
         ok,
+        incomplete: present::incomplete(result),
+        assembly_lines: dutchman::json::completeness_lines(result),
         outcome: if ok {
             outcome(result)
         } else {
@@ -324,6 +330,20 @@ pub fn outcome(report: &Value) -> String {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn empty_placements_are_shown_on_the_browser_card() {
+        let report = json!({"results": [{"ok": true, "completeness": {
+            "placed": 67, "placed_empty": 13, "placements": 88,
+            "left_out": [{"count": 8, "file": "pin.ipt", "reason": "not found"}]
+        }}]});
+        let cards = cards(&report);
+        assert!(cards[0].incomplete);
+        assert_eq!(
+            cards[0].assembly_lines[0],
+            "assembly: 67 of 88 placements placed; 13 placed empty; 8 left out:"
+        );
+    }
 
     #[test]
     fn server_paths_are_taken_out_and_links_added() {

@@ -115,7 +115,8 @@ impl Assembly {
     /// sub-assembly, the sub-assembly's, as often as it is placed.
     pub fn completeness(&self) -> Completeness {
         let mut groups: BTreeMap<(Option<String>, String, Stage), u64> = BTreeMap::new();
-        let placed = self.count(1, &mut groups, 0);
+        let mut placed_empty = 0;
+        let placed = self.count(1, &mut groups, &mut placed_empty, 0);
         let mut left_out: Vec<LeftOutGroup> = groups
             .into_iter()
             .map(|((file, reason, stage), count)| LeftOutGroup {
@@ -126,7 +127,11 @@ impl Assembly {
             })
             .collect();
         left_out.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.file.cmp(&b.file)));
-        Completeness { placed, left_out }
+        Completeness {
+            placed,
+            placed_empty,
+            left_out,
+        }
     }
 
     /// The placements placed in this assembly placed `times` times, adding those left out to
@@ -135,6 +140,7 @@ impl Assembly {
         &self,
         times: u64,
         groups: &mut BTreeMap<(Option<String>, String, Stage), u64>,
+        placed_empty: &mut u64,
         depth: usize,
     ) -> u64 {
         for left in &self.left_out {
@@ -156,7 +162,15 @@ impl Assembly {
                 *count = count.saturating_add(times);
                 continue;
             }
-            placed = placed.saturating_add(times);
+            if self
+                .parts
+                .get(placement.part)
+                .is_some_and(|part| part.assembly.is_none() && part.ir.model.bodies.is_empty())
+            {
+                *placed_empty = placed_empty.saturating_add(times);
+            } else {
+                placed = placed.saturating_add(times);
+            }
             *uses.entry(placement.part).or_default() += 1;
         }
         if depth >= MAX_DEPTH {
@@ -164,8 +178,12 @@ impl Assembly {
         }
         for (part, used) in uses {
             if let Some(sub) = self.parts.get(part).and_then(|part| part.assembly.as_ref()) {
-                placed =
-                    placed.saturating_add(sub.count(times.saturating_mul(used), groups, depth + 1));
+                placed = placed.saturating_add(sub.count(
+                    times.saturating_mul(used),
+                    groups,
+                    placed_empty,
+                    depth + 1,
+                ));
             }
         }
         placed
@@ -3084,6 +3102,38 @@ mod tests {
     }
 
     #[test]
+    fn empty_leaves_count_for_each_use_but_child_holders_are_placed() {
+        let project = Project::new(&[
+            (
+                "top.iam",
+                vec![
+                    occurrence(0, "sub.iam", root(), 0.0),
+                    occurrence(1, "sub.iam", root(), 30.0),
+                ],
+            ),
+            (
+                "sub.iam",
+                vec![
+                    occurrence(0, "cube.ipt", root(), 0.0),
+                    occurrence(1, "cube.ipt", root(), 15.0),
+                    occurrence(2, "gone.ipt", root(), 0.0),
+                ],
+            ),
+        ]);
+        let mut top = project.read("top.iam", &mut Report::default()).unwrap();
+        let assembly = top.assembly.as_mut().unwrap();
+        let holder = &mut assembly.parts[0];
+        holder.ir.model.bodies.clear();
+        let leaf = &mut holder.assembly.as_mut().unwrap().parts[0];
+        leaf.ir.model.bodies.clear();
+        let counts = assembly.completeness();
+        assert_eq!((counts.placed, counts.placed_empty), (2, 4));
+        assert_eq!(counts.left_out_count(), 2);
+        assert_eq!(counts.placements(), 8);
+        assert!(!counts.is_complete());
+    }
+
+    #[test]
     fn an_assembly_that_places_itself_is_refused() {
         let project = Project::new(&[
             (
@@ -3673,6 +3723,12 @@ mod tests {
         assert_eq!(assembly.parts[1].name, "Carriage");
         assert!(assembly.parts[1].ir.model.bodies.is_empty());
         assert_eq!(assembly.placements.len(), 3);
+        let counts = assembly.completeness();
+        assert_eq!(
+            (counts.placed, counts.placed_empty, counts.placements()),
+            (2, 1, 3)
+        );
+        assert!(!counts.is_complete());
     }
 
     /// cadmpeg's example cube, owned by component `Block`, placed twice inside a `Frame`

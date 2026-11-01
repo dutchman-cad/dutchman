@@ -338,14 +338,9 @@ impl<'a> File<'a> {
         }
     }
 
-    /// Whether it is an assembly that converted with placements left out.
+    /// Whether an assembly converted with placements left out or placed empty.
     fn incomplete(&self) -> bool {
-        self.ok
-            && self
-                .report
-                .pointer("/completeness/left_out")
-                .and_then(Value::as_array)
-                .is_some_and(|causes| !causes.is_empty())
+        self.ok && crate::present::incomplete(self.report)
     }
 
     /// Whether it converted but lost something that matters (a Degraded or Dropped loss).

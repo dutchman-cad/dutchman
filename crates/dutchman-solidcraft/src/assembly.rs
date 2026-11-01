@@ -99,6 +99,16 @@ pub(crate) fn write(
     assembly: &Assembly,
     report: &mut Report,
 ) -> Result<Vec<u8>, Error> {
+    // Use the source catalog before mirrored definitions are added or repeats shared.
+    for part in dutchman_core::parts::catalog(model) {
+        if !part.assembly && part.bodies == 0 {
+            report.push(
+                Severity::Degraded,
+                format!("part {}", part.number),
+                "placed as an empty component: it has no bodies; check the source part and convert again",
+            );
+        }
+    }
     let admitted = crate::placements::prepare(assembly, writer.joints, report)?;
     let assembly = &admitted;
     report.set_completeness(assembly.completeness());
@@ -1018,35 +1028,13 @@ impl Builder<'_> {
         let step = match prepared {
             Some(prepared) => {
                 self.report.append(prepared.report);
-                if prepared.step.is_none() {
-                    let file = part.source_file.as_deref().unwrap_or(&part.name);
-                    self.report.push(
-                        Severity::Info,
-                        file,
-                        format!(
-                            "{}: placed as an empty component: it has no bodies",
-                            part.name
-                        ),
-                    );
-                }
                 prepared_history = prepared.history;
                 prepared_references = prepared.references;
                 prepared.step
             }
             None => match &part.assembly {
                 Some(_) => None,
-                None if part.ir.model.bodies.is_empty() => {
-                    let file = part.source_file.as_deref().unwrap_or(&part.name);
-                    self.report.push(
-                        Severity::Info,
-                        file,
-                        format!(
-                            "{}: placed as an empty component: it has no bodies",
-                            part.name
-                        ),
-                    );
-                    None
-                }
+                None if part.ir.model.bodies.is_empty() => None,
                 None => match step::restate(part, self.report) {
                     Ok(step) => Some(step),
                     Err(err) => {

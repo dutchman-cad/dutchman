@@ -182,10 +182,17 @@ Explicit output paths keep their given extension. The container format stays `so
 | `history.features` | Every source feature in timeline order. `status`: `mapped`, `not_needed` (the target needs no feature, e.g. a principal datum plane or an unused construction helper), `left_out` (suppressed in the source, or a reference sketch omitted by choice), `blocked` (does not map; `reason` says why). |
 | `history.mapped`, `history.total` | Mapped or not-needed features, out of all but left-out ones. |
 | `history.parts` | For an assembly written as SolidCraft components: each part's history, in the order written. `name`; `status` and `reason` as in `verification` (`not_applicable` when the part has no source features, else `flattened` with its first blocker, `partial`, `unverified` or `verified`); `mapped` and `total` as in `history`. A part placed several times is listed once. Absent for a single part. |
-| `completeness` | For an assembly: how much of it was placed. `placed` and `placements` count every placement the assembly and its placed sub-assemblies record, a sub-assembly's as often as it is placed. `left_out` lists those not placed by cause, most first: `file` (the file placed, or `null`), `reason`, `stage` and `count`. Absent for a single part. |
+| `completeness` | For an assembly: `placed` counts placements with geometry and assembly holders of children; `placed_empty` counts placements of leaf parts with no bodies. Empty leaves no longer inflate `placed`. `placements` is `placed + placed_empty + sum(left_out.count)`. Counts include every recorded placement through placed sub-assemblies, each as often as placed. `left_out` lists those not placed by cause, most first: `file` (the file placed, or `null`), `reason`, `stage` and `count`. Absent for a single part. |
 | `joints` | For an assembly whose joints were written: how many of each kind, `{"revolute": 5, "rigid": 1}` (kinds `revolute`, `slider`, `rigid`). Grounded joints count as `rigid`, fixing their occurrence to the design at its stored placement. Absent when none were. |
 | `names` | Every name the conversion met, sorted: the paths and folders it read from, and the names the design gives its parts, components, bodies, features, sketches, parameters and properties. For tools that take names out of a report before it is shared (the anonymous report does); absent when there were none. |
 | `losses` | What did not survive intact. `level` is `Info` (no effect on geometry), `Degraded` (carried in a weaker form) or `Dropped` (left out). `code` is cadmpeg's stable loss code when cadmpeg reported it, else `null`; `subject` says what was affected; `message` is for people. `stage` and `upstream` say where it arose (below). |
+
+An empty leaf retains its component and joints and adds a `Degraded` loss whose
+`subject` is `part N`, using the anonymous catalog number from `diagnose` and `--part`.
+Assembly holders are not empty leaves. A STEP finding with code
+`step/topology.region-solid-reduced-to-sheet` also adds a `Degraded` geometry loss
+at stage `write` with the count of affected solid regions. Intended sheets do not
+receive that loss.
 
 Offset datum planes need no building feature when their support resolves or all their
 consumers carry independent resolved sketch placements. Otherwise the history reason
@@ -984,6 +991,14 @@ and `step_comparison`. `planning_failed` counts planning errors without names.
 `count` and numbered `occurrences` (`file`, nullable `part`). A broad signature only
 suggests related failures. Checkpoints contain private conversion results and paths;
 only the top-level `report.json` is intended for sharing.
+
+Each doctor file also has nullable `completeness`, containing numeric `placed`,
+`placed_empty`, `placements`, and `left_out` (the number left out, without names or
+reasons). Empty placements add a finding with outcome `degraded`, stage `map`, kind
+`no_geometry`, and code `empty_placements`. Solid regions reduced to sheets add a
+finding with outcome `degraded`, stage `write`, kind `geometry`, and code
+`solid_reduced_to_sheet`. These findings count affected files; placement counts are
+in each file's `completeness`.
 
 Diagnose reports add nullable `target_part`, `placement_checks` and `step_comparison`.
 Placement checks have `status`, `advisory`, `coincident_transform_tolerance` (1e-9),

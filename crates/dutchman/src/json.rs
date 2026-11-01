@@ -461,6 +461,7 @@ pub fn completeness_json(completeness: &Completeness) -> Value {
         .collect();
     json!({
         "placed": completeness.placed,
+        "placed_empty": completeness.placed_empty,
         "placements": completeness.placements(),
         "left_out": left_out,
     })
@@ -473,11 +474,15 @@ pub fn assembly_line(report: &Value) -> Option<String> {
     let completeness = report.get("completeness")?;
     let count = |key: &str| completeness.get(key).and_then(Value::as_u64).unwrap_or(0);
     let (placed, placements) = (count("placed"), count("placements"));
-    let components = if placed == placements {
+    let empty = count("placed_empty");
+    let mut components = if placed == placements {
         format!("{placed} component{}", plural(placed))
     } else {
         format!("{placed} of {placements} components placed")
     };
+    if empty > 0 {
+        components.push_str(&format!("; {empty} placed empty"));
+    }
     let kinds: Vec<(String, u64)> = report
         .get("joints")
         .and_then(Value::as_object)
@@ -526,13 +531,19 @@ pub fn completeness_lines(report: &Value) -> Vec<String> {
         .into_iter()
         .flatten()
         .collect();
-    if causes.is_empty() {
+    let empty = count("placed_empty");
+    if causes.is_empty() && empty == 0 {
         return vec![format!("assembly: all {placements} placements placed")];
     }
-    let mut lines = vec![format!(
-        "assembly: {placed} of {placements} placements placed; {} left out:",
-        placements.saturating_sub(placed)
-    )];
+    let mut summary = format!("assembly: {placed} of {placements} placements placed");
+    if empty > 0 {
+        summary.push_str(&format!("; {empty} placed empty"));
+    }
+    let left_out = placements.saturating_sub(placed).saturating_sub(empty);
+    if !causes.is_empty() {
+        summary.push_str(&format!("; {left_out} left out:"));
+    }
+    let mut lines = vec![summary];
     for cause in causes.iter().take(CAUSES_SHOWN) {
         let field = |key: &str| cause.get(key).and_then(Value::as_str);
         let times = cause.get("count").and_then(Value::as_u64).unwrap_or(1);
@@ -1131,6 +1142,7 @@ mod tests {
     fn an_assembly_says_how_much_of_it_was_placed() {
         let completeness = Completeness {
             placed: 18,
+            placed_empty: 0,
             left_out: vec![dutchman_core::LeftOutGroup {
                 file: Some("pin.ipt".to_owned()),
                 reason: "pin.ipt: not found at its stored path".to_owned(),
@@ -1150,6 +1162,7 @@ mod tests {
         );
         let whole = Completeness {
             placed: 3,
+            placed_empty: 0,
             left_out: Vec::new(),
         };
         assert_eq!(
@@ -1157,6 +1170,37 @@ mod tests {
             ["assembly: all 3 placements placed"]
         );
         assert!(completeness_lines(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn empty_placements_are_separate_from_geometry_and_left_out() {
+        let counts = Completeness {
+            placed: 67,
+            placed_empty: 13,
+            left_out: vec![dutchman_core::LeftOutGroup {
+                file: Some("pin.ipt".into()),
+                reason: "not found".into(),
+                stage: Stage::Input,
+                count: 8,
+            }],
+        };
+        let report = json!({"ok": true, "completeness": completeness_json(&counts)});
+        assert_eq!(report["completeness"]["placements"], 88);
+        assert_eq!(report["completeness"]["placed_empty"], 13);
+        assert_eq!(counts.left_out_count(), 8);
+        assert_eq!(
+            completeness_lines(&report)[0],
+            "assembly: 67 of 88 placements placed; 13 placed empty; 8 left out:"
+        );
+        assert_eq!(
+            assembly_line(&report).unwrap(),
+            "67 of 88 components placed; 13 placed empty, no joints"
+        );
+        let empty_only = json!({"completeness": {"placed": 0, "placed_empty": 2, "placements": 2, "left_out": []}});
+        assert_eq!(
+            completeness_lines(&empty_only),
+            ["assembly: 0 of 2 placements placed; 2 placed empty"]
+        );
     }
 
     fn feature(kind: &str, status: FeatureStatus) -> FeatureOutcome {

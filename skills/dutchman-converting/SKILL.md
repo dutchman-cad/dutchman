@@ -624,6 +624,14 @@ what to share. No diagnostic tool sends anything. Use `doctor` for folder checks
 
 ## Folder doctor and matching STEP
 
+Assembly completeness separates `placed` (geometry or child holders) from
+`placed_empty` (leaf parts with no bodies), with both included in `placements`.
+The summary and desktop and web cards show empty placements separately and mark the
+assembly incomplete. Empty leaves add Degraded losses naming their anonymous part
+numbers; child holders do not. Solid regions reduced to open sheets add a counted
+Degraded geometry line; intended sheets do not. Doctor includes anonymous placement
+counts and findings for empty placements and solids reduced to sheets.
+
 For a folder or ZIP, use MCP `doctor` (`input`, `out`, optional `jobs`, total `memory_mb`,
 per-part `time_limit`, `step_path`, `part`) or `dutchman doctor FOLDER --out CHECKED
 --jobs 2 --memory-mb 8192 --json`. Repeat the same command to resume. Only top-level
