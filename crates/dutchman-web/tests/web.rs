@@ -99,6 +99,10 @@ async fn the_page_offers_the_formats_that_convert() {
     assert!(page.contains("action=\"convert\""), "{page}");
     assert!(page.contains(".f3d"));
     assert!(page.contains("Inventor part"));
+    assert!(page.contains(&format!(
+        "<span class=\"version\">v{}</span>",
+        dutchman::BUILD_VERSION
+    )));
     assert!(headers.get(header::CONTENT_SECURITY_POLICY).is_some());
 }
 

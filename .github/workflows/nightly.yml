@@ -143,6 +143,7 @@ jobs:
           if [[ '${{ matrix.target }}' == *linux* ]]; then
             packages+=(-p dutchman-web)
           fi
+          export DUTCHMAN_NIGHTLY_VERSION=$(scripts/nightly-version.sh "${{ needs.changes.outputs.dutchman }}")
           cargo build --release "${packages[@]}" --target ${{ matrix.target }}
       - name: Package
         shell: bash
@@ -179,7 +180,9 @@ jobs:
           shared-key: macos-release-${{ matrix.target }}
       - run: scripts/use-cadmpeg-main.sh "${{ needs.changes.outputs.cadmpeg }}"
       - name: Build archive programs
-        run: cargo build --release --locked -p dutchman -p dutchman-gui --target ${{ matrix.target }}
+        run: |
+          export DUTCHMAN_NIGHTLY_VERSION=$(scripts/nightly-version.sh "${{ needs.changes.outputs.dutchman }}")
+          cargo build --release --locked -p dutchman -p dutchman-gui --target ${{ matrix.target }}
       - name: Package
         run: |
           if [[ '${{ matrix.target }}' == x86_64-apple-darwin ]]; then

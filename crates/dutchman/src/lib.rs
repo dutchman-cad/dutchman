@@ -4,6 +4,13 @@
 //!
 //! This is the front ends' shared code, not a stable library API.
 
+/// The version of this build as the apps show it: the package version, or a nightly's own
+/// version when the nightly workflow sets `DUTCHMAN_NIGHTLY_VERSION`.
+pub const BUILD_VERSION: &str = match option_env!("DUTCHMAN_NIGHTLY_VERSION") {
+    Some(version) => version,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
 pub mod anon;
 pub mod batch;
 pub mod choices;

@@ -62,7 +62,7 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Ok(Startup::Version) => {
-            println!("dutchman-gui {}", env!("CARGO_PKG_VERSION"));
+            println!("dutchman-gui {}", dutchman::BUILD_VERSION);
             return ExitCode::SUCCESS;
         }
         Err(err) => {
@@ -90,7 +90,7 @@ fn main() -> ExitCode {
     };
     let initialized = ready.clone();
     let result = eframe::run_native(
-        dutchman_gui::WINDOW_TITLE,
+        dutchman_gui::SETTINGS_NAME,
         dutchman_gui::options(),
         Box::new(move |cc| {
             // eframe creates the window and renderer before calling the app creator.
