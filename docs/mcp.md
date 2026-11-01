@@ -748,3 +748,6 @@ No tool accepts whole files for anonymous upload. Use the private-send card inst
 Report summaries identify the authoring app from the native format, such as Fusion or
 Inventor. Exchange formats and unclassified `.prt` use `unknown` because their authoring
 app cannot be inferred. The build version is included alongside this information.
+
+The desktop report review selects the anonymous summary when no bundle is available.
+Its **Send** button becomes **Retry** after a delivery failure.

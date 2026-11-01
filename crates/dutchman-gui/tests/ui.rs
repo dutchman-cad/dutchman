@@ -1249,6 +1249,8 @@ mod consent_e2e {
         harness.get_by_label("RESULTS").scroll_to_me();
         harness.run_steps(8);
         assert!(harness.query_by_label("0 converted, 1 failed").is_some());
+        let diagnose = harness.get_by_label("Diagnose this file").rect();
+        assert!(diagnose.top() > 70.0 && diagnose.bottom() < 730.0);
         if capture_walkthrough {
             walkthrough(&mut harness, "01-failed-card");
         }
@@ -1272,24 +1274,18 @@ mod consent_e2e {
         harness.run_steps(8);
         assert!(harness.query_by_label("Send a problem report").is_some());
         assert!(harness.query_by_label(SENT).is_none());
+        assert!(harness.query_by_label("Send the bundle").is_none());
+        assert!(harness.query_by_label("Retry").is_none());
+        assert!(harness.query_by_label_contains("JSON").is_none());
+        assert!(harness.query_by_label_contains("claim hash").is_none());
         assert_eq!(
             harness
-                .get_by_label("Send the bundle")
-                .accesskit_node()
-                .toggled(),
-            Some(egui::accesskit::Toggled::True)
-        );
-        assert_eq!(
-            harness
-                .get_by_label("You may quote these bytes in a public test case")
+                .get_by_label("You may use this report in a public test case")
                 .accesskit_node()
                 .toggled(),
             Some(egui::accesskit::Toggled::False)
         );
-        assert!(harness
-            .get_by_label("Send report / retry")
-            .accesskit_node()
-            .is_disabled());
+        assert!(!harness.get_by_label("Send").accesskit_node().is_disabled());
         let folder = std::fs::read_dir(out.path().join("reports"))
             .unwrap()
             .next()
@@ -1302,10 +1298,7 @@ mod consent_e2e {
             .get_by_label("Anonymous summary only")
             .click_accesskit();
         harness.run_steps(3);
-        assert!(!harness
-            .get_by_label("Send report / retry")
-            .accesskit_node()
-            .is_disabled());
+        assert!(!harness.get_by_label("Send").accesskit_node().is_disabled());
         if capture_walkthrough {
             walkthrough(&mut harness, "03-consent-screen");
         }
@@ -1358,9 +1351,7 @@ mod consent_e2e {
         let (mut harness, _out, folder) = review(stub.endpoint, None, status == 201);
         assert!(stub.requests.try_recv().is_err());
         snapshot(&mut harness, &format!("consent-{status}-before"));
-        harness
-            .get_by_label("Send report / retry")
-            .click_accesskit();
+        harness.get_by_label("Send").click_accesskit();
         harness.run_steps(3);
         let report = stub.requests.recv_timeout(Duration::from_secs(10)).unwrap();
         assert_eq!(
@@ -1381,10 +1372,7 @@ mod consent_e2e {
         assert!(harness.query_by_label("Sending…").is_some());
         assert!(harness.query_by_label(SENT).is_none());
         assert!(!folder.join("receipt.json").exists());
-        assert!(harness
-            .get_by_label("Send report / retry")
-            .accesskit_node()
-            .is_disabled());
+        assert!(harness.get_by_label("Send").accesskit_node().is_disabled());
         if status == 201 {
             walkthrough(&mut harness, "04-sending");
         }
@@ -1409,8 +1397,11 @@ mod consent_e2e {
                 json!({"report_id": report["report_id"], "received": 1793534400u64})
             );
             harness.run_steps(8);
+            assert!(harness.get_by_label("Send").accesskit_node().is_disabled());
+            assert!(harness.query_by_label("Retry").is_none());
         } else {
             wait_for(&mut harness, "It did not go through.");
+            assert!(harness.query_by_label("Send").is_none());
             assert_eq!(
                 stub.requests.recv_timeout(Duration::from_secs(5)).unwrap(),
                 report
@@ -1419,10 +1410,7 @@ mod consent_e2e {
             assert!(folder.join("prepared.json").is_file());
             assert!(folder.join("submission.json").is_file());
             assert!(harness.query_by_label(SENT).is_none());
-            assert!(!harness
-                .get_by_label("Send report / retry")
-                .accesskit_node()
-                .is_disabled());
+            assert!(!harness.get_by_label("Retry").accesskit_node().is_disabled());
             assert!(harness
                 .query_by_label("Send the whole file privately")
                 .is_some());
@@ -1470,6 +1458,9 @@ mod consent_e2e {
         assert!(harness
             .query_by_label("Works locally. Keep the original and local-key.json private.")
             .is_some());
+        assert!(harness
+            .query_by_label(dutchman::present::REPORT_COPIED)
+            .is_none());
         walkthrough(harness, "08-diagnose-wizard");
         let started = Instant::now();
         while harness.get_by_label("Close").accesskit_node().is_disabled() {
@@ -1481,7 +1472,7 @@ mod consent_e2e {
         harness.run_steps(8);
         harness.get_by_label("Add matching STEP").click_accesskit();
         harness.run_steps(8);
-        assert!(harness.query_by_label("Report target: part").is_some());
+        assert!(harness.query_by_label("Part to check").is_some());
         walkthrough(harness, "09-add-matching-step");
         harness.get_by_label("Back to conversion").click_accesskit();
         harness.run_steps(8);
@@ -1490,6 +1481,7 @@ mod consent_e2e {
         harness.get_by_label("Check a folder").click_accesskit();
         harness.run_steps(8);
         assert!(harness.query_by_label("Choose folder…").is_some());
+        harness.get_by_label(dutchman_gui::APP_NAME);
         walkthrough(harness, "10-check-a-folder");
         harness.get_by_label("Back to conversion").click_accesskit();
         harness.run_steps(8);
@@ -1533,9 +1525,7 @@ mod consent_e2e {
             false,
         );
         snapshot(&mut harness, "consent-live-before");
-        harness
-            .get_by_label("Send report / retry")
-            .click_accesskit();
+        harness.get_by_label("Send").click_accesskit();
         harness.step();
         wait_for(&mut harness, SENT);
         let receipt: Value =

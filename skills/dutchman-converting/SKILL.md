@@ -668,8 +668,8 @@ roles and sizes. Never show or transmit bundle contents through an assistant. Ca
 report, its bundle/summary choice and separate public-test permission. The public-test
 box defaults false. Whole-file sending uses the private-send card. On delivery failure
 keep the local report; retry later only when the user asks. GitHub gets the anonymous
-summary only, never a geometry bundle. Until extraction is available choose summary
-explicitly. Optional Discord claims are copied locally and pasted by the user.
+summary only, never a geometry bundle. The desktop app selects summary when no bundle is available;
+Send becomes Retry only after delivery fails. Optional Discord claims are copied locally and pasted by the user.
 
 Report summaries identify the authoring app from the native format, such as Fusion or
 Inventor. Exchange formats and unclassified `.prt` use `unknown` because their authoring

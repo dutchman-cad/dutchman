@@ -223,7 +223,7 @@ impl Page {
                 if file {
                     if ui.button("Add matching STEP").clicked() { self.pick(true,ctx); }
                     if let Some(step) = &self.step { ui.label(format!("Matching STEP: {}",step.display())); }
-                    ui.horizontal(|ui| { ui.label("Report target: part"); ui.add(egui::DragValue::new(&mut self.target).range(1..=100_000)); });
+                    ui.horizontal(|ui| { ui.label("Part to check"); ui.add(egui::DragValue::new(&mut self.target).range(1..=100_000)); });
                 }
                 if ui.add_enabled(self.input.is_some(),egui::Button::new("Start local checks")).clicked() { self.start(ctx); }
                 if ui.button("Back to conversion").clicked() { close = true; }
