@@ -160,6 +160,9 @@ fn answer(method: &str, params: &Value) -> Result<Value, (i64, String)> {
                 }
                 "compare_step" => (compare_step(arguments), "dutchman.compare-step/1"),
                 "doctor" => (doctor_tool(arguments), crate::doctor::SCHEMA),
+
+                "report_preview" => (report_preview(arguments), crate::report_send::SCHEMA),
+                "report_submit" => (report_submit(arguments), crate::report_send::SCHEMA),
                 _ => return Err((INVALID_PARAMS, format!("no tool named {name}"))),
             };
             // Arguments the tool cannot take fail as the tool fails: a report with the reason,
@@ -369,6 +372,14 @@ fn tools() -> Value {
             "title": "Convert many CAD files",
             "description": "Convert CAD files, folders and project ZIPs into SolidCraft designs under one folder. Plans top-level assemblies and unused parts, ignores lock files, and keeps adjacent STEP exports as native-file fallbacks. Returns the dutchman.convert-all/1 report.",
             "inputSchema": {"type": "object", "properties": all, "required": ["inputs", "out_dir"], "additionalProperties": false},
+        },
+        {
+            "name": "report_preview", "description": "Prepare or preview a local report. Returns only sizes, roles and signature; never bundle contents. Nothing is sent. Reuse the diagnostic file id. Until repro extraction is available only summary can be sent.",
+            "inputSchema": {"type": "object", "properties": {"folder": {"type": "string"}, "report_id": {"type": "string"}, "source_format": {"type": "string"}, "signature": {"type": "string"}}, "required": ["folder"], "additionalProperties": false}
+        },
+        {
+            "name": "report_submit", "description": "Send the previewed report only after the user's explicit yes to this choice and public-test permission. Never infer consent. No automatic resend after failure.",
+            "inputSchema": {"type": "object", "properties": {"folder": {"type": "string"}, "choice": {"enum": ["bundle", "summary"], "default": "bundle"}, "public_test": {"type": "boolean", "default": false}, "explicit_yes": {"type": "boolean"}}, "required": ["folder", "choice", "explicit_yes"], "additionalProperties": false}
         },
         {
             "name": "repro", "title": "Make a minimum reproduction kit",
@@ -876,6 +887,27 @@ mod tests {
     }
 
     #[test]
+    fn report_tools_preview_without_secrets_and_require_yes() {
+        let dir = tempfile::tempdir().unwrap();
+        let preview = call(
+            "report_preview",
+            json!({"folder": dir.path(), "report_id": "f0123456789abcdef", "source_format": "f3d", "signature": "decode"}),
+        );
+        assert_eq!(
+            preview["result"]["structuredContent"]["bundle_available"],
+            false
+        );
+        assert!(!preview.to_string().contains("claim_secret"));
+        assert!(!preview.to_string().contains("bytes_base64url"));
+        let refused = call(
+            "report_submit",
+            json!({"folder": dir.path(), "choice": "summary", "explicit_yes": false}),
+        );
+        assert_eq!(refused["result"]["isError"], true);
+        assert!(!dir.path().join("submission.json").exists());
+    }
+
+    #[test]
     fn notifications_and_responses_get_no_reply() {
         assert!(handle(r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#).is_none());
         assert!(handle(r#"{"jsonrpc":"2.0","id":3,"result":{}}"#).is_none());
@@ -1158,4 +1190,50 @@ fn diagnostic(name: &str, arguments: &Arguments) -> Result<Value, String> {
         }
     }
     Ok(Value::Object(answer))
+}
+
+fn report_preview(arguments: &Arguments) -> Result<Value, String> {
+    only(
+        arguments,
+        &["folder", "report_id", "source_format", "signature"],
+    )?;
+    let folder = path(arguments, "folder")?;
+    let report = if folder.join("prepared.json").exists() {
+        crate::report_send::Prepared::load(&folder)?
+    } else {
+        let text = |key| {
+            arguments
+                .get(key)
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("{key} is required"))
+        };
+        crate::report_send::Prepared::new(
+            text("report_id")?,
+            text("source_format")?,
+            text("signature")?,
+            None,
+            &folder,
+        )?
+    };
+    Ok(report.preview())
+}
+
+fn report_submit(arguments: &Arguments) -> Result<Value, String> {
+    only(
+        arguments,
+        &["folder", "choice", "public_test", "explicit_yes"],
+    )?;
+    let folder = path(arguments, "folder")?;
+    let prepared = crate::report_send::Prepared::load(&folder)?;
+    crate::report_send::submit(
+        &prepared,
+        &folder,
+        arguments
+            .get("choice")
+            .and_then(Value::as_str)
+            .unwrap_or("bundle"),
+        flag(arguments, "public_test", false)?,
+        flag(arguments, "explicit_yes", false)?,
+        crate::report_send::endpoint().as_deref(),
+    )
 }

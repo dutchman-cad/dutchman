@@ -648,3 +648,12 @@ Doctor's `geometry_checks` compare converted bodies with stored source geometry,
 partial-history outputs with intentionally extra hidden bodies. Private whole-design
 snapshot pairs may accompany flags when SolidCraft supports them; never attach these
 to an anonymous public report. A file check's Target part buttons save a local target.
+
+For report sending, call `report_preview` first and show the user the choices, part
+roles and sizes. Never show or transmit bundle contents through an assistant. Call
+`report_submit` with `explicit_yes: true` only after the user's explicit yes to that
+report, its bundle/summary choice and separate public-test permission. The public-test
+box defaults false. Whole-file sending uses the private-send card. On delivery failure
+keep the local report; retry later only when the user asks. GitHub gets the anonymous
+summary only, never a geometry bundle. Until extraction is available choose summary
+explicitly. Optional Discord claims are copied locally and pasted by the user.

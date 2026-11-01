@@ -20,6 +20,7 @@ const THREE_DAYS: u64 = 3 * 24 * HOUR;
 
 #[derive(Clone, Debug)]
 pub struct Release {
+    pub fixes_reports: Vec<String>,
     pub tag: String,
     pub notes: String,
     pub download: String,
@@ -69,6 +70,33 @@ fn plain_text(html: &str) -> String {
         .collect()
 }
 
+// Release notes carry this small machine-readable comment through GitHub's Atom
+// feed too, so package installations get the same fix notices without report queries.
+fn report_fixes(value: &Value) -> Vec<String> {
+    value
+        .get("fixes_reports")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .take(10000)
+        .filter_map(Value::as_str)
+        .filter(|s| {
+            s.len() == 64
+                && s.bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        })
+        .map(str::to_owned)
+        .collect()
+}
+
+fn notes_fixes(text: &str) -> Vec<String> {
+    text.split_once("<!-- dutchman-release ")
+        .and_then(|(_, rest)| rest.split_once(" -->"))
+        .and_then(|(json, _)| serde_json::from_str::<Value>(json).ok())
+        .map(|v| report_fixes(&v))
+        .unwrap_or_default()
+}
+
 fn parse_feed(body: &[u8]) -> Result<Option<Release>, String> {
     Ok(feed_entries(body)?
         .into_iter()
@@ -108,6 +136,7 @@ fn feed_entries(body: &[u8]) -> Result<Vec<Release>, String> {
         let tag = field("id").rsplit('/').next().unwrap_or("");
         if version(tag).is_some() {
             releases.push(Release {
+                fixes_reports: notes_fixes(field("content")),
                 tag: tag.into(),
                 notes: plain_text(field("content")),
                 download: format!("{RELEASES}/tag/{tag}"),
@@ -183,8 +212,9 @@ fn check(
         return Err("Release details are not available yet.".into());
     }
     let notes = feed_release
+        .as_ref()
         .filter(|r| r.tag == tag)
-        .map(|r| r.notes)
+        .map(|r| r.notes.clone())
         .unwrap_or_default();
     let appimage = std::env::current_exe()
         .ok()
@@ -206,6 +236,18 @@ fn check(
     Ok(Checked {
         clear_release: false,
         release: (version(tag) > version(known)).then(|| Release {
+            fixes_reports: {
+                let mut fixes = report_fixes(&value);
+                fixes.extend(notes_fixes(
+                    value.get("body").and_then(Value::as_str).unwrap_or(""),
+                ));
+                if let Some(release) = feed_release.as_ref().filter(|r| r.tag == tag) {
+                    fixes.extend(release.fixes_reports.clone());
+                }
+                fixes.sort();
+                fixes.dedup();
+                fixes
+            },
             tag: tag.into(),
             notes,
             download,
@@ -246,20 +288,22 @@ fn check_package(
             etag,
         });
     }
-    let notes = match fetch(FEED, None) {
+    let feed_release = match fetch(FEED, None) {
         Ok(Response::Body { bytes, .. }) => feed_entries(&bytes)
             .ok()
-            .and_then(|entries| entries.into_iter().find(|entry| entry.tag == tag))
-            .map(|entry| entry.notes)
-            .unwrap_or_default(),
-        _ => String::new(),
+            .and_then(|entries| entries.into_iter().find(|entry| entry.tag == tag)),
+        _ => None,
     };
     Ok(Checked {
         clear_release: false,
         release: Some(Release {
+            fixes_reports: feed_release
+                .as_ref()
+                .map(|r| r.fixes_reports.clone())
+                .unwrap_or_default(),
             download: format!("{RELEASES}/tag/{tag}"),
             tag,
-            notes,
+            notes: feed_release.map(|r| r.notes).unwrap_or_default(),
         }),
         etag,
     })
@@ -330,6 +374,7 @@ pub(crate) fn now() -> u64 {
 }
 
 pub struct Updater {
+    pub report_ids: Vec<String>,
     install: Install,
     job: Job,
     closing: bool,
@@ -355,6 +400,7 @@ impl Updater {
         let install = Install::current();
         let failure = package::scoop_startup(&install);
         let mut updater = Self {
+            report_ids: Vec::new(),
             install,
             job: Job::new(),
             closing: false,
@@ -375,6 +421,7 @@ impl Updater {
         };
         if let Some(failure) = failure {
             updater.release = Some(Release {
+                fixes_reports: Vec::new(),
                 download: format!("{RELEASES}/tag/{}", failure.tag),
                 tag: failure.tag.clone(),
                 notes: String::new(),
@@ -568,6 +615,7 @@ impl Updater {
                         return;
                     }
                     ui.heading(format!("Dutchman {} is available", release.tag.trim_start_matches('v')));
+                    if let Some(notice) = dutchman::report_send::fixed_notice(&self.report_ids, &release.fixes_reports) { ui.label(notice); }
                     egui::ScrollArea::vertical()
                         .max_height(240.0)
                         .show(ui, |ui| {

@@ -1019,3 +1019,27 @@ SolidCraft snapshots were produced. Preview paths and bytes stay private under t
 checkpoint's `diagnose/preview/{step,geometry}/` folders. They show the full design,
 not an isolated part. No preview is included in anonymous output or report submission.
 BBox coordinates beyond 1e12 mm are treated as unavailable measurements.
+
+### Report preview and sending (`dutchman.report-send/1`)
+
+Preview: `ok`, `report_id` (the diagnostic file id), `source_format`, `signature`,
+`parts` (role and uncompressed `bytes`), `bundle_size` (gzip bytes),
+`bundle_available`, `summary_size` (summary JSON bytes with default consent), `default_choice` (`bundle`), `public_test` (false), `summary`.
+No contents or claim secret are returned. Sending takes explicit consent and returns
+`sent`: true only with a matching Worker `report_id` and unsigned Unix `received`.
+Failure returns `sent: false`, `summary`, `local_folder`, optional `bundle`,
+`github` and `private_send`. Paths are local, not sent in the multipart request.
+The request records consent choice, text version 1 and public-test permission;
+only a claim hash leaves the app. A local `submission.json` freezes that choice for
+retries; `prepared.json` holds the private claim secret. Keep both private.
+
+Release details may include `fixes_reports`: lower-case SHA-256 report-id hashes.
+The desktop compares locally and shows one fix notice by the update prompt.
+There is no per-report status request or contact field. Discord follow-up is optional:
+the app copies `claim <id>-<code>` and opens Dutchy's DM on a click.
+
+For GitHub release feeds, append machine-readable release metadata to the release
+notes as `<!-- dutchman-release {"fixes_reports":["<64 lower-case hex digits>"]} -->`.
+The update check reads that comment in the existing Atom feed, including for package
+installations, and hides it from displayed notes. Release JSON may also supply the
+same `fixes_reports` array directly. No report ids are sent during update checks.

@@ -1368,6 +1368,7 @@ name = "dutchman"
 version = "0.2.5"
 dependencies = [
  "aho-corasick",
+ "base64 0.22.1",
  "clap",
  "ctrlc",
  "dutchman-core",
@@ -1377,12 +1378,15 @@ dependencies = [
  "dutchman-pilot",
  "dutchman-serve",
  "dutchman-solidcraft",
+ "flate2",
  "getrandom 0.3.4",
  "serde",
  "serde_json",
  "sha2",
  "sysinfo",
  "tempfile",
+ "ureq",
+ "url",
  "zip",
 ]
 

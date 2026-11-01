@@ -224,3 +224,9 @@ When the installed SolidCraft CLI supports snapshots, flagged comparisons show s
 source and matching STEP or converted geometry side by side. These are whole-design
 views. On a file check, click **Target part N** to save the report target. Comparison
 body numbers still need local resolution to the correct assembly part.
+
+Failed-file cards offer **Review and send report**. Review the part roles and exact
+sizes; bundles contain geometry. The public-test permission is separate and unticked.
+Extraction is not supported yet: choose anonymous summary, or use the private-send
+card for the whole file. Send/retry always requires a click. If the endpoint does
+not answer, the report remains in the output folder under `reports/<id>`.

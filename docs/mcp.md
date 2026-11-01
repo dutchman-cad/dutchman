@@ -720,3 +720,12 @@ ask for confirmation before treating a visual difference as a defect. Neither to
 sends a file or opens a report. STEP files may be shared only through private sending.
 Doctor's `geometry_checks` use the same anonymous measurement structure for stored source
 versus converted bodies. Optional local snapshot pairs never enter the tool result.
+
+`report_preview` takes `folder` and, for a new report, `report_id`, `source_format`
+and `signature`. Reuse the diagnostic file id. The result shows parts and sizes,
+never bundle contents or claim secrets. Extraction is not supported yet, so a new
+preview currently offers summary only. Nothing is sent.
+`report_submit` takes `folder`, `choice` (`bundle` or `summary`), `public_test`
+(default false) and `explicit_yes`. Ask the user for explicit consent to this exact
+preview and choice before passing true. A failure does not authorize a later resend.
+No tool accepts whole files for anonymous upload. Use the private-send card instead.

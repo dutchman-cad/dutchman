@@ -28,8 +28,7 @@ const MAX_FIELD: usize = 200;
 const PASTE_HERE: &str = "Paste the anonymous report here: Dutchman copied it to your clipboard.";
 
 /// What the form's report box opens with for a narrowed failure.
-const PASTE_ZIP: &str = "Paste anonymous.json here, and drag the report zip in if you are free to \
-     share the small file publicly.";
+const PASTE_ZIP: &str = "Paste anonymous.json here. Keep the report zip private; it contains geometry. Use the private-send card for the zip.";
 
 /// The issue to file about the file `report` (a `dutchman.convert/1` report) is of.
 #[derive(Clone, Debug, PartialEq)]

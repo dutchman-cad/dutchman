@@ -52,6 +52,8 @@ impl Row {
 
 /// Dutchman Convert's window.
 pub struct App {
+    consent: crate::report_consent::Consent,
+    private_send: Option<(usize, Option<PathBuf>)>,
     pub updater: crate::update::Updater,
     diagnosis: Option<crate::diagnose::Wizard>,
     inputs: Vec<PathBuf>,
@@ -267,6 +269,15 @@ impl App {
             report_policy: crate::report_policy::Refresher::new(
                 stored.as_ref().and_then(|v| v.get("report_policy")),
             ),
+            private_send: None,
+            consent: crate::report_consent::Consent {
+                ids: stored
+                    .as_ref()
+                    .and_then(|v| v.get("report_ids"))
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default(),
+                card: None,
+            },
             salt: None,
             file_manager: platform::reveal,
         }
@@ -395,6 +406,49 @@ impl App {
         Ok(Some((anonymous, id, report)))
     }
 
+    fn open_consent(&mut self, index: usize) -> Result<(), String> {
+        if self.salt.is_none() {
+            self.salt = Some(dutchman::anon::Salt::random()?);
+        }
+        let Some((anonymous, id, report)) = self.anonymous(index)? else {
+            return Ok(());
+        };
+        let error = anonymous.pointer("/errors/0");
+        let field = |key| {
+            error
+                .and_then(|e| e.get(key))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        };
+        let signature = dutchman::diagnose::signature::Signature::new(
+            dutchman::diagnose::signature::ErrorCode {
+                outcome: "failed".into(),
+                stage: field("stage"),
+                kind: field("code"),
+                codes: Vec::new(),
+            },
+            None,
+        );
+        let format = report
+            .pointer("/input/path")
+            .and_then(Value::as_str)
+            .and_then(|p| Path::new(p).extension())
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_ascii_lowercase();
+        let folder = dutchman::report_send::local_folder(
+            &self.out_dir.clone().unwrap_or_else(std::env::temp_dir),
+            &id,
+        );
+        let prepared = if folder.join("prepared.json").exists() {
+            dutchman::report_send::Prepared::load(&folder)?
+        } else {
+            dutchman::report_send::Prepared::new(&id, &format, &signature.hash, None, &folder)?
+        };
+        self.consent.card = Some(crate::report_consent::Card::new(index, prepared, folder));
+        Ok(())
+    }
+
     /// Opens the GitHub issue form about the file of the row at `index`, filled in from its
     /// report. When its anonymous report is too long for the link, it is copied for the
     /// reporter to paste, and the notice says so.
@@ -413,6 +467,15 @@ impl App {
     /// Copies the one-line message about the file of the row at `index` and opens Dutchy's
     /// DM. A file small enough to drag in has its folder shown too.
     pub fn dm_dutchy(&mut self, index: usize, ctx: &egui::Context) -> Result<(), String> {
+        self.dm_private(index, None, ctx)
+    }
+
+    fn dm_private(
+        &mut self,
+        index: usize,
+        file: Option<&Path>,
+        ctx: &egui::Context,
+    ) -> Result<(), String> {
         let Some((_, id, report)) = self.anonymous(index)? else {
             return Ok(());
         };
@@ -420,21 +483,80 @@ impl App {
             return Ok(());
         };
         let policy = self.report_policy.policy();
-        let steps = present::SendSteps::new(policy, row.size, report, present::Surface::Desktop);
+        let size = file
+            .and_then(|p| std::fs::metadata(p).ok())
+            .map(|m| m.len())
+            .or(row.size);
+        let steps = present::SendSteps::new(policy, size, report, present::Surface::Desktop);
         ctx.copy_text(policy.message(&MessageFacts {
             code: present::error_code(report),
             report_id: &id,
-            size_bytes: row.size,
+            size_bytes: size,
             step: present::step_known(report),
         }));
         ctx.open_url(egui::OpenUrl::new_tab(policy.dm_url()));
         let shown = if steps.drag {
-            (self.file_manager)(&row.input)
+            (self.file_manager)(file.unwrap_or(&row.input))
         } else {
             Ok(())
         };
         self.notice = Some(present::SEND_COPIED.to_owned());
         shown
+    }
+
+    fn private_send_window(&mut self, ctx: &egui::Context) {
+        let Some((index, file)) = self.private_send.clone() else {
+            return;
+        };
+        let mut open = true;
+        let mut action = None;
+        egui::Window::new("Send privately")
+            .open(&mut open)
+            .show(ctx, |ui| {
+                let Some(row) = self.rows.get(index) else {
+                    return;
+                };
+                let Some(report) = row.report.as_ref() else {
+                    return;
+                };
+                if let Some(path) = &file {
+                    ui.label(format!("Saved bundle: {}", path.display()));
+                }
+                let size = file
+                    .as_ref()
+                    .and_then(|p| std::fs::metadata(p).ok())
+                    .map(|m| m.len())
+                    .or(row.size);
+                let steps = present::SendSteps::new(
+                    self.report_policy.policy(),
+                    size,
+                    report,
+                    present::Surface::Desktop,
+                );
+                let palette = theme::palette(ui);
+                action = send_ui(ui, palette, index, &steps);
+            });
+        let result = match action {
+            Some(Action::Dm(index)) => self.dm_private(index, file.as_deref(), ctx),
+            Some(Action::Join) => {
+                ctx.open_url(egui::OpenUrl::new_tab(
+                    self.report_policy.policy().invite_url.clone(),
+                ));
+                Ok(())
+            }
+            Some(Action::Report(index)) => self.report_on_github(index, ctx),
+            Some(Action::Consent(index)) => {
+                open = false;
+                self.open_consent(index)
+            }
+            _ => Ok(()),
+        };
+        if let Err(error) = result {
+            self.notice = Some(error);
+        }
+        if !open {
+            self.private_send = None;
+        }
     }
 
     /// Whether a run is in progress.
@@ -846,6 +968,20 @@ impl App {
                         }
                     });
             });
+        if let Some(action) = self.consent.window(ctx) {
+            let result = match action {
+                crate::report_consent::Action::Private(index, file) => {
+                    self.private_send = Some((index, file));
+                    Ok(())
+                }
+                crate::report_consent::Action::Github(index) => self.report_on_github(index, ctx),
+            };
+            if let Err(error) = result {
+                self.notice = Some(error);
+            }
+        }
+        self.private_send_window(ctx);
+        self.updater.report_ids = self.consent.ids.clone();
         self.solidcraft_window(ctx);
         self.updater.windows(ctx, !self.running());
         self.memory_dialog(ctx);
@@ -1444,6 +1580,8 @@ impl App {
                 }
                 Ok(())
             }
+
+            Some(Action::Consent(index)) => self.open_consent(index),
             Some(Action::Report(index)) => self.report_on_github(index, ui.ctx()),
             Some(Action::Join) => {
                 let invite = self.report_policy.policy().invite_url.clone();
@@ -1482,6 +1620,7 @@ impl eframe::App for App {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         let mut settings = saved_choices(&self.options, self.custom);
         if let Some(object) = settings.as_object_mut() {
+            object.insert("report_ids".into(), serde_json::json!(self.consent.ids));
             object.insert("update".into(), self.updater.saved());
             object.insert("report_policy".into(), self.report_policy.saved());
         }
@@ -1499,6 +1638,7 @@ enum Action {
     Open(PathBuf),
     Reveal(PathBuf),
     Pick(Pick),
+    Consent(usize),
     /// Open the GitHub issue form about the row's file, filled in.
     Report(usize),
     /// Open the Discord invite.
@@ -1694,6 +1834,9 @@ fn send_ui(
     steps: &present::SendSteps,
 ) -> Option<Action> {
     let mut action = None;
+    if ui.button("Review and send report").clicked() {
+        action = Some(Action::Consent(index));
+    }
     ui.add_space(theme::SPACE_2);
     ui.label(RichText::new(present::SEND_INTRO).color(p.ink));
     ui.add_space(theme::SPACE_2);
@@ -1924,6 +2067,38 @@ mod tests {
         harness.get_by_label("Diagnose this file").click();
         harness.run_steps(2);
         assert!(*harness.state());
+    }
+
+    #[test]
+    fn whole_file_choice_opens_private_steps_without_sending() {
+        use egui_kittest::kittest::Queryable;
+        let dir = tempfile::tempdir().unwrap();
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1100.0, 1500.0))
+            .build_eframe(|cc| {
+                let mut app = App::new(cc);
+                app.out_dir = Some(dir.path().to_path_buf());
+                app.rows.push(Row { input: PathBuf::from("synthetic.f3d"), output: None, status: Status::Failed,
+                    progress: None, report: Some(json!({"ok": false, "input": {"path": "synthetic.f3d", "format_name": "Fusion"}, "error": {"stage": "decode", "kind": "decode"}})), job: None, size: Some(100) });
+                app.open_consent(0).unwrap();
+                app
+            });
+        harness.run_steps(8);
+        let folder = harness
+            .state()
+            .consent
+            .card
+            .as_ref()
+            .unwrap()
+            .folder
+            .clone();
+        harness
+            .get_by_label("Send the whole file privately")
+            .click_accesskit();
+        harness.step();
+        assert!(harness.state().private_send.is_some());
+        assert!(harness.state().consent.card.is_none());
+        assert!(!folder.join("submission.json").exists());
     }
 
     #[test]

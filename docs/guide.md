@@ -439,3 +439,18 @@ Inventor and SolidWorks) produced 0 flags in 3 comparisons against matching STEP
 A planted 1 mm move in a two-instance assembly was detected, and snapshot pairs were
 produced. These small controls establish basic behavior, not a false-positive rate
 for large assemblies or arbitrary designs.
+
+Report consent is per report. In the desktop failed-file card, **Review and send report**
+opens a review with bundle or summary (bundle is the default). Until minimal repro
+extraction is available, explicitly choose summary: version, OS, format and failure
+signature only. Whole files use the private-send card on Discord. A separate box,
+**You may quote these bytes in a public test case**, starts unticked.
+Nothing is sent before clicking Send. A report is sent only when a matching receipt
+arrives. A temporary failure gets one short retry, then keeps the report locally;
+retrying later requires a click. A daily cap asks you to try again tomorrow.
+GitHub accepts the anonymous summary only; never attach a geometry bundle there.
+
+Report sending is enabled for a build by setting `DUTCHMAN_REPORT_ENDPOINT` at
+compile time to the Worker's HTTPS `/api/reports` URL. Without it, clicking Send
+keeps the report locally and offers the same fallbacks. Development tests use a
+loopback HTTP stub. The app does not assume a deployed endpoint exists.

@@ -102,6 +102,8 @@ fn an_mcp_client_converts_through_dutchman() {
             "inspect",
             "formats",
             "convert_all",
+            "report_preview",
+            "report_submit",
             "repro",
             "diagnose",
             "diagnose_narrow",
