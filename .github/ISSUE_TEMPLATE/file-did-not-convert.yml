@@ -10,7 +10,7 @@ body:
 
         In the desktop app, Dutchman Convert, **Report anonymously on GitHub** on the failed file opens this form filled in; read what it filled in before you submit.
 
-        **Do not attach design files, logs, the key file, the salt, or the journal.** They hold names and paths. A link to a file that is already public (a GitHub repository, GrabCAD, a maker's site) is welcome: it lets us test the same file. If you are willing to let a maintainer see the file privately, say so below; we will reply with a private way to send it. File here even when the report says `upstream: cadmpeg` or `upstream: solidcraft`; we take it upstream.
+        **Do not attach design files, logs, the key file, the salt, or the journal.** They hold names and paths. The one exception is the report zip `dutchman diagnose --make-report` makes, when you are free to share the small file in it publicly. A link to a file that is already public (a GitHub repository, GrabCAD, a maker's site) is welcome: it lets us test the same file. If you are willing to let a maintainer see the file privately, say so below; we will reply with a private way to send it. File here even when the report says `upstream: cadmpeg` or `upstream: solidcraft`; we take it upstream.
   - type: dropdown
     id: format
     attributes:

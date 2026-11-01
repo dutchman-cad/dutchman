@@ -9,6 +9,7 @@ use std::path::Path;
 use serde_json::{json, Value};
 
 use crate::anon;
+use crate::diagnose::signature::Signature;
 
 /// The issue form for a file that did not convert.
 pub const NEW_ISSUE: &str =
@@ -25,6 +26,10 @@ const MAX_FIELD: usize = 200;
 
 /// What the form's report box opens with.
 const PASTE_HERE: &str = "Paste the anonymous report here: Dutchman copied it to your clipboard.";
+
+/// What the form's report box opens with for a narrowed failure.
+const PASTE_ZIP: &str = "Paste anonymous.json here, and drag the report zip in if you are free to \
+     share the small file publicly.";
 
 /// The issue to file about the file `report` (a `dutchman.convert/1` report) is of.
 #[derive(Clone, Debug, PartialEq)]
@@ -90,6 +95,38 @@ pub fn fill(report: &Value, anonymous: &Value) -> Issue {
         url: url(&fields),
         anonymous_report,
     }
+}
+
+/// The link that opens the form about a failure `dutchman diagnose --narrow` narrowed down, in
+/// a small rebuilt file of the format named `format`. It carries the signature and no file.
+pub fn narrowed(format: &str, signature: &Signature) -> String {
+    let fields = [
+        ("title", format!("[file] {format} failed to convert")),
+        ("format", format.to_owned()),
+        (
+            "dutchman-version",
+            format!("dutchman {}", env!("CARGO_PKG_VERSION")),
+        ),
+        ("os", system()),
+        (
+            "what-happened",
+            format!(
+                "Narrowed with dutchman diagnose. Failure signature {}. The small rebuilt file \
+                 fails the same way.",
+                signature.short()
+            ),
+        ),
+        (
+            "stage",
+            format!(
+                "stage: {}, code: {}",
+                signature.error.stage.as_deref().unwrap_or("none"),
+                signature.error.kind.as_deref().unwrap_or("none")
+            ),
+        ),
+        ("report-anon", PASTE_ZIP.to_owned()),
+    ];
+    url(&fields.map(|(id, value)| (id, value.chars().take(MAX_FIELD).collect())))
 }
 
 /// The form's link with `fields` filled in, each by its form id.
@@ -220,6 +257,26 @@ mod tests {
         assert!(issue.url.is_ascii() && !issue.url.contains(['\'', '(', ')', ' ', ';']));
         assert!(issue.anonymous_report.contains("xxxx"));
         assert!(issue.anonymous_report.contains("yyyy"));
+    }
+
+    #[test]
+    fn a_narrowed_failure_fills_in_the_form_with_its_signature_and_no_more() {
+        let signature = Signature::new(
+            crate::diagnose::signature::ErrorCode {
+                outcome: "failed".into(),
+                stage: Some("write".into()),
+                kind: Some("restate".into()),
+                codes: Vec::new(),
+            },
+            None,
+        );
+        let url = narrowed("Fusion archive (.f3d)", &signature);
+        assert!(url.starts_with(NEW_ISSUE));
+        assert!(url.len() <= MAX_URL, "{}", url.len());
+        assert!(query(&url, "what-happened")
+            .unwrap()
+            .contains(signature.short()));
+        assert_eq!(query(&url, "stage").unwrap(), "stage: write, code: restate");
     }
 
     #[test]

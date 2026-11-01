@@ -65,6 +65,111 @@ converting the whole file, narrows that part to a body, feature or sketch, and
 `kit/next-steps.md` names the part number and the feature kind to rebuild as a small file. See
 [Make a minimum reproduction](minimum-reproduction.md).
 
+## Let Dutchman do all of it: `--narrow`
+
+```sh
+dutchman diagnose --narrow big.f3z --out findings
+```
+
+This runs the whole narrowing by itself, in five steps, and needs no AI assistant:
+
+1. **Rank the parts**, as `dutchman diagnose` does.
+2. **Isolate a failing part**: alone, then with the parts either side of it. Up to five failing
+   parts are tried, in rank order, until one fails again. If every part converts alone, the
+   whole design is tried.
+3. **Narrow its history**: the part is converted again with its history cut short, halving the
+   range each time, until feature N fails the same way and feature N - 1 does not. A part with
+   80 features takes about seven tries.
+4. **Record the failure signature**: the kind of feature, its options, the shape of its profile
+   and the error code. It holds no names, paths or real dimensions.
+5. **Write the results.**
+
+It says where it is as it goes:
+
+```text
+dutchman: step 3 of 5: narrowing part 17 (feature 41 of 80)
+```
+
+The design is read once, and one converter takes every try, so narrowing does not read a large
+file again for each one. A try that runs past its limits, or crashes the converter, counts as
+that failure, and a new converter reads the design for the next try.
+
+**If it stops**, run the same command with the same `--out` folder. `narrow-state.json` is
+written after every step and every try, so a crash or a reboot costs at most the try it was
+on. The folder must be about the same file; another file is refused. A folder that already has a
+finished `dutchman diagnose` report for this path starts at step 2.
+
+**Limits.** Each step has its own. `--time-limit` and `--memory-limit` hold for one part in the
+ranking and for each try in steps 2 and 3, so a part stopped by a limit is stopped by the same
+limit when it is tried again. `--step-time-limit` is the most steps 2 and 3 may take each, in
+all (default 4 hours; it counts across resumes). Describing the feature in step 4 has 10 minutes.
+A step past its limit stops, and the run reports what it found: when that is step 3, the range
+the feature is in.
+
+It writes these in `findings/diagnose/`, beside the ranking:
+
+| File | What it is |
+|---|---|
+| `narrow.json` | What was found ([schema `dutchman.narrow/1`](json.md#dutchmannarrow1)). **Safe to share.** |
+| `signature.json` | The failure signature ([schema `dutchman.signature/1`](json.md#dutchmansignature1)). **Safe to share.** |
+| `narrow-state.json` | The checkpoint: numbers, categories and a hash of your file. Nothing to share. |
+| `kit/anonymous.json` | The anonymous report. **Safe to share.** |
+| `kit/next-steps.md` | The steps to rebuild the failure as a small file. |
+| `kit/local-key.json` | The numbers back to your part and feature names. **Do not share.** |
+
+**When no feature is named.** A conversion writes a part's stored shape as well as its history,
+and cutting the history leaves the stored shape as it is. So a part that fails with no history
+at all fails in its stored shape, and the run says so instead of naming a feature. A
+design that cannot be read has a signature with no feature too. Failures of a conversion that
+finished, such as a history that stopped early and kept its imported shape, are not failures here.
+
+Narrowing uses the same writing as `dutchman diagnose`, without the check in SolidCraft, so a
+failure that shows only in that check does not show here.
+
+To try one cut yourself:
+
+```sh
+dutchman convert big.f3z --part 17 --stop-at-feature 41 -o part17.sc
+```
+
+### Check your small file
+
+Rebuild the failure as `kit/next-steps.md` says, then:
+
+```sh
+dutchman diagnose --same-failure small.f3d --out findings
+```
+
+The small file goes through the same narrowing and its signature is compared with yours. Sizes
+and names do not matter; the feature's kind and options, its profile's shape and the error do.
+You get one of:
+
+| Verdict | What it says |
+|---|---|
+| `same` | It fails the same way: this is the one to send. |
+| `converts_fine` | It converts fine. Try again, closer to what the failure needs. |
+| `different` | It fails, but differently, and it names what differs. |
+| `too_broad` | Same stage and error category, but the failure has no feature or check code, so that cannot prove it is the same failure. You can still make the report. |
+
+Your original file is refused here: it is not a small rebuild.
+
+### Make the report
+
+```sh
+dutchman diagnose --make-report small.f3d --out findings
+```
+
+This makes `findings/diagnose/dutchman-report.zip`, holding `anonymous.json`, `signature.json` and
+your small file as `small.f3d`, and prints a link that opens the GitHub issue form filled in; the
+link is in `issue-link.txt` too. It works only for a file that passed `--same-failure`, and never
+for your original.
+
+**Nothing is sent.** The zip stays on your machine until you send it. On GitHub, open the link,
+paste `anonymous.json` and drag the zip in, if you are free to share the small file publicly.
+With no GitHub account, or if the small file must stay private, send the zip to Dutchy in a direct
+message on the [Dutchman Discord](https://discord.gg/yTcseBEdeu); see
+[Send the file privately](troubleshooting.md#send-the-file-privately).
+
 ## When the machine cannot finish
 
 A conversion that needs more memory than the machine has free stops early, once the design is
@@ -77,6 +182,9 @@ this conversion needs about 9.4 GB more memory and 6.1 GB are free (the design a
 `dutchman diagnose` on the file to see which parts fail, run slowly or take the most memory, or
 convert one part with --part N (--no-memory-check converts anyway)
 ```
+
+What the design holds is measured. What it would need on top is an estimate, three quarters of
+that, which has not been calibrated against real peak memory yet.
 
 The exit code is 2. `--no-memory-check` converts anyway.
 

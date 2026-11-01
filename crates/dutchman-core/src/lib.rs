@@ -354,6 +354,8 @@ pub struct PartSelection {
     pub number: usize,
     /// For a sub-assembly: also the parts inside it.
     pub children: bool,
+    /// Cut the part's history after this feature (see [`parts::stop_at_feature`]).
+    pub stop_at_feature: Option<usize>,
 }
 
 /// [`convert_with_progress`] for one part of the design only, by its number. The whole
@@ -441,6 +443,16 @@ fn convert_impl(
         let total = parts::catalog(&model).len();
         model = parts::select(&model, part.number, part.children)
             .map_err(|why| Error::Assembly(why.to_string()))?;
+        if let Some(number) = part.stop_at_feature {
+            let features = parts::history_length(&model);
+            model = parts::stop_at_feature(&model, number)
+                .map_err(|why| Error::Assembly(why.to_string()))?;
+            report.push(
+                Severity::Info,
+                "part",
+                format!("its history stops at feature {number} of {features}"),
+            );
+        }
         report.push(
             Severity::Info,
             "part",
