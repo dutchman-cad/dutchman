@@ -85,6 +85,10 @@ with cycle protection and a depth limit of 32. Repeated references to the saved 
 configuration share one read across the whole assembly tree, including sibling sub-assemblies.
 Saved display tessellations are released before building that tree; exact geometry and feature
 history are kept.
+
+Assemblies with many coloured faces retain their body and face colours without long pauses
+while mapping those colours, including with the fast preset.
+
 Parts that cannot be found or read are left out and reported for every affected occurrence;
 the remaining parts still convert. Virtual components without readable geometry are reported.
 

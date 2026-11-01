@@ -35,7 +35,8 @@ mod spatial;
 mod sweep;
 mod thread;
 
-use std::collections::BTreeMap;
+use std::cell::OnceCell;
+use std::collections::{BTreeMap, HashMap};
 
 use dutchman_core::{FeatureOutcome, FeatureStatus, Model, Report, Severity};
 use serde_json::Value;
@@ -336,12 +337,17 @@ impl History {
     }
 }
 
+type RowIndex<'a> = OnceCell<HashMap<&'a str, &'a Value>>;
+
 /// The model and what has been mapped so far.
 struct Context<'a> {
     /// Source for guarded STEP restatement of stored feature bodies.
     source: Option<&'a Model>,
     /// The CADIR `model` object.
     model: &'a Value,
+    /// Borrowed rows, indexed once on the first lookup in each arena. Geometry walks
+    /// otherwise scan whole arenas for every edge, vertex and point they visit.
+    rows: BTreeMap<&'a str, RowIndex<'a>>,
     target_version: crate::SolidCraftVersion,
     next_id: u64,
     /// SolidCraft parameter names by CADIR parameter id.
@@ -380,6 +386,13 @@ impl<'a> Context<'a> {
         Context {
             source: None,
             model,
+            rows: model
+                .as_object()
+                .into_iter()
+                .flatten()
+                .filter(|(_, rows)| rows.is_array())
+                .map(|(name, _)| (name.as_str(), OnceCell::new()))
+                .collect(),
             target_version: crate::SolidCraftVersion::default(),
             next_id: 1,
             params: BTreeMap::new(),
@@ -429,9 +442,17 @@ impl<'a> Context<'a> {
 
     /// A row of a CADIR arena by id.
     fn row(&self, arena: &str, id: &str) -> Option<&'a Value> {
-        self.arena(arena)
-            .iter()
-            .find(|row| row.get("id").and_then(Value::as_str) == Some(id))
+        let rows = self.rows.get(arena)?.get_or_init(|| {
+            let mut rows = HashMap::new();
+            for row in self.arena(arena) {
+                if let Some(id) = row.get("id").and_then(Value::as_str) {
+                    // Match the original scan's first row when ids repeat.
+                    rows.entry(id).or_insert(row);
+                }
+            }
+            rows
+        });
+        rows.get(id).copied()
     }
 
     /// The SolidCraft expression of the one parameter `feature` owns for the source kind
@@ -1228,6 +1249,45 @@ mod tests {
 
     use super::*;
     use crate::testing::{cube, feature, with};
+
+    #[test]
+    fn row_lookups_reuse_one_borrowed_index_per_arena() {
+        let faces: Vec<_> = (0..16_384)
+            .map(|i| json!({"id": format!("synthetic:face:{i}"), "ordinal": i}))
+            .collect();
+        let model = json!({"faces": faces, "points": [{"id": "point"}]});
+        let ctx = Context::new(&model);
+        assert!(ctx.rows.values().all(|index| index.get().is_none()));
+        for row in ctx.arena("faces").iter().rev() {
+            let id = row["id"].as_str().unwrap();
+            assert!(std::ptr::eq(ctx.row("faces", id).unwrap(), row));
+        }
+        let index = ctx.rows["faces"].get().unwrap();
+        assert_eq!(index.len(), 16_384);
+        // Repeated misses also reuse the index; unrelated arenas stay unindexed.
+        for _ in 0..16_384 {
+            assert!(ctx.row("faces", "missing").is_none());
+        }
+        assert!(std::ptr::eq(ctx.rows["faces"].get().unwrap(), index));
+        assert!(ctx.rows["points"].get().is_none());
+        assert!(ctx.row("unknown", "point").is_none());
+    }
+
+    #[test]
+    fn row_index_keeps_first_duplicate_and_arena_scope() {
+        let model = json!({
+            "faces": [null, {"id": 7}, {"id": "same", "value": 1},
+                      {"id": "same", "value": 2}],
+            "points": [{"id": "same", "value": 3}],
+            "metadata": {"id": "same"}
+        });
+        let ctx = Context::new(&model);
+        assert_eq!(ctx.row("faces", "same").unwrap()["value"], 1);
+        assert_eq!(ctx.row("points", "same").unwrap()["value"], 3);
+        assert!(ctx.row("metadata", "same").is_none());
+        assert!(ctx.row("faces", "7").is_none());
+        assert!(Context::new(&Value::Null).row("faces", "same").is_none());
+    }
 
     fn datum(key: u32, ordinal: u64) -> Value {
         feature(
