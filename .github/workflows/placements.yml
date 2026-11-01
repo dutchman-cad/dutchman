@@ -158,8 +158,11 @@ jobs:
           chmod +x bin/dutchman
           mkdir out
           status=0
-          bin/dutchman convert in/Voron_2.4r2_Assembly.f3d -o out/voron.sc \
-            --preset standard --no-verify 2> out/convert.log || status=$?
+          # The job has swap the memory stop does not count, so it runs past the stop. Its peak
+          # memory is logged to calibrate the stop.
+          /usr/bin/time -v bin/dutchman convert in/Voron_2.4r2_Assembly.f3d -o out/voron.sc \
+            --preset standard --no-verify --no-memory-check 2> out/convert.log || status=$?
+          grep -E 'Maximum resident|Elapsed' out/convert.log || true
           if [ "$status" -ne 0 ]; then
             tail -n 5 out/convert.log
             if [ "$status" -eq 137 ] || grep -qiE 'out of memory|memory allocation|needs about .* GB' out/convert.log; then
