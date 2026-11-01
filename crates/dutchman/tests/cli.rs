@@ -437,7 +437,11 @@ fn convert_json_reports_a_failure() {
 
 #[test]
 fn inspect_json_shows_what_would_map_without_writing() {
-    let out = dutchman(&["inspect", "--json", &fixture("body_history.sldprt")]);
+    let out = dutchman(&[
+        "inspect",
+        "--json",
+        &fixture("design_sketch_constraints.f3d"),
+    ]);
     assert_eq!(out.status.code(), Some(0));
     let report = json_of(&out);
     assert_eq!(report["schema"], "dutchman.inspect/1");
@@ -455,7 +459,7 @@ fn inspect_json_shows_what_would_map_without_writing() {
         serde_json::json!({"possible": false,
             "reason": "the model has no solids or surfaces SolidCraft can import"})
     );
-    let text = dutchman(&["inspect", &fixture("body_history.sldprt")]);
+    let text = dutchman(&["inspect", &fixture("design_sketch_constraints.f3d")]);
     assert!(String::from_utf8_lossy(&text.stdout).contains(
         "would write: nothing; converting it fails: the model has no solids or surfaces"
     ));
