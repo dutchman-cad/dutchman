@@ -4,6 +4,12 @@
 //! `screenshots` renders the window in both themes; it needs a GPU, so it is ignored by default:
 //! `DUTCHMAN_GUI_SCREENSHOTS=<dir> cargo test -p dutchman-gui --features test-support
 //! --test ui -- --ignored screenshots`. Linux isolates diagnostics with XDG_STATE_HOME.
+//!
+//! `--features test-support --test ui consent_e2e` drives consent against loopback 201/503
+//! stubs. With `DUTCHMAN_GUI_SCREENSHOTS=<dir>`, it also renders day-theme evidence there
+//! and eleven walkthrough frames in the sibling `walkthrough` directory. The ignored
+//! `consent_e2e::consent_e2e_live` test requires `DUTCHMAN_E2E_ENDPOINT` and sends only a
+//! synthetic fixture summary, marked with signature `e2e-test-desktop-consent-summary`.
 
 // Test helpers outside `#[test]` functions are not covered by clippy.toml's test allowances.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
@@ -1115,4 +1121,432 @@ fn project_zip_screenshots() {
         "Project conversion results.",
     );
     std::fs::write(dir.join("project-screenshots.md"), index).unwrap();
+}
+
+#[cfg(feature = "test-support")]
+mod consent_e2e {
+    use super::*;
+    use egui_kittest::kittest::NodeT;
+    use serde_json::{json, Value};
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::mpsc::{channel, Receiver, Sender};
+
+    const SENT: &str = "Sent. The report was received.";
+
+    struct Stub {
+        endpoint: String,
+        requests: Receiver<Value>,
+        release: Sender<()>,
+        thread: std::thread::JoinHandle<()>,
+    }
+
+    impl Stub {
+        fn new(status: u16) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let endpoint = format!("http://{}/api/reports", listener.local_addr().unwrap());
+            listener.set_nonblocking(true).unwrap();
+            let (tx, requests) = channel();
+            let (release, gate) = channel();
+            let thread = std::thread::spawn(move || {
+                for attempt in 0..if status == 503 { 2 } else { 1 } {
+                    let started = Instant::now();
+                    let mut stream = loop {
+                        match listener.accept() {
+                            Ok((stream, _)) => break stream,
+                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                                assert!(started.elapsed() < Duration::from_secs(30));
+                                std::thread::sleep(Duration::from_millis(10));
+                            }
+                            Err(e) => panic!("{e}"),
+                        }
+                    };
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(10)))
+                        .unwrap();
+                    let mut bytes = Vec::new();
+                    let (header_end, size) = loop {
+                        let mut chunk = [0; 4096];
+                        let n = stream.read(&mut chunk).unwrap();
+                        assert!(n > 0);
+                        bytes.extend_from_slice(&chunk[..n]);
+                        assert!(bytes.len() < 32 * 1024);
+                        if let Some(end) = bytes.windows(4).position(|b| b == b"\r\n\r\n") {
+                            let headers = String::from_utf8(bytes[..end].to_vec()).unwrap();
+                            assert!(headers.starts_with("POST /api/reports HTTP/1.1"));
+                            let size = headers
+                                .lines()
+                                .find_map(|line| {
+                                    let (key, value) = line.split_once(':')?;
+                                    key.eq_ignore_ascii_case("content-length")
+                                        .then(|| value.trim().parse::<usize>().unwrap())
+                                })
+                                .unwrap();
+                            break (end + 4, size);
+                        }
+                    };
+                    while bytes.len() < header_end + size {
+                        let mut chunk = [0; 4096];
+                        let n = stream.read(&mut chunk).unwrap();
+                        assert!(n > 0);
+                        bytes.extend_from_slice(&chunk[..n]);
+                        assert!(bytes.len() < 32 * 1024);
+                    }
+                    let body = std::str::from_utf8(&bytes[header_end..]).unwrap();
+                    assert!(body.contains("name=\"report\""));
+                    assert!(!body.contains("name=\"bundle\""));
+                    assert!(!body.contains("container_metadata_only"));
+                    let metadata = body
+                        .split_once("\r\n\r\n")
+                        .unwrap()
+                        .1
+                        .split("\r\n--")
+                        .next()
+                        .unwrap();
+                    let report: Value = serde_json::from_str(metadata).unwrap();
+                    tx.send(report.clone()).unwrap();
+                    if attempt == 0 {
+                        gate.recv_timeout(Duration::from_secs(20)).unwrap();
+                    }
+                    let receipt = if status == 201 {
+                        json!({"report_id": report["report_id"], "received": 1793534400u64})
+                    } else {
+                        json!({"error": "Storage full"})
+                    }
+                    .to_string();
+                    write!(stream, "HTTP/1.1 {status} Stub\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{receipt}", receipt.len()).unwrap();
+                }
+            });
+            Self {
+                endpoint,
+                requests,
+                release,
+                thread,
+            }
+        }
+    }
+
+    fn review(
+        endpoint: String,
+        signature: Option<String>,
+        capture_walkthrough: bool,
+    ) -> (Harness<'static, App>, tempfile::TempDir, PathBuf) {
+        let out = tempfile::tempdir().unwrap();
+        let mut harness = screenshot_harness(ThemePreference::Light);
+        harness
+            .state_mut()
+            .set_report_transport_for_test(endpoint, signature);
+        let input = out.path().join("container_metadata_only.f3d");
+        std::fs::copy(fixture("container_metadata_only.f3d"), &input).unwrap();
+        harness.state_mut().add_inputs([input]);
+        harness.state_mut().set_out_dir(out.path().to_path_buf());
+        harness.state_mut().set_verify(false);
+        harness
+            .state_mut()
+            .set_diagnostic_log(out.path().join("diagnostics.jsonl"));
+        convert(&mut harness);
+        assert_eq!(harness.state().rows()[0].status, Status::Failed);
+        harness.get_by_label("RESULTS").scroll_to_me();
+        harness.run_steps(8);
+        assert!(harness.query_by_label("0 converted, 1 failed").is_some());
+        if capture_walkthrough {
+            walkthrough(&mut harness, "01-failed-card");
+        }
+        harness
+            .get_by_label("Review and send report")
+            .click_accesskit();
+        harness.run_steps(8);
+        harness
+            .get_by_label("Send the whole file privately")
+            .click_accesskit();
+        harness.run_steps(8);
+        assert!(harness.query_by_label("Send privately").is_some());
+        if capture_walkthrough {
+            walkthrough(&mut harness, "02-private-send-card");
+        }
+        // The private card and the row both offer review; select the window's button.
+        harness
+            .get_by_label("Send privately")
+            .get_by_label("Review and send report")
+            .click_accesskit();
+        harness.run_steps(8);
+        assert!(harness.query_by_label("Send a problem report").is_some());
+        assert!(harness.query_by_label(SENT).is_none());
+        assert_eq!(
+            harness
+                .get_by_label("Send the bundle")
+                .accesskit_node()
+                .toggled(),
+            Some(egui::accesskit::Toggled::True)
+        );
+        assert_eq!(
+            harness
+                .get_by_label("You may quote these bytes in a public test case")
+                .accesskit_node()
+                .toggled(),
+            Some(egui::accesskit::Toggled::False)
+        );
+        assert!(harness
+            .get_by_label("Send report / retry")
+            .accesskit_node()
+            .is_disabled());
+        let folder = std::fs::read_dir(out.path().join("reports"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        assert!(folder.join("prepared.json").is_file());
+        assert!(!folder.join("submission.json").exists());
+        harness
+            .get_by_label("Anonymous summary only")
+            .click_accesskit();
+        harness.run_steps(3);
+        assert!(!harness
+            .get_by_label("Send report / retry")
+            .accesskit_node()
+            .is_disabled());
+        if capture_walkthrough {
+            walkthrough(&mut harness, "03-consent-screen");
+        }
+        (harness, out, folder)
+    }
+
+    fn walkthrough(harness: &mut Harness<'static, App>, name: &str) {
+        if let Some(dir) = std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS") {
+            let dir = PathBuf::from(dir).parent().unwrap().join("walkthrough");
+            std::fs::create_dir_all(&dir).unwrap();
+            let image = harness.render().unwrap();
+            assert_eq!(image.dimensions(), (1100, 800));
+            image.save(dir.join(format!("{name}.png"))).unwrap();
+        }
+    }
+
+    fn snapshot(harness: &mut Harness<'static, App>, name: &str) {
+        if let Some(dir) = std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS") {
+            let dir = PathBuf::from(dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            shot(
+                harness,
+                &dir,
+                &mut String::new(),
+                name,
+                "day",
+                "Consent E2E",
+            );
+        }
+    }
+
+    fn wait_for(harness: &mut Harness<'static, App>, label: &str) {
+        let started = Instant::now();
+        loop {
+            harness.run_steps(2);
+            if harness.query_all_by_label_contains(label).count() > 0 {
+                break;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(30),
+                "waiting for {label}"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        harness.run_steps(8);
+    }
+
+    fn local_case(status: u16) {
+        let stub = Stub::new(status);
+        let (mut harness, _out, folder) = review(stub.endpoint, None, status == 201);
+        assert!(stub.requests.try_recv().is_err());
+        snapshot(&mut harness, &format!("consent-{status}-before"));
+        harness
+            .get_by_label("Send report / retry")
+            .click_accesskit();
+        harness.run_steps(3);
+        let report = stub.requests.recv_timeout(Duration::from_secs(10)).unwrap();
+        assert_eq!(
+            report["consent"],
+            json!({"choice": "summary", "text_version": 1, "public_test": false})
+        );
+        assert_eq!(report["source_format"], "f3d");
+        assert_eq!(report["source_app"], "Fusion");
+        assert_eq!(report["dutchman_version"], dutchman::BUILD_VERSION);
+        assert_eq!(report["claim_hash"].as_str().unwrap().len(), 64);
+        assert_eq!(
+            serde_json::from_slice::<Value>(
+                &std::fs::read(folder.join("submission.json")).unwrap()
+            )
+            .unwrap(),
+            report
+        );
+        assert!(harness.query_by_label("Sending…").is_some());
+        assert!(harness.query_by_label(SENT).is_none());
+        assert!(!folder.join("receipt.json").exists());
+        assert!(harness
+            .get_by_label("Send report / retry")
+            .accesskit_node()
+            .is_disabled());
+        if status == 201 {
+            walkthrough(&mut harness, "04-sending");
+        }
+        stub.release.send(()).unwrap();
+        if status == 201 {
+            // Observe every frame: the UI must never say sent before the durable receipt.
+            let started = Instant::now();
+            loop {
+                harness.step();
+                if harness.query_by_label(SENT).is_some() {
+                    assert!(folder.join("receipt.json").is_file());
+                    break;
+                }
+                assert!(started.elapsed() < Duration::from_secs(20));
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let receipt: Value =
+                serde_json::from_slice(&std::fs::read(folder.join("receipt.json")).unwrap())
+                    .unwrap();
+            assert_eq!(
+                receipt,
+                json!({"report_id": report["report_id"], "received": 1793534400u64})
+            );
+            harness.run_steps(8);
+        } else {
+            wait_for(&mut harness, "It did not go through.");
+            assert_eq!(
+                stub.requests.recv_timeout(Duration::from_secs(5)).unwrap(),
+                report
+            );
+            assert!(!folder.join("receipt.json").exists());
+            assert!(folder.join("prepared.json").is_file());
+            assert!(folder.join("submission.json").is_file());
+            assert!(harness.query_by_label(SENT).is_none());
+            assert!(!harness
+                .get_by_label("Send report / retry")
+                .accesskit_node()
+                .is_disabled());
+            assert!(harness
+                .query_by_label("Send the whole file privately")
+                .is_some());
+            assert!(harness
+                .query_by_label("Open GitHub with anonymous summary only")
+                .is_some());
+        }
+        snapshot(&mut harness, &format!("consent-{status}-after"));
+        stub.thread.join().unwrap();
+        if status == 201 {
+            walkthrough(&mut harness, "05-sent-receipt");
+            walkthrough_extras(&mut harness, &report);
+        } else {
+            walkthrough(&mut harness, "06-send-failed-fallbacks");
+        }
+    }
+
+    fn walkthrough_extras(harness: &mut Harness<'static, App>, report: &Value) {
+        harness
+            .get_by_label("Open GitHub with anonymous summary only")
+            .click_accesskit();
+        harness.step();
+        let url = harness
+            .output()
+            .platform_output
+            .commands
+            .iter()
+            .find_map(|command| {
+                if let egui::OutputCommand::OpenUrl(open) = command {
+                    Some(open.url.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+        assert!(url.starts_with(dutchman_gui::REPORT_PROBLEM_URL));
+        assert!(url.len() < 2000);
+        harness.run_steps(8);
+        assert!(harness
+            .query_by_label(dutchman::present::REPORT_COPIED)
+            .is_some());
+        walkthrough(harness, "07-github-short-link");
+        harness.get_by_label("Diagnose this file").click_accesskit();
+        harness.run_steps(8);
+        assert!(harness
+            .query_by_label("Works locally. Keep the original and local-key.json private.")
+            .is_some());
+        walkthrough(harness, "08-diagnose-wizard");
+        let started = Instant::now();
+        while harness.get_by_label("Close").accesskit_node().is_disabled() {
+            assert!(started.elapsed() < Duration::from_secs(30));
+            std::thread::sleep(Duration::from_millis(20));
+            harness.run_steps(2);
+        }
+        harness.get_by_label("Close").click_accesskit();
+        harness.run_steps(8);
+        harness.get_by_label("Add matching STEP").click_accesskit();
+        harness.run_steps(8);
+        assert!(harness.query_by_label("Report target: part").is_some());
+        walkthrough(harness, "09-add-matching-step");
+        harness.get_by_label("Back to conversion").click_accesskit();
+        harness.run_steps(8);
+        harness.get_by_label("Check a folder").scroll_to_me();
+        harness.run_steps(8);
+        harness.get_by_label("Check a folder").click_accesskit();
+        harness.run_steps(8);
+        assert!(harness.query_by_label("Choose folder…").is_some());
+        walkthrough(harness, "10-check-a-folder");
+        harness.get_by_label("Back to conversion").click_accesskit();
+        harness.run_steps(8);
+        harness
+            .state_mut()
+            .updater
+            .preview(dutchman_gui::update::Release {
+                fixes_reports: vec![dutchman::report_send::hash(
+                    report["report_id"].as_str().unwrap().as_bytes(),
+                )],
+                tag: "v99.0.0".into(),
+                notes: "Synthetic release for desktop report testing.".into(),
+                download: "https://github.com/dutchman-cad/dutchman/releases/tag/v99.0.0".into(),
+            });
+        harness.run_steps(8);
+        harness.get_by_label("Update to 99.0.0").click_accesskit();
+        harness.run_steps(8);
+        assert!(harness
+            .query_by_label_contains("This update fixes a problem you reported")
+            .is_some());
+        walkthrough(harness, "11-update-fixes-your-report");
+    }
+
+    #[test]
+    fn consent_e2e_201_receipt() {
+        local_case(201);
+    }
+
+    #[test]
+    fn consent_e2e_503_keeps_report_and_fallbacks() {
+        local_case(503);
+    }
+
+    #[test]
+    #[ignore = "sends a synthetic summary to DUTCHMAN_E2E_ENDPOINT after UI consent"]
+    fn consent_e2e_live() {
+        let endpoint = std::env::var("DUTCHMAN_E2E_ENDPOINT").unwrap();
+        let (mut harness, _out, folder) = review(
+            endpoint,
+            Some("e2e-test-desktop-consent-summary".into()),
+            false,
+        );
+        snapshot(&mut harness, "consent-live-before");
+        harness
+            .get_by_label("Send report / retry")
+            .click_accesskit();
+        harness.step();
+        wait_for(&mut harness, SENT);
+        let receipt: Value =
+            serde_json::from_slice(&std::fs::read(folder.join("receipt.json")).unwrap()).unwrap();
+        assert!(receipt["received"].as_u64().is_some());
+        let saved: Value =
+            serde_json::from_slice(&std::fs::read(folder.join("submission.json")).unwrap())
+                .unwrap();
+        assert_eq!(saved["signature"], "e2e-test-desktop-consent-summary");
+        assert_eq!(receipt["report_id"], saved["report_id"]);
+        eprintln!("Live receipt: {receipt}");
+        snapshot(&mut harness, "consent-live-after");
+    }
 }

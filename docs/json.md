@@ -1029,6 +1029,11 @@ No contents or claim secret are returned. Sending takes explicit consent and ret
 `sent`: true only with a matching Worker `report_id` and unsigned Unix `received`.
 Failure returns `sent: false`, `summary`, `local_folder`, optional `bundle`,
 `github` and `private_send`. Paths are local, not sent in the multipart request.
+The request includes `dutchman_version` (the build version), `source_format`, and
+`source_app`, derived from the native format family (Fusion, Inventor, SolidWorks,
+FreeCAD, CATIA, Creo, NX, Creo View or Rhino). Exchange formats (STEP, IGES, ACIS),
+unclassified `.prt` and unrecognised formats use `unknown`: the authoring app cannot
+be inferred from those formats. No file is opened to derive this field.
 The request records consent choice, text version 1 and public-test permission;
 only a claim hash leaves the app. A local `submission.json` freezes that choice for
 retries; `prepared.json` holds the private claim secret. Keep both private.

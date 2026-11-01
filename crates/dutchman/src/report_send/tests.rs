@@ -193,3 +193,49 @@ fn claim_code_matches_the_endpoint_contract_vector() {
     report.claim_secret = "synthetic-secret".into();
     assert_eq!(report.claim(), "claim 0123456789abcdef-PVMFRAMQDO");
 }
+
+#[test]
+fn metadata_identifies_native_apps_without_guessing_exchange_file_authors() {
+    for (format, app) in [
+        ("f3d", "Fusion"),
+        ("f3z", "Fusion"),
+        ("fusion_archive", "Fusion"),
+        ("ipt", "Inventor"),
+        ("iam", "Inventor"),
+        ("inventor", "Inventor"),
+        ("sldprt", "SolidWorks"),
+        ("sldasm", "SolidWorks"),
+        ("fcstd", "FreeCAD"),
+        ("freecad_document", "FreeCAD"),
+        ("catpart", "CATIA"),
+        ("catia", "CATIA"),
+        ("creo_part", "Creo"),
+        ("nx_part", "NX"),
+        ("pvz", "Creo View"),
+        ("3dm", "Rhino"),
+        ("prt", "unknown"),
+        ("step", "unknown"),
+        ("stp", "unknown"),
+        ("iges", "unknown"),
+        ("sat", "unknown"),
+        ("future", "unknown"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let report = Prepared::new(
+            "0123456789abcdef",
+            format,
+            "e2e-test-metadata",
+            None,
+            dir.path(),
+        )
+        .unwrap();
+        let reloaded = Prepared::load(dir.path()).unwrap();
+        for choice in ["summary", "bundle"] {
+            let metadata = reloaded.metadata(choice, false);
+            assert_eq!(metadata["source_app"], app, "{format}");
+            assert_eq!(metadata["source_format"], format);
+            assert_eq!(metadata["dutchman_version"], crate::BUILD_VERSION);
+            assert_eq!(metadata["signature"], report.signature);
+        }
+    }
+}
