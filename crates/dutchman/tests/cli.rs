@@ -2779,12 +2779,12 @@ fn a_conversion_the_machine_cannot_finish_stops_early_naming_the_largest_parts()
         "--no-verify",
     ];
     // The design holds 12 GB once read and 2 GB are free.
-    let env = [("DUTCHMAN_TEST_MEMORY", "12000000000,2000000000")];
+    let env = [("DUTCHMAN_TEST_MEMORY", "12000000000,1000000000")];
     let out = dutchman_with(&args, &env);
     assert_eq!(out.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("this conversion needs about 9.0 GB more memory and 2.0 GB are free"),
+        stderr.contains("this conversion needs about 1.8 GB more memory and 1.0 GB are free"),
         "{stderr}"
     );
     assert!(stderr.contains("are the largest"), "{stderr}");

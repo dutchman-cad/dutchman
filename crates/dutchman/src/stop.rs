@@ -9,9 +9,10 @@
 use dutchman_core::{parts, Model};
 
 /// What mapping and writing a decoded model needs on top of what it holds, as a share of it.
-/// An estimate, set low so a conversion that would only just fit is not stopped; calibrate it
-/// against peak memory on large assemblies.
-pub const EXTRA_SHARE: f64 = 0.75;
+/// Set from one large Fusion assembly at the Standard preset, which held 14.5 GB once read and
+/// peaked at 16 GB (0.10), with a margin; low, so a conversion that would only just fit is not
+/// stopped. A swap file does not count as free.
+pub const EXTRA_SHARE: f64 = 0.15;
 
 /// A design holding less than this is never stopped: its extra work cannot matter.
 pub const MIN_HELD: u64 = 1 << 30;
@@ -122,9 +123,9 @@ mod tests {
             part(4, 50, false),
             part(17, 550, false),
         ];
-        let text = stop_message(10 * GB, 2 * GB, &catalog).unwrap();
+        let text = stop_message(10 * GB, GB, &catalog).unwrap();
         assert!(
-            text.starts_with("this conversion needs about 7.5 GB more memory and 2.0 GB are free")
+            text.starts_with("this conversion needs about 1.5 GB more memory and 1.0 GB are free")
         );
         assert!(
             text.contains(
