@@ -212,6 +212,32 @@ pub(crate) fn memory_check_with(
     }
 }
 
+/// The refusal for converting one part of a design, if this machine cannot even read the
+/// whole design: only the memory the read itself needs is checked, since only the part is
+/// then mapped and written.
+pub(crate) fn part_memory_refusal(
+    input: &Path,
+    options: &crate::ConvertOptions,
+    available: Option<u64>,
+) -> Option<String> {
+    if options.no_memory_check || options.preset == Preset::Fast {
+        return None;
+    }
+    let (Some(read), Some(available)) = (
+        estimate_without_history(input, options.choices(), options),
+        available,
+    ) else {
+        return None;
+    };
+    (read.peak_bytes > available).then(|| {
+        format!(
+            "this conversion needs about {:.1} GB just to read the whole design and {:.1} GB are free; free some memory, or pass --no-memory-check to try anyway",
+            gb(read.peak_bytes),
+            gb(available)
+        )
+    })
+}
+
 fn estimate_without_history(
     input: &Path,
     mut choices: Choices,

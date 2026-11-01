@@ -1731,13 +1731,14 @@ mod tests {
             .click_accesskit();
         // The preset menu can take more than one frame to open on a slow runner.
         for _ in 0..60 {
-            harness.run();
+            harness.step();
             if harness.query_by_label("Full").is_some() {
                 break;
             }
         }
         harness.get_by_label("Full").click_accesskit();
-        harness.run();
+        // The menu's closing animation can outlast `run`'s step limit on a slow runner.
+        harness.run_steps(8);
         assert!(!harness.state().custom);
         assert_eq!(harness.state().options.choices(), Choices::of(Preset::Full));
     }

@@ -3,9 +3,12 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use dutchman_core::{Error, Format, MemberEvent, MemberObserver, Model, Progress, Report, Writer};
+use dutchman_core::{
+    parts, Error, Format, MemberEvent, MemberObserver, Model, Progress, Report, Writer,
+};
 use serde_json::{json, Value};
 
+use crate::diagnose::{self, FailingPart};
 use crate::{diagnostics, ConvertOptions};
 
 pub const SCHEMA: &str = crate::json::REPRO;
@@ -33,11 +36,31 @@ impl MemberObserver for Capture {
 /// failing stage on local subsets. An existing kit is refused; originals are never changed.
 /// `include_local_key` is for a client operating locally; its result must stay local too.
 pub fn run(input: &Path, out: &Path, include_local_key: bool) -> Result<Value, String> {
+    run_from(input, out, include_local_key, None)
+}
+
+/// [`run`], going straight to the failing part of a `dutchman diagnose` report: the one in
+/// `from` (the folder diagnose wrote to) when given, else the one in `out`, when it holds one.
+pub fn run_from(
+    input: &Path,
+    out: &Path,
+    include_local_key: bool,
+    from: Option<&Path>,
+) -> Result<Value, String> {
+    let failing = match from {
+        Some(folder) => Some(diagnose::report_from(folder)?),
+        None => diagnose::report_from(out).ok(),
+    }
+    .as_ref()
+    .and_then(diagnose::failing_part);
     std::fs::create_dir_all(out).map_err(|e| format!("cannot create reproduction folder: {e}"))?;
     let kit = out.join("kit");
     std::fs::create_dir(&kit)
         .map_err(|e| format!("cannot create kit; choose a fresh --out folder: {e}"))?;
-    let result = build(input, out, &kit, include_local_key);
+    let result = match &failing {
+        Some(part) => build_part(input, &kit, include_local_key, part),
+        None => build(input, out, &kit, include_local_key),
+    };
     if result.is_err() {
         // Only our newly created kit is removed, never a pre-existing folder.
         let _ = std::fs::remove_dir_all(&kit);
@@ -145,18 +168,98 @@ fn build(input: &Path, out: &Path, kit: &Path, include_local_key: bool) -> Resul
             narrowed.limit("No decoded model is available at this failure stage; component, body, feature and sketch checks are not possible.");
         }
     }
-    let anonymous = anonymous(input, &failure, &narrowed);
+    let result = finish_kit(
+        input,
+        kit,
+        include_local_key,
+        &failure,
+        &narrowed,
+        source_document,
+    )?;
+    drop(capture);
+    drop(log);
+    scratch
+        .close()
+        .map_err(|e| format!("cannot remove local working files: {e}"))?;
+    Ok(result)
+}
+
+/// The kit for the failing part a `dutchman diagnose` report named: that part is read, converted
+/// alone to see the failure, and narrowed from there to a body, feature or sketch.
+fn build_part(
+    input: &Path,
+    kit: &Path,
+    include_local_key: bool,
+    part: &FailingPart,
+) -> Result<Value, String> {
+    let options = ConvertOptions {
+        no_verify: true,
+        ..ConvertOptions::default()
+    };
+    let format = Format::from_path(input).ok_or("this file is not a format Dutchman reads")?;
+    let model = dutchman_core::read_in(
+        format,
+        input,
+        &options.part_search(),
+        &mut Report::default(),
+    )
+    .map_err(|e| format!("cannot read the design: {e}"))?;
+    let catalog = parts::catalog(&model);
+    let info = catalog
+        .iter()
+        .find(|p| p.number == part.number)
+        .ok_or_else(|| {
+            format!(
+                "the diagnose report names part {} but this design has {} parts; was it made from another file?",
+                part.number,
+                catalog.len()
+            )
+        })?;
+    let selected = parts::select(&model, part.number, false).map_err(|e| e.to_string())?;
+    drop(model);
+    let writer = options.writer();
+    let mut narrowed = Narrowed::default();
+    narrowed.select("part", part.number, catalog.len(), Some(&info.name), None);
+    let mut trials = 0;
+    let failure = if part.outcome == "failed" {
+        let converted = writer.write(&selected, &mut std::io::sink(), &mut Report::default());
+        match converted {
+            Ok(()) => {
+                narrowed.limit("The failing part converted on its own here; it may need the rest of the design, or the limits that stopped it in the diagnose run.");
+                Value::Null
+            }
+            Err(error) => diagnostics::anonymous_failure(&crate::json::error(
+                crate::json::CONVERT,
+                Value::Null,
+                &error,
+            )),
+        }
+    } else {
+        narrowed.limit("The part did not finish within the diagnose limits, so smaller units cannot be tried automatically; rebuild the part's most complex features first.");
+        json!({"stage": "map", "kind": part.outcome, "findings": {}, "curve_kinds": {}})
+    };
+    if part.outcome == "failed" && !failure.is_null() {
+        narrow(selected, &failure, &writer, &mut narrowed, &mut trials)?;
+    }
+    finish_kit(input, kit, include_local_key, &failure, &narrowed, None)
+}
+
+/// Writes the kit's files and builds the result.
+fn finish_kit(
+    input: &Path,
+    kit: &Path,
+    include_local_key: bool,
+    failure: &Value,
+    narrowed: &Narrowed,
+    source_document: Option<String>,
+) -> Result<Value, String> {
+    let anonymous = anonymous(input, failure, narrowed);
     let local = json!({"schema": "dutchman.repro-local/1", "warning": "Do not share",
         "input": input, "source_document": source_document, "members": narrowed.member_names, "ordinals": narrowed.key});
     write_json(&kit.join("anonymous.json"), &anonymous, false)?;
     write_json(&kit.join("local-key.json"), &local, true)?;
     std::fs::write(kit.join("next-steps.md"), next_steps(&anonymous))
         .map_err(|e| format!("cannot write reproduction instructions: {e}"))?;
-    drop(capture);
-    drop(log);
-    scratch
-        .close()
-        .map_err(|e| format!("cannot remove local working files: {e}"))?;
     let summary = if failure.is_null() {
         "Conversion succeeded: no failure to reproduce. Share only kit/anonymous.json. Do not share kit/local-key.json or the original file."
     } else {
@@ -268,8 +371,24 @@ impl Narrowed {
         name: Option<&str>,
         parent: Option<usize>,
     ) {
-        self.path
-            .push(json!({"unit": unit, "ordinal": ordinal, "total": total}));
+        self.select_kind(unit, ordinal, total, name, parent, None);
+    }
+
+    /// [`Narrowed::select`], also saying what kind of feature it is (a fixed category).
+    fn select_kind(
+        &mut self,
+        unit: &'static str,
+        ordinal: usize,
+        total: usize,
+        name: Option<&str>,
+        parent: Option<usize>,
+        kind: Option<&'static str>,
+    ) {
+        let mut step = json!({"unit": unit, "ordinal": ordinal, "total": total});
+        if let (Some(kind), Some(fields)) = (kind, step.as_object_mut()) {
+            fields.insert("kind".into(), json!(kind));
+        }
+        self.path.push(step);
         self.key.push(json!({"unit": unit, "ordinal": ordinal, "total": total, "parent_step": parent,
             "name": name, "lookup": if name.is_some() { "name" } else { "unnamed in CADIR; locate manually in the CAD program, whose order may differ" }}));
     }
@@ -354,7 +473,7 @@ fn narrow(
             }
             if trial_matches(failure, &test_model(&candidate, failure, writer)) {
                 let parent = result.path.len().checked_sub(1);
-                result.select(
+                result.select_kind(
                     unit,
                     index + 1,
                     rows.len(),
@@ -362,6 +481,7 @@ fn narrow(
                         .or_else(|| row.get("label"))
                         .and_then(Value::as_str),
                     parent,
+                    (unit == "feature").then(|| feature_kind(row)),
                 );
                 model = candidate;
                 result.isolated = (unit == "body" || unit == "feature" || unit == "sketch")
@@ -383,6 +503,29 @@ fn narrow(
     }
     result.kinds = kinds(&model);
     Ok(())
+}
+
+/// A feature's kind, only when it is one of CADIR's fixed operation names.
+fn feature_kind(feature: &Value) -> &'static str {
+    const KINDS: &[&str] = &[
+        "sketch",
+        "extrude",
+        "revolve",
+        "fillet",
+        "chamfer",
+        "sweep",
+        "loft",
+        "shell",
+        "boolean",
+        "pattern",
+        "mirror",
+        "stored_geometry",
+    ];
+    feature
+        .pointer("/definition/definition")
+        .and_then(Value::as_str)
+        .and_then(|k| KINDS.iter().find(|known| **known == k).copied())
+        .unwrap_or("other")
 }
 
 fn kinds(model: &Model) -> Value {
@@ -422,28 +565,7 @@ fn kinds(model: &Model) -> Value {
         .into_iter()
         .flatten()
     {
-        let kind = feature
-            .pointer("/definition/definition")
-            .and_then(Value::as_str)
-            .filter(|k| {
-                matches!(
-                    *k,
-                    "sketch"
-                        | "extrude"
-                        | "revolve"
-                        | "fillet"
-                        | "chamfer"
-                        | "sweep"
-                        | "loft"
-                        | "shell"
-                        | "boolean"
-                        | "pattern"
-                        | "mirror"
-                        | "stored_geometry"
-                )
-            })
-            .unwrap_or("other");
-        *features.entry(kind.into()).or_default() += 1;
+        *features.entry(feature_kind(feature).into()).or_default() += 1;
     }
     json!({"surface_kinds": surfaces, "feature_kinds": features, "use_curve_outside_carrier": dutchman_core::repro::use_curve_outside_carrier_count(model), "finding_entity_kinds": dutchman_core::repro::entity_kinds(model).ok()})
 }
@@ -453,7 +575,8 @@ fn anonymous(input: &Path, failure: &Value, narrowed: &Narrowed) -> Value {
         input,
         failure,
         json!({"path": narrowed.path, "smallest_failing_unit_isolated": narrowed.isolated,
-            "limits": narrowed.limits, "members": narrowed.members}),
+            "limits": narrowed.limits, "members": narrowed.members,
+            "from_diagnose": narrowed.path.first().is_some_and(|p| p["unit"] == "part")}),
         &narrowed.kinds,
     )
 }
@@ -479,7 +602,13 @@ pub fn next_steps(anonymous: &Value) -> String {
             let unit = step["unit"].as_str().unwrap_or("unit");
             let ordinal = step["ordinal"].as_u64().unwrap_or(0);
             let total = step["total"].as_u64().unwrap_or(0);
-            text.push_str(&format!("Look up {unit} #{ordinal} of {total} in local-key.json, following the preceding step's scope. Keep that name local.\n\n"));
+            if unit == "part" {
+                text.push_str(&format!("The part to rebuild is part {ordinal} of {total}: the number `dutchman diagnose` gave it. Its name is in the diagnose folder's local-key.json under part {ordinal}, and in this kit's local-key.json. Keep that name local. `dutchman convert <your file> --part {ordinal}` converts it alone.\n\n"));
+            } else if let Some(kind) = step["kind"].as_str() {
+                text.push_str(&format!("Rebuild feature #{ordinal} of {total} in that part's history, a {kind} feature (look it up in local-key.json; keep the name local).\n\n"));
+            } else {
+                text.push_str(&format!("Look up {unit} #{ordinal} of {total} in local-key.json, following the preceding step's scope. Keep that name local.\n\n"));
+            }
         }
         let parameter = anonymous
             .pointer("/failure/findings/parameter_domain")

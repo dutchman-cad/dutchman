@@ -495,6 +495,7 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
             .map_or(defaults.verify_timeout, |n| n.get() as u64),
         project: search.project,
         search: search.also,
+        part: None,
     })
 }
 

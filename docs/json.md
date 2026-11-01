@@ -706,6 +706,54 @@ available memory by remaining cgroup headroom, including ancestor limits. Memory
 refusals happen before decode, never at `map`; Standard accepts the history-free estimate
 when it fits.
 
+## `dutchman.diagnose/1`
+
+`dutchman diagnose INPUT [--out FOLDER] [--time-limit T] [--memory-limit GB] [--json]` writes
+`FOLDER/diagnose/report.json` in this schema, rewriting it after each part so an interrupted run
+keeps its results. An existing `diagnose` folder is refused. Every field is a number, a fixed
+category or a code; the report holds no name, path, identity, message or geometry, and is safe
+to share. See [Find what breaks in a large private file](diagnose.md).
+
+| Field | Meaning |
+|---|---|
+| `schema` | `dutchman.diagnose/1`. |
+| `versions` | `dutchman` release and `cadmpeg` version. |
+| `input` | `format` (Dutchman's format id) and `size_class` (as in `dutchman.repro/1`). |
+| `status` | `running` (in progress, or interrupted), `complete`, or `read_failed` (the design could not be read, so no part was tried). |
+| `limits` | `time_limit_s` per part and `memory_limit_mb` (null for none). |
+| `read` | How reading the design went: `outcome` (`ok`, `failed`, or null while reading), `time_ms`, `peak_memory_mb`, and, if it failed, `stage`, `error_kind` and `findings`. |
+| `summary` | Counts: `parts`, `finished`, `ok`, `failed`, `timed_out`, `out_of_memory`, `container`, `not_run`, `restarts` (how often the design was read again after a part stopped the converter) and `elapsed_ms`. |
+| `parts` | Every part, ranked: failures first (slowest first), then parts not run, then parts that converted (slowest first, biggest first among equals), then sub-assemblies with nothing of their own. |
+| `advice` | Fixed next steps: `{"code": "convert_part", "part": N}`, `{"code": "repro", "part": N}`, `every_part_converts` or `read_failed`. |
+
+Each of `parts`:
+
+| Field | Meaning |
+|---|---|
+| `rank` | Position in this ranking, from 1. |
+| `part` | The part's number, from 1: the number `dutchman convert --part` takes and `dutchman repro` uses. |
+| `parent` | The number of the sub-assembly holding it, or null. |
+| `kind` | `part`, or `assembly` for a sub-assembly. |
+| `depth` | How many sub-assemblies it sits inside. |
+| `outcome` | `ok`, `failed`, `timed_out`, `out_of_memory`, `container` (a sub-assembly, or a component, with no geometry of its own: nothing to convert), or `not_run` (given up after too many restarts, or the run was stopped). |
+| `stage` | The stage it stopped at (`map`, `write`, ...), or null. A part stopped for time or memory is at `map`. |
+| `error_kind` | A fixed category such as `restate`, `encode`, `cadmpeg_checks`, `no_geometry`, `panic` or `crash`, or null. |
+| `findings`, `curve_kinds` | cadmpeg check codes with counts, and referenced curve categories, as in `dutchman.repro/1`. |
+| `time_ms` | How long the part took (until it was stopped, if it was). |
+| `peak_memory_mb`, `extra_memory_mb` | The most memory the converter held while on the part, and how much of that came on top of what it held before the part. |
+| `bodies`, `entities` | Size: bodies, and all the entities (faces, edges, features, sketches and the rest) the part holds. |
+
+`FOLDER/diagnose/local-key.json` uses `dutchman.diagnose-local/1`, with `warning` and the
+private `input` path and each `parts` entry's `part` number and `name`. It must stay local, and
+is written readable by its owner only.
+
+The `--json` result also uses `dutchman.diagnose/1` with `ok`, `summary` (text), `status`,
+`paths` (`report`, `text`, `local_key`), `share` and `private` (which files are which) and
+`report` (the content of `report.json`). It holds local paths and stays local.
+
+`dutchman convert --part N` and the part-stop message of a conversion that cannot fit in memory
+use the same numbers.
+
 ## `dutchman.repro/1`
 
 `dutchman repro INPUT --out FOLDER [--json]` and the MCP `repro` tool write a local kit.
@@ -729,7 +777,8 @@ exact input byte lengths, or timings.
 | `status` | `failure` or `no_failure_to_reproduce`. A recovered conversion is a success. |
 | `failure` | Null on success; otherwise fixed `stage`, `kind`, error `findings` by code and referenced `curve_kinds` by category, as in diagnostics. Counts describe the original failure. |
 | `narrowing.members` | Independent F3Z member trials with one-based `ordinal`, `total`, fixed `status` (`decoded` or `decode_failed`) and `trial_failure` (anonymous stage/category/check facts, or null). Includes tested members only. |
-| `narrowing.path` | Ordered steps with `unit` (`member`, `component`, `occurrence`, `body`, `feature`, `sketch`), one-based `ordinal` and `total`. Each step is scoped to the previously retained unit. |
+| `narrowing.path` | Ordered steps with `unit` (`part`, `member`, `component`, `occurrence`, `body`, `feature`, `sketch`), one-based `ordinal` and `total`, and for a `feature` its `kind` (a fixed category). `part` is the first step when the kit followed a [`dutchman diagnose`](diagnose.md) report, and its ordinal is diagnose's part number. Each step is scoped to the previously retained unit. |
+| `narrowing.from_diagnose` | True when the kit went straight to the failing part of a diagnose report (found in `--out`, or given with `--from-diagnose`). |
 | `narrowing.smallest_failing_unit_isolated` | True when a single body or smaller independent feature/sketch subset retained the same stage, category and complete finding-code set. Does not prove the globally smallest model or identify the native operation responsible. |
 | `narrowing.limits` | Fixed explanatory sentences for unavailable levels, unsuccessful trials or a trial budget. |
 | `retained_unit_kinds` | Null when no checked subset is available; otherwise `surface_kinds`, `feature_kinds` (fixed enum categories; unlisted kinds become `other`), `finding_entity_kinds` (arena names cited by structured errors, or null when unavailable), and `use_curve_outside_carrier` (structurally detected coedge range/carrier-domain mismatch count). Counts cover the retained unit, without carrier values. |

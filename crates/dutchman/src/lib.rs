@@ -14,6 +14,7 @@ pub const BUILD_VERSION: &str = match option_env!("DUTCHMAN_NIGHTLY_VERSION") {
 pub mod anon;
 pub mod batch;
 pub mod choices;
+pub mod diagnose;
 pub mod diagnostics;
 pub mod dxf;
 pub mod formats;
@@ -23,6 +24,7 @@ pub mod mcp;
 pub mod present;
 pub mod progress;
 pub mod repro;
+pub mod stop;
 pub mod watch;
 pub mod worker;
 
@@ -97,6 +99,12 @@ impl Writer for OutputWriter {
         out: &mut dyn std::io::Write,
         report: &mut Report,
     ) -> Result<(), Error> {
+        // Tests make the writer fail on one named part, to see the rest carry on; release
+        // builds have no such switch.
+        #[cfg(debug_assertions)]
+        if std::env::var("DUTCHMAN_TEST_FAIL_MODEL").is_ok_and(|name| name == model.name) {
+            return Err(Error::Restate("injected failure".into()));
+        }
         match self {
             Self::Configured { writer, .. } => writer.write(model, out, report),
             Self::SolidCraft(writer) => writer.write(model, out, report),
@@ -179,6 +187,9 @@ pub struct ConvertOptions {
     /// not hold; may be given more than once.
     #[arg(long = "search", value_name = "DIR")]
     pub search: Vec<PathBuf>,
+    /// Convert only this part of the design (set by `convert --part`).
+    #[arg(skip)]
+    pub part: Option<dutchman_core::PartSelection>,
 }
 
 impl Default for ConvertOptions {
@@ -204,6 +215,7 @@ impl Default for ConvertOptions {
             verify_timeout: DEFAULT_TIMEOUT.as_secs(),
             project: None,
             search: Vec::new(),
+            part: None,
         }
     }
 }
@@ -297,6 +309,8 @@ pub struct PreparedWriter {
     writer: OutputWriter,
     history_note: Option<String>,
     solidcraft: Option<Value>,
+    /// Whether to stop, once the design is read, when the machine cannot finish converting it.
+    memory_stop: bool,
 }
 
 impl Writer for PreparedWriter {
@@ -314,11 +328,33 @@ impl Writer for PreparedWriter {
         out: &mut dyn std::io::Write,
         report: &mut Report,
     ) -> Result<(), Error> {
+        if self.memory_stop {
+            let (held, available) = measured_memory();
+            if let Some(message) = stop::check(model, held, available) {
+                return Err(Error::MemoryBudget(message));
+            }
+        }
         if let Some(note) = &self.history_note {
             report.push(dutchman_core::Severity::Info, "history", note.clone());
         }
         self.writer.write(model, out, report)
     }
+}
+
+/// What this process holds and what is still free, in bytes. Tests set both with
+/// `DUTCHMAN_TEST_MEMORY=held,available`; release builds always measure.
+fn measured_memory() -> (Option<u64>, Option<u64>) {
+    #[cfg(debug_assertions)]
+    if let Some((held, available)) = std::env::var("DUTCHMAN_TEST_MEMORY").ok().and_then(|text| {
+        let (held, available) = text.split_once(',')?;
+        Some((held.parse().ok()?, available.parse().ok()?))
+    }) {
+        return (Some(held), Some(available));
+    }
+    (
+        worker::resident_bytes(std::process::id()),
+        choices::available_memory(),
+    )
 }
 
 impl ConvertOptions {
@@ -356,10 +392,21 @@ impl ConvertOptions {
             writer: options.output_writer(),
             history_note,
             solidcraft,
+            memory_stop: !self.no_memory_check
+                && self.preset != choices::Preset::Fast
+                && self.part.is_none()
+                && self.diagnostics_threads <= 1
+                && self.to == OutputFormat::Solidcraft,
         }
     }
 
     fn preflight(&self, input: &Path, available: Option<u64>) -> Result<PreparedWriter, Value> {
+        if self.part.is_some() {
+            if let Some(message) = choices::part_memory_refusal(input, self, available) {
+                return Err(json::memory_failure(json::CONVERT, input, self, &message));
+            }
+            return Ok(self.prepare_writer(input, available));
+        }
         if let Some(message) = choices::memory_check_with(input, self, available).refusal() {
             return Err(json::memory_failure(json::CONVERT, input, self, &message));
         }
@@ -427,9 +474,15 @@ fn convert_prepared(
         Ok(writer) => writer,
         Err(report) => return report,
     };
-    let mut report = match dutchman_core::convert_with_progress(
-        input, output, &writer, replace, search, progress,
-    ) {
+    let converted = match options.part {
+        Some(part) => dutchman_core::convert_part_with_progress(
+            input, output, &writer, replace, search, part, progress,
+        ),
+        None => {
+            dutchman_core::convert_with_progress(input, output, &writer, replace, search, progress)
+        }
+    };
+    let mut report = match converted {
         Ok(report) => convert_success(input, output, &report),
         Err(err) => json::error(json::CONVERT, json::input(input), &err),
     };

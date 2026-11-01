@@ -40,7 +40,21 @@ CAD extension selects conversion.
 | `--json` | One final JSON report on stdout, with progress JSON lines on stderr. |
 | `--quiet` | Hide conversion progress and the volunteer invitation. |
 | `--verbose` | Print every loss, each note in full. Without it, a file with more than 12 losses is summarised by component (below), repeated notes of the same kind are grouped with a count, and long notes are cut to their first sentence. The JSON report always has them all in full. |
+| `--part N`, `--with-children` | Convert only part N, as `dutchman diagnose` numbers it (with the parts inside it, for a sub-assembly). See [Find what breaks in a large private file](diagnose.md). |
 | `--log FILE` | Also write the whole text report, every loss in full, grouped by component, to `FILE`. |
+
+## Find what breaks in a large file: diagnose
+
+```sh
+dutchman diagnose big.f3z --out findings [--time-limit 5m] [--memory-limit 16] [--json]
+```
+
+Reads the design once, converts each part on its own under a time and memory limit, and
+writes `findings/diagnose/report.json` (schema [`dutchman.diagnose/1`](json.md#dutchmandiagnose1)),
+`report.txt` and `local-key.json`. The first two name parts by number only and are safe to
+share; the key is not. `dutchman convert big.f3z --part N` then converts one part alone, and
+`dutchman repro big.f3z --out findings` goes straight to the first failing part. See
+[Find what breaks in a large private file](diagnose.md).
 
 ## Look before you convert: inspect
 

@@ -147,6 +147,7 @@ For other clients:
 - [The command line](docs/command-line.md): options, `inspect`, whole folders, and watching a folder.
 - [Choosing what to keep](docs/presets.md): Fast, Standard, Full, and the memory and time estimate.
 - [Troubleshooting](docs/troubleshooting.md): common problems and diagnostic logs.
+- [Find what breaks in a large private file](docs/diagnose.md): `dutchman diagnose` ranks the failing, slow and large parts by number, and `--part` converts one.
 - [Make a minimum reproduction](docs/minimum-reproduction.md): isolate a failure locally and rebuild a small file you are free to share.
 
 **Formats and results**

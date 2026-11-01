@@ -41,9 +41,41 @@ enum Command {
     /// Make a private local reproduction kit; only kit/anonymous.json is safe to share.
     Repro {
         input: PathBuf,
-        /// Fresh folder for the kit and temporary local trials.
+        /// Fresh folder for the kit and temporary local trials. A `dutchman diagnose` report
+        /// already in it (its `diagnose` folder) sends the kit straight to the failing part.
         #[arg(long)]
         out: PathBuf,
+        /// Use the report `dutchman diagnose` wrote to this folder (its --out folder) instead.
+        #[arg(long, value_name = "FOLDER")]
+        from_diagnose: Option<PathBuf>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Find which parts of a large design fail, run slowly or take the memory, on this machine,
+    /// and write a ranked report that names parts by number only; nothing leaves the machine.
+    Diagnose {
+        /// The native design file to read.
+        input: PathBuf,
+        /// Fresh folder to write `diagnose/report.json`, `report.txt` and `local-key.json` in
+        /// (default: the current folder).
+        #[arg(long, value_name = "FOLDER")]
+        out: Option<PathBuf>,
+        /// The longest one part may take: seconds, or a number with s, m or h.
+        #[arg(long, value_name = "TIME", value_parser = dutchman::diagnose::parse_duration)]
+        time_limit: Option<std::time::Duration>,
+        /// The most memory, in gigabytes, the converter may hold while it works on one part
+        /// (default: four fifths of what is free).
+        #[arg(long, value_name = "GB")]
+        memory_limit: Option<f64>,
+        /// The project folder an assembly's part files are searched in when they are not at
+        /// their stored paths.
+        #[arg(long, value_name = "DIR")]
+        project: Option<PathBuf>,
+        /// Another folder to search, with its subfolders, for part files; may be given more
+        /// than once.
+        #[arg(long = "search", value_name = "DIR")]
+        search: Vec<PathBuf>,
+        /// Print one machine-readable result on stdout instead of the summary.
         #[arg(long)]
         json: bool,
     },
@@ -75,6 +107,12 @@ enum Command {
         /// Select one TechDraw page by object name (requires --to dxf).
         #[arg(long, value_name = "NAME")]
         page: Option<String>,
+        /// Convert only this part of the design, by the number `dutchman diagnose` gave it.
+        #[arg(long, value_name = "N")]
+        part: Option<usize>,
+        /// With --part: also convert the parts inside it, when it is a sub-assembly.
+        #[arg(long, requires = "part")]
+        with_children: bool,
         /// Also write the whole text report, every loss in full, to FILE.
         #[arg(long, value_name = "FILE")]
         log: Option<PathBuf>,
@@ -224,7 +262,33 @@ fn main() -> ExitCode {
     let quiet = cli.quiet;
     let yes = cli.yes;
     match cli.command {
-        Command::Repro { input, out, json } => match dutchman::repro::run(&input, &out, false) {
+        Command::Diagnose {
+            input,
+            out,
+            time_limit,
+            memory_limit,
+            project,
+            search,
+            json,
+        } => diagnose(
+            &input,
+            out.as_deref().unwrap_or(Path::new(".")),
+            time_limit,
+            memory_limit,
+            ConvertOptions {
+                project,
+                search,
+                ..ConvertOptions::default()
+            },
+            json,
+            quiet,
+        ),
+        Command::Repro {
+            input,
+            out,
+            from_diagnose,
+            json,
+        } => match dutchman::repro::run_from(&input, &out, false, from_diagnose.as_deref()) {
             Ok(report) => {
                 if json {
                     println!("{report}");
@@ -298,10 +362,20 @@ fn main() -> ExitCode {
             force,
             mut options,
             page,
+            part,
+            with_children,
             log,
             json,
         } => {
             let explicit = output.or(output_flag);
+            options.part = part.map(|number| dutchman_core::PartSelection {
+                number,
+                children: with_children,
+            });
+            if part.is_some() && options.to == dutchman::OutputFormat::Dxf {
+                eprintln!("dutchman: --part does not apply to --to dxf");
+                return ExitCode::from(2);
+            }
             if page.is_some() && options.to != dutchman::OutputFormat::Dxf {
                 eprintln!("dutchman: --page requires --to dxf");
                 return ExitCode::from(2);
@@ -379,7 +453,9 @@ fn main() -> ExitCode {
                     println!("{status}");
                 }
             }
-            if !memory_cli(&input, &mut options, json, quiet, yes, json::CONVERT) {
+            if options.part.is_none()
+                && !memory_cli(&input, &mut options, json, quiet, yes, json::CONVERT)
+            {
                 return ExitCode::from(2);
             }
             convert(
@@ -556,6 +632,105 @@ fn run_tool(path: &Path, args: &[OsString]) -> ExitCode {
         Ok(code) => ExitCode::from(u8::try_from(code).unwrap_or(1)),
         Err(err) => {
             eprintln!("dutchman: cannot run {}: {err}", path.display());
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn diagnose(
+    input: &Path,
+    out: &Path,
+    time_limit: Option<std::time::Duration>,
+    memory_limit: Option<f64>,
+    options: ConvertOptions,
+    as_json: bool,
+    quiet: bool,
+) -> ExitCode {
+    use dutchman::diagnose::{self, Event};
+    let mut settings = diagnose::Settings {
+        options,
+        ..diagnose::Settings::default()
+    };
+    if let Some(limit) = time_limit {
+        settings.time_limit = limit;
+    }
+    if let Some(gb) = memory_limit {
+        if !gb.is_finite() || gb <= 0.0 {
+            eprintln!("dutchman: --memory-limit must be above zero (gigabytes)");
+            return ExitCode::from(2);
+        }
+        settings.memory_limit = Some((gb * 1e9) as u64);
+    }
+    let show = !as_json && !quiet;
+    let on_event = move |event: Event| {
+        if !show {
+            return;
+        }
+        match event {
+            Event::Reading => eprintln!("dutchman: reading the design..."),
+            Event::Read { parts, ms } => eprintln!(
+                "dutchman: read {parts} part{} in {}",
+                if parts == 1 { "" } else { "s" },
+                dutchman_core::elapsed(ms / 1000)
+            ),
+            Event::ReadFailed { .. } => {
+                eprintln!("dutchman: the design could not be read")
+            }
+            Event::Part {
+                done,
+                total,
+                number,
+                outcome,
+                ms,
+            } => {
+                if outcome != "ok" && outcome != "container" {
+                    eprintln!(
+                        "dutchman: part {number}: {} ({} ms)",
+                        outcome.replace('_', " "),
+                        ms
+                    );
+                } else if done % 25 == 0 {
+                    eprintln!("dutchman: {done} of {total} parts done");
+                }
+            }
+            Event::Restarted => eprintln!("dutchman: reading the design again for the next part"),
+        }
+    };
+    match diagnose::run(input, out, &settings, &on_event) {
+        Ok(result) => {
+            if as_json {
+                print_json(&result);
+            } else {
+                let path = |key: &str| {
+                    result
+                        .pointer(&format!("/paths/{key}"))
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned()
+                };
+                println!(
+                    "{}\n\nSafe to share: {} and {}\nPrivate, do not share: {}",
+                    result
+                        .get("summary")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                    path("report"),
+                    path("text"),
+                    path("local_key"),
+                );
+            }
+            if result.get("status") == Some(&Value::from("complete")) {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Err(error) => {
+            if as_json {
+                print_json(&json::failure(diagnose::SCHEMA, json::input(input), &error));
+            } else {
+                eprintln!("dutchman: {error}");
+            }
             ExitCode::FAILURE
         }
     }
