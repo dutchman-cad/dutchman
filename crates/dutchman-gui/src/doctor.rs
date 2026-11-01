@@ -247,8 +247,15 @@ impl Page {
                     if let Some(files) = report.get("files").and_then(Value::as_array) {
                         for file in files {
                             let number = file.get("file").and_then(Value::as_u64).unwrap_or(0);
-                            let status = if file.get("converted") == Some(&Value::Bool(true)) { "Converted" } else { "Needs review" };
+                            let counts = file.get("completeness").filter(|c| c.is_object());
+                            let n = |key: &str| counts.and_then(|c| c.get(key)).and_then(Value::as_u64).unwrap_or(0);
+                            let status = if file.get("converted") != Some(&Value::Bool(true)) { "Needs review" }
+                                else if n("placed_empty") > 0 || n("left_out") > 0 { "Incomplete" }
+                                else { "Converted" };
                             ui.label(format!("File {number}: {status}"));
+                            if counts.is_some() {
+                                ui.label(format!("{} of {} placements placed; {} placed empty; {} left out", n("placed"), n("placements"), n("placed_empty"), n("left_out")));
+                            }
                         }
                     }
                     let anonymous = report.get("report").unwrap_or(report);
@@ -378,6 +385,22 @@ mod tests {
         harness.get_by_label("Start local checks");
         assert!(!harness.state().running);
     }
+    #[test]
+    fn doctor_shows_empty_placements_as_incomplete() {
+        let mut page = Page::new(None);
+        page.report = Some(serde_json::json!({"files": [{"file": 1, "converted": true,
+            "completeness": {"placed": 67, "placed_empty": 13, "placements": 88, "left_out": 8}}]}));
+        let mut harness = egui_kittest::Harness::new_state(
+            |ctx, page: &mut Page| {
+                page.ui(ctx);
+            },
+            page,
+        );
+        harness.run_steps(2);
+        harness.get_by_label("File 1: Incomplete");
+        harness.get_by_label("67 of 88 placements placed; 13 placed empty; 8 left out");
+    }
+
     #[test]
     fn clicking_a_part_saves_the_local_report_target() {
         let dir = tempfile::tempdir().unwrap();

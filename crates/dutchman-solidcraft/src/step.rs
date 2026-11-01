@@ -3,7 +3,7 @@
 use cadmpeg_ir::codec::write::target::TargetRequest;
 use cadmpeg_ir::codec::write::EncodeInput;
 use cadmpeg_registry::{build_encoder, Format};
-use dutchman_core::{Error, Model, Report, Severity};
+use dutchman_core::{Error, Model, Report, Severity, Stage};
 
 /// The STEP schema written: AP214, which SolidCraft writes and reads natively.
 const SCHEMA: &str = "ap214";
@@ -81,6 +81,25 @@ fn no_geometry() -> Error {
 fn restate_unguarded(model: &Model, report: &mut Report) -> Result<String, Error> {
     let plan = plan(model)?;
     report.extend_from_cadmpeg_export(&plan.report().losses);
+    let reduced = plan
+        .report()
+        .losses
+        .iter()
+        .filter(|loss| loss.code.to_string() == "step/topology.region-solid-reduced-to-sheet")
+        .count();
+    if reduced > 0 {
+        let what = if reduced == 1 {
+            "solid region converted to an open sheet"
+        } else {
+            "solid regions converted to open sheets"
+        };
+        report.push_at(
+            Stage::Write,
+            Severity::Degraded,
+            "geometry",
+            format!("{reduced} {what}: solid shells are incomplete or open; check the source geometry and convert again"),
+        );
+    }
     if plan
         .report()
         .losses
@@ -154,6 +173,42 @@ fn name_unnamed_product(step: String, design: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_solid_reduced_to_a_sheet_gets_a_counted_degraded_loss() {
+        let mut ir = cadmpeg_ir::examples::unit_cube().unwrap();
+        let removed = ir.model.edges[0].curve().unwrap().clone();
+        ir.model.edges[0].carrier = cadmpeg_ir::topology::EdgeCarrier::Free;
+        ir.model.curves.retain(|curve| curve.id != removed);
+        let model = Model {
+            ir,
+            fidelity: None,
+            name: "Synthetic open cube".into(),
+            source_file: None,
+            source_step: None,
+            assembly: None,
+        };
+        let mut report = Report::default();
+        let step = restate(&model, &mut report).unwrap();
+        assert!(step.contains("SHELL_BASED_SURFACE_MODEL"));
+        assert!(report
+            .losses()
+            .iter()
+            .any(|loss| loss.severity == Severity::Degraded
+                && loss.stage == Stage::Write
+                && loss.subject == "geometry"
+                && loss
+                    .detail
+                    .starts_with("1 solid region converted to an open sheet")));
+        let mut sheet = model;
+        sheet.ir.model.bodies[0].kind = cadmpeg_ir::topology::BodyKind::Sheet;
+        let mut report = Report::default();
+        restate(&sheet, &mut report).unwrap();
+        assert!(!report
+            .losses()
+            .iter()
+            .any(|loss| loss.detail.contains("solid region converted")));
+    }
 
     #[test]
     fn names_the_placeholder_product_after_the_design() {

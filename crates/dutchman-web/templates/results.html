@@ -12,10 +12,11 @@
 <section class="card">
   <header>
     <h2>{{ card.name }}</h2>
-    {% if card.ok %}<span class="pill ok">Converted</span>{% else %}<span class="pill failed">Failed</span>{% endif %}
+    {% if card.ok %}<span class="pill ok">{% if card.incomplete %}Incomplete{% else %}Converted{% endif %}</span>{% else %}<span class="pill failed">Failed</span>{% endif %}
   </header>
   {% if card.ok %}
   <p class="outcome">{{ card.outcome }}</p>
+  {% for line in card.assembly_lines %}<p class="muted">{{ line }}</p>{% endfor %}
   {% else %}
   <p class="error">{{ card.outcome }}</p>
   {% if let Some(stage) = card.stage %}<p class="muted">Stopped in the {{ stage }} stage.</p>{% endif %}

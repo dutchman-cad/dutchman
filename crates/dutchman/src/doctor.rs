@@ -371,6 +371,56 @@ fn summarize(
                 },
             );
         }
+        // Only counts enter the anonymous report; left-out reasons and file names stay private.
+        let completeness = conversion.get("completeness").map(|counts| {
+            let n = |key: &str| counts.get(key).and_then(Value::as_u64).unwrap_or(0);
+            let left_out = counts
+                .get("left_out")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .fold(0u64, |total, row| {
+                    total.saturating_add(row.get("count").and_then(Value::as_u64).unwrap_or(0))
+                });
+            json!({"placed": n("placed"), "placed_empty": n("placed_empty"),
+                "placements": n("placements"), "left_out": left_out})
+        });
+        if completeness
+            .as_ref()
+            .and_then(|c| c.get("placed_empty"))
+            .and_then(Value::as_u64)
+            .is_some_and(|n| n > 0)
+        {
+            add(
+                None,
+                ErrorCode {
+                    outcome: "degraded".into(),
+                    stage: Some("map".into()),
+                    kind: Some("no_geometry".into()),
+                    codes: vec!["empty_placements".into()],
+                },
+            );
+        }
+        if conversion
+            .get("losses")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|loss| {
+                loss.get("code").and_then(Value::as_str)
+                    == Some("step/topology.region-solid-reduced-to-sheet")
+            })
+        {
+            add(
+                None,
+                ErrorCode {
+                    outcome: "degraded".into(),
+                    stage: Some("write".into()),
+                    kind: Some("geometry".into()),
+                    codes: vec!["solid_reduced_to_sheet".into()],
+                },
+            );
+        }
         let diagnose = result.get("diagnose").unwrap_or(&Value::Null);
         if conversion
             .pointer("/verification/status")
@@ -467,6 +517,7 @@ fn summarize(
             }
         }
         files.push(json!({"file": index+1, "converted": conversion.get("ok") == Some(&json!(true)),
+            "completeness": completeness,
             "check_status": result.get("check_error").cloned().unwrap_or_else(|| diagnose.get("status").cloned().unwrap_or(json!("unavailable"))),
             "step_comparison": diagnose.get("step_comparison"), "target_part": diagnose.get("target_part"),
             "placement_checks": diagnose.get("placement_checks"), "geometry_checks": diagnose.get("geometry_checks"), "history_replay": conversion.pointer("/verification/status")}));
@@ -490,6 +541,25 @@ mod tests {
         assert_eq!(report["findings"][0]["count"], 100);
         assert!(!report.to_string().contains("private name"));
     }
+    #[test]
+    fn successful_conversion_keeps_empty_counts_and_sheet_losses_in_doctor() {
+        let result = json!({"ok": true, "conversion": {"ok": true, "completeness": {
+            "placed": 67, "placed_empty": 13, "placements": 88,
+            "left_out": [{"file": "SyntheticPrivateName.ipt", "reason": "SyntheticPrivateReason", "count": 8}]
+        }, "losses": [{"code": "step/topology.region-solid-reduced-to-sheet"}]}});
+        let report = summarize(&BTreeMap::from([(0, result)]), 0, 1, 1 << 30);
+        assert_eq!(
+            report["files"][0]["completeness"],
+            json!({"placed": 67, "placed_empty": 13, "placements": 88, "left_out": 8})
+        );
+        assert_eq!(report["findings"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            report["findings"][0]["signature"]["error"]["outcome"],
+            "degraded"
+        );
+        assert!(!report.to_string().contains("SyntheticPrivate"));
+    }
+
     #[test]
     fn budget_never_oversubscribes_memory() {
         assert_eq!(concurrency(NonZeroUsize::new(100), 256 << 20), 1);

@@ -461,12 +461,16 @@ impl RunView {
     }
 }
 
-/// Whether `report` is of an assembly that converted with placements left out.
+/// Whether an assembly converted with placements left out or placed empty.
 pub fn incomplete(report: &Value) -> bool {
     report
-        .pointer("/completeness/left_out")
-        .and_then(Value::as_array)
-        .is_some_and(|causes| !causes.is_empty())
+        .pointer("/completeness/placed_empty")
+        .and_then(Value::as_u64)
+        .is_some_and(|n| n > 0)
+        || report
+            .pointer("/completeness/left_out")
+            .and_then(Value::as_array)
+            .is_some_and(|causes| !causes.is_empty())
 }
 
 /// What marks a part file an assembly places as not found, in its loss.
@@ -767,6 +771,19 @@ mod tests {
             "7 part files were not found: 0, 1, 2, 3, 4 and 2 more"
         );
         assert!(!incomplete(&json!({"completeness": {"left_out": []}})));
+    }
+
+    #[test]
+    fn empty_placements_make_the_shared_card_incomplete() {
+        let report = json!({"ok": true, "completeness": {"placed": 2, "placed_empty": 1,
+            "placements": 3, "left_out": []}});
+        let view = FileView::from_report(&report);
+        assert!(view.incomplete);
+        assert_eq!(view.status, Status::Incomplete);
+        assert_eq!(
+            view.assembly.as_deref(),
+            Some("2 of 3 components placed; 1 placed empty, no joints")
+        );
     }
 
     fn failed_on(format: &str) -> Value {

@@ -155,8 +155,10 @@ pub struct Report {
 /// files record, each sub-assembly counted as often as it is placed.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Completeness {
-    /// The placements placed.
+    /// Placements with geometry, including assembly holders of child placements.
     pub placed: u64,
+    /// Placements of leaf parts with no bodies. These retain their component and joints.
+    pub placed_empty: u64,
     /// The placements left out, by the file each places and why, most first.
     pub left_out: Vec<LeftOutGroup>,
 }
@@ -177,19 +179,22 @@ pub struct LeftOutGroup {
 impl Completeness {
     /// Every placement recorded, placed or not.
     pub fn placements(&self) -> u64 {
-        self.left_out.iter().fold(self.placed, |total, group| {
-            total.saturating_add(group.count)
-        })
+        self.left_out.iter().fold(
+            self.placed.saturating_add(self.placed_empty),
+            |total, group| total.saturating_add(group.count),
+        )
     }
 
     /// How many placements were left out.
     pub fn left_out_count(&self) -> u64 {
-        self.placements().saturating_sub(self.placed)
+        self.left_out
+            .iter()
+            .fold(0u64, |total, group| total.saturating_add(group.count))
     }
 
-    /// Whether every placement was placed.
+    /// Whether every placement has geometry or holds child placements.
     pub fn is_complete(&self) -> bool {
-        self.left_out.is_empty()
+        self.placed_empty == 0 && self.left_out.is_empty()
     }
 }
 
