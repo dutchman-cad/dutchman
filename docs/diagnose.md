@@ -72,7 +72,7 @@ read and its memory is measured, instead of running for hours. The message names
 parts by number:
 
 ```text
-this conversion needs about 9.4 GB more memory and 6.1 GB are free (the design already takes
+this conversion needs about 1.9 GB more memory and 1.2 GB are free (the design already takes
 12.5 GB); parts 17 (about 2.9 GB), 4 (about 2.2 GB), and 9 (about 1.6 GB) are the largest. Run
 `dutchman diagnose` on the file to see which parts fail, run slowly or take the most memory, or
 convert one part with --part N (--no-memory-check converts anyway)
