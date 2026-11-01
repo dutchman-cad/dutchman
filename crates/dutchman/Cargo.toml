@@ -37,6 +37,7 @@ dutchman-freecad.workspace = true
 dutchman-pilot = { workspace = true, optional = true }
 dutchman-solidcraft.workspace = true
 getrandom.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 zip.workspace = true

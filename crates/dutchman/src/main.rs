@@ -55,7 +55,24 @@ enum Command {
     /// and write a ranked report that names parts by number only; nothing leaves the machine.
     Diagnose {
         /// The native design file to read.
-        input: PathBuf,
+        #[arg(required_unless_present_any = ["same_failure", "make_report"])]
+        input: Option<PathBuf>,
+        /// Run the whole narrowing: rank the parts, isolate a failing part, find the first
+        /// feature it fails at and record the failure's signature. Run it again with the same
+        /// --out to carry on after a stop.
+        #[arg(long, requires = "input", conflicts_with_all = ["same_failure", "make_report"])]
+        narrow: bool,
+        /// Convert this small rebuilt file and say whether it fails the way the design narrowed
+        /// into --out did.
+        #[arg(long, value_name = "FILE", conflicts_with_all = ["input", "make_report"])]
+        same_failure: Option<PathBuf>,
+        /// Make the report for this small rebuilt file: one zip and a prefilled issue link, in
+        /// the --out folder. Nothing is sent.
+        #[arg(long, value_name = "FILE", conflicts_with = "input")]
+        make_report: Option<PathBuf>,
+        /// With --narrow or --same-failure: the longest isolating or bisecting may take in all.
+        #[arg(long, value_name = "TIME", value_parser = dutchman::diagnose::parse_duration)]
+        step_time_limit: Option<std::time::Duration>,
         /// Fresh folder to write `diagnose/report.json`, `report.txt` and `local-key.json` in
         /// (default: the current folder).
         #[arg(long, value_name = "FOLDER")]
@@ -113,6 +130,10 @@ enum Command {
         /// With --part: also convert the parts inside it, when it is a sub-assembly.
         #[arg(long, requires = "part")]
         with_children: bool,
+        /// With --part: cut the part's history after this feature (0: no history), counting
+        /// the features not suppressed, in timeline order.
+        #[arg(long, value_name = "N", requires = "part")]
+        stop_at_feature: Option<usize>,
         /// Also write the whole text report, every loss in full, to FILE.
         #[arg(long, value_name = "FILE")]
         log: Option<PathBuf>,
@@ -264,25 +285,40 @@ fn main() -> ExitCode {
     match cli.command {
         Command::Diagnose {
             input,
+            narrow,
+            same_failure,
+            make_report,
+            step_time_limit,
             out,
             time_limit,
             memory_limit,
             project,
             search,
             json,
-        } => diagnose(
-            &input,
-            out.as_deref().unwrap_or(Path::new(".")),
-            time_limit,
-            memory_limit,
-            ConvertOptions {
-                project,
-                search,
-                ..ConvertOptions::default()
-            },
-            json,
-            quiet,
-        ),
+        } => {
+            let job = match (input, same_failure, make_report) {
+                (Some(input), _, _) if narrow => DiagnoseJob::Narrow(input),
+                (Some(input), _, _) => DiagnoseJob::Rank(input),
+                (_, Some(small), _) => DiagnoseJob::SameFailure(small),
+                (_, _, Some(small)) => DiagnoseJob::MakeReport(small),
+                // clap requires one of them.
+                (None, None, None) => return ExitCode::from(2),
+            };
+            diagnose(
+                &job,
+                out.as_deref().unwrap_or(Path::new(".")),
+                time_limit,
+                memory_limit,
+                step_time_limit,
+                ConvertOptions {
+                    project,
+                    search,
+                    ..ConvertOptions::default()
+                },
+                json,
+                quiet,
+            )
+        }
         Command::Repro {
             input,
             out,
@@ -364,6 +400,7 @@ fn main() -> ExitCode {
             page,
             part,
             with_children,
+            stop_at_feature,
             log,
             json,
         } => {
@@ -371,6 +408,7 @@ fn main() -> ExitCode {
             options.part = part.map(|number| dutchman_core::PartSelection {
                 number,
                 children: with_children,
+                stop_at_feature,
             });
             if part.is_some() && options.to == dutchman::OutputFormat::Dxf {
                 eprintln!("dutchman: --part does not apply to --to dxf");
@@ -637,30 +675,153 @@ fn run_tool(path: &Path, args: &[OsString]) -> ExitCode {
     }
 }
 
-fn diagnose(
-    input: &Path,
-    out: &Path,
+/// What `dutchman diagnose` was asked to do.
+enum DiagnoseJob {
+    Rank(PathBuf),
+    Narrow(PathBuf),
+    SameFailure(PathBuf),
+    MakeReport(PathBuf),
+}
+
+/// The settings every diagnose job shares, or the message for a bad `--memory-limit`.
+fn diagnose_settings(
     time_limit: Option<std::time::Duration>,
     memory_limit: Option<f64>,
     options: ConvertOptions,
-    as_json: bool,
-    quiet: bool,
-) -> ExitCode {
-    use dutchman::diagnose::{self, Event};
-    let mut settings = diagnose::Settings {
+) -> Result<dutchman::diagnose::Settings, &'static str> {
+    let mut settings = dutchman::diagnose::Settings {
         options,
-        ..diagnose::Settings::default()
+        ..dutchman::diagnose::Settings::default()
     };
     if let Some(limit) = time_limit {
         settings.time_limit = limit;
     }
     if let Some(gb) = memory_limit {
         if !gb.is_finite() || gb <= 0.0 {
-            eprintln!("dutchman: --memory-limit must be above zero (gigabytes)");
-            return ExitCode::from(2);
+            return Err("--memory-limit must be above zero (gigabytes)");
         }
         settings.memory_limit = Some((gb * 1e9) as u64);
     }
+    Ok(settings)
+}
+
+/// Prints what a `--narrow`, `--same-failure` or `--make-report` job came to.
+fn narrow_outcome(
+    schema: &str,
+    file: &Path,
+    result: Result<Value, String>,
+    as_json: bool,
+    good: &dyn Fn(&Value) -> bool,
+) -> ExitCode {
+    match result {
+        Ok(result) => {
+            if as_json {
+                print_json(&result);
+            } else {
+                println!(
+                    "{}",
+                    result
+                        .get("summary")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                );
+                if let Some(link) = result.get("issue_url").and_then(Value::as_str) {
+                    let line = |key: &str, field: &str| {
+                        result
+                            .pointer(&format!("/{key}/{field}"))
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned()
+                    };
+                    println!(
+                        "\nThe zip: {}\nOpen a prefilled issue: {link}\n{} {}",
+                        line("paths", "zip"),
+                        line("private_send", "text"),
+                        line("private_send", "url"),
+                    );
+                } else if let Some(steps) =
+                    result.pointer("/paths/next_steps").and_then(Value::as_str)
+                {
+                    println!("\nWhat to do next: {steps}");
+                }
+            }
+            if good(&result) {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
+        Err(error) => {
+            if as_json {
+                print_json(&json::failure(schema, json::input(file), &error));
+            } else {
+                eprintln!("dutchman: {error}");
+            }
+            ExitCode::FAILURE
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn diagnose(
+    job: &DiagnoseJob,
+    out: &Path,
+    time_limit: Option<std::time::Duration>,
+    memory_limit: Option<f64>,
+    step_time_limit: Option<std::time::Duration>,
+    options: ConvertOptions,
+    as_json: bool,
+    quiet: bool,
+) -> ExitCode {
+    use dutchman::diagnose::{self, narrow, Event};
+    let settings = match diagnose_settings(time_limit, memory_limit, options) {
+        Ok(settings) => settings,
+        Err(message) => {
+            eprintln!("dutchman: {message}");
+            return ExitCode::from(2);
+        }
+    };
+    let on_progress = move |progress: narrow::Progress| {
+        if !as_json && !quiet {
+            eprintln!("dutchman: {progress}");
+        }
+    };
+    let steps = narrow::NarrowSettings::new(settings.clone(), step_time_limit);
+    let input = match job {
+        DiagnoseJob::Rank(input) => input,
+        DiagnoseJob::Narrow(input) => {
+            return narrow_outcome(
+                json::NARROW,
+                input,
+                narrow::run(input, out, &steps, &on_progress),
+                as_json,
+                &|result| {
+                    !matches!(
+                        result.get("status").and_then(Value::as_str),
+                        Some("stopped" | "not_repeated")
+                    )
+                },
+            );
+        }
+        DiagnoseJob::SameFailure(small) => {
+            return narrow_outcome(
+                json::SAME_FAILURE,
+                small,
+                narrow::same_failure(small, out, &steps, &on_progress),
+                as_json,
+                &|result| result.get("same") == Some(&Value::Bool(true)),
+            );
+        }
+        DiagnoseJob::MakeReport(small) => {
+            return narrow_outcome(
+                json::MADE_REPORT,
+                small,
+                narrow::make_report(small, out),
+                as_json,
+                &|_| true,
+            );
+        }
+    };
     let show = !as_json && !quiet;
     let on_event = move |event: Event| {
         if !show {

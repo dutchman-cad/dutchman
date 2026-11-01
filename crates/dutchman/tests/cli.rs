@@ -2665,6 +2665,301 @@ fn diagnose_files_never_hold_names_paths_or_the_file_name() {
     assert_eq!(again.status.code(), Some(1));
 }
 
+// ---- dutchman diagnose --narrow, --same-failure and --make-report ----
+
+/// The fault tests use, on a fixture every build reads: part 1 of the design fails once its
+/// history reaches `feature`.
+fn narrow_fault(feature: usize) -> String {
+    format!("1:feature:{feature}:fail")
+}
+
+fn narrow(file: &str, out: &std::path::Path, env: &[(&str, &str)], extra: &[&str]) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_dutchman"));
+    command
+        .args(["diagnose", "--narrow", file, "--out"])
+        .arg(out)
+        .args(extra);
+    for (key, value) in env {
+        command.env(key, value);
+    }
+    command.test_output().unwrap()
+}
+
+fn narrow_result(out: &std::path::Path) -> serde_json::Value {
+    serde_json::from_slice(&std::fs::read(out.join("diagnose/narrow.json")).unwrap()).unwrap()
+}
+
+/// How many features the history of `body_history.sldprt` has.
+fn history_of_fixture() -> u64 {
+    let dir = tempfile::tempdir().unwrap();
+    // A fault at the first feature makes the run say how many there are.
+    let file = fixture("body_history.sldprt");
+    let fault = narrow_fault(1);
+    let out = narrow(
+        &file,
+        dir.path(),
+        &[("DUTCHMAN_DIAGNOSE_TEST_FAULT", &fault)],
+        &[],
+    );
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    narrow_result(dir.path())["features"].as_u64().unwrap()
+}
+
+#[test]
+fn narrow_finds_the_first_failing_feature_and_says_each_step() {
+    let total = history_of_fixture();
+    assert!(total >= 2, "the fixture needs a history: {total}");
+    let dir = tempfile::tempdir().unwrap();
+    let file = fixture("body_history.sldprt");
+    let fault = narrow_fault(2);
+    let out = narrow(
+        &file,
+        dir.path(),
+        &[("DUTCHMAN_DIAGNOSE_TEST_FAULT", &fault)],
+        &[],
+    );
+    let said = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(out.status.success(), "{said}");
+    for step in 1..=5 {
+        assert!(said.contains(&format!("step {step} of 5:")), "{said}");
+    }
+    let found = narrow_result(dir.path());
+    assert_eq!(found["schema"], "dutchman.narrow/1");
+    assert_eq!(found["status"], "narrowed");
+    assert_eq!(found["part"], 1);
+    assert_eq!(found["first_failing_feature"], 2);
+    let shared = [
+        std::fs::read_to_string(dir.path().join("diagnose/narrow.json")).unwrap(),
+        std::fs::read_to_string(dir.path().join("diagnose/signature.json")).unwrap(),
+        std::fs::read_to_string(dir.path().join("diagnose/narrow-state.json")).unwrap(),
+        std::fs::read_to_string(dir.path().join("diagnose/kit/anonymous.json")).unwrap(),
+        std::fs::read_to_string(dir.path().join("diagnose/kit/next-steps.md")).unwrap(),
+    ];
+    for text in &shared {
+        assert!(!text.contains("body_history"), "{text}");
+        assert!(!text.contains(dir.path().to_str().unwrap()), "{text}");
+    }
+    assert!(shared[4].contains("--same-failure"));
+}
+
+#[test]
+fn narrow_resumes_after_it_is_killed_without_repeating_finished_trials() {
+    let file = fixture("body_history.sldprt");
+    let fault = narrow_fault(2);
+    let dir = tempfile::tempdir().unwrap();
+    // Dies, as a crash or a reboot would, once two trials are on disk.
+    let stopped = narrow(
+        &file,
+        dir.path(),
+        &[
+            ("DUTCHMAN_DIAGNOSE_TEST_FAULT", &fault),
+            ("DUTCHMAN_NARROW_TEST_ABORT_AFTER", "2"),
+        ],
+        &[],
+    );
+    assert!(!stopped.status.success());
+    assert!(!dir.path().join("diagnose/narrow.json").exists());
+    let state: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(dir.path().join("diagnose/narrow-state.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(state["trials"].as_array().unwrap().len(), 2);
+    let out = narrow(
+        &file,
+        dir.path(),
+        &[("DUTCHMAN_DIAGNOSE_TEST_FAULT", &fault)],
+        &[],
+    );
+    let said = String::from_utf8_lossy(&out.stderr).into_owned();
+    assert!(out.status.success(), "{said}");
+    assert!(
+        said.contains("carrying on from narrow-state.json"),
+        "{said}"
+    );
+    assert!(!said.contains("step 1 of 5"), "{said}");
+
+    let whole = tempfile::tempdir().unwrap();
+    assert!(narrow(
+        &file,
+        whole.path(),
+        &[("DUTCHMAN_DIAGNOSE_TEST_FAULT", &fault)],
+        &[]
+    )
+    .status
+    .success());
+    assert_eq!(narrow_result(dir.path()), narrow_result(whole.path()));
+
+    // Another design in the same folder is refused.
+    let other = narrow(&fixture("generated_unit_cube.f3d"), dir.path(), &[], &[]);
+    assert!(!other.status.success());
+    assert!(String::from_utf8_lossy(&other.stderr).contains("fresh --out"));
+}
+
+#[test]
+fn narrow_survives_a_feature_that_crashes_or_hangs_the_converter() {
+    let file = fixture("body_history.sldprt");
+    // A crash can take a while to end on a loaded machine, as the system saves a core dump.
+    for (fault, outcome, limit) in [("crash", "failed", "60"), ("hang", "timed_out", "2")] {
+        let dir = tempfile::tempdir().unwrap();
+        let fault = format!("1:feature:2:{fault}");
+        let out = narrow(
+            &file,
+            dir.path(),
+            &[("DUTCHMAN_DIAGNOSE_TEST_FAULT", &fault)],
+            &["--time-limit", limit],
+        );
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let found = narrow_result(dir.path());
+        assert_eq!(found["first_failing_feature"], 2, "{found}");
+        assert_eq!(found["signature"]["error"]["outcome"], outcome, "{found}");
+    }
+}
+
+#[test]
+fn convert_cuts_a_history_at_the_feature_asked_for() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = dir.path().join("cut.sc");
+    let cut = dutchman(&[
+        "convert",
+        &fixture("generated_unit_cube.f3d"),
+        "--part",
+        "1",
+        "--stop-at-feature",
+        "0",
+        "--no-verify",
+        "-o",
+        output.to_str().unwrap(),
+    ]);
+    let said =
+        String::from_utf8_lossy(&cut.stdout).into_owned() + &String::from_utf8_lossy(&cut.stderr);
+    assert!(cut.status.success(), "{said}");
+    let past = dutchman(&[
+        "convert",
+        &fixture("generated_unit_cube.f3d"),
+        "--part",
+        "1",
+        "--stop-at-feature",
+        "99",
+        "--no-verify",
+        "-o",
+        output.to_str().unwrap(),
+    ]);
+    assert!(!past.status.success());
+    assert!(String::from_utf8_lossy(&past.stderr).contains("there is no feature 99"));
+    // It needs a part to cut.
+    let alone = dutchman(&[
+        "convert",
+        &fixture("generated_unit_cube.f3d"),
+        "--stop-at-feature",
+        "1",
+    ]);
+    assert_eq!(alone.status.code(), Some(2));
+}
+
+#[test]
+fn a_design_that_converts_has_nothing_to_narrow() {
+    let dir = tempfile::tempdir().unwrap();
+    let out = narrow(&fixture("generated_unit_cube.f3d"), dir.path(), &[], &[]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(narrow_result(dir.path())["status"], "nothing_to_narrow");
+    assert!(!dir.path().join("diagnose/signature.json").exists());
+}
+
+#[cfg(feature = "freecad")]
+/// Copies the archive `from` to `to` with a comment on it: the same design in different bytes.
+fn repack(from: &std::path::Path, to: &std::path::Path) {
+    use std::io::{Read, Write};
+    let mut archive = zip::ZipArchive::new(std::fs::File::open(from).unwrap()).unwrap();
+    let mut copy = zip::ZipWriter::new(std::fs::File::create(to).unwrap());
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    copy.set_comment("rebuilt").unwrap();
+    for at in 0..archive.len() {
+        let mut member = archive.by_index(at).unwrap();
+        let name = member.name().unwrap().into_owned();
+        let mut bytes = Vec::new();
+        member.read_to_end(&mut bytes).unwrap();
+        copy.start_file(name, options).unwrap();
+        copy.write_all(&bytes).unwrap();
+    }
+    copy.finish().unwrap();
+}
+
+#[test]
+#[cfg(feature = "freecad")]
+fn a_small_file_is_checked_and_the_report_gathered_only_when_it_fails_the_same_way() {
+    let dir = tempfile::tempdir().unwrap();
+    let out_dir = dir.path().join("results");
+    let design = fixture("design_history.FCStd");
+    let fault = narrow_fault(2);
+    let env = [("DUTCHMAN_DIAGNOSE_TEST_FAULT", fault.as_str())];
+    assert!(narrow(&design, &out_dir, &env, &[]).status.success());
+    let diagnose = |flag: &str, file: &std::path::Path, env: &[(&str, &str)]| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_dutchman"));
+        command
+            .args(["diagnose", flag])
+            .arg(file)
+            .arg("--out")
+            .arg(&out_dir)
+            .arg("--json");
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        command.test_output().unwrap()
+    };
+
+    // The design itself is not a rebuild of it.
+    let refused = diagnose("--same-failure", std::path::Path::new(&design), &env);
+    assert!(!refused.status.success());
+
+    // A rebuild: the same design, stored differently, so it is a file of its own.
+    let small = dir.path().join("small.FCStd");
+    repack(std::path::Path::new(&design), &small);
+
+    // Without the fault it converts fine, and there is no report to make.
+    let fine = diagnose("--same-failure", &small, &[]);
+    assert!(!fine.status.success());
+    let verdict = json_of(&fine);
+    assert_eq!(verdict["schema"], "dutchman.same-failure/1");
+    assert_eq!(verdict["verdict"], "converts_fine", "{verdict}");
+    assert!(verdict["summary"].as_str().unwrap().contains("Try again"));
+    assert!(!diagnose("--make-report", &small, &[]).status.success());
+
+    // With the fault it fails the same way, and the report can be made.
+    let same = diagnose("--same-failure", &small, &env);
+    let verdict = json_of(&same);
+    assert_eq!(verdict["verdict"], "same", "{verdict}");
+    assert!(verdict["summary"]
+        .as_str()
+        .unwrap()
+        .contains("this is the one to send"));
+    assert!(same.status.success());
+    let made = diagnose("--make-report", &small, &[]);
+    assert!(made.status.success());
+    let made = json_of(&made);
+    assert_eq!(made["schema"], "dutchman.made-report/1");
+    let zip = std::fs::File::open(made["paths"]["zip"].as_str().unwrap()).unwrap();
+    let zip = zip::ZipArchive::new(zip).unwrap();
+    let mut names: Vec<String> = zip
+        .file_names()
+        .map(|name| name.unwrap().into_owned())
+        .collect();
+    names.sort_unstable();
+    assert_eq!(names, ["anonymous.json", "signature.json", "small.FCStd"]);
+}
+
 #[test]
 #[cfg(feature = "freecad")]
 fn diagnose_stops_a_part_over_its_time_limit_and_carries_on() {

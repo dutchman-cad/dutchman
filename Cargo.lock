@@ -1377,6 +1377,7 @@ dependencies = [
  "dutchman-pilot",
  "dutchman-solidcraft",
  "getrandom 0.3.4",
+ "serde",
  "serde_json",
  "sha2",
  "sysinfo",

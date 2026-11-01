@@ -158,6 +158,38 @@ fn a_report_is_written_as_the_run_goes() {
 }
 
 #[test]
+fn a_stopped_ranking_is_taken_up_with_the_parts_it_finished() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut stopped = state(dir.path());
+    let mut failed = run(Outcome::Failed, 100);
+    failed.stage = Some("write".into());
+    failed.kind = Some("restate".into());
+    failed.findings.insert("parameter_domain".into(), json!(2));
+    stopped.results.insert(4, failed);
+    stopped.results.insert(1, run(Outcome::Ok, 10));
+    stopped.save_key().unwrap();
+    stopped.save("running", true).unwrap();
+
+    let mut taken_up = State::new(
+        dir.path().to_path_buf(),
+        Path::new(PRIVATE_PATH),
+        &stopped.settings,
+    );
+    taken_up.restore();
+    assert_eq!(taken_up.listed.len(), 6);
+    assert_eq!(taken_up.listed[2].name, format!("{PRIVATE_NAME} 3"));
+    assert_eq!(taken_up.listed[2].parent, Some(2));
+    // Only the finished parts count as done: the rest run.
+    assert_eq!(taken_up.results.keys().copied().collect::<Vec<_>>(), [1, 4]);
+    assert_eq!(taken_up.results[&4].kind.as_deref(), Some("restate"));
+    assert_eq!(taken_up.results[&4].findings["parameter_domain"], 2);
+    assert_eq!(
+        taken_up.report("running")["parts"],
+        stopped.report("running")["parts"]
+    );
+}
+
+#[test]
 fn time_limits_read_as_people_type_them() {
     assert_eq!(parse_duration("90").unwrap(), Duration::from_secs(90));
     assert_eq!(parse_duration("90s").unwrap(), Duration::from_secs(90));
