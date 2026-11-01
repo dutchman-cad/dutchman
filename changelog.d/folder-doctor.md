@@ -5,8 +5,5 @@
   grouped by signature. Nothing is sent.
 - **`dutchman diagnose --step`** compares a design with its matching STEP export, worst part first.
   A STEP beside the file is found by itself. The comparison limits are advisory for now.
-
-### Desktop app
-
-- **Check a folder** and **Add matching STEP** bring the same checks to the app, and the MCP server
-  adds `doctor`, `diagnose`, and `compare_step`.
+- The desktop app can check a folder and take a matching STEP, and the MCP server adds `doctor`,
+  `diagnose`, and `compare_step`.
