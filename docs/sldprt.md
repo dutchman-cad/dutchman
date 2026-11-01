@@ -26,6 +26,24 @@ edge checks read again since 0.2.3: cadmpeg no longer lets bytes inside other
 Parasolid records hide or refuse a part's bodies, and keeps the range of arcs stored past the
 seam.
 
+Stored base features name only regions that STEP can emit: a region with no shells
+contributes no shape and consumes no appearance target. Empty exterior or void regions
+therefore do not discard the editable history. Other shape-count mismatches leave the explicit appearance targets unbound while
+keeping the base geometry and history; colours must never shift onto different bodies.
+
+Offset datum planes retain their resolved reference frame and signed distance for later
+plane consumers. A missing support does not block history when every consumer is a sketch
+with its own resolved placement. A consumer needing a missing frame still stops history.
+
+Shells map a resolved thickness and inward or outward direction with faces from their
+own historical input topology and one earlier named target body. Native selections,
+final-body faces, unsupported offset modes and unresolved historical boundaries remain
+specific blockers. The selected input faces must exist before shelling removes them.
+
+A through-all extrusion cut needs an earlier named body. Features replay in neutral
+ordinal order even when stored in a different order. When no earlier producer supplies a
+body, the cut stops mapping with a body-producing-feature explanation before replay.
+
 ## Upstream gaps, in the order they block history
 
 Found by running Dutchman's history mapper on what the codec decodes from cadmpeg's published

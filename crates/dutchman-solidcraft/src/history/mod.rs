@@ -12,6 +12,7 @@ mod blend;
 mod chain;
 mod constraints;
 mod crossing;
+mod datum;
 mod delete_face;
 mod dof;
 mod extrude;
@@ -28,6 +29,7 @@ mod primitive;
 mod profile;
 mod revolve;
 mod sheet;
+mod shell;
 mod sketch;
 mod spatial;
 mod sweep;
@@ -336,6 +338,8 @@ impl History {
 
 /// The model and what has been mapped so far.
 struct Context<'a> {
+    /// Source for guarded STEP restatement of stored feature bodies.
+    source: Option<&'a Model>,
     /// The CADIR `model` object.
     model: &'a Value,
     target_version: crate::SolidCraftVersion,
@@ -359,6 +363,8 @@ struct Context<'a> {
     named_bodies: Vec<(String, String)>,
     /// Region of each explicitly named imported shape.
     imported_regions: BTreeMap<String, String>,
+    /// Resolved frames of earlier nonbuilding datum planes.
+    planes: BTreeMap<String, datum::Frame>,
     /// Whether a feature that builds geometry has been mapped.
     builds: bool,
     /// The sheet thicknesses (mm) its sheet-metal features use, each with its rule's name.
@@ -372,6 +378,7 @@ struct Context<'a> {
 impl<'a> Context<'a> {
     fn new(model: &'a Value) -> Self {
         Context {
+            source: None,
             model,
             target_version: crate::SolidCraftVersion::default(),
             next_id: 1,
@@ -385,6 +392,7 @@ impl<'a> Context<'a> {
             pattern_replay_required: false,
             named_bodies: Vec::new(),
             imported_regions: BTreeMap::new(),
+            planes: BTreeMap::new(),
             builds: false,
             sheet_rules: Vec::new(),
             blends: Vec::new(),
@@ -645,6 +653,7 @@ fn map_into(
     let (params, param_names) = params::map(model, report);
     references.params = params.clone();
     let mut ctx = Context::new(&wire);
+    ctx.source = Some(model);
     ctx.target_version = target_version;
     ctx.params = param_names;
     let mut features: Vec<&Value> = ctx.arena("features").iter().collect();
@@ -1101,13 +1110,19 @@ fn map_feature(
     report: &mut Report,
     preceding: &mut Vec<Value>,
 ) -> Result<Mapped, String> {
+    let definition = operation(feature);
+    if matches!(
+        definition.get("definition").and_then(Value::as_str),
+        Some("datum_principal_plane" | "datum_plane" | "datum_offset_plane")
+    ) {
+        return datum::map(feature, ctx).map(|()| Mapped::Nothing);
+    }
     if helpers::is_helper(feature) {
         return helpers::map(feature, ctx, report);
     }
-    let definition = operation(feature);
     match definition.get("definition").and_then(Value::as_str) {
         // A folder, a PartDesign Body or another node that orders the tree and builds nothing.
-        Some("datum_principal_plane" | "tree_node") => Ok(Mapped::Nothing),
+        Some("tree_node") => Ok(Mapped::Nothing),
         // A component inserted, or a joint made, in the timeline: the assembly carries it.
         Some("insert_component" | "assembly_joint") => Ok(Mapped::Nothing),
         Some("sketch") => sketch::map(feature, definition, ctx, report).map(Mapped::Feature),
@@ -1123,9 +1138,8 @@ fn map_feature(
         Some("coil") => primitive::coil(feature, definition, ctx).map(Mapped::Feature),
         Some("helical_sweep") => helix::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some(kind @ ("block" | "primitive")) => Err(primitive::unplaced(kind)),
-        // Their faces are picked on the final body, where the feature itself has already
-        // removed or tilted them; mapping waits until CADIR carries the input faces.
-        Some("shell") => Err("shell waits on input face geometry".to_owned()),
+        Some("shell") => shell::map(feature, definition, ctx).map(Mapped::Feature),
+        // Draft still needs the geometry of its own input faces.
         Some("draft") => Err("draft waits on input face geometry".to_owned()),
         Some("combine") => modify::combine(feature, definition, ctx).map(Mapped::Feature),
         Some("split_body") => modify::split(feature, definition, ctx).map(Mapped::Feature),
@@ -1170,10 +1184,6 @@ fn map_feature(
         Some("stored_geometry") => base::stored(feature, ctx, report).map(Mapped::Feature),
         Some("base_feature") if base::holds_none(definition) => Ok(Mapped::Nothing),
         Some("base_feature") => base::map(feature, definition, ctx).map(Mapped::Feature),
-        // A placed datum plane: what is sketched on it carries the same frame of its own.
-        Some("datum_plane") if definition.get("frame").is_some_and(Value::is_object) => {
-            Ok(Mapped::Nothing)
-        }
         _ => Err(format!("{} is not mapped yet", kind(feature))),
     }
 }
@@ -1413,20 +1423,43 @@ mod tests {
     }
 
     /// A stored-geometry feature imports exactly the bodies it outputs, solids and sheets.
+    #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
     fn stored_outputs(outputs: Value) -> Result<Value, String> {
-        let model = json!({
-            "bodies": [
-                {"id": "b#1", "name": "Solid", "kind": "solid"},
-                {"id": "b#2", "name": "Skin", "kind": "sheet"},
-                {"id": "b#3", "name": "Other", "kind": "sheet"},
-            ],
-            "regions": [
-                {"id": "r#1", "body": "b#1"},
-                {"id": "r#2", "body": "b#2"},
-                {"id": "r#3", "body": "b#3"},
-            ],
-        });
-        let mut ctx = Context::new(&model);
+        let mut source = cube();
+        source.ir = cadmpeg_ir::examples::unit_cube().unwrap();
+        source.fidelity = None;
+        let mut wire = serde_json::to_value(&source.ir).unwrap();
+        let template = wire["model"].clone();
+        for (prefix, label) in [("skin", "Skin"), ("other", "Other")] {
+            let text = serde_json::to_string(&template)
+                .unwrap()
+                .replace("synthetic:cube:", &format!("synthetic:{prefix}:"));
+            let mut copy: Value = serde_json::from_str(&text).unwrap();
+            copy["bodies"][0]["name"] = json!(label);
+            copy["bodies"][0]["kind"] = json!("sheet");
+            for arena in [
+                "points", "vertices", "curves", "edges", "coedges", "loops", "surfaces", "faces",
+                "shells", "regions", "bodies",
+            ] {
+                wire["model"][arena]
+                    .as_array_mut()
+                    .unwrap()
+                    .extend(copy[arena].as_array().unwrap().iter().cloned());
+            }
+        }
+        wire["model"]["bodies"][0]["name"] = json!("Solid");
+        source.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let model = &wire["model"];
+        let mut ctx = Context::new(model);
+        ctx.source = Some(&source);
+        let outputs: Value = serde_json::from_str(
+            &outputs
+                .to_string()
+                .replace("b#1", "synthetic:cube:body#0")
+                .replace("b#2", "synthetic:skin:body#0")
+                .replace("b#3", "synthetic:other:body#0"),
+        )
+        .unwrap();
         let stored = json!({
             "id": "f#1", "ordinal": 0, "name": "Composite1", "suppressed": false,
             "outputs": outputs,
@@ -1443,10 +1476,16 @@ mod tests {
         let mapped = stored_outputs(json!(["b#1", "b#2"])).unwrap();
         assert_eq!(mapped["type"], "import");
         assert_eq!(mapped["name"], "Composite1");
-        assert_eq!(mapped["_bodies"], json!(["b#1", "b#2"]));
+        assert_eq!(
+            mapped["_bodies"],
+            json!(["synthetic:cube:body#0", "synthetic:skin:body#0"])
+        );
         assert_eq!(mapped["body_names"], json!(["Solid", "Skin"]));
         let sheets = stored_outputs(json!(["b#2", "b#3"])).unwrap();
-        assert_eq!(sheets["_bodies"], json!(["b#2", "b#3"]));
+        assert_eq!(
+            sheets["_bodies"],
+            json!(["synthetic:skin:body#0", "synthetic:other:body#0"])
+        );
         assert_eq!(sheets["body_names"], json!(["Skin", "Other"]));
     }
 

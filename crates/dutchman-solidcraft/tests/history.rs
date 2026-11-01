@@ -8158,7 +8158,7 @@ fn unsupported_modify_options_explain_what_stops_history() {
     cases.push((
         json!({"definition": "shell", "bodies": cube_body(),
         "removed_faces": cube_faces(&["top"]), "thickness": 1.0, "outward": false}),
-        "shell waits on input face geometry",
+        "shell requires faces from its own input topology",
     ));
     cases.push((
         json!({"definition": "draft", "faces": cube_faces(&["right"]),
@@ -10396,5 +10396,346 @@ fn a_sketch_on_the_end_of_a_feature_moves_with_the_dimensions_that_place_it() {
             (taller[0] - (2000.0 - pocket_volume)).abs() < 0.05,
             "{taller:?}"
         );
+    }
+}
+
+#[test]
+fn an_empty_base_region_does_not_consume_an_import_name() {
+    let mut model = based_cube();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let body = wire["model"]["bodies"][0]["id"].clone();
+    let empty = json!({"id": "test:model:region#empty", "body": body, "shells": []});
+    wire["model"]["regions"]
+        .as_array_mut()
+        .unwrap()
+        .insert(0, empty);
+    wire["model"]["bodies"][0]["regions"]
+        .as_array_mut()
+        .unwrap()
+        .insert(0, json!("test:model:region#empty"));
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_eq!(
+        document["features"][0]["name"],
+        "Base Feature 1",
+        "{}",
+        history_line(&report)
+    );
+    assert_eq!(
+        document["features"][0]["body_names"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["type"] == "hole"));
+    assert!(!history_line(&report).contains("appearance targets"));
+}
+
+#[test]
+fn an_omitted_base_region_does_not_discard_history_or_shift_body_colours() {
+    let mut model = based_cube();
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let body = wire["model"]["bodies"][0]["id"].clone();
+    // A nonempty region whose shell is unavailable: the exporter omits it.
+    wire["model"]["regions"].as_array_mut().unwrap().insert(0,
+        json!({"id": "test:model:region#omitted", "body": body, "shells": ["test:model:shell#missing"]}));
+    wire["model"]["bodies"][0]["regions"]
+        .as_array_mut()
+        .unwrap()
+        .insert(0, json!("test:model:region#omitted"));
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let base = &document["features"][0];
+    assert_eq!(base["name"], "Base Feature 1", "{}", history_line(&report));
+    assert!(base.get("body_names").is_none());
+    assert!(document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["type"] == "hole"));
+}
+
+#[test]
+fn an_offset_datum_with_independent_sketch_consumers_does_not_stop_history() {
+    let model = cube_with_history(10.0, whole_sketch(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    for feature in wire["model"]["features"].as_array_mut().unwrap() {
+        feature["ordinal"] = json!(feature["ordinal"].as_u64().unwrap() + 1);
+    }
+    wire["model"]["features"][0]["dependencies"] = json!(["test:model:feature#offset"]);
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+        "id": "test:model:feature#offset", "ordinal": 0, "name": "Offset datum", "suppressed": false,
+        "definition": {"definition": "datum_offset_plane", "distance": -7.0}}));
+    let changed = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    };
+    let (document, report) = convert(
+        &changed,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let outcome = report.outcome().unwrap();
+    assert_eq!(
+        outcome.features[0].status,
+        dutchman_core::FeatureStatus::NotNeeded,
+        "{}",
+        history_line(&report)
+    );
+    assert!(document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["type"] == "extrude"));
+    let mut unresolved = serde_json::to_value(&changed.ir).unwrap();
+    unresolved["model"]["sketches"][0]["placement"] = json!({"kind": "unresolved"});
+    let changed = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&unresolved.to_string()).unwrap(),
+        ..changed
+    };
+    let (_, report) = convert(
+        &changed,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert_eq!(
+        report.outcome().unwrap().features[0].status,
+        dutchman_core::FeatureStatus::Blocked
+    );
+    assert!(
+        history_line(&report).contains("offset plane reference is not resolved"),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
+fn a_body_split_uses_the_signed_offset_datum_frame() {
+    let model = split_cube(0.0, false, None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"][2]["definition"] = json!({"definition": "datum_offset_plane",
+        "reference": {"reference": "resolved_plane", "frame": {
+            "origin": {"x": 9.0, "y": 0.0, "z": 0.0},
+            "normal": {"x": 2.0, "y": 0.0, "z": 0.0},
+            "u_axis": {"x": 0.0, "y": 3.0, "z": 0.0}}}, "distance": -5.0});
+    let changed = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    };
+    let (document, report) = convert(
+        &changed,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let split = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["type"] == "split")
+        .unwrap_or_else(|| panic!("{}", history_line(&report)));
+    assert_eq!(split["plane"]["plane"]["origin"], json!([4.0, 0.0, 0.0]));
+    if let Some(cli) = solidcraft() {
+        let mut got = volumes(
+            &cli,
+            &written_with(
+                &changed,
+                &SolidCraftWriter::new().verification(Verification::Off),
+            )
+            .0,
+        );
+        got.sort_by(f64::total_cmp);
+        assert_eq!(got.len(), 2, "{got:?}");
+        assert!(
+            (got[0] - 400.0).abs() < 1.0 && (got[1] - 600.0).abs() < 1.0,
+            "{got:?}"
+        );
+    }
+}
+
+fn historical_shell(outward: bool) -> Model {
+    face_extrude(true, |definition| {
+        *definition = json!({"definition": "shell", "removed_faces": {
+            "kind": "historical", "value": {"state": "test:face:feature-input#3",
+                "faces": ["test:face:historical-face#target"], "native": "synthetic selection"}},
+            "thickness": 1.0, "outward": outward});
+    })
+}
+
+#[test]
+fn shells_map_historical_input_faces_and_signed_direction() {
+    for outward in [false, true] {
+        let model = historical_shell(outward);
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        let shell = document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["type"] == "shell")
+            .unwrap_or_else(|| panic!("{}", history_line(&report)));
+        assert_eq!(
+            shell["direction"],
+            if outward { "outside" } else { "inside" }
+        );
+        assert_eq!(shell["thickness"], "1 mm");
+        assert_eq!(shell["faces"].as_array().unwrap().len(), 1);
+        assert_eq!(shell["faces"][0][2], 10.0);
+        assert!(shell["body"].is_string());
+        if let Some(cli) = solidcraft() {
+            let got = volumes(
+                &cli,
+                &written_with(
+                    &model,
+                    &SolidCraftWriter::new().verification(Verification::Off),
+                )
+                .0,
+            );
+            let expected = if outward {
+                12.0 * 12.0 * 11.0 - 1000.0
+            } else {
+                1000.0 - 8.0 * 8.0 * 9.0
+            };
+            assert_eq!(got.len(), 1, "{got:?}");
+            assert!((got[0] - expected).abs() < 1.0, "{got:?} vs {expected}");
+        }
+    }
+}
+
+#[test]
+fn shells_require_their_own_historical_input_faces() {
+    let model = historical_shell(false);
+    let original = serde_json::to_value(&model.ir).unwrap();
+    for missing_geometry in [true, false] {
+        let mut wire = original.clone();
+        if missing_geometry {
+            wire["model"]["feature_input_topologies"][0]["edge_geometry"] = json!([]);
+        } else {
+            wire["model"]["feature_input_topologies"][0]["input_of"] = json!("f3d:model:feature#2");
+        }
+        let changed = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model.clone()
+        };
+        let (document, report) = convert(
+            &changed,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(!document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["type"] == "shell"));
+        assert!(
+            history_line(&report).contains(if missing_geometry {
+                "no edge geometry"
+            } else {
+                "does not uniquely belong"
+            }),
+            "{}",
+            history_line(&report)
+        );
+    }
+}
+
+#[test]
+fn through_all_cuts_require_a_body_before_the_cut_in_ordinal_order() {
+    const CUT_SKETCH: &str = "test:model:sketch#cut";
+    for with_boss in [false, true] {
+        let model = cube_with_history(10.0, whole_sketch(), None);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut cut = wire["model"]["features"][1].clone();
+        cut["id"] = json!("test:model:feature#cut");
+        cut["name"] = json!("Through cut");
+        cut["ordinal"] = json!(3);
+        cut["outputs"] = json!([]);
+        cut["dependencies"] = if with_boss {
+            json!(["test:model:feature#cut-sketch", "f3d:model:feature#2"])
+        } else {
+            json!(["test:model:feature#cut-sketch"])
+        };
+        cut["definition"]["op"] = json!("cut");
+        cut["definition"]["extent"] =
+            json!({"kind": "symmetric", "side": {"termination": {"kind": "through_all"}}});
+        cut["definition"]["profile"] = json!({"kind": "sketch", "value": CUT_SKETCH});
+        let mut circle = entity(
+            5,
+            json!({"kind": "circle", "center": {"u": 5.0, "v": 5.0}, "radius": 1.0}),
+        );
+        circle["sketch"] = json!(CUT_SKETCH);
+        wire["model"]["sketch_entities"]
+            .as_array_mut()
+            .unwrap()
+            .push(circle);
+        let placement = wire["model"]["sketches"][0]["placement"].clone();
+        wire["model"]["sketches"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": CUT_SKETCH,
+            "name": "Cut sketch", "placement": placement,
+            "profiles": [[{"entity": "f3d:model:sketch-entity#5"}]]}));
+        let features = wire["model"]["features"].as_array_mut().unwrap();
+        if !with_boss {
+            features.retain(|f| f["ordinal"] == 0);
+        }
+        features.push(json!({"id": "test:model:feature#cut-sketch", "ordinal": 2, "name": "Cut sketch", "suppressed": false,
+            "definition": {"definition": "sketch", "sketch": {"space": "planar", "sketch": CUT_SKETCH}}}));
+        features.push(cut);
+        features.reverse();
+        let changed = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        };
+        let (document, report) = convert(
+            &changed,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        let cuts: Vec<_> = document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|f| f["operation"] == "cut")
+            .collect();
+        if with_boss {
+            assert_eq!(cuts.len(), 1, "{}", history_line(&report));
+            let features = document["features"].as_array().unwrap();
+            assert_eq!(features[1]["name"], "Block");
+            assert_eq!(features[2]["name"], "Cut sketch");
+            assert_eq!(features[3]["name"], "Through cut");
+            if let Some(cli) = solidcraft() {
+                let got = volumes(
+                    &cli,
+                    &written_with(
+                        &changed,
+                        &SolidCraftWriter::new().verification(Verification::Off),
+                    )
+                    .0,
+                );
+                assert_eq!(got.len(), 1);
+                assert!(
+                    (got[0] - (1000.0 - std::f64::consts::PI * 10.0)).abs() < 1.0,
+                    "{got:?}"
+                );
+            }
+        } else {
+            assert!(cuts.is_empty());
+            assert!(
+                history_line(&report).contains("through-all cut has no earlier named body"),
+                "{}",
+                history_line(&report)
+            );
+        }
     }
 }

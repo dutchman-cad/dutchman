@@ -137,7 +137,7 @@ pub(super) fn map(feature: &Value, ctx: &Context, report: &mut Report) -> Result
     }
 }
 
-fn resolved_sketch(feature: &Value, ctx: &Context) -> bool {
+pub(super) fn resolved_sketch(feature: &Value, ctx: &Context) -> bool {
     operation(feature).get("definition").and_then(Value::as_str) == Some("sketch")
         && operation(feature)
             .pointer("/sketch/sketch")

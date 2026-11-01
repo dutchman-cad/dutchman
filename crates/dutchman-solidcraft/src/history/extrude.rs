@@ -124,6 +124,12 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         return Err("sheet extrudes are not mapped yet".to_owned());
     }
     let operation = operation(definition.get("op"))?;
+    if operation == "cut"
+        && extent.get("through_all").and_then(Value::as_bool) == Some(true)
+        && ctx.named_bodies.is_empty()
+    {
+        return Err("its through-all cut has no earlier named body; resolve its body-producing feature first".to_owned());
+    }
     let body_names = body_names(feature, ctx, operation);
 
     let id = ctx.id();
