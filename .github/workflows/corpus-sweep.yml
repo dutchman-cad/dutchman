@@ -61,7 +61,7 @@ jobs:
             nightly) echo "ref=" >> "$GITHUB_OUTPUT" ;;
             *) echo "::error::dutchman must be branch or nightly"; exit 1 ;;
           esac
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: steps.choose.outputs.ref != ''
       - name: Install build dependencies
         if: steps.choose.outputs.ref != ''
@@ -118,7 +118,7 @@ jobs:
             echo "dutchman=nightly" >> "$GITHUB_OUTPUT"
             echo "cadmpeg=main (as the nightly was built)" >> "$GITHUB_OUTPUT"
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: dutchman-bin
           path: bin/dutchman
@@ -131,7 +131,7 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
       chunks: ${{ steps.plan.outputs.chunks }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: plan
         env:
           GH_TOKEN: ${{ github.token }}
@@ -141,7 +141,7 @@ jobs:
         run: |
           python3 scripts/corpus_plan.py --corpus corpus/public.toml --out plan.json \
             --sources "$SOURCES" --step "$STEP" --preset "$PRESET"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: plan
           path: plan.json
@@ -157,12 +157,12 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           name: dutchman-bin
           path: bin
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: plan
           path: plan
@@ -174,13 +174,13 @@ jobs:
           command -v /usr/bin/time > /dev/null || sudo apt-get install -y --no-install-recommends time
           python3 scripts/corpus_convert.py --plan plan/plan.json --chunk "${{ matrix.chunk }}" \
             --dutchman "$PWD/bin/dutchman" --out out --keep-sc "$KEEP_SC"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: chunk-${{ matrix.chunk }}
           path: out/
           retention-days: 14
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always() && inputs.keep_sc != ''
         with:
           name: sc-${{ matrix.chunk }}
@@ -194,12 +194,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: chunk-*
           path: results
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: plan
           path: plan
@@ -212,7 +212,7 @@ jobs:
           python3 scripts/corpus_report.py --results results --plan plan/plan.json \
             --report REPORT.md --json results.json --inputs "$inputs"
           cat REPORT.md >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: corpus-report
           path: |
