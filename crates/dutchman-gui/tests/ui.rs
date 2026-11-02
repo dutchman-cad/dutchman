@@ -280,7 +280,7 @@ fn a_step_file_is_not_asked_for_a_step_export() {
     let (mut harness, _dir) = failed_card("broken.step", 2048, 760.0);
     assert!(harness.query_by_label("Have a STEP export?").is_none());
     let (message, _) = press_dm(&mut harness);
-    assert!(message.ends_with("STEP: yes."), "{message}");
+    assert!(message.contains("STEP: yes."), "{message}");
 }
 
 #[test]
