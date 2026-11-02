@@ -42,8 +42,9 @@ use dutchman_core::{FeatureOutcome, FeatureStatus, Model, Report, Severity};
 use serde_json::Value;
 
 /// The CADIR wire versions the mapping reads. Version 7 adds only assembly joint kinds and a
-/// sheet-metal thickness side, neither of which the mapping uses.
-const IR_VERSIONS: [&str; 5] = ["6", "7", "8", "9", "10"];
+/// sheet-metal thickness side, neither of which the mapping uses. Version 11 adds
+/// fragment/reproduction metadata without changing the complete-model feature mapping.
+const IR_VERSIONS: [&str; 6] = ["6", "7", "8", "9", "10", "11"];
 
 /// A replayable history: SolidCraft parameters and features in timeline order.
 #[derive(Clone, Debug, Default)]
@@ -1330,12 +1331,12 @@ mod tests {
     #[test]
     fn known_cadir_versions_are_read_and_others_refused() {
         assert!(check_version(&json!({"ir_version": "6"})).is_ok());
-        for version in ["7", "8", "9", "10"] {
+        for version in ["7", "8", "9", "10", "11"] {
             assert!(check_version(&json!({"ir_version": version})).is_ok());
         }
         assert_eq!(
-            check_version(&json!({"ir_version": "11"})).unwrap_err(),
-            "unsupported CADIR version \"11\" (Dutchman reads 6, 7, 8, 9, 10)"
+            check_version(&json!({"ir_version": "12"})).unwrap_err(),
+            "unsupported CADIR version \"12\" (Dutchman reads 6, 7, 8, 9, 10, 11)"
         );
         assert!(check_version(&json!({})).is_err());
     }
