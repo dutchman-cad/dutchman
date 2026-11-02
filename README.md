@@ -113,6 +113,13 @@ Make a small public test file from a [fixtures recipe](https://dutchman-cad.gith
 or send a file that converts wrong, with its STEP export, to Dutchy in
 [Discord](https://discord.gg/yTcseBEdeu). Share only designs you own and can share.
 
+With diagnostic logging enabled, each result card can **Show this run's log** or
+**Copy log to…**. Its name includes the date, time, Dutchman version and result, with no
+names or contents from the design. Report review and the copied Discord DM identify that
+same log. [Reporting a problem](docs/desktop.md#reporting-a-problem) explains what is shared.
+
+![Failed synthetic conversion in Day theme, with Show this run's log and Copy log to buttons](docs/images/readme-run-log-day.png)
+
 ## Use from scripts and AI agents
 
 `dutchman --json` prints one machine-readable report, and `dutchman-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server on stdio with conversion, diagnosis, and reporting tools. The core conversion tools return the same reports as their matching `--json` commands:

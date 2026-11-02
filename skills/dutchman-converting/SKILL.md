@@ -702,3 +702,15 @@ use the private-send card or summary when it is false. Decode refusals have no b
 
 Treat refused cuts as a normal no-bundle outcome, including large assembly closures
 that exceed the fragment byte limit. Offer summary or the private-send card.
+
+### Finding a run's diagnostic log
+
+Automatic diagnostic filenames include UTC date and time, Dutchman version and result.
+They start as `running` and become `converted`, `failed` or `stopped` once writers close;
+a crash or rename failure leaves `running`. Retention keeps ten logs, including legacy
+time-only names. Explicit `--diagnostics PATH` files keep their exact path. A version notice
+when reusing an older log is advisory; conversion proceeds. Desktop result cards offer
+**Show this run's log** and **Copy log to…** for the shared batch log, while retries keep
+other cards linked to their original run. Report review and the copied Discord DM identify
+that run's log. The log contains no names or contents from the design. Send uploads only
+the summary or bundle reviewed in the consent screen; the log stays local.

@@ -120,8 +120,27 @@ The window's title and top row show its version beside **Dutchman Convert**, for
 form. `dutchman-gui --version` and `dutchman-gui --help` print and exit without opening a
 window (on Windows, read the version with `dutchman --version`).
 
+With **Save a diagnostic log (no names or contents from your file)** enabled, each result
+card shows its run's log path, **Show this run's log** and **Copy log to…**, available when
+the run ends. Show selects that file on Windows and macOS, or opens its folder on Linux.
+Copy lets you save it elsewhere,
+using the same filename by default. Every card in a batch uses the same log; retries keep
+the other cards linked to their original run.
+
+Log names include UTC date and time, Dutchman version and result, for example
+`2026-11-02_163710_dutchman-0.2.6_failed.jsonl`. A live or crashed run keeps `running`;
+completed runs use `converted`, `failed` or `stopped`. **Open diagnostics folder** opens the
+folder containing the newest ten logs, including older time-only names.
+
+**Review and send report** names this run's log automatically and lets you show or copy it.
+The log contains no names or contents from the design. Send uploads only the summary or
+bundle described in that review; the log stays local. The private-send card also shows
+this log, and the copied Discord DM names it so you can attach it without guessing which
+file belongs to the run. An older log's version is shown as an advisory notice, such as
+"This log is from Dutchman 0.2.5; this is 0.2.6." It never blocks conversion.
+
 When a file fails, its card offers two routes. To send the file, follow the steps on the card:
-join the Discord server, then **Copy and open DM** copies a one-line message and opens Dutchy's
+join the Discord server, then **Copy and open DM** copies a message and opens Dutchy's
 DM. A file within Discord's upload limit is dragged in, and its folder opens for that; for a
 larger one, Dutchy replies with a private upload link. See
 [Send the file privately](troubleshooting.md#send-the-file-privately).

@@ -355,6 +355,9 @@ change replay order: the neutral ordinal controls it.
 ### Diagnostic logs for unfinished runs
 
 [Diagnostic logs for unfinished runs](troubleshooting.md#diagnostic-logs-for-unfinished-runs)
+include UTC time, Dutchman version and result in automatic filenames. Explicit
+`--diagnostics PATH` files keep their chosen path. Reusing a log from another version shows
+a notice and still converts. Desktop result cards show or copy their own run's log.
 
 ### Troubleshooting
 

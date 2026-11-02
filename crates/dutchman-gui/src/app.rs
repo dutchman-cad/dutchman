@@ -74,6 +74,8 @@ pub struct App {
     options: ConvertOptions,
     diagnostic_path: Option<PathBuf>,
     diagnostic_stopped: bool,
+    diagnostic_automatic: bool,
+    row_logs: std::collections::BTreeMap<usize, PathBuf>,
     unfinished_diagnostic: Option<PathBuf>,
     rows: Vec<Row>,
     /// Rows before the run's first job: inputs that could not be planned.
@@ -300,6 +302,8 @@ impl App {
             diagnosis: None,
             diagnostic_path: None,
             diagnostic_stopped: false,
+            diagnostic_automatic: false,
+            row_logs: Default::default(),
             unfinished_diagnostic: dutchman::diagnostics::unfinished_default_log(),
             rows: Vec::new(),
             offset: 0,
@@ -588,7 +592,10 @@ impl App {
         } else {
             dutchman::report_send::Prepared::new(&id, &format, &signature, None, &folder)?
         };
-        self.consent.card = Some(crate::report_consent::Card::new(index, prepared, folder));
+        let mut card = crate::report_consent::Card::new(index, prepared, folder);
+        card.log = self.row_logs.get(&index).cloned();
+        card.log_ready = !self.running();
+        self.consent.card = Some(card);
         Ok(())
     }
 
@@ -607,7 +614,7 @@ impl App {
         Ok(())
     }
 
-    /// Copies the one-line message about the file of the row at `index` and opens Dutchy's
+    /// Copies the message about the file of the row at `index` and opens Dutchy's
     /// DM. A file small enough to drag in has its folder shown too.
     pub fn dm_dutchy(&mut self, index: usize, ctx: &egui::Context) -> Result<(), String> {
         self.dm_private(index, None, ctx)
@@ -631,12 +638,19 @@ impl App {
             .map(|m| m.len())
             .or(row.size);
         let steps = present::SendSteps::new(policy, size, report, present::Surface::Desktop);
-        ctx.copy_text(policy.message(&MessageFacts {
+        let mut message = policy.message(&MessageFacts {
             code: present::error_code(report),
             report_id: &id,
             size_bytes: size,
             step: present::step_known(report),
-        }));
+        });
+        if let Some(log) = self.row_logs.get(&index) {
+            message.push_str(&format!(
+                " Run log: {}. It contains no names or contents from the design.",
+                log.file_name().unwrap_or_default().to_string_lossy()
+            ));
+        }
+        ctx.copy_text(message);
         ctx.open_url(egui::OpenUrl::new_tab(policy.dm_url()));
         let shown = if steps.drag {
             (self.file_manager)(file.unwrap_or(&row.input))
@@ -653,6 +667,7 @@ impl App {
         };
         let mut open = true;
         let mut action = None;
+        let log_ready = !self.running();
         egui::Window::new("Send privately")
             .open(&mut open)
             .show(ctx, |ui| {
@@ -662,6 +677,10 @@ impl App {
                 let Some(report) = row.report.as_ref() else {
                     return;
                 };
+                if let Some(log) = self.row_logs.get(&index) {
+                    ui.label("This run's log contains no names or contents from the design. Its name is included in the copied DM; attach it if you choose.");
+                    if let Err(message) = platform::log_controls(ui, log, log_ready) { self.notice = Some(message); }
+                }
                 if let Some(path) = &file {
                     ui.label(format!("Saved bundle: {}", path.display()));
                 }
@@ -765,7 +784,9 @@ impl App {
         };
         pending.options.diagnostics_salt = Some(salt.clone());
         self.salt = Some(salt);
-        if pending.options.diagnostics_default {
+        self.diagnostic_automatic =
+            pending.options.diagnostics_default && pending.options.diagnostics.is_none();
+        if pending.options.diagnostics_default || pending.options.diagnostics.is_some() {
             let threads = match &pending.kind {
                 RunKind::Batch { .. } => dutchman::batch::workers(None),
                 RunKind::Retry { .. } => 1,
@@ -775,9 +796,14 @@ impl App {
                 return;
             }
             self.diagnostic_path = pending.options.diagnostics.clone();
+            self.notice = self
+                .diagnostic_path
+                .as_deref()
+                .and_then(dutchman::diagnostics::version_notice);
         }
         self.run = Some(match pending.kind {
             RunKind::Batch { inputs, out_dir } => {
+                self.row_logs.clear();
                 self.rows.clear();
                 self.offset = 0;
                 Run::start(
@@ -789,6 +815,10 @@ impl App {
                 )
             }
             RunKind::Retry { job, index } => {
+                self.row_logs.remove(&(self.offset + index));
+                if let Some(path) = &self.diagnostic_path {
+                    self.row_logs.insert(self.offset + index, path.clone());
+                }
                 if let Some(row) = self.rows.get_mut(self.offset + index) {
                     row.status = Status::Waiting;
                     row.report = None;
@@ -1043,6 +1073,11 @@ impl App {
                             size: None,
                         }))
                         .collect();
+                    if let Some(path) = &self.diagnostic_path {
+                        self.row_logs = (0..self.rows.len())
+                            .map(|index| (index, path.clone()))
+                            .collect();
+                    }
                 }
                 Message::Sized { input, size } => {
                     if let Some(row) = self.rows.iter_mut().find(|row| row.input == input) {
@@ -1072,6 +1107,37 @@ impl App {
                 }
                 Message::Done => {
                     self.run = None;
+                    if let Some(path) = self.diagnostic_path.clone() {
+                        let failed = self.row_logs.iter().any(|(index, log)| {
+                            log == &path
+                                && self
+                                    .rows
+                                    .get(*index)
+                                    .is_some_and(|r| r.status != Status::Converted)
+                        });
+                        let result = if self.diagnostic_stopped {
+                            "stopped"
+                        } else if failed {
+                            "failed"
+                        } else {
+                            "converted"
+                        };
+                        let final_path = if self.diagnostic_automatic {
+                            dutchman::diagnostics::finish_default_log(&path, result)
+                        } else {
+                            path.clone()
+                        };
+                        for log in self.row_logs.values_mut().filter(|log| **log == path) {
+                            *log = final_path.clone();
+                        }
+                        if let Some(card) = &mut self.consent.card {
+                            if card.log.as_ref() == Some(&path) {
+                                card.log = Some(final_path.clone());
+                                card.log_ready = true;
+                            }
+                        }
+                        self.diagnostic_path = Some(final_path);
+                    }
                     self.reveal = Some(Reveal::FirstIssue);
                     for row in &mut self.rows {
                         if matches!(row.status, Status::Waiting | Status::Converting) {
@@ -1177,7 +1243,7 @@ impl App {
                     .show(ui, |ui| {
                         if let Some(path) = self.unfinished_diagnostic.clone() {
                             ui.label("The last run didn't finish. Its diagnostic log is here:");
-                            ui.label(path.display().to_string());
+                            ui.label(platform::display_path(&path));
                             ui.horizontal(|ui| {
                                 if ui.button("Open folder").clicked() {
                                     if let Err(message) = platform::reveal(&path) {
@@ -1801,20 +1867,10 @@ impl App {
         if reveal == Some(Reveal::Results) {
             heading.scroll_to_me(Some(Align::Min));
         }
-        if let Some(path) = &self.diagnostic_path {
-            ui.label(path.display().to_string());
-            if (!self.running() || self.diagnostic_stopped)
-                && path.is_file()
-                && ui.button("Show the log").clicked()
-            {
-                if let Err(message) = platform::reveal(path) {
-                    self.notice = Some(message);
-                }
-            }
-        }
         let first = (reveal == Some(Reveal::FirstIssue)).then_some(view.first_to_show);
         let mut action = None;
-        let running = self.running() || self.diagnosis.is_some();
+        let log_ready = !self.running();
+        let running = !log_ready || self.diagnosis.is_some();
         let mut files: Vec<_> = view.files.iter().collect();
         files.sort_by_key(|(index, _)| *index);
         for (index, file) in files {
@@ -1824,6 +1880,11 @@ impl App {
             };
             let shown = card(ui, &p, |ui| {
                 let policy = self.report_policy.policy();
+                if let Some(path) = self.row_logs.get(&index) {
+                    if let Err(message) = platform::log_controls(ui, path, log_ready) {
+                        self.notice = Some(message);
+                    }
+                }
                 let chosen = row_ui(ui, &p, index, row, file, policy, self.has_app, running);
                 if let Some(chosen) = chosen {
                     action = Some(chosen);
@@ -2580,6 +2641,69 @@ mod tests {
         assert!(restored.no_verify);
         assert!(restored.diagnostics_default);
         assert!(restored.diagnostics.is_none());
+    }
+
+    #[test]
+    fn run_log_completion_renames_only_its_rows_and_marks_stopped() {
+        for stopped in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let running = dir
+                .path()
+                .join("2026-11-02_163710_dutchman-0.2.6_running.jsonl");
+            let prior = dir
+                .path()
+                .join("2026-11-02_150000_dutchman-0.2.6_failed.jsonl");
+            std::fs::write(&running, "").unwrap();
+            let mut harness = egui_kittest::Harness::builder().build_eframe(|cc| {
+                let mut app = App::new(cc);
+                app.diagnostic_path = Some(running.clone());
+                app.diagnostic_automatic = true;
+                app.diagnostic_stopped = stopped;
+                app.row_logs.insert(0, prior.clone());
+                app.row_logs.insert(1, running.clone());
+                app.rows = (0..2)
+                    .map(|_| Row {
+                        input: PathBuf::from("synthetic.f3d"),
+                        output: None,
+                        status: Status::Failed,
+                        report: Some(json!({"ok": false})),
+                        progress: None,
+                        job: None,
+                        size: None,
+                    })
+                    .collect();
+                let prepared = dutchman::report_send::Prepared::new(
+                    "0123456789abcdef",
+                    "f3d",
+                    "decode",
+                    None,
+                    dir.path(),
+                )
+                .unwrap();
+                let mut card =
+                    crate::report_consent::Card::new(1, prepared, dir.path().to_path_buf());
+                card.log = Some(running.clone());
+                card.log_ready = false;
+                app.consent.card = Some(card);
+                app.sender.send(Message::Done).unwrap();
+                app
+            });
+            harness.run_steps(2);
+            let app = harness.state();
+            assert_eq!(app.row_logs.get(&0), Some(&prior));
+            let finished = app.row_logs.get(&1).unwrap();
+            assert_eq!(Some(finished), app.diagnostic_path.as_ref());
+            assert!(finished.is_file());
+            let card = app.consent.card.as_ref().unwrap();
+            assert_eq!(card.log.as_ref(), Some(finished));
+            assert!(card.log_ready);
+            assert!(finished.to_str().unwrap().ends_with(if stopped {
+                "_stopped.jsonl"
+            } else {
+                "_failed.jsonl"
+            }));
+            assert!(!running.exists());
+        }
     }
 
     #[test]

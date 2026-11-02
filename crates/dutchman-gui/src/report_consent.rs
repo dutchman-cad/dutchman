@@ -20,6 +20,8 @@ pub enum Action {
 
 pub struct Card {
     pub row: usize,
+    pub log: Option<PathBuf>,
+    pub log_ready: bool,
     pub prepared: Prepared,
     pub folder: PathBuf,
     summary: bool,
@@ -34,6 +36,8 @@ impl Card {
     pub fn new(row: usize, prepared: Prepared, folder: PathBuf) -> Self {
         Self {
             row,
+            log: None,
+            log_ready: true,
             summary: prepared.bundle_sha256.is_none(),
             prepared,
             folder,
@@ -82,6 +86,10 @@ impl Consent {
         let mut private = None;
         egui::Window::new("Send a problem report").open(&mut open).show(ctx, |ui| {
             ui.label(format!("Report {}", card.prepared.report_id));
+            if let Some(log) = &card.log {
+                ui.label("This run's log contains no names or contents from the design. It is kept locally; Send uploads only the summary or bundle reviewed below.");
+                if let Err(message) = crate::platform::log_controls(ui, log, card.log_ready) { card.status = message; }
+            }
             if card.prepared.bundle_sha256.is_some() {
                 ui.label("Bundles contain geometry and are used privately to reproduce the problem.");
                 ui.radio_value(&mut card.summary, false, "Send the bundle");
@@ -160,6 +168,57 @@ mod tests {
         kittest::{NodeT, Queryable},
         Harness,
     };
+
+    #[test]
+    fn run_log_is_named_in_review_without_an_unreviewed_upload() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir
+            .path()
+            .join("2026-11-02_163710_dutchman-0.2.5_failed.jsonl");
+        std::fs::write(&log, "{\"dutchman\":\"0.2.5\"}\n").unwrap();
+        let prepared =
+            Prepared::new("0123456789abcdef", "f3d", "decode", None, dir.path()).unwrap();
+        let mut card = Card::new(0, prepared, dir.path().to_path_buf());
+        card.log = Some(log.clone());
+        card.log_ready = false;
+        let state = Consent {
+            card: Some(card),
+            ..Default::default()
+        };
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1000.0, 1000.0))
+            .build_state(
+                |ctx, state: &mut Consent| {
+                    state.window(ctx);
+                },
+                state,
+            );
+        harness.run_steps(3);
+        harness.get_by_label(&crate::platform::display_path(&log));
+        harness.get_by_label("Show this run's log");
+        assert!(harness
+            .get_by_label("Copy log to…")
+            .accesskit_node()
+            .is_disabled());
+        harness.state_mut().card.as_mut().unwrap().log_ready = true;
+        harness.run_steps(2);
+        assert!(!harness
+            .get_by_label("Copy log to…")
+            .accesskit_node()
+            .is_disabled());
+        harness.get_by_label(&format!(
+            "This log is from Dutchman 0.2.5; this is {}.",
+            dutchman::BUILD_VERSION
+        ));
+        assert!(!harness.get_by_label("Send").accesskit_node().is_disabled());
+        let card = harness.state().card.as_ref().unwrap();
+        assert!(!card
+            .prepared
+            .metadata("summary", false)
+            .to_string()
+            .contains("jsonl"));
+        assert!(!card.folder.join("submission.json").exists());
+    }
 
     #[test]
     fn consent_with_bundle_selects_it_without_public_permission() {

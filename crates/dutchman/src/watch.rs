@@ -117,7 +117,29 @@ pub fn run(command: Command) -> Result<bool, String> {
 
 /// Runs with conversion progress on stderr, unless `quiet` is set.
 pub fn run_with_progress(mut command: Command, quiet: bool) -> Result<bool, String> {
+    let owns_log = command.options.diagnostics_default && command.options.diagnostics.is_none();
     crate::diagnostics::prepare(&mut command.options, batch::workers(command.jobs))?;
+    let path = owns_log
+        .then(|| command.options.diagnostics.clone())
+        .flatten();
+    let mut stopped = false;
+    let result = run_prepared(command, quiet, &mut stopped);
+    if let Some(path) = path {
+        crate::diagnostics::finish_default_log(
+            &path,
+            if stopped {
+                "stopped"
+            } else if result.as_ref().is_ok_and(|ok| *ok) {
+                "converted"
+            } else {
+                "failed"
+            },
+        );
+    }
+    result
+}
+
+fn run_prepared(command: Command, quiet: bool, stopped: &mut bool) -> Result<bool, String> {
     let progress = Arc::new(crate::progress::StderrProgress::new(quiet, command.json));
     if command.options.to == crate::OutputFormat::Dxf {
         return Err(
@@ -155,15 +177,19 @@ pub fn run_with_progress(mut command: Command, quiet: bool) -> Result<bool, Stri
     {
         return Err("watch state does not match this inbox; choose another output folder".into());
     }
-    run_loop(
+    let result = run_loop(
         &command,
         &inbox,
         &out,
         &state_path,
         &mut state,
-        stop,
+        Arc::clone(&stop),
         &progress,
-    )
+    );
+    result.map(|(ok, was_stopped)| {
+        *stopped = was_stopped;
+        ok
+    })
 }
 
 struct Pending {
@@ -188,7 +214,7 @@ fn run_loop(
     state: &mut Value,
     stop: Arc<AtomicBool>,
     progress: &Arc<crate::progress::StderrProgress>,
-) -> Result<bool, String> {
+) -> Result<(bool, bool), String> {
     let settings = batch::Settings {
         jobs: command.jobs,
         limits: worker::Limits {
@@ -324,7 +350,7 @@ fn run_loop(
         let stopping = stop.load(Ordering::Relaxed);
         if (stopping || command.once && scanned) && active.is_empty() {
             atomic_json(state_path, state)?;
-            return Ok(!failed);
+            return Ok((!failed, stopping));
         }
         if !stopping && (!command.once || !scanned) && Instant::now() >= next_scan {
             let mut plan = batch::plan_filtered(&[inbox.to_path_buf()], out, |path| !ignored(path));

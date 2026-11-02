@@ -76,7 +76,7 @@ and the file is the quickest way to fix it. A failed file's card in the desktop 
 has the steps:
 
 1. **Join our Discord server.** Already in? Skip this step.
-2. **DM Dutchy.** The button copies a one-line message and opens Dutchy's DM. Paste the message.
+2. **DM Dutchy.** The button copies a message and opens Dutchy's DM. Paste the message.
    It gives Dutchman's version, the error's code, the report id, the file's size, and whether a
    STEP is at hand. It names no file, and the report id is the one in the anonymous report and
    the diagnostic log.
@@ -128,9 +128,12 @@ dutchman convert-all --diagnostics-default --out-dir converted parts/
 dutchman watch inbox --diagnostics-default --out-dir converted
 ```
 
-Each invocation creates one JSON Lines file named by UTC start time, such as
-`2026-10-29_201500.jsonl`; a counter suffix keeps simultaneous starts unique. Input names
-never enter the log's filename. The default folder is:
+Each invocation creates one JSON Lines file named by UTC start time, Dutchman version and
+result, such as `2026-11-02_163710_dutchman-0.2.6_failed.jsonl`. The name starts with a
+`running` result and changes to `converted`, `failed` or `stopped` when the run ends.
+A crash leaves the `running` name. A counter keeps simultaneous starts unique. Names and
+contents from the design never enter the log or its filename. If renaming is unavailable,
+the log keeps its `running` name and the conversion result is unaffected. The default folder is:
 
 | System | Folder |
 |---|---|
@@ -139,15 +142,23 @@ never enter the log's filename. The default folder is:
 | Linux | `$XDG_STATE_HOME/dutchman/diagnostics/`, or `~/.local/state/dutchman/diagnostics/` when unset |
 
 The newest ten automatically placed logs are kept. Starting a run removes older logs
-whose filenames match this timestamp pattern; unrelated files are left alone.
+whose filenames match this pattern, including older time-only names such as
+`2026-10-29_201500.jsonl`; unrelated files are left alone.
 `--diagnostics /absolute/path/run.jsonl` instead appends to an explicit file, without
-retention. Choose either `--diagnostics-default` or `--diagnostics PATH`.
+retention or renaming. Reusing a log from another version shows an advisory notice, for
+example, "This log is from Dutchman 0.2.5; this is 0.2.6." Conversion still proceeds.
+Choose either `--diagnostics-default` or `--diagnostics PATH`.
 The MCP `convert` and `convert_all` tools accept `diagnostics` (an explicit path) or
 `diagnostics_default: true`.
 
 In the desktop app's settings, select **Save a diagnostic log (no names or contents from
 your file)** before starting. **Open diagnostics folder** opens the default folder.
-After completion or Stop, **Show the log** opens the log's folder; its path is shown too.
+Each result card offers **Show this run's log** and **Copy log to…** beside the log's path,
+available when the run ends.
+Show selects the exact file on Windows and macOS, or opens its folder on Linux. Copy opens
+a save dialog with the same filename and copies the log to the location you choose.
+A batch shares one log, so every card opens or copies that same file. A retry has its own
+log; the other cards keep their original log. Windows folder paths use backslashes.
 On launch, an unfinished conversion in the newest default log shows **The last run didn't
 finish. Its diagnostic log is here:** with **Open folder** and **Dismiss** buttons.
 

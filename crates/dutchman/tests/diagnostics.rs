@@ -199,6 +199,15 @@ fn default_location_and_explicit_override_are_distinct() {
         .unwrap()
         .to_string_lossy()
         .contains("cube"));
+    assert!(paths[0]
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .ends_with(&format!(
+            "_dutchman-{}_converted.jsonl",
+            dutchman::BUILD_VERSION
+        )));
     assert_eq!(records(&paths[0]).last().unwrap()["type"], "end");
     let out = Command::new(env!("CARGO_BIN_EXE_dutchman"))
         .args([
@@ -322,8 +331,10 @@ fn watch_writes_diagnostics_while_keeping_event_output_unchanged() {
     let inbox = dir.path().join("inbox");
     std::fs::create_dir(&inbox).unwrap();
     std::fs::copy(fixture(), inbox.join("ZebraWatch.f3d")).unwrap();
-    let log = dir.path().join("watch.jsonl");
     let out = Command::new(env!("CARGO_BIN_EXE_dutchman"))
+        .env("HOME", dir.path())
+        .env("LOCALAPPDATA", dir.path())
+        .env("XDG_STATE_HOME", dir.path())
         .arg("watch")
         .arg(inbox)
         .arg("--out-dir")
@@ -336,9 +347,8 @@ fn watch_writes_diagnostics_while_keeping_event_output_unchanged() {
             "--json",
             "--jobs",
             "1",
-            "--diagnostics",
+            "--diagnostics-default",
         ])
-        .arg(&log)
         .output()
         .unwrap();
     assert!(
@@ -346,6 +356,25 @@ fn watch_writes_diagnostics_while_keeping_event_output_unchanged() {
         "{}",
         String::from_utf8_lossy(&out.stderr)
     );
+    let folder = if cfg!(windows) {
+        dir.path().join("Dutchman").join("diagnostics")
+    } else if cfg!(target_os = "macos") {
+        dir.path().join("Library/Logs/Dutchman")
+    } else {
+        dir.path().join("dutchman/diagnostics")
+    };
+    let log = std::fs::read_dir(folder)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    assert!(log
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .ends_with("_converted.jsonl"));
     let event: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(event["schema"], "dutchman.watch-event/1");
     assert_eq!(event["event"], "converted");
@@ -419,4 +448,76 @@ fn drawing_conversion_also_writes_the_requested_log() {
     assert_eq!(lines.last().unwrap()["type"], "end");
     assert_eq!(lines.last().unwrap()["ok"], true);
     assert!(!std::fs::read_to_string(log).unwrap().contains("techdraw"));
+}
+
+#[test]
+fn default_batch_log_finishes_after_isolated_workers_and_names_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let bad = dir.path().join("synthetic.f3d");
+    std::fs::write(&bad, "synthetic refusal").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_dutchman"))
+        .env("HOME", dir.path())
+        .env("LOCALAPPDATA", dir.path())
+        .env("XDG_STATE_HOME", dir.path())
+        .args([
+            "convert-all",
+            "--diagnostics-default",
+            "--no-verify",
+            "--jobs",
+            "2",
+            "--out-dir",
+        ])
+        .arg(dir.path().join("out"))
+        .arg(fixture())
+        .arg(bad)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let folder = if cfg!(windows) {
+        dir.path().join("Dutchman").join("diagnostics")
+    } else if cfg!(target_os = "macos") {
+        dir.path().join("Library/Logs/Dutchman")
+    } else {
+        dir.path().join("dutchman/diagnostics")
+    };
+    let logs: Vec<_> = std::fs::read_dir(folder)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(logs.len(), 1);
+    let path = logs.first().unwrap();
+    assert!(path
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .ends_with("_failed.jsonl"));
+    let rows = records(path);
+    assert_eq!(rows.iter().filter(|r| r["type"] == "start").count(), 2);
+    assert_eq!(rows.iter().filter(|r| r["type"] == "end").count(), 2);
+}
+
+#[test]
+fn explicit_log_from_another_version_warns_and_still_converts() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("selected.jsonl");
+    std::fs::write(&path, "{\"dutchman\":\"0.0.1\"}\n").unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_dutchman"))
+        .args(["convert", "--no-verify", "--diagnostics"])
+        .arg(&path)
+        .arg(fixture())
+        .arg(dir.path().join("out.sc"))
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains(&format!(
+        "This log is from Dutchman 0.0.1; this is {}.",
+        dutchman::BUILD_VERSION
+    )));
+    assert!(path.is_file());
+    assert_eq!(records(&path).last().unwrap()["type"], "end");
 }

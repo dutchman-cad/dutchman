@@ -15,7 +15,7 @@ pub fn default_folder() -> Result<PathBuf, String> {
     if cfg!(windows) {
         std::env::var_os("LOCALAPPDATA")
             .filter(|value| !value.is_empty())
-            .map(|base| PathBuf::from(base).join("Dutchman/diagnostics"))
+            .map(|base| PathBuf::from(base).join("Dutchman").join("diagnostics"))
             .ok_or_else(|| "cannot find LOCALAPPDATA; use --diagnostics PATH".to_owned())
     } else if cfg!(target_os = "macos") {
         Ok(home()?.join("Library/Logs/Dutchman"))
@@ -96,7 +96,7 @@ fn create_log(folder: &Path, stamp: &str) -> Result<PathBuf, String> {
     let latest = logs(folder)
         .into_iter()
         .filter_map(|path| {
-            let name = path.file_stem()?.to_str()?;
+            let name = path.file_stem()?.to_str()?.split("_dutchman-").next()?;
             if name.get(..17)? != stamp {
                 return None;
             }
@@ -115,9 +115,12 @@ fn create_log(folder: &Path, stamp: &str) -> Result<PathBuf, String> {
             .checked_add(offset)
             .ok_or("cannot choose a unique diagnostic log name; use --diagnostics PATH")?;
         let name = if counter == 0 {
-            format!("{stamp}.jsonl")
+            format!("{stamp}_dutchman-{}_running.jsonl", crate::BUILD_VERSION)
         } else {
-            format!("{stamp}-{counter}.jsonl")
+            format!(
+                "{stamp}-{counter}_dutchman-{}_running.jsonl",
+                crate::BUILD_VERSION
+            )
         };
         let path = folder.join(name);
         match std::fs::OpenOptions::new()
@@ -141,10 +144,46 @@ fn create_log(folder: &Path, stamp: &str) -> Result<PathBuf, String> {
     Err("cannot choose a unique diagnostic log name; use --diagnostics PATH".into())
 }
 
+/// Finish an automatically placed run after every writer (including workers) has closed.
+/// A failed rename leaves the running path usable and never changes the conversion result.
+pub fn finish_default_log(path: &Path, result: &str) -> PathBuf {
+    let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+        return path.into();
+    };
+    if !log_name(name) || !matches!(result, "converted" | "failed" | "stopped") {
+        return path.into();
+    }
+    let Some(prefix) = name.strip_suffix("_running.jsonl") else {
+        return path.into();
+    };
+    let target = path.with_file_name(format!("{prefix}_{result}.jsonl"));
+    if !target.exists() && std::fs::rename(path, &target).is_ok() {
+        target
+    } else {
+        path.into()
+    }
+}
+
 fn log_name(name: &str) -> bool {
     let Some(stem) = name.strip_suffix(".jsonl") else {
         return false;
     };
+    let (stem, result) = stem
+        .split_once("_dutchman-")
+        .map_or((stem, None), |(stamp, rest)| (stamp, Some(rest)));
+    if let Some(rest) = result {
+        let Some((version, outcome)) = rest.rsplit_once('_') else {
+            return false;
+        };
+        if version.is_empty()
+            || !version
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'+'))
+            || !matches!(outcome, "running" | "converted" | "failed" | "stopped")
+        {
+            return false;
+        }
+    }
     let Some(date) = stem.get(..17) else {
         return false;
     };
@@ -178,6 +217,9 @@ fn logs(folder: &Path) -> Vec<PathBuf> {
             .unwrap_or_default();
         let stamp = name.get(..17).unwrap_or_default().to_owned();
         let counter = name
+            .split("_dutchman-")
+            .next()
+            .unwrap_or_default()
             .get(18..)
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(0);
@@ -211,6 +253,20 @@ pub fn unfinished_default_log() -> Option<PathBuf> {
 }
 
 fn unfinished(path: &Path) -> bool {
+    // A completed run can contain no conversion rows (for example a planning refusal).
+    // Final names are written only after all writers have returned.
+    if path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            name.contains("_dutchman-")
+                && ["_converted", "_failed", "_stopped"]
+                    .iter()
+                    .any(|result| name.ends_with(*result))
+        })
+    {
+        return false;
+    }
     let Ok(file) = std::fs::File::open(path) else {
         return false;
     };
@@ -301,6 +357,93 @@ mod tests {
         ] {
             assert!(!log_name(name));
         }
+    }
+
+    #[test]
+    fn results_rename_only_closed_default_logs_and_keep_crash_names() {
+        let dir = tempfile::tempdir().unwrap();
+        for result in ["converted", "failed", "stopped"] {
+            let running = create_log(dir.path(), "2026-11-02_163710").unwrap();
+            let writer = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&running)
+                .unwrap();
+            drop(writer);
+            let finished = finish_default_log(&running, result);
+            assert_ne!(finished, running);
+            assert!(finished
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .ends_with(&format!("_{result}.jsonl")));
+            assert!(log_name(finished.file_name().unwrap().to_str().unwrap()));
+            assert!(!running.exists());
+            assert!(!unfinished(&finished));
+        }
+        let running = create_log(dir.path(), "2026-11-02_163710").unwrap();
+        assert!(unfinished(&running));
+        assert!(logs(dir.path()).contains(&running));
+        let target = running.with_file_name(
+            running
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .replace("_running", "_failed"),
+        );
+        std::fs::create_dir(&target).unwrap();
+        assert_eq!(finish_default_log(&running, "failed"), running);
+        assert!(running.is_file());
+        let explicit = dir.path().join("chosen.jsonl");
+        std::fs::write(&explicit, "").unwrap();
+        assert_eq!(finish_default_log(&explicit, "converted"), explicit);
+    }
+
+    #[test]
+    fn retention_includes_legacy_and_all_result_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let legacy = dir.path().join("2026-10-29_201500.jsonl");
+        std::fs::write(&legacy, "").unwrap();
+        let legacy_counter = dir.path().join("2026-10-29_201500-1.jsonl");
+        std::fs::write(&legacy_counter, "").unwrap();
+        for result in ["converted", "failed", "stopped", "running"]
+            .into_iter()
+            .cycle()
+            .take(12)
+        {
+            let path = create_log(dir.path(), "2026-11-02_163710").unwrap();
+            if result != "running" {
+                finish_default_log(&path, result);
+            }
+        }
+        assert_eq!(logs(dir.path()).len(), 10);
+        assert!(!legacy.exists());
+        assert!(!legacy_counter.exists());
+    }
+
+    #[test]
+    fn running_log_is_found_at_launch_in_an_isolated_home() {
+        if std::env::var_os("DUTCHMAN_RUNLOG_RECOVERY_CHILD").is_some() {
+            let folder = default_folder().unwrap();
+            let path = create_log(&folder, "2026-11-02_163710").unwrap();
+            std::fs::write(&path, "{\"type\":\"start\",\"file\":\"f1\"}\n").unwrap();
+            assert_eq!(unfinished_default_log(), Some(path));
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "diagnostics::location::tests::running_log_is_found_at_launch_in_an_isolated_home",
+            ])
+            .env("DUTCHMAN_RUNLOG_RECOVERY_CHILD", "1")
+            .env("HOME", dir.path())
+            .env("LOCALAPPDATA", dir.path())
+            .env("XDG_STATE_HOME", dir.path())
+            .status()
+            .unwrap();
+        assert!(status.success());
     }
 
     #[test]

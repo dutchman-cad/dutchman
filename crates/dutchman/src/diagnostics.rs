@@ -13,7 +13,7 @@ pub use dutchman_core::MemberEvent;
 use dutchman_core::{MemberObserver, ProgressEvent, Stage};
 
 mod location;
-pub use location::{default_folder, new_default_log, unfinished_default_log};
+pub use location::{default_folder, finish_default_log, new_default_log, unfinished_default_log};
 use serde_json::{json, Value};
 
 use crate::{anon, choices, ConvertOptions};
@@ -72,6 +72,9 @@ impl Log {
                     .into(),
             );
         }
+        if let Some(notice) = version_notice(path) {
+            eprintln!("{notice}");
+        }
         let file = OpenOptions::new()
             .create(true)
             .append(true)
@@ -101,7 +104,7 @@ impl Log {
             thread: None,
         };
         log.record(json!({
-            "type": "start", "dutchman": env!("CARGO_PKG_VERSION"),
+            "type": "start", "dutchman": crate::BUILD_VERSION,
             "cadmpeg": anon::CADMPEG_VERSION,
             "os": {"family": std::env::consts::FAMILY, "name": std::env::consts::OS,
                    "version": os_version()},
@@ -493,6 +496,7 @@ pub(crate) fn run(
     progress: &(dyn Fn(ProgressEvent) + Send + Sync),
     work: impl FnOnce(&(dyn Fn(ProgressEvent) + Send + Sync), Option<&Log>) -> Value,
 ) -> Value {
+    let owns_log = options.diagnostics_default && options.diagnostics.is_none();
     let mut prepared = options.clone();
     if let Err(message) = prepare(&mut prepared, options.diagnostics_threads) {
         return crate::json::failure(crate::json::CONVERT, crate::json::input(input), &message);
@@ -506,7 +510,12 @@ pub(crate) fn run(
     {
         Ok(log) => log,
         Err(message) => {
-            return crate::json::failure(crate::json::CONVERT, crate::json::input(input), &message)
+            if owns_log {
+                if let Some(path) = &options.diagnostics {
+                    finish_default_log(path, "failed");
+                }
+            }
+            return crate::json::failure(crate::json::CONVERT, crate::json::input(input), &message);
         }
     };
     let callback = |event| {
@@ -515,13 +524,54 @@ pub(crate) fn run(
         }
         progress(event);
     };
-    let report = work(&callback, log.as_ref());
+    let mut report = work(&callback, log.as_ref());
     if let Some(log) = &mut log {
         if let Err(message) = log.end(&report) {
-            return crate::json::failure(crate::json::CONVERT, crate::json::input(input), &message);
+            report =
+                crate::json::failure(crate::json::CONVERT, crate::json::input(input), &message);
+        }
+    }
+    drop(log); // Windows cannot rename an open log; observers have returned with work.
+    if owns_log {
+        if let Some(path) = &options.diagnostics {
+            finish_default_log(
+                path,
+                if report.get("ok") == Some(&Value::Bool(true)) {
+                    "converted"
+                } else {
+                    "failed"
+                },
+            );
         }
     }
     report
+}
+
+/// Version notice for a selected existing log. Read only the bounded first row.
+pub fn version_notice(path: &Path) -> Option<String> {
+    use std::io::{BufRead, Read};
+    let mut row = String::new();
+    std::io::BufReader::new(File::open(path).ok()?)
+        .take(4 << 20)
+        .read_line(&mut row)
+        .ok()?;
+    let first: Value = serde_json::from_str(&row).ok()?;
+    let version = first.get("dutchman")?.as_str()?;
+    // A version is a label, never arbitrary file text in a UI or terminal.
+    if version.is_empty()
+        || version.len() > 100
+        || !version
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'+'))
+    {
+        return None;
+    }
+    (version != crate::BUILD_VERSION).then(|| {
+        format!(
+            "This log is from Dutchman {version}; this is {}.",
+            crate::BUILD_VERSION
+        )
+    })
 }
 
 fn members(input: &Path, salt: &anon::Salt) -> Option<Vec<Value>> {
@@ -691,6 +741,26 @@ mod tests {
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect()
+    }
+
+    #[test]
+    fn selected_log_version_notice_is_advisory_and_bounded() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("selected.jsonl");
+        std::fs::write(&path, "{\"dutchman\":\"0.0.1\"}\nnot a row\n").unwrap();
+        assert_eq!(
+            version_notice(&path),
+            Some(format!(
+                "This log is from Dutchman 0.0.1; this is {}.",
+                crate::BUILD_VERSION
+            ))
+        );
+        std::fs::write(&path, json!({"dutchman": crate::BUILD_VERSION}).to_string()).unwrap();
+        assert!(version_notice(&path).is_none());
+        for row in ["", "not JSON", "{\"dutchman\":\"bad\\ntext\"}"] {
+            std::fs::write(&path, row).unwrap();
+            assert!(version_notice(&path).is_none());
+        }
     }
 
     #[test]

@@ -375,7 +375,10 @@ against the server's working directory, which the client chooses.
 Both `convert` and `convert_all` accept optional `diagnostics` (an absolute file path), or
 `diagnostics_default: true` for a unique timestamp file in the platform's default diagnostics
 folder. They cannot be combined. Explicit files are appended without retention; the default
-folder keeps the newest ten timestamp logs. [The guide](troubleshooting.md#diagnostic-logs-for-unfinished-runs)
+folder keeps the newest ten timestamp logs, including older time-only names. Automatic
+names include the Dutchman version and result: `running` changes to `converted`, `failed`
+or `stopped` after writers close; a crash or rename failure leaves `running`. Explicit
+paths stay exactly as supplied. Reusing another version's log gives an advisory notice. [The guide](troubleshooting.md#diagnostic-logs-for-unfinished-runs)
 lists each OS folder and how to review and send a log.
 
 Batch output defaults to `.sc`; targets before SolidCraft 0.25.1 use `.solidcraft`.

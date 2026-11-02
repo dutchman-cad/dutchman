@@ -207,7 +207,10 @@ fn press_dm(harness: &mut Harness<'static, App>) -> (String, String) {
         egui::OutputCommand::OpenUrl(open) => Some(open.url.clone()),
         _ => None,
     });
-    (copied.unwrap(), opened.unwrap())
+    let copied = copied.unwrap();
+    assert!(copied.contains("Run log: log.jsonl."));
+    assert!(copied.contains("no names or contents from the design"));
+    (copied, opened.unwrap())
 }
 
 #[test]
@@ -228,7 +231,7 @@ fn a_small_failed_file_is_dragged_into_the_dm_with_its_folder_open() {
     let (message, opened) = press_dm(&mut harness);
     assert!(opened.starts_with("https://discord.com/users/"), "{opened}");
     assert!(message.contains("Size: 0.1 MB."), "{message}");
-    assert!(message.ends_with("STEP: unknown."), "{message}");
+    assert!(message.contains("STEP: unknown."), "{message}");
     assert!(!message.contains("broken"), "{message}");
     assert!(!message.contains('\n'), "{message}");
     assert!(SHOWN
@@ -1862,4 +1865,111 @@ fn memory_dialog_screenshots() {
         }
     }
     std::fs::write(dir.join("index.md"), index).unwrap();
+}
+
+#[test]
+fn run_log_buttons_share_the_batch_log_and_review_names_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut harness = screenshot_harness(ThemePreference::Light);
+    let log = dir
+        .path()
+        .join("2026-11-02_163710_dutchman-0.2.6_failed.jsonl");
+    for name in ["first.f3d", "second.f3d"] {
+        let input = dir.path().join(name);
+        std::fs::write(&input, "synthetic refusal").unwrap();
+        harness.state_mut().add_inputs([input]);
+    }
+    harness.state_mut().set_diagnostic_log(log.clone());
+    harness
+        .state_mut()
+        .set_out_dir(dir.path().join("converted"));
+    convert(&mut harness);
+    harness.get_by_label("RESULTS").scroll_to_me();
+    harness.run_steps(8);
+    assert_eq!(harness.query_all_by_label("Show this run's log").count(), 2);
+    assert_eq!(harness.query_all_by_label("Copy log to…").count(), 2);
+    assert_eq!(
+        harness
+            .query_all_by_label(&dutchman_gui::platform::display_path(&log))
+            .count(),
+        2
+    );
+    assert!(log.is_file()); // Explicit paths remain exactly as supplied, even result-like names.
+    harness
+        .query_all_by_label("Review and send report")
+        .next()
+        .unwrap()
+        .click_accesskit();
+    harness.run_steps(8);
+    harness
+        .get_by_label("Send a problem report")
+        .get_by_label(&dutchman_gui::platform::display_path(&log));
+    harness.get_by_label("This run's log contains no names or contents from the design. It is kept locally; Send uploads only the summary or bundle reviewed below.");
+}
+
+#[test]
+#[ignore = "renders the failed run-log card with a GPU"]
+fn run_log_screenshots() {
+    // Isolate recovery notices too, so screenshots never display the owner's log paths.
+    if std::env::var_os("DUTCHMAN_RUNLOG_SCREENSHOT_CHILD").is_none() {
+        let state = tempfile::tempdir().unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "run_log_screenshots"])
+            .env("DUTCHMAN_RUNLOG_SCREENSHOT_CHILD", "1")
+            .env("HOME", state.path())
+            .env("LOCALAPPDATA", state.path())
+            .env("XDG_STATE_HOME", state.path())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let input = work.path().join("synthetic-part.f3d");
+    std::fs::copy(fixture("container_metadata_only.f3d"), &input).unwrap();
+    let mut index = String::new();
+    for (theme, name) in [
+        (ThemePreference::Light, "day"),
+        (ThemePreference::Dark, "night"),
+    ] {
+        let mut harness = screenshot_harness(theme);
+        harness.state_mut().add_inputs([input.clone()]);
+        harness.state_mut().set_out_dir(work.path().join(name));
+        harness.state_mut().set_verify(false);
+        harness.state_mut().set_diagnostic_log(
+            work.path()
+                .join("2026-11-02_163710_dutchman-0.2.6_failed.jsonl"),
+        );
+        convert(&mut harness);
+        assert_eq!(harness.state().rows()[0].status, Status::Failed);
+        harness
+            .get_by_label(dutchman::present::REPORT_BUTTON)
+            .scroll_to_me();
+        harness.run_steps(8);
+        for label in [
+            "Show this run's log",
+            "Copy log to…",
+            dutchman::present::REPORT_BUTTON,
+        ] {
+            let rect = harness.get_by_label(label).rect();
+            assert!(
+                rect.left() >= 0.0
+                    && rect.right() < 1100.0
+                    && rect.top() > 60.0
+                    && rect.bottom() < 730.0,
+                "{label}: {rect:?}"
+            );
+        }
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "run-log-failed",
+            name,
+            "Failed synthetic conversion with its own log selected or copied.",
+        );
+    }
+    std::fs::write(dir.join("run-logs.md"), index).unwrap();
 }

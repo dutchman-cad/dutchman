@@ -9,7 +9,12 @@ before trying again: `--diagnostics-default`, or `--diagnostics PATH` for an exp
 Unlike this completed-batch report, [`dutchman.diagnostics/1`](json.md#dutchmandiagnostics1)
 writes progress and resource heartbeats during the run, with no messages at all. A run using
 both reports shares this report's salt and file ids. The desktop app can save diagnostics
-and reopen their folder after a stopped run or on its next launch.
+and show or copy the exact run's log from each result card, after a stopped run or on its
+next launch. Automatic names include UTC date and time, Dutchman version and result
+(`running`, `converted`, `failed` or `stopped`); they never include design names. Explicit
+`--diagnostics PATH` files keep their chosen path. Report review names the run's log, but
+uploads only the summary or bundle reviewed there. The Discord DM names that same log;
+you choose whether to attach it. The log has no names or contents from the design.
 
 ## What it never holds
 

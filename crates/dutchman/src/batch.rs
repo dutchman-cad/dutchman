@@ -126,9 +126,35 @@ pub fn convert_all_with_progress(
     settings: &Settings,
     on_progress: &(dyn Fn(&Path, dutchman_core::ProgressEvent) + Send + Sync),
 ) -> Result<Value, String> {
+    let owns_log = options.diagnostics_default && options.diagnostics.is_none();
     let mut prepared = options.clone();
     crate::diagnostics::prepare(&mut prepared, workers(settings.jobs))?;
-    let options = &prepared;
+    let result = convert_all_prepared(inputs, out_dir, &prepared, settings, on_progress);
+    if owns_log {
+        if let Some(path) = &prepared.diagnostics {
+            crate::diagnostics::finish_default_log(
+                path,
+                if result
+                    .as_ref()
+                    .is_ok_and(|r| r.get("ok") == Some(&Value::Bool(true)))
+                {
+                    "converted"
+                } else {
+                    "failed"
+                },
+            );
+        }
+    }
+    result
+}
+
+fn convert_all_prepared(
+    inputs: &[PathBuf],
+    out_dir: &Path,
+    options: &ConvertOptions,
+    settings: &Settings,
+    on_progress: &(dyn Fn(&Path, dutchman_core::ProgressEvent) + Send + Sync),
+) -> Result<Value, String> {
     if options.to == crate::OutputFormat::Dxf {
         return Err(
             "DXF page output uses dutchman convert --to dxf; batch and watch are not supported yet"
