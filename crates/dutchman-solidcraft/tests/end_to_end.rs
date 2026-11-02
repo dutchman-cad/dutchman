@@ -92,7 +92,7 @@ fn converts_to_an_import(file: &str) {
     assert_eq!(container, br#"{"format":"solidcraft-container/1"}"#);
 
     let (step, method) = entry(&mut archive, &blob);
-    assert_eq!(method, CompressionMethod::Stored);
+    assert_eq!(method, CompressionMethod::Deflated);
     let digest: String = Sha256::digest(&step)
         .iter()
         .map(|byte| format!("{byte:02x}"))

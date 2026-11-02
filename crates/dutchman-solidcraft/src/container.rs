@@ -41,7 +41,7 @@ impl Container {
     pub(crate) fn add_step(&mut self, step: &[u8]) -> Result<String, Error> {
         let name = format!("blobs/{}.step", hex(&Sha256::digest(step)));
         if !self.blobs.contains(&name) {
-            self.part(&name, step, CompressionMethod::Stored)?;
+            self.part(&name, step, CompressionMethod::Deflated)?;
             self.blobs.push(name.clone());
         }
         Ok(name)
