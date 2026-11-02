@@ -8,6 +8,249 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
+## 0.2.6 (2026-11-02)
+
+### Formats
+
+- Convert SolidWorks assemblies (`.sldasm`) as placed parts and nested sub-assemblies.
+  Resolve external files case-insensitively beside the assembly and through project search
+  folders, protect against reference cycles, and report missing parts and unavailable
+  referenced configurations while keeping the parts that can be read.
+
+### History
+
+- A writer that keeps an unchecked history hidden (`hide_unverified_history`) now does so for
+  each part of an assembly too: the part's original geometry stays visible, and its mapped
+  history goes into a hidden "Editable history (unverified)" component.
+- Empty regions without shells no longer consume body appearance targets on stored base
+  features. Their STEP shapes and names stay aligned, preserving later editable features.
+  Other shape-count mismatches omit explicit appearance targets while keeping history.
+- A cylindrical face with its own colour (holes, bosses, rounded edges) now gets that colour in
+  the written design, placed by a point on the face. Before, only planar faces did and the
+  colours of curved faces were reported as left out.
+- Delete face maps to SolidCraft's delete-face feature when cadmpeg resolves the faces in the
+  feature's own input topology (planar and cylindrical faces, with the heal setting). When the
+  selection is still native, the history note now says so instead of "not mapped yet".
+- Extrudes ending at a resolved plane parallel to their sketch now keep editable history
+  before any body-building feature, including placed work-plane ends. Plane ends after
+  earlier geometry name the missing input face geometry; tilted planes and vertex ends
+  also name their unsupported case.
+- Hide partial and unverified editable-history copies from the History bar for targets of SolidCraft 0.30 or newer; their features remain editable in the Browser.
+- Extrudes of a face as it was earlier in the timeline ("extrude this face") now keep editable
+  history. The face is rebuilt as a sketch of its boundary from the edge geometry the design
+  keeps for it, and checked against the face SolidCraft rebuilds before the extrude, which also
+  decides which side the extrude runs on. Faces whose boundary is not lines and circular arcs,
+  or whose edge geometry is missing, still stop the history and say why.
+- Keep history checking on by default and skip checks that do not fit in free memory, reporting the reason while keeping the original shape usable and retained history unverified. Include checking in memory estimates, bound automatic assembly workers by part complexity, and offer a desktop override for the memory guard.
+- Offset datum planes resolve signed distances through earlier datum planes, resolved
+  support frames or a unique planar face. Independently placed sketch consumers can
+  continue when the source support is missing; other unresolved consumers remain guarded.
+- Body splits can use the retained offset plane frame.
+- A parameter you edit now reaches more of the geometry it sets. An extrude's distance and a
+  partial revolve's angle keep the parameter that sets them instead of the value it had; a
+  sketch on the end of an earlier feature sits at the height that sketch's dimensions give
+  (so a socket cut follows the screw's length); a ring drawn as an outer and an inner loop
+  keeps its hole (an inner diameter parameter changes it); and a sketch with a parameter
+  whose last loose point or two the source left free keeps that point where it was drawn, so
+  one edit cannot fling it across the profile.
+- Keep point-on-curve coincidences, point-to-line and finite-endpoint dimensions, and
+  parallel-line spacing, with parameter expressions driving the editable geometry.
+- Convert cosmetic ISO metric thread annotations with resolved diameter, pitch, length, and
+  cylindrical face geometry, including sizes without a source designation.
+- Tie a sketch profile that meets the sketch origin to that origin when the source does, so
+  a parameter edit no longer slides the profile across a revolve axis.
+- An extrude, revolve or other feature that takes a whole sketch, or a list of its profile loops,
+  now treats loops inside other selected loops as holes. A shim drawn as two concentric circles
+  is written as a ring instead of a filled disc, and a sketch of nested outlines (a logo plate)
+  keeps its cut-outs, so these files no longer lose their editable history at the replay check.
+- Shells with historical input-face boundaries map thickness, inward or outward direction
+  and a single earlier body to SolidCraft. Unresolved input selections, final-body faces,
+  unsupported offset modes and corner continuations remain specific history blockers.
+- Fusion 3D sketches (spatial sketches) now map to SolidCraft 3D sketches, so the history
+  continues after them instead of stopping at "spatial_sketch is not mapped yet". Lines,
+  exact arcs, circles, splines and points are written at their solved positions, and a
+  sweep path or guide rail picked from their curves resolves to them. Constraints, links to
+  model edges and vertices, surfaces and source-native geometry are reported as not carried.
+- Stored-geometry features (Inventor stored bodies, Fusion base bodies, and other formats'
+  directly stored geometry) import exactly the bodies they output, solids and sheets, at their
+  place in the timeline; a stored-geometry feature with no output bodies is reported as holding
+  none rather than guessed.
+- Sketch curves that no closed profile loop uses (open segments, lines laid across a
+  region) are now written as construction when every feature using the sketch selects
+  whole-loop regions and none names the curve, so they no longer divide the region the
+  extrude, revolve or plate selects. An Info note counts them.
+- Through-all extrusion cuts stop mapping when no earlier feature names a body to cut,
+  explaining the missing producer before SolidCraft replay. Neutral ordinals continue to
+  control replay order even when the feature records are stored in another order.
+- A writer that cannot check history against the original (the SolidCraft importer plugin,
+  with no SolidCraft CLI in its sandbox) can keep the mapped history in a hidden
+  "Editable history (unverified)" part, with the original geometry as the visible model.
+
+### Assemblies
+
+- Reduce conversion time for assemblies with many coloured faces, including with the fast preset.
+- Designs compress their stored geometry, so a large assembly stays well under SolidCraft's design file limit: a public 88-component assembly went from 333 MB to 10 MB.
+- Joints into a Fusion component stored at the identity move the whole component only when internal joints or file poses bind the rest of what it holds to the joined part, the joints that reach into it agree on where it goes, and the file does not already place both joined parts. An outer joint that places a part inside from something placed (a part joined to the origin) keeps that part where it puts it. RailCore II 300ZL and the Voron 2.4 keep every occurrence where 0.2.5 put them; the robot arm's gripper still moves onto the arm.
+- Mirrored placements retain reflected component geometry in shared mirrored definitions,
+  including nested reflections. Mirrored copies keep imported geometry and report history
+  and affected joints left out. Tiny placement drift is corrected; non-finite, scaled, or
+  sheared placements beyond tolerance are left out with a note so the design can open.
+  Mirrored geometry is written into the carriers (points, curves, surfaces, free-form
+  poles) rather than as a reflecting transform, so SolidCraft keeps every mirrored body.
+- A component whose instances hold different components, or the same components at different
+  placements, now converts as an assembly instead of one flat import. It is written as one
+  definition per layout (`<component>`, `<component> (2)`, ...), each instance at its own
+  placement, and the report notes how many components were written as how many definitions.
+  Instances with the same layout, within numeric noise, still share one definition, and mirrored
+  placements combine with it.
+- A component a joint places now carries the parts the file poses inside it. Before, an inserted
+  design joined to the rest of an assembly by a part inside it was moved to that joint, but the
+  parts the file poses inside it stayed at their old world positions, so they were left away from
+  the rest of the design while their neighbours moved.
+- A converted assembly writes each sketch under the part that owns it instead of in the
+  assembly root, once per part however many times it is placed, including sketches of a
+  component that holds no bodies. Sketches with no owner, such as those of the design's own
+  root component, stay in the root, and the report counts them.
+  Sketches a part's history builds nothing on, and sketches the source hides, start hidden.
+- Reduce memory use when converting SolidWorks assemblies by releasing saved display meshes
+  and sharing reads of the saved active configuration across sibling sub-assemblies.
+- Convert top-level SolidWorks assemblies in folders and ZIP projects with their nested assemblies and parts, then convert unused parts.
+- History is shorter on converted assemblies. A part repeated across sub-assemblies or layouts
+  is one definition placed in each, and "Original geometry (imported)" is left out when a
+  part's base features already hold every one of its bodies. A kept history of base features
+  alone gets no hidden "Editable history (partial)" component.
+- Joints to parts inside identity-placed Fusion components place the whole component,
+  keeping its internal joints together. Components already held by a file pose or a joint
+  stay in place, and conflicting joints remain suppressed.
+
+### Desktop app
+
+- Show copied-report notices in the success colour and clear them on the next action.
+- Offer only available report choices, use plain consent wording, and show Retry after a failed send.
+- Keep the app header during folder checks, clarify the part selector, and keep the page scrollbar visible to reach every private-send option.
+- A failed file's card now shows how to send the file privately: join the Discord server, then
+  one button copies a one-line message and opens Dutchy's DM. A file within Discord's limit is
+  dragged in, with its folder open; for a larger one, Dutchy replies with a private upload
+  link. **Report this on GitHub** is now **Report anonymously on GitHub**, and the report id
+  matches the diagnostic log. The web app's failed cards show the same steps.
+- **Report this on GitHub** opens a short link, so GitHub no longer answers it with a 406 when you are signed in. The anonymous report is copied for you to paste into the form.
+- The desktop and web apps show **Dutchman Convert** with the running version beside it in
+  their top row, at every window size. A nightly shows its nightly version.
+
+### Command line and install
+
+- `dutchman-core` has a Cargo feature per input format (all on by default, in `formats`), so a
+  build that reads only some formats, such as the SolidCraft importer plugin, links only their
+  cadmpeg codecs.
+- New `dutchman diagnose --narrow FILE` runs the whole narrowing by itself: it ranks the parts,
+  isolates a failing part, alone and then with its neighbours, bisects its history to the first
+  failing feature, and records the failure's signature (kind of feature, options, profile shape,
+  and error code; never names, paths, or real dimensions). Each step has its own limits, it says
+  `step 3 of 5: narrowing part 17 (feature 41 of 80)` as it goes, and running it again resumes
+  after a crash or a reboot.
+- New `dutchman diagnose --same-failure small.f3d` converts your small rebuild and says whether
+  it fails the same way, and `--make-report` then makes one zip with a prefilled issue link.
+  Nothing is sent: the zip stays on your machine until you send it.
+- `dutchman convert FILE --part N --stop-at-feature K` converts a part with its history cut after
+  feature K.
+- New `dutchman diagnose FILE`: for a large design that takes hours, runs out of memory, or
+  fails in one part, it converts the design part by part on your machine, each part under a
+  time and memory limit (`--time-limit`, `--memory-limit`), and writes a ranked report that
+  names parts by number only (`diagnose/report.json`, `report.txt`; `local-key.json` maps the
+  numbers back to your part names and stays private). A part that hangs, crashes or runs out of
+  memory costs only that part, and the report is written as it goes.
+- `dutchman convert FILE --part N` (with `--with-children` for a sub-assembly) converts only
+  part N, as diagnose numbers it, so a failure that took hours to reach shows in seconds. A
+  number the design does not have is refused with the range it does have.
+- A conversion that cannot fit in the machine's free memory now also stops once the design is
+  read, instead of running for hours, naming the largest parts by number; `--no-memory-check`
+  still converts anyway.
+- `dutchman repro` goes straight to the failing part of a diagnose report (found in `--out`, or
+  given with `--from-diagnose`), and `next-steps.md` names the part number and the kind of
+  feature to rebuild.
+- **`dutchman doctor <folder>`** checks a whole folder or zip on your machine, with CPU and memory
+  budgets, private checkpoints so it can resume, and an anonymous report. Repeat failures are
+  grouped by signature. Nothing is sent.
+- **`dutchman diagnose --step`** compares a design with its matching STEP export, worst part first.
+  A STEP beside the file is found by itself. The comparison limits are advisory for now.
+- The desktop app can check a folder and take a matching STEP, and the MCP server adds `doctor`,
+  `diagnose`, and `compare_step`.
+- Convert project ZIPs and folders directly, with private bounded ZIP extraction, a
+  project plan, top-level Inventor assemblies and unused parts, and STEP fallback for
+  same-name native files. Report unread SolidWorks assemblies while converting their parts.
+- Select a new output folder beside dropped inputs, show Inventor settings only when
+  applicable, hide unknown memory, and prefer the newest automatically found SolidCraft CLI.
+
+- Show the project inventory before conversion. Web folder uploads preserve their relative
+  paths and share the bounded upload budget; results show the project plan.
+- Ignore `~$` lock files in project planning for every CAD format, excluding them from
+  conversion, failure and skipped-file counts.
+- Bound ZIP directory metadata and declared entry counts before allocation, using the
+  same preflight for project extraction and conversion estimates.
+- Recognize SolidCraft 0.30 as the newest known minor and default target without an
+  installed CLI. The supported window is 0.18–0.30; CI checks the newest 0.30 patch
+  and the pinned 0.18.2 release. Designs keep format 23, which 0.30 and older targets open.
+
+### Reports
+
+- Anonymous diagnostic logs include failure stages, error categories, model check counts,
+  available referenced curve kinds, and timed decoder preparation phases. Geometry check
+  failures stop without repeating the decode; history recovery rechecks the model in memory.
+- Group repeated stderr loss notes with a count, including appearance bindings on faces.
+  Keep individual details in --verbose, --log, and JSON reports.
+- Diagnosis now includes numbered rebuild recipes for Fusion, Inventor, SolidWorks and
+  FreeCAD, using round starting sizes and the anonymous failure signature. Unknown feature
+  kinds get a generic recipe. A versioned release list can identify exact known failures
+  before further narrowing and show a workaround or next-version fix advice.
+- Failed desktop cards now offer **Diagnose this file**, with step progress, checkpoint
+  resume, the recipe, **Check my small file**, and local **Make the report**.
+- MCP adds anonymous `diagnose`, `diagnose_narrow`, `convert_part`, `stop_at_feature`,
+  `same_failure` and `make_report` tools, with a paste-in troubleshooting prompt. Reports
+  stay local until the user chooses to share them.
+- Keep one millimetre placement differences detectable on large bodies by capping the advisory bounds and placement allowance at 0.5 mm.
+- Check assembly placements and compare bodies in the selected joint pose so intentional joint placement does not produce look-wrong findings.
+- Flag toroidal faces without trim loops when they share a shell with other faces; allow whole tori in their own shells.
+- Count empty leaf placements separately from placements with geometry in assembly
+  summaries, desktop and web cards, JSON, and doctor. Empty leaves report Degraded
+  losses with anonymous part numbers; assembly holders of children are not empty.
+- Report a counted Degraded geometry loss when solid regions convert to open sheets.
+- Stop counting a possible ten-second macOS version-probe timeout as normal conversion
+  work, and retain fractional assembly estimates in seconds_exact.
+- Explain Fusion material losses as “Materials and appearances were not carried over.”
+- Preserve the largest part-worker count when combining reports from assembly members.
+  Clarify that worker counts exclude threads inside SolidCraft checks.
+- A failed file's card can show you what a report holds and ask your consent before sending it.
+  It sends the anonymous summary when a report endpoint is configured, and says "sent" only after
+  a matching receipt. If sending fails, the report stays on your machine.
+- Linking a report to Discord is optional, and an update can tell you it fixes a report you sent.
+- The MCP server adds `report_preview` and `report_submit` for reviewing and sending reports.
+- Sent reports identify the source app from native formats instead of always reporting unknown.
+- Cut, prove and shrink private reproduction bundles for model check failures, with local gzip storage and a manifest of retained records and sizes.
+- Add diagnose --bundle and anonymous MCP extract_repro and verify_repro tools; offer summary or the private-send card when no proven bundle is available.
+- Keep report requests below 25 MiB including multipart overhead, show bundle Send when available, and retain source-app metadata.
+- Read CADIR 11 feature histories while continuing to refuse unknown newer versions.
+- `dutchman repro` and the MCP `repro` tool make a local minimum-reproduction kit with
+  anonymous check facts, private ordinal-to-name lookup, and rebuild instructions.
+  Structured check failures are narrowed through independent archive members and CADIR
+  subsets without sharing the original design.
+
+### Docs
+
+- The README leads with download, use, and what converts, and its formats list is a table.
+  The long guide is split into pages: install, the desktop app, the command line, choosing
+  what to keep, formats, feature history, and troubleshooting. Old guide links still land
+  on a pointer to the new page.
+- `dutchman formats --markdown` prints the formats list as a Markdown table.
+- Explain macOS archive download, checksum verification, installation, and first run, and
+  make quarantine removal quiet when no flag is present.
+- Link the disk image’s first-opening instructions to installation and command-line help.
+- Explain how to make a minimum reproduction when the original CAD file must stay private,
+  with a step-by-step skill procedure, a paste-ready AI prompt and a generated synthetic
+  example of 88 use-curve range findings.
+- A manually dispatched workflow converts the CAD files of public, openly licensed repositories
+  on GitHub's free runners and reports what converted, what failed, and which layer owns each
+  failure. See [Releasing](docs/releasing.md#public-corpus-sweep).
+
 ## 0.2.5 (2026-10-30)
 
 ### Formats

@@ -18,7 +18,7 @@ Dutchman Convert turns native CAD files into [SolidCraft](https://github.com/tan
 designs (`.sc`). This page takes you from install to an open design in four steps: install, convert, read the report, and open the result; the
 [docs list](../README.md#docs) has everything else.
 
-What changed in each release: the [0.2.5 release notes](../release-notes/0.2.5.md) and the
+What changed in each release: the [0.2.6 release notes](../release-notes/0.2.6.md) and the
 [changelog](../CHANGELOG.md).
 
 A design stores its geometry compressed, so a large assembly stays small: SolidCraft refuses design files over its limit (256 MB by default).

@@ -3,7 +3,7 @@
   <img alt="Dutchman Convert" src="assets/logo/dutchman-lockup-night.png#gh-dark-mode-only" width="252">
 </h1>
 
-Converts Fusion, Inventor, SolidWorks, FreeCAD, CATIA, Rhino, Creo View, ACIS, and STEP designs into editable SolidCraft designs.
+Converts Fusion, Inventor, SolidWorks, FreeCAD, CATIA, Rhino, Creo View, ACIS, and STEP designs into SolidCraft designs, keeping editable features where they map.
 
 <a href="https://dutchman-cad.github.io/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-day.png&alt=Dutchman%20Convert%20in%20Day%20theme%3A%20a%20CC0%20FreeCAD%20bracket%20converted%2C%20with%20its%20mapped%20feature%20history%20and%20Open%20in%20SolidCraft"><img alt="Dutchman Convert in Day theme: a CC0 FreeCAD bracket converted, with its mapped feature history and Open in SolidCraft" src="docs/images/readme-result-day.png#gh-light-mode-only" width="100%"></a>
 <a href="https://dutchman-cad.github.io/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-night.png&alt=Dutchman%20Convert%20in%20Night%20theme%3A%20the%20same%20CC0%20bracket%20conversion%20and%20its%20result%20card"><img alt="Dutchman Convert in Night theme: the same CC0 bracket conversion and its result card" src="docs/images/readme-result-night.png#gh-dark-mode-only" width="100%"></a>
@@ -47,12 +47,14 @@ Every download holds the desktop app (`dutchman-gui`), the `dutchman` command, a
 
    <a href="https://dutchman-cad.github.io/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-day.png&alt=The%20CC0%20bracket%27s%20result%3A%20mapped%20feature%20history%20and%20Open%20in%20SolidCraft"><img alt="The CC0 bracket's result: mapped feature history and Open in SolidCraft" src="docs/images/readme-result-day.png" width="100%"></a>
 
-## What's new in 0.2.5
+## What's new in 0.2.6
 
-- **Whole Fusion assemblies, part by part:** each component keeps its own features, sketches, and parameters, parts stay where the design puts them, and every body keeps its colour.
-- **Much faster on big assemblies:** parts are prepared on several cores, with free memory deciding how many.
-- **Choose what to keep, with an estimate first,** and an **anonymous diagnostic log** for any run.
-- **Updates from the app,** and a pill naming the SolidCraft it found.
+- **SolidWorks assemblies:** placed parts and nested sub-assemblies, with missing references reported.
+- **Whole projects:** folders and ZIPs, a project inventory, and matching STEP fallbacks.
+- **Local diagnosis without an AI assistant:** isolate a failure, check a small rebuild, or check a folder with `doctor`.
+- **More editable geometry:** better placements, parameter expressions, and shorter assembly timelines.
+- **Review before sharing:** anonymous summaries, private-file sharing steps, and consent before sending.
+- **SolidCraft 0.30:** the newest known target, with support back to 0.18.2.
 
 [Release notes](https://github.com/dutchman-cad/dutchman/releases/latest) · [Changelog](CHANGELOG.md)
 
@@ -108,7 +110,7 @@ or send a file that converts wrong, with its STEP export, to Dutchy in
 
 ## Use from scripts and AI agents
 
-`dutchman --json` prints one machine-readable report, and `dutchman-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server on stdio with four tools, each returning the same report as the matching `--json` command:
+`dutchman --json` prints one machine-readable report, and `dutchman-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server on stdio with conversion, diagnosis, and reporting tools. The core conversion tools return the same reports as their matching `--json` commands:
 
 | Tool | Arguments | Returns |
 |---|---|---|

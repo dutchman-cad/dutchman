@@ -108,11 +108,11 @@ available for Homebrew and other installations that select a processor. The READ
 table links the latest release's universal archive and disk image.
 
 Download the archive and its `.sha256` file, check one against the other, then unpack it and
-put the programs on your `PATH`. On Linux x86_64, for release 0.2.5 (set `VERSION` and the
+put the programs on your `PATH`. On Linux x86_64, for release 0.2.6 (set `VERSION` and the
 target for another release or machine):
 
 ```sh
-VERSION=0.2.5 TARGET=x86_64-unknown-linux-gnu
+VERSION=0.2.6 TARGET=x86_64-unknown-linux-gnu
 base=https://github.com/dutchman-cad/dutchman/releases/download/v$VERSION
 curl -fLO "$base/dutchman-$VERSION-$TARGET.tar.gz"
 curl -fLO "$base/dutchman-$VERSION-$TARGET.tar.gz.sha256"
@@ -171,7 +171,7 @@ Expand-Archive dutchman-VERSION-x86_64-pc-windows-msvc.zip -DestinationPath .
 
 ## Channels: stable and nightly
 
-- **Stable** releases (`v0.2.5`, …) are the ones to use. Each is built against one tested
+- **Stable** releases (`v0.2.6`, …) are the ones to use. Each is built against one tested
   commit of cadmpeg, the library that reads the native files.
 - **Nightly** is one pre-release, [`nightly`](https://github.com/dutchman-cad/dutchman/releases/tag/nightly),
   rebuilt each day from Dutchman's latest code against cadmpeg's latest code, and published
