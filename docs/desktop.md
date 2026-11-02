@@ -51,7 +51,7 @@ and times below 60 seconds show **under a minute**, just as in the CLI. **M GB o
 once when the machine's free memory can be read. These are estimates, not limits or promises; an unavailable estimate
 leaves no label. Planning and estimation run in the background.
 
-Before a conversion or retry, Dutchman checks each file's estimate against free memory.
+Before a conversion or retry, Dutchman checks each file's estimate, the figure on its row, against free memory.
 If one is too large, a dialog shows only its file name, without the folder path:
 “`<file name>` may use about `<N GB>` of memory while converting. Your computer has about
 `<M GB>` free, so it may not have enough.” A separate line advises using the lighter preset

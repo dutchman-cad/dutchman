@@ -193,15 +193,14 @@ pub(crate) fn memory_check_with(
     if options.no_memory_check || options.preset == Preset::Fast {
         return MemoryCheck::Ok(estimate);
     }
-    let (Some(full), Some(conversion), Some(available)) = (
-        estimate,
-        conversion_estimate(input, &choices, options),
-        available,
-    ) else {
+    let (Some(conversion), Some(available)) =
+        (conversion_estimate(input, &choices, options), available)
+    else {
         return MemoryCheck::Ok(estimate);
     };
-    // Display includes checking, but a check that cannot fit is skipped after reading.
-    // It must not prevent conversion or consume Standard's history-retention budget.
+    // A check that cannot fit is skipped after reading, so it must not prevent conversion or
+    // consume Standard's history-retention budget. The warning names the figure compared here,
+    // the same one a file's row shows.
     if conversion.peak_bytes <= available {
         return MemoryCheck::Ok(estimate);
     }
@@ -213,7 +212,7 @@ pub(crate) fn memory_check_with(
         }
     }
     MemoryCheck::TooBig {
-        estimate: full,
+        estimate: conversion,
         available,
         lighter: options.preset.lighter(),
     }
@@ -1016,6 +1015,23 @@ mod tests {
         let prepared = options.prepare_writer(&input, Some(conversion.peak_bytes));
         assert!(prepared.history_note.is_none());
         assert!(prepared.check_history_memory);
+    }
+
+    #[test]
+    fn a_memory_warning_names_the_figure_it_compared_and_the_row_shows() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("synthetic.ipt");
+        std::fs::write(&input, [0u8; 1024]).unwrap();
+        let options = crate::ConvertOptions::default();
+        let choices = options.choices();
+        let row = estimate(&input, &choices).unwrap();
+        let conversion = conversion_estimate(&input, &choices, &options).unwrap();
+        assert_eq!(row.peak_bytes, conversion.peak_bytes);
+        let MemoryCheck::TooBig { estimate, .. } = memory_check_with(&input, &options, Some(0))
+        else {
+            panic!("the conversion does not fit in no memory");
+        };
+        assert_eq!(estimate.peak_bytes, row.peak_bytes);
     }
 
     #[test]
