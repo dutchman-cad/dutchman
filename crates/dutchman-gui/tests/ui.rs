@@ -1020,8 +1020,14 @@ fn readme_screenshots() {
 #[test]
 fn solidworks_folder_shows_the_plan_and_hides_inventor_settings() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("cube.sldprt"), b"synthetic").unwrap();
-    std::fs::write(dir.path().join("main.sldasm"), b"synthetic").unwrap();
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../dutchman-core/tests/fixtures");
+    for (source, name) in [
+        ("solidworks_cube.sldprt", "solidworks_cube.sldprt"),
+        ("placed_cubes.sldasm", "main.SLDASM"),
+    ] {
+        std::fs::copy(fixtures.join(source), dir.path().join(name)).unwrap();
+    }
+    std::fs::write(dir.path().join("~$main.SLDASM"), b"lock").unwrap();
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1100.0, 1200.0))
         .build_eframe(|cc| App::new(cc));
@@ -1030,7 +1036,9 @@ fn solidworks_folder_shows_the_plan_and_hides_inventor_settings() {
     loop {
         harness.run_steps(2);
         if harness
-            .query_all_by_label_contains("SolidWorks assemblies not read yet")
+            .query_all_by_label_contains(
+                "1 assembly, 1 part, 0 STEP files; converting assemblies with their parts",
+            )
             .count()
             > 0
         {
@@ -1046,6 +1054,17 @@ fn solidworks_folder_shows_the_plan_and_hides_inventor_settings() {
         0
     );
     assert!(harness.query_by_label("Choose an output folder.").is_none());
+    harness
+        .state_mut()
+        .set_out_dir(dir.path().join("converted"));
+    harness.state_mut().set_verify(false);
+    convert(&mut harness);
+    assert_eq!(harness.state().rows().len(), 1);
+    let row = &harness.state().rows()[0];
+    assert_eq!(row.status, Status::Converted);
+    assert_eq!(row.input.file_name().unwrap(), "main.SLDASM");
+    let report = row.report.as_ref().unwrap();
+    assert_eq!(report["completeness"]["left_out"], serde_json::json!([]));
 }
 
 #[test]

@@ -16,9 +16,9 @@ is optional, defaulting beside the first input. ZIP extraction uses a private te
 folder, with a 10,000-entry and 4 GiB limit; traversal paths are refused, links are skipped,
 and extracted files are cleaned up after the run.
 
-The plan selects top-level Inventor assemblies and parts no assembly uses. SolidWorks
-assemblies are not read yet and remain failure results, while their parts convert
-independently. A STEP export beside a same-name native file is used only if native
+The plan reads Inventor and SolidWorks assembly references to select assemblies no other
+assembly in the project references. These convert with parts resolved inside the project,
+followed by parts no assembly uses. Reference cycles remain visible for error reporting. A STEP export beside a same-name native file is used only if native
 conversion fails. The batch report's `plan` describes its conversion list;
 `native_failure` retains the native report when a STEP fallback was attempted.
 

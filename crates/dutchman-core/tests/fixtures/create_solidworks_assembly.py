@@ -18,21 +18,29 @@ def reference(key, name, transform, suppressed="NO"):
             f'swIsVirtualComponent="NO" swTransform="{transform}"/>')
 
 
-def generate():
+def generate(part_path=r"W:\authored\SOLIDWORKS_CUBE.SLDPRT", part_type="PART", embedded=False):
+    type_attr = f' swDocType="{part_type}"' if part_type else ""
     references = "".join([
         reference(4, "First", IDENTITY),
         reference(7, "Second", SHIFTED),
         reference(10, "Suppressed", IDENTITY, "YES"),
         reference(11, "Mirrored", MIRRORED),
     ])
+    extra_file = extra_model = children = ""
+    if embedded:
+        extra_file = r'<swFile id="13" swDocType="PART" swPath="W:\authored\SOLIDWORKS_CUBE.SLDPRT"/>'
+        extra_model = '<swModel id="12" swName="Cube" swConfigurationName="Default" swFileRef="13"/>'
+        children = reference(14, "Leaf", IDENTITY).replace('swModelRef="8"', 'swModelRef="12"')
+    child_model = '<swModel id="8" swName="Cube" swConfigurationName="Default" swFileRef="9"'
+    child_model += f'>{children}</swModel>' if embedded else '/>'
     xml = rf'''<?xml version="1.0" encoding="UTF-8"?>
 <swSolidWorks xmlns="http://www.solidworks.com/sw2003/schema" swVersion="17000">
  <swHeader>
   <swFile id="3" swDocType="ASSEMBLY" swPath="W:\authored\Assembly.SLDASM"/>
-  <swFile id="9" swDocType="PART" swPath="W:\authored\SOLIDWORKS_CUBE.SLDPRT"/>
+  <swFile id="9"{type_attr} swPath="{part_path}"/>{extra_file}
  </swHeader>
  <swModelList>
-  <swModel id="8" swName="Cube" swConfigurationName="Default" swFileRef="9"/>
+  {child_model}{extra_model}
   <swModel id="2" swName="Assembly" swConfigurationName="Default" swFileRef="3">
    {references}
   </swModel>
@@ -59,3 +67,11 @@ def generate():
 
 if __name__ == "__main__":
     Path(__file__).with_name("placed_cubes.sldasm").write_bytes(generate())
+
+    # An external assembly reference without an embedded component tree.
+    Path(__file__).with_name("nested_cubes.sldasm").write_bytes(
+        generate(r"W:\authored\placed_cubes.sldasm", None))
+
+    # A local holder with its own embedded component tree and a saved assembly copy.
+    Path(__file__).with_name("local_cubes.sldasm").write_bytes(
+        generate(r"W:\authored\placed_cubes.sldasm", "ASSEMBLY", embedded=True))

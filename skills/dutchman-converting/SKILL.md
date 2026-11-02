@@ -603,8 +603,8 @@ synthetic example and a prompt usable with any chat assistant or MCP client.
 ## Project inputs
 
 `convert_all` accepts ZIP projects in `inputs`, using private bounded extraction (10,000
-entries, 4 GiB). It selects top-level Inventor assemblies and unused parts; SolidWorks
-assemblies are not read yet and their parts convert independently. Adjacent same-name
+entries, 4 GiB). It reads Inventor and SolidWorks assembly references, converts assemblies
+no other assembly references with their project parts, then converts unused parts. Adjacent same-name
 STEP exports are fallbacks when native conversion fails. Read the batch `plan` and the
 fallback result's `native_failure` when explaining outcomes. On the command line,
 `dutchman convert project.zip` or a folder works directly and defaults to a new

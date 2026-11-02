@@ -10,8 +10,8 @@ the ZIP directory is allocated; entry budgets count every declared entry.
 
 Folders and project ZIPs can be passed directly to `dutchman convert` or `convert-all`.
 The default output is a new `Project (SolidCraft)` folder beside the input. Project planning
-selects top-level Inventor assemblies and unused parts. SolidWorks assemblies are not read
-yet, so their parts convert independently. Same-name adjacent STEP exports are fallbacks
+selects top-level Inventor and SolidWorks assemblies by their references, converts them
+with parts resolved inside the project, then converts parts no assembly uses. Same-name adjacent STEP exports are fallbacks
 for failed native conversions. See [Project inputs](command-line.md#project-inputs).
 
 Dutchman Convert turns native CAD files into [SolidCraft](https://github.com/tangency-labs/solidcraft)

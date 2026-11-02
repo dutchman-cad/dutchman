@@ -142,3 +142,11 @@ path, with one rotated and translated placement. Two more references are suppres
 mirrored, respectively, to exercise cadmpeg's losses. No real assembly supplied its
 names, geometry, structure or placements. Regenerate with `python3
 crates/dutchman-core/tests/fixtures/create_solidworks_assembly.py`.
+
+`nested_cubes.sldasm` uses the same generator and envelope as `placed_cubes.sldasm`,
+with authored references to that synthetic assembly instead of the cube part. It tests
+project root selection and recursive resolution; no third-party design supplied its data.
+
+`local_cubes.sldasm` uses that generator with an authored local sub-assembly holder
+and an embedded cube reference. It covers matching a local holder's neutral source name
+to a saved sub-assembly file when choosing project roots.

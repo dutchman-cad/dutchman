@@ -96,7 +96,7 @@ pub fn read(format: Format, input: &Path, report: &mut Report) -> Result<Model, 
     read_in(format, input, &PartSearch::default(), report)
 }
 
-/// Resolves the direct external references of an assembly without reading its parts.
+/// Resolves an assembly's file references without reading its parts.
 /// Uses the same guarded decoder and part search as conversion.
 pub fn assembly_references(
     input: &Path,
@@ -113,16 +113,19 @@ pub fn assembly_references(
         .map_err(|err| Error::Decode(format!("cannot read assembly references: {err}")))?;
     let finder = locate::Finder::new(search);
     let folder = input.parent().unwrap_or(Path::new("."));
-    Ok(value
+    let mut references: std::collections::BTreeSet<_> = value
         .as_array()
         .into_iter()
         .flatten()
         .take(MAX_PLACEMENTS)
-        // Nested placements come from each sub-assembly's own file during conversion.
+        // SolidWorks keeps external references below local assembly holders. Inventor
+        // reads nested placements from each sub-assembly's own file instead.
         .filter(|row| {
-            row.pointer("/parent/kind")
-                .and_then(serde_json::Value::as_str)
-                == Some("root")
+            format == Format::SolidWorksAssembly
+                || row
+                    .pointer("/parent/kind")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("root")
         })
         .filter_map(|row| {
             row.pointer("/prototype/document/path")
@@ -132,11 +135,57 @@ pub fn assembly_references(
             let name = stored.rsplit(['/', '\\']).next().unwrap_or_default();
             matches!(
                 Format::from_path(Path::new(name)),
-                Some(Format::InventorPart | Format::InventorAssembly)
+                Some(
+                    Format::InventorPart
+                        | Format::InventorAssembly
+                        | Format::SolidWorksPart
+                        | Format::SolidWorksAssembly
+                )
             )
         })
-        .filter_map(|stored| finder.locate(stored, folder).ok().map(|found| found.path))
-        .collect())
+        .filter_map(|stored| {
+            let found = if format == Format::SolidWorksAssembly {
+                finder.sibling_first(stored, folder)
+            } else {
+                finder.locate(stored, folder)
+            };
+            found.ok().map(|found| found.path)
+        })
+        .collect();
+    if format == Format::SolidWorksAssembly {
+        // Local sub-assembly holders retain the source document's stem rather than an
+        // external path. Match their neutral source names to assembly files too, so a
+        // saved copy of a placed sub-assembly is not converted again as a project root.
+        let definitions: std::collections::BTreeMap<_, _> = model
+            .ir
+            .model
+            .product_definitions
+            .iter()
+            .map(|definition| (definition.id.as_str(), definition))
+            .collect();
+        for row in value.as_array().into_iter().flatten().take(MAX_PLACEMENTS) {
+            if row
+                .pointer("/parent/kind")
+                .and_then(serde_json::Value::as_str)
+                == Some("root")
+            {
+                continue;
+            }
+            let definition = row
+                .pointer("/prototype/definition")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|id| definitions.get(id))
+                .filter(|definition| definition.bodies.is_empty());
+            let Some(name) = definition.and_then(|definition| definition.source_name.as_deref())
+            else {
+                continue;
+            };
+            if let Ok(found) = finder.sibling_first(&format!("{name}.sldasm"), folder) {
+                references.insert(found.path);
+            }
+        }
+    }
+    Ok(references.into_iter().collect())
 }
 
 /// Reads the full drawing graph without requiring a 3D body or filtering hidden bodies.

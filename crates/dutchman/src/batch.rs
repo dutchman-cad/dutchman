@@ -630,6 +630,7 @@ fn project_roots(jobs: &mut Vec<Job>) {
         }
     }
     retain_roots(jobs, &edges);
+    jobs.sort_by_key(|job| !Format::from_path(&job.input).is_some_and(Format::is_assembly));
 }
 
 fn retain_roots(jobs: &mut Vec<Job>, edges: &BTreeMap<PathBuf, Vec<PathBuf>>) {
@@ -732,15 +733,10 @@ pub fn summary(jobs: &[Job]) -> String {
     let mut assemblies = 0;
     let mut parts = 0;
     let mut steps = 0;
-    let mut unread = 0;
     let fallbacks = jobs.iter().filter(|job| job.fallback.is_some()).count();
     for job in jobs {
         match extension_of(&job.input).as_str() {
-            "sldasm" => {
-                assemblies += 1;
-                unread += 1;
-            }
-            "iam" | "f3z" => assemblies += 1,
+            "sldasm" | "iam" | "f3z" => assemblies += 1,
             "step" | "stp" => steps += 1,
             _ => parts += 1,
         }
@@ -755,11 +751,7 @@ pub fn summary(jobs: &[Job]) -> String {
     let file_word = if steps == 1 { "file" } else { "files" };
     let mut text =
         format!("{assemblies} {assembly_word}, {parts} {part_word}, {steps} STEP {file_word}");
-    if unread > 0 {
-        text.push_str(&format!(
-            "; {unread} SolidWorks assemblies not read yet; converting their parts on their own"
-        ));
-    } else if assemblies > 0 {
+    if assemblies > 0 {
         text.push_str("; converting assemblies with their parts");
     }
     if fallbacks > 0 {
@@ -1264,6 +1256,67 @@ mod tests {
     }
 
     #[test]
+    fn solidworks_projects_convert_roots_with_nested_parts_and_then_unused_parts() {
+        for root_fixture in ["nested_cubes.sldasm", "local_cubes.sldasm"] {
+            let dir = tempfile::tempdir().unwrap();
+            let inputs = dir.path().join("inputs");
+            std::fs::create_dir(&inputs).unwrap();
+            let fixtures =
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../dutchman-core/tests/fixtures");
+            let root = std::fs::read(fixtures.join(root_fixture)).unwrap();
+            let nested = std::fs::read(fixtures.join("placed_cubes.sldasm")).unwrap();
+            let cube = std::fs::read(fixtures.join("solidworks_cube.sldprt")).unwrap();
+            let entries: Vec<(&str, &[u8])> = vec![
+                ("assemblies/root.SLDASM", &root),
+                ("assemblies/placed_cubes.SLDASM", &nested),
+                ("parts/solidworks_cube.SLDPRT", &cube),
+                ("a_unused.sldprt", &cube),
+                ("~$ignored.SLDASM", b"lock"),
+            ];
+            for (name, bytes) in &entries {
+                let path = inputs.join(name);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, bytes).unwrap();
+            }
+            let archive = dir.path().join("project.zip");
+            project_zip(&archive, &entries);
+            for (index, input) in [inputs, archive].into_iter().enumerate() {
+                let out = dir.path().join(format!("out{index}"));
+                let planned = plan(&[input], &out);
+                assert!(planned.problems.is_empty(), "{:?}", planned.problems);
+                assert_eq!(planned.skipped, 0);
+                assert_eq!(
+                    planned.description,
+                    "2 assemblies, 2 parts, 0 STEP files; converting assemblies with their parts"
+                );
+                assert_eq!(planned.jobs.len(), 2);
+                assert_eq!(planned.jobs[0].input.file_name().unwrap(), "root.SLDASM");
+                assert_eq!(
+                    planned.jobs[1].input.file_name().unwrap(),
+                    "a_unused.sldprt"
+                );
+                let options = ConvertOptions {
+                    preset: crate::choices::Preset::Fast,
+                    no_verify: true,
+                    ..Default::default()
+                };
+                for job in &planned.jobs {
+                    let result = convert_options_job_with_progress(job, &options, &|_| {});
+                    assert_eq!(result["ok"], true, "{result}");
+                    assert!(job.output.is_file());
+                    if job.input.extension().unwrap() == "SLDASM" {
+                        assert!(
+                            result["completeness"]["placed"].as_u64().unwrap() >= 4,
+                            "{result}"
+                        );
+                        assert_eq!(result["completeness"]["left_out"], json!([]), "{result}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn zip_projects_keep_sources_alive_until_the_last_job_is_released() {
         let dir = tempfile::tempdir().unwrap();
         let archive = dir.path().join("project.zip");
@@ -1363,7 +1416,7 @@ mod tests {
         std::fs::write(dir.path().join("main.SLDASM"), b"assembly").unwrap();
         let planned = plan(&[dir.path().to_path_buf()], &dir.path().join("out"));
         assert_eq!(planned.jobs.len(), 2);
-        assert!(summary(&planned.jobs).contains("SolidWorks assemblies not read yet"));
+        assert!(summary(&planned.jobs).contains("converting assemblies with their parts"));
         let job = planned
             .jobs
             .iter()

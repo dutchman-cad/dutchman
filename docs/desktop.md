@@ -16,9 +16,8 @@ receive a numbered alternative.
 ZIP projects unpack into a private temporary folder, limited to 10,000 entries and 4 GiB
 of extracted data. Paths outside the project are refused and symbolic links are skipped.
 Temporary files are removed when the conversion and its retained retry rows are released.
-Inventor assemblies convert from their top-level roots with referenced parts resolved
-inside the project; unused parts convert separately. SolidWorks assemblies are not read
-yet: the plan says so and their parts convert on their own. A same-name STEP export beside
+Inventor and SolidWorks assembly references select the top-level roots, which convert
+with their parts resolved inside the project; unused parts convert afterwards. A same-name STEP export beside
 a native file is kept as a fallback if the native conversion fails.
 
 The Inventor project folder setting appears only for inputs containing Inventor files.

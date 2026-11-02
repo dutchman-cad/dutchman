@@ -99,6 +99,11 @@ Suppressed components and mirrored placements follow cadmpeg's projection and lo
 Dutchman does not reconstruct components that the reader leaves out. Reader resource limits
 still apply, so an assembly can be refused before any parts are resolved.
 
+Folder and ZIP projects read assembly references to select top-level `.sldasm` files.
+Local sub-assembly holders are matched to saved `.sldasm` files by their source document
+names. Each converts with its nested assemblies and parts resolved inside the project; unused
+parts convert afterwards. The plan counts the full inventory before grouping references.
+
 ## Testing without real SolidWorks files
 
 Dutchman never uses customer files. The fixtures (provenance in

@@ -10,8 +10,8 @@ Folder uploads share the ZIP entry budget and upload byte limit. At most 10,000
 individual files or archives can be uploaded at once.
 
 Project planning uses the same rules as the desktop app and command line: top-level
-Inventor assemblies convert with their parts, and unused parts convert separately.
-SolidWorks assemblies are not read yet; their parts convert independently. A same-name
+Inventor and SolidWorks assemblies convert with parts resolved inside the project, then
+unused parts convert separately. Assembly references determine which assemblies are top-level. A same-name
 STEP export beside a native file is kept as a fallback if native conversion fails.
 The JSON result includes a plain `plan` describing the selected files. The web upload
 limits and retention settings below still apply.

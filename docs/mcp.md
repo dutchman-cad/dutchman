@@ -11,8 +11,8 @@ the ZIP directory is allocated; entry budgets count every declared entry.
 The `convert_all` tool accepts project ZIPs in `inputs` as well as files and folders;
 `out_dir` remains required for the tool. ZIPs unpack privately within 10,000 entries and
 4 GiB of extracted data, with traversal paths refused and symbolic links skipped.
-Planning selects top-level Inventor assemblies and unused parts. SolidWorks assemblies
-are not read yet, so their parts convert independently. Adjacent same-name STEP exports
+Planning reads Inventor and SolidWorks assembly references, selects assemblies no other
+assembly references, and converts them with their project parts, then unused parts. Adjacent same-name STEP exports
 are used only when native conversion fails. The batch report adds `plan`; a fallback's
 conversion result adds `native_failure` with the original native report.
 

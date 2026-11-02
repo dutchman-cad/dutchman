@@ -9,7 +9,7 @@ ZIP directory data and ZIP64 extensible records are limited to 16 MiB each befor
 the ZIP directory is allocated; entry budgets count every declared entry.
 
 The `dutchman.convert-all/1` report adds `plan`, a sentence describing assembly, part and
-STEP counts and whether SolidWorks assemblies cannot be read yet. Project ZIPs use the
+STEP counts and the strategy of converting assemblies with their parts. Project ZIPs use the
 same schema as folder inputs. Counts describe the project inventory before referenced parts are grouped into assemblies.
 Those parts do not get separate results. Paired STEP exports are included in the STEP
 count and identified as fallbacks.
