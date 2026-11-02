@@ -183,6 +183,7 @@ fn decode_unguarded(
                 "container_prepare",
                 bytes.len() as u64,
             ))),
+            step: Default::default(),
             sink,
             bytes: bytes.len() as u64,
             started: Default::default(),
@@ -348,12 +349,31 @@ impl Drop for Phase {
 
 struct Members {
     phase: std::cell::RefCell<Option<Phase>>,
+    /// The preparation step running inside `container_prepare`.
+    step: std::cell::RefCell<Option<Phase>>,
     bytes: u64,
     sink: std::sync::Arc<dyn crate::MemberObserver>,
     started: std::cell::RefCell<std::collections::BTreeMap<String, std::time::Instant>>,
 }
 
 impl cadmpeg_codec_f3d::F3zMemberObserver for Members {
+    fn phase_started(&self, phase: cadmpeg_codec_f3d::F3zPhase) {
+        let name = match phase {
+            cadmpeg_codec_f3d::F3zPhase::Scan => "archive_scan",
+            cadmpeg_codec_f3d::F3zPhase::Classify => "archive_classify",
+            cadmpeg_codec_f3d::F3zPhase::SessionOpen => "archive_session_open",
+        };
+        *self.step.borrow_mut() = Some(Phase::new(Some(self.sink.clone()), name, self.bytes));
+    }
+
+    fn phase_finished(
+        &self,
+        _phase: cadmpeg_codec_f3d::F3zPhase,
+        _outcome: Result<(), &CodecError>,
+    ) {
+        self.step.borrow_mut().take();
+    }
+
     fn member_started(&self, path: &str) {
         self.phase.borrow_mut().take();
         let mut started = self.started.borrow_mut();
@@ -966,6 +986,7 @@ mod tests {
                 "container_prepare",
                 42,
             ))),
+            step: Default::default(),
             bytes: 42,
             sink: events.clone(),
             started: Default::default(),

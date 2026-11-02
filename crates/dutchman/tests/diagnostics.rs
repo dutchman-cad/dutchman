@@ -126,6 +126,9 @@ fn fusion_member_events_reach_both_direct_and_isolated_logs() {
         for phase in [
             "codec_selection",
             "container_prepare",
+            "archive_scan",
+            "archive_classify",
+            "archive_session_open",
             "container_compose",
             "model_validation",
         ] {

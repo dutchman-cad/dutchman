@@ -407,6 +407,9 @@ fn phase_code(phase: &str) -> Option<&'static str> {
     match phase {
         "codec_selection" => Some("codec_selection"),
         "container_prepare" => Some("container_prepare"),
+        "archive_scan" => Some("archive_scan"),
+        "archive_classify" => Some("archive_classify"),
+        "archive_session_open" => Some("archive_session_open"),
         "container_compose" => Some("container_compose"),
         "model_validation" => Some("model_validation"),
         _ => None,

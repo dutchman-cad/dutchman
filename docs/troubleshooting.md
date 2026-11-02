@@ -191,6 +191,8 @@ immediately and says a geometry-only retry was not needed. Neither path reads th
 container again. Drawing conversions keep their drawing graph and do not take this retry.
 
 A long `container_prepare` phase before the first `.f3z` member starts belongs to cadmpeg.
+Its `archive_scan`, `archive_classify` and `archive_session_open` phases say which step took
+the time.
 At the pinned revision, `container::scan` opens every outer ZIP entry, including temporarily
 inflating deferred document members and discarding their expanded bytes. Then
 `F3zSession::open_scanned` calls `archive::model_root` and `archive::classify_members`:

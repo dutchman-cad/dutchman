@@ -716,7 +716,8 @@ also add `kind` and, for check failures, `findings` and `curve_kinds`; their exi
 Model check failures have failure stage `project`, independently of the last progress stage.
 
 Phase categories are `codec_selection`, `container_prepare` (codec entry to the first
-member start), `container_compose` (between member attempts and after the last one), and
+member start), `archive_scan`, `archive_classify` and `archive_session_open` (the steps of a
+Fusion archive's preparation, inside `container_prepare`), `container_compose` (between member attempts and after the last one), and
 `model_validation` (including any geometry-only recheck). Without member callbacks,
 `container_prepare` covers the whole codec call. A finish closes the timed scope, including
 error returns; it does not claim success. Start records identify a phase even if the
