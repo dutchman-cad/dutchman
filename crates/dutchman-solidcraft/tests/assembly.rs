@@ -249,45 +249,58 @@ fn an_assembly_parts_unverified_history_can_be_kept_hidden_beside_its_original()
     part.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     assembly.parts.push(part);
     assembly.placements[1].part = 1;
-    let mut report = Report::default();
-    let mut bytes = Vec::new();
-    SolidCraftWriter::new()
-        .verification(Verification::Off)
-        .hide_unverified_history(true)
-        .write(&model, &mut bytes, &mut report)
-        .unwrap();
-    let doc = document(&bytes);
-    let features = doc["features"].as_array().unwrap();
-    // The original stays the part's visible model; the history is all there, hidden.
-    let original = features
-        .iter()
-        .find(|f| f["type"] == "import" && f["component"] != features[0]["component"])
-        .unwrap();
-    assert_eq!(original["suppressed"], false);
-    let ball = features.iter().find(|f| f["type"] == "sphere").unwrap();
-    let history = doc["components"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|c| c["id"] == ball["component"])
-        .unwrap();
-    assert_eq!(history["name"], "Editable history (unverified)");
-    assert_eq!(history["parent"], original["component"]);
-    let occurrence = doc["occurrences"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|o| o["component"] == history["id"])
-        .unwrap();
-    let hidden = doc["visibility"]["hidden_occurrences"].as_array().unwrap();
-    assert!(hidden
-        .iter()
-        .any(|path| path.as_array().unwrap().last() == Some(&occurrence["id"])));
-    assert!(report.losses().iter().any(|note| note
-        .detail
-        .contains("unverified: verification turned off; kept hidden")));
-    if let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) {
-        assert_eq!(evaluate(&cli, &bytes).len(), 3);
+    for target in ["0.29.0", "0.30.0"] {
+        let mut report = Report::default();
+        let mut bytes = Vec::new();
+        SolidCraftWriter::new()
+            .target_version(Some(target.parse().unwrap()))
+            .verification(Verification::Off)
+            .hide_unverified_history(true)
+            .write(&model, &mut bytes, &mut report)
+            .unwrap();
+        let doc = document(&bytes);
+        let features = doc["features"].as_array().unwrap();
+        // The original stays the part's visible model; the history is all there, hidden.
+        let original = features
+            .iter()
+            .find(|f| f["type"] == "import" && f["component"] != features[0]["component"])
+            .unwrap();
+        assert_eq!(original["suppressed"], false);
+        let ball = features.iter().find(|f| f["type"] == "sphere").unwrap();
+        let history = doc["components"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == ball["component"])
+            .unwrap();
+        assert_eq!(history["name"], "Editable history (unverified)");
+        assert_eq!(history["parent"], original["component"]);
+        assert_eq!(
+            history.get("history_hidden"),
+            (target == "0.30.0").then_some(&json!(true))
+        );
+        assert!(doc["components"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c["id"] != history["id"])
+            .all(|c| c.get("history_hidden").is_none()));
+        let occurrence = doc["occurrences"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|o| o["component"] == history["id"])
+            .unwrap();
+        let hidden = doc["visibility"]["hidden_occurrences"].as_array().unwrap();
+        assert!(hidden
+            .iter()
+            .any(|path| path.as_array().unwrap().last() == Some(&occurrence["id"])));
+        assert!(report.losses().iter().any(|note| note
+            .detail
+            .contains("unverified: verification turned off; kept hidden")));
+        if let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) {
+            assert_eq!(evaluate(&cli, &bytes).len(), 3);
+        }
     }
 }
 

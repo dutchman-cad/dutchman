@@ -181,6 +181,9 @@ impl SolidCraftVersion {
     /// First release with sketch-profile coils and the `.sc` design extension.
     pub const V0_25_1: Self = Self([0, 25, 1]);
 
+    /// First release with saved component History bar visibility.
+    pub const V0_30_0: Self = Self([0, 30, 0]);
+
     /// The minor used in presentation; patch-sensitive writer gates keep the full version.
     pub fn minor(self) -> String {
         let Self([major, minor, _]) = self;

@@ -1328,7 +1328,12 @@ impl Builder<'_> {
                 "Editable history (unverified)"
             };
             self.components
-                .push(json!({"id": child, "name": label, "parent": component}));
+                .push(crate::document::editable_history_component(
+                    child,
+                    label,
+                    component,
+                    self.writer.resolved_version(),
+                ));
             self.occurrences.push(json!({"id": occurrence, "name": format!("{label}:1"), "component": child, "parent": component, "grounded": true, "transform": column_major(&IDENTITY)}));
             // The prefix belongs to the part definition; each placement inherits its hide.
             self.placements.insert(occurrence, (child, IDENTITY));

@@ -392,7 +392,13 @@ impl SolidCraftWriter {
         };
         let mut history = history.clone();
         history::base::store(&mut history.features, &mut design)?;
-        let doc: Value = document::history_design(model, &history, design.step_blob(), live);
+        let doc: Value = document::history_design(
+            model,
+            &history,
+            design.step_blob(),
+            live,
+            self.resolved_version(),
+        );
         design.finish(&doc)
     }
 

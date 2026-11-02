@@ -11,7 +11,7 @@ use dutchman_core::{Model, Report, Severity};
 use serde_json::{json, Value};
 
 use crate::history::History;
-use crate::FORMAT;
+use crate::{SolidCraftVersion, FORMAT};
 
 /// The timeline name of the original geometry in a history design.
 pub(crate) const ORIGINAL: &str = "Original geometry (imported)";
@@ -150,6 +150,7 @@ pub(crate) fn history_design(
     history: &History,
     step_blob: &str,
     live: Live,
+    target: SolidCraftVersion,
 ) -> Value {
     let mut history = history.clone();
     let component = history.next_id;
@@ -200,7 +201,7 @@ pub(crate) fn history_design(
         };
         fields.insert(
             "components".to_owned(),
-            json!([{"id": component, "name": part, "parent": 0}]),
+            json!([editable_history_component(component, part, 0, target)]),
         );
         fields.insert("occurrences".to_owned(), json!([{"id": occurrence, "name": format!("{part}:1"), "component": component, "parent": 0, "grounded": true, "transform": IDENTITY}]));
         let sketches: Vec<Value> = history
@@ -225,6 +226,23 @@ pub(crate) fn history_design(
         fields.insert("appearances".to_owned(), appearances);
     }
     doc
+}
+
+/// A hidden editable-history copy. Hiding its History bar entries leaves rebuilding and
+/// Browser access intact; older targets keep their existing component fields.
+pub(crate) fn editable_history_component(
+    id: u64,
+    name: &str,
+    parent: u64,
+    target: SolidCraftVersion,
+) -> Value {
+    let mut component = json!({"id": id, "name": name, "parent": parent});
+    if target >= SolidCraftVersion::V0_30_0 {
+        if let Some(fields) = component.as_object_mut() {
+            fields.insert("history_hidden".to_owned(), Value::Bool(true));
+        }
+    }
+    component
 }
 
 /// An Import feature holding the model's STEP restatement, in `component` (the root when
@@ -367,9 +385,48 @@ mod history_tests {
     }
 
     #[test]
+    fn only_hidden_copies_hide_history_on_new_targets() {
+        let model = crate::testing::cube();
+        for target in ["0.29.0", "0.30.0", "0.31.0"] {
+            let version = target.parse().unwrap();
+            for live in [
+                Live::Partial,
+                Live::Unverified,
+                Live::History,
+                Live::Whole,
+                Live::Original,
+            ] {
+                let doc = history_design(&model, &history(), "blobs/x.step", live, version);
+                assert_eq!(doc["format"], FORMAT);
+                if matches!(live, Live::Partial | Live::Unverified) {
+                    let component = &doc["components"][0];
+                    assert_eq!(
+                        component.get("history_hidden"),
+                        (version >= SolidCraftVersion::V0_30_0).then_some(&Value::Bool(true))
+                    );
+                    assert_eq!(doc["visibility"]["hidden_occurrences"], json!([[4]]));
+                    assert!(doc["features"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .all(|f| f["suppressed"] == false));
+                } else {
+                    assert!(doc.get("components").is_none());
+                }
+            }
+        }
+    }
+
+    #[test]
     fn the_original_follows_the_history_suppressed() {
         let model = crate::testing::cube();
-        let doc = history_design(&model, &history(), "blobs/x.step", Live::History);
+        let doc = history_design(
+            &model,
+            &history(),
+            "blobs/x.step",
+            Live::History,
+            SolidCraftVersion::default(),
+        );
         let features = doc["features"].as_array().unwrap();
         assert_eq!(features.len(), 3);
         let original = features.last().unwrap();
@@ -388,7 +445,13 @@ mod history_tests {
     #[test]
     fn a_whole_history_leaves_the_original_out() {
         let model = crate::testing::cube();
-        let doc = history_design(&model, &history(), "", Live::Whole);
+        let doc = history_design(
+            &model,
+            &history(),
+            "",
+            Live::Whole,
+            SolidCraftVersion::default(),
+        );
         let features = doc["features"].as_array().unwrap();
         assert_eq!(features.len(), 2);
         assert!(features.iter().all(|f| f["name"] != ORIGINAL));
@@ -397,7 +460,13 @@ mod history_tests {
     #[test]
     fn the_check_design_has_only_the_original_live() {
         let model = crate::testing::cube();
-        let doc = history_design(&model, &history(), "blobs/x.step", Live::Original);
+        let doc = history_design(
+            &model,
+            &history(),
+            "blobs/x.step",
+            Live::Original,
+            SolidCraftVersion::default(),
+        );
         let features = doc["features"].as_array().unwrap();
         assert!(features.iter().take(2).all(|f| f["suppressed"] == true));
         assert_eq!(features.last().unwrap()["suppressed"], false);

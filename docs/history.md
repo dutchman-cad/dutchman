@@ -289,9 +289,11 @@ timeline for correction when it replays; it does not identify which feature need
 correction. SolidCraft's numerical eval includes hidden bodies as well as the visible
 final shape.
 
-SolidCraft lists every component's features in History, hidden or not, so the features of a
-hidden **Editable history (partial)** component appear there too. A kept history of base
-features alone has nothing to edit, so in an assembly no hidden component is written for it.
+For targets of SolidCraft 0.30 or newer, partial and unverified editable-history copies
+use **Hide its History**: their features stay in the Browser and keep rebuilding, but
+are left out of the History bar. Use **Show its History** on the component to restore
+them. Older targets keep these features in History. A kept history of base features
+alone has nothing to edit, so in an assembly no hidden component is written for it.
 
 A writer that can never run the check (the SolidCraft importer plugin, which runs Dutchman
 in a sandbox with no `solidcraft-cli`) keeps a whole unchecked history the same way, in a
