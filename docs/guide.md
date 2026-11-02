@@ -489,3 +489,22 @@ app cannot be inferred. The build version is included alongside this information
 The desktop keeps its page scrollbar visible to reach every private-send option in the results.
 Copied-report notices use the success colour and clear on the next action.
 **Check a folder** keeps the app header; **Part to check** selects a part for local checks.
+
+`dutchman diagnose part.f3d --bundle --out diagnosis` cuts a private reproduction
+bundle without narrowing. Ordinary diagnosis, narrowing, and doctor also try to save a
+bundle when cadmpeg's decoded model fails a check. A cut must reproduce the same
+failure signature; Dutchman widens it if needed and keeps no bundle if proof fails.
+A refused cut, including a closure wider than the current fragment byte limit, is a
+normal no-bundle result; choose summary or the private-send card.
+Shrinking runs for up to ten seconds (or the shorter time limit). Creating
+`diagnose/cancel-bundle` in the output folder stops shrinking between candidates and
+keeps the last proven cut.
+
+The report folder `diagnose/repro` holds `bundle.json.gz`, `manifest.json`, and private
+report metadata. The manifest lists retained arenas, row counts, sizes, and purposes;
+previews never show their contents. Bundles contain numeric geometry. Review them locally
+before choosing to send. A bundle is the default when available. The service caps the entire multipart request at 25 MiB, including metadata and
+upload overhead. Dutchman keeps gzip bundles at least 64 KiB below that cap and checks the complete
+size before enabling Send. If it will not fit, use the
+private-send card or send a summary. Decode refusals have no bundle yet; choose
+an anonymous summary or the private-send card. Nothing is sent by diagnosis.

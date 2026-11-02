@@ -34,9 +34,9 @@ impl Card {
     pub fn new(row: usize, prepared: Prepared, folder: PathBuf) -> Self {
         Self {
             row,
-            folder,
             summary: prepared.bundle_sha256.is_none(),
             prepared,
+            folder,
             public_test: false,
             status: String::new(),
             failed: false,
@@ -90,14 +90,27 @@ impl Consent {
             if card.prepared.bundle_sha256.is_none() {
                 ui.label("No bundle is available yet. The summary contains no design geometry.");
             } else {
-                ui.label(format!("Bundle: {} bytes (limit 25 MiB)", card.prepared.bundle_size));
+                ui.label(format!("Gzip bundle: {} bytes (send limit {} bytes)", card.prepared.bundle_size, report_send::MAX_BUNDLE));
+                if let Some(size) = card.prepared.request_size("bundle", card.public_test) {
+                    ui.label(format!("Upload request: {size} bytes (limit 25 MiB, including overhead)"));
+                }
                 for part in &card.prepared.parts { ui.label(format!("{}: {} bytes", part.role, part.bytes)); }
+                if let Some(entries) = card.prepared.manifest.as_array() {
+                    for entry in entries {
+                        ui.label(format!("{}: {} rows, {} bytes — {}",
+                            entry["arena"].as_str().unwrap_or("arena"), entry["rows"], entry["serialized_bytes"],
+                            entry["description"].as_str().unwrap_or("retained records")));
+                    }
+                }
+                if !card.prepared.can_send_bundle() {
+                    ui.label(report_send::SIZE_NOTICE);
+                }
             }
             ui.checkbox(&mut card.public_test, "You may use this report in a public test case");
             if ui.button("Send the whole file privately").clicked() { private = Some(Action::Private(card.row, None)); }
             ui.label(format!("Anonymous summary: {} bytes — app version, operating system, file format, source app, failure details, your sharing choices and a code for updates", card.prepared.metadata("summary", card.public_test).to_string().len()));
             ui.label(format!("Kept locally: {}", card.folder.display()));
-            let can_send = card.rx.is_none() && !card.sent && (card.summary || card.prepared.bundle_sha256.is_some());
+            let can_send = card.rx.is_none() && !card.sent && (card.summary || card.prepared.can_send_bundle());
             if ui.add_enabled(can_send, egui::Button::new(if card.failed { "Retry" } else { "Send" })).clicked() {
                 let prepared = card.prepared.clone();
                 let folder = card.folder.clone();
@@ -119,8 +132,8 @@ impl Consent {
                 });
             }
             ui.label(&card.status);
-            if card.prepared.bundle_sha256.is_some() && ui.button("Send the saved bundle privately").clicked() {
-                private = Some(Action::Private(card.row, Some(card.folder.join("bundle.json.gz"))));
+            if ui.button("Use the private-send card").clicked() {
+                private = Some(Action::Private(card.row, card.prepared.bundle_sha256.as_ref().map(|_| card.folder.join("bundle.json.gz"))));
             }
             if ui.button("Get updates on Discord").clicked() {
                 ctx.copy_text(card.prepared.claim());
@@ -143,7 +156,10 @@ impl Consent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use egui_kittest::{kittest::Queryable, Harness};
+    use egui_kittest::{
+        kittest::{NodeT, Queryable},
+        Harness,
+    };
 
     #[test]
     fn consent_with_bundle_selects_it_without_public_permission() {
@@ -167,12 +183,14 @@ mod tests {
             #[cfg(feature = "test-support")]
             test_transport: None,
         };
-        let mut harness = Harness::new_state(
-            |ctx, state: &mut Consent| {
-                state.window(ctx);
-            },
-            state,
-        );
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1000.0, 1000.0))
+            .build_state(
+                |ctx, state: &mut Consent| {
+                    state.window(ctx);
+                },
+                state,
+            );
         harness.run_steps(3);
         assert!(harness.state().card.as_ref().unwrap().summary);
         assert!(harness.query_by_label("Send the bundle").is_none());
@@ -191,5 +209,88 @@ mod tests {
         assert!(harness.state().card.as_ref().unwrap().public_test);
         assert!(harness.state().ids.is_empty());
         assert!(!dir.path().join("submission.json").exists());
+    }
+    #[test]
+    fn saved_bundle_is_default_and_manifest_has_no_contents() {
+        struct Synthetic;
+        impl dutchman::report_send::BundleSource for Synthetic {
+            fn parts(&self) -> Result<Vec<dutchman::report_send::BundlePart>, String> {
+                Ok(vec![dutchman::report_send::BundlePart {
+                    role: "CADIR fragment".into(),
+                    bytes: b"private numeric geometry".to_vec(),
+                }])
+            }
+            fn manifest(&self) -> Value {
+                serde_json::json!([{"arena": "model.points", "rows": 2, "serialized_bytes": 100, "description": "Point positions"}])
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let prepared = Prepared::new(
+            "0123456789abcdef",
+            "f3d",
+            "check",
+            Some(&Synthetic),
+            dir.path(),
+        )
+        .unwrap();
+        let state = Consent {
+            ids: vec![],
+            card: Some(Card::new(0, prepared, dir.path().into())),
+            #[cfg(feature = "test-support")]
+            test_transport: None,
+        };
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1000.0, 1000.0))
+            .build_state(
+                |ctx, state: &mut Consent| {
+                    state.window(ctx);
+                },
+                state,
+            );
+        harness.run_steps(3);
+        assert!(!harness.state().card.as_ref().unwrap().summary);
+        harness.get_by_label("Send the bundle");
+        harness.get_by_label("Send");
+        harness.get_by_label("model.points: 2 rows, 100 bytes — Point positions");
+        harness
+            .get_by_label("Anonymous summary only")
+            .click_accesskit();
+        harness.step();
+        assert!(harness.state().card.as_ref().unwrap().summary);
+    }
+    #[test]
+    fn oversized_bundle_offers_private_send_and_summary_without_enabling_bundle_send() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut prepared =
+            Prepared::new("0123456789abcdef", "f3d", "check", None, dir.path()).unwrap();
+        prepared.bundle_sha256 = Some("0".repeat(64));
+        prepared.bundle_size = report_send::MAX_REQUEST;
+        let state = Consent {
+            ids: vec![],
+            card: Some(Card::new(0, prepared, dir.path().into())),
+            #[cfg(feature = "test-support")]
+            test_transport: None,
+        };
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1000.0, 1000.0))
+            .build_state(
+                |ctx, state: &mut Consent| {
+                    state.window(ctx);
+                },
+                state,
+            );
+        harness.run_steps(3);
+        harness.get_by_label("Send the bundle");
+        harness.get_by_label(report_send::SIZE_NOTICE);
+        harness.get_by_label("Use the private-send card");
+        assert!(harness.get_by_label("Send").accesskit_node().is_disabled());
+        harness
+            .get_by_label("Anonymous summary only")
+            .click_accesskit();
+        harness.step();
+        assert!(!harness.get_by_label("Send").accesskit_node().is_disabled());
+        harness.get_by_label("Send the bundle").click_accesskit();
+        harness.step();
+        assert!(harness.get_by_label("Send").accesskit_node().is_disabled());
     }
 }

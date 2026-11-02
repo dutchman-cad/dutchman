@@ -465,3 +465,7 @@ Direct low-level writer calls apply presets and switches without a source-specif
 Core assemblies retain transforms from before joint solving so a writer omitting
 joints can restore stored placements without learning the source format. SolidCraft
 controls reference sketches and joints independently; FreeCAD honours history only.
+
+The history mapper reads CADIR wire versions 6 through 11. Version 11 includes the
+fragment and reproduction contract; complete documents continue through the same
+history mapping and feature checks. Unknown later versions remain refused.

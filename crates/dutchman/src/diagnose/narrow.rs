@@ -244,13 +244,13 @@ struct Target {
 
 /// A design's identity: enough to refuse to resume on another file, and no path.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-struct Fingerprint {
+pub(crate) struct Fingerprint {
     size: u64,
     sha256: String,
 }
 
 impl Fingerprint {
-    fn of(path: &Path) -> Result<Self, String> {
+    pub(crate) fn of(path: &Path) -> Result<Self, String> {
         let mut file = std::fs::File::open(path)
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let mut hash = Sha256::new();
@@ -265,6 +265,9 @@ impl Fingerprint {
             };
             hash.update(chunk);
             size += read as u64;
+            if size > dutchman_core::MAX_INPUT_BYTES {
+                return Err("The design exceeds the local input size limit.".into());
+            }
         }
         Ok(Fingerprint {
             size,
@@ -826,7 +829,32 @@ pub fn run(
     if state.known_failure.is_none() {
         state.known_failure = state.signature.as_ref().and_then(super::known::lookup);
     }
-    let result = write_results(input, &folder, &mut state)?;
+    let mut result = write_results(input, &folder, &mut state)?;
+    let mut rank = settings.rank.clone();
+    rank.target_part = findings(&state)
+        .get("part")
+        .and_then(Value::as_u64)
+        .and_then(|n| usize::try_from(n).ok());
+    let has_checks = state
+        .signature
+        .as_ref()
+        .is_some_and(|s| s.error.kind.as_deref() == Some("cadmpeg_checks"));
+    let bundle = if has_checks {
+        super::bundle::extract(input, out, &rank, state.first_failing, state.signature.as_ref().and_then(|s| s.feature.as_ref()).map(|f| f.kind.as_str()), &|| false)
+        .unwrap_or_else(|_| json!({"bundle_available": false, "summary": "No proven bundle could be saved. Choose summary or the private-send card."}))
+    } else {
+        super::bundle::no_bundle()
+    };
+    if let Some(map) = result.as_object_mut() {
+        if let (Some(summary), Some(note)) = (
+            map.get("summary").and_then(Value::as_str),
+            bundle.get("summary").and_then(Value::as_str),
+        ) {
+            let summary = format!("{summary} {note}");
+            map.insert("summary".into(), json!(summary));
+        }
+        map.insert("bundle".into(), bundle);
+    }
     save_state(&path, &state)?;
     Ok(result)
 }
@@ -1170,7 +1198,9 @@ impl Trials for Children<'_> {
             };
             on_progress(Progress { step: 1, text });
         };
-        let result = run_resuming(self.input, self.out, &self.settings.rank, &on_event)?;
+        let mut rank = self.settings.rank.clone();
+        rank.build_bundle = false;
+        let result = run_resuming(self.input, self.out, &rank, &on_event)?;
         Ok(result["report"].clone())
     }
 

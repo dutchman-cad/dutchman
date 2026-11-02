@@ -225,3 +225,167 @@ pub fn entity_kinds(model: &Model) -> Result<BTreeMap<String, u64>, Error> {
         ))
     })
 }
+
+pub use cadmpeg_registry::repro::{Bundle, CutOptions, Document, Signature};
+
+/// Prove a bundle without exposing checker messages or entity identities.
+pub fn verifies(bundle: &Bundle) -> bool {
+    catch_unwind(AssertUnwindSafe(|| {
+        if bundle.incomplete_reason.is_some() {
+            return false;
+        }
+        cadmpeg_registry::repro::check(bundle)
+            .iter()
+            .any(|f| bundle.signature.reproduces(f))
+    }))
+    .unwrap_or(false)
+}
+
+/// Cut from the actual failing finding, widen to all row roots if needed, and reduce only
+/// while the same signature reproduces. All native calls stay behind a panic guard.
+pub fn bundle(
+    document: &Document,
+    options: &CutOptions,
+    budget: std::time::Duration,
+    cancel: &dyn Fn() -> bool,
+) -> Result<Option<Bundle>, String> {
+    catch_unwind(AssertUnwindSafe(|| {
+        let arena = DecodeArena::new();
+        let policy = decode::policy();
+        let ctx = DecodeContext::for_loaded_input(&arena, &policy, 0)
+            .map_err(|_| "The checker could not start.")?;
+        let validation =
+            cadmpeg_ir::validate::validate_neutral_for_decode(&ctx, document, Vec::new())
+                .map_err(|_| "The checker could not finish.")?;
+        ctx.finish_session()
+            .map_err(|_| "The checker could not finish.")?;
+        let Some(finding) = validation
+            .findings
+            .iter()
+            .find(|f| f.severity >= cadmpeg_ir::report::Severity::Error)
+        else {
+            return Ok(None);
+        };
+        let signature = Signature::new(
+            finding,
+            document
+                .source
+                .as_ref()
+                .map_or("cadir", |source| source.format()),
+            cadmpeg_registry::repro::Stage::Check,
+        );
+        let initial = cadmpeg_registry::repro::cut(document, finding, options).ok();
+        if initial
+            .as_ref()
+            .is_some_and(|cut| cut.incomplete_reason.is_some())
+        {
+            return Ok(None);
+        }
+        let cut = if let Some(cut) = initial.filter(verifies) {
+            cut
+        } else {
+            if cadmpeg_ir::repro::projection_size(document, options).is_err() {
+                return Ok(None);
+            }
+            let mut wider = finding.clone();
+            let value =
+                serde_json::to_value(document).map_err(|_| "The model could not be projected.")?;
+            // Use the same graph visitor as cadmpeg; include native arenas too.
+            wider.related = cadmpeg_ir::repro::rows(&value)
+                .iter()
+                .filter_map(|row| {
+                    cadmpeg_ir::repro::record(&value, row)
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                })
+                .collect();
+            let Ok(mut cut) = cadmpeg_registry::repro::cut(document, &wider, options) else {
+                return Ok(None);
+            };
+            cut.signature = signature.clone();
+            if !verifies(&cut) {
+                return Ok(None);
+            }
+            cut
+        };
+        let reduced = cadmpeg_registry::repro::shrink(&cut, &signature, budget, cancel);
+        Ok(Some(if verifies(&reduced) { reduced } else { cut }))
+    }))
+    .unwrap_or_else(|_| Err("The bundle checker stopped unexpectedly. No bundle was saved.".into()))
+}
+
+#[cfg(test)]
+mod bundle_tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+    use super::*;
+    use cadmpeg_ir::codec::write::Encoder;
+    use std::time::Duration;
+
+    fn cube() -> Document {
+        crate::read(
+            crate::Format::FusionArchive,
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/generated_unit_cube.f3d"),
+            &mut Report::default(),
+        )
+        .unwrap()
+        .ir
+    }
+
+    #[test]
+    fn synthetic_failure_survives_bundle_and_native_roundtrip() {
+        let mut doc = cube();
+        doc.model.points[0].set_position(
+            cadmpeg_ir::math::Point3::new(50.0, 0.0, 0.0)
+                .try_into()
+                .unwrap(),
+        );
+        let refused = CutOptions {
+            max_serialized_bytes: 1,
+            ..Default::default()
+        };
+        assert!(bundle(&doc, &refused, Duration::ZERO, &|| false)
+            .unwrap()
+            .is_none());
+        let original = doc.clone();
+        let cut = bundle(&doc, &CutOptions::default(), Duration::ZERO, &|| false)
+            .unwrap()
+            .unwrap();
+        assert!(verifies(&cut));
+        assert_eq!(doc, original);
+        let cancelled = bundle(
+            &doc,
+            &CutOptions::default(),
+            Duration::from_secs(1),
+            &|| true,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(verifies(&cancelled));
+        assert!(
+            bundle(&cube(), &CutOptions::default(), Duration::ZERO, &|| false)
+                .unwrap()
+                .is_none()
+        );
+        let mut encoded = Vec::new();
+        cadmpeg_codec_f3d::F3dCodec
+            .plan(
+                cadmpeg_ir::codec::write::EncodeInput::new(&doc, None),
+                cadmpeg_ir::codec::write::target::TargetRequest::Inherit,
+            )
+            .unwrap()
+            .write_to(&mut encoded)
+            .unwrap();
+        let read = crate::read_bytes(
+            crate::Format::FusionArchive,
+            std::path::Path::new("synthetic-failure.f3d"),
+            &encoded,
+            &mut Report::default(),
+        );
+        assert!(matches!(read, Err(Error::Checks { .. })));
+        if let Ok(path) = std::env::var("DUTCHMAN_SYNTHETIC_FAILURE_OUT") {
+            std::fs::write(path, &encoded).unwrap();
+        }
+    }
+}

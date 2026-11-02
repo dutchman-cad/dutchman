@@ -93,6 +93,9 @@ enum Command {
         /// --out to carry on after a stop.
         #[arg(long, requires = "input", conflicts_with_all = ["same_failure", "make_report"])]
         narrow: bool,
+        /// Cut and prove a private reproduction bundle without narrowing. Nothing is sent.
+        #[arg(long, requires = "input", conflicts_with_all = ["narrow", "same_failure", "make_report"])]
+        bundle: bool,
         /// Convert this small rebuilt file and say whether it fails the way the design narrowed
         /// into --out did.
         #[arg(long, value_name = "FILE", conflicts_with_all = ["input", "make_report"])]
@@ -355,6 +358,7 @@ fn main() -> ExitCode {
             part,
             input,
             narrow,
+            bundle,
             same_failure,
             make_report,
             step_time_limit,
@@ -366,6 +370,7 @@ fn main() -> ExitCode {
             json,
         } => {
             let job = match (input, same_failure, make_report) {
+                (Some(input), _, _) if bundle => DiagnoseJob::Bundle(input),
                 (Some(input), _, _) if narrow => DiagnoseJob::Narrow(input),
                 (Some(input), _, _) => DiagnoseJob::Rank(input),
                 (_, Some(small), _) => DiagnoseJob::SameFailure(small),
@@ -797,6 +802,7 @@ fn run_tool(path: &Path, args: &[OsString]) -> ExitCode {
 /// What `dutchman diagnose` was asked to do.
 enum DiagnoseJob {
     Rank(PathBuf),
+    Bundle(PathBuf),
     Narrow(PathBuf),
     SameFailure(PathBuf),
     MakeReport(PathBuf),
@@ -914,6 +920,15 @@ fn diagnose(
     let steps = narrow::NarrowSettings::new(settings.clone(), step_time_limit);
     let input = match job {
         DiagnoseJob::Rank(input) => input,
+        DiagnoseJob::Bundle(input) => {
+            return narrow_outcome(
+                diagnose::bundle::SCHEMA,
+                input,
+                diagnose::bundle::extract(input, out, &settings, None, None, &|| false),
+                as_json,
+                &|_| true,
+            );
+        }
         DiagnoseJob::Narrow(input) => {
             return narrow_outcome(
                 json::NARROW,

@@ -39,6 +39,7 @@ use serde_json::{json, Map, Value};
 use crate::json as wire;
 use crate::{diagnostics, worker, ConvertOptions};
 
+pub mod bundle;
 mod checks;
 pub mod known;
 pub mod narrow;
@@ -85,6 +86,8 @@ const SAMPLE: Duration = Duration::from_millis(250);
 pub struct Settings {
     /// How long one part may take.
     pub time_limit: Duration,
+    /// Save a proven bundle for check failures after ranking. Narrowing defers this to its final step.
+    pub build_bundle: bool,
     /// How much memory the converter may hold while it works on one part (the design it has
     /// read included), in bytes; `None` for no limit.
     pub memory_limit: Option<u64>,
@@ -104,6 +107,7 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             time_limit: DEFAULT_TIME_LIMIT,
+            build_bundle: true,
             memory_limit: default_memory_limit(),
             options: ConvertOptions::default(),
             program: None,
@@ -289,7 +293,9 @@ pub(crate) fn run_resuming(
         .map_err(|e| format!("cannot create {}: {e}", folder.display()))?;
     if let Ok(report) = report_from(&folder) {
         if report["status"] != "running" {
-            return Ok(json!({"status": report["status"], "report": report}));
+            return Ok(
+                json!({"status": report["status"], "bundle": report.get("bundle"), "report": report}),
+            );
         }
     }
     let mut state = State::new(folder, input, settings);
@@ -347,10 +353,50 @@ fn run_state(
         }
     }
     state.save(status, true)?;
-    let report = state.report(status);
+    let mut report = state.report(status);
     let failing = failing_part_in(&report);
     let summary = summary_text(&report, failing);
+    let bundle = if settings.build_bundle && (failing.is_some() || status == "read_failed") {
+        let has_checks = report.pointer("/read/error_kind").and_then(Value::as_str)
+            == Some("cadmpeg_checks")
+            || report
+                .get("parts")
+                .and_then(Value::as_array)
+                .is_some_and(|parts| {
+                    parts.iter().any(|part| {
+                        part.get("error_kind").and_then(Value::as_str) == Some("cadmpeg_checks")
+                    })
+                });
+        if has_checks {
+            let mut bundle_settings = settings.clone();
+            bundle_settings.target_part = settings.target_part.or(failing);
+            bundle::extract(&state.input, state.out.parent().unwrap_or(&state.out), &bundle_settings, None, None, &|| false)
+            .unwrap_or_else(|_| json!({"bundle_available": false, "summary": "No proven bundle could be saved. Choose summary or the private-send card."}))
+        } else {
+            bundle::no_bundle()
+        }
+    } else {
+        json!(null)
+    };
+    let summary = match bundle.get("summary").and_then(Value::as_str) {
+        Some(note) => format!("{summary} {note}"),
+        None => summary,
+    };
+    if let Some(map) = report.as_object_mut() {
+        map.insert("bundle".into(), bundle.clone());
+    }
+    write_file(
+        &state.out.join("report.txt"),
+        text(&report).as_bytes(),
+        true,
+    )?;
+    write_file(
+        &state.out.join("report.json"),
+        &serde_json::to_vec_pretty(&report).map_err(|e| e.to_string())?,
+        true,
+    )?;
     Ok(json!({
+        "bundle": bundle,
         "schema": SCHEMA, "ok": true, "summary": summary, "status": status,
         "paths": {"report": state.out.join("report.json"), "text": state.out.join("report.txt"),
                   "local_key": state.out.join("local-key.json")},
@@ -1081,6 +1127,10 @@ pub fn text(report: &Value) -> String {
         "Dutchman diagnose report. Safe to share: it has part numbers, outcomes and sizes, and no\n\
          names, paths or geometry. Do not share local-key.json or the design itself.\n\n",
     );
+    if let Some(note) = report.pointer("/bundle/summary").and_then(Value::as_str) {
+        out.push_str(note);
+        out.push_str("\n\n");
+    }
     if let Some(part) = report.get("target_part").and_then(Value::as_u64) {
         out.push_str(&format!("Report target: part {part}.\n"));
     }

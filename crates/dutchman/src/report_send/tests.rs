@@ -92,6 +92,11 @@ fn retry_is_identical_and_only_receipt_means_sent() {
     let calls = task.join().unwrap();
     assert_eq!(calls[0], calls[1]);
     let body = String::from_utf8_lossy(&calls[0]);
+    assert_eq!(
+        calls[0].len(),
+        report.request_size("summary", false).unwrap()
+    );
+    assert!(body.contains("\"source_app\":\"Fusion\""));
     assert!(body.contains("claim_hash"));
     assert!(!body.contains(&report.claim_secret));
     assert!(!body.contains("name=\"bundle\""));
@@ -177,6 +182,9 @@ fn bundle_upload_has_ordered_parts_checksums_and_recorded_permission() {
     let body = String::from_utf8_lossy(&calls[0]);
     assert!(body.find("name=\"report\"").unwrap() < body.find("name=\"bundle\"").unwrap());
     assert!(body.contains("application/gzip"));
+    assert_eq!(calls[0].len(), report.request_size("bundle", true).unwrap());
+    assert!(calls[0].len() <= MAX_REQUEST);
+    assert!(body.contains("\"source_app\":\"Fusion\""));
     let saved: Value =
         serde_json::from_slice(&std::fs::read(dir.path().join("submission.json")).unwrap())
             .unwrap();
@@ -200,6 +208,7 @@ fn metadata_identifies_native_apps_without_guessing_exchange_file_authors() {
         ("f3d", "Fusion"),
         ("f3z", "Fusion"),
         ("fusion_archive", "Fusion"),
+        ("fusion_multi_document", "Fusion"),
         ("ipt", "Inventor"),
         ("iam", "Inventor"),
         ("inventor", "Inventor"),
@@ -238,4 +247,119 @@ fn metadata_identifies_native_apps_without_guessing_exchange_file_authors() {
             assert_eq!(metadata["signature"], report.signature);
         }
     }
+}
+
+#[test]
+fn debug_builds_never_contact_remote_report_service() {
+    if cfg!(debug_assertions) {
+        assert!(endpoint().is_none());
+        let dir = tempfile::tempdir().unwrap();
+        let report = Prepared::new("0123456789abcdef", "f3d", "decode", None, dir.path()).unwrap();
+        assert!(submit(
+            &report,
+            dir.path(),
+            "summary",
+            false,
+            true,
+            Some("https://dutchman-reports.dutchman-cad.workers.dev/api/reports")
+        )
+        .is_err());
+    }
+}
+
+#[test]
+fn raw_size_is_not_the_compressed_upload_limit() {
+    struct Large;
+    impl BundleSource for Large {
+        fn parts(&self) -> Result<Vec<BundlePart>, String> {
+            Ok(vec![BundlePart {
+                role: "synthetic repeated records".into(),
+                bytes: vec![0; MAX_BUNDLE + 1],
+            }])
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let report =
+        Prepared::new("0123456789abcdef", "f3d", "check", Some(&Large), dir.path()).unwrap();
+    assert!(report.bundle_size < MAX_BUNDLE);
+    assert_eq!(report.preview()["bundle_sendable"], true);
+}
+
+#[test]
+fn oversized_gzip_is_saved_for_private_send() {
+    struct Incompressible;
+    impl BundleSource for Incompressible {
+        fn parts(&self) -> Result<Vec<BundlePart>, String> {
+            let mut state = 0xabcdef1234567890u64;
+            let bytes = (0..MAX_BUNDLE + 1024)
+                .map(|_| {
+                    state ^= state << 13;
+                    state ^= state >> 7;
+                    state ^= state << 17;
+                    state as u8
+                })
+                .collect();
+            Ok(vec![BundlePart {
+                role: "Synthetic numeric records".into(),
+                bytes,
+            }])
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let report = Prepared::new(
+        "0123456789abcdef",
+        "f3d",
+        "check",
+        Some(&Incompressible),
+        dir.path(),
+    )
+    .unwrap();
+    assert!(report.bundle_size > MAX_BUNDLE);
+    assert_eq!(report.preview()["bundle_sendable"], false);
+    assert!(report.preview()["summary"]
+        .as_str()
+        .unwrap()
+        .contains("25 MiB"));
+    assert!(dir.path().join("bundle.json.gz").exists());
+    assert!(submit(&report, dir.path(), "bundle", false, true, None).is_err());
+    assert_eq!(
+        submit(&report, dir.path(), "summary", false, true, None).unwrap()["sent"],
+        false
+    );
+    eprintln!("Oversize synthetic gzip: {} bytes", report.bundle_size);
+}
+
+#[test]
+fn multipart_limit_includes_framing_and_reserves_bundle_headroom() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut report = Prepared::new("0123456789abcdef", "f3d", "check", None, dir.path()).unwrap();
+    report.bundle_sha256 = Some("0".repeat(64));
+    report.bundle_size = MAX_BUNDLE;
+    assert!(report.can_send_bundle());
+    assert!(report.request_size("bundle", false).unwrap() < MAX_REQUEST);
+    assert!(report.request_size("bundle", true).unwrap() < MAX_REQUEST);
+    report.bundle_size += 1;
+    // Even when it would just fit today, leave the documented headroom.
+    assert!(!report.can_send_bundle());
+    assert!(submit(&report, dir.path(), "bundle", false, true, None)
+        .unwrap_err()
+        .contains("private-send"));
+    assert!(!dir.path().join("submission.json").exists());
+    report.bundle_size = MAX_REQUEST;
+    assert!(report.request_size("bundle", false).unwrap() > MAX_REQUEST);
+    assert_eq!(report.preview()["bundle_sendable"], false);
+    assert!(report.preview()["summary"]
+        .as_str()
+        .unwrap()
+        .contains("overhead"));
+    let overhead = multipart_size(100, Some(0)).unwrap();
+    assert_eq!(
+        multipart_size(100, Some(MAX_REQUEST - overhead)),
+        Some(MAX_REQUEST)
+    );
+    assert_eq!(
+        multipart_size(100, Some(MAX_REQUEST - overhead + 1)),
+        Some(MAX_REQUEST + 1)
+    );
+    assert!(multipart_size(usize::MAX, Some(0)).is_none());
 }

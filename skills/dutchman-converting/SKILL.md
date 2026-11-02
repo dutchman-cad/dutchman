@@ -685,3 +685,16 @@ Send becomes Retry only after delivery fails. Optional Discord claims are copied
 Report summaries identify the authoring app from the native format, such as Fusion or
 Inventor. Exchange formats and unclassified `.prt` use `unknown` because their authoring
 app cannot be inferred. The build version is included alongside this information.
+
+When no proven bundle exists choose summary or the private-send card.
+
+For a check failure, `dutchman diagnose INPUT --bundle --out OUT` or MCP `extract_repro`
+cuts and proves a private local fragment without narrowing. MCP `verify_repro` rechecks
+the saved report folder. Review `report_preview`: it shows only the manifest, roles and
+sizes. Bundles contain numeric geometry and default to the bundle choice when available.
+Obtain explicit consent for sending. The complete multipart request must fit 25 MiB, including metadata and overhead;
+bundles reserve 64 KiB below that cap. Check `bundle_sendable` in the preview and
+use the private-send card or summary when it is false. Decode refusals have no bundle yet; never substitute the original as a bundle.
+
+Treat refused cuts as a normal no-bundle outcome, including large assembly closures
+that exceed the fragment byte limit. Offer summary or the private-send card.

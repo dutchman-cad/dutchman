@@ -220,3 +220,13 @@ before isolation and bisection; a feature-specific signature is checked when rec
 before resuming narrowing. A feature-specific failure cannot be recognized from a broad
 ranking signature alone. There is no network lookup. The initial list is empty; only
 replay-confirmed entries should be added, with behavior and advice, never design information.
+
+Use `--bundle` to cut a reproduction without narrowing. Check failures also attempt a
+proven bundle during ordinary diagnosis, narrowing and doctor. The local
+`diagnose/repro/manifest.json` describes retained records and sizes, without contents.
+The gzip retains numeric geometry. Cuts that do not reproduce the original signature are
+widened and checked again; if proof still fails, no bundle is saved. Shrinking has a ten
+second budget and keeps the last proven cut when cancelled with `diagnose/cancel-bundle`.
+Decode refusals have no bundle yet. Choose a summary or the private-send card. The
+whole multipart upload must fit 25 MiB, including metadata and framing. Bundles
+reserve 64 KiB below that cap; those that will not fit stay local for private sending.

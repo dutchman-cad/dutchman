@@ -445,7 +445,7 @@ impl App {
             .and_then(|s| s.to_str())
             .unwrap_or("unknown")
             .to_ascii_lowercase();
-        let folder = dutchman::report_send::local_folder(
+        let mut folder = dutchman::report_send::local_folder(
             &self.out_dir.clone().unwrap_or_else(std::env::temp_dir),
             &id,
         );
@@ -457,6 +457,17 @@ impl App {
             .as_ref()
             .and_then(|(_, signature)| signature.clone())
             .unwrap_or(signature);
+        if let Some(row) = self.rows.get(index) {
+            let name = row.input.file_name().unwrap_or_default().to_string_lossy();
+            let saved = row
+                .input
+                .with_file_name(format!("{name}.diagnosis"))
+                .join("diagnose")
+                .join("repro");
+            if saved.join("prepared.json").exists() {
+                folder = saved;
+            }
+        }
         let prepared = if folder.join("prepared.json").exists() {
             dutchman::report_send::Prepared::load(&folder)?
         } else {
