@@ -8,13 +8,22 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 pub const SCHEMA: &str = crate::json::REPORT_SEND;
-pub const MAX_BUNDLE: usize = 25 * 1024 * 1024;
+/// The service limits the complete multipart body, including metadata and framing.
+pub const MAX_REQUEST: usize = 25 * 1024 * 1024;
+/// Leave room for metadata, consent and multipart framing even as reports evolve.
+pub const MAX_BUNDLE: usize = MAX_REQUEST - 64 * 1024;
+// Report boundaries are always SHA-256 hex digests (64 ASCII bytes).
+const SIZE_BOUNDARY: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+pub const SIZE_NOTICE: &str = "The bundle plus reserved metadata and upload overhead exceeds the 25 MiB send limit. Use the private-send card or send an anonymous summary.";
 const MAX_REPORT: usize = 16 * 1024;
 
 /// Only a replay-verified, minimal repro provider should implement this seam.
 /// Names must describe roles, never source names. Bytes can contain private geometry.
 pub trait BundleSource {
     fn parts(&self) -> Result<Vec<BundlePart>, String>;
+    fn manifest(&self) -> Value {
+        json!([])
+    }
 }
 
 pub struct BundlePart {
@@ -34,6 +43,8 @@ pub struct Prepared {
     pub source_format: String,
     pub signature: String,
     pub parts: Vec<PartSize>,
+    #[serde(default)]
+    pub manifest: Value,
     pub bundle_size: usize,
     pub bundle_sha256: Option<String>,
     claim_secret: String,
@@ -90,7 +101,7 @@ impl Prepared {
     ) -> Result<Self, String> {
         if !valid_id(id)
             || format.is_empty()
-            || format.len() > 20
+            || format.len() > 64
             || !format
                 .bytes()
                 .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"._-".contains(&b))
@@ -107,6 +118,7 @@ impl Prepared {
             source_format: format.into(),
             signature: signature.into(),
             parts: Vec::new(),
+            manifest: json!([]),
             bundle_size: 0,
             bundle_sha256: None,
             claim_secret: base64url(&secret),
@@ -120,25 +132,25 @@ impl Prepared {
                 || parts
                     .iter()
                     .try_fold(0usize, |n, p| n.checked_add(p.bytes.len()))
-                    .is_none_or(|n| n > MAX_BUNDLE)
+                    .is_none_or(|n| n > 128 * 1024 * 1024)
             {
                 return Err("The bundle is too large; send it with the private-send card.".into());
             }
-            // A gzip JSON container keeps the role and byte boundaries explicit for replay.
+            // A single payload is a directly replayable gzip CADIR document. Keep role
+            // boundaries explicit in a container when a provider needs multiple payloads.
             let mut gzip =
                 flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-            let content: Vec<Value> = parts
-                .iter()
-                .map(|p| json!({"role": p.role, "bytes_base64url": base64url(&p.bytes)}))
-                .collect();
-            serde_json::to_writer(&mut gzip, &json!({"schema": 1, "parts": content}))
-                .map_err(|e| e.to_string())?;
-            let bytes = gzip.finish().map_err(|e| e.to_string())?;
-            if bytes.len() > MAX_BUNDLE {
-                return Err(
-                    "The compressed bundle exceeds 25 MiB; use the private-send card.".into(),
-                );
+            if let [part] = parts.as_slice() {
+                gzip.write_all(&part.bytes).map_err(|e| e.to_string())?;
+            } else {
+                let content: Vec<Value> = parts
+                    .iter()
+                    .map(|p| json!({"role": p.role, "bytes_base64url": base64url(&p.bytes)}))
+                    .collect();
+                serde_json::to_writer(&mut gzip, &json!({"schema": 1, "parts": content}))
+                    .map_err(|e| e.to_string())?;
             }
+            let bytes = gzip.finish().map_err(|e| e.to_string())?;
             prepared.parts = parts
                 .iter()
                 .map(|p| PartSize {
@@ -146,6 +158,7 @@ impl Prepared {
                     bytes: p.bytes.len(),
                 })
                 .collect();
+            prepared.manifest = source.manifest();
             prepared.bundle_size = bytes.len();
             prepared.bundle_sha256 = Some(hash(&bytes));
             private_write(&folder.join("bundle.json.gz"), &bytes)?;
@@ -158,13 +171,13 @@ impl Prepared {
     }
 
     pub fn load(folder: &Path) -> Result<Self, String> {
-        let bytes = bounded_read(&folder.join("prepared.json"), MAX_REPORT)?;
+        let bytes = bounded_read(&folder.join("prepared.json"), 1024 * 1024)?;
         serde_json::from_slice(&bytes).map_err(|e| e.to_string())
     }
 
     /// Safe for MCP: sizes and roles only, never geometry or the claim secret.
     pub fn preview(&self) -> Value {
-        json!({"schema": SCHEMA, "ok": true, "report_id": self.report_id, "source_format": self.source_format, "signature": self.signature, "parts": self.parts, "bundle_size": self.bundle_size, "bundle_available": self.bundle_sha256.is_some(), "summary_size": self.metadata("summary", false).to_string().len(), "default_choice": "bundle", "public_test": false, "summary": if self.bundle_sha256.is_some() { "Review the bundle parts and sizes. Bundles contain private geometry." } else { "No bundle is available until repro extraction is supported. Choose summary to send only version, OS, format, source app and failure signature." }})
+        json!({"schema": SCHEMA, "ok": true, "report_id": self.report_id, "source_format": self.source_format, "signature": self.signature, "parts": self.parts, "manifest": self.manifest, "bundle_sendable": self.can_send_bundle(), "request_size": self.request_size("bundle", false), "request_limit": MAX_REQUEST, "bundle_limit": MAX_BUNDLE, "private_send": crate::json::DISCORD_URL, "bundle_size": self.bundle_size, "bundle_available": self.bundle_sha256.is_some(), "summary_size": self.metadata("summary", false).to_string().len(), "default_choice": if self.bundle_sha256.is_some() { "bundle" } else { "summary" }, "public_test": false, "summary": if self.bundle_sha256.is_some() && !self.can_send_bundle() { SIZE_NOTICE } else if self.bundle_sha256.is_some() { "Review the bundle parts and sizes. Bundles contain private geometry." } else { "No bundle is available for this failure. Decode refusals have no bundle yet. Choose summary or use the private-send card." }})
     }
 
     /// The exact bounded envelope, without the private secret or local paths.
@@ -177,6 +190,25 @@ impl Prepared {
             }
         }
         report
+    }
+
+    /// The exact body size for this consent choice, without opening or exposing geometry.
+    pub fn request_size(&self, choice: &str, public_test: bool) -> Option<usize> {
+        let metadata = serde_json::to_vec(&self.metadata(choice, public_test)).ok()?;
+        multipart_size(
+            metadata.len(),
+            (choice == "bundle").then_some(self.bundle_size),
+        )
+    }
+
+    /// Used by both desktop consent and anonymous previews before offering Send.
+    pub fn can_send_bundle(&self) -> bool {
+        self.bundle_sha256.is_some()
+            && self.bundle_size <= MAX_BUNDLE
+            && [false, true].into_iter().all(|permission| {
+                self.request_size("bundle", permission)
+                    .is_some_and(|size| size <= MAX_REQUEST)
+            })
     }
 
     pub fn claim(&self) -> String {
@@ -200,12 +232,31 @@ impl Prepared {
     }
 }
 
+/// One framing definition serves size previews and the actual request body.
+fn multipart_framing(boundary: &str) -> (String, String, String) {
+    (format!("--{boundary}\r\nContent-Disposition: form-data; name=\"report\"\r\nContent-Type: application/json\r\n\r\n"),
+     format!("\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"bundle\"; filename=\"repro.gz\"\r\nContent-Type: application/gzip\r\n\r\n"),
+     format!("\r\n--{boundary}--\r\n"))
+}
+
+fn multipart_size(metadata: usize, bundle: Option<usize>) -> Option<usize> {
+    let (header, separator, tail) = multipart_framing(SIZE_BOUNDARY);
+    let size = header
+        .len()
+        .checked_add(metadata)?
+        .checked_add(tail.len())?;
+    match bundle {
+        Some(bytes) => size.checked_add(separator.len())?.checked_add(bytes),
+        None => Some(size),
+    }
+}
+
 fn base64url(bytes: &[u8]) -> String {
     use base64::Engine;
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
 }
 
-fn private_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn private_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -219,7 +270,7 @@ fn private_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
         .map_err(|e| format!("Cannot keep the local report: {e}"))
 }
 
-fn bounded_read(path: &Path, cap: usize) -> Result<Vec<u8>, String> {
+pub(crate) fn bounded_read(path: &Path, cap: usize) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     std::fs::File::open(path)
         .and_then(|f| f.take(cap as u64 + 1).read_to_end(&mut bytes))
@@ -236,8 +287,8 @@ const DEFAULT_ENDPOINT: &str = "https://dutchman-reports.dutchman-cad.workers.de
 /// Where reports go: `DUTCHMAN_REPORT_ENDPOINT` at build time, else the service in a release
 /// build. A debug build has no default, so tests and development never reach the service.
 pub fn endpoint() -> Option<String> {
-    option_env!("DUTCHMAN_REPORT_ENDPOINT")
-        .or((!cfg!(debug_assertions)).then_some(DEFAULT_ENDPOINT))
+    (!cfg!(debug_assertions))
+        .then(|| option_env!("DUTCHMAN_REPORT_ENDPOINT").unwrap_or(DEFAULT_ENDPOINT))
         .map(str::to_owned)
 }
 
@@ -256,6 +307,9 @@ pub fn submit(
     if !matches!(choice, "bundle" | "summary") {
         return Err("Choose bundle or summary; whole files use the private-send card.".into());
     }
+    if choice == "bundle" && !prepared.can_send_bundle() {
+        return Err(SIZE_NOTICE.into());
+    }
     let bundle = if choice == "bundle" {
         let bytes = bounded_read(&folder.join("bundle.json.gz"), MAX_BUNDLE)?;
         if prepared.bundle_sha256.as_deref() != Some(hash(&bytes).as_str())
@@ -272,6 +326,20 @@ pub fn submit(
     if metadata.len() > MAX_REPORT {
         return Err("Report metadata exceeds 16 KiB.".into());
     }
+    let mut random = [0; 16];
+    getrandom::fill(&mut random).map_err(|e| e.to_string())?;
+    let boundary = hash(&random);
+    let (header, separator, tail) = multipart_framing(&boundary);
+    let mut body = header.into_bytes();
+    body.extend_from_slice(&metadata);
+    if let Some(bytes) = bundle {
+        body.extend_from_slice(separator.as_bytes());
+        body.extend(bytes);
+    }
+    body.extend_from_slice(tail.as_bytes());
+    if body.len() > MAX_REQUEST {
+        return Err(SIZE_NOTICE.into());
+    }
     // Keep consent per report, and never reuse an id for different bytes after an attempt.
     let saved = folder.join("submission.json");
     if saved.exists() {
@@ -284,19 +352,14 @@ pub fn submit(
     } else {
         private_write(&saved, &metadata)?;
     }
-    let mut random = [0; 16];
-    getrandom::fill(&mut random).map_err(|e| e.to_string())?;
-    let boundary = hash(&random);
-    let mut body = format!("--{boundary}\r\nContent-Disposition: form-data; name=\"report\"\r\nContent-Type: application/json\r\n\r\n").into_bytes();
-    body.extend(metadata);
-    if let Some(bytes) = bundle {
-        body.extend(format!("\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"bundle\"; filename=\"repro.gz\"\r\nContent-Type: application/gzip\r\n\r\n").bytes());
-        body.extend(bytes);
-    }
-    body.extend(format!("\r\n--{boundary}--\r\n").bytes());
     let mut rate_limited = false;
     if let Some(endpoint) = endpoint {
         let url = url::Url::parse(endpoint).map_err(|e| e.to_string())?;
+        if cfg!(debug_assertions)
+            && !matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"))
+        {
+            return Err("Debug builds send reports only to a local test service.".into());
+        }
         if url.scheme() != "https"
             && !(url.scheme() == "http"
                 && matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]")))

@@ -194,7 +194,7 @@ pub fn run(
             let ranking = diagnose::run_resuming(&job.input, &folder, &settings, &|_| {});
             let result = match ranking {
                 Ok(ranking) => {
-                    json!({"ok": true, "conversion": conversion, "diagnose": ranking.get("report"), "checkpoint": folder})
+                    json!({"ok": true, "conversion": conversion, "diagnose": ranking.get("report"), "bundle": ranking.get("bundle"), "checkpoint": folder})
                 }
                 Err(_) => {
                     json!({"ok": false, "conversion": conversion, "check_error": "checkpoint_write_failed"})

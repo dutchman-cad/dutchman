@@ -1058,7 +1058,7 @@ BBox coordinates beyond 1e12 mm are treated as unavailable measurements.
 
 Preview: `ok`, `report_id` (the diagnostic file id), `source_format`, `signature`,
 `parts` (role and uncompressed `bytes`), `bundle_size` (gzip bytes),
-`bundle_available`, `summary_size` (summary JSON bytes with default consent), `default_choice` (`bundle`), `public_test` (false), `summary`.
+`bundle_available`, `summary_size` (summary JSON bytes with default consent), `default_choice` (`bundle` when available, otherwise `summary`), `public_test` (false), `summary`.
 No contents or claim secret are returned. Sending takes explicit consent and returns
 `sent`: true only with a matching Worker `report_id` and unsigned Unix `received`.
 Failure returns `sent: false`, `summary`, `local_folder`, optional `bundle`,
@@ -1085,3 +1085,24 @@ same `fixes_reports` array directly. No report ids are sent during update checks
 
 Desktop report review describes the summary in plain language; this does not change
 the report fields or consent values sent to the report service.
+
+Reproduction bundles use `dutchman.repro-bundle/1` for local extraction refusal and
+verification results. Extraction of a proven bundle returns the existing report-send
+preview. Diagnose and narrow results add `bundle` (a preview, unavailable result, or
+null). Doctor checkpoints add the same field. These previews include `manifest`, an
+array of `{arena, rows, serialized_bytes, description}`, plus `bundle_sendable` and
+`private_send`. `parts` describes saved payload roles and uncompressed byte sizes;
+`bundle_size` is the gzip byte size. `default_choice` is `bundle` when available,
+otherwise `summary`. `request_size` includes multipart framing and metadata (default
+public-test permission false), `request_limit` is 25 MiB, and `bundle_limit` reserves
+64 KiB below it. `bundle_sendable` requires both limits to fit. Oversize bundles stay
+local for the private-send card; summaries remain available.
+
+Verification returns `reproduces`, `signature` (hash only), `manifest`,
+`compressed_bytes`, and `uncompressed_bytes`. Bundle contents and local paths are never
+returned. The gzip contains a CADIR fragment with cadmpeg's reproduction contract and
+opaque context keys `dutchman_part`, `feature_index`, and `failed_operation_kind`;
+unknown context values are null. Keep the gzip and prepared metadata private.
+
+Cut refusals (including the fragment byte limit) return `ok: true` and
+`bundle_available: false`, with a plain `summary` and `private_send`; no bundle is saved.

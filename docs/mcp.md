@@ -749,8 +749,8 @@ pairs never enter the tool result.
 
 `report_preview` takes `folder` and, for a new report, `report_id`, `source_format`
 and `signature`. Reuse the diagnostic file id. The result shows parts and sizes,
-never bundle contents or claim secrets. Extraction is not supported yet, so a new
-preview currently offers summary only. Nothing is sent.
+never bundle contents or claim secrets. Use the folder saved by `extract_repro` to
+preview a proven bundle; a new report without a bundle offers summary. Nothing is sent.
 `report_submit` takes `folder`, `choice` (`bundle` or `summary`), `public_test`
 (default false) and `explicit_yes`. Ask the user for explicit consent to this exact
 preview and choice before passing true. A failure does not authorize a later resend.
@@ -762,3 +762,18 @@ app cannot be inferred. The build version is included alongside this information
 
 The desktop report review selects the anonymous summary when no bundle is available.
 Its **Send** button becomes **Retry** after a delivery failure.
+
+`extract_repro` takes absolute `input` and `out` paths, with optional `time_limit` and
+`memory_limit_mb` as for diagnose. It cuts, proves and shrinks a local reproduction bundle
+without narrowing. `verify_repro` takes the absolute `folder` containing the saved
+`bundle.json.gz` and `prepared.json` and rechecks its signature. Both return anonymous
+results: availability or reproduction status, sizes, signature hash, and the manifest;
+never paths, checker messages, entity identities, or geometry. Neither sends anything.
+`report_preview` can use that same folder to review the saved bundle. Bundles are the
+default when available. The entire multipart request must fit 25 MiB; a 64 KiB
+reserve keeps bundles below the cap. Preview checks metadata and framing overhead
+before marking a bundle sendable. Use the private-send card or summary when it will not fit.
+Decode refusals have no bundle yet.
+
+A cut refused by the fragment limits returns a normal unavailable-bundle result,
+with a plain explanation and summary or private-send options; it is not a tool error.

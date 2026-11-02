@@ -161,6 +161,8 @@ fn answer(method: &str, params: &Value) -> Result<Value, (i64, String)> {
                 "compare_step" => (compare_step(arguments), "dutchman.compare-step/1"),
                 "doctor" => (doctor_tool(arguments), crate::doctor::SCHEMA),
 
+                "extract_repro" => (extract_repro(arguments), crate::diagnose::bundle::SCHEMA),
+                "verify_repro" => (verify_repro(arguments), crate::diagnose::bundle::SCHEMA),
                 "report_preview" => (report_preview(arguments), crate::report_send::SCHEMA),
                 "report_submit" => (report_submit(arguments), crate::report_send::SCHEMA),
                 _ => return Err((INVALID_PARAMS, format!("no tool named {name}"))),
@@ -374,7 +376,7 @@ fn tools() -> Value {
             "inputSchema": {"type": "object", "properties": all, "required": ["inputs", "out_dir"], "additionalProperties": false},
         },
         {
-            "name": "report_preview", "description": "Prepare or preview a local report. Returns only sizes, roles and signature; never bundle contents. Nothing is sent. Reuse the diagnostic file id. Until repro extraction is available only summary can be sent.",
+            "name": "report_preview", "description": "Prepare or preview a local report. Returns only sizes, roles and signature; never bundle contents. Nothing is sent. Reuse the diagnostic file id. Bundle is the default when a proven bundle exists. Decode refusals have no bundle yet.",
             "inputSchema": {"type": "object", "properties": {"folder": {"type": "string"}, "report_id": {"type": "string"}, "source_format": {"type": "string"}, "signature": {"type": "string"}}, "required": ["folder"], "additionalProperties": false}
         },
         {
@@ -1065,7 +1067,9 @@ mod freecad_output_tests {
 fn is_diagnostic(name: &str) -> bool {
     matches!(
         name,
-        "diagnose"
+        "extract_repro"
+            | "verify_repro"
+            | "diagnose"
             | "diagnose_narrow"
             | "convert_part"
             | "stop_at_feature"
@@ -1086,6 +1090,8 @@ fn diagnostic_schema(name: &str) -> &'static str {
 
 fn diagnostic_tools() -> Vec<Value> {
     [
+        ("extract_repro", "Cut, prove and shrink a private bundle locally without narrowing. Nothing is sent.", vec!["input", "out"]),
+        ("verify_repro", "Replay a saved bundle locally. Returns sizes, manifest and reproduction status only.", vec!["folder"]),
         ("diagnose", "Rank numbered parts locally under time and memory limits.", vec!["input", "out"]),
         ("diagnose_narrow", "Resume automatic narrowing, returning the anonymous signature and rebuild recipe.", vec!["input", "out"]),
         ("convert_part", "Try one numbered part, optionally with neighbours; discard the converted geometry.", vec!["input", "part"]),
@@ -1102,7 +1108,7 @@ fn diagnostic_tools() -> Vec<Value> {
         if matches!(name, "convert_part" | "stop_at_feature") {
             properties.insert("neighbours".into(), json!({"type": "boolean", "default": false}));
         }
-        if name != "make_report" {
+        if !matches!(name, "make_report" | "verify_repro") {
             properties.insert("time_limit".into(), json!({"type": ["string", "integer"], "description": "Time per trial, such as 30s or 5m, or positive whole seconds."}));
             properties.insert("memory_limit_mb".into(), json!({"type": "integer", "minimum": 1}));
         }
@@ -1134,7 +1140,7 @@ fn diagnostic(name: &str, arguments: &Arguments) -> Result<Value, String> {
     if name == "diagnose" {
         allowed.push("narrow");
     }
-    if name != "make_report" {
+    if !matches!(name, "make_report" | "verify_repro") {
         allowed.extend(["time_limit", "memory_limit_mb"]);
     }
     only(arguments, &allowed)?;
@@ -1184,6 +1190,7 @@ fn diagnostic(name: &str, arguments: &Arguments) -> Result<Value, String> {
         "result",
         "signature",
         "bytes",
+        "bundle",
     ] {
         if let Some(value) = result.get(key) {
             answer.insert(key.into(), value.clone());
@@ -1236,4 +1243,41 @@ fn report_submit(arguments: &Arguments) -> Result<Value, String> {
         flag(arguments, "explicit_yes", false)?,
         crate::report_send::endpoint().as_deref(),
     )
+}
+
+fn extract_repro(arguments: &Arguments) -> Result<Value, String> {
+    only(
+        arguments,
+        &["input", "out", "time_limit", "memory_limit_mb"],
+    )?;
+    crate::diagnose::bundle::extract(
+        &path(arguments, "input")?,
+        &path(arguments, "out")?,
+        &diagnostic_settings(arguments)?,
+        None,
+        None,
+        &|| false,
+    )
+}
+fn verify_repro(arguments: &Arguments) -> Result<Value, String> {
+    only(arguments, &["folder"])?;
+    crate::diagnose::bundle::verify(&path(arguments, "folder")?)
+}
+
+#[cfg(test)]
+mod bundle_tools_tests {
+    use super::*;
+    #[test]
+    fn bundle_tools_are_listed_and_errors_are_anonymous() {
+        let tools = diagnostic_tools();
+        for name in ["extract_repro", "verify_repro"] {
+            assert!(tools.iter().any(|t| t["name"] == name));
+            assert!(is_diagnostic(name));
+        }
+        let response = handle(
+            &json!({"jsonrpc":"2.0", "id":1, "method":"tools/call", "params":{"name":"verify_repro", "arguments":{"folder":"/private/design-name/no-bundle"}}}).to_string(),
+        );
+        assert!(response.is_some());
+        assert!(!format!("{response:?}").contains("design-name"));
+    }
 }
