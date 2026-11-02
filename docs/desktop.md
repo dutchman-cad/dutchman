@@ -51,14 +51,23 @@ and times below 60 seconds show **under a minute**, just as in the CLI. **M GB o
 once when the machine's free memory can be read. These are estimates, not limits or promises; an unavailable estimate
 leaves no label. Planning and estimation run in the background.
 
-Before a conversion or retry, Dutchman checks each file's estimate, the figure on its row, against free memory.
-If one is too large, a dialog shows only its file name, without the folder path:
-“`<file name>` may use about `<N GB>` of memory while converting. Your computer has about
-`<M GB>` free, so it may not have enough.” A separate line advises using the lighter preset
-when one is available. All dialog buttons appear in one horizontal row.
-**Use Fast** or **Use Standard** selects the offered preset and checks the files again.
-**Convert anyway** skips the memory check for this run only; **Cancel** starts no conversion.
-When Fast is already selected, the dialog offers only Convert anyway and Cancel.
+Before a conversion or retry, Dutchman compares conversion memory, without the history
+check, against free memory. If a file is too large, **This conversion may need more memory**
+shows its file name and explains what Fast, Standard and Full keep. Change the preset,
+**Feature history**, **Sketches**, **Joints**, or **Check feature history in SolidCraft**
+to see a live total matching the file row. The check is counted only when its checkbox is
+on and a SolidCraft CLI was found. Each checkbox shows the estimator's extra memory and
+time for that choice; **no separate estimate** means it has no separate cost in the current
+model. Archive sizes are read in the background once; changing choices updates the figures
+without reading the archive again. Standard's total leaves history out when doing so fits
+free memory, with a note saying so.
+
+**Convert with these choices** and **Cancel** stay visible together, including in short
+windows where the contents scroll. The choices return to the main window and are remembered,
+including the history-check checkbox. If the conversion still will not fit, the box says so;
+converting skips memory checks for this run only. Otherwise the queued files are checked
+again. A requested history check that cannot fit after reading is skipped, and the box
+explains this when its estimate exceeds free memory. Conversion can still continue.
 When Standard leaves history out to fit in memory, its result card shows the
 history Info message even with the full loss log collapsed. The original geometry is kept.
 

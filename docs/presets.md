@@ -8,6 +8,8 @@
 | `standard` (default) | History, sketches, and joints. History is left out when its estimate exceeds free memory and the history-free estimate fits. |
 | `full` | History, sketches, and joints whenever they map; history is never left out to fit memory. |
 
+Parameters that map are retained with history or reference sketches; Fast leaves them out.
+
 `--no-history` (also `--import-only`), `--no-sketches`, and `--no-joints` only remove
 choices from the preset. `--no-sketches` removes reference sketches, including those
 kept beside an imported shape or after a blocked history; sketches needed to replay
@@ -106,6 +108,12 @@ history-check skipping.
 Existing decoder input limits and batch worker memory limits still apply. Batch
 conversion checks each input; changing presets or narrowing switches also prevents a
 journal from reusing a result made with different choices.
+
+The desktop memory dialog uses the same preset descriptions as its main selector and lets
+you narrow these choices before proceeding. Its total and the file row include checking only
+when a SolidCraft CLI was found and checking is on. They show Standard's reduced estimate
+when history is left out to fit. Checkbox costs come from the estimator; choices without a
+separate model show **no separate estimate**. See [the desktop guide](desktop.md).
 
 ## Presets and estimates
 

@@ -61,7 +61,9 @@ pub struct App {
     project_summary: String,
     has_inventor: bool,
     custom: bool,
-    estimate_key: Option<(Vec<PathBuf>, Choices)>,
+    estimate_key: Option<EstimateKey>,
+    size_inputs: Option<Vec<PathBuf>>,
+    sizes: Vec<(PathBuf, Option<dutchman::choices::Sizes>)>,
     estimate_generation: u64,
     estimates: Vec<(PathBuf, Option<Estimate>)>,
     available: Option<u64>,
@@ -101,6 +103,17 @@ pub struct App {
     file_manager: fn(&Path) -> Result<(), String>,
 }
 
+#[derive(PartialEq)]
+struct EstimateKey {
+    inputs: Vec<PathBuf>,
+    choices: Choices,
+    check: bool,
+    no_memory_check: bool,
+    to: dutchman::OutputFormat,
+    threads: usize,
+    available: Option<u64>,
+}
+
 struct PendingRun {
     options: ConvertOptions,
     kind: RunKind,
@@ -118,8 +131,7 @@ enum RunKind {
 }
 
 enum MemoryAction {
-    Use(Preset),
-    Anyway,
+    Convert,
     Cancel,
 }
 
@@ -176,6 +188,10 @@ fn restore_choices(options: &mut ConvertOptions, settings: &Value) -> bool {
         .get("no_sketches")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    options.no_verify = settings
+        .get("no_verify")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
     options.no_joints = settings
         .get("no_joints")
         .and_then(Value::as_bool)
@@ -220,6 +236,7 @@ fn saved_choices(options: &ConvertOptions, custom: bool) -> Value {
         "save_diagnostics": options.diagnostics_default,
         "import_only": options.import_only,
         "no_sketches": options.no_sketches, "no_joints": options.no_joints,
+        "no_verify": options.no_verify,
     })
 }
 
@@ -270,6 +287,8 @@ impl App {
             has_inventor: false,
             custom,
             estimate_key: None,
+            size_inputs: None,
+            sizes: Vec::new(),
             estimate_generation: 0,
             estimates: Vec::new(),
             available: None,
@@ -398,7 +417,19 @@ impl App {
     /// Injects a memory decision for headless UI review without allocating a huge design.
     #[cfg(feature = "test-support")]
     #[doc(hidden)]
-    pub fn show_memory_check_for_test(&mut self, input: PathBuf, check: MemoryCheck) {
+    pub fn show_memory_check_for_test(
+        &mut self,
+        input: PathBuf,
+        check: MemoryCheck,
+        sizes: dutchman::choices::Sizes,
+    ) {
+        self.sizes.retain(|(path, _)| *path != input);
+        self.sizes.push((input.clone(), Some(sizes)));
+        self.size_inputs = Some(self.inputs.clone());
+        if let MemoryCheck::TooBig { available, .. } = check {
+            self.available = Some(available);
+        }
+        self.estimate_key = None;
         if let Some(out_dir) = self.out_dir.clone() {
             self.pending = Some(PendingRun {
                 options: self.options.clone(),
@@ -407,8 +438,36 @@ impl App {
                     out_dir,
                 },
             });
+            self.estimate_generation = self.estimate_generation.wrapping_add(1);
             self.memory_warning = Some((input, check));
         }
+    }
+
+    /// Shared row/dialog estimate for deterministic UI review.
+    #[cfg(feature = "test-support")]
+    pub fn memory_estimate_for_test(&self, input: &Path) -> Option<Estimate> {
+        self.sizes
+            .iter()
+            .find(|(path, _)| path == input)
+            .and_then(|(_, sizes)| *sizes)
+            .and_then(|sizes| {
+                dutchman::choices::desktop_estimate(
+                    sizes,
+                    &self.options,
+                    self.checker.is_ok(),
+                    self.estimate_available(),
+                )
+                .0
+            })
+    }
+
+    #[cfg(feature = "test-support")]
+    pub fn set_checker_for_test(&mut self, found: bool) {
+        self.checker = if found {
+            Ok(PathBuf::from("solidcraft-cli"))
+        } else {
+            Err(dutchman_solidcraft::NoCli::NotFound("Not found".into()))
+        };
     }
 
     /// The rows of the current or last run.
@@ -745,87 +804,141 @@ impl App {
         });
     }
 
+    fn estimate_available(&self) -> Option<u64> {
+        match &self.memory_warning {
+            Some((_, MemoryCheck::TooBig { available, .. })) => Some(*available),
+            _ => self.available,
+        }
+    }
+
+    fn current_estimate_key(&self) -> EstimateKey {
+        EstimateKey {
+            inputs: self.inputs.clone(),
+            choices: self.options.choices(),
+            check: !self.options.no_verify && self.checker.is_ok(),
+            no_memory_check: self.options.no_memory_check,
+            to: self.options.to,
+            threads: self.options.threads,
+            available: self.estimate_available(),
+        }
+    }
+
     fn refresh_estimates(&mut self, ctx: &egui::Context) {
-        let key = (self.inputs.clone(), self.options.choices());
+        let key = self.current_estimate_key();
         if self.estimate_key.as_ref() == Some(&key) {
             return;
         }
-        self.estimate_generation = self.estimate_generation.wrapping_add(1);
-        self.estimates.clear();
-        worker::estimates(
-            key.0.clone(),
-            key.1,
-            self.estimate_generation,
-            self.sender.clone(),
-            ctx.clone(),
-        );
+        if self.size_inputs.as_ref() != Some(&self.inputs) {
+            self.estimate_generation = self.estimate_generation.wrapping_add(1);
+            self.estimates.clear();
+            self.sizes.clear();
+            self.size_inputs = Some(self.inputs.clone());
+            worker::estimates(
+                key.inputs.clone(),
+                self.options.clone(),
+                self.checker.is_ok(),
+                self.estimate_generation,
+                self.sender.clone(),
+                ctx.clone(),
+            );
+        } else if !self.sizes.is_empty() {
+            self.estimates = self
+                .sizes
+                .iter()
+                .map(|(path, sizes)| {
+                    (
+                        path.clone(),
+                        sizes.and_then(|sizes| {
+                            dutchman::choices::desktop_estimate(
+                                sizes,
+                                &self.options,
+                                self.checker.is_ok(),
+                                self.estimate_available(),
+                            )
+                            .0
+                        }),
+                    )
+                })
+                .collect();
+        }
         self.estimate_key = Some(key);
     }
 
     fn memory_dialog(&mut self, ctx: &egui::Context) {
-        let Some((
-            path,
-            MemoryCheck::TooBig {
-                conversion,
-                available,
-                lighter,
-                ..
-            },
-        )) = self.memory_warning.clone()
+        let Some((path, MemoryCheck::TooBig { available, .. })) = self.memory_warning.clone()
         else {
             return;
         };
+        let sizes = self
+            .sizes
+            .iter()
+            .find(|(p, _)| *p == path)
+            .and_then(|(_, s)| *s);
+        let sizes_ready = self.sizes.iter().any(|(p, _)| *p == path);
         let mut action = None;
+        let mut will_not_fit = false;
         egui::Modal::new(egui::Id::new("memory_warning")).show(ctx, |ui| {
-            ui.heading("This conversion may need more memory");
-            ui.label(format!(
-                "{} may use about {:.1} GB of memory while converting. Your computer has about {:.1} GB free, so it may not have enough.",
-                path.file_name().unwrap_or_default().to_string_lossy(),
-                gigabytes(conversion.peak_bytes),
-                gigabytes(available)
-            ));
-            if let Some(preset) = lighter {
-                ui.label(format!(
-                    "Use {} to keep less and reduce memory use.",
-                    preset_label(preset)
-                ));
-            } else {
-                ui.label("This is already the lightest preset.");
-            }
-            ui.horizontal(|ui| {
-                if let Some(preset) = lighter {
-                    if ui.button(format!("Use {}", preset_label(preset))).clicked() {
-                        action = Some(MemoryAction::Use(preset));
+            ui.set_width((ctx.content_rect().width() - 64.0).clamp(280.0, 560.0));
+            ScrollArea::vertical().max_height((ctx.content_rect().height() - 125.0).max(80.0)).show(ui, |ui| {
+                ui.heading("This conversion may need more memory");
+                ui.label(path.file_name().unwrap_or_default().to_string_lossy());
+                ui.label(format!("About {:.1} GB of memory free.", gigabytes(available)));
+                for preset in [Preset::Fast, Preset::Standard, Preset::Full] {
+                    ui.label(format!("{}: {}", preset_label(preset), preset_description(preset)));
+                }
+                self.preset_ui(ui);
+                let choices = self.options.choices();
+                let (mut history, mut sketches, mut joints) = (choices.history, choices.sketches, choices.joints);
+                let before = self.options.clone();
+                ui.add_enabled_ui(self.options.preset != Preset::Fast, |ui| {
+                    for (value, label, kind) in [(&mut history, "Feature history", 0), (&mut sketches, "Sketches", 1), (&mut joints, "Joints", 2)] {
+                        ui.checkbox(value, label);
+                        ui.label(choice_cost(sizes, &before, self.checker.is_ok(), available, kind));
                     }
+                });
+                if (history, sketches, joints) != (choices.history, choices.sketches, choices.joints) {
+                    set_choices(&mut self.options, history, sketches, joints);
+                    self.custom = true;
                 }
-                if ui.button("Convert anyway").clicked() {
-                    action = Some(MemoryAction::Anyway);
-                }
-                if ui.button("Cancel").clicked() {
-                    action = Some(MemoryAction::Cancel);
-                }
+                let mut verify = !self.options.no_verify;
+                if ui.checkbox(&mut verify, "Check feature history in SolidCraft").changed() { self.options.no_verify = !verify; }
+                ui.label(choice_cost(sizes, &self.options, self.checker.is_ok(), available, 3));
+                if let Some(sizes) = sizes {
+                    let (total, reduced) = dutchman::choices::desktop_estimate(sizes, &self.options, self.checker.is_ok(), Some(available));
+                    if let Some(total) = total { ui.label(format!("Total: {}", estimate_text(total))); }
+                    if reduced { ui.label("Standard leaves feature history out to fit in free memory."); }
+                    let mut conversion_options = self.options.clone();
+                    conversion_options.no_verify = true;
+                    let conversion = dutchman::choices::desktop_estimate(sizes, &conversion_options, false, Some(available)).0;
+                    will_not_fit = conversion.is_some_and(|e| e.peak_bytes > available);
+                    if will_not_fit { ui.label("These choices will not fit in free memory. Converting anyway skips memory checks for this run only."); }
+                    else if total.is_some_and(|e| e.peak_bytes > available) && !self.options.no_memory_check {
+                        ui.label("If the history check will not fit after reading, it is skipped; conversion still continues.");
+                    }
+                    if self.checker.is_err() && !self.options.no_verify { ui.label("SolidCraft CLI not found. History checking is not included."); }
+                } else if sizes_ready { ui.label("Estimate unavailable. Convert to check this file again."); } else { ui.label("Working out…"); }
+            });
+            ui.separator();
+            ui.horizontal(|ui| {
+                if ui.add_enabled(sizes_ready, egui::Button::new("Convert with these choices")).clicked() { action = Some(MemoryAction::Convert); }
+                if ui.button("Cancel").clicked() { action = Some(MemoryAction::Cancel); }
             });
         });
         if let Some(action) = action {
             self.memory_warning = None;
             match action {
-                MemoryAction::Use(preset) => {
+                MemoryAction::Convert => {
                     if let Some(pending) = &mut self.pending {
-                        select_preset(&mut pending.options, preset);
-                        select_preset(&mut self.options, preset);
-                        self.custom = false;
+                        pending.options = self.options.clone();
+                        pending.options.no_memory_check |= will_not_fit;
                     }
-                    self.check_memory(ctx);
-                }
-                MemoryAction::Anyway => {
-                    if let Some(pending) = &mut self.pending {
-                        pending.options.no_memory_check = true;
+                    if will_not_fit {
+                        self.start_checked(ctx);
+                    } else {
+                        self.check_memory(ctx);
                     }
-                    self.start_checked(ctx);
                 }
-                MemoryAction::Cancel => {
-                    self.pending = None;
-                }
+                MemoryAction::Cancel => self.pending = None,
             }
         }
     }
@@ -873,19 +986,33 @@ impl App {
                     generation,
                     files,
                     available,
+                    sizes,
                 } => {
                     if generation == self.estimate_generation {
                         self.estimates = files;
                         self.available = available;
+                        if !sizes.is_empty() {
+                            self.sizes = sizes;
+                            self.estimate_key = None;
+                        }
                     }
                 }
                 Message::MemoryChecked(warning) => {
                     self.checking_memory = false;
                     if warning.is_some() {
+                        if let Some((_, MemoryCheck::TooBig { available, .. })) = &warning {
+                            self.available = Some(*available);
+                            self.estimate_key = None;
+                        }
                         self.memory_warning = warning;
                     } else {
                         self.start_checked(ctx);
                     }
+                }
+                Message::MemorySizes { path, sizes } => {
+                    self.sizes.retain(|(p, _)| *p != path);
+                    self.sizes.push((path, sizes));
+                    self.estimate_key = None;
                 }
                 Message::Picked { pick, paths } => self.picked(pick, paths, ctx),
                 Message::Planned { problems, jobs } => {
@@ -1325,6 +1452,9 @@ impl App {
                                             )
                                         };
                                         ui.label(RichText::new(text).small().color(p.tide));
+                                        if self.sizes.iter().find(|(p, _)| p == path).and_then(|(_, sizes)| *sizes).is_some_and(|sizes| dutchman::choices::desktop_estimate(sizes, &self.options, self.checker.is_ok(), self.estimate_available()).1) {
+                                            ui.label(RichText::new("Standard leaves feature history out to fit in free memory.").small());
+                                        }
                                     }
                                 }
                             }
@@ -1351,7 +1481,7 @@ impl App {
             if !self.inputs.is_empty() && !self.project_summary.is_empty() {
                 ui.label(RichText::new(&self.project_summary).small().color(p.tide));
             }
-            if let Some(available) = self.available.filter(|bytes| *bytes > 0) {
+            if let Some(available) = self.estimate_available().filter(|bytes| *bytes > 0) {
                 ui.label(
                     RichText::new(format!("{:.1} GB of memory free", gigabytes(available)))
                         .small()
@@ -1379,25 +1509,39 @@ impl App {
         });
     }
 
-    fn choices_ui(&mut self, ui: &mut egui::Ui) {
+    fn preset_ui(&mut self, ui: &mut egui::Ui) {
         let label = if self.custom {
             format!("Custom (based on {})", preset_label(self.options.preset))
         } else {
             preset_label(self.options.preset).to_owned()
         };
-        egui::ComboBox::from_label("Preset").selected_text(label).show_ui(ui, |ui| {
-            for (preset, description) in [
-                (Preset::Fast, "shape only, least memory"),
-                (Preset::Standard, "history, sketches and joints; leaves history out if it would not fit in free memory"),
-                (Preset::Full, "everything, most memory"),
-            ] {
-                if ui.selectable_label(!self.custom && self.options.preset == preset, preset_label(preset)).clicked() {
-                    select_preset(&mut self.options, preset);
-                    self.custom = false;
+        egui::ComboBox::from_label("Preset")
+            .selected_text(label)
+            .show_ui(ui, |ui| {
+                ui.set_width((ui.ctx().content_rect().width() - 80.0).clamp(260.0, 480.0));
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                for preset in [Preset::Fast, Preset::Standard, Preset::Full] {
+                    let description = preset_description(preset);
+                    if ui
+                        .selectable_label(
+                            !self.custom && self.options.preset == preset,
+                            preset_label(preset),
+                        )
+                        .clicked()
+                    {
+                        select_preset(&mut self.options, preset);
+                        self.custom = false;
+                        ui.close();
+                    }
+                    ui.label(RichText::new(description).small());
                 }
-                ui.label(RichText::new(description).small());
-            }
-        });
+            })
+            .response
+            .on_hover_text(preset_description(self.options.preset));
+    }
+
+    fn choices_ui(&mut self, ui: &mut egui::Ui) {
+        self.preset_ui(ui);
         egui::CollapsingHeader::new("Advanced").show(ui, |ui| {
             let choices = self.options.choices();
             let (mut history, mut sketches, mut joints) =
@@ -2163,6 +2307,79 @@ fn display(path: &Path) -> String {
     path.display().to_string()
 }
 
+fn preset_description(preset: Preset) -> &'static str {
+    match preset {
+        Preset::Fast => "Shape only; no feature history, sketches, parameters or joints. Least memory.",
+        Preset::Standard => "Feature history, sketches, parameters and joints that map; leaves history out if it would not fit in free memory.",
+        Preset::Full => "Feature history, sketches, parameters and joints that map. Most memory; keeps history regardless of free memory.",
+    }
+}
+
+fn choice_cost(
+    sizes: Option<dutchman::choices::Sizes>,
+    options: &ConvertOptions,
+    checker: bool,
+    available: u64,
+    kind: u8,
+) -> String {
+    let Some(sizes) = sizes else {
+        return "Working out…".into();
+    };
+    let mut on = options.clone();
+    let mut off = options.clone();
+    match kind {
+        0 => {
+            on.import_only = false;
+            off.import_only = true;
+        }
+        1 => {
+            on.no_sketches = false;
+            off.no_sketches = true;
+        }
+        2 => {
+            on.no_joints = false;
+            off.no_joints = true;
+        }
+        _ => {
+            on.no_verify = false;
+            off.no_verify = true;
+        }
+    }
+    let estimate = |options: &ConvertOptions| {
+        dutchman::choices::desktop_estimate(sizes, options, checker, Some(available)).0
+    };
+    let (Some(on), Some(off)) = (estimate(&on), estimate(&off)) else {
+        return "no separate estimate".into();
+    };
+    let bytes = on.peak_bytes.saturating_sub(off.peak_bytes);
+    let seconds_exact = (on.seconds_exact - off.seconds_exact).max(0.0);
+    if bytes == 0 && seconds_exact == 0.0 {
+        return "no separate estimate".into();
+    }
+    let text = estimate_text(Estimate {
+        peak_bytes: bytes,
+        seconds: seconds_exact.ceil() as u64,
+        seconds_exact,
+        ..on
+    });
+    let (memory, time) = text
+        .split_once(", ")
+        .unwrap_or((&text, "no separate estimate"));
+    format!(
+        "Memory: {}; time: {}",
+        if bytes == 0 {
+            "no separate estimate"
+        } else {
+            memory
+        },
+        if seconds_exact == 0.0 {
+            "no separate estimate"
+        } else {
+            time
+        }
+    )
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -2352,6 +2569,7 @@ mod tests {
         select_preset(&mut options, Preset::Full);
         set_choices(&mut options, true, false, true);
         options.no_memory_check = true;
+        options.no_verify = true;
         options.diagnostics_default = true;
         let saved = saved_choices(&options, true);
         let mut restored = ConvertOptions::default();
@@ -2359,6 +2577,7 @@ mod tests {
         assert_eq!(restored.preset, Preset::Full);
         assert_eq!(restored.choices(), options.choices());
         assert!(!restored.no_memory_check);
+        assert!(restored.no_verify);
         assert!(restored.diagnostics_default);
         assert!(restored.diagnostics.is_none());
     }
@@ -2462,18 +2681,11 @@ mod tests {
                 app
             });
         harness.run_steps(8);
-        assert!(harness
-            .query_by_label("synthetic.f3z may use about 8.0 GB of memory while converting. Your computer has about 4.0 GB free, so it may not have enough.")
-            .is_some());
-        assert!(harness.query_by_label("Use Fast").is_some());
-        assert!(harness.query_by_label("Convert anyway").is_some());
-        let use_fast = harness.get_by_label("Use Fast").rect();
-        let anyway = harness.get_by_label("Convert anyway").rect();
+        assert!(harness.query_by_label("synthetic.f3z").is_some());
+        assert!(harness.query_all_by_label("Working out…").count() > 0);
+        let convert = harness.get_by_label("Convert with these choices").rect();
         let cancel = harness.get_by_label("Cancel").rect();
-        assert_eq!(use_fast.center().y, anyway.center().y);
-        assert_eq!(anyway.center().y, cancel.center().y);
-        assert!(use_fast.right() < anyway.left());
-        assert!(anyway.right() < cancel.left());
+        assert_eq!(convert.center().y, cancel.center().y);
         harness.get_by_label("Cancel").click_accesskit();
         harness.run_steps(8);
         assert!(!harness.state().running());
@@ -2490,7 +2702,8 @@ mod tests {
                 let mut app = App::new(cc);
                 let input = PathBuf::from("synthetic.f3d");
                 app.inputs = vec![input.clone()];
-                app.estimate_key = Some((app.inputs.clone(), app.options.choices()));
+                app.size_inputs = Some(app.inputs.clone());
+                app.estimate_key = Some(app.current_estimate_key());
                 app.estimates = vec![(
                     input,
                     Some(Estimate {
@@ -2519,10 +2732,12 @@ mod tests {
             .build_eframe(|cc| {
                 let mut app = App::new(cc);
                 app.inputs = vec![input.clone()];
-                app.estimate_key = Some((app.inputs.clone(), app.options.choices()));
+                app.size_inputs = Some(app.inputs.clone());
+                app.estimate_key = Some(app.current_estimate_key());
                 app.estimate_generation = 2;
                 app.sender
                     .send(Message::Estimated {
+                        sizes: Vec::new(),
                         generation: 1,
                         files: vec![(
                             input.clone(),
@@ -2540,6 +2755,7 @@ mod tests {
                     .unwrap();
                 app.sender
                     .send(Message::Estimated {
+                        sizes: Vec::new(),
                         generation: 2,
                         files: vec![(
                             input.clone(),
@@ -2574,7 +2790,8 @@ mod tests {
             let mut harness = egui_kittest::Harness::builder().build_eframe(|cc| {
                 let mut app = App::new(cc);
                 app.available = available;
-                app.estimate_key = Some((app.inputs.clone(), app.options.choices()));
+                app.size_inputs = Some(app.inputs.clone());
+                app.estimate_key = Some(app.current_estimate_key());
                 app
             });
             harness.run_steps(8);

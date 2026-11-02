@@ -348,6 +348,10 @@ Normal JSON reports contain file names and paths. For sharing, request `--report
 The desktop app shows Info messages with subject `history` directly on result cards,
 including Standard's explanation when history is left out to fit in free memory.
 These are existing `losses` entries; desktop estimates and preset labels add no report fields.
+The desktop memory warning and file row share a live total, including checking only when
+checking is on and a usable CLI was found, and showing Standard's reduced history choice.
+Its per-choice costs and remembered controls are desktop presentation; the JSON schema and
+CLI and MCP estimate reports keep the same fields and behaviour.
 The CLI and desktop display small estimates as “under 0.1 GB” and “under a minute”;
 JSON `estimate.peak_bytes` and `estimate.seconds` remain numeric and unrounded.
 

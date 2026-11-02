@@ -570,9 +570,14 @@ fn screenshots() {
         // Collapse before conversion so the ordinary 800-pixel window shows more results.
         harness.get_by_label("Advanced").click_accesskit();
         harness.run_steps(8);
+        let memory_input = work.path().join("Synthetic assembly.ipt");
+        std::fs::File::create(&memory_input)
+            .unwrap()
+            .set_len(180_000_000)
+            .unwrap();
         #[cfg(feature = "test-support")]
         harness.state_mut().show_memory_check_for_test(
-            input.clone(),
+            memory_input.clone(),
             dutchman::choices::MemoryCheck::TooBig {
                 estimate: dutchman::choices::Estimate {
                     peak_bytes: 8_000_000_000,
@@ -593,10 +598,18 @@ fn screenshots() {
                 available: 4_000_000_000,
                 lighter: Some(dutchman::choices::Preset::Fast),
             },
+            dutchman::choices::read_sizes(&memory_input).unwrap(),
         );
         harness.run_steps(8);
         harness.get_by_label("This conversion may need more memory");
-        shot(&mut harness, &dir, &mut index, "07-memory-dialog", name, "Injected TooBig memory decision: 8 GB estimated, 4 GB free, Use Fast / Convert anyway / Cancel.");
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "07-memory-dialog",
+            name,
+            "Memory choices with live estimates and Convert with these choices / Cancel.",
+        );
         harness.get_by_label("Cancel").click_accesskit();
         harness.run_steps(8);
 
@@ -717,7 +730,7 @@ fn shot(
 ) {
     let file = format!("{state}-{theme}.png");
     let image = harness.render().unwrap();
-    assert_eq!(image.dimensions(), (1100, 800));
+    let (width, height) = image.dimensions();
     use image::ImageEncoder;
     let output = std::fs::File::create(dir.join(&file)).unwrap();
     image::codecs::png::PngEncoder::new_with_quality(
@@ -725,7 +738,12 @@ fn shot(
         image::codecs::png::CompressionType::Best,
         image::codecs::png::FilterType::Adaptive,
     )
-    .write_image(image.as_raw(), 1100, 800, image::ExtendedColorType::Rgba8)
+    .write_image(
+        image.as_raw(),
+        width,
+        height,
+        image::ExtendedColorType::Rgba8,
+    )
     .unwrap();
     index.push_str(&format!("- [{file}]({file}) — {description}\n"));
 }
@@ -1612,4 +1630,236 @@ mod consent_e2e {
         eprintln!("Live receipt: {receipt}");
         snapshot(&mut harness, "consent-live-after");
     }
+}
+
+#[cfg(feature = "test-support")]
+fn memory_harness(
+    width: f32,
+    height: f32,
+    free: u64,
+) -> (Harness<'static, App>, PathBuf, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("Synthetic assembly.ipt");
+    let file = std::fs::File::create(&input).unwrap();
+    file.set_len(180_000_000).unwrap();
+    let sizes = dutchman::choices::read_sizes(&input).unwrap();
+    let options = dutchman::ConvertOptions::default();
+    let estimate =
+        dutchman::choices::estimate_from_sizes(sizes, &options.choices(), &options).unwrap();
+    let check = dutchman::choices::MemoryCheck::TooBig {
+        estimate,
+        conversion: estimate,
+        available: free,
+        lighter: Some(dutchman::choices::Preset::Fast),
+    };
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(width, height))
+        .build_eframe(|cc| App::new(cc));
+    harness.state_mut().add_inputs([input.clone()]);
+    harness.state_mut().set_out_dir(dir.path().join("out"));
+    harness.state_mut().set_checker_for_test(true);
+    harness.state_mut().preview_solidcraft(Some("0.30.0"));
+    harness
+        .state_mut()
+        .show_memory_check_for_test(input.clone(), check, sizes);
+    std::fs::remove_file(&input).unwrap(); // All subsequent UI changes must use cached sizes.
+    harness.run_steps(8);
+    let total = harness.state().memory_estimate_for_test(&input).unwrap();
+    assert!(harness
+        .query_by_label(&dutchman::choices::estimate_text(total))
+        .is_some());
+    (harness, input, dir)
+}
+
+#[cfg(feature = "test-support")]
+fn click_memory(h: &mut Harness<'static, App>, label: &str) {
+    use egui_kittest::kittest::NodeT;
+    h.query_all_by_label(label)
+        .find(|node| !node.accesskit_node().is_disabled())
+        .unwrap_or_else(|| {
+            panic!(
+                "No active {label}: {:?}",
+                h.query_all_by_label(label).collect::<Vec<_>>()
+            )
+        })
+        .click_accesskit();
+}
+
+#[test]
+#[cfg(feature = "test-support")]
+fn memory_choices_share_the_row_total_and_update_without_rereading() {
+    let (mut h, input, _dir) = memory_harness(760.0, 900.0, 1);
+    for label in [
+        "Sketches",
+        "Joints",
+        "Feature history",
+        "Check feature history in SolidCraft",
+    ] {
+        let before = h.state().memory_estimate_for_test(&input).unwrap();
+        click_memory(&mut h, label);
+        h.run_steps(8);
+        let total = h.state().memory_estimate_for_test(&input).unwrap();
+        assert!(h
+            .query_by_label(&format!(
+                "Total: {}",
+                dutchman::choices::estimate_text(total)
+            ))
+            .is_some());
+        assert!(h
+            .query_by_label(&dutchman::choices::estimate_text(total))
+            .is_some());
+        if label == "Feature history" || label == "Check feature history in SolidCraft" {
+            assert!(total.peak_bytes < before.peak_bytes);
+        } else {
+            assert_eq!(total, before);
+        }
+    }
+    assert!(h.query_all_by_label("no separate estimate").count() >= 2);
+}
+
+#[test]
+#[cfg(feature = "test-support")]
+fn memory_choices_count_check_only_with_cli_and_warning_clears() {
+    let (mut h, input, _dir) = memory_harness(760.0, 900.0, 20_000_000_000);
+    let checked = h.state().memory_estimate_for_test(&input).unwrap();
+    h.state_mut().set_checker_for_test(false);
+    h.run_steps(8);
+    let no_cli = h.state().memory_estimate_for_test(&input).unwrap();
+    assert!(no_cli.peak_bytes < checked.peak_bytes);
+    click_memory(&mut h, "Check feature history in SolidCraft");
+    h.run_steps(8);
+    assert_eq!(h.state().memory_estimate_for_test(&input), Some(no_cli));
+
+    let (mut h, _, _dir) = memory_harness(760.0, 900.0, 4_800_000_000);
+    assert!(
+        h.query_all_by_label("Standard leaves feature history out to fit in free memory.")
+            .count()
+            >= 1
+    );
+    assert!(h.query_by_label("If the history check will not fit after reading, it is skipped; conversion still continues.").is_some());
+    // Full keeps history even when it cannot fit; Fast fits this budget.
+    use egui_kittest::kittest::NodeT;
+    h.query_all_by_value("Standard")
+        .find(|node| !node.accesskit_node().is_disabled())
+        .unwrap()
+        .click_accesskit();
+    h.run_steps(4);
+    click_memory(&mut h, "Full");
+    h.run_steps(20);
+    assert!(
+        h.query_all_by_label_contains("These choices will not fit")
+            .count()
+            > 0
+    );
+    h.query_all_by_value("Full")
+        .find(|node| !node.accesskit_node().is_disabled())
+        .unwrap()
+        .click_accesskit();
+    for _ in 0..60 {
+        h.step();
+        if h.query_all_by_label("Fast")
+            .any(|node| !node.accesskit_node().is_disabled())
+        {
+            break;
+        }
+    }
+    click_memory(&mut h, "Fast");
+    h.run_steps(8);
+    assert_eq!(
+        h.query_all_by_label_contains("These choices will not fit")
+            .count(),
+        0
+    );
+}
+
+#[test]
+#[cfg(feature = "test-support")]
+fn memory_choices_reach_the_conversion() {
+    let (mut h, input, dir) = memory_harness(760.0, 900.0, 1);
+    std::fs::copy(fixture("synthetic_cube.ipt"), &input).unwrap();
+    click_memory(&mut h, "Sketches");
+    click_memory(&mut h, "Joints");
+    click_memory(&mut h, "Feature history");
+    click_memory(&mut h, "Check feature history in SolidCraft");
+    h.run_steps(8);
+    click_memory(&mut h, "Convert with these choices");
+    h.step();
+    wait_for_conversion(&mut h);
+    let report = h.state().rows().first().unwrap().report.as_ref().unwrap();
+    assert_eq!(
+        report.pointer("/choices/history"),
+        Some(&serde_json::json!(false))
+    );
+    assert_eq!(
+        report.pointer("/choices/sketches"),
+        Some(&serde_json::json!(false))
+    );
+    assert_eq!(
+        report.pointer("/choices/joints"),
+        Some(&serde_json::json!(false))
+    );
+    let choices = dutchman::choices::Choices {
+        history: false,
+        sketches: false,
+        joints: false,
+        history_within_budget: true,
+    };
+    let unchecked = dutchman::choices::estimate(&input, &choices).unwrap();
+    assert_eq!(
+        report.pointer("/estimate/peak_bytes"),
+        Some(&serde_json::json!(unchecked.peak_bytes))
+    );
+    assert!(dir.path().join("out").exists());
+}
+
+#[test]
+#[ignore = "renders real GPU screenshots"]
+#[cfg(feature = "test-support")]
+fn memory_dialog_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::from(
+        "# Memory choices\n\nSynthetic file, Day and Night, wide and minimum width.\n\n",
+    );
+    for (theme, name) in [
+        (ThemePreference::Light, "day"),
+        (ThemePreference::Dark, "night"),
+    ] {
+        for (width, height, state) in [
+            (1100.0, 800.0, "07-memory-dialog-wide"),
+            (520.0, 800.0, "07-memory-dialog-520"),
+            (520.0, 420.0, "07-memory-dialog-short"),
+        ] {
+            let (mut h, _, _dir) = memory_harness(width, height, 4_000_000_000);
+            h.ctx.set_theme(theme);
+            h.run_steps(8);
+            let convert = h.get_by_label("Convert with these choices").rect();
+            let cancel = h.get_by_label("Cancel").rect();
+            assert!(convert.left() >= 0.0 && cancel.right() <= width && convert.bottom() <= height);
+            assert_eq!(convert.center().y, cancel.center().y);
+            shot(
+                &mut h,
+                &dir,
+                &mut index,
+                state,
+                name,
+                "Live memory choices; buttons remain visible.",
+            );
+            if height < 500.0 {
+                h.get_by_label_contains("These choices will not fit")
+                    .scroll_to_me();
+                h.run_steps(8);
+                assert!(h.get_by_label("Convert with these choices").rect().bottom() <= height);
+                shot(
+                    &mut h,
+                    &dir,
+                    &mut index,
+                    "07-memory-dialog-short-scrolled",
+                    name,
+                    "Short window scrolled to the total; buttons stay visible.",
+                );
+            }
+        }
+    }
+    std::fs::write(dir.join("index.md"), index).unwrap();
 }

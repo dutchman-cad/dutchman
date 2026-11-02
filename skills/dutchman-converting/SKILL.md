@@ -532,7 +532,11 @@ or web. The MCP formats report includes the additive `drawings` capability list.
 The desktop app also offers Fast, Standard (default), and Full presets, with Advanced
 checkboxes that leave history, sketches, or joints out. Estimates below 0.1 GB show
 **under 0.1 GB**, and times below 60 seconds show **under a minute**, using the CLI’s text
-formatter. Numeric MCP estimates stay unchanged. The app checks memory before converting; choosing Convert anyway applies only to that run. History
+formatter. Its memory warning offers the same choices with live costs and a total matching
+the file row. Checking is counted only with a usable CLI and checking on. **Convert with
+these choices** checks queued files again when the conversion fits; if it still will not
+fit, proceeding bypasses memory checks for that run only. Choices and the checking preference
+return to the main window and are remembered. Numeric MCP estimates stay unchanged. History
 Info messages, including history left out by Standard, appear on its result cards.
 
 SolidCraft conversion reports include `solidcraft.target` and `solidcraft.found` (null

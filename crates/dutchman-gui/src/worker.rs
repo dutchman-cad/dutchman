@@ -8,7 +8,7 @@ use std::sync::mpsc::Sender;
 use std::sync::Arc;
 
 use dutchman::batch::{self, Event, Job};
-use dutchman::choices::{self, Choices, Estimate, MemoryCheck};
+use dutchman::choices::{self, Estimate, MemoryCheck};
 use dutchman::ConvertOptions;
 use eframe::egui;
 use serde_json::Value;
@@ -29,6 +29,12 @@ pub enum Message {
         generation: u64,
         files: Vec<(PathBuf, Option<Estimate>)>,
         available: Option<u64>,
+        sizes: Vec<(PathBuf, Option<choices::Sizes>)>,
+    },
+    /// Metadata for a warning, including retries outside the current queue.
+    MemorySizes {
+        path: PathBuf,
+        sizes: Option<choices::Sizes>,
     },
     /// The first file that needs a memory decision, if any.
     MemoryChecked(Option<(PathBuf, MemoryCheck)>),
@@ -155,7 +161,8 @@ impl Run {
 /// Plans folders and estimates their files without blocking a frame.
 pub fn estimates(
     inputs: Vec<PathBuf>,
-    choices: Choices,
+    options: ConvertOptions,
+    checker_found: bool,
     generation: u64,
     messages: Sender<Message>,
     ctx: egui::Context,
@@ -170,18 +177,25 @@ pub fn estimates(
                 .iter()
                 .any(|job| matches!(batch::extension_of(&job.input).as_str(), "ipt" | "iam")),
         });
+        let available = choices::available_memory();
+        let mut sizes = Vec::new();
         let files = plan
             .jobs
             .into_iter()
             .map(|job| {
-                let estimate = choices::estimate(&job.input, &choices);
+                let size = choices::read_sizes(&job.input);
+                let estimate = size.and_then(|sizes| {
+                    choices::desktop_estimate(sizes, &options, checker_found, available).0
+                });
+                sizes.push((job.input.clone(), size));
                 (job.input, estimate)
             })
             .collect();
         let _ = messages.send(Message::Estimated {
             generation,
             files,
-            available: choices::available_memory(),
+            available,
+            sizes,
         });
         ctx.request_repaint();
     });
@@ -200,6 +214,12 @@ pub fn check_memory(
             let check = choices::memory_check(&job.input, &options);
             matches!(check, MemoryCheck::TooBig { .. }).then_some((job.input, check))
         });
+        if let Some((path, _)) = &warning {
+            let _ = messages.send(Message::MemorySizes {
+                path: path.clone(),
+                sizes: choices::read_sizes(path),
+            });
+        }
         let _ = messages.send(Message::MemoryChecked(warning));
         ctx.request_repaint();
     });
@@ -312,7 +332,8 @@ mod tests {
         let (send, receive) = std::sync::mpsc::channel();
         estimates(
             vec![dir.path().to_path_buf()],
-            Choices::of(choices::Preset::Standard),
+            ConvertOptions::default(),
+            false,
             7,
             send,
             egui::Context::default(),

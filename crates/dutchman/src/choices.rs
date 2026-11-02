@@ -613,9 +613,25 @@ pub fn estimate_with_options(
     choices: &Choices,
     options: &crate::ConvertOptions,
 ) -> Option<Estimate> {
-    let mut result = estimate_with_threads(input, choices, options.threads)?;
-    let startup = Format::from_path(input)
-        .and_then(|format| COEFFICIENTS.iter().find(|c| c.format == format))
+    estimate_from_sizes(read_sizes(input)?, choices, options)
+}
+
+/// Pure estimate from sizes already read, including the requested history check.
+pub fn estimate_from_sizes(
+    sizes: Sizes,
+    choices: &Choices,
+    options: &crate::ConvertOptions,
+) -> Option<Estimate> {
+    let mut result = sizes.calculate(choices, options.threads, |requested, designs, _| {
+        if requested == 0 {
+            sizes.auto_workers
+        } else {
+            requested.min(designs).min(sizes.worker_limit).max(1)
+        }
+    })?;
+    let startup = COEFFICIENTS
+        .iter()
+        .find(|c| c.format == sizes.format)
         .and_then(|c| c.startup.as_ref());
     if !options.no_verify && options.to == crate::OutputFormat::Solidcraft {
         // The 256-placement assembly needed about 9 GB beyond its 8.6 GB conversion
@@ -655,6 +671,21 @@ fn estimate_using_workers(
     threads: usize,
     workers: impl FnOnce(usize, usize, u64) -> usize,
 ) -> Option<Estimate> {
+    read_sizes(input)?.calculate(choices, threads, workers)
+}
+
+/// File metadata and bounded archive sizes, read once before interactive estimates.
+#[derive(Clone, Copy, Debug)]
+pub struct Sizes {
+    format: Format,
+    bytes: u64,
+    designs: usize,
+    auto_workers: usize,
+    worker_limit: usize,
+}
+
+/// Reads sizes without decoding a design. Call off the UI thread.
+pub fn read_sizes(input: &Path) -> Option<Sizes> {
     let format = Format::from_path(input)?;
     if !format.can_convert() {
         return None;
@@ -663,7 +694,6 @@ fn estimate_using_workers(
     if !metadata.is_file() {
         return None;
     }
-    let coefficients = COEFFICIENTS.iter().find(|c| c.format == format)?;
     let (bytes, _members, designs) = if matches!(
         format,
         Format::FusionArchive | Format::FusionMultiDocument | Format::FreeCadDocument
@@ -675,75 +705,108 @@ fn estimate_using_workers(
     } else {
         (metadata.len(), 0, 0)
     };
-    let factor = if choices.history {
-        coefficients.history_factor
+    let (auto_workers, worker_limit) = if designs > 1 {
+        let available = available_memory();
+        (
+            dutchman_core::parallel::workers_with_memory(0, designs, 256 << 20, available),
+            dutchman_core::parallel::workers_with_memory(usize::MAX, designs, 256 << 20, available),
+        )
     } else {
-        1.0
+        (1, 1)
     };
-    let seconds_factor = if choices.history {
-        coefficients.history_seconds_factor
-    } else {
-        1.0
-    };
-    let time_rate = if let Some(time) = coefficients.multipart_time.as_ref().filter(|_| designs > 1)
-    {
-        // The native body counts are not available yet. Use the converter's 256 MiB
-        // minimum per-worker budget and embedded design count as pre-decode proxies.
-        let count = if threads == 1 {
-            1
-        } else {
-            workers(threads, designs, 256 << 20)
-        };
-        time.seconds_per_mib
-            * (time.serial_fraction + (1.0 - time.serial_fraction) / count.max(1) as f64)
-    } else {
-        coefficients.seconds_per_mib
-    };
-    let time_rate = coefficients
-        .startup
-        .as_ref()
-        .filter(|_| cfg!(target_os = "windows"))
-        .and_then(|s| s.content_rates)
-        .map_or(time_rate * seconds_factor, |(shape, history)| {
-            if choices.history {
-                history
-            } else {
-                shape
-            }
-        });
-    let content_seconds = time_rate * bytes as f64 / (1 << 20) as f64;
-    let seconds_exact = if let Some(startup) = &coefficients.startup {
-        let fixed = if cfg!(target_os = "windows") {
-            if choices.history {
-                startup.windows_history
-            } else {
-                startup.windows_shape
-            }
-        } else if cfg!(target_os = "macos") {
-            if choices.history {
-                startup.mac_history
-            } else {
-                startup.mac_shape
-            }
-        } else {
-            // No Linux timing measurements: retain the previous startup guess.
-            coefficients.base_seconds * seconds_factor
-        };
-        fixed + content_seconds
-    } else {
-        // Preserve fractional seconds; only the legacy integer field rounds up.
-        coefficients.base_seconds * seconds_factor + content_seconds
-    };
-    Some(Estimate {
-        peak_bytes: (coefficients.base_bytes as f64
-            + coefficients.bytes_per_byte * bytes as f64 * factor)
-            .ceil() as u64,
-        seconds: seconds_exact.ceil() as u64,
-        seconds_exact,
-        band: coefficients.band,
-        memory_band: coefficients.memory_band,
-        time_band: coefficients.time_band,
+    Some(Sizes {
+        format,
+        bytes,
+        designs,
+        auto_workers,
+        worker_limit,
     })
+}
+
+impl Sizes {
+    fn calculate(
+        self,
+        choices: &Choices,
+        threads: usize,
+        workers: impl FnOnce(usize, usize, u64) -> usize,
+    ) -> Option<Estimate> {
+        let Self {
+            format,
+            bytes,
+            designs,
+            ..
+        } = self;
+        let coefficients = COEFFICIENTS.iter().find(|c| c.format == format)?;
+        let factor = if choices.history {
+            coefficients.history_factor
+        } else {
+            1.0
+        };
+        let seconds_factor = if choices.history {
+            coefficients.history_seconds_factor
+        } else {
+            1.0
+        };
+        let time_rate =
+            if let Some(time) = coefficients.multipart_time.as_ref().filter(|_| designs > 1) {
+                // The native body counts are not available yet. Use the converter's 256 MiB
+                // minimum per-worker budget and embedded design count as pre-decode proxies.
+                let count = if threads == 1 {
+                    1
+                } else {
+                    workers(threads, designs, 256 << 20)
+                };
+                time.seconds_per_mib
+                    * (time.serial_fraction + (1.0 - time.serial_fraction) / count.max(1) as f64)
+            } else {
+                coefficients.seconds_per_mib
+            };
+        let time_rate = coefficients
+            .startup
+            .as_ref()
+            .filter(|_| cfg!(target_os = "windows"))
+            .and_then(|s| s.content_rates)
+            .map_or(time_rate * seconds_factor, |(shape, history)| {
+                if choices.history {
+                    history
+                } else {
+                    shape
+                }
+            });
+        let content_seconds = time_rate * bytes as f64 / (1 << 20) as f64;
+        let seconds_exact = if let Some(startup) = &coefficients.startup {
+            let fixed = if cfg!(target_os = "windows") {
+                if choices.history {
+                    startup.windows_history
+                } else {
+                    startup.windows_shape
+                }
+            } else if cfg!(target_os = "macos") {
+                if choices.history {
+                    startup.mac_history
+                } else {
+                    startup.mac_shape
+                }
+            } else {
+                // No Linux timing measurements: retain the previous startup guess.
+                coefficients.base_seconds * seconds_factor
+            };
+            fixed + content_seconds
+        } else {
+            // Preserve fractional seconds; only the legacy integer field rounds up.
+            coefficients.base_seconds * seconds_factor + content_seconds
+        };
+        Some(Estimate {
+            peak_bytes: (coefficients.base_bytes as f64
+                + coefficients.bytes_per_byte * bytes as f64 * factor)
+                .ceil() as u64,
+            seconds: seconds_exact.ceil() as u64,
+            seconds_exact,
+            band: coefficients.band,
+            memory_band: coefficients.memory_band,
+            time_band: coefficients.time_band,
+        })
+    }
 }
 
 /// Open a zip only after bounding its directory and entry count.
@@ -827,11 +890,65 @@ pub(crate) fn nested_content_size(reader: &mut impl std::io::Read, limit: u64) -
 /// Available memory, including process limits where available.
 pub use dutchman_core::available_memory;
 
+/// Desktop estimate and automatic retention note, using conversion-only memory for Standard.
+/// Checking is included only when a CLI is available; its budget is checked after reading.
+pub fn desktop_estimate(
+    sizes: Sizes,
+    options: &crate::ConvertOptions,
+    checker_found: bool,
+    available: Option<u64>,
+) -> (Option<Estimate>, bool) {
+    let mut options = options.clone();
+    options.no_verify |= !checker_found;
+    let mut choices = options.choices();
+    let mut conversion_options = options.clone();
+    conversion_options.no_verify = true;
+    let conversion = estimate_from_sizes(sizes, &choices, &conversion_options);
+    let mut reduced = false;
+    if !options.no_memory_check && choices.history && choices.history_within_budget {
+        if let (Some(full), Some(free)) = (conversion, available) {
+            if full.peak_bytes > free {
+                let mut without = choices;
+                without.history = false;
+                if estimate_from_sizes(sizes, &without, &conversion_options)
+                    .is_some_and(|e| e.peak_bytes <= free)
+                {
+                    choices = without;
+                    reduced = true;
+                }
+            }
+        }
+    }
+    // Without history there is nothing to check.
+    options.no_verify |= !choices.history;
+    (estimate_from_sizes(sizes, &choices, &options), reduced)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::ConvertOptions;
     use std::io::Write;
+
+    #[test]
+    fn the_desktop_total_has_no_check_without_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("synthetic.ipt");
+        std::fs::write(&input, [0u8; 1024]).unwrap();
+        let sizes = read_sizes(&input).unwrap();
+        let options = ConvertOptions {
+            import_only: true,
+            ..Default::default()
+        };
+        let unchecked = ConvertOptions {
+            no_verify: true,
+            ..options.clone()
+        };
+        assert_eq!(
+            desktop_estimate(sizes, &options, true, None).0,
+            desktop_estimate(sizes, &unchecked, true, None).0
+        );
+    }
 
     #[test]
     fn presets_only_narrow_and_have_a_lighter_choice() {
@@ -1373,5 +1490,53 @@ mod startup_regression_tests {
         let estimated = estimate(&path, &Choices::of(Preset::Full)).unwrap();
         assert!(estimated.seconds_exact > 0.0 && estimated.seconds_exact < 1.0);
         assert_eq!(estimated.seconds, 1);
+    }
+}
+
+#[cfg(test)]
+mod cached_estimate_tests {
+    use super::*;
+
+    #[test]
+    fn cached_sizes_keep_existing_estimates_without_reading_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("synthetic.ipt");
+        std::fs::File::create(&input)
+            .unwrap()
+            .set_len(180_000_000)
+            .unwrap();
+        let sizes = read_sizes(&input).unwrap();
+        for preset in [Preset::Fast, Preset::Standard, Preset::Full] {
+            for no_verify in [false, true] {
+                let options = crate::ConvertOptions {
+                    preset,
+                    no_verify,
+                    ..Default::default()
+                };
+                assert_eq!(
+                    estimate_with_options(&input, &options.choices(), &options),
+                    estimate_from_sizes(sizes, &options.choices(), &options)
+                );
+            }
+        }
+        std::fs::remove_file(&input).unwrap();
+        let options = crate::ConvertOptions::default();
+        let checked = desktop_estimate(sizes, &options, true, None).0.unwrap();
+        let unchecked = desktop_estimate(sizes, &options, false, None).0.unwrap();
+        assert!(checked.peak_bytes > unchecked.peak_bytes);
+        let off = crate::ConvertOptions {
+            no_verify: true,
+            ..options.clone()
+        };
+        assert_eq!(desktop_estimate(sizes, &off, true, None).0, Some(unchecked));
+        let reduced_choices = Choices {
+            history: false,
+            ..options.choices()
+        };
+        let reduced = estimate_from_sizes(sizes, &reduced_choices, &off).unwrap();
+        let free = (reduced.peak_bytes + unchecked.peak_bytes) / 2;
+        let (total, omitted) = desktop_estimate(sizes, &off, true, Some(free));
+        assert!(omitted);
+        assert_eq!(total, Some(reduced));
     }
 }
