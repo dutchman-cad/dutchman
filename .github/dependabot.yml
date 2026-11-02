@@ -11,6 +11,23 @@ updates:
     ignore:
       - dependency-name: "cadmpeg*"
       - dependency-name: "dutchman*"
+      # These majors change APIs we use; each moves in its own small pull request.
+      - dependency-name: "getrandom"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "sysinfo"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "base64"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "eframe"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "egui_extras"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "egui_kittest"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "pollster"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "rfd"
+        update-types: ["version-update:semver-major"]
     groups:
       cargo-minor-and-patch:
         update-types: [minor, patch]
