@@ -853,8 +853,11 @@ fn solidcraft_panel_takes_a_chosen_cli_and_explains_the_app_alone() {
     harness.state_mut().choose_solidcraft_cli(&app);
     harness.run_steps(8);
     assert!(harness
-        .query_by_label_contains("portable ZIP and the MSI")
+        .query_by_label_contains("no solidcraft-cli beside it")
         .is_some());
+    assert!(harness
+        .query_by_label_contains("Found the SolidCraft app")
+        .is_none());
 
     script(&dir.path().join("solidcraft-cli"), "solidcraft-cli 0.30.0");
     harness.state_mut().choose_solidcraft_cli(&app);

@@ -1214,6 +1214,8 @@ impl App {
                 let report = self.solidcraft_report();
                 if let Some(notice) = dutchman::json::solidcraft_notice(&report) {
                     ui.label(notice);
+                } else if self.found_version.is_none() && self.solidcraft_cli_error.is_some() {
+                    // The error below says what is missing and which downloads have it.
                 } else if self.found_version.is_none() && self.has_app {
                     ui.label("Found the SolidCraft app, but not solidcraft-cli, which checks feature history. On Windows, the single-file SolidCraft download leaves it out; the portable ZIP and the MSI installer include it.");
                 } else if self.found_version.is_none() {
