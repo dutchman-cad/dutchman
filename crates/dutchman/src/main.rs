@@ -1058,13 +1058,18 @@ fn memory_cli(
                 return true;
             }
             MemoryCheck::TooBig {
-                estimate, lighter, ..
+                conversion,
+                lighter,
+                ..
             } => {
                 let message = check.refusal().unwrap_or_default();
                 if !as_json && !yes && std::io::stdin().is_terminal() {
                     if let Some(lighter) = lighter {
                         if !quiet {
-                            println!("Estimate: {}", choices::estimate_text_with_bands(estimate));
+                            println!(
+                                "Estimate: {}",
+                                choices::estimate_text_with_bands(conversion)
+                            );
                         }
                         eprint!("{message}\nSwitch to --preset {}? [y/N] ", lighter.name());
                         let _ = std::io::stderr().flush();

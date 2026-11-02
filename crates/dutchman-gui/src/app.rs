@@ -710,9 +710,10 @@ impl App {
         let Some((
             path,
             MemoryCheck::TooBig {
-                estimate,
+                conversion,
                 available,
                 lighter,
+                ..
             },
         )) = self.memory_warning.clone()
         else {
@@ -724,7 +725,7 @@ impl App {
             ui.label(format!(
                 "{} may use about {:.1} GB of memory while converting. Your computer has about {:.1} GB free, so it may not have enough.",
                 path.file_name().unwrap_or_default().to_string_lossy(),
-                gigabytes(estimate.peak_bytes),
+                gigabytes(conversion.peak_bytes),
                 gigabytes(available)
             ));
             if let Some(preset) = lighter {
@@ -2356,6 +2357,14 @@ mod tests {
                     PathBuf::from("Designs").join("synthetic.f3z"),
                     MemoryCheck::TooBig {
                         estimate: Estimate {
+                            peak_bytes: 8_000_000_000,
+                            seconds: 120,
+                            seconds_exact: 120.0,
+                            band: 0.3,
+                            memory_band: 0.3,
+                            time_band: Some(0.3),
+                        },
+                        conversion: Estimate {
                             peak_bytes: 8_000_000_000,
                             seconds: 120,
                             seconds_exact: 120.0,

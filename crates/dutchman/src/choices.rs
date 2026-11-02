@@ -149,7 +149,10 @@ fn time_text(estimate: Estimate, band: bool) -> String {
 pub enum MemoryCheck {
     Ok(Option<Estimate>),
     TooBig {
+        /// The whole estimate, including the history check, as reports give it.
         estimate: Estimate,
+        /// The conversion alone: what was compared with free memory, and what to tell people.
+        conversion: Estimate,
         available: u64,
         lighter: Option<Preset>,
     },
@@ -160,9 +163,9 @@ impl MemoryCheck {
     pub fn refusal(self) -> Option<String> {
         match self {
             Self::Ok(_) => None,
-            Self::TooBig { estimate, available, lighter } => Some(format!(
+            Self::TooBig { conversion, available, lighter, .. } => Some(format!(
                 "this conversion needs about {:.1} GB and {:.1} GB are free; try --preset {} (or --no-memory-check to run anyway)",
-                gb(estimate.peak_bytes), gb(available), lighter.map_or("fast", Preset::name)
+                gb(conversion.peak_bytes), gb(available), lighter.map_or("fast", Preset::name)
             )),
         }
     }
@@ -193,14 +196,15 @@ pub(crate) fn memory_check_with(
     if options.no_memory_check || options.preset == Preset::Fast {
         return MemoryCheck::Ok(estimate);
     }
-    let (Some(conversion), Some(available)) =
-        (conversion_estimate(input, &choices, options), available)
-    else {
+    let (Some(full), Some(conversion), Some(available)) = (
+        estimate,
+        conversion_estimate(input, &choices, options),
+        available,
+    ) else {
         return MemoryCheck::Ok(estimate);
     };
-    // A check that cannot fit is skipped after reading, so it must not prevent conversion or
-    // consume Standard's history-retention budget. The warning names the figure compared here,
-    // the same one a file's row shows.
+    // Reports include checking, but a check that cannot fit is skipped after reading.
+    // It must not prevent conversion or consume Standard's history-retention budget.
     if conversion.peak_bytes <= available {
         return MemoryCheck::Ok(estimate);
     }
@@ -212,7 +216,8 @@ pub(crate) fn memory_check_with(
         }
     }
     MemoryCheck::TooBig {
-        estimate: conversion,
+        estimate: full,
+        conversion,
         available,
         lighter: options.preset.lighter(),
     }
@@ -1027,11 +1032,13 @@ mod tests {
         let row = estimate(&input, &choices).unwrap();
         let conversion = conversion_estimate(&input, &choices, &options).unwrap();
         assert_eq!(row.peak_bytes, conversion.peak_bytes);
-        let MemoryCheck::TooBig { estimate, .. } = memory_check_with(&input, &options, Some(0))
+        let MemoryCheck::TooBig {
+            conversion: warned, ..
+        } = memory_check_with(&input, &options, Some(0))
         else {
             panic!("the conversion does not fit in no memory");
         };
-        assert_eq!(estimate.peak_bytes, row.peak_bytes);
+        assert_eq!(warned.peak_bytes, row.peak_bytes);
     }
 
     #[test]
@@ -1242,15 +1249,20 @@ mod tests {
 
     #[test]
     fn refusal_is_shared_and_uses_decimal_gigabytes() {
+        let estimate = Estimate {
+            peak_bytes: 2_500_000_000,
+            seconds: 60,
+            seconds_exact: 60.0,
+            band: 0.5,
+            memory_band: 0.5,
+            time_band: Some(0.5),
+        };
         let check = MemoryCheck::TooBig {
             estimate: Estimate {
-                peak_bytes: 2_500_000_000,
-                seconds: 60,
-                seconds_exact: 60.0,
-                band: 0.5,
-                memory_band: 0.5,
-                time_band: Some(0.5),
+                peak_bytes: 5_000_000_000,
+                ..estimate
             },
+            conversion: estimate,
             available: 1_000_000_000,
             lighter: Some(Preset::Fast),
         };
