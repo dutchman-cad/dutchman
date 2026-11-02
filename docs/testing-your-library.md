@@ -1,10 +1,9 @@
 # Testing Dutchman on your library
 
 This guide is for anyone willing to run Dutchman over their own CAD library and tell us what
-broke, without giving away a single file. You convert everything on your own machine, and
-Dutchman writes an **anonymous report**: what converted and what did not, by cause, with no
-file names, paths, part names or geometry in it. You read it, then share it or the parts of
-it you choose.
+broke. You convert everything on your own machine and choose what, if anything, reaches us:
+an **anonymous report**, which says what converted and what did not, by cause, with no file
+names, paths, part names or geometry in it, or a report you review and send from the app.
 
 If you used 0.1.3's report-anon.json, re-run with 0.1.4 before sharing it.
 
@@ -14,13 +13,14 @@ including ones you cannot open any more.
 
 ## Everything stays on your machine
 
-- Dutchman makes **no network connections**. It reads your files, writes the designs and
-  reports where you tell it to, and starts only two kinds of program: itself (one copy per
-  file, so one bad file cannot stop the run) and, if you have it, SolidCraft's command-line
-  tool to check the results. On macOS and Windows it also runs `ps` or `tasklist` to measure
-  how much memory each file takes.
+- Converting and checking your files makes **no network connections**. Dutchman reads your
+  files, writes the designs and reports where you tell it to, and starts only two kinds of
+  program: itself (one copy per file, so one bad file cannot stop the run) and, if you have it,
+  SolidCraft's command-line tool to check the results. On macOS and Windows it also runs `ps` or
+  `tasklist` to measure how much memory each file takes. The app's update check says nothing
+  about your files; `DUTCHMAN_UPDATE_CHECK=0` turns it off.
 - Your files are never changed. The converted designs go to a folder you name.
-- Nothing is sent anywhere unless you send it yourself.
+- Nothing about your files is sent anywhere unless you send it yourself, after reviewing it.
 
 ## 1. Install
 
@@ -87,6 +87,21 @@ dutchman convert-all ~/CAD \
 - When it ends, Dutchman prints the report's salt. Keep it to yourself (it is also in the key
   file). To make the next run's ids match this one's, add `--report-salt` with that salt.
 
+## Check a folder with doctor
+
+`convert-all`, above, gives you one anonymous report for a whole library. `dutchman doctor`, or
+**Check a folder** in the app, goes further: it also diagnoses each failing design and groups
+repeated findings, so you see each distinct problem once.
+
+```sh
+dutchman doctor ~/CAD --out ~/dutchman-test/checked --jobs 4 --memory-mb 16000
+```
+
+`--memory-mb` is the total for all the designs converting at once. Run the same command again
+to resume. Keep the output folder outside your library. Only the top-level `report.json` in it is
+anonymous; the converted designs, `local-key.json` and `private-checkpoints/` stay private.
+Findings are advisory, and [Doctor calibration](doctor-calibration.md) gives their limits.
+
 ## 3. Read the report
 
 `report-anon.json` is plain JSON; any text editor shows it. The parts that matter most:
@@ -117,7 +132,15 @@ see which of your files it is. [The report's fields](report-anon.md) are all des
 
 ## 5. Report what you found
 
-File every report on **Dutchman's issues**,
+**One failed file, from the app.** Its card has **Review and send report**. You see what the
+report holds and choose before anything goes. No GitHub or Discord account is needed, and the app
+says it is sent only after our report service confirms it. A summary holds no names and no
+geometry; a cut-down piece of the failing design, when Dutchman can prove one, holds geometry and
+is a separate choice. Reports are limited to 25 MB each and about 5 an hour. If one does not go
+through, it stays on your computer. When a later update fixes it, the app tells you. See
+[Reporting a problem](desktop.md#reporting-a-problem).
+
+**A whole library, or if you prefer GitHub.** File every report on **Dutchman's issues**,
 <https://github.com/dutchman-cad/dutchman/issues>, with the **Library test report** form
 (for a single file, the
 [**A file didn't convert**](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
@@ -136,6 +159,21 @@ the issue when a Dutchman release fixes it.
   small rebuilt reproduction only if it reproduces and you are free to share it. Use the
   [minimum-reproduction procedure](minimum-reproduction.md) to compare its failure stage
   and finding codes. Keep a body copied from the original local while investigating.
+
+## Let your own AI check a folder
+
+Connect `dutchman-mcp` to your assistant ([client setup](mcp.md#set-up-a-client)). Its diagnostic
+tools return anonymous results, and `report_submit` needs an explicit yes, so paste this prompt:
+
+```text
+Check my CAD folder <LIBRARY FOLDER> with Dutchman, writing to <RESULTS FOLDER> outside it. Use the
+doctor tool, with limits that leave this computer usable. If it stops, run it again; it resumes.
+Do not read my design files, the converted designs, local-key.json or private-checkpoints/.
+Read only the anonymous report.json. List each distinct problem, most files first, and narrow the
+biggest ones with diagnose_narrow. For a report I might send, call report_preview and show me
+the choices, the part roles and the sizes. Call report_submit only after I say yes to that report,
+that choice and the public-test box. Never send anything else, anywhere.
+```
 
 ## Let your own Claude do the legwork
 
