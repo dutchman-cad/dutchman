@@ -1029,6 +1029,7 @@ mod tests {
         let events = Arc::new(Events::default());
         let observer = Members {
             phase: Default::default(),
+            step: Default::default(),
             bytes: 100,
             sink: events.clone(),
             started: Default::default(),
