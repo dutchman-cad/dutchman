@@ -156,7 +156,7 @@ pub struct ConvertOptions {
     #[arg(long)]
     pub no_memory_check: bool,
     /// The SolidCraft CLI that checks a written history against the original geometry
-    /// (default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an
+    /// (default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, beside this program, or inside an
     /// installed SolidCraft app).
     #[arg(long, value_name = "PATH", conflicts_with = "no_verify")]
     pub solidcraft: Option<PathBuf>,

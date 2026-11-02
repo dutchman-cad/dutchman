@@ -278,7 +278,7 @@ mapped timeline stays available for correction. Retained features are replayed
 separately from the original, without claiming that the unfinished result matches the
 source. If no editable prefix remains, the design falls back to the import with
 reference sketches. When no CLI is found (`--solidcraft PATH`, else `$SOLIDCRAFT_CLI`,
-else `PATH`), when it times out (`--verify-timeout`, default 120 s), or with
+else `PATH` or beside the program), when it times out (`--verify-timeout`, default 120 s), or with
 `--no-verify`, the history is written and reported unverified. For ordered mirror chains
 and repeated full-turn endpoints, an attempted replay that cannot finish instead keeps the
 original geometry and reports why. `--import-only` always writes the import design.

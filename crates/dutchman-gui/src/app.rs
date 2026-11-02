@@ -85,6 +85,8 @@ pub struct App {
     /// The SolidCraft CLI that checks histories when nothing else is chosen, if one is found.
     checker: Result<PathBuf, dutchman_solidcraft::NoCli>,
     solidcraft_open: bool,
+    /// Why the file last chosen as the `solidcraft-cli` cannot be used.
+    solidcraft_cli_error: Option<String>,
     found_version: Option<String>,
     detected_version: dutchman_solidcraft::SolidCraftVersion,
     /// What to scroll into view on the next frame, so the results are seen without looking
@@ -184,6 +186,34 @@ fn restore_choices(options: &mut ConvertOptions, settings: &Value) -> bool {
         .unwrap_or(options.import_only || options.no_sketches || options.no_joints)
 }
 
+/// Where the settings keep the `solidcraft-cli` a person chose.
+const SOLIDCRAFT_CLI_KEY: &str = "solidcraft_cli";
+
+/// How to find the CLI: the one a person chose, else the automatic search.
+fn checking_with(chosen: Option<&PathBuf>) -> dutchman_solidcraft::Verification {
+    chosen.map_or(dutchman_solidcraft::Verification::Auto, |cli| {
+        dutchman_solidcraft::Verification::With(cli.clone())
+    })
+}
+
+/// The release `checking` finds, and the target it means, capped at the newest known.
+fn found_solidcraft(
+    checking: &dutchman_solidcraft::Verification,
+) -> (Option<String>, dutchman_solidcraft::SolidCraftVersion) {
+    let found = dutchman_solidcraft::solidcraft_version(checking)
+        .and_then(|line| dutchman::json::solidcraft_release(&line));
+    let detected = found
+        .as_deref()
+        .and_then(|version| {
+            version
+                .parse::<dutchman_solidcraft::SolidCraftVersion>()
+                .ok()
+        })
+        .unwrap_or_default()
+        .min(Default::default());
+    (found, detected)
+}
+
 fn saved_choices(options: &ConvertOptions, custom: bool) -> Value {
     serde_json::json!({
         "preset": options.preset.name(), "custom": custom,
@@ -211,26 +241,24 @@ impl App {
         theme::install(&cc.egui_ctx);
         egui_extras::install_image_loaders(&cc.egui_ctx);
         let (sender, messages) = channel();
-        let found_version =
-            dutchman_solidcraft::solidcraft_version(&dutchman_solidcraft::Verification::Auto)
-                .and_then(|line| dutchman::json::solidcraft_release(&line));
-        let detected_version = found_version
-            .as_deref()
-            .and_then(|version| {
-                version
-                    .parse::<dutchman_solidcraft::SolidCraftVersion>()
-                    .ok()
-            })
-            .unwrap_or_default()
-            .min(Default::default());
-        let mut options = ConvertOptions {
-            solidcraft_version: Some(detected_version),
-            ..ConvertOptions::default()
-        };
         let stored = cc
             .storage
             .and_then(|storage| storage.get_string(SETTINGS_KEY))
             .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+        // A chosen CLI that has since moved falls back to the automatic search.
+        let chosen_cli = stored
+            .as_ref()
+            .and_then(|settings| settings.get(SOLIDCRAFT_CLI_KEY))
+            .and_then(Value::as_str)
+            .map(PathBuf::from)
+            .filter(|cli| cli.is_file());
+        let checking_with = checking_with(chosen_cli.as_ref());
+        let (found_version, detected_version) = found_solidcraft(&checking_with);
+        let mut options = ConvertOptions {
+            solidcraft: chosen_cli,
+            solidcraft_version: Some(detected_version),
+            ..ConvertOptions::default()
+        };
         let custom = stored
             .as_ref()
             .is_some_and(|settings| restore_choices(&mut options, settings));
@@ -261,8 +289,9 @@ impl App {
             sender,
             notice: None,
             has_app: platform::has_solidcraft_app(),
-            checker: dutchman_solidcraft::usable_cli(&dutchman_solidcraft::Verification::Auto),
+            checker: dutchman_solidcraft::usable_cli(&checking_with),
             solidcraft_open: false,
+            solidcraft_cli_error: None,
             found_version,
             detected_version,
             reveal: None,
@@ -308,6 +337,33 @@ impl App {
         self.detected_version = found.and_then(|v| v.parse().ok()).unwrap_or_default();
         self.detected_version = self.detected_version.min(Default::default());
         self.options.solidcraft_version = Some(self.detected_version);
+    }
+
+    /// Supplies a SolidCraft app without its CLI, whatever this machine has, for UI previews.
+    pub fn preview_solidcraft_app(&mut self, found: bool) {
+        self.has_app = found;
+    }
+
+    /// Checks histories with the `solidcraft-cli` a person chose, or searches for one again.
+    /// A target left on Automatic follows the release this finds.
+    pub fn set_solidcraft_cli(&mut self, cli: Option<PathBuf>) {
+        let automatic = self.options.solidcraft_version == Some(self.detected_version);
+        let checking = checking_with(cli.as_ref());
+        self.options.solidcraft = cli;
+        self.checker = dutchman_solidcraft::usable_cli(&checking);
+        (self.found_version, self.detected_version) = found_solidcraft(&checking);
+        if automatic {
+            self.options.solidcraft_version = Some(self.detected_version);
+        }
+        self.solidcraft_cli_error = None;
+    }
+
+    /// Takes the file a person chose as the `solidcraft-cli`, or says why it cannot be used.
+    pub fn choose_solidcraft_cli(&mut self, chosen: &Path) {
+        match dutchman_solidcraft::chosen_cli(chosen) {
+            Ok(cli) => self.set_solidcraft_cli(Some(cli)),
+            Err(why) => self.solidcraft_cli_error = Some(why),
+        }
     }
 
     /// Adds design files and folders to convert, each once.
@@ -598,7 +654,7 @@ impl App {
     fn refresh_blocked_checker(&mut self) {
         if matches!(self.checker, Err(dutchman_solidcraft::NoCli::Blocked(_))) {
             self.checker =
-                dutchman_solidcraft::usable_cli(&dutchman_solidcraft::Verification::Auto);
+                dutchman_solidcraft::usable_cli(&checking_with(self.options.solidcraft.as_ref()));
         }
     }
 
@@ -781,6 +837,7 @@ impl App {
             Pick::Files | Pick::Folder => self.add_inputs(paths),
             Pick::Output => self.out_dir = Some(first),
             Pick::Project => self.options.project = Some(first),
+            Pick::SolidCraftCli => self.choose_solidcraft_cli(&first),
             Pick::SearchFolder(row) => self.search_for_row(row, first, ctx),
             Pick::SearchFile(row) => {
                 if let Some(folder) = first.parent() {
@@ -1157,6 +1214,8 @@ impl App {
                 let report = self.solidcraft_report();
                 if let Some(notice) = dutchman::json::solidcraft_notice(&report) {
                     ui.label(notice);
+                } else if self.found_version.is_none() && self.has_app {
+                    ui.label("Found the SolidCraft app, but not solidcraft-cli, which checks feature history. On Windows, the single-file SolidCraft download leaves it out; the portable ZIP and the MSI installer include it.");
                 } else if self.found_version.is_none() {
                     ui.label("SolidCraft not found. Install SolidCraft to check feature history and open designs.");
                 } else if let Some(found) = &self.found_version {
@@ -1165,6 +1224,7 @@ impl App {
                     }
                 }
                 self.solidcraft_picker(ui);
+                self.solidcraft_cli_chooser(ui, ctx);
                 if report.pointer("/solidcraft/status").and_then(Value::as_str) == Some("newer")
                     && self.updater.newer_known()
                     && ui.button("Update Dutchman").clicked()
@@ -1176,6 +1236,21 @@ impl App {
                 }
             });
         self.solidcraft_open = open;
+    }
+
+    fn solidcraft_cli_chooser(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        ui.horizontal(|ui| {
+            if ui.button("Choose solidcraft-cli…").clicked() {
+                worker::pick(Pick::SolidCraftCli, self.sender.clone(), ctx.clone());
+            }
+            if self.options.solidcraft.is_some() && ui.button("Find automatically").clicked() {
+                self.set_solidcraft_cli(None);
+            }
+        });
+        if let Some(why) = &self.solidcraft_cli_error {
+            let danger = theme::palette(ui).danger;
+            ui.label(RichText::new(why).color(danger));
+        }
     }
 
     fn solidcraft_picker(&mut self, ui: &mut egui::Ui) {
@@ -1426,8 +1501,8 @@ impl App {
                         format!("History is written unchecked: {why}.")
                     }
                     Err(dutchman_solidcraft::NoCli::NotFound(_)) => format!(
-                        "No SolidCraft found, so history is written unchecked: install SolidCraft, \
-                         or set {} to the full path of its solidcraft-cli.",
+                        "No solidcraft-cli found, so history is written unchecked: install SolidCraft, \
+                         choose its solidcraft-cli under SolidCraft version…, or set {} to its full path.",
                         dutchman_solidcraft::CLI_ENV
                     ),
                 };
@@ -1683,6 +1758,12 @@ impl eframe::App for App {
             object.insert("report_ids".into(), serde_json::json!(self.consent.ids));
             object.insert("update".into(), self.updater.saved());
             object.insert("report_policy".into(), self.report_policy.saved());
+            if let Some(cli) = &self.options.solidcraft {
+                object.insert(
+                    SOLIDCRAFT_CLI_KEY.into(),
+                    serde_json::json!(cli.display().to_string()),
+                );
+            }
         }
         storage.set_string(SETTINGS_KEY, settings.to_string());
     }

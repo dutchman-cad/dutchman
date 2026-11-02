@@ -9,7 +9,8 @@ use std::process::Command;
 /// The environment variable that names the SolidCraft app, when it is not on `PATH`.
 pub const APP_ENV: &str = "SOLIDCRAFT_APP";
 
-/// Opens `design` in SolidCraft: the app `SOLIDCRAFT_APP` names, else `solidcraft` on `PATH`,
+/// Opens `design` in SolidCraft: the app `SOLIDCRAFT_APP` names, else `solidcraft` on `PATH` or
+/// beside this program,
 /// else whatever the system opens the design's extension with.
 pub fn open_in_solidcraft(design: &Path) -> Result<(), String> {
     match solidcraft_app() {
@@ -27,11 +28,15 @@ fn solidcraft_app() -> Option<PathBuf> {
     if let Some(app) = std::env::var_os(APP_ENV).map(PathBuf::from) {
         return app.is_file().then_some(app);
     }
-    on_path(&OsString::from(if cfg!(windows) {
+    let name = OsString::from(if cfg!(windows) {
         "solidcraft.exe"
     } else {
         "solidcraft"
-    }))
+    });
+    on_path(&name).or_else(|| {
+        let app = std::env::current_exe().ok()?.parent()?.join(&name);
+        app.is_file().then_some(app)
+    })
 }
 
 fn on_path(name: &OsString) -> Option<PathBuf> {

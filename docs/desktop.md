@@ -22,7 +22,7 @@ a native file is kept as a fallback if the native conversion fails.
 
 The Inventor project folder setting appears only for inputs containing Inventor files.
 Available memory is labelled as memory and hidden when unknown. Automatic SolidCraft
-selection compares the versions found on PATH and in installed applications, choosing
+selection compares the versions found on PATH, beside Dutchman and in installed applications, choosing
 the newest; `SOLIDCRAFT_CLI` remains an explicit override.
 
 Dutchman Convert (`dutchman-gui`) converts without a terminal. [How to use it](../README.md#how-to-use-it) shows it step by step.
@@ -63,7 +63,7 @@ When Standard leaves history out to fit in memory, its result card shows the
 history Info message even with the full loss log collapsed. The original geometry is kept.
 
 A converted design opens in SolidCraft from its card: the app that `SOLIDCRAFT_APP` names, else
-`solidcraft` on `PATH`, else the system's app for `.sc` files. When an Inventor assembly's part
+`solidcraft` on `PATH` or beside Dutchman, else the system's app for `.sc` files. When an Inventor assembly's part
 files are not found, its card names them: **Search a folder…** or **Find a file…** converts it
 again, searching there too. The app follows the system's light or dark setting, or can be set to
 Day or Night, and its **Output format** choice also offers a FreeCAD macro.
@@ -80,6 +80,11 @@ the version or **not found**, shorten **Update**, and put theme choices in a men
 For an installed release newer than known, the panel has an **Update Dutchman** button, which
 opens the update window, when the update check already knows a newer Dutchman. Too-old releases have a
 [Download SolidCraft](https://github.com/tangency-labs/solidcraft/releases) link.
+
+**Choose solidcraft-cli…** in the panel picks the command-line tool that checks histories and
+remembers it; **Find automatically** goes back to searching. Choosing the SolidCraft app uses the
+`solidcraft-cli` beside it. Without one, the panel says so: on Windows, the single-file SolidCraft
+download leaves it out, and the portable ZIP and the MSI installer include it.
 
 Choose the target with the **Target SolidCraft** selector: it defaults to the found CLI's version, else the built-in newest (currently 0.30), even when history checking is off. **Automatic** follows the detected installation; **0.25 and newer** keeps supported FreeCAD helices as editable coils.
 

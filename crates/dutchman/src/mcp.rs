@@ -229,7 +229,7 @@ fn option_properties() -> Map<String, Value> {
         },
         "solidcraft": {
             "type": "string",
-            "description": "Path of the SolidCraft CLI for the check (default: $SOLIDCRAFT_CLI, else solidcraft-cli on PATH, else the one inside an installed SolidCraft app).",
+            "description": "Path of the SolidCraft CLI for the check (default: $SOLIDCRAFT_CLI, else solidcraft-cli on PATH, beside this program, or inside an installed SolidCraft app).",
         },
         "overwrite": {
             "type": "boolean",

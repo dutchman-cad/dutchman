@@ -212,9 +212,11 @@ command-line tool, `solidcraft-cli`, which comes with every
 [SolidCraft release](https://github.com/tangency-labs/solidcraft/releases). Installing the
 SolidCraft app is enough: Dutchman finds the tool inside it (on macOS, the newest
 `SolidCraft*.app` in `/Applications` or `~/Applications`; on Windows, `Program Files\SolidCraft`, else the install folder the installer recorded in the
-registry).
-`--solidcraft PATH`, `SOLIDCRAFT_CLI`, or `solidcraft-cli` on your `PATH` come first. The
-desktop app says which one it checks with. Without one, conversions still work; a converted
+registry). On Windows, the MSI installer and the portable ZIP include `solidcraft-cli.exe`; the
+single-file `SolidCraft-…-windows-x64.exe` download does not.
+`--solidcraft PATH`, `SOLIDCRAFT_CLI`, or `solidcraft-cli` on your `PATH` or beside Dutchman come first. The
+desktop app says which one it checks with, and **Choose solidcraft-cli…** in its
+[SolidCraft version panel](desktop.md#solidcraft-version) picks one and remembers it. Without one, conversions still work; a converted
 history is marked unverified.
 
 On macOS, let SolidCraft itself run once before the first check: open SolidCraft from

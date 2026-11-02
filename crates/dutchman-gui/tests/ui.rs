@@ -823,6 +823,49 @@ fn solidcraft_status_panel_waits_for_a_click_and_shares_version_notices() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn solidcraft_panel_takes_a_chosen_cli_and_explains_the_app_alone() {
+    use std::os::unix::fs::PermissionsExt;
+    let script = |path: &std::path::Path, line: &str| {
+        std::fs::write(path, format!("#!/bin/sh\necho '{line}'\n")).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    let dir = tempfile::tempdir().unwrap();
+    let app = dir.path().join("solidcraft");
+    script(&app, "solidcraft 0.30.0");
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1120.0, 680.0))
+        .build_eframe(|cc| App::new(cc));
+    harness.state_mut().preview_solidcraft(None);
+    harness.state_mut().preview_solidcraft_app(true);
+    harness.run_steps(8);
+    harness
+        .get_by_label("SolidCraft not found")
+        .click_accesskit();
+    harness.run_steps(8);
+    assert!(harness
+        .query_by_label_contains("Found the SolidCraft app, but not solidcraft-cli")
+        .is_some());
+    assert!(harness.query_by_label("Choose solidcraft-cli…").is_some());
+    assert!(harness.query_by_label("Find automatically").is_none());
+
+    harness.state_mut().choose_solidcraft_cli(&app);
+    harness.run_steps(8);
+    assert!(harness
+        .query_by_label_contains("portable ZIP and the MSI")
+        .is_some());
+
+    script(&dir.path().join("solidcraft-cli"), "solidcraft-cli 0.30.0");
+    harness.state_mut().choose_solidcraft_cli(&app);
+    harness.run_steps(8);
+    assert!(harness.query_by_label("SolidCraft 0.30").is_some());
+    assert!(harness.query_by_label("Find automatically").is_some());
+    assert!(harness
+        .query_by_label_contains("the portable ZIP and the MSI")
+        .is_none());
+}
+
 #[test]
 fn update_pill_adapts_to_width_and_waits_for_a_click() {
     for (width, label) in [(760.0, "Update"), (1000.0, "Update to 0.2.6")] {

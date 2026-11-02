@@ -67,8 +67,8 @@ pub(crate) enum Outcome {
 }
 
 /// The SolidCraft CLI `verification` checks with: for [`Verification::Auto`], the one
-/// `SOLIDCRAFT_CLI` names, else the newest `solidcraft-cli` found on `PATH` or inside an
-/// installed SolidCraft app: on macOS `SolidCraft*.app` in `/Applications` or `~/Applications`, newest
+/// `SOLIDCRAFT_CLI` names, else the newest `solidcraft-cli` found on `PATH`, beside this program,
+/// or inside an installed SolidCraft app: on macOS `SolidCraft*.app` in `/Applications` or `~/Applications`, newest
 /// version first; on Windows `SolidCraft\solidcraft-cli.exe` in Program Files or `%LOCALAPPDATA%`,
 /// else in the install folder the installer recorded in the registry (`InstallDir`, or beside
 /// the registered `solidcraft.exe`).
@@ -80,18 +80,67 @@ pub fn find_cli(verification: &Verification) -> Result<PathBuf, String> {
             .map(PathBuf::from)
             .filter(|path| !path.as_os_str().is_empty())
             .or_else(|| {
-                newest_cli(on_path().into_iter().chain(installed()), &|cli| {
-                    version_of(cli)
-                        .ok()
-                        .flatten()
-                        .and_then(|line| parse_version(&line))
-                })
+                let beside_this = std::env::current_exe()
+                    .ok()
+                    .and_then(|program| beside(&program));
+                newest_cli(
+                    on_path().into_iter().chain(beside_this).chain(installed()),
+                    &|cli| {
+                        version_of(cli)
+                            .ok()
+                            .flatten()
+                            .and_then(|line| parse_version(&line))
+                    },
+                )
             })
             .ok_or_else(|| {
                 format!(
                     "no {CLI_NAME} found (install SolidCraft, set {CLI_ENV}, or add it to PATH)"
                 )
             }),
+    }
+}
+
+/// The SolidCraft CLI in the same folder as `file`, if there is one.
+fn beside(file: &Path) -> Option<PathBuf> {
+    let cli = file
+        .parent()?
+        .join(format!("{CLI_NAME}{}", std::env::consts::EXE_SUFFIX));
+    cli.is_file().then_some(cli)
+}
+
+/// Whether `file` is named as a SolidCraft app rather than its command-line tool, including the
+/// single-file Windows download (`SolidCraft-0.30.1-windows-x64.exe`).
+fn named_as_app(file: &Path) -> bool {
+    file.file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(str::to_ascii_lowercase)
+        .is_some_and(|stem| stem.starts_with("solidcraft") && !stem.starts_with(CLI_NAME))
+}
+
+/// The SolidCraft CLI to use for a file somebody chose: the file itself, or the CLI beside it when
+/// they chose the SolidCraft app. An app is never started, as that would open its window. The
+/// error says what to do instead.
+pub fn chosen_cli(chosen: &Path) -> Result<PathBuf, String> {
+    let cli = if named_as_app(chosen) {
+        beside(chosen).ok_or_else(|| {
+            "That is the SolidCraft app, and there is no solidcraft-cli beside it. Dutchman \
+             checks designs with solidcraft-cli. On Windows, the single-file SolidCraft download \
+             leaves it out; the portable ZIP and the MSI installer include it."
+                .to_owned()
+        })?
+    } else {
+        chosen.to_path_buf()
+    };
+    let says_solidcraft = version_of(&cli)?.filter(|line| {
+        line.to_ascii_lowercase().contains("solidcraft") && parse_version(line).is_some()
+    });
+    match says_solidcraft {
+        Some(_) => Ok(cli),
+        None => Err(format!(
+            "{} did not answer as solidcraft-cli. Choose the solidcraft-cli that comes with SolidCraft.",
+            cli.display()
+        )),
     }
 }
 
@@ -1773,6 +1822,53 @@ mod cli_tests {
         });
         assert_eq!(found, Some(app));
         assert_eq!(newest_cli([path.clone()], &|_| None), Some(path));
+    }
+
+    fn version_script(dir: &Path, name: &str, line: &str) -> PathBuf {
+        let path = dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\necho '{line}'\n")).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[test]
+    fn finds_the_cli_beside_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("dutchman");
+        assert_eq!(beside(&program), None);
+        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.30.0");
+        assert_eq!(beside(&program), Some(cli));
+    }
+
+    #[test]
+    fn a_chosen_cli_must_answer_as_solidcraft() {
+        let dir = tempfile::tempdir().unwrap();
+        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.30.0");
+        assert_eq!(chosen_cli(&cli), Ok(cli));
+        let other = version_script(dir.path(), "other-tool", "other-tool 1.2.3");
+        assert!(chosen_cli(&other)
+            .unwrap_err()
+            .contains("did not answer as solidcraft-cli"));
+    }
+
+    #[test]
+    fn a_chosen_app_uses_the_cli_beside_it_and_is_never_started() {
+        let dir = tempfile::tempdir().unwrap();
+        let started = dir.path().join("started");
+        let app = dir.path().join("SolidCraft-0.30.1-windows-x64");
+        std::fs::write(
+            &app,
+            format!(
+                "#!/bin/sh\ntouch '{}'\necho 'solidcraft 0.30.1'\n",
+                started.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&app, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(chosen_cli(&app).unwrap_err().contains("portable ZIP"));
+        let cli = version_script(dir.path(), "solidcraft-cli", "solidcraft-cli 0.30.1");
+        assert_eq!(chosen_cli(&app), Ok(cli));
+        assert!(!started.exists());
     }
 
     fn fake_cli(dir: &Path, script: &str) -> PathBuf {

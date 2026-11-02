@@ -255,6 +255,12 @@ pub fn pick(kind: Pick, messages: Sender<Message>, ctx: egui::Context) {
                     .await
                     .into_iter()
                     .collect(),
+                Pick::SolidCraftCli => dialog
+                    .set_title("Choose solidcraft-cli")
+                    .pick_file()
+                    .await
+                    .into_iter()
+                    .collect(),
                 Pick::SearchFile(_) => dialog
                     .set_title("Find a missing part file")
                     .add_filter("Inventor parts and assemblies", &["ipt", "iam"])
@@ -284,6 +290,8 @@ pub enum Pick {
     Output,
     /// The project folder an assembly's part files are searched in.
     Project,
+    /// The `solidcraft-cli` that checks histories.
+    SolidCraftCli,
     /// A folder to search for the part files the result row at this index is missing.
     SearchFolder(usize),
     /// One of those files, whose folder is then searched.
