@@ -1194,7 +1194,7 @@ mod external_tools {
             file.write_all(
                 br#"#!/bin/sh
 if [ "$1" = "--version" ]; then
-    printf 'solidcraft-cli 0.29.0\n'
+    printf 'solidcraft-cli 0.30.0\n'
     exit 0
 fi
 printf 'replay\n' >> "$DUTCHMAN_TEST_REPLAY_MARKER"
@@ -1211,7 +1211,7 @@ exit 1
             "-o",
             output.to_str().unwrap(),
             "--solidcraft-version",
-            "0.29.0",
+            "0.30.0",
             "--json",
         ];
         let env = [
@@ -3314,7 +3314,7 @@ fn history_check_skips_for_low_memory_but_off_and_force_remain_explicit() {
         "-o",
         output.to_str().unwrap(),
         "--solidcraft-version",
-        "0.29.0",
+        "0.30.0",
         "--json",
     ];
     let out = dutchman_with(&args, &env);
@@ -3355,7 +3355,7 @@ fn history_check_skips_for_low_memory_but_off_and_force_remain_explicit() {
             "--out-dir",
             dir.path().to_str().unwrap(),
             "--solidcraft-version",
-            "0.29.0",
+            "0.30.0",
             "--json",
         ],
         &env,
@@ -3380,7 +3380,7 @@ fn low_memory_keeps_editable_history_unverified_and_the_original_shape_visible()
             "-o",
             output.to_str().unwrap(),
             "--solidcraft-version",
-            "0.29.0",
+            "0.30.0",
             "--part",
             "1",
             "--stop-at-feature",
@@ -3426,7 +3426,7 @@ fn automatic_assembly_workers_use_the_synthetic_free_memory_budget() {
             output.to_str().unwrap(),
             "--no-verify",
             "--solidcraft-version",
-            "0.29.0",
+            "0.30.0",
             "--json",
         ],
         &[("DUTCHMAN_TEST_MEMORY", "100000000,500000000")],

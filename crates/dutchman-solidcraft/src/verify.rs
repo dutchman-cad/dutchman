@@ -99,7 +99,7 @@ pub fn find_cli(verification: &Verification) -> Result<PathBuf, String> {
 pub const OLDEST_SOLIDCRAFT: [u64; 3] = [0, 18, 2];
 
 /// The newest minor known at build time. Patch releases need no constant update.
-pub const NEWEST_SOLIDCRAFT: [u64; 2] = [0, 29];
+pub const NEWEST_SOLIDCRAFT: [u64; 2] = [0, 30];
 
 /// The oldest SolidCraft release published in the 14 days before the tag, never below
 /// OLDEST_SOLIDCRAFT. Update alongside NEWEST_SOLIDCRAFT and the CI roundtrip pins at release time.
@@ -1984,7 +1984,7 @@ mod cli_tests {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
         for version in [
-            "0.18.2", "0.20.0", "0.25.1", "0.27.1", "0.29.0", "0.29.9", "0.30.0", "nonsense",
+            "0.18.2", "0.20.0", "0.25.1", "0.27.1", "0.30.0", "0.30.9", "0.31.0", "nonsense",
             "0.17.0",
         ] {
             let cli = dir.path().join(version);
@@ -2106,9 +2106,9 @@ mod version_tests {
         for (found, status) in [
             ("0.27.0", "current"),
             ("0.27.9", "current"),
-            ("0.29.0", "current"),
-            ("0.29.9", "current"),
-            ("0.30.0", "newer"),
+            ("0.30.0", "current"),
+            ("0.30.9", "current"),
+            ("0.31.0", "newer"),
             ("0.17.99", "too_old"),
         ] {
             assert_eq!(

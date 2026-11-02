@@ -414,13 +414,13 @@ fn screenshots() {
             "A newer release is available: the Update pill in the header.",
         );
         for (found, case, update, width) in [
-            (Some("0.29.9"), "current", false, 1120.0),
-            (Some("0.30.0"), "newer", false, 1120.0),
-            (Some("0.30.0"), "newer-update", true, 1120.0),
+            (Some("0.30.9"), "current", false, 1120.0),
+            (Some("0.31.0"), "newer", false, 1120.0),
+            (Some("0.31.0"), "newer-update", true, 1120.0),
             (Some("0.17.9"), "too-old", false, 1120.0),
             (Some("0.24.0"), "older-history", false, 1120.0),
             (None, "none-found", false, 1120.0),
-            (Some("0.30.0"), "narrow", true, 760.0),
+            (Some("0.31.0"), "narrow", true, 760.0),
         ] {
             let mut preview = Harness::builder()
                 .with_size(egui::vec2(width, 680.0))
@@ -464,7 +464,7 @@ fn screenshots() {
                     "too-old" => "is too old to open Dutchman's designs",
                     "older-history" => "A newer SolidCraft keeps more of their history.",
                     "none-found" => "SolidCraft not found. Install SolidCraft",
-                    _ => "SolidCraft 0.29 is installed.",
+                    _ => "SolidCraft 0.30 is installed.",
                 })
                 .is_some());
             let file = format!("00-solidcraft-{case}-{name}.png");
@@ -790,13 +790,13 @@ fn dropped_files_and_results_show_format_status_and_one_invitation() {
 #[test]
 fn solidcraft_status_panel_waits_for_a_click_and_shares_version_notices() {
     for (found, expected) in [
-        (Some("0.30.0"), "is newer than this Dutchman knows"),
+        (Some("0.31.0"), "is newer than this Dutchman knows"),
         (Some("0.17.9"), "is too old to open Dutchman's designs"),
         (
             Some("0.24.0"),
             "A newer SolidCraft keeps more of their history.",
         ),
-        (Some("0.29.0"), "SolidCraft 0.29 is installed."),
+        (Some("0.30.0"), "SolidCraft 0.30 is installed."),
         (None, "SolidCraft not found. Install SolidCraft"),
     ] {
         let mut harness = Harness::builder()

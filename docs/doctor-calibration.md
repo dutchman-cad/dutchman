@@ -9,7 +9,7 @@ The coverage sample contains 19 public designs: three RailCore assemblies, the r
 arm, and 15 other designs. Fast output converts 17 of them. Fourteen designs supply
 measured comparisons (356 complete and nine incomplete body rows); three comparisons
 are unavailable and two designs do not convert. These coverage outcomes are separate
-from the false-positive counts below. Measurements use the same SolidCraft 0.29.0
+from the false-positive counts below. Measurements use one SolidCraft release
 kernel for both sides of each comparison.
 
 Two other RailCore variants retain six coincidence advisories. The written designs
