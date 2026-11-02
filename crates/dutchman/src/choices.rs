@@ -629,33 +629,8 @@ pub fn estimate_from_sizes(
             requested.min(designs).min(sizes.worker_limit).max(1)
         }
     })?;
-    let startup = COEFFICIENTS
-        .iter()
-        .find(|c| c.format == sizes.format)
-        .and_then(|c| c.startup.as_ref());
     if !options.no_verify && options.to == crate::OutputFormat::Solidcraft {
-        // The 256-placement assembly needed about 9 GB beyond its 8.6 GB conversion
-        // peak. The serial peak was 3.5 GB; use three times that conversion allowance
-        // when a smaller worker count makes the conversion itself cheaper.
-        let share = if options.threads == 1 {
-            crate::stop::HISTORY_CHECK_SHARE
-        } else {
-            1.1
-        };
-        let replay = (result.peak_bytes as f64 * share).ceil() as u64;
-        result.peak_bytes = result.peak_bytes.saturating_add(replay);
-        if cfg!(target_os = "windows") {
-            if let Some(startup) = startup {
-                let (without, with) = if choices.history {
-                    (startup.windows_history, startup.windows_verify_history)
-                } else {
-                    (startup.windows_shape, startup.windows_verify_shape)
-                };
-                result.seconds_exact += with - without;
-                result.seconds = result.seconds_exact.ceil() as u64;
-            }
-        }
-        result.time_band = None;
+        result = combine_held_stages(result, check_cost(sizes, choices, options, result));
     }
     // Explicit target versions bypass history's version discovery. We cannot subtract
     // its cost from a combined startup measurement, so retain a rough estimate.
@@ -663,6 +638,55 @@ pub fn estimate_from_sizes(
         result.time_band = None;
     }
     Some(result)
+}
+
+// Replay runs in another process while conversion still holds its copies. Keep
+// the overlap policy here so every total, including the desktop row, agrees.
+fn combine_held_stages(conversion: Estimate, check: Estimate) -> Estimate {
+    let seconds_exact = conversion.seconds_exact + check.seconds_exact;
+    Estimate {
+        peak_bytes: conversion.peak_bytes.saturating_add(check.peak_bytes),
+        seconds: seconds_exact.ceil() as u64,
+        seconds_exact,
+        time_band: None,
+        ..conversion
+    }
+}
+
+fn check_cost(
+    sizes: Sizes,
+    choices: &Choices,
+    options: &crate::ConvertOptions,
+    conversion: Estimate,
+) -> Estimate {
+    // Measured replay allowance, separate from the conversion's retained copies.
+    let share = if options.threads == 1 {
+        crate::stop::HISTORY_CHECK_SHARE
+    } else {
+        1.1
+    };
+    let seconds_exact = if cfg!(target_os = "windows") {
+        COEFFICIENTS
+            .iter()
+            .find(|c| c.format == sizes.format)
+            .and_then(|c| c.startup.as_ref())
+            .map_or(0.0, |startup| {
+                if choices.history {
+                    startup.windows_verify_history - startup.windows_history
+                } else {
+                    startup.windows_verify_shape - startup.windows_shape
+                }
+            })
+    } else {
+        0.0
+    };
+    Estimate {
+        peak_bytes: (conversion.peak_bytes as f64 * share).ceil() as u64,
+        seconds: seconds_exact.ceil() as u64,
+        seconds_exact,
+        time_band: None,
+        ..conversion
+    }
 }
 
 fn estimate_using_workers(
@@ -890,20 +914,58 @@ pub(crate) fn nested_content_size(reader: &mut impl std::io::Read, limit: u64) -
 /// Available memory, including process limits where available.
 pub use dutchman_core::available_memory;
 
+/// Conversion and checking costs for the desktop, sharing the file row's total.
+#[derive(Clone, Copy, Debug)]
+pub struct DesktopEstimate {
+    /// Reading and converting together, before checking.
+    pub conversion: Estimate,
+    /// Separate measured costs, when available. Current models have no split.
+    pub split: Option<ReadConvertSplit>,
+    /// Extra memory and time in the checker process, when enabled and available.
+    pub check: Option<Estimate>,
+    pub total: Estimate,
+    pub history_omitted: bool,
+}
+
+/// Optional measured split; each stage holds its memory while the next runs.
+#[derive(Clone, Copy, Debug)]
+pub struct ReadConvertSplit {
+    pub read: Estimate,
+    pub convert: Estimate,
+}
+
 /// Desktop estimate and automatic retention note, using conversion-only memory for Standard.
-/// Checking is included only when a CLI is available; its budget is checked after reading.
 pub fn desktop_estimate(
     sizes: Sizes,
     options: &crate::ConvertOptions,
     checker_found: bool,
     available: Option<u64>,
 ) -> (Option<Estimate>, bool) {
+    let parts = desktop_estimate_parts(sizes, options, checker_found, available, None);
+    (
+        parts.map(|parts| parts.total),
+        parts.is_some_and(|parts| parts.history_omitted),
+    )
+}
+
+/// Split the same total into conversion and extra checking costs. Checking is
+/// counted only with history and a CLI; its budget is checked after reading.
+pub fn desktop_estimate_parts(
+    sizes: Sizes,
+    options: &crate::ConvertOptions,
+    checker_found: bool,
+    available: Option<u64>,
+    split: Option<ReadConvertSplit>,
+) -> Option<DesktopEstimate> {
     let mut options = options.clone();
     options.no_verify |= !checker_found;
     let mut choices = options.choices();
     let mut conversion_options = options.clone();
     conversion_options.no_verify = true;
-    let conversion = estimate_from_sizes(sizes, &choices, &conversion_options);
+    let conversion = split.map_or_else(
+        || estimate_from_sizes(sizes, &choices, &conversion_options),
+        |split| Some(combine_held_stages(split.read, split.convert)),
+    );
     let mut reduced = false;
     if !options.no_memory_check && choices.history && choices.history_within_budget {
         if let (Some(full), Some(free)) = (conversion, available) {
@@ -919,9 +981,24 @@ pub fn desktop_estimate(
             }
         }
     }
-    // Without history there is nothing to check.
-    options.no_verify |= !choices.history;
-    (estimate_from_sizes(sizes, &choices, &options), reduced)
+    // A supplied split describes the requested choices. If Standard changes them,
+    // use the model for the reduced choices until their own split is measured.
+    let split = if reduced { None } else { split };
+    let conversion = split.map_or_else(
+        || estimate_from_sizes(sizes, &choices, &conversion_options),
+        |split| Some(combine_held_stages(split.read, split.convert)),
+    )?;
+    let check =
+        (!options.no_verify && choices.history && options.to == crate::OutputFormat::Solidcraft)
+            .then(|| check_cost(sizes, &choices, &options, conversion));
+    let total = check.map_or(conversion, |check| combine_held_stages(conversion, check));
+    Some(DesktopEstimate {
+        split,
+        conversion,
+        check,
+        total,
+        history_omitted: reduced,
+    })
 }
 
 #[cfg(test)]
@@ -1496,6 +1573,57 @@ mod startup_regression_tests {
 #[cfg(test)]
 mod cached_estimate_tests {
     use super::*;
+
+    #[test]
+    fn desktop_parts_share_the_row_total_and_add_overlapping_memory() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("synthetic.ipt");
+        std::fs::File::create(&input)
+            .unwrap()
+            .set_len(180_000_000)
+            .unwrap();
+        let sizes = read_sizes(&input).unwrap();
+        for preset in [Preset::Fast, Preset::Standard, Preset::Full] {
+            for no_verify in [false, true] {
+                for checker in [false, true] {
+                    for free in [1, 4_800_000_000, 10_000_000_000, u64::MAX] {
+                        let options = crate::ConvertOptions {
+                            preset,
+                            no_verify,
+                            ..Default::default()
+                        };
+                        let parts =
+                            desktop_estimate_parts(sizes, &options, checker, Some(free), None)
+                                .unwrap();
+                        assert_eq!(
+                            desktop_estimate(sizes, &options, checker, Some(free)),
+                            (Some(parts.total), parts.history_omitted)
+                        );
+                        if let Some(check) = parts.check {
+                            assert_eq!(
+                                parts.total.peak_bytes,
+                                parts.conversion.peak_bytes + check.peak_bytes
+                            );
+                            assert_eq!(
+                                parts.total.seconds_exact,
+                                parts.conversion.seconds_exact + check.seconds_exact
+                            );
+                            assert_eq!(
+                                parts.total.seconds,
+                                parts.total.seconds_exact.ceil() as u64
+                            );
+                            assert_eq!(
+                                Some(parts.total),
+                                estimate_from_sizes(sizes, &options.choices(), &options)
+                            );
+                        } else {
+                            assert_eq!(parts.total, parts.conversion);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     #[test]
     fn cached_sizes_keep_existing_estimates_without_reading_again() {

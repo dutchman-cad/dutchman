@@ -53,14 +53,26 @@ leaves no label. Planning and estimation run in the background.
 
 Before a conversion or retry, Dutchman compares conversion memory, without the history
 check, against free memory. If a file is too large, **This conversion may need more memory**
-shows its file name and explains what Fast, Standard and Full keep. Change the preset,
-**Feature history**, **Sketches**, **Joints**, or **Check feature history in SolidCraft**
-to see a live total matching the file row. The check is counted only when its checkbox is
-on and a SolidCraft CLI was found. Each checkbox shows the estimator's extra memory and
-time for that choice; **no separate estimate** means it has no separate cost in the current
-model. Archive sizes are read in the background once; changing choices updates the figures
-without reading the archive again. Standard's total leaves history out when doing so fits
-free memory, with a note saying so.
+shows its file name and two parts. **Read the file** has no choices. **Convert to SolidCraft**
+holds the preset and **Feature history**, **Sketches** and **Joints** choices. No individual
+choice carries a figure. The estimator does not yet have a measured split between reading
+and converting, so one line under conversion gives their combined memory and time. When
+separate estimates are available, each part shows its own figure instead.
+
+A small **Check history in SolidCraft** row under conversion holds its checkbox and the
+check's extra memory and time. It is greyed out with a reason when no SolidCraft CLI was
+found or history is off. Preset descriptions appear on hover or keyboard focus in the menu
+and selector, here and in the main window.
+
+**Total time** adds reading, conversion and checking time. **Most memory at once** adds
+their memory, since each stage holds its copies while the next runs. This total matches
+the file row. Free memory appears below it. If reading and converting alone will not fit,
+the warning points to the preset and checkboxes; otherwise it says the check is skipped
+when it cannot fit after reading. **Estimates can be well above what's used.**
+
+Archive sizes are read in the background once; changing choices updates the figures without
+reading the archive again. Standard leaves history out when doing so fits free memory,
+with a note saying so.
 
 **Convert with these choices** and **Cancel** stay visible together, including in short
 windows where the contents scroll. The choices return to the main window and are remembered,

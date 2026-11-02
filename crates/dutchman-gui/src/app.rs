@@ -62,6 +62,7 @@ pub struct App {
     has_inventor: bool,
     custom: bool,
     estimate_key: Option<EstimateKey>,
+    read_convert_split: Option<dutchman::choices::ReadConvertSplit>,
     size_inputs: Option<Vec<PathBuf>>,
     sizes: Vec<(PathBuf, Option<dutchman::choices::Sizes>)>,
     estimate_generation: u64,
@@ -287,6 +288,7 @@ impl App {
             has_inventor: false,
             custom,
             estimate_key: None,
+            read_convert_split: None,
             size_inputs: None,
             sizes: Vec::new(),
             estimate_generation: 0,
@@ -451,13 +453,8 @@ impl App {
             .find(|(path, _)| path == input)
             .and_then(|(_, sizes)| *sizes)
             .and_then(|sizes| {
-                dutchman::choices::desktop_estimate(
-                    sizes,
-                    &self.options,
-                    self.checker.is_ok(),
-                    self.estimate_available(),
-                )
-                .0
+                self.desktop_parts(sizes, self.estimate_available())
+                    .map(|parts| parts.total)
             })
     }
 
@@ -849,19 +846,34 @@ impl App {
                     (
                         path.clone(),
                         sizes.and_then(|sizes| {
-                            dutchman::choices::desktop_estimate(
-                                sizes,
-                                &self.options,
-                                self.checker.is_ok(),
-                                self.estimate_available(),
-                            )
-                            .0
+                            self.desktop_parts(sizes, self.estimate_available())
+                                .map(|parts| parts.total)
                         }),
                     )
                 })
                 .collect();
         }
         self.estimate_key = Some(key);
+    }
+
+    fn desktop_parts(
+        &self,
+        sizes: dutchman::choices::Sizes,
+        available: Option<u64>,
+    ) -> Option<dutchman::choices::DesktopEstimate> {
+        dutchman::choices::desktop_estimate_parts(
+            sizes,
+            &self.options,
+            self.checker.is_ok(),
+            available,
+            self.read_convert_split,
+        )
+    }
+
+    #[cfg(feature = "test-support")]
+    pub fn set_read_convert_split_for_test(&mut self, split: dutchman::choices::ReadConvertSplit) {
+        self.read_convert_split = Some(split);
+        self.estimate_key = None;
     }
 
     fn memory_dialog(&mut self, ctx: &egui::Context) {
@@ -882,41 +894,62 @@ impl App {
             ScrollArea::vertical().max_height((ctx.content_rect().height() - 125.0).max(80.0)).show(ui, |ui| {
                 ui.heading("This conversion may need more memory");
                 ui.label(path.file_name().unwrap_or_default().to_string_lossy());
-                ui.label(format!("About {:.1} GB of memory free.", gigabytes(available)));
-                for preset in [Preset::Fast, Preset::Standard, Preset::Full] {
-                    ui.label(format!("{}: {}", preset_label(preset), preset_description(preset)));
-                }
-                self.preset_ui(ui);
-                let choices = self.options.choices();
-                let (mut history, mut sketches, mut joints) = (choices.history, choices.sketches, choices.joints);
-                let before = self.options.clone();
-                ui.add_enabled_ui(self.options.preset != Preset::Fast, |ui| {
-                    for (value, label, kind) in [(&mut history, "Feature history", 0), (&mut sketches, "Sketches", 1), (&mut joints, "Joints", 2)] {
-                        ui.checkbox(value, label);
-                        ui.label(choice_cost(sizes, &before, self.checker.is_ok(), available, kind));
+                let parts = sizes.and_then(|sizes| self.desktop_parts(sizes, Some(available)));
+                egui::Frame::group(ui.style()).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.heading("Read the file");
+                    if let Some(split) = parts.and_then(|parts| parts.split) {
+                        ui.label(format!("Reading: {}", estimate_text(split.read)));
                     }
                 });
-                if (history, sketches, joints) != (choices.history, choices.sketches, choices.joints) {
-                    set_choices(&mut self.options, history, sketches, joints);
-                    self.custom = true;
-                }
-                let mut verify = !self.options.no_verify;
-                if ui.checkbox(&mut verify, "Check feature history in SolidCraft").changed() { self.options.no_verify = !verify; }
-                ui.label(choice_cost(sizes, &self.options, self.checker.is_ok(), available, 3));
-                if let Some(sizes) = sizes {
-                    let (total, reduced) = dutchman::choices::desktop_estimate(sizes, &self.options, self.checker.is_ok(), Some(available));
-                    if let Some(total) = total { ui.label(format!("Total: {}", estimate_text(total))); }
-                    if reduced { ui.label("Standard leaves feature history out to fit in free memory."); }
-                    let mut conversion_options = self.options.clone();
-                    conversion_options.no_verify = true;
-                    let conversion = dutchman::choices::desktop_estimate(sizes, &conversion_options, false, Some(available)).0;
-                    will_not_fit = conversion.is_some_and(|e| e.peak_bytes > available);
-                    if will_not_fit { ui.label("These choices will not fit in free memory. Converting anyway skips memory checks for this run only."); }
-                    else if total.is_some_and(|e| e.peak_bytes > available) && !self.options.no_memory_check {
-                        ui.label("If the history check will not fit after reading, it is skipped; conversion still continues.");
+                egui::Frame::group(ui.style()).show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.heading("Convert to SolidCraft");
+                    self.preset_ui(ui);
+                    let choices = self.options.choices();
+                    let (mut history, mut sketches, mut joints) = (choices.history, choices.sketches, choices.joints);
+                    ui.add_enabled_ui(self.options.preset != Preset::Fast, |ui| {
+                        ui.checkbox(&mut history, "Feature history");
+                        ui.checkbox(&mut sketches, "Sketches");
+                        ui.checkbox(&mut joints, "Joints");
+                    });
+                    if (history, sketches, joints) != (choices.history, choices.sketches, choices.joints) {
+                        set_choices(&mut self.options, history, sketches, joints);
+                        self.custom = true;
                     }
-                    if self.checker.is_err() && !self.options.no_verify { ui.label("SolidCraft CLI not found. History checking is not included."); }
+                    if let Some(parts) = sizes.and_then(|sizes| self.desktop_parts(sizes, Some(available))) {
+                        if let Some(split) = parts.split {
+                            ui.label(format!("Converting: {}", estimate_text(split.convert)));
+                        } else { ui.label(format!("Reading and converting together: {}", estimate_text(parts.conversion))); }
+                        if parts.history_omitted { ui.label("Standard leaves feature history out to fit in free memory."); }
+                    }
+                    ui.separator();
+                    let parts = sizes.and_then(|sizes| self.desktop_parts(sizes, Some(available)));
+                    let history_on = self.options.choices().history && !parts.is_some_and(|parts| parts.history_omitted);
+                    let can_check = self.checker.is_ok() && history_on;
+                    ui.add_enabled_ui(can_check, |ui| {
+                        let mut verify = !self.options.no_verify;
+                        if ui.checkbox(&mut verify, "Check history in SolidCraft").changed() { self.options.no_verify = !verify; }
+                        let parts = sizes.and_then(|sizes| self.desktop_parts(sizes, Some(available)));
+                        if let Some(check) = parts.and_then(|parts| parts.check) {
+                            ui.label(format!("Extra for check: {}", estimate_text(check)));
+                        } else if !can_check {
+                            ui.label(if self.checker.is_err() { "SolidCraft CLI not found." } else { "Feature history is off." });
+                        } else { ui.label("Extra for check: none (check is off)."); }
+                    });
+                });
+                if let Some(parts) = sizes.and_then(|sizes| self.desktop_parts(sizes, Some(available))) {
+                    ui.label(RichText::new(memory_total_text(parts.total)).strong());
+                    ui.label("Each stage keeps its memory while the next runs.");
+                    ui.label(format!("About {:.1} GB of memory free.", gigabytes(available)));
+                    will_not_fit = parts.conversion.peak_bytes > available;
+                    if will_not_fit {
+                        ui.colored_label(theme::palette(ui).lantern_text, "Change the preset or checkboxes: reading and converting alone will not fit in free memory. Converting anyway skips memory checks for this run only.");
+                    } else if parts.total.peak_bytes > available && !self.options.no_memory_check {
+                        ui.colored_label(theme::palette(ui).lantern_text, "The check is skipped when it cannot fit after reading; conversion still continues.");
+                    }
                 } else if sizes_ready { ui.label("Estimate unavailable. Convert to check this file again."); } else { ui.label("Working out…"); }
+                ui.label("Estimates can be well above what's used.");
             });
             ui.separator();
             ui.horizontal(|ui| {
@@ -1515,29 +1548,27 @@ impl App {
         } else {
             preset_label(self.options.preset).to_owned()
         };
-        egui::ComboBox::from_label("Preset")
+        let response = egui::ComboBox::from_label("Preset")
             .selected_text(label)
             .show_ui(ui, |ui| {
                 ui.set_width((ui.ctx().content_rect().width() - 80.0).clamp(260.0, 480.0));
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
                 for preset in [Preset::Fast, Preset::Standard, Preset::Full] {
                     let description = preset_description(preset);
-                    if ui
-                        .selectable_label(
-                            !self.custom && self.options.preset == preset,
-                            preset_label(preset),
-                        )
-                        .clicked()
-                    {
+                    let response = ui.selectable_label(
+                        !self.custom && self.options.preset == preset,
+                        preset_label(preset),
+                    );
+                    preset_help(&response, description);
+                    if response.clicked() {
                         select_preset(&mut self.options, preset);
                         self.custom = false;
                         ui.close();
                     }
-                    ui.label(RichText::new(description).small());
                 }
             })
-            .response
-            .on_hover_text(preset_description(self.options.preset));
+            .response;
+        preset_help(&response, preset_description(self.options.preset));
     }
 
     fn choices_ui(&mut self, ui: &mut egui::Ui) {
@@ -2315,69 +2346,27 @@ fn preset_description(preset: Preset) -> &'static str {
     }
 }
 
-fn choice_cost(
-    sizes: Option<dutchman::choices::Sizes>,
-    options: &ConvertOptions,
-    checker: bool,
-    available: u64,
-    kind: u8,
-) -> String {
-    let Some(sizes) = sizes else {
-        return "Working out…".into();
-    };
-    let mut on = options.clone();
-    let mut off = options.clone();
-    match kind {
-        0 => {
-            on.import_only = false;
-            off.import_only = true;
-        }
-        1 => {
-            on.no_sketches = false;
-            off.no_sketches = true;
-        }
-        2 => {
-            on.no_joints = false;
-            off.no_joints = true;
-        }
-        _ => {
-            on.no_verify = false;
-            off.no_verify = true;
-        }
+fn memory_total_text(total: Estimate) -> String {
+    let text = estimate_text(total);
+    let (memory, time) = text.split_once(", ").unwrap_or((&text, ""));
+    format!("Total time: {time} · Most memory at once: {memory}")
+}
+
+fn preset_help(response: &egui::Response, description: &str) {
+    if response.has_focus() || response.hovered() {
+        egui::Tooltip::always_open(
+            response.ctx.clone(),
+            response.layer_id,
+            response.id.with("preset_help"),
+            response.rect,
+        )
+        .show(|ui| {
+            ui.label(description);
+        });
     }
-    let estimate = |options: &ConvertOptions| {
-        dutchman::choices::desktop_estimate(sizes, options, checker, Some(available)).0
-    };
-    let (Some(on), Some(off)) = (estimate(&on), estimate(&off)) else {
-        return "no separate estimate".into();
-    };
-    let bytes = on.peak_bytes.saturating_sub(off.peak_bytes);
-    let seconds_exact = (on.seconds_exact - off.seconds_exact).max(0.0);
-    if bytes == 0 && seconds_exact == 0.0 {
-        return "no separate estimate".into();
-    }
-    let text = estimate_text(Estimate {
-        peak_bytes: bytes,
-        seconds: seconds_exact.ceil() as u64,
-        seconds_exact,
-        ..on
+    response.ctx.accesskit_node_builder(response.id, |node| {
+        node.set_description(description);
     });
-    let (memory, time) = text
-        .split_once(", ")
-        .unwrap_or((&text, "no separate estimate"));
-    format!(
-        "Memory: {}; time: {}",
-        if bytes == 0 {
-            "no separate estimate"
-        } else {
-            memory
-        },
-        if seconds_exact == 0.0 {
-            "no separate estimate"
-        } else {
-            time
-        }
-    )
 }
 
 #[cfg(test)]

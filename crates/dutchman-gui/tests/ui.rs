@@ -1665,10 +1665,20 @@ fn memory_harness(
     std::fs::remove_file(&input).unwrap(); // All subsequent UI changes must use cached sizes.
     harness.run_steps(8);
     let total = harness.state().memory_estimate_for_test(&input).unwrap();
-    assert!(harness
-        .query_by_label(&dutchman::choices::estimate_text(total))
-        .is_some());
+    assert!(
+        harness
+            .query_all_by_label(&dutchman::choices::estimate_text(total))
+            .count()
+            > 0
+    );
     (harness, input, dir)
+}
+
+#[cfg(feature = "test-support")]
+fn memory_total_label(total: dutchman::choices::Estimate) -> String {
+    let text = dutchman::choices::estimate_text(total);
+    let (memory, time) = text.split_once(", ").unwrap();
+    format!("Total time: {time} · Most memory at once: {memory}")
 }
 
 #[cfg(feature = "test-support")]
@@ -1688,33 +1698,117 @@ fn click_memory(h: &mut Harness<'static, App>, label: &str) {
 #[test]
 #[cfg(feature = "test-support")]
 fn memory_choices_share_the_row_total_and_update_without_rereading() {
+    use egui_kittest::kittest::NodeT;
     let (mut h, input, _dir) = memory_harness(760.0, 900.0, 1);
     for label in [
+        "Check history in SolidCraft",
         "Sketches",
         "Joints",
         "Feature history",
-        "Check feature history in SolidCraft",
     ] {
         let before = h.state().memory_estimate_for_test(&input).unwrap();
         click_memory(&mut h, label);
         h.run_steps(8);
         let total = h.state().memory_estimate_for_test(&input).unwrap();
-        assert!(h
-            .query_by_label(&format!(
-                "Total: {}",
-                dutchman::choices::estimate_text(total)
-            ))
-            .is_some());
-        assert!(h
-            .query_by_label(&dutchman::choices::estimate_text(total))
-            .is_some());
-        if label == "Feature history" || label == "Check feature history in SolidCraft" {
+        assert!(h.query_by_label(&memory_total_label(total)).is_some());
+        assert!(
+            h.query_all_by_label(&dutchman::choices::estimate_text(total))
+                .count()
+                > 0
+        );
+        if label == "Feature history" || label == "Check history in SolidCraft" {
             assert!(total.peak_bytes < before.peak_bytes);
         } else {
             assert_eq!(total, before);
         }
     }
-    assert!(h.query_all_by_label("no separate estimate").count() >= 2);
+    assert_eq!(h.query_all_by_label("no separate estimate").count(), 0);
+    assert_eq!(
+        h.query_all_by_label_contains("not estimated separately")
+            .count(),
+        0
+    );
+    assert!(h
+        .get_by_label("Check history in SolidCraft")
+        .accesskit_node()
+        .is_disabled());
+    h.get_by_label("Estimates can be well above what's used.");
+}
+
+#[test]
+#[cfg(feature = "test-support")]
+fn memory_dialog_shows_a_split_only_when_available() {
+    let (mut h, input, _dir) = memory_harness(520.0, 800.0, 20_000_000_000);
+    h.get_by_label("Read the file");
+    h.get_by_label("Convert to SolidCraft");
+    h.get_by_label_contains("Reading and converting together:");
+    assert!(h.query_by_label_contains("Reading:").is_none());
+    assert!(h.query_by_label_contains("Converting:").is_none());
+    let base = h.state().memory_estimate_for_test(&input).unwrap();
+    let read = dutchman::choices::Estimate {
+        peak_bytes: 2_000_000_000,
+        seconds: 60,
+        seconds_exact: 60.0,
+        ..base
+    };
+    let convert = dutchman::choices::Estimate {
+        peak_bytes: 3_000_000_000,
+        seconds: 120,
+        seconds_exact: 120.0,
+        ..base
+    };
+    h.state_mut()
+        .set_read_convert_split_for_test(dutchman::choices::ReadConvertSplit { read, convert });
+    h.run_steps(8);
+    h.get_by_label(&format!(
+        "Reading: {}",
+        dutchman::choices::estimate_text(read)
+    ));
+    h.get_by_label(&format!(
+        "Converting: {}",
+        dutchman::choices::estimate_text(convert)
+    ));
+    assert!(h
+        .query_by_label_contains("Reading and converting together:")
+        .is_none());
+    let total = h.state().memory_estimate_for_test(&input).unwrap();
+    assert_eq!(total.peak_bytes, 10_500_000_000);
+    assert!(total.seconds_exact >= 180.0);
+    h.get_by_label(&memory_total_label(total));
+    h.get_by_label(&dutchman::choices::estimate_text(total));
+}
+
+#[test]
+#[cfg(feature = "test-support")]
+fn memory_presets_expose_help_to_focus_and_accessibility() {
+    use egui_kittest::kittest::NodeT;
+    let (mut h, _, _dir) = memory_harness(520.0, 800.0, 1);
+    let selector = h
+        .query_all_by_value("Standard")
+        .find(|node| !node.accesskit_node().is_disabled())
+        .unwrap();
+    let description = selector.accesskit_node().description().unwrap().to_owned();
+    assert!(description.contains("leaves history out"));
+    selector.focus();
+    h.run_steps(4);
+    h.get_by_label(&description);
+    h.key_press(egui::Key::Space);
+    h.run_steps(4);
+    for (label, text) in [
+        ("Fast", "Shape only"),
+        ("Standard", "leaves history out"),
+        ("Full", "keeps history regardless"),
+    ] {
+        let entry = h
+            .query_all_by_label(label)
+            .find(|node| !node.accesskit_node().is_disabled())
+            .unwrap();
+        assert!(entry.accesskit_node().description().unwrap().contains(text));
+        let description = entry.accesskit_node().description().unwrap().to_owned();
+        entry.focus();
+        h.run_steps(4);
+        h.get_by_label(&description);
+    }
 }
 
 #[test]
@@ -1726,9 +1820,19 @@ fn memory_choices_count_check_only_with_cli_and_warning_clears() {
     h.run_steps(8);
     let no_cli = h.state().memory_estimate_for_test(&input).unwrap();
     assert!(no_cli.peak_bytes < checked.peak_bytes);
-    click_memory(&mut h, "Check feature history in SolidCraft");
-    h.run_steps(8);
+    assert!(h
+        .get_by_label("Check history in SolidCraft")
+        .accesskit_node()
+        .is_disabled());
+    h.get_by_label("SolidCraft CLI not found.");
     assert_eq!(h.state().memory_estimate_for_test(&input), Some(no_cli));
+
+    let (h, _, _dir) = memory_harness(760.0, 900.0, 10_000_000_000);
+    assert!(h
+        .query_by_label(
+            "The check is skipped when it cannot fit after reading; conversion still continues."
+        )
+        .is_some());
 
     let (mut h, _, _dir) = memory_harness(760.0, 900.0, 4_800_000_000);
     assert!(
@@ -1736,7 +1840,11 @@ fn memory_choices_count_check_only_with_cli_and_warning_clears() {
             .count()
             >= 1
     );
-    assert!(h.query_by_label("If the history check will not fit after reading, it is skipped; conversion still continues.").is_some());
+    assert!(h
+        .query_by_label(
+            "The check is skipped when it cannot fit after reading; conversion still continues."
+        )
+        .is_none());
     // Full keeps history even when it cannot fit; Fast fits this budget.
     use egui_kittest::kittest::NodeT;
     h.query_all_by_value("Standard")
@@ -1747,8 +1855,10 @@ fn memory_choices_count_check_only_with_cli_and_warning_clears() {
     click_memory(&mut h, "Full");
     h.run_steps(20);
     assert!(
-        h.query_all_by_label_contains("These choices will not fit")
-            .count()
+        h.query_all_by_label_contains(
+            "Change the preset or checkboxes: reading and converting alone will not fit"
+        )
+        .count()
             > 0
     );
     h.query_all_by_value("Full")
@@ -1766,8 +1876,10 @@ fn memory_choices_count_check_only_with_cli_and_warning_clears() {
     click_memory(&mut h, "Fast");
     h.run_steps(8);
     assert_eq!(
-        h.query_all_by_label_contains("These choices will not fit")
-            .count(),
+        h.query_all_by_label_contains(
+            "Change the preset or checkboxes: reading and converting alone will not fit"
+        )
+        .count(),
         0
     );
 }
@@ -1777,10 +1889,11 @@ fn memory_choices_count_check_only_with_cli_and_warning_clears() {
 fn memory_choices_reach_the_conversion() {
     let (mut h, input, dir) = memory_harness(760.0, 900.0, 1);
     std::fs::copy(fixture("synthetic_cube.ipt"), &input).unwrap();
+    click_memory(&mut h, "Check history in SolidCraft");
+    h.run_steps(8);
     click_memory(&mut h, "Sketches");
     click_memory(&mut h, "Joints");
     click_memory(&mut h, "Feature history");
-    click_memory(&mut h, "Check feature history in SolidCraft");
     h.run_steps(8);
     click_memory(&mut h, "Convert with these choices");
     h.step();
@@ -1833,6 +1946,20 @@ fn memory_dialog_screenshots() {
             let (mut h, _, _dir) = memory_harness(width, height, 4_000_000_000);
             h.ctx.set_theme(theme);
             h.run_steps(8);
+            if height >= 500.0 {
+                let conversion = h
+                    .get_by_label_contains("Reading and converting together: about ")
+                    .rect();
+                let check = h.get_by_label_contains("Extra for check: about ").rect();
+                let total = h.get_by_label_contains("Total time:").rect();
+                assert!(conversion.bottom() < check.top() && check.bottom() < total.top());
+                for rect in [conversion, check, total] {
+                    assert!(rect.left() >= 16.0 && rect.right() <= width - 16.0);
+                }
+                for label in ["Feature history", "Sketches", "Joints"] {
+                    assert!(h.get_by_label(label).rect().bottom() < conversion.top());
+                }
+            }
             let convert = h.get_by_label("Convert with these choices").rect();
             let cancel = h.get_by_label("Cancel").rect();
             assert!(convert.left() >= 0.0 && cancel.right() <= width && convert.bottom() <= height);
@@ -1846,8 +1973,10 @@ fn memory_dialog_screenshots() {
                 "Live memory choices; buttons remain visible.",
             );
             if height < 500.0 {
-                h.get_by_label_contains("These choices will not fit")
-                    .scroll_to_me();
+                h.get_by_label_contains(
+                    "Change the preset or checkboxes: reading and converting alone will not fit",
+                )
+                .scroll_to_me();
                 h.run_steps(8);
                 assert!(h.get_by_label("Convert with these choices").rect().bottom() <= height);
                 shot(
