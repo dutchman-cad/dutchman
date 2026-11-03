@@ -1758,7 +1758,7 @@ fn memory_choices_share_the_row_total_and_update_without_rereading() {
         .get_by_label("Check in SolidCraft")
         .accesskit_node()
         .is_disabled());
-    h.get_by_label("Estimates can be off by a few GB either way");
+    h.get_by_label("Estimates can be off by a few GB either way.");
 }
 
 #[test]
@@ -1800,7 +1800,7 @@ fn memory_dialog_shows_the_calibrated_split_from_cached_sizes() {
         &h.state().memory_estimate_text_for_test(&input).unwrap(),
     ));
     h.get_by_label(&h.state().memory_estimate_text_for_test(&input).unwrap());
-    h.get_by_label("Estimates can be off by a few GB either way");
+    h.get_by_label("Estimates can be off by a few GB either way.");
 }
 
 #[test]

@@ -994,7 +994,7 @@ impl App {
                         ui.colored_label(theme::palette(ui).lantern_text, "The check is skipped when it cannot fit after reading; conversion still continues.");
                     }
                 } else if sizes_ready { ui.label("Estimate unavailable. Convert to check this file again."); } else { ui.label("Working out…"); }
-                ui.label("Estimates can be off by a few GB either way");
+                ui.label("Estimates can be off by a few GB either way.");
             });
             ui.separator();
             ui.horizontal(|ui| {

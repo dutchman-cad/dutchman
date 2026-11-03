@@ -74,7 +74,7 @@ times before rounding. **Most memory at once** adds
 the read peak and the extra memory for conversion and checking. This total matches
 the file row. Free memory appears below it. If reading and converting alone will not fit,
 the warning points to the preset and checkboxes; otherwise it says the check is skipped
-when it cannot fit after reading. **Estimates can be off by a few GB either way**
+when it cannot fit after reading. **Estimates can be off by a few GB either way.**
 
 Archive sizes are read in the background once; changing choices updates the figures without
 reading the archive again. Standard leaves history out when doing so fits free memory,
