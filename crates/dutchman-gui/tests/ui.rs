@@ -1952,12 +1952,15 @@ fn memory_dialog_screenshots() {
                     .rect();
                 let check = h.get_by_label_contains("Extra for check: about ").rect();
                 let total = h.get_by_label_contains("Total time:").rect();
+                let read = h.get_by_label("Read the file").rect();
+                let convert = h.get_by_label("Convert to SolidCraft").rect();
+                assert!(read.bottom() < conversion.top() && conversion.bottom() < convert.top());
                 assert!(conversion.bottom() < check.top() && check.bottom() < total.top());
                 for rect in [conversion, check, total] {
                     assert!(rect.left() >= 16.0 && rect.right() <= width - 16.0);
                 }
                 for label in ["Feature history", "Sketches", "Joints"] {
-                    assert!(h.get_by_label(label).rect().bottom() < conversion.top());
+                    assert!(h.get_by_label(label).rect().top() > conversion.bottom());
                 }
             }
             let convert = h.get_by_label("Convert with these choices").rect();
