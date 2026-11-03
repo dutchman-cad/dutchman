@@ -55,17 +55,19 @@ Before a conversion or retry, Dutchman compares conversion memory, without the h
 check, against free memory. If a file is too large, **This conversion may need more memory**
 shows its file name and two parts. **Read the file** has no choices. **Convert to SolidCraft**
 holds the preset and **Feature history**, **Sketches** and **Joints** choices. No individual
-choice carries a figure. The estimator does not yet have a measured split between reading
-and converting, so one line under conversion gives their combined memory and time. When
-separate estimates are available, each part shows its own figure instead.
+choice carries a figure. Fusion, Inventor parts and SolidWorks parts show a measured read
+peak and the extra memory needed after decoding, with time for each. Conversion includes
+validation, component extraction, mapping and writing. Formats without a calibrated split
+keep one combined reading-and-conversion figure.
 
-A small **Check history in SolidCraft** row under conversion holds its checkbox and the
-check's extra memory and time. It is greyed out with a reason when no SolidCraft CLI was
-found or history is off. Preset descriptions appear on hover or keyboard focus in the menu
+A small **Check in SolidCraft** row under conversion holds its checkbox and the
+check's extra memory and time. It checks the converted geometry even when feature history
+is off, using that mode's measured allowance. It is greyed out with a reason when no
+SolidCraft CLI was found. Preset descriptions appear on hover or keyboard focus in the menu
 and selector, here and in the main window.
 
 **Total time** adds reading, conversion and checking time. **Most memory at once** adds
-their memory, since each stage holds its copies while the next runs. This total matches
+the read peak and the extra memory for conversion and checking. This total matches
 the file row. Free memory appears below it. If reading and converting alone will not fit,
 the warning points to the preset and checkboxes; otherwise it says the check is skipped
 when it cannot fit after reading. **Estimates can be well above what's used.**

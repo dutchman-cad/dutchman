@@ -86,37 +86,27 @@ Before a costly conversion, call `convert` with `dry_run: true`; omit `output` i
 This pre-reads metadata and bounded ZIP directory information without decoding or
 writing. Read `estimate` (`peak_bytes`, integer `seconds`, fractional `seconds_exact`, legacy `band`, `memory_band`, nullable `time_band`, or `null`), `choices`
 (`preset`, `history`, `sketches`, `joints`), and `fits` (boolean or unknown `null`).
-Estimates are calibrated on measured conversions. Fixed process
-overhead does not grow with history; memory and time have separate history factors. Times
-leave out the SolidCraft check and round up to whole seconds. Assembly parts
+Estimates use measured read, conversion and checking costs where calibrated, with fixed process overhead separated from content growth.
+Calibrated read, conversion and check costs add to the existing numeric totals; no JSON
+split fields are added. The desktop shows the read peak and extra conversion and checking
+memory separately, with time for each and the same total in the file row. Whole-second
+times round up only after adding the stages. Assembly parts
 stored in separate files are not pre-read, and archive assembly structure is confirmed
 only during normal decoding. A dry run does not promise that conversion will succeed.
 
-RAM bands use every successful Windows and Mac measurement, re-evaluated with the
-current coefficients: Fusion `.f3d` ±55%, multipart `.f3z` ±25%, Inventor parts ±30%,
-SolidWorks parts ±35%, and FreeCAD ±50%. One percentage point of safety is added before
-rounding up to a 5% step. These are empirical envelopes of this corpus, not guarantees for
-unseen designs. Unmeasured formats retain their ±100% memory heuristic.
-Time has its own band: multipart Fusion is ±20%; other time bands are uncalibrated.
-Timing uses fractional `seconds_exact`; `seconds` remains its whole-second ceiling for
-compatibility. Fixed startup is separate from content work: Windows has different fast,
-history and verification startup terms; macOS has its own process floor. A possible
-version-probe timeout is not included as normal conversion work. The estimator
-never runs SolidCraft to measure a probe. History may probe its version even with
-`--no-verify`. Old Mac probe durations were not recorded, Windows startup varies between runs, and
-FreeCAD assembly worker startup is poorly predicted by archive bytes, so these four formats keep uncalibrated time bands. Verification
-replay and explicit-version/no-memory-check variants also retain rough timing; their
-startup or replay costs are not generally calibrated. Bands are not widened to hide this.
-JSON adds `memory_band` and nullable `time_band`. The existing `band` stays as the legacy
-shared heuristic for compatibility; use the new fields for separate calibrated coverage.
-For multipart Fusion `band` is the larger of the two calibrated bands (25%).
+The current phase fits use six public Fusion assemblies and five small Fusion, Inventor
+and SolidWorks parts, measured on Linux with four requested workers and SolidCraft 0.30.1.
+Total-peak RAM bands are ±45% for `.f3d` and ±30% for `.f3z`; Inventor/SolidWorks larger-part
+growth remains a ±100% heuristic, and FreeCAD keeps ±50%. Component costs and their worst
+misses are documented in `docs/presets.md`. These are empirical total-peak
+envelopes, not guarantees for unseen designs or individual phases.
 
-For Fusion archives with multiple readable embedded `.f3d` designs, the time estimate
-uses the requested threads (0 means auto), limited by the converter's shared CPU, item
-count and free-memory worker policy. A serial component remains. Before native decoding,
-the embedded design count and the converter's 256 MiB minimum worker budget are proxies;
-actual body counts can reduce conversion workers further. Single-design files keep their
-existing time model. The worker adjustment changes time estimates only.
+Time fits include the requested checking cost, including default geometry checking with
+history off. `seconds_exact` adds fractional phase times and `seconds` is its ceiling.
+`time_band` stays null: other platforms, worker counts and timeout settings have no fresh
+timing calibration. The old multipart speedup fraction is not reused after the shared-index
+performance change. Worker scheduling itself is unchanged. `band` remains the shared
+compatibility field; use `memory_band` and nullable `time_band` for separate coverage.
 
 `threads.used` is the largest bounded Dutchman part-worker limit selected across conversion
 stages and embedded members. It excludes threads inside SolidCraft child processes and does
@@ -132,8 +122,11 @@ switches; `--yes` and `--json` refuse over-budget runs with exit 2 rather than a
 extra memory use. Normal JSON reports include `estimate` and effective `choices`.
 
 Keep SolidCraft history checking on by default. The peak estimate includes checking;
-conversion-only preflight can allow a run whose check cannot fit. If memory after reading
-will not fit a second build, conversion keeps a usable original shape and unverified
+geometry-only conversion also checks its converted shape, using a separate measured
+allowance. The desktop's **Check in SolidCraft** control applies with history on or off.
+Conversion-only preflight can allow a run whose check cannot fit. If memory after reading
+will not fit the same extra check figure shown by the desktop estimate, conversion keeps
+a usable original shape and unverified
 retained history. Explain `history_check_skipped` (`needed_bytes`, `available_bytes`,
 `reason`) when it appears: `History check skipped: needs about N GB, M GB free`.
 Use `verify: false` / `--no-verify` when checking is unwanted. Only use

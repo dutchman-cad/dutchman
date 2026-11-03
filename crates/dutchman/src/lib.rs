@@ -315,6 +315,7 @@ pub struct PreparedWriter {
     /// Whether to stop, once the design is read, when the machine cannot finish converting it.
     memory_stop: bool,
     check_history_memory: bool,
+    history_check_bytes: Option<u64>,
 }
 
 impl Writer for PreparedWriter {
@@ -346,10 +347,10 @@ impl Writer for PreparedWriter {
             report.push(dutchman_core::Severity::Info, "history", note.clone());
         }
         if self.check_history_memory {
-            if let (OutputWriter::SolidCraft(writer), Some(held)) = (&self.writer, held) {
-                let writer = writer
-                    .clone()
-                    .history_check_memory(stop::history_check_bytes(held), available);
+            if let (OutputWriter::SolidCraft(writer), Some(needed)) =
+                (&self.writer, self.history_check_bytes)
+            {
+                let writer = writer.clone().history_check_memory(needed, available);
                 writer.write(model, out, report)?;
                 if let Some((needed, available)) = writer.history_check_skipped() {
                     record_history_check_skip(report, needed, available);
@@ -429,6 +430,11 @@ impl ConvertOptions {
             writer: options.output_writer(),
             history_note,
             solidcraft,
+            history_check_bytes: (!self.no_memory_check
+                && !self.no_verify
+                && self.to == OutputFormat::Solidcraft)
+                .then(|| stop::history_check_bytes(input, &options))
+                .flatten(),
             check_history_memory: !self.no_memory_check
                 && !self.no_verify
                 && self.to == OutputFormat::Solidcraft,
@@ -731,10 +737,9 @@ mod option_tests {
                 no_memory_check,
                 ..Default::default()
             };
-            assert_eq!(
-                options.prepare_writer(&input, None).check_history_memory,
-                guarded
-            );
+            let prepared = options.prepare_writer(&input, None);
+            assert_eq!(prepared.check_history_memory, guarded);
+            assert_eq!(prepared.history_check_bytes.is_some(), guarded);
         }
     }
 

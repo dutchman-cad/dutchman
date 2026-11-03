@@ -1459,6 +1459,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "ureq",
+ "zip",
 ]
 
 [[package]]

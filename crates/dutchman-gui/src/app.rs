@@ -62,7 +62,6 @@ pub struct App {
     has_inventor: bool,
     custom: bool,
     estimate_key: Option<EstimateKey>,
-    read_convert_split: Option<dutchman::choices::ReadConvertSplit>,
     size_inputs: Option<Vec<PathBuf>>,
     sizes: Vec<(PathBuf, Option<dutchman::choices::Sizes>)>,
     estimate_generation: u64,
@@ -290,7 +289,6 @@ impl App {
             has_inventor: false,
             custom,
             estimate_key: None,
-            read_convert_split: None,
             size_inputs: None,
             sizes: Vec::new(),
             estimate_generation: 0,
@@ -452,14 +450,19 @@ impl App {
     /// Shared row/dialog estimate for deterministic UI review.
     #[cfg(feature = "test-support")]
     pub fn memory_estimate_for_test(&self, input: &Path) -> Option<Estimate> {
+        self.memory_parts_for_test(input).map(|parts| parts.total)
+    }
+
+    #[cfg(feature = "test-support")]
+    pub fn memory_parts_for_test(
+        &self,
+        input: &Path,
+    ) -> Option<dutchman::choices::DesktopEstimate> {
         self.sizes
             .iter()
             .find(|(path, _)| path == input)
             .and_then(|(_, sizes)| *sizes)
-            .and_then(|sizes| {
-                self.desktop_parts(sizes, self.estimate_available())
-                    .map(|parts| parts.total)
-            })
+            .and_then(|sizes| self.desktop_parts(sizes, self.estimate_available()))
     }
 
     #[cfg(feature = "test-support")]
@@ -896,14 +899,7 @@ impl App {
             &self.options,
             self.checker.is_ok(),
             available,
-            self.read_convert_split,
         )
-    }
-
-    #[cfg(feature = "test-support")]
-    pub fn set_read_convert_split_for_test(&mut self, split: dutchman::choices::ReadConvertSplit) {
-        self.read_convert_split = Some(split);
-        self.estimate_key = None;
     }
 
     fn memory_dialog(&mut self, ctx: &egui::Context) {
@@ -957,23 +953,21 @@ impl App {
                         if parts.history_omitted { ui.label("Standard leaves feature history out to fit in free memory."); }
                     }
                     ui.separator();
-                    let parts = sizes.and_then(|sizes| self.desktop_parts(sizes, Some(available)));
-                    let history_on = self.options.choices().history && !parts.is_some_and(|parts| parts.history_omitted);
-                    let can_check = self.checker.is_ok() && history_on;
+                    let can_check = self.checker.is_ok();
                     ui.add_enabled_ui(can_check, |ui| {
                         let mut verify = !self.options.no_verify;
-                        if ui.checkbox(&mut verify, "Check history in SolidCraft").changed() { self.options.no_verify = !verify; }
+                        if ui.checkbox(&mut verify, "Check in SolidCraft").changed() { self.options.no_verify = !verify; }
                         let parts = sizes.and_then(|sizes| self.desktop_parts(sizes, Some(available)));
                         if let Some(check) = parts.and_then(|parts| parts.check) {
                             ui.label(format!("Extra for check: {}", estimate_text(check)));
                         } else if !can_check {
-                            ui.label(if self.checker.is_err() { "SolidCraft CLI not found." } else { "Feature history is off." });
+                            ui.label("SolidCraft CLI not found.");
                         } else { ui.label("Extra for check: none (check is off)."); }
                     });
                 });
                 if let Some(parts) = sizes.and_then(|sizes| self.desktop_parts(sizes, Some(available))) {
                     ui.label(RichText::new(memory_total_text(parts.total)).strong());
-                    ui.label("Each stage keeps its memory while the next runs.");
+                    ui.label("Memory adds the read peak and extra memory for conversion and checking.");
                     ui.label(format!("About {:.1} GB of memory free.", gigabytes(available)));
                     will_not_fit = parts.conversion.peak_bytes > available;
                     if will_not_fit {

@@ -133,31 +133,19 @@ default material: the decoded model does not establish that no source appearance
 }
 ```
 
-RAM bands use every successful Windows and Mac measurement, re-evaluated with the
-current coefficients: Fusion `.f3d` ±55%, multipart `.f3z` ±25%, Inventor parts ±30%,
-SolidWorks parts ±35%, and FreeCAD ±50%. One percentage point of safety is added before
-rounding up to a 5% step. These are empirical envelopes of this corpus, not guarantees for
-unseen designs. Unmeasured formats retain their ±100% memory heuristic.
-Time has its own band: multipart Fusion is ±20%; other time bands are uncalibrated.
-Timing uses fractional `seconds_exact`; `seconds` remains its whole-second ceiling for
-compatibility. Fixed startup is separate from content work: Windows has different fast,
-history and verification startup terms; macOS has its own process floor. A possible
-version-probe timeout is not included as normal conversion work. The estimator
-never runs SolidCraft to measure a probe. History may probe its version even with
-`--no-verify`. Old Mac probe durations were not recorded, Windows startup varies between runs, and
-FreeCAD assembly worker startup is poorly predicted by archive bytes, so these four formats keep uncalibrated time bands. Verification
-replay and explicit-version/no-memory-check variants also retain rough timing; their
-startup or replay costs are not generally calibrated. Bands are not widened to hide this.
-JSON adds `memory_band` and nullable `time_band`. The existing `band` stays as the legacy
-shared heuristic for compatibility; use the new fields for separate calibrated coverage.
-For multipart Fusion `band` is the larger of the two calibrated bands (25%).
+The current phase fits use six public Fusion assemblies and five small Fusion, Inventor
+and SolidWorks parts, measured on Linux with four requested workers and SolidCraft 0.30.1.
+Total-peak RAM bands are ±45% for `.f3d` and ±30% for `.f3z`; Inventor/SolidWorks larger-part
+growth remains a ±100% heuristic, and FreeCAD keeps ±50%. Component costs and their worst
+misses are documented in [Choosing what to keep](presets.md). These are empirical total-peak
+envelopes, not guarantees for unseen designs or individual phases.
 
-For Fusion archives with multiple readable embedded `.f3d` designs, the time estimate
-uses the requested threads (0 means auto), limited by the converter's shared CPU, item
-count and free-memory worker policy. A serial component remains. Before native decoding,
-the embedded design count and the converter's 256 MiB minimum worker budget are proxies;
-actual body counts can reduce conversion workers further. Single-design files keep their
-existing time model. The worker adjustment changes time estimates only.
+Time fits include the requested checking cost, including default geometry checking with
+history off. `seconds_exact` adds fractional phase times and `seconds` is its ceiling.
+`time_band` stays null: other platforms, worker counts and timeout settings have no fresh
+timing calibration. The old multipart speedup fraction is not reused after the shared-index
+performance change. Worker scheduling itself is unchanged. `band` remains the shared
+compatibility field; use `memory_band` and nullable `time_band` for separate coverage.
 
 `threads.used` is the largest bounded Dutchman part-worker limit selected across conversion
 stages and embedded members. It excludes threads inside SolidCraft child processes and does
@@ -169,7 +157,7 @@ Explicit output paths keep their given extension. The container format stays `so
 | Field | Meaning |
 |---|---|
 | `ok` | `true` when the design was written. |
-| `estimate` | Quick pre-read estimate, including on memory refusals: `peak_bytes` and `seconds` are unsigned integers; `seconds_exact` is an additive fractional-second elapsed estimate (`seconds` is its ceiling); time bands apply to `seconds_exact`; `band` is the legacy shared heuristic (`0.5` means ±50%); `memory_band` is the separate relative RAM band and `time_band` is a relative time band or `null` when uncalibrated. `band` remains the previous heuristic when timing is uncalibrated, and the larger of the two calibrated bands otherwise. `null` when unavailable. No design is decoded; a Fusion archive's designs are read one at a time for their own directories. Calibrated on measured conversions (see [Choosing what to keep](presets.md)). Memory adds fixed process overhead to a content cost; history scales the content cost. Memory and time use separate history factors. |
+| `estimate` | Quick pre-read estimate, including on memory refusals: `peak_bytes` and `seconds` are unsigned integers; `seconds_exact` is an additive fractional-second elapsed estimate (`seconds` is its ceiling); time bands apply to `seconds_exact`; `band` is the legacy shared heuristic (`0.5` means ±50%); `memory_band` is the separate relative RAM band and `time_band` is a relative time band or `null` when uncalibrated. `band` remains the shared compatibility field; current phase models use their total-memory envelope there, while older combined models retain their heuristic. `null` when unavailable. No design is decoded; a Fusion archive's designs are read one at a time for their own directories. Calibrated on measured conversions (see [Choosing what to keep](presets.md)). Measured formats add independent read, conversion and checking costs; other formats keep their combined heuristic. |
 | `threads` | `{requested, used}` records the per-part worker limit (`0`: automatic, `1`: serial) and the bounded maximum used across component slicing and SolidCraft preparation. Counts are limited by part count and available memory, and never below `1`. Present on SolidCraft writes and on assembly reads that reach component slicing, including inspection and other output formats; omitted for pre-read estimates and reads/writers with no part-worker stage. Batch entries and watch reports carry it within each conversion report. Native decoding stays serial. |
 | `solidcraft` | SolidCraft output only: `target` is the selected `x.y` minor; `found` is the discovered CLI release as `x.y.z`, or null when unavailable or not checked. `known_newest` is the newest known minor (`0.30`). `status` is `newer`, `too_old`, `older_loses_history`, `current`, or `none_found`. The history status requires an older installed release and a selected target whose writer gates retain less history than newest; `current` includes older releases with no gated history loss. Included even with verification off. An explicit target wins; otherwise the supported found version capped at known newest, else built-in newest (0.30), is targeted. |
 | `choices` | Selected `preset` (`fast`, `standard`, or `full`) and effective `history`, `sketches`, and `joints` booleans after narrowing. `history` is false when Standard leaves history out to fit memory. These describe requested retention, not proof that every feature maps. FreeCAD output honours history only. |
@@ -196,10 +184,12 @@ at stage `write` with the count of affected solid regions. Intended sheets do no
 receive that loss.
 
 The conversion `estimate.peak_bytes` includes the requested SolidCraft check unless
-`--no-verify` / MCP `verify: false` is selected. Conversion-only preflight can allow a run
+`--no-verify` / MCP `verify: false` is selected. Geometry-only work still checks the
+converted shape, with its own calibrated extra cost. Conversion-only preflight can allow a run
 whose check will not fit; `history_check_skipped` records the actual post-read decision.
-The check allowance uses the resident design and current free memory, independently of
-archive-size preflight. Automatic part workers use at most two workers and can reduce to
+The check allowance uses the same metadata-based extra check estimate as the desktop,
+compared with current free memory after reading and again before replay. It does not
+multiply the resident design's memory. Automatic part workers use at most two workers and can reduce to
 serial work for a large per-part peak or retained preparation queue.
 
 Offset datum planes need no building feature when their support resolves or all their
@@ -350,8 +340,10 @@ including Standard's explanation when history is left out to fit in free memory.
 These are existing `losses` entries; desktop estimates and preset labels add no report fields.
 The desktop memory warning and file row share a live total, including checking only when
 checking is on and a usable CLI was found, and showing Standard's reduced history choice.
-Its per-choice costs and remembered controls are desktop presentation; the JSON schema and
-CLI and MCP estimate reports keep the same fields and behaviour.
+Its separate read, conversion and check figures and remembered controls are desktop
+presentation; CLI and MCP keep the existing estimate fields without adding a split.
+The calibrated stage costs add to `peak_bytes` and `seconds_exact`; `seconds` is the
+ceiling of that total. Checking is included for geometry-only conversion too.
 The CLI and desktop display small estimates as “under 0.1 GB” and “under a minute”;
 JSON `estimate.peak_bytes` and `estimate.seconds` remain numeric and unrounded.
 

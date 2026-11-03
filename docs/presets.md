@@ -28,50 +28,107 @@ Text conversions show `Estimate: about N GB (±R %), about M min (±T %)` before
 unless `--quiet` is set. Estimates below 0.1 GB read `under 0.1 GB`, and times below
 60 seconds read `under a minute`; longer times round up to whole minutes. Where measurements
 don't yet support a time band for the format, the time reads `roughly M min`.
-Estimates use file size and format. For `.f3d`, `.f3z`, and
-`.FCStd`, a bounded ZIP pre-read counts members and uses their total uncompressed size; for
-Fusion archives it also reads each design's own directory, one design at a time, and never
-decodes a design. Memory estimates add a fixed process cost to a content-dependent cost;
-keeping history scales the content cost, not the fixed overhead. Tiny Inventor and SolidWorks
-parts start at about 18 MB with every preset. The Fusion content term is about 52 bytes per
-byte (57 with history). FreeCAD uses about 29 MB plus 150 bytes per byte of archive content,
-with a 1.04 history multiplier on that content term. The small-file fit uses synthetic parts
-and CC0 FreeCAD recipes from 0.21.2, 1.0.2 and 1.1.4, measured on Windows and macOS; the Mac
-measurements used an older nightly decoder. Larger Fusion assemblies retain their earlier
-calibration. Memory and time use separate history factors. Times are rounded up to whole seconds,
-so subsecond conversions are especially approximate. They leave out the history check in
-SolidCraft, which can add several minutes on a large assembly.
-Separate assembly part files are not pre-read, so their cost can be underestimated.
-An estimate is unknown for formats this build cannot convert, or when metadata cannot
-be read, including ZIP directories exceeding 10,000 members or 16 MiB, and unreadable
-archives.
+Estimates use file size and format. A bounded ZIP pre-read counts members and total
+uncompressed content for `.f3d`, `.f3z` and `.FCStd`. Fusion archives also read each
+embedded design’s directory, one design at a time, without decoding it. Separate assembly
+part files are not pre-read. Unknown formats, unreadable metadata, ZIP directories over
+10,000 members or 16 MiB, and unreadable archives have no estimate.
 
-RAM bands use every successful Windows and Mac measurement, re-evaluated with the
-current coefficients: Fusion `.f3d` ±55%, multipart `.f3z` ±25%, Inventor parts ±30%,
-SolidWorks parts ±35%, and FreeCAD ±50%. One percentage point of safety is added before
-rounding up to a 5% step. These are empirical envelopes of this corpus, not guarantees for
-unseen designs. Unmeasured formats retain their ±100% memory heuristic.
-Time has its own band: multipart Fusion is ±20%; other time bands are uncalibrated.
-Timing uses fractional `seconds_exact`; `seconds` remains its whole-second ceiling for
-compatibility. Fixed startup is separate from content work: Windows has different fast,
-history and verification startup terms; macOS has its own process floor. A possible
-version-probe timeout is not included as normal conversion work. The estimator
-never runs SolidCraft to measure a probe. History may probe its version even with
-`--no-verify`. Old Mac probe durations were not recorded, Windows startup varies between runs, and
-FreeCAD assembly worker startup is poorly predicted by archive bytes, so these four formats keep uncalibrated time bands. Verification
-replay and explicit-version/no-memory-check variants also retain rough timing; their
-startup or replay costs are not generally calibrated. Bands are not widened to hide this.
-JSON adds `memory_band` and nullable `time_band`. The existing `band` stays as the legacy
-shared heuristic for compatibility; use the new fields for separate calibrated coverage.
-For multipart Fusion `band` is the larger of the two calibrated bands (25%).
+## Memory and time model
 
-For Fusion archives with multiple readable embedded `.f3d` designs, the time estimate
-uses the requested threads (0 means auto), limited by the converter's shared CPU, item
-count and free-memory worker policy. A serial component remains. Before native decoding,
-the embedded design count and the converter's 256 MiB minimum worker budget are proxies;
-actual body counts can reduce conversion workers further. Single-design files keep their
-existing time model. Automatic workers are capped at two; detailed parts and retained
-preparations can reduce that further after reading.
+Fusion, Inventor parts and SolidWorks parts have three separately measured costs:
+reading through native decode, conversion after decode, and checking. Conversion includes
+validation, visibility filtering, component extraction, mapping and writing. The read
+figure is its peak; conversion and checking figures are extra memory above the preceding
+peak. Their memory and time add to the total shown in the desktop box and file row.
+History on/off have independent conversion and checking models. Geometry-only conversion
+also checks its converted shape unless `--no-verify` is selected.
+
+Memory is `fixed MB + content bytes × B/B + member count × MB/member` after converting
+MB to bytes. A fitted content plateau, where listed, limits only the variable memory
+cost. It is an empirical estimate, not a ceiling on allocations. Time is `fixed seconds +
+content MiB × s/MiB + member count × s/member`. All coefficients live in `COEFFICIENTS`
+in `crates/dutchman/src/choices.rs`. Decimal MB/GB are used for memory; MiB is 1,048,576
+bytes. Fractional phase times add before `seconds` rounds up.
+
+| Format | Stage | Fixed MB | B/B | MB/member | Content plateau MB | Fixed s | s/MiB | s/member |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| .f3d | Read | 15 | 5.7 | 1.7 | — | 0 | 0.1 | 0.061 |
+| .f3d | Convert, history off | 12 | 15 | 0 | — | 0 | 0.11 | 0.062 |
+| .f3d | Convert, history on | 9 | 26 | 0 | — | 0 | 0.35 | 0 |
+| .f3d | Check, history on | 23 | 260 | 0 | 1191 | 0.032 | 0.38 | 0 |
+| .f3d | Check, history off | 25 | 230 | 0 | 740 | 0.03 | 0.46 | 0 |
+| .f3z | Read | 29 | 20 | 0 | — | 0.011 | 1.2 | 0 |
+| .f3z | Convert, history off | 24 | 16 | 0 | — | 0.02 | 0.32 | 0 |
+| .f3z | Convert, history on | 12 | 19 | 0 | — | 0.019 | 0.38 | 0 |
+| .f3z | Check, history on | 23 | 25 | 0 | — | 0.032 | 1.8 | 0 |
+| .f3z | Check, history off | 25 | 230 | 0 | 2055 | 0.03 | 0.69 | 0 |
+| .ipt | Read | 15 | 20 | 0 | — | 0.003 | 1 | 0 |
+| .ipt | Convert, history off | 18 | 5 | 0 | — | 0.014 | 1 | 0 |
+| .ipt | Convert, history on | 17 | 30 | 0 | — | 0.042 | 3 | 0 |
+| .ipt | Check, history on | 20 | 55 | 0 | — | 0.002 | 0 | 0 |
+| .ipt | Check, history off | 30 | 27.5 | 0 | — | 0.046 | 0 | 0 |
+| .sldprt | Read | 22 | 20 | 0 | — | 0.006 | 2.5 | 0 |
+| .sldprt | Convert, history off | 11 | 5 | 0 | — | 0.016 | 2.5 | 0 |
+| .sldprt | Convert, history on | 20 | 22.5 | 0 | — | 0.017 | 6 | 0 |
+| .sldprt | Check, history on | 26 | 46.75 | 0 | — | 0.023 | 0 | 0 |
+| .sldprt | Check, history off | 20 | 27.5 | 0 | — | 0.025 | 0 | 0 |
+
+## Calibration and misses
+
+The current shared-index main build was measured on six public Fusion assemblies
+(Voron V1.8, Voron V2.4, Cascade, v02, RailCore and Trident) and five smaller public or
+synthetic Fusion, Inventor and SolidWorks parts. The 44 successful observations pair
+Full with checking on/off and Standard without history with checking on/off. Runs used
+Linux, four requested workers, SolidCraft 0.30.1, the default 120-second per-check timeout,
+`nice -n 10`, and a 24 GiB per-process address-space limit, one conversion at a time.
+The recorded costs include checks that reached that timeout. Whole-tree peaks use
+simultaneous resident memory, bounded below by the largest individual high-water mark;
+individual high-water marks are never summed. Read boundaries come from the decoder’s
+end marker. Sampling was 200 ms for assemblies and 2 ms for small parts, with diagnostic
+clock alignment on the repeated small cases. Signed checked-minus-unchecked differences
+are preserved; negative differences contribute zero added memory.
+
+Single-design Fusion adds member count only where leaving one file out improves weighted
+fit error by at least 10%. Read and conversion fits use relative errors with 20 MB /
+5-second denominator floors. The two multipart assemblies support one content slope per
+metric and the measured small Fusion floor; their time fit minimizes absolute seconds.
+Checking uses a measured small-file floor and absolute errors, with a capped memory ramp
+where the assembly observations support a plateau.
+
+Inventor and SolidWorks each have one measured small shape. Those measurements calibrate
+fixed costs only. Their old total content growth remains a heuristic for larger parts:
+25 B/B without history, 50 B/B for Inventor with history, and 42.5 B/B for SolidWorks with
+history, partitioned across reading and conversion. Larger foreign-part check times have
+no measured content growth. FreeCAD retains its combined model: 29 MB plus 150 B/B, with
+a 1.04 history multiplier on content and its previous startup terms. Other unmeasured
+formats retain combined heuristics.
+
+The largest absolute misses after rounding the coefficients are:
+
+| Fit | Peak-memory miss | Time miss |
+|---|---:|---:|
+| Read | 0.806 GB (v18) | 61.2 s (v18) |
+| Convert, history off | 2.980 GB (trident) | 24.7 s (cascade) |
+| Convert, history on | 2.288 GB (v18) | 83.6 s (v24) |
+| Check, history on | 1.810 GB (v24) | 131.7 s (railcore) |
+| Check, history off | 1.857 GB (railcore) | 95.5 s (cascade) |
+
+Total-peak memory envelopes for this Fusion corpus are ±45% for `.f3d` and ±30% for
+`.f3z`, adding one percentage point and rounding up to 5%. These bands describe total
+peak memory, not each individual stage. Inventor and SolidWorks use a ±100% heuristic
+outside their measured small-file floors; FreeCAD keeps ±50%. These are not guarantees
+for unseen designs. Checking depends on the geometry and applicable history, which ZIP
+sizes cannot reveal. Time bands remain uncalibrated (`time_band: null`), so longer times
+read as rough. Other platforms, worker counts and timeout settings have no fresh timing
+calibration. The old multipart serial-fraction speedup is not reused after the performance
+change; changing threads does not invent a measured speedup. Actual worker limits and
+buffer budgets are unchanged.
+
+`peak_bytes`, `seconds`, `seconds_exact`, `band`, `memory_band` and `time_band` keep their
+existing JSON fields. No split fields are added. The estimator never runs SolidCraft or
+decodes a design. Version discovery before conversion can still run with `--no-verify`;
+a possible probe timeout is not normal conversion work.
 
 `threads.used` is the largest bounded Dutchman part-worker limit selected across conversion
 stages and embedded members. It excludes threads inside SolidCraft child processes and does
@@ -115,29 +172,26 @@ when a SolidCraft CLI was found and checking is on. They show Standard's reduced
 when history is left out to fit. Checkbox costs come from the estimator; choices without a
 separate model show **no separate estimate**. See [the desktop guide](desktop.md).
 
-## Presets and estimates
+## Checking after reading
 
 The presets, narrowing switches, and memory guard are described above; `dutchman convert --help` lists them too.
 
-History checking stays enabled by default, independently of the retention preset. Its
-second build needs memory on top of conversion: measured peaks for a 256-placement
-assembly were 8.6 GB in 22 seconds with checking off, 3.5 GB in 25 seconds with one worker
-and checking off, and over 17 GB with checking on before the run was stopped. The check
-needed about 9 GB extra. These measurements justify limiting automatic workers to two
-and budgeting dense single-body parts from their entity counts, with a separate allowance
-for all retained preparations. Small imported parts use serial SolidCraft preparation: a synthetic 256-cube
-assembly took about 2.9 seconds with either one or sixteen workers, while sixteen used
-about 14 MiB more peak memory. Explicit thread requests can still prepare those parts
-in parallel within the memory budget.
+Checking stays enabled by default, independently of retention. It checks imported geometry
+when feature history is off. The peak estimate includes the requested check. Conversion
+preflight and Standard’s history budget compare conversion-only memory with free memory;
+selecting one part compares the calibrated read figure because the whole file must be read.
 
-The peak estimate includes the requested check. Conversion preflight and Standard's
-history budget use conversion-only memory so an expensive check does not discard history.
-Once read, the check allowance is three times the resident set plus the 15% mapping margin.
-Free memory is checked again before SolidCraft rebuilds geometry. If the allowance will
-not fit, that design skips checking, keeps the original shape visible and retained editable
-history unverified, and reports `History check skipped: needs about N GB, M GB free`.
-Unknown memory measurements allow checking. This is a conservative estimate, not a memory
-reservation; simultaneous work can change what is free.
+The runtime guard uses the same calibrated extra check figure shown by the desktop. It
+does not multiply the memory already held by the decoded model. Free memory is measured
+after reading and checked again before replay. If the allowance will not fit, checking
+is skipped, the original shape remains visible, and retained history stays unverified.
+The report says `History check skipped: needs about N GB, M GB free`. Unknown metadata or
+memory measurements allow checking. These figures are estimates, not reservations;
+simultaneous work can change what is free.
+
+Automatic workers remain capped at two, with lower limits for detailed parts and retained
+preparations. Explicit requests stay bounded by part counts and free-memory worker budgets.
+Small imported parts can still use serial preparation.
 
 Component extraction shares one geometry index per design, across workers and serial
 retries. Geometry stays in compact JSON until a component reaches it; each component

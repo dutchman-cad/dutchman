@@ -52,6 +52,48 @@ fn dutchman(args: &[&str]) -> Output {
         .unwrap()
 }
 
+/// The synthetic cube plus generated padding: only metadata cost changes, not geometry.
+fn memory_budget_cube(folder: &std::path::Path) -> String {
+    use std::io::Write;
+    let path = folder.join("budget-cube.f3d");
+    let mut source =
+        zip::ZipArchive::new(std::fs::File::open(fixture("generated_unit_cube.f3d")).unwrap())
+            .unwrap();
+    let mut target = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
+    let options =
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for index in 0..source.len() {
+        let mut member = source.by_index(index).unwrap();
+        let name = member.name().unwrap().into_owned();
+        target.start_file(name, options).unwrap();
+        std::io::copy(&mut member, &mut target).unwrap();
+    }
+    target.start_file("memory-budget.bin", options).unwrap();
+    target.write_all(&vec![0; 1 << 20]).unwrap();
+    target.finish().unwrap();
+    path.to_str().unwrap().to_owned()
+}
+
+/// Preflight fits, but the calibrated extra check does not. Held memory stays below
+/// the separate mapping-stop threshold, so the test reaches checking.
+fn memory_between_conversion_and_check(input: &str) -> (String, u64) {
+    let options = dutchman::ConvertOptions::default();
+    let path = std::path::Path::new(input);
+    let conversion = dutchman::choices::estimate_with_options(
+        path,
+        &options.choices(),
+        &dutchman::ConvertOptions {
+            no_verify: true,
+            ..options.clone()
+        },
+    )
+    .unwrap();
+    let needed = dutchman::stop::history_check_bytes(path, &options).unwrap();
+    assert!(needed > conversion.peak_bytes);
+    let available = conversion.peak_bytes + (needed - conversion.peak_bytes) / 2;
+    (format!("100000000,{available}"), available)
+}
+
 #[cfg(feature = "pilot")]
 #[test]
 fn pilot_help_names_the_embedded_command() {
@@ -1203,7 +1245,8 @@ exit 1
             )
             .unwrap();
         });
-        let input = fixture("generated_unit_cube.f3d");
+        let input = memory_budget_cube(dir.path());
+        let (memory, _) = memory_between_conversion_and_check(&input);
         let output = dir.path().join("cube.sc");
         let args = [
             "convert",
@@ -1214,8 +1257,9 @@ exit 1
             "0.30.0",
             "--json",
         ];
+        // Preflight fits while the calibrated check does not.
         let env = [
-            ("DUTCHMAN_TEST_MEMORY", "3000000000,2000000000"),
+            ("DUTCHMAN_TEST_MEMORY", memory.as_str()),
             ("SOLIDCRAFT_CLI", cli.to_str().unwrap()),
             ("DUTCHMAN_TEST_REPLAY_MARKER", marker.to_str().unwrap()),
         ];
@@ -1223,8 +1267,10 @@ exit 1
         assert!(skipped.status.success());
         assert!(json_of(&skipped)["history_check_skipped"].is_object());
         assert!(!marker.exists());
+        // The old 3.15x resident-set reserve falsely skipped this case. A check
+        // that fits its metadata-based allowance must actually launch replay.
         let ample = [
-            ("DUTCHMAN_TEST_MEMORY", "3000000000,20000000000"),
+            ("DUTCHMAN_TEST_MEMORY", "14500000000,15600000000"),
             ("SOLIDCRAFT_CLI", cli.to_str().unwrap()),
             ("DUTCHMAN_TEST_REPLAY_MARKER", marker.to_str().unwrap()),
         ];
@@ -3305,9 +3351,9 @@ fn folders_and_zips_convert_with_automatic_sibling_output_folders() {
 fn history_check_skips_for_low_memory_but_off_and_force_remain_explicit() {
     let dir = tempfile::tempdir().unwrap();
     let output = dir.path().join("cube.sc");
-    let input = fixture("generated_unit_cube.f3d");
-    // Reading/mapping fits (0.45 GB extra), but replay needs another 9.45 GB.
-    let env = [("DUTCHMAN_TEST_MEMORY", "3000000000,2000000000")];
+    let input = memory_budget_cube(dir.path());
+    let (memory, available) = memory_between_conversion_and_check(&input);
+    let env = [("DUTCHMAN_TEST_MEMORY", memory.as_str())];
     let args = [
         "convert",
         &input,
@@ -3325,16 +3371,21 @@ fn history_check_skips_for_low_memory_but_off_and_force_remain_explicit() {
     );
     let report = json_of(&out);
     assert!(output.is_file());
-    assert_eq!(
-        report["history_check_skipped"]["needed_bytes"],
-        9_450_000_000u64
-    );
+    let needed = dutchman::stop::history_check_bytes(
+        std::path::Path::new(&input),
+        &dutchman::ConvertOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(report["history_check_skipped"]["needed_bytes"], needed);
     assert_eq!(
         report["history_check_skipped"]["available_bytes"],
-        2_000_000_000u64
+        available
     );
     let reason = report["history_check_skipped"]["reason"].as_str().unwrap();
-    assert!(reason.starts_with("History check skipped: needs about 9.4 GB, 2.0 GB free"));
+    assert_eq!(
+        reason,
+        dutchman::stop::history_check_message(needed, available)
+    );
     assert!(dutchman::present::outcome(&report).contains(reason));
     for flags in [
         vec!["--no-verify"],
@@ -3373,10 +3424,12 @@ fn history_check_skips_for_low_memory_but_off_and_force_remain_explicit() {
 fn low_memory_keeps_editable_history_unverified_and_the_original_shape_visible() {
     let dir = tempfile::tempdir().unwrap();
     let output = dir.path().join("history.sc");
+    let input = fixture("design_history.FCStd");
+    let (memory, _) = memory_between_conversion_and_check(&input);
     let out = dutchman_with(
         &[
             "convert",
-            &fixture("design_history.FCStd"),
+            &input,
             "-o",
             output.to_str().unwrap(),
             "--solidcraft-version",
@@ -3387,7 +3440,7 @@ fn low_memory_keeps_editable_history_unverified_and_the_original_shape_visible()
             "3",
             "--json",
         ],
-        &[("DUTCHMAN_TEST_MEMORY", "3000000000,2000000000")],
+        &[("DUTCHMAN_TEST_MEMORY", memory.as_str())],
     );
     assert!(
         out.status.success(),

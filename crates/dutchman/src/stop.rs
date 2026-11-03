@@ -9,20 +9,18 @@
 use dutchman_core::{parts, Model};
 
 /// What mapping and writing a decoded model needs on top of what it holds, as a share of it.
-/// Set from one large Fusion assembly at the Standard preset, which held 14.5 GB once read and
-/// peaked at 16 GB (0.10), with a margin; low, so a conversion that would only just fit is not
-/// stopped. A swap file does not count as free.
+/// This existing post-read mapping margin is separate from the calibrated preflight
+/// stages and check allowance. A swap file does not count as free.
 pub const EXTRA_SHARE: f64 = 0.15;
 
-/// Replay builds the design again in a separate SolidCraft process. A measured assembly
-/// peaked at 3.5 GB with serial conversion, 8.6 GB with parallel conversion, and needed
-/// about 9 GB more for replay. Reserve three times the post-read resident set, plus the
-/// conversion margin. This is a conservative proxy, not a reservation or a hard limit.
-pub const HISTORY_CHECK_SHARE: f64 = 3.0;
-
-/// Estimated additional memory for replay while mapping/writing still holds its copies.
-pub fn history_check_bytes(held: u64) -> u64 {
-    (held as f64 * (HISTORY_CHECK_SHARE + EXTRA_SHARE)).ceil() as u64
+/// Additional checking memory from the same metadata model the desktop displays.
+/// Unknown metadata leaves checking enabled. The read model's resident copies are
+/// already allocated when free memory is measured; do not reserve them again.
+pub fn history_check_bytes(
+    input: &std::path::Path,
+    options: &crate::ConvertOptions,
+) -> Option<u64> {
+    crate::choices::history_check_estimate(input, options).map(|estimate| estimate.peak_bytes)
 }
 
 /// Shared card and report text for a check skipped to keep the design usable.
@@ -127,14 +125,25 @@ mod tests {
     const GB: u64 = 1_000_000_000;
 
     #[test]
-    fn history_check_allowance_covers_the_measured_replay_and_saturates() {
-        assert_eq!(history_check_bytes(3 * GB), 9_450_000_000);
+    fn history_check_allowance_uses_the_displayed_cost() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("synthetic.ipt");
+        std::fs::write(&input, [0; 1024]).unwrap();
+        let options = crate::ConvertOptions::default();
+        let sizes = crate::choices::read_sizes(&input).unwrap();
+        let parts = crate::choices::desktop_estimate_parts(sizes, &options, true, None).unwrap();
         assert_eq!(
-            history_check_message(9_450_000_000, 2 * GB),
-            "History check skipped: needs about 9.4 GB, 2.0 GB free"
+            history_check_bytes(&input, &options),
+            parts.check.map(|e| e.peak_bytes)
         );
-        // Saturates rather than wrapping a hostile or very large measurement.
-        assert_eq!(history_check_bytes(u64::MAX), u64::MAX);
+        assert_eq!(
+            history_check_message(500_000_000, 2 * GB),
+            "History check skipped: needs about 0.5 GB, 2.0 GB free"
+        );
+        assert_eq!(
+            history_check_bytes(&dir.path().join("missing.f3d"), &options),
+            None
+        );
     }
 
     #[test]

@@ -90,8 +90,8 @@ pub struct Estimate {
     pub seconds: u64,
     /// Expected elapsed time before rounding; time bands apply to this value.
     pub seconds_exact: f64,
-    /// Legacy shared band. Use the separate bands for calibrated coverage; when time is
-    /// uncalibrated this retains the previous heuristic for existing consumers.
+    /// Shared compatibility band. Phase models use their total-memory envelope;
+    /// older combined models retain their heuristic. Prefer the separate bands.
     pub band: f64,
     /// Relative peak-memory band (0.3 is ±30 %); unmeasured formats retain a heuristic.
     pub memory_band: f64,
@@ -234,12 +234,11 @@ pub(crate) fn part_memory_refusal(
     if options.no_memory_check || options.preset == Preset::Fast {
         return None;
     }
-    let (Some(read), Some(available)) = (
-        estimate_without_history(input, options.choices(), options),
-        available,
-    ) else {
-        return None;
-    };
+    let available = available?;
+    let read = read_sizes(input)
+        .and_then(|sizes| read_convert_split(sizes, &options.choices()))
+        .map(|split| split.read)
+        .or_else(|| estimate_without_history(input, options.choices(), options))?;
     (read.peak_bytes > available).then(|| {
         format!(
             "this conversion needs about {:.1} GB just to read the whole design and {:.1} GB are free; free some memory, or pass --no-memory-check to try anyway",
@@ -275,27 +274,97 @@ pub(crate) fn conversion_estimate(
     )
 }
 
-// Independent embedded designs expose parallel work before native decoding. The serial
-// fraction covers decode, assembly coordination and container writing.
-struct MultipartTime {
-    seconds_per_mib: f64,
-    serial_fraction: f64,
-}
-
 struct Coefficients {
     format: Format,
-    // Fixed process overhead; history scales the content term, not this floor.
+    model: CostModel,
+    band: f64,
+    memory_band: f64,
+    time_band: Option<f64>,
+}
+
+impl Coefficients {
+    fn template(&self) -> Estimate {
+        Estimate {
+            peak_bytes: 0,
+            seconds: 0,
+            seconds_exact: 0.0,
+            band: self.band,
+            memory_band: self.memory_band,
+            time_band: self.time_band,
+        }
+    }
+}
+
+enum CostModel {
+    Stages(Stages),
+    Legacy(LegacyCost),
+}
+
+struct Stages {
+    read: StageCost,
+    convert: StageCost,
+    history: StageCost,
+    check: StageCost,
+    geometry_check: StageCost,
+}
+
+impl Stages {
+    fn split(&self, sizes: Sizes, choices: &Choices, template: Estimate) -> ReadConvertSplit {
+        let convert = if choices.history {
+            &self.history
+        } else {
+            &self.convert
+        };
+        ReadConvertSplit {
+            read: self.read.estimate(sizes, template),
+            convert: convert.estimate(sizes, template),
+        }
+    }
+}
+
+// Existing combined models for formats without phase measurements.
+struct LegacyCost {
     base_bytes: u64,
     bytes_per_byte: f64,
     base_seconds: f64,
     seconds_per_mib: f64,
-    multipart_time: Option<MultipartTime>,
     history_factor: f64,
     history_seconds_factor: f64,
-    band: f64,
-    memory_band: f64,
-    time_band: Option<f64>,
     startup: Option<StartupTime>,
+    check_share: f64,
+}
+
+/// Linear costs from archive metadata. Memory after decode and checking is additional
+/// to the preceding peak, so adding the three stages gives one consistent total.
+struct StageCost {
+    base_bytes: u64,
+    // Some checking fits plateau at the observed assembly scale; this is an
+    // empirical estimate, not a ceiling on what an unseen design can allocate.
+    work_bytes_limit: Option<u64>,
+    bytes_per_byte: f64,
+    bytes_per_member: f64,
+    base_seconds: f64,
+    seconds_per_mib: f64,
+    seconds_per_member: f64,
+}
+
+impl StageCost {
+    fn estimate(&self, sizes: Sizes, template: Estimate) -> Estimate {
+        let seconds_exact = self.base_seconds
+            + self.seconds_per_mib * sizes.bytes as f64 / (1 << 20) as f64
+            + self.seconds_per_member * sizes.members as f64;
+        let work = (self.bytes_per_byte * sizes.bytes as f64
+            + self.bytes_per_member * sizes.members as f64)
+            .ceil() as u64;
+        Estimate {
+            peak_bytes: self
+                .base_bytes
+                .saturating_add(work.min(self.work_bytes_limit.unwrap_or(u64::MAX))),
+            seconds: seconds_exact.ceil() as u64,
+            seconds_exact,
+            ..template
+        }
+    }
 }
 
 // Fixed elapsed startup is independent of content/history scaling. Windows history
@@ -312,302 +381,442 @@ struct StartupTime {
     content_rates: Option<(f64, f64)>,
 }
 
-// Calibrated on: release builds converting a 350-occurrence Fusion printer frame (74 MB of
-// nested archive content), a 33-placement Fusion assembly (259 MB), a 60 MB single Fusion design
-// of 202 MB content with 1,500 parts, a 168 MB Fusion archive (859 MB, over 24 GB with history),
-// Fusion and Inventor recipe parts and SolidWorks parts of 0.3 to 6.4 MB, each with history off
-// and on, on Linux and Windows, with the default parallel part workers. Peak memory is about 52
-// bytes per byte of Fusion design content (57 with history) and 140 per byte of SolidWorks
-// file. Formats without measurements keep a conservative guess and a band of 100 %.
-// Small-file floors were refit on the synthetic Inventor and SolidWorks cubes and
-// FreeCAD recipe/fixture documents: exact-bundle Windows conversions and a pre-preset macOS
-// nightly (see docs/presets.md). Fixed overhead is separate from content-dependent history memory.
-// Memory and time have separate history factors so a RAM fit does not change time estimates.
-// Band refit: all 5,516 successful CSV rows from Windows and both Macs, evaluated
-// against the current model. Add one percentage point of slack, then round up to 5%.
-// Four measured formats have timing misses beyond their previous bands (subsecond
-// rounding and host-specific CLI-probe startup), so their time bands are uncalibrated.
-// Keep their legacy shared heuristics for old consumers; never widen to hide those misses.
-// All format-dependent coefficients, including history factors and bands, live in this table.
+// Fresh Linux measurements use the shared-index main build, four requested workers,
+// six public Fusion assemblies and five smaller public/synthetic Fusion, Inventor and
+// SolidWorks parts. Read, conversion (history on/off), and checking (history on/off)
+// have independent memory/time fits. Small foreign parts calibrate floors only;
+// their previous content slopes remain heuristics for larger files. Formats without
+// phase measurements keep their existing combined model. See docs/presets.md for
+// the coefficients' scope and measured misses. All format-dependent numbers live here.
 const COEFFICIENTS: &[Coefficients] = &[
     Coefficients {
         format: Format::FusionArchive,
-        base_bytes: 33_000_000,
-        bytes_per_byte: 52.0,
-        base_seconds: 0.2,
-        seconds_per_mib: 1.4,
-        multipart_time: Some(MultipartTime {
-            seconds_per_mib: 0.75,
-            serial_fraction: 0.60,
+        model: CostModel::Stages(Stages {
+            read: StageCost {
+                base_bytes: 15_000_000,
+                work_bytes_limit: None,
+                bytes_per_byte: 5.7,
+                bytes_per_member: 1_700_000.0,
+                base_seconds: 0.0,
+                seconds_per_mib: 0.1,
+                seconds_per_member: 0.061,
+            },
+            convert: StageCost {
+                base_bytes: 12_000_000,
+                work_bytes_limit: None,
+                bytes_per_byte: 15.0,
+                bytes_per_member: 0.0,
+                base_seconds: 0.0,
+                seconds_per_mib: 0.11,
+                seconds_per_member: 0.062,
+            },
+            history: StageCost {
+                base_bytes: 9_000_000,
+                work_bytes_limit: None,
+                bytes_per_byte: 26.0,
+                bytes_per_member: 0.0,
+                base_seconds: 0.0,
+                seconds_per_mib: 0.35,
+                seconds_per_member: 0.0,
+            },
+            check: StageCost {
+                base_bytes: 23_000_000,
+                work_bytes_limit: Some(1_191_000_000),
+                bytes_per_byte: 260.0,
+                bytes_per_member: 0.0,
+                base_seconds: 0.032,
+                seconds_per_mib: 0.38,
+                seconds_per_member: 0.0,
+            },
+            geometry_check: StageCost {
+                base_bytes: 25_000_000,
+                work_bytes_limit: Some(740_000_000),
+                bytes_per_byte: 230.0,
+                bytes_per_member: 0.0,
+                base_seconds: 0.03,
+                seconds_per_mib: 0.46,
+                seconds_per_member: 0.0,
+            },
         }),
-        history_factor: 1.1,
-        history_seconds_factor: 1.1,
-        band: 0.6,
-        memory_band: 0.55,
+        band: 0.45,
+        memory_band: 0.45,
         time_band: None,
-        startup: Some(StartupTime {
-            windows_shape: 0.160,
-            windows_history: 1.535,
-            mac_shape: 0.020,
-            mac_history: 0.040,
-            windows_verify_shape: 0.330,
-            windows_verify_history: 1.690,
-            content_rates: None,
-        }),
     },
     Coefficients {
         format: Format::FusionMultiDocument,
-        base_bytes: 33_000_000,
-        bytes_per_byte: 52.0,
-        base_seconds: 0.2,
-        seconds_per_mib: 1.4,
-        multipart_time: Some(MultipartTime {
-            seconds_per_mib: 0.75,
-            serial_fraction: 0.60,
+        model: CostModel::Stages(Stages {
+            read: StageCost {
+                base_bytes: 29_000_000,
+                work_bytes_limit: None,
+                bytes_per_byte: 20.0,
+                bytes_per_member: 0.0,
+                base_seconds: 0.011,
+                seconds_per_mib: 1.2,
+                seconds_per_member: 0.0,
+            },
+            convert: StageCost {
+                base_bytes: 24_000_000,
+                work_bytes_limit: None,
+                bytes_per_byte: 16.0,
+                bytes_per_member: 0.0,
+                base_seconds: 0.02,
+                seconds_per_mib: 0.32,
+                seconds_per_member: 0.0,
+            },
+            history: StageCost {
+                base_bytes: 12_000_000,
+                work_bytes_limit: None,
+                bytes_per_byte: 19.0,
+                bytes_per_member: 0.0,
+                base_seconds: 0.019,
+                seconds_per_mib: 0.38,
+                seconds_per_member: 0.0,
+            },
+            check: StageCost {
+                base_bytes: 23_000_000,
+                work_bytes_limit: None,
+                bytes_per_byte: 25.0,
+                bytes_per_member: 0.0,
+                base_seconds: 0.032,
+                seconds_per_mib: 1.8,
+                seconds_per_member: 0.0,
+            },
+            geometry_check: StageCost {
+                base_bytes: 25_000_000,
+                work_bytes_limit: Some(2_055_000_000),
+                bytes_per_byte: 230.0,
+                bytes_per_member: 0.0,
+                base_seconds: 0.03,
+                seconds_per_mib: 0.69,
+                seconds_per_member: 0.0,
+            },
         }),
-        history_factor: 1.1,
-        history_seconds_factor: 1.1,
-        band: 0.25,
-        memory_band: 0.25,
-        time_band: Some(0.2),
-        startup: None,
+        band: 0.30,
+        memory_band: 0.30,
+        time_band: None,
     },
     Coefficients {
         format: Format::InventorPart,
-        base_bytes: 18_000_000,
-        bytes_per_byte: 25.0,
-        base_seconds: 0.1,
-        seconds_per_mib: 2.0,
-        multipart_time: None,
-        history_factor: 2.0,
-        history_seconds_factor: 2.0,
-        band: 0.5,
-        memory_band: 0.3,
-        time_band: None,
-        startup: Some(StartupTime {
-            windows_shape: 0.162,
-            windows_history: 1.550,
-            mac_shape: 0.010,
-            mac_history: 0.040,
-            windows_verify_shape: 0.335,
-            windows_verify_history: 1.760,
-            content_rates: None,
+        model: CostModel::Stages(Stages {
+            read: StageCost {
+                base_bytes: 15_000_000,
+                work_bytes_limit: None,
+                bytes_per_byte: 20.0,
+                bytes_per_member: 0.0,
+                base_seconds: 0.003,
+                seconds_per_mib: 1.0,
+                seconds_per_member: 0.0,
+            },
+            convert: StageCost {
+                base_bytes: 18_000_000,
+                work_bytes_limit: None,
+                bytes_per_byte: 5.0,
+                bytes_per_member: 0.0,
+                base_seconds: 0.014,
+                seconds_per_mib: 1.0,
+                seconds_per_member: 0.0,
+            },
+            history: StageCost {
+                base_bytes: 17_000_000,
+                work_bytes_limit: None,
+                bytes_per_byte: 30.0,
+                bytes_per_member: 0.0,
+                base_seconds: 0.042,
+                seconds_per_mib: 3.0,
+                seconds_per_member: 0.0,
+            },
+            check: StageCost {
+                base_bytes: 20_000_000,
+                work_bytes_limit: None,
+                bytes_per_byte: 55.0,
+                bytes_per_member: 0.0,
+                base_seconds: 0.002,
+                seconds_per_mib: 0.0,
+                seconds_per_member: 0.0,
+            },
+            geometry_check: StageCost {
+                base_bytes: 30_000_000,
+                work_bytes_limit: None,
+                bytes_per_byte: 27.5,
+                bytes_per_member: 0.0,
+                base_seconds: 0.046,
+                seconds_per_mib: 0.0,
+                seconds_per_member: 0.0,
+            },
         }),
+        band: 1.00,
+        memory_band: 1.00,
+        time_band: None,
     },
     Coefficients {
         format: Format::InventorAssembly,
-        base_bytes: 100_000_000,
-        bytes_per_byte: 30.0,
-        base_seconds: 1.0,
-        seconds_per_mib: 2.0,
-        multipart_time: None,
-        history_factor: 3.0,
-        history_seconds_factor: 3.0,
+        model: CostModel::Legacy(LegacyCost {
+            base_bytes: 100_000_000,
+            bytes_per_byte: 30.0,
+            base_seconds: 1.0,
+            seconds_per_mib: 2.0,
+            history_factor: 3.0,
+            history_seconds_factor: 3.0,
+            startup: None,
+            check_share: 1.1,
+        }),
         band: 1.0,
         memory_band: 1.0,
         time_band: None,
-        startup: None,
     },
     Coefficients {
         format: Format::SolidWorksPart,
-        base_bytes: 18_000_000,
-        bytes_per_byte: 25.0,
-        base_seconds: 1.0,
-        seconds_per_mib: 5.0,
-        multipart_time: None,
-        history_factor: 1.7,
-        history_seconds_factor: 1.7,
-        band: 0.4,
-        memory_band: 0.35,
-        time_band: None,
-        startup: Some(StartupTime {
-            windows_shape: 0.170,
-            windows_history: 1.668,
-            mac_shape: 0.010,
-            mac_history: 0.040,
-            windows_verify_shape: 0.340,
-            windows_verify_history: 1.660,
-            content_rates: None,
+        model: CostModel::Stages(Stages {
+            read: StageCost {
+                base_bytes: 22_000_000,
+                work_bytes_limit: None,
+                bytes_per_byte: 20.0,
+                bytes_per_member: 0.0,
+                base_seconds: 0.006,
+                seconds_per_mib: 2.5,
+                seconds_per_member: 0.0,
+            },
+            convert: StageCost {
+                base_bytes: 11_000_000,
+                work_bytes_limit: None,
+                bytes_per_byte: 5.0,
+                bytes_per_member: 0.0,
+                base_seconds: 0.016,
+                seconds_per_mib: 2.5,
+                seconds_per_member: 0.0,
+            },
+            history: StageCost {
+                base_bytes: 20_000_000,
+                work_bytes_limit: None,
+                bytes_per_byte: 22.5,
+                bytes_per_member: 0.0,
+                base_seconds: 0.017,
+                seconds_per_mib: 6.0,
+                seconds_per_member: 0.0,
+            },
+            check: StageCost {
+                base_bytes: 26_000_000,
+                work_bytes_limit: None,
+                bytes_per_byte: 46.75,
+                bytes_per_member: 0.0,
+                base_seconds: 0.023,
+                seconds_per_mib: 0.0,
+                seconds_per_member: 0.0,
+            },
+            geometry_check: StageCost {
+                base_bytes: 20_000_000,
+                work_bytes_limit: None,
+                bytes_per_byte: 27.5,
+                bytes_per_member: 0.0,
+                base_seconds: 0.025,
+                seconds_per_mib: 0.0,
+                seconds_per_member: 0.0,
+            },
         }),
+        band: 1.00,
+        memory_band: 1.00,
+        time_band: None,
     },
     Coefficients {
         format: Format::SolidWorksAssembly,
-        base_bytes: 100_000_000,
-        bytes_per_byte: 30.0,
-        base_seconds: 1.0,
-        seconds_per_mib: 5.0,
-        multipart_time: None,
-        history_factor: 3.0,
-        history_seconds_factor: 3.0,
+        model: CostModel::Legacy(LegacyCost {
+            base_bytes: 100_000_000,
+            bytes_per_byte: 30.0,
+            base_seconds: 1.0,
+            seconds_per_mib: 5.0,
+            history_factor: 3.0,
+            history_seconds_factor: 3.0,
+            startup: None,
+            check_share: 1.1,
+        }),
         band: 1.0,
         memory_band: 1.0,
         time_band: None,
-        startup: None,
     },
     Coefficients {
         format: Format::FreeCadDocument,
-        base_bytes: 29_000_000,
-        bytes_per_byte: 150.0,
-        base_seconds: 1.0,
-        seconds_per_mib: 2.0,
-        multipart_time: None,
-        history_factor: 1.04,
-        history_seconds_factor: 3.0,
+        model: CostModel::Legacy(LegacyCost {
+            base_bytes: 29_000_000,
+            bytes_per_byte: 150.0,
+            base_seconds: 1.0,
+            seconds_per_mib: 2.0,
+            history_factor: 1.04,
+            history_seconds_factor: 3.0,
+            startup: Some(StartupTime {
+                windows_shape: 0.183,
+                windows_history: 1.600,
+                mac_shape: 0.025,
+                mac_history: 0.050,
+                windows_verify_shape: 0.350,
+                windows_verify_history: 1.900,
+                content_rates: Some((0.2, 0.01)),
+            }),
+            check_share: 1.1,
+        }),
         band: 1.0,
         memory_band: 0.5,
         time_band: None,
-        startup: Some(StartupTime {
-            windows_shape: 0.183,
-            windows_history: 1.600,
-            mac_shape: 0.025,
-            mac_history: 0.050,
-            windows_verify_shape: 0.350,
-            windows_verify_history: 1.900,
-            content_rates: Some((0.2, 0.01)),
-        }),
     },
     Coefficients {
         format: Format::CatiaPart,
-        base_bytes: 100_000_000,
-        bytes_per_byte: 30.0,
-        base_seconds: 1.0,
-        seconds_per_mib: 2.0,
-        multipart_time: None,
-        history_factor: 3.0,
-        history_seconds_factor: 3.0,
+        model: CostModel::Legacy(LegacyCost {
+            base_bytes: 100_000_000,
+            bytes_per_byte: 30.0,
+            base_seconds: 1.0,
+            seconds_per_mib: 2.0,
+            history_factor: 3.0,
+            history_seconds_factor: 3.0,
+            startup: None,
+            check_share: 1.1,
+        }),
         band: 1.0,
         memory_band: 1.0,
         time_band: None,
-        startup: None,
     },
     Coefficients {
         format: Format::CreoPart,
-        base_bytes: 100_000_000,
-        bytes_per_byte: 30.0,
-        base_seconds: 1.0,
-        seconds_per_mib: 2.0,
-        multipart_time: None,
-        history_factor: 3.0,
-        history_seconds_factor: 3.0,
+        model: CostModel::Legacy(LegacyCost {
+            base_bytes: 100_000_000,
+            bytes_per_byte: 30.0,
+            base_seconds: 1.0,
+            seconds_per_mib: 2.0,
+            history_factor: 3.0,
+            history_seconds_factor: 3.0,
+            startup: None,
+            check_share: 1.1,
+        }),
         band: 1.0,
         memory_band: 1.0,
         time_band: None,
-        startup: None,
     },
     Coefficients {
         format: Format::NxPart,
-        base_bytes: 100_000_000,
-        bytes_per_byte: 30.0,
-        base_seconds: 1.0,
-        seconds_per_mib: 2.0,
-        multipart_time: None,
-        history_factor: 3.0,
-        history_seconds_factor: 3.0,
+        model: CostModel::Legacy(LegacyCost {
+            base_bytes: 100_000_000,
+            bytes_per_byte: 30.0,
+            base_seconds: 1.0,
+            seconds_per_mib: 2.0,
+            history_factor: 3.0,
+            history_seconds_factor: 3.0,
+            startup: None,
+            check_share: 1.1,
+        }),
         band: 1.0,
         memory_band: 1.0,
         time_band: None,
-        startup: None,
     },
     Coefficients {
         format: Format::CreoView,
-        base_bytes: 100_000_000,
-        bytes_per_byte: 30.0,
-        base_seconds: 1.0,
-        seconds_per_mib: 2.0,
-        multipart_time: None,
-        history_factor: 3.0,
-        history_seconds_factor: 3.0,
+        model: CostModel::Legacy(LegacyCost {
+            base_bytes: 100_000_000,
+            bytes_per_byte: 30.0,
+            base_seconds: 1.0,
+            seconds_per_mib: 2.0,
+            history_factor: 3.0,
+            history_seconds_factor: 3.0,
+            startup: None,
+            check_share: 1.1,
+        }),
         band: 1.0,
         memory_band: 1.0,
         time_band: None,
-        startup: None,
     },
     Coefficients {
         format: Format::Rhino,
-        base_bytes: 100_000_000,
-        bytes_per_byte: 30.0,
-        base_seconds: 1.0,
-        seconds_per_mib: 2.0,
-        multipart_time: None,
-        history_factor: 3.0,
-        history_seconds_factor: 3.0,
+        model: CostModel::Legacy(LegacyCost {
+            base_bytes: 100_000_000,
+            bytes_per_byte: 30.0,
+            base_seconds: 1.0,
+            seconds_per_mib: 2.0,
+            history_factor: 3.0,
+            history_seconds_factor: 3.0,
+            startup: None,
+            check_share: 1.1,
+        }),
         band: 1.0,
         memory_band: 1.0,
         time_band: None,
-        startup: None,
     },
     Coefficients {
         format: Format::Acis,
-        base_bytes: 100_000_000,
-        bytes_per_byte: 30.0,
-        base_seconds: 1.0,
-        seconds_per_mib: 2.0,
-        multipart_time: None,
-        history_factor: 3.0,
-        history_seconds_factor: 3.0,
+        model: CostModel::Legacy(LegacyCost {
+            base_bytes: 100_000_000,
+            bytes_per_byte: 30.0,
+            base_seconds: 1.0,
+            seconds_per_mib: 2.0,
+            history_factor: 3.0,
+            history_seconds_factor: 3.0,
+            startup: None,
+            check_share: 1.1,
+        }),
         band: 1.0,
         memory_band: 1.0,
         time_band: None,
-        startup: None,
     },
     Coefficients {
         format: Format::Step,
-        base_bytes: 100_000_000,
-        bytes_per_byte: 20.0,
-        base_seconds: 1.0,
-        seconds_per_mib: 1.0,
-        multipart_time: None,
-        history_factor: 2.0,
-        history_seconds_factor: 2.0,
+        model: CostModel::Legacy(LegacyCost {
+            base_bytes: 100_000_000,
+            bytes_per_byte: 20.0,
+            base_seconds: 1.0,
+            seconds_per_mib: 1.0,
+            history_factor: 2.0,
+            history_seconds_factor: 2.0,
+            startup: None,
+            check_share: 1.1,
+        }),
         band: 1.0,
         memory_band: 1.0,
         time_band: None,
-        startup: None,
     },
     Coefficients {
         format: Format::Iges,
-        base_bytes: 100_000_000,
-        bytes_per_byte: 20.0,
-        base_seconds: 1.0,
-        seconds_per_mib: 1.0,
-        multipart_time: None,
-        history_factor: 2.0,
-        history_seconds_factor: 2.0,
+        model: CostModel::Legacy(LegacyCost {
+            base_bytes: 100_000_000,
+            bytes_per_byte: 20.0,
+            base_seconds: 1.0,
+            seconds_per_mib: 1.0,
+            history_factor: 2.0,
+            history_seconds_factor: 2.0,
+            startup: None,
+            check_share: 1.1,
+        }),
         band: 1.0,
         memory_band: 1.0,
         time_band: None,
-        startup: None,
     },
     Coefficients {
         format: Format::UnclassifiedPart,
-        base_bytes: 100_000_000,
-        bytes_per_byte: 30.0,
-        base_seconds: 1.0,
-        seconds_per_mib: 2.0,
-        multipart_time: None,
-        history_factor: 3.0,
-        history_seconds_factor: 3.0,
+        model: CostModel::Legacy(LegacyCost {
+            base_bytes: 100_000_000,
+            bytes_per_byte: 30.0,
+            base_seconds: 1.0,
+            seconds_per_mib: 2.0,
+            history_factor: 3.0,
+            history_seconds_factor: 3.0,
+            startup: None,
+            check_share: 1.1,
+        }),
         band: 1.0,
         memory_band: 1.0,
         time_band: None,
-        startup: None,
     },
 ];
 
 /// Estimate without native decoding, using automatic part workers. Nested Fusion ZIP
 /// containers are inflated only to read their bounded directories.
 pub fn estimate(input: &Path, choices: &Choices) -> Option<Estimate> {
-    estimate_with_threads(input, choices, 0)
+    read_sizes(input)?.calculate(choices)
 }
 
-/// Estimate using the requested part workers (0 selects the machine's automatic limit).
-pub fn estimate_with_threads(input: &Path, choices: &Choices, threads: usize) -> Option<Estimate> {
-    estimate_using_workers(input, choices, threads, dutchman_core::parallel::workers)
+/// Estimate with the existing worker-selection API. Phase timings are calibrated at
+/// four workers; other counts have no measured speedup model and remain rough.
+pub fn estimate_with_threads(input: &Path, choices: &Choices, _threads: usize) -> Option<Estimate> {
+    estimate(input, choices)
 }
 
 /// Estimate with verification and preflight context, without running a CLI probe.
-/// Replay adds a second build. Its memory allowance uses the measured assembly peaks;
-/// replay time remains uncalibrated.
+/// Replay adds the separately calibrated checking cost.
 pub fn estimate_with_options(
     input: &Path,
     choices: &Choices,
@@ -622,15 +831,9 @@ pub fn estimate_from_sizes(
     choices: &Choices,
     options: &crate::ConvertOptions,
 ) -> Option<Estimate> {
-    let mut result = sizes.calculate(choices, options.threads, |requested, designs, _| {
-        if requested == 0 {
-            sizes.auto_workers
-        } else {
-            requested.min(designs).min(sizes.worker_limit).max(1)
-        }
-    })?;
+    let mut result = sizes.calculate(choices)?;
     if !options.no_verify && options.to == crate::OutputFormat::Solidcraft {
-        result = combine_held_stages(result, check_cost(sizes, choices, options, result));
+        result = combine_held_stages(result, check_cost(sizes, choices, result));
     }
     // Explicit target versions bypass history's version discovery. We cannot subtract
     // its cost from a combined startup measurement, so retain a rough estimate.
@@ -653,49 +856,63 @@ fn combine_held_stages(conversion: Estimate, check: Estimate) -> Estimate {
     }
 }
 
-fn check_cost(
-    sizes: Sizes,
-    choices: &Choices,
-    options: &crate::ConvertOptions,
-    conversion: Estimate,
-) -> Estimate {
-    // Measured replay allowance, separate from the conversion's retained copies.
-    let share = if options.threads == 1 {
-        crate::stop::HISTORY_CHECK_SHARE
-    } else {
-        1.1
+fn check_cost(sizes: Sizes, choices: &Choices, conversion: Estimate) -> Estimate {
+    let Some(coefficients) = COEFFICIENTS.iter().find(|c| c.format == sizes.format) else {
+        return Estimate {
+            peak_bytes: 0,
+            seconds: 0,
+            seconds_exact: 0.0,
+            ..conversion
+        };
     };
-    let seconds_exact = if cfg!(target_os = "windows") {
-        COEFFICIENTS
-            .iter()
-            .find(|c| c.format == sizes.format)
-            .and_then(|c| c.startup.as_ref())
-            .map_or(0.0, |startup| {
-                if choices.history {
-                    startup.windows_verify_history - startup.windows_history
-                } else {
-                    startup.windows_verify_shape - startup.windows_shape
-                }
-            })
-    } else {
-        0.0
-    };
-    Estimate {
-        peak_bytes: (conversion.peak_bytes as f64 * share).ceil() as u64,
-        seconds: seconds_exact.ceil() as u64,
-        seconds_exact,
-        time_band: None,
-        ..conversion
+    match &coefficients.model {
+        CostModel::Stages(stages) => {
+            let check = if choices.history {
+                &stages.check
+            } else {
+                &stages.geometry_check
+            };
+            check.estimate(sizes, coefficients.template())
+        }
+        CostModel::Legacy(legacy) => {
+            let seconds_exact = if cfg!(target_os = "windows") {
+                legacy.startup.as_ref().map_or(0.0, |startup| {
+                    if choices.history {
+                        startup.windows_verify_history - startup.windows_history
+                    } else {
+                        startup.windows_verify_shape - startup.windows_shape
+                    }
+                })
+            } else {
+                0.0
+            };
+            Estimate {
+                peak_bytes: (conversion.peak_bytes as f64 * legacy.check_share).ceil() as u64,
+                seconds: seconds_exact.ceil() as u64,
+                seconds_exact,
+                time_band: None,
+                ..conversion
+            }
+        }
     }
 }
 
-fn estimate_using_workers(
+/// The same extra checking cost used by the desktop, CLI estimates and runtime guard.
+pub(crate) fn history_check_estimate(
     input: &Path,
-    choices: &Choices,
-    threads: usize,
-    workers: impl FnOnce(usize, usize, u64) -> usize,
+    options: &crate::ConvertOptions,
 ) -> Option<Estimate> {
-    read_sizes(input)?.calculate(choices, threads, workers)
+    let sizes = read_sizes(input)?;
+    let choices = options.choices();
+    let conversion = estimate_from_sizes(
+        sizes,
+        &choices,
+        &crate::ConvertOptions {
+            no_verify: true,
+            ..options.clone()
+        },
+    )?;
+    Some(check_cost(sizes, &choices, conversion))
 }
 
 /// File metadata and bounded archive sizes, read once before interactive estimates.
@@ -703,9 +920,7 @@ fn estimate_using_workers(
 pub struct Sizes {
     format: Format,
     bytes: u64,
-    designs: usize,
-    auto_workers: usize,
-    worker_limit: usize,
+    members: u64,
 }
 
 /// Reads sizes without decoding a design. Call off the UI thread.
@@ -718,7 +933,7 @@ pub fn read_sizes(input: &Path) -> Option<Sizes> {
     if !metadata.is_file() {
         return None;
     }
-    let (bytes, _members, designs) = if matches!(
+    let (bytes, members, _designs) = if matches!(
         format,
         Format::FusionArchive | Format::FusionMultiDocument | Format::FreeCadDocument
     ) {
@@ -729,107 +944,78 @@ pub fn read_sizes(input: &Path) -> Option<Sizes> {
     } else {
         (metadata.len(), 0, 0)
     };
-    let (auto_workers, worker_limit) = if designs > 1 {
-        let available = available_memory();
-        (
-            dutchman_core::parallel::workers_with_memory(0, designs, 256 << 20, available),
-            dutchman_core::parallel::workers_with_memory(usize::MAX, designs, 256 << 20, available),
-        )
-    } else {
-        (1, 1)
-    };
     Some(Sizes {
         format,
         bytes,
-        designs,
-        auto_workers,
-        worker_limit,
+        members,
     })
 }
 
 impl Sizes {
-    fn calculate(
-        self,
-        choices: &Choices,
-        threads: usize,
-        workers: impl FnOnce(usize, usize, u64) -> usize,
-    ) -> Option<Estimate> {
-        let Self {
-            format,
-            bytes,
-            designs,
-            ..
-        } = self;
-        let coefficients = COEFFICIENTS.iter().find(|c| c.format == format)?;
+    fn calculate(self, choices: &Choices) -> Option<Estimate> {
+        let coefficients = COEFFICIENTS.iter().find(|c| c.format == self.format)?;
+        Some(match &coefficients.model {
+            CostModel::Stages(stages) => {
+                let split = stages.split(self, choices, coefficients.template());
+                combine_held_stages(split.read, split.convert)
+            }
+            CostModel::Legacy(legacy) => legacy.estimate(self, choices, coefficients.template()),
+        })
+    }
+}
+
+impl LegacyCost {
+    fn estimate(&self, sizes: Sizes, choices: &Choices, template: Estimate) -> Estimate {
         let factor = if choices.history {
-            coefficients.history_factor
+            self.history_factor
         } else {
             1.0
         };
         let seconds_factor = if choices.history {
-            coefficients.history_seconds_factor
+            self.history_seconds_factor
         } else {
             1.0
         };
-        let time_rate =
-            if let Some(time) = coefficients.multipart_time.as_ref().filter(|_| designs > 1) {
-                // The native body counts are not available yet. Use the converter's 256 MiB
-                // minimum per-worker budget and embedded design count as pre-decode proxies.
-                let count = if threads == 1 {
-                    1
-                } else {
-                    workers(threads, designs, 256 << 20)
-                };
-                time.seconds_per_mib
-                    * (time.serial_fraction + (1.0 - time.serial_fraction) / count.max(1) as f64)
-            } else {
-                coefficients.seconds_per_mib
-            };
-        let time_rate = coefficients
+        let time_rate = self
             .startup
             .as_ref()
             .filter(|_| cfg!(target_os = "windows"))
             .and_then(|s| s.content_rates)
-            .map_or(time_rate * seconds_factor, |(shape, history)| {
+            .map_or(self.seconds_per_mib * seconds_factor, |(shape, history)| {
                 if choices.history {
                     history
                 } else {
                     shape
                 }
             });
-        let content_seconds = time_rate * bytes as f64 / (1 << 20) as f64;
-        let seconds_exact = if let Some(startup) = &coefficients.startup {
-            let fixed = if cfg!(target_os = "windows") {
-                if choices.history {
-                    startup.windows_history
+        let fixed = self
+            .startup
+            .as_ref()
+            .map_or(self.base_seconds * seconds_factor, |startup| {
+                if cfg!(target_os = "windows") {
+                    if choices.history {
+                        startup.windows_history
+                    } else {
+                        startup.windows_shape
+                    }
+                } else if cfg!(target_os = "macos") {
+                    if choices.history {
+                        startup.mac_history
+                    } else {
+                        startup.mac_shape
+                    }
                 } else {
-                    startup.windows_shape
+                    self.base_seconds * seconds_factor
                 }
-            } else if cfg!(target_os = "macos") {
-                if choices.history {
-                    startup.mac_history
-                } else {
-                    startup.mac_shape
-                }
-            } else {
-                // No Linux timing measurements: retain the previous startup guess.
-                coefficients.base_seconds * seconds_factor
-            };
-            fixed + content_seconds
-        } else {
-            // Preserve fractional seconds; only the legacy integer field rounds up.
-            coefficients.base_seconds * seconds_factor + content_seconds
-        };
-        Some(Estimate {
-            peak_bytes: (coefficients.base_bytes as f64
-                + coefficients.bytes_per_byte * bytes as f64 * factor)
+            });
+        let seconds_exact = fixed + time_rate * sizes.bytes as f64 / (1 << 20) as f64;
+        Estimate {
+            peak_bytes: (self.base_bytes as f64 + self.bytes_per_byte * sizes.bytes as f64 * factor)
                 .ceil() as u64,
             seconds: seconds_exact.ceil() as u64,
             seconds_exact,
-            band: coefficients.band,
-            memory_band: coefficients.memory_band,
-            time_band: coefficients.time_band,
-        })
+            ..template
+        }
     }
 }
 
@@ -919,19 +1105,27 @@ pub use dutchman_core::available_memory;
 pub struct DesktopEstimate {
     /// Reading and converting together, before checking.
     pub conversion: Estimate,
-    /// Separate measured costs, when available. Current models have no split.
+    /// Separate measured costs, when calibrated for this format.
     pub split: Option<ReadConvertSplit>,
-    /// Extra memory and time in the checker process, when enabled and available.
+    /// Extra memory and time caused by checking, when enabled and available.
     pub check: Option<Estimate>,
     pub total: Estimate,
     pub history_omitted: bool,
 }
 
-/// Optional measured split; each stage holds its memory while the next runs.
+/// Read peak and additional conversion cost beyond that peak.
 #[derive(Clone, Copy, Debug)]
 pub struct ReadConvertSplit {
     pub read: Estimate,
     pub convert: Estimate,
+}
+
+fn read_convert_split(sizes: Sizes, choices: &Choices) -> Option<ReadConvertSplit> {
+    let coefficients = COEFFICIENTS.iter().find(|c| c.format == sizes.format)?;
+    match &coefficients.model {
+        CostModel::Stages(stages) => Some(stages.split(sizes, choices, coefficients.template())),
+        CostModel::Legacy(_) => None,
+    }
 }
 
 /// Desktop estimate and automatic retention note, using conversion-only memory for Standard.
@@ -941,7 +1135,7 @@ pub fn desktop_estimate(
     checker_found: bool,
     available: Option<u64>,
 ) -> (Option<Estimate>, bool) {
-    let parts = desktop_estimate_parts(sizes, options, checker_found, available, None);
+    let parts = desktop_estimate_parts(sizes, options, checker_found, available);
     (
         parts.map(|parts| parts.total),
         parts.is_some_and(|parts| parts.history_omitted),
@@ -949,23 +1143,20 @@ pub fn desktop_estimate(
 }
 
 /// Split the same total into conversion and extra checking costs. Checking is
-/// counted only with history and a CLI; its budget is checked after reading.
+/// counted only with a CLI; its budget is checked after reading. Geometry-only
+/// conversion still checks the written shape unless checking is turned off.
 pub fn desktop_estimate_parts(
     sizes: Sizes,
     options: &crate::ConvertOptions,
     checker_found: bool,
     available: Option<u64>,
-    split: Option<ReadConvertSplit>,
 ) -> Option<DesktopEstimate> {
     let mut options = options.clone();
     options.no_verify |= !checker_found;
     let mut choices = options.choices();
     let mut conversion_options = options.clone();
     conversion_options.no_verify = true;
-    let conversion = split.map_or_else(
-        || estimate_from_sizes(sizes, &choices, &conversion_options),
-        |split| Some(combine_held_stages(split.read, split.convert)),
-    );
+    let conversion = estimate_from_sizes(sizes, &choices, &conversion_options);
     let mut reduced = false;
     if !options.no_memory_check && choices.history && choices.history_within_budget {
         if let (Some(full), Some(free)) = (conversion, available) {
@@ -981,16 +1172,15 @@ pub fn desktop_estimate_parts(
             }
         }
     }
-    // A supplied split describes the requested choices. If Standard changes them,
-    // use the model for the reduced choices until their own split is measured.
-    let split = if reduced { None } else { split };
-    let conversion = split.map_or_else(
-        || estimate_from_sizes(sizes, &choices, &conversion_options),
-        |split| Some(combine_held_stages(split.read, split.convert)),
-    )?;
-    let check =
-        (!options.no_verify && choices.history && options.to == crate::OutputFormat::Solidcraft)
-            .then(|| check_cost(sizes, &choices, &options, conversion));
+    // Recalculate the measured split too when Standard removes history.
+    let conversion = if reduced {
+        estimate_from_sizes(sizes, &choices, &conversion_options)?
+    } else {
+        conversion?
+    };
+    let split = read_convert_split(sizes, &choices);
+    let check = (!options.no_verify && options.to == crate::OutputFormat::Solidcraft)
+        .then(|| check_cost(sizes, &choices, conversion));
     let total = check.map_or(conversion, |check| combine_held_stages(conversion, check));
     Some(DesktopEstimate {
         split,
@@ -1008,7 +1198,143 @@ mod tests {
     use std::io::Write;
 
     #[test]
-    fn the_desktop_total_has_no_check_without_history() {
+    fn fitted_fusion_stages_pin_content_member_and_retention_costs() {
+        for (format, read_bytes, read_seconds, geometry, history, geometry_check, history_check) in [
+            (
+                Format::FusionArchive,
+                782_688_320,
+                16.1,
+                (1_584_864_000, 17.2),
+                (2_735_297_600, 35.0),
+                (765_000_000, 46.03),
+                (1_214_000_000, 38.032),
+            ),
+            (
+                Format::FusionMultiDocument,
+                2_126_152_000,
+                120.011,
+                (1_701_721_600, 32.02),
+                (2_004_294_400, 38.019),
+                (2_080_000_000, 69.03),
+                (2_644_440_000, 180.032),
+            ),
+        ] {
+            let sizes = Sizes {
+                format,
+                bytes: 100 << 20,
+                members: 100,
+            };
+            for (import_only, converting, checking) in [
+                (false, history, history_check),
+                (true, geometry, geometry_check),
+            ] {
+                let options = ConvertOptions {
+                    preset: Preset::Full,
+                    import_only,
+                    threads: 4,
+                    ..Default::default()
+                };
+                let parts = desktop_estimate_parts(sizes, &options, true, None).unwrap();
+                let split = parts.split.unwrap();
+                let check = parts.check.unwrap();
+                assert_eq!(split.read.peak_bytes, read_bytes);
+                assert!((split.read.seconds_exact - read_seconds).abs() < 1e-8);
+                assert_eq!(split.convert.peak_bytes, converting.0);
+                assert!((split.convert.seconds_exact - converting.1).abs() < 1e-8);
+                assert_eq!(check.peak_bytes, checking.0);
+                assert!((check.seconds_exact - checking.1).abs() < 1e-8);
+                assert_eq!(
+                    parts.total.peak_bytes,
+                    read_bytes + converting.0 + checking.0
+                );
+                assert!(
+                    (parts.total.seconds_exact - read_seconds - converting.1 - checking.1).abs()
+                        < 1e-8
+                );
+                assert_eq!(parts.total.seconds, parts.total.seconds_exact.ceil() as u64);
+            }
+        }
+    }
+
+    #[test]
+    fn checking_ramps_from_the_small_floor_and_then_plateaus() {
+        let options = ConvertOptions {
+            preset: Preset::Full,
+            threads: 4,
+            ..Default::default()
+        };
+        for (import_only, small, plateau) in [
+            (false, 295_629_760, 1_214_000_000),
+            (true, 266_172_480, 765_000_000),
+        ] {
+            let options = ConvertOptions {
+                import_only,
+                ..options.clone()
+            };
+            for (bytes, expected) in [(1 << 20, small), (10 << 20, plateau), (100 << 20, plateau)] {
+                let sizes = Sizes {
+                    format: Format::FusionArchive,
+                    bytes,
+                    members: 20,
+                };
+                let parts = desktop_estimate_parts(sizes, &options, true, None).unwrap();
+                assert_eq!(parts.check.unwrap().peak_bytes, expected);
+            }
+        }
+        // A hostile size saturates the total, never wrapping after adding stages.
+        let sizes = Sizes {
+            format: Format::FusionArchive,
+            bytes: u64::MAX,
+            members: u64::MAX,
+        };
+        assert_eq!(
+            desktop_estimate_parts(sizes, &options, true, None)
+                .unwrap()
+                .total
+                .peak_bytes,
+            u64::MAX
+        );
+    }
+
+    #[test]
+    fn standard_recalculates_the_conversion_and_geometry_check_after_omitting_history() {
+        let sizes = Sizes {
+            format: Format::FusionArchive,
+            bytes: 100 << 20,
+            members: 100,
+        };
+        let parts =
+            desktop_estimate_parts(sizes, &ConvertOptions::default(), true, Some(3_000_000_000))
+                .unwrap();
+        assert!(parts.history_omitted);
+        assert_eq!(parts.split.unwrap().read.peak_bytes, 782_688_320);
+        assert_eq!(parts.split.unwrap().convert.peak_bytes, 1_584_864_000);
+        assert_eq!(parts.check.unwrap().peak_bytes, 765_000_000);
+        assert_eq!(parts.total.peak_bytes, 3_132_552_320);
+        assert!(parts.conversion.peak_bytes < 3_000_000_000);
+    }
+
+    #[test]
+    fn selecting_one_part_budgets_only_the_calibrated_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("synthetic.ipt");
+        std::fs::File::create(&input)
+            .unwrap()
+            .set_len(1 << 20)
+            .unwrap();
+        let options = ConvertOptions {
+            preset: Preset::Full,
+            ..Default::default()
+        };
+        // Conversion work after decode must not be described as "just to read".
+        assert!(part_memory_refusal(&input, &options, Some(35_971_520)).is_none());
+        assert!(part_memory_refusal(&input, &options, Some(35_971_519))
+            .unwrap()
+            .contains("just to read the whole design"));
+    }
+
+    #[test]
+    fn the_desktop_total_includes_geometry_checking_without_history() {
         let dir = tempfile::tempdir().unwrap();
         let input = dir.path().join("synthetic.ipt");
         std::fs::write(&input, [0u8; 1024]).unwrap();
@@ -1021,10 +1347,11 @@ mod tests {
             no_verify: true,
             ..options.clone()
         };
-        assert_eq!(
-            desktop_estimate(sizes, &options, true, None).0,
-            desktop_estimate(sizes, &unchecked, true, None).0
-        );
+        let checked = desktop_estimate_parts(sizes, &options, true, None).unwrap();
+        let unchecked = desktop_estimate_parts(sizes, &unchecked, true, None).unwrap();
+        assert!(checked.check.is_some());
+        assert!(unchecked.check.is_none());
+        assert!(checked.total.peak_bytes > unchecked.total.peak_bytes);
     }
 
     #[test]
@@ -1056,23 +1383,37 @@ mod tests {
             let entries: Vec<_> = COEFFICIENTS.iter().filter(|c| c.format == format).collect();
             assert_eq!(entries.len(), 1, "{format:?}");
             let c = entries[0];
-            assert!(
-                c.base_bytes > 0
-                    && c.bytes_per_byte.is_finite()
-                    && c.bytes_per_byte > 0.0
-                    && c.base_seconds.is_finite()
-                    && c.base_seconds > 0.0
-                    && c.seconds_per_mib.is_finite()
-                    && c.seconds_per_mib > 0.0
-            );
-            if let Some(time) = &c.multipart_time {
-                assert!(time.seconds_per_mib.is_finite() && time.seconds_per_mib > 0.0);
-                assert!(
-                    time.serial_fraction.is_finite() && (0.0..=1.0).contains(&time.serial_fraction)
-                );
+            match &c.model {
+                CostModel::Stages(stages) => {
+                    for cost in [
+                        &stages.read,
+                        &stages.convert,
+                        &stages.history,
+                        &stages.check,
+                        &stages.geometry_check,
+                    ] {
+                        assert!(cost.bytes_per_byte.is_finite() && cost.bytes_per_byte >= 0.0);
+                        assert!(cost.bytes_per_member.is_finite() && cost.bytes_per_member >= 0.0);
+                        assert!(cost.base_seconds.is_finite() && cost.base_seconds >= 0.0);
+                        assert!(cost.seconds_per_mib.is_finite() && cost.seconds_per_mib >= 0.0);
+                        assert!(
+                            cost.seconds_per_member.is_finite() && cost.seconds_per_member >= 0.0
+                        );
+                    }
+                }
+                CostModel::Legacy(legacy) => {
+                    assert!(legacy.base_bytes > 0);
+                    assert!(legacy.bytes_per_byte.is_finite() && legacy.bytes_per_byte > 0.0);
+                    assert!(legacy.base_seconds.is_finite() && legacy.base_seconds > 0.0);
+                    assert!(legacy.seconds_per_mib.is_finite() && legacy.seconds_per_mib > 0.0);
+                    assert!(legacy.check_share.is_finite() && legacy.check_share >= 0.0);
+                    assert!(legacy.history_factor.is_finite() && legacy.history_factor > 0.0);
+                    assert!(
+                        legacy.history_seconds_factor.is_finite()
+                            && legacy.history_seconds_factor > 0.0
+                    );
+                }
             }
-            assert!(c.history_factor.is_finite() && c.history_factor > 1.0);
-            assert!(c.history_seconds_factor.is_finite() && c.history_seconds_factor > 1.0);
             assert!(c.band.is_finite() && c.band > 0.0 && c.band <= 1.0);
             assert!(c.memory_band.is_finite() && c.memory_band > 0.0 && c.memory_band <= c.band);
             if let Some(time_band) = c.time_band {
@@ -1107,7 +1448,7 @@ mod tests {
     }
 
     #[test]
-    fn multipart_time_uses_requested_workers_without_changing_memory() {
+    fn four_worker_fit_does_not_invent_a_speedup_for_other_worker_counts() {
         let mut inner = Vec::new();
         {
             let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut inner));
@@ -1127,31 +1468,20 @@ mod tests {
         }
         zip.finish().unwrap();
         let choices = Choices::of(Preset::Fast);
-        let serial = estimate_using_workers(&path, &choices, 1, |_, _, _| {
-            panic!("serial needs no probe")
-        })
-        .unwrap();
-        let auto = estimate_using_workers(&path, &choices, 0, |requested, parts, budget| {
-            assert_eq!((requested, parts, budget), (0, 4, 256 << 20));
-            4
-        })
-        .unwrap();
-        let limited = estimate_using_workers(&path, &choices, 2, |requested, _, _| {
-            assert_eq!(requested, 2);
-            2
-        })
-        .unwrap();
-        assert_eq!(serial.seconds, 13);
-        assert_eq!(auto.seconds, 9);
-        assert_eq!(limited.seconds, 10);
-        assert_eq!(auto.peak_bytes, serial.peak_bytes);
-        assert_eq!(auto.band, serial.band);
-        assert_eq!(auto.memory_band, serial.memory_band);
-        assert_eq!(auto.time_band, serial.time_band);
+        // Only four-worker runs calibrate the new phase model. The old 13/9/10
+        // second expectations encoded an unmeasured serial-fraction assumption.
+        let calibrated = estimate_with_threads(&path, &choices, 4).unwrap();
+        assert!(calibrated.time_band.is_none());
+        for threads in [0, 1, 2, 16] {
+            assert_eq!(
+                estimate_with_threads(&path, &choices, threads),
+                Some(calibrated)
+            );
+        }
     }
 
     #[test]
-    fn zip_members_alone_do_not_imply_parallel_designs() {
+    fn zip_members_are_retained_as_estimator_inputs() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("synthetic.f3d");
         let mut zip = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
@@ -1161,11 +1491,10 @@ mod tests {
             zip.write_all(&vec![0; 1 << 20]).unwrap();
         }
         zip.finish().unwrap();
-        let estimate = estimate_using_workers(&path, &Choices::of(Preset::Fast), 0, |_, _, _| {
-            panic!("one design needs no parallel estimate")
-        })
-        .unwrap();
-        assert_eq!(estimate.seconds, 3);
+        let sizes = read_sizes(&path).unwrap();
+        assert_eq!(sizes.bytes, 2 << 20);
+        assert_eq!(sizes.members, 2);
+        assert!(estimate_with_threads(&path, &Choices::of(Preset::Fast), 4).is_some());
     }
 
     #[test]
@@ -1192,6 +1521,7 @@ mod tests {
             },
         )
         .unwrap();
+        // Geometry-only conversion still checks the written shape by default.
         assert!(verified.peak_bytes > fast.peak_bytes);
         assert!(verified.seconds_exact >= fast.seconds_exact);
         assert!(verified.time_band.is_none());
@@ -1236,20 +1566,27 @@ mod tests {
     }
 
     #[test]
-    fn history_does_not_multiply_the_fixed_process_floor() {
+    fn measured_native_floors_are_separate_from_legacy_content_growth() {
         let dir = tempfile::tempdir().unwrap();
-        for extension in ["ipt", "sldprt"] {
+        // Fresh phase measurements have separate preparation floors for the two
+        // modes. Only larger-part content growth retains the old heuristic.
+        for (extension, shape_floor, history_floor, history_growth) in [
+            ("ipt", 33_000_000, 32_000_000, 256_000),
+            ("sldprt", 33_000_000, 42_000_000, 217_600),
+        ] {
             let path = dir.path().join(format!("synthetic.{extension}"));
             std::fs::write(&path, []).unwrap();
             let fast = estimate(&path, &Choices::of(Preset::Fast)).unwrap();
             let full = estimate(&path, &Choices::of(Preset::Full)).unwrap();
-            assert_eq!(fast.peak_bytes, full.peak_bytes);
+            assert_eq!(fast.peak_bytes, shape_floor);
+            assert_eq!(full.peak_bytes, history_floor);
             // Content still costs more when history is kept.
             std::fs::write(&path, [0; 5120]).unwrap();
             let fast_content = estimate(&path, &Choices::of(Preset::Fast)).unwrap();
             let full_content = estimate(&path, &Choices::of(Preset::Full)).unwrap();
             assert!(fast_content.peak_bytes > fast.peak_bytes);
-            assert!(full_content.peak_bytes > fast_content.peak_bytes);
+            assert_eq!(fast_content.peak_bytes - fast.peak_bytes, 128_000);
+            assert_eq!(full_content.peak_bytes - full.peak_bytes, history_growth);
         }
     }
 
@@ -1290,18 +1627,10 @@ mod tests {
                 assert!(estimate(&path, &Choices::of(Preset::Fast)).is_none());
                 continue;
             }
-            let light = estimate(&path, &Choices::of(Preset::Fast)).unwrap();
-            let full = estimate(&path, &Choices::of(Preset::Full)).unwrap();
-            let c = COEFFICIENTS
-                .iter()
-                .find(|c| c.format == Format::from_path(&path).unwrap())
-                .unwrap();
-            assert_eq!(
-                light.peak_bytes,
-                (c.base_bytes as f64 + c.bytes_per_byte * ((1 << 20) + 9) as f64).ceil() as u64
-            );
-            assert!(full.peak_bytes > light.peak_bytes);
-            assert!(full.seconds >= light.seconds);
+            let sizes = read_sizes(&path).unwrap();
+            assert_eq!(sizes.bytes, (1 << 20) + 9);
+            assert_eq!(sizes.members, 2);
+            assert!(estimate(&path, &Choices::of(Preset::Fast)).is_some());
         }
     }
 
@@ -1593,8 +1922,11 @@ mod cached_estimate_tests {
                             ..Default::default()
                         };
                         let parts =
-                            desktop_estimate_parts(sizes, &options, checker, Some(free), None)
-                                .unwrap();
+                            desktop_estimate_parts(sizes, &options, checker, Some(free)).unwrap();
+                        let effective = Choices {
+                            history: options.choices().history && !parts.history_omitted,
+                            ..options.choices()
+                        };
                         assert_eq!(
                             desktop_estimate(sizes, &options, checker, Some(free)),
                             (Some(parts.total), parts.history_omitted)
@@ -1614,7 +1946,7 @@ mod cached_estimate_tests {
                             );
                             assert_eq!(
                                 Some(parts.total),
-                                estimate_from_sizes(sizes, &options.choices(), &options)
+                                estimate_from_sizes(sizes, &effective, &options)
                             );
                         } else {
                             assert_eq!(parts.total, parts.conversion);

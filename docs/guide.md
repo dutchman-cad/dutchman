@@ -117,13 +117,19 @@ History checks stay on by default and fit themselves to free memory. If a second
 will not fit after reading the design, conversion still saves a usable original shape
 with retained history unverified; the card and report say
 `History check skipped: needs about N GB, M GB free`. Peak estimates include checking.
+The runtime guard uses the same calibrated extra check figure as the desktop estimate,
+without multiplying the memory already held by the decoded design.
+Geometry-only conversions also check the converted shape by default. Their allowance is
+calibrated separately; **Check in SolidCraft** can turn checking off in the desktop.
 Use `--no-verify` to keep checks off or `--no-memory-check` to force requested checks.
 Desktop Advanced has the matching **Convert and check history even if memory is low**
 control. Automatic assembly preparation uses at most two workers and reduces that count
 for detailed parts or large retained preparations. See [presets](presets.md).
 
 The [desktop memory warning](desktop.md) lets you adjust the preset, retained content and
-history checking with live memory and time figures matching the file row. Choices are
+history checking with live memory and time figures matching the file row. Calibrated
+formats show reading, extra conversion work after decoding and the extra history check
+separately; their memory and time add to that shared total. Choices are
 remembered. **Convert with these choices** checks queued files again when the conversion
 fits; proceeding when it still will not fit bypasses memory checks for that run only.
 

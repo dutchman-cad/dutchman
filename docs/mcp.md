@@ -124,7 +124,11 @@ reported as one Info line under `history`, as described in the [guide](presets.m
 
 Requested SolidCraft checking is included in `estimate.peak_bytes`. Conversion-only
 preflight can allow a run whose check will not fit. After reading, checking compares the
-second build's allowance with current free memory and rechecks before geometry replay.
+same extra check figure used by the desktop estimate with current free memory and
+rechecks before geometry replay. It does not multiply the memory already held by the
+decoded design.
+Geometry-only conversion also checks the converted shape by default, using a separately
+calibrated check allowance; `verify: false` keeps either kind of checking off.
 If it cannot fit, the successful report includes `history_check_skipped` with
 `needed_bytes`, `available_bytes`, and `reason`:
 `History check skipped: needs about N GB, M GB free`. The original shape stays usable
@@ -143,38 +147,25 @@ Use `convert` with `dry_run: true` for a quick estimate without decoding or writ
 The result contains `ok: true`, `estimate: {peak_bytes, seconds, seconds_exact, band, memory_band, time_band}`,
 `choices: {preset, history, sketches, joints}`, and `fits` (boolean, or `null` when
 memory or the estimate is unknown). `estimate` itself can be `null`. ZIP directory
-reads are bounded and no design is decoded. Memory includes fixed process overhead that is not multiplied by history;
-its content cost and the time estimate have separate history factors. A pre-read cannot confirm archive assembly structure,
+reads are bounded and no design is decoded. Memory includes fixed process overhead and independent measured read, conversion and checking costs where calibrated. A pre-read cannot confirm archive assembly structure,
 so Standard's budgeted choices are provisional until normal decoding. An over-budget
 dry run returns `fits: false`; it writes nothing and does not attempt conversion.
 Normal convert reports, including batch results, carry the same `estimate` and
 `choices` fields ([json.md](json.md)).
 
-RAM bands use every successful Windows and Mac measurement, re-evaluated with the
-current coefficients: Fusion `.f3d` ±55%, multipart `.f3z` ±25%, Inventor parts ±30%,
-SolidWorks parts ±35%, and FreeCAD ±50%. One percentage point of safety is added before
-rounding up to a 5% step. These are empirical envelopes of this corpus, not guarantees for
-unseen designs. Unmeasured formats retain their ±100% memory heuristic.
-Time has its own band: multipart Fusion is ±20%; other time bands are uncalibrated.
-Timing uses fractional `seconds_exact`; `seconds` remains its whole-second ceiling for
-compatibility. Fixed startup is separate from content work: Windows has different fast,
-history and verification startup terms; macOS has its own process floor. A possible
-version-probe timeout is not included as normal conversion work. The estimator
-never runs SolidCraft to measure a probe. History may probe its version even with
-`--no-verify`. Old Mac probe durations were not recorded, Windows startup varies between runs, and
-FreeCAD assembly worker startup is poorly predicted by archive bytes, so these four formats keep uncalibrated time bands. Verification
-replay and explicit-version/no-memory-check variants also retain rough timing; their
-startup or replay costs are not generally calibrated. Bands are not widened to hide this.
-JSON adds `memory_band` and nullable `time_band`. The existing `band` stays as the legacy
-shared heuristic for compatibility; use the new fields for separate calibrated coverage.
-For multipart Fusion `band` is the larger of the two calibrated bands (25%).
+The current phase fits use six public Fusion assemblies and five small Fusion, Inventor
+and SolidWorks parts, measured on Linux with four requested workers and SolidCraft 0.30.1.
+Total-peak RAM bands are ±45% for `.f3d` and ±30% for `.f3z`; Inventor/SolidWorks larger-part
+growth remains a ±100% heuristic, and FreeCAD keeps ±50%. Component costs and their worst
+misses are documented in [Choosing what to keep](presets.md). These are empirical total-peak
+envelopes, not guarantees for unseen designs or individual phases.
 
-For Fusion archives with multiple readable embedded `.f3d` designs, the time estimate
-uses the requested threads (0 means auto), limited by the converter's shared CPU, item
-count and free-memory worker policy. A serial component remains. Before native decoding,
-the embedded design count and the converter's 256 MiB minimum worker budget are proxies;
-actual body counts can reduce conversion workers further. Single-design files keep their
-existing time model. The worker adjustment changes time estimates only.
+Time fits include the requested checking cost, including default geometry checking with
+history off. `seconds_exact` adds fractional phase times and `seconds` is its ceiling.
+`time_band` stays null: other platforms, worker counts and timeout settings have no fresh
+timing calibration. The old multipart speedup fraction is not reused after the shared-index
+performance change. Worker scheduling itself is unchanged. `band` remains the shared
+compatibility field; use `memory_band` and nullable `time_band` for separate coverage.
 
 `threads.used` is the largest bounded Dutchman part-worker limit selected across conversion
 stages and embedded members. It excludes threads inside SolidCraft child processes and does
@@ -632,7 +623,9 @@ formatter. Its memory warning offers the same choices with live costs and a tota
 the file row. Checking is counted only with a usable CLI and checking on. **Convert with
 these choices** checks queued files again when the conversion fits; if it still will not
 fit, proceeding bypasses memory checks for that run only. Choices and the checking preference
-return to the main window and are remembered. Numeric MCP estimates stay unchanged. History
+return to the main window and are remembered. Calibrated formats split reading, extra
+conversion work after decoding and extra checking in the desktop. MCP keeps the existing
+numeric estimate fields; the split is desktop presentation. History
 Info messages, including history left out by Standard, appear on its result cards.
 
 SolidCraft conversion results include `solidcraft: {target, found, known_newest, status}`: the selected

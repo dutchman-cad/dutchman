@@ -46,7 +46,7 @@ Every download holds the desktop app (`dutchman-gui`), the `dutchman` command, a
    If memory looks tight, adjust what to keep in the memory box and see the total change
    before converting. The same choices return to the main window.
 
-   ![Memory warning with preset, content choices and a live memory and time total](docs/images/readme-memory-day.png)
+   ![Memory warning with separate reading, conversion and checking figures](docs/images/readme-memory-day.png)
 
 3. **Convert, then Open in SolidCraft.** The result card says what came across and what didn't. Your design is a `.sc` file.
 

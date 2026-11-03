@@ -36,6 +36,7 @@ ureq = { version = "2.12", default-features = false, features = ["tls"] }
 egui_kittest = { version = "0.33", features = ["eframe", "wgpu"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 tempfile.workspace = true
+zip.workspace = true
 
 [lints]
 workspace = true
