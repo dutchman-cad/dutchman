@@ -291,11 +291,17 @@ jobs:
     env:
       SOLIDCRAFT_VERSION: ${{ matrix.solidcraft.version }}
       SOLIDCRAFT_SHA256: ${{ matrix.solidcraft.sha256 }}
+      # Full debug info for the whole workspace filled the runner: the linker died with a bus
+      # error. The checks need only the dutchman binary and no debug info.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --locked
+      - run: cargo build --locked -p dutchman --bin dutchman
+      - if: failure()
+        run: df -h . /tmp
       - name: Fetch SolidCraft
         env:
           GITHUB_TOKEN: ${{ github.token }}
