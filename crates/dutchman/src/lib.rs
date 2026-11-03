@@ -745,10 +745,21 @@ mod option_tests {
         };
         let dir = tempfile::tempdir().unwrap();
         let input = dir.path().join("synthetic.step");
-        std::fs::File::create(&input)
-            .unwrap()
-            .set_len(available.saturating_add(2_000_000_000))
-            .unwrap();
+        // Just large enough that the estimate exceeds free memory by 2 GB. A file as large as
+        // free memory fills a Windows runner's disk: NTFS allocates what set_len extends.
+        let estimate_at = |len: u64| {
+            std::fs::File::create(&input).unwrap().set_len(len).unwrap();
+            choices::estimate(&input, &choices::Choices::of(choices::Preset::Full))
+                .unwrap()
+                .peak_bytes
+        };
+        let (small, large) = (estimate_at(1 << 20), estimate_at(2 << 20));
+        let per_mib = large.saturating_sub(small).max(1);
+        let needed = available
+            .saturating_add(2_000_000_000)
+            .saturating_sub(small);
+        let len = (needed / per_mib + 2) << 20;
+        estimate_at(len);
         let folder = dir.path().join("never-created");
         let job = batch::Job {
             project_files: None,
