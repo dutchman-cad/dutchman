@@ -153,9 +153,16 @@ transform, and each component as a product definition.
   shown and hidden bodies is shown whole.
 - **Joints** between components become SolidCraft joints: fixed ones rigid (their offset kept),
   revolute ones turning about the connector's z axis with their limits, slider ones along it.
-  Each connector frame is in its own part, as cadmpeg gives it, which is how SolidCraft takes
-  it. The two frames meet face to face, as the faces they were snapped to do: same origin,
-  opposite z axes, the second half a turn about the first's x axis. Fusion can store a joined
+  Each connector frame is in its own part. Offsets apply to the second connector:
+  `C0 = C1 * T(offset) * Rz(angle) * F`, where `C0` and `C1` are the stored connector
+  world frames. `F` is a half turn about x for `opposed` frame sense (also the default),
+  or identity for `aligned`. Fixed offsets translate in the second connector's axes before
+  turning about its z axis; a revolute's angular offset turns that same connector.
+  Dutchman folds these offsets into SolidCraft's second snap, so placement and the written
+  joint use the same relation. Slider translation offsets also apply to the second snap;
+  their distance is expressed along the first snap's z, with its sign reversed for aligned
+  frames. With no offsets, opposed frames meet face to face: the same origin and opposite
+  z axes; aligned frames meet with their axes pointing the same way. Fusion can store a joined
   part where it was before its joints were solved, so Dutchman places joined parts where their
   joints put them: from the design's own root, each joint places the part at its other end; a
   joint neither of whose parts is placed yet moves its first part to its second, as Fusion moves
@@ -183,7 +190,8 @@ transform, and each component as a product definition.
   unrelated component or mirrored sibling does not inherit the pose. A part two joints would
   place differently is reported, and the joint that cannot hold it is written suppressed:
   SolidCraft solves the joints when it opens a design, and the part stays where the file places
-  it. A joint to the design's root component holds its occurrence to the design. Fusion joint motion converts from Dutchman 0.1.5 on (before it, every Fusion joint was
+  it. Earlier internal joints are checked again after outer joints place their holders,
+  so an active joint cannot move those parts again on open. A joint to the design's root component holds its occurrence to the design. Fusion joint motion converts from Dutchman 0.1.5 on (before it, every Fusion joint was
   fixed). A revolute limit on one side only is left out, and the report says so. A component
   placed more than once is held once in the SolidCraft design, so a joint between two parts
   inside one copy of it is that component's own: it is written once, through the first copy, as

@@ -878,9 +878,9 @@ impl Builder<'_> {
         groups
     }
 
-    /// The joints, as SolidCraft rigid joints written as built: each holds its two
-    /// occurrences where they are placed now. Side A's joint frame is A's own origin; side B's
-    /// is the same place in the world, given in B's component.
+    /// Joints in the frames the core places their parts by. Source offsets are already
+    /// folded into those frames; write both snaps and the frame sense unchanged so the
+    /// SolidCraft solver closes A * motion * facing = B at those placements.
     fn joints(&mut self, joints: &[Joint], top: &[Option<u64>]) -> Vec<Value> {
         let mut out = Vec::new();
         let mut counts: BTreeMap<&str, usize> = BTreeMap::new();

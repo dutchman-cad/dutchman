@@ -4,7 +4,7 @@ Where every part of three public assemblies lands, as the "Placements" workflow
 (`.github/workflows/placements.yml`) checks it on each pull request that changes the converter.
 A golden maps an occurrence path (the occurrence names from the root, joined by `/`; a repeated
 name among siblings gets `#2`, `#3`, ... in document order) to the world position of its origin
-in millimetres, rounded to 0.001. The positions of a public design are facts about that design.
+in millimetres, rounded to 0.001. These goldens record converter output; an independent source reference is needed to establish whether those positions are correct.
 The check fails when a shared part moves more than 0.01 mm, or a part disappears or appears. The
 "Editable history" stand-ins the converter adds beside a part are not listed.
 
@@ -28,10 +28,9 @@ python3 scripts/placements.py railcore.sc --check corpus/placements/railcore.jso
 
 ## Regenerate a golden
 
-Only when a part is meant to be somewhere else, and only after a person has opened the converted
-design and looked at the picture: the parts sit where the source puts them, nothing is scattered,
-floating or stacked at the origin. A failing check is a finding to fix first; regenerating to make
-it pass records the fault as correct.
+Regenerate only after checking why parts moved against an independent source, such as Fusion's
+saved display scene, or a visual reference. A failing check is a finding to investigate first;
+regenerating solely to make it pass records a fault as correct.
 
 ```
 python3 scripts/placements.py railcore.sc --out corpus/placements/railcore.json
@@ -40,5 +39,87 @@ python3 scripts/placements.py railcore.sc --out corpus/placements/railcore.json
 Commit the regenerated golden in the same pull request as the change that moved the parts, and say
 in the description which parts moved and why.
 
-The goldens were taken from conversions checked by eye: RailCore and Voron from Dutchman 0.2.5,
-the robot arm with its gripper in place.
+RailCore and Voron were taken from Dutchman 0.2.5 conversions checked by eye. The original
+robot-arm golden was also converter output checked visually, without an independent pose
+reference; it pinned the old angular sign for aligned joints. Its replacement uses the fixed
+second-connector rule, `C0 = C1 * T(offset) * Rz(+angle)` for aligned frames.
+
+## Check against Fusion's saved scene
+
+The robot-arm golden is checked against the root design's saved member
+`FusionAssetName[Active]/OGS.BlobFolder/OGS/DefaultScene/world`. Its matrices are column-major
+float32 4×4 transforms in centimetres. Absolute translation checks accept the rounded golden;
+relative translation and rotation checks use the converted design's full, unrounded transforms.
+
+```sh
+dutchman convert Assem1.f3z -o robot-arm.sc --preset standard --no-verify
+python3 scripts/placements.py robot-arm.sc --out corpus/placements/robot-arm.json
+python3 scripts/fusion_scene_placements.py Assem1.f3z corpus/placements/robot-arm.json \
+  --mapping corpus/placements/robot-arm.scene.json --out robot-arm-absolute.json
+```
+
+The absolute check fails: all 38 mapped parts exceed 0.1 mm, with a maximum of 597.217100 mm at
+`dito_MIR:1`. Fusion's current pose differs from the stored occurrence poses that Dutchman uses;
+the arm was moved after storing those poses. All seven root parts' native `current_pose` records
+match the scene within 0.000064 mm and 1.25e-8 rad. Their decoded stored transforms differ by
+154.824–578.362 mm, with a maximum rotation error of 0.496408 rad. This change retains Dutchman's
+stored-pose selection. Three assembly holders have no independently assigned scene entry and
+remain explicitly unmatched.
+
+Relative checks separate that arm movement from the gripper joint. The joint's first operand
+is `griper:1/Assem1 component 1:1/frame:1`; its second is `Assem1 component 2:1/Part02:1`
+(source occurrence `f3d:model:occurrence#25`). It is fixed, aligned, with angle +π/2 and zero offset.
+Run both the gripper's internal check and its attachment check:
+
+```sh
+python3 scripts/fusion_scene_placements.py Assem1.f3z robot-arm.sc \
+  --mapping corpus/placements/robot-arm.scene.json \
+  --relative-to 'griper:1/Assem1 component 1:1/frame:1' \
+  --path-prefix 'griper:1/Assem1 component 1:1/' --out robot-arm-internal.json
+python3 scripts/fusion_scene_placements.py Assem1.f3z robot-arm.sc \
+  --mapping corpus/placements/robot-arm.scene.json \
+  --relative-to 'Assem1 component 2:1/Part02:1' \
+  --path 'griper:1/Assem1 component 1:1/frame:1' --out robot-arm-attachment.json
+```
+
+Each check forms part-to-anchor transforms independently in the design and scene, then compares
+translation and rotation. Shared assembly motion cancels. The rotation error is the angle between
+the relative orientations, in radians; scene axes are orthonormalized to remove float32 rounding.
+The tolerances are 0.1 mm and 0.001 rad. Repeat `--path` to select individual parts, or omit both
+selection options to check every placement (including any unmatched holders). An empty selection
+or an unmatched anchor cannot pass.
+
+Measured with the same joint-emitting decoder for both builds:
+
+| Relative comparison | Old rule: maximum mm / rad | Fixed rule: maximum mm / rad |
+|---|---|---|
+| 31 gripper parts relative to `frame:1` | 0.000084465 / 4.20e-8 | 0.000084465 / 4.20e-8 |
+| `frame:1` relative to `Part02:1` | 0.000010043 / π | 0.000010043 / 2.87e-8 |
+| 31 gripper parts relative to `Part02:1` | 99.999958 / π | 0.000078685 / 3.14e-8 |
+
+For the last row, replace the attachment command's `--path` with
+`--path-prefix 'griper:1/Assem1 component 1:1/'`. All 31 pass with the fix and all 31 fail with
+the old rule. Both builds preserve the internal arrangement; the corrected joint orientation
+is the independent evidence for regenerating the golden. The attachment frame's origin nearly
+coincides in both builds, so checking translation alone would miss its half-turn error.
+
+`robot-arm.scene.json` identifies 38 part matrices by byte offset, source occurrence identity,
+and source/scene SHA-256. The reference identities come from the public file's native current
+poses and positive-angle joint composition, corroborated against both rotation and translation
+in the scene within 0.000064 mm. Duplicate entries must have identical translations for absolute
+checks, and identical full transforms for relative checks. These mappings contain derived facts,
+not CAD geometry.
+
+The comparison also accepts a single `.f3d`, such as Voron 2.4. For another source, supply an
+independently established mapping of occurrence paths to scene matrix offsets, bound to both
+SHA-256 values, in the same format. It never assigns a part to whichever matrix happens to be
+nearest its converted position: the scene includes stored transforms and current overrides,
+so that would silently accept stale or unrelated entries. Without an independent mapping, a
+present scene is reported as `no part mapping: not checked`.
+
+Not every Fusion file stores this display scene. The pinned RailCore 2019 and Voron 2.4 inputs
+have none: both absolute and relative checks report exactly `no scene: not checked` and exit
+**3**, never a pass. Their goldens remain unchanged. Exit statuses are 0 for a complete match of
+the selected placements, 1 for translation or rotation differences, 2 for an input error, 3 for
+an absent scene, and 4 for unmatched parts or a missing mapping. A partial comparison also cannot
+pass, even when all mapped parts are within tolerance.

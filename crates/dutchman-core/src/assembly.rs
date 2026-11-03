@@ -224,7 +224,7 @@ pub enum Motion {
     Rigid,
     /// Turning about the first frame's z axis, now `angle` radians from where the frames meet,
     /// within `limits` (radians), when it has them. The source's angular offset is in the
-    /// first frame; the angle is where the placements put the joint.
+    /// second frame; the angle is where the placements put the joint.
     Revolute {
         angle: f64,
         limits: Option<(f64, f64)>,
@@ -1335,6 +1335,33 @@ fn place_by_joints(assembly: &mut Assembly, posed: &BTreeSet<Vec<usize>>) -> Vec
             hold_in(&mut fixed, exact.b.clone(), &scope);
         }
     }
+    // A later outer joint can move a holder while preserving one of its children.
+    // Recheck earlier internal joints at the final poses too: an active conflict would
+    // otherwise move those parts again when the target solver opens the design.
+    let conflicts: Vec<usize> = assembly
+        .joints
+        .iter()
+        .enumerate()
+        .filter_map(|(index, joint)| {
+            if joint.suppressed {
+                return None;
+            }
+            let (a, b) = (world_at(assembly, &joint.a)?, world_at(assembly, &joint.b)?);
+            let reach = compose(&compose(&a, &joint.frame_a), &joint.meeting());
+            (!same(&reach, &compose(&b, &joint.frame_b))).then_some(index)
+        })
+        .collect();
+    for index in conflicts {
+        if let Some(joint) = assembly.joints.get_mut(index) {
+            joint.suppressed = true;
+        }
+        notes.push(format!(
+            "joint {}: its parts are placed by other joints where it cannot hold them; \
+             it is kept suppressed, so they stay where the file places them",
+            index + 1
+        ));
+    }
+
     notes
 }
 
@@ -1830,24 +1857,28 @@ fn joint(
     }
     let number = |key: &str| kind.get(key).and_then(Value::as_f64).unwrap_or(0.0);
     let mut note = None;
-    let (motion, frame_a) = match kind
+    let flip = frame_aligned(row);
+    let translation = kind
+        .get("translation_offset")
+        .and_then(Value::as_array)
+        .map(|t| [0, 1, 2].map(|i| t.get(i).and_then(Value::as_f64).unwrap_or(0.0)))
+        .unwrap_or([0.0; 3]);
+    let offset = |angle| {
+        let mut offset = turn(angle);
+        for (row, value) in offset.iter_mut().zip(translation) {
+            row[3] = value;
+        }
+        compose(&frame_b, &offset)
+    };
+    // CADIR closes C0 = C1 * T(offset) * Rz(angle) * facing. SolidCraft
+    // closes A * motion * facing = B, so keep A and fold the source offset into B.
+    // Placement and export consume these same frames.
+    let (motion, frame_b) = match kind
         .get("kind")
         .and_then(Value::as_str)
         .unwrap_or("unknown")
     {
-        "fixed" => {
-            // The offset carries B's frame from A's: along A's frame, then turned about z.
-            let t = kind
-                .get("translation_offset")
-                .and_then(Value::as_array)
-                .map(|t| [0, 1, 2].map(|i| t.get(i).and_then(Value::as_f64).unwrap_or(0.0)))
-                .unwrap_or([0.0; 3]);
-            let mut offset = turn(number("angle"));
-            for (row, value) in offset.iter_mut().zip(t) {
-                row[3] = value;
-            }
-            (Motion::Rigid, compose(&frame_a, &offset))
-        }
+        "fixed" => (Motion::Rigid, offset(number("angle"))),
         "revolute" => {
             let limits = match kind.get("angular_limits") {
                 None | Some(Value::Null) => None,
@@ -1865,19 +1896,24 @@ fn joint(
                     }
                 },
             };
-            // The source's angle aligns the frames, as a fixed joint's does: it turns A's
-            // frame about z. Where the joint turns from there is in the placements alone, so
-            // it starts at none and is measured from them once the parts are placed.
+            // The source's angle aligns the frames by turning B's frame about z.
+            // Further motion is measured from the placements once the parts are placed.
             (
                 Motion::Revolute { angle: 0.0, limits },
-                compose(&frame_a, &turn(number("angle"))),
+                compose(&frame_b, &turn(number("angle"))),
             )
         }
         "slider" => (
             Motion::Slider {
-                distance: number("distance"),
+                // C0 = C1 * Tz(d) * facing. Express B's motion along A's z:
+                // the half turn reverses z for opposed frames, but aligned frames do not.
+                distance: if flip {
+                    -number("distance")
+                } else {
+                    number("distance")
+                },
             },
-            frame_a,
+            offset(0.0),
         ),
         other => return Err(format!("{other} joints are not converted yet")),
     };
@@ -1892,7 +1928,7 @@ fn joint(
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
             motion,
-            flip: frame_aligned(row),
+            flip,
         },
         match (lifted, note) {
             (true, Some(note)) => Some(format!("{WHOLE_COPY}; {note}")),
@@ -4667,12 +4703,12 @@ mod tests {
         let (a, b) = hinge();
         let (world, _, _) = joined(json!({"kind": "revolute", "angle": 0.5}), a, b);
         assert!(near(&world, &at([110.0, 0.0, 0.0], -0.5)), "{world:?}");
-        // A slider 7 mm out along the first frame's z, which faces down once they meet.
+        // A slider 7 mm along the second connector's z, which points down.
         let (a, b) = hinge();
         let (world, _, _) = joined(json!({"kind": "slider", "distance": 7.0}), a, b);
         assert!(near(&world, &at([110.0, 0.0, -7.0], 0.0)), "{world:?}");
-        // A fixed joint carries its offset in the first frame: 5 mm along it, then a quarter
-        // turn about it.
+        // C0 = C1 * T(5, 0, 0) * Rz(pi/2) * F: the second frame's x points
+        // along world x, so the first part sits at x = 115, turned -pi/2.
         let (a, b) = hinge();
         let (world, _, _) = joined(
             json!({"kind": "fixed", "angle": std::f64::consts::FRAC_PI_2,
@@ -4681,9 +4717,221 @@ mod tests {
             b,
         );
         assert!(
-            near(&world, &at([110.0, 5.0, 0.0], -std::f64::consts::FRAC_PI_2)),
+            near(&world, &at([115.0, 0.0, 0.0], -std::f64::consts::FRAC_PI_2)),
             "{world:?}"
         );
+    }
+
+    #[test]
+    fn joint_offsets_close_on_the_second_connector_for_each_frame_sense() {
+        let first = at([1.0, 2.0, 3.0], 0.2);
+        let second = at([10.0, 20.0, 30.0], -0.3);
+        for (kind, source_offset) in [
+            (
+                json!({"kind": "fixed", "angle": 0.7, "translation_offset": [4.0, 6.0, 8.0]}),
+                at([4.0, 6.0, 8.0], 0.7),
+            ),
+            (json!({"kind": "revolute", "angle": 0.7}), turn(0.7)),
+            (
+                json!({"kind": "slider", "distance": 7.0, "translation_offset": [4.0, 6.0, 8.0]}),
+                at([4.0, 6.0, 15.0], 0.0),
+            ),
+        ] {
+            for (sense, facing) in [("opposed", FACING), ("aligned", IDENTITY)] {
+                for anchor_a in [false, true] {
+                    for already_closed in [false, true] {
+                        let (mut a, mut b) = (at([30.0, 40.0, 50.0], 0.4), IDENTITY);
+                        // Derive the missing pose directly from C0 = C1 * offset * facing.
+                        let b_to_a = compose(&compose(&second, &source_offset), &facing);
+                        let (expected_a, expected_b) = if anchor_a {
+                            (a, compose(&compose(&a, &first), &inverse(&b_to_a)))
+                        } else {
+                            (compose(&compose(&b, &b_to_a), &inverse(&first)), b)
+                        };
+                        if already_closed {
+                            (a, b) = (expected_a, expected_b);
+                        }
+                        let mut a_row = placed(2, "block", inside(0), 0.0);
+                        a_row["transform"] = json!(a);
+                        let mut b_row = placed(1, "block", inside(0), 0.0);
+                        b_row["transform"] = json!(b);
+                        if anchor_a || already_closed {
+                            a_row = posed_child(
+                                a_row,
+                                "f3d:Design/BulkStream.dat:design-component-occurrence#11",
+                            );
+                        }
+                        if !anchor_a || already_closed {
+                            b_row = posed_child(
+                                b_row,
+                                "f3d:Design/BulkStream.dat:design-component-occurrence#12",
+                            );
+                        }
+                        let mut row = joint(
+                            1,
+                            kind.clone(),
+                            connector_at(2, &[], first),
+                            connector_at(1, &[], second),
+                        );
+                        row["operands"]["frame_sense"] = json!(sense);
+                        let model = with_current_poses(
+                            with_joints(
+                                nested(
+                                    false,
+                                    Some(json!([placed(0, "frame", root(), 100.0), b_row, a_row])),
+                                ),
+                                json!([row]),
+                            ),
+                            &[
+                                "f3d:Design/BulkStream.dat:design-component-occurrence#11",
+                                "f3d:Design/BulkStream.dat:design-component-occurrence#12",
+                            ],
+                        );
+                        let (assembly, notes) = local_components(&model).unwrap().unwrap();
+                        assert!(notes.is_empty(), "{kind}, {sense}, anchor_a={anchor_a}, closed={already_closed}: {notes:?}");
+                        let holder = at([100.0, 0.0, 0.0], 0.0);
+                        let wa = world_at(&assembly, &[0, 1]).unwrap();
+                        let wb = world_at(&assembly, &[0, 0]).unwrap();
+                        assert!(
+                            near(&wa, &compose(&holder, &expected_a)),
+                            "{kind}, {sense}: {wa:?}"
+                        );
+                        assert!(
+                            near(&wb, &compose(&holder, &expected_b)),
+                            "{kind}, {sense}: {wb:?}"
+                        );
+                        let joint = &assembly.joints[0];
+                        assert!(!joint.suppressed);
+                        assert_eq!(joint.flip, sense == "aligned");
+                        assert!(near(&joint.frame_a, &first));
+                        // The exact same normalized frames used for placement go to the writer.
+                        assert!(near(
+                            &compose(&compose(&wa, &joint.frame_a), &joint.meeting()),
+                            &compose(&wb, &joint.frame_b),
+                        ));
+                        assert!(near(
+                            &compose(&wa, &first),
+                            &compose(&compose(&compose(&wb, &second), &source_offset), &facing),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn an_offset_joint_is_rechecked_after_outer_joints_place_its_parts() {
+        // The internal joint closes at the stored poses: A is 5 mm along B's x.
+        // Outer joints then hold A at x = 10 and its holder at x = 20. B travels
+        // with the holder, while A stays held. The internal joint must be suppressed.
+        let aligned = |mut row: Value| {
+            row["operands"]["frame_sense"] = json!("aligned");
+            row
+        };
+        let root_at = |x| {
+            let mut connector = connector(None);
+            connector["frame"] = json!(at([x, 0.0, 0.0], 0.0));
+            connector
+        };
+        let model = with_joints(
+            nested(
+                false,
+                Some(json!([
+                    placed(0, "frame", root(), 3.0),
+                    placed(1, "block", inside(0), 5.0),
+                    placed(2, "block", inside(0), 0.0),
+                ])),
+            ),
+            json!([
+                aligned(joint(
+                    1,
+                    json!({"kind": "fixed", "translation_offset": [5.0, 0.0, 0.0]}),
+                    connector_at(1, &[], IDENTITY),
+                    connector_at(2, &[], IDENTITY)
+                )),
+                aligned(joint(
+                    2,
+                    json!({"kind": "fixed"}),
+                    root_at(10.0),
+                    connector_at(1, &[], IDENTITY)
+                )),
+                aligned(joint(
+                    3,
+                    json!({"kind": "fixed"}),
+                    root_at(20.0),
+                    connector_at(0, &[], IDENTITY)
+                )),
+            ]),
+        );
+        let (assembly, notes) = local_components(&model).unwrap().unwrap();
+        assert_eq!(
+            world_at(&assembly, &[0, 0]),
+            Some(at([10.0, 0.0, 0.0], 0.0))
+        );
+        assert_eq!(
+            world_at(&assembly, &[0, 1]),
+            Some(at([20.0, 0.0, 0.0], 0.0))
+        );
+        assert_eq!(
+            assembly
+                .joints
+                .iter()
+                .map(|joint| joint.suppressed)
+                .collect::<Vec<_>>(),
+            [true, false, false]
+        );
+        assert_eq!(notes.len(), 1, "{notes:?}");
+        assert!(notes[0].starts_with("joint 1: its parts are placed by other joints"));
+    }
+
+    #[test]
+    fn a_carriage_offset_keeps_its_three_mm_stored_pose() {
+        // Synthetic carriage and rail: C0 at (0, 5, 0), z down Y; C1 at
+        // (-40, 8, 0), z up Y. C1 * T(40, 0, 0) * F meets C0 at y = 8
+        // when the carriage is at y = 3. The same rule places an unposed carriage.
+        let carriage = [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 0.0, -1.0, 5.0],
+            [0.0, 1.0, 0.0, 0.0],
+        ];
+        let rail = [
+            [1.0, 0.0, 0.0, -40.0],
+            [0.0, 0.0, 1.0, 8.0],
+            [0.0, -1.0, 0.0, 0.0],
+        ];
+        for stored_y in [0.0, 3.0] {
+            let mut moving = placed(2, "block", inside(0), 0.0);
+            moving["transform"] = json!(at([0.0, stored_y, 0.0], 0.0));
+            let model = with_joints(
+                nested(
+                    false,
+                    Some(json!([
+                        placed(0, "frame", root(), 0.0),
+                        placed(1, "block", inside(0), 0.0),
+                        moving
+                    ])),
+                ),
+                json!([joint(
+                    1,
+                    json!({"kind": "fixed", "angle": 0.0, "translation_offset": [40.0, 0.0, 0.0]}),
+                    connector_at(2, &[], carriage),
+                    connector_at(1, &[], rail),
+                )]),
+            );
+            let (assembly, notes) = local_components(&model).unwrap().unwrap();
+            assert!(notes.is_empty(), "{notes:?}");
+            let world = world_at(&assembly, &[0, 1]).unwrap();
+            assert!(near(&world, &at([0.0, 3.0, 0.0], 0.0)), "{world:?}");
+            assert_eq!(world_at(&assembly, &[0, 0]), Some(IDENTITY));
+            let joint = &assembly.joints[0];
+            assert!(!joint.flip);
+            assert!(!joint.suppressed);
+            assert!(near(&joint.frame_a, &carriage));
+            assert!(near(
+                &compose(&compose(&world, &joint.frame_a), &joint.meeting()),
+                &joint.frame_b,
+            ));
+        }
     }
 
     #[test]
@@ -4978,7 +5226,7 @@ mod tests {
 
     #[test]
     fn fixed_joints_join_the_placements_they_name() {
-        let fixed = json!({"kind": "fixed", "angle": 0.0, "translation_offset": [0.0, 0.0, 0.0]});
+        let fixed = json!({"kind": "fixed", "angle": 0.25, "translation_offset": [5.0, 0.0, 0.0]});
         let model = with_joints(
             nested(false, None),
             json!([
@@ -5016,6 +5264,13 @@ mod tests {
                 (vec![0, 0], vec![0, 1])
             ]
         );
+        for joint in &assembly.joints {
+            assert!(near(&joint.frame_a, &IDENTITY), "{joint:?}");
+            assert!(
+                near(&joint.frame_b, &at([5.0, 0.0, 0.0], 0.25)),
+                "{joint:?}"
+            );
+        }
     }
 
     #[test]

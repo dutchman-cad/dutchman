@@ -1440,6 +1440,118 @@ fn revolute_and_slider_joints_are_written_with_their_motion() {
     assert_eq!(kinds, [("revolute", 1), ("rigid", 1)]);
 }
 
+#[test]
+fn joint_offsets_keep_the_written_snaps_closed() {
+    for (kind, expected_origin, angle) in [
+        (
+            json!({"kind": "fixed", "translation_offset": [5.0, 7.0, 9.0], "angle": 0.5}),
+            [-5.0, -3.0, -9.0],
+            0.5_f64,
+        ),
+        (
+            json!({"kind": "revolute", "angle": 0.5}),
+            [-10.0, 4.0, 0.0],
+            0.5_f64,
+        ),
+        (
+            json!({"kind": "slider", "translation_offset": [5.0, 7.0, 9.0], "distance": 7.0}),
+            [-5.0, -3.0, -9.0],
+            0.0_f64,
+        ),
+    ] {
+        for sense in ["opposed", "aligned"] {
+            let mut model = hinged(kind.clone());
+            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            wire["model"]["assembly_joints"][1]["operands"]["frame_sense"] = json!(sense);
+            // Start off the joint axis so each kind must place the unposed second part.
+            wire["model"]["assembly_joints"][1]["operands"]["connectors"][1]["frame"][1][3] =
+                json!(4.0);
+            model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+            model.assembly = dutchman_core::local_assembly(&model).unwrap();
+            let (bytes, _) = written(&model);
+            let doc = document(&bytes);
+            let joint = &doc["assembly"]["joints"][1];
+            assert_eq!(joint["flip"], sense == "aligned");
+            assert_ne!(joint["suppressed"], true);
+            assert_eq!(joint["a"]["snap"]["origin"], json!([20.0, 0.0, 0.0]));
+            assert_eq!(joint["a"]["snap"]["x"], json!([1.0, 0.0, 0.0]));
+            assert_eq!(joint["b"]["snap"]["origin"], json!(expected_origin));
+            assert_eq!(joint["b"]["snap"]["z"], json!([0.0, 0.0, -1.0]));
+            // The second connector faces down Z, so its Rz(angle) turns x toward -Y.
+            let x = joint["b"]["snap"]["x"].as_array().unwrap();
+            for (actual, expected) in x.iter().zip([angle.cos(), -angle.sin(), 0.0]) {
+                assert!(
+                    (actual.as_f64().unwrap() - expected).abs() < 1e-9,
+                    "{joint}"
+                );
+            }
+            if kind["kind"] == "slider" {
+                assert_eq!(
+                    joint["values"],
+                    json!([if sense == "aligned" { -7.0 } else { 7.0 }])
+                );
+            }
+            let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) else {
+                continue;
+            };
+            let dir = tempfile::tempdir().unwrap();
+            let design = dir.path().join("design.sc");
+            let solved = dir.path().join("solved.sc");
+            let script = dir.path().join("solve.json");
+            let results = dir.path().join("results.json");
+            std::fs::write(&design, &bytes).unwrap();
+            std::fs::write(&script, r#"[{"command":"joint.solve","params":{}}]"#).unwrap();
+            let status = std::process::Command::new(&cli)
+                .arg("run")
+                .arg(&script)
+                .arg("--in")
+                .arg(&design)
+                .arg("--save")
+                .arg(&solved)
+                .arg("--results")
+                .arg("--json-out")
+                .arg(&results)
+                .status()
+                .unwrap();
+            assert!(status.success(), "{kind}, {sense}");
+            let results: Value =
+                serde_json::from_reader(std::fs::File::open(results).unwrap()).unwrap();
+            assert_eq!(
+                results[0]["conflicts"],
+                json!([]),
+                "{kind}, {sense}: {results}"
+            );
+            assert_eq!(
+                results[0]["errors"],
+                json!([]),
+                "{kind}, {sense}: {results}"
+            );
+            let after = document(&std::fs::read(solved).unwrap());
+            for before in doc["occurrences"].as_array().unwrap() {
+                let now = after["occurrences"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|row| row["id"] == before["id"])
+                    .unwrap();
+                for (old, new) in before["transform"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .zip(now["transform"].as_array().unwrap())
+                {
+                    for (old, new) in old.as_array().unwrap().iter().zip(new.as_array().unwrap()) {
+                        assert!(
+                            (old.as_f64().unwrap() - new.as_f64().unwrap()).abs() < 1e-6,
+                            "{kind}, {sense}: {before} -> {now}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// A grounded base and a hinge, both turned a quarter turn about Z and translated.
 fn grounded_hinge() -> Model {
     let mut model = hinged(serde_json::json!({"kind": "revolute"}));

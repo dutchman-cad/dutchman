@@ -35,8 +35,8 @@ def mul(a, b):
     return [[sum(a[i][k] * b[k][j] for k in range(4)) for j in range(4)] for i in range(4)]
 
 
-def placements(doc):
-    """Map of occurrence path -> world origin [x, y, z], rounded to 0.001."""
+def world_transforms(doc):
+    """Map of occurrence path -> unrounded row-vector world transform."""
     children = {}
     for occ in doc["occurrences"]:
         children.setdefault(occ["parent"], []).append(occ)
@@ -56,9 +56,15 @@ def placements(doc):
                 continue
             w = mul(occ["transform"], world)
             path = prefix + "/" + name if prefix else name
-            out[path] = [round(v, 3) + 0.0 for v in w[3][:3]]
+            out[path] = w
             stack.append((occ["component"], w, path, depth + 1))
     return dict(sorted(out.items()))
+
+
+def placements(doc):
+    """Map of occurrence path -> world origin [x, y, z], rounded to 0.001."""
+    return {path: [round(v, 3) + 0.0 for v in w[3][:3]]
+            for path, w in world_transforms(doc).items()}
 
 
 def golden_of(doc):
