@@ -165,17 +165,23 @@ transform, and each component as a product definition.
   z axes; aligned frames meet with their axes pointing the same way. Fusion can store a joined
   part where it was before its joints were solved, so Dutchman places joined parts where their
   joints put them: from the design's own root, each joint places the part at its other end; a
-  joint neither of whose parts is placed yet moves its first part to its second, as Fusion moves
-  the first part picked for a joint. A joint to a part inside an identity-placed component
-  places the outermost such component below the common ancestor, carrying its internal
-  joints with it, when internal joints bind the rest of its parts to the joined one and the
-  joints that reach into the component agree on where it goes; otherwise (parts nothing binds,
-  or each part joined to the origin at a place of its own) the component stays and each joint
-  places its part. Internal joints solve first, so the outer joint uses the inner part's
+  joint neither of whose parts is placed yet normally moves its first part to its second,
+  as Fusion moves the first part picked for a joint. When starting a group of joints that
+  reaches nothing placed, a non-identity stored world pose takes precedence over an identity
+  pose on the other side; otherwise the outermost occurrence stays put. Joints that already
+  close at the stored poses hold their parts in their common component before any open joint
+  moves a part. That component can still travel with an outer joint.
+  A joint to a part inside an identity-placed component carries the component when child
+  poses describe its relative layout, or all its children belong to the joined group, and
+  the joints reaching into it agree on its place. An unrelated internal joint is insufficient. If that outer component is only an organiser,
+  Dutchman tries the deepest smaller holder whose children are connected, then the named part.
+  A body's identity placement at a holder's origin can also identify the holder as the moving
+  assembly, including a holder with a non-identity placement, provided every outside joint
+  reaches it through that same body. A joint that names the holder itself prevents this
+  promotion. Children independently reached by other joints stay with their own placements.
+  Internal joints solve first, so the outer joint uses the inner part's
   solved connector position. A file pose, grounding joint, or earlier joint holds that component in
-  place instead; a conflicting outer joint is suppressed. Joints that reach nothing placed
-  start from the outermost occurrence they join, which stays where the file puts it. Of a joint
-  between a component and a
+  place instead; a conflicting outer joint is suppressed. Of a joint between a component and a
   part inside it, as a rigid group holds its members to its first, the inner part moves and the
   component keeps its own placement; a component holding a part already placed by an outer
   joint is never moved to meet that part, as that would move the part too. A component a joint
@@ -183,8 +189,11 @@ transform, and each component as a product definition.
   parts the file poses inside it, whose poses are relative to it. Internal
   joints alone do not fix their holder in the assembly. A component the file stores at the pose it shows
   it in starts placed: its joints are checked there instead of moving it back to where it was
-  inserted. This also preserves a child component named by a contained pose inside an inserted
-  design when that design has no current pose of its own. An inserted design's own current
+  inserted. Within an already posed component, an isolated leaf pose marker yields to a
+  partner held by joints that already close; the design root alone does not override that
+  child pose. Explicit holder poses and child poses already
+  confirmed by a solved joint stay protected. This also preserves a child component named by
+  a contained pose inside an inserted design when that design has no current pose of its own. An inserted design's own current
   pose holds the design; its children still use their own poses or joints. A contained pose is
   matched within that design instance and its stored owner chain, so an
   unrelated component or mirrored sibling does not inherit the pose. A part two joints would
