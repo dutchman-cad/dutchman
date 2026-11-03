@@ -1880,12 +1880,11 @@ impl App {
             };
             let shown = card(ui, &p, |ui| {
                 let policy = self.report_policy.policy();
-                if let Some(path) = self.row_logs.get(&index) {
-                    if let Err(message) = platform::log_controls(ui, path, log_ready) {
-                        self.notice = Some(message);
-                    }
-                }
-                let chosen = row_ui(ui, &p, index, row, file, policy, self.has_app, running);
+                let log = self
+                    .row_logs
+                    .get(&index)
+                    .map(|path| (path.as_path(), log_ready));
+                let chosen = row_ui(ui, &p, index, row, file, policy, self.has_app, running, log);
                 if let Some(chosen) = chosen {
                     action = Some(chosen);
                 }
@@ -1905,6 +1904,10 @@ impl App {
                 if let Some(row) = self.rows.get(index) {
                     self.doctor = Some(crate::doctor::Page::new(Some(row.input.clone())));
                 }
+                Ok(())
+            }
+            Some(Action::Notice(message)) => {
+                self.notice = Some(message);
                 Ok(())
             }
             Some(Action::Pick(pick)) => {
@@ -1982,6 +1985,8 @@ impl eframe::App for App {
 }
 
 enum Action {
+    /// Show this message.
+    Notice(String),
     Diagnose(usize),
     Check(usize),
     Open(PathBuf),
@@ -2007,6 +2012,7 @@ fn row_ui(
     policy: &ReportPolicy,
     has_app: bool,
     running: bool,
+    log: Option<(&Path, bool)>,
 ) -> Option<Action> {
     let mut action = None;
     let colour = match view.status {
@@ -2095,6 +2101,11 @@ fn row_ui(
     }
     if let Some(message) = &view.error {
         ui.label(RichText::new(message).color(p.danger));
+        if let Some((path, ready)) = log {
+            if let Err(message) = platform::log_controls(ui, path, ready) {
+                action = Some(Action::Notice(message));
+            }
+        }
         if ui
             .add_enabled(!running, egui::Button::new("Diagnose this file"))
             .clicked()
@@ -2111,6 +2122,11 @@ fn row_ui(
             }
         }
         return action;
+    }
+    if let Some((path, ready)) = log {
+        if let Err(message) = platform::log_controls(ui, path, ready) {
+            action = Some(Action::Notice(message));
+        }
     }
     if row.status == Status::Converted && row.report.is_some() {
         let output = row.output.as_deref().map(display).unwrap_or_default();
@@ -2510,6 +2526,7 @@ mod tests {
                             ReportPolicy::bundled(),
                             false,
                             false,
+                            None,
                         ) {
                             *chosen = true;
                         }
@@ -2957,6 +2974,7 @@ mod tests {
                     ReportPolicy::bundled(),
                     true,
                     false,
+                    None,
                 );
             });
         harness.run_steps(8);
@@ -3008,6 +3026,7 @@ mod tests {
                             ReportPolicy::bundled(),
                             true,
                             false,
+                            None,
                         );
                     });
                     ui.add_space(theme::SPACE_2);
@@ -3099,6 +3118,7 @@ mod tests {
                         ReportPolicy::bundled(),
                         true,
                         false,
+                        None,
                     );
                 });
             harness.run_steps(2);
