@@ -52,6 +52,44 @@ pub struct Model {
     /// hand it on as it is instead of restating the decoded model as STEP.
     pub source_step: Option<String>,
 }
+
+impl Model {
+    /// Explains an assignment that no placed component retained. Body and face
+    /// identities are checked exactly, without conflating different instances.
+    pub fn unplaced_appearance_binding(
+        &self,
+        binding: &cadmpeg_ir::appearance::AppearanceBinding,
+    ) -> String {
+        use cadmpeg_ir::appearance::AppearanceTarget;
+        let (kind, id, exists) = match &binding.target {
+            AppearanceTarget::Body(id) => (
+                "body",
+                id.as_str(),
+                self.ir.model.bodies.iter().any(|body| body.id == *id),
+            ),
+            AppearanceTarget::Face(id) => (
+                "face",
+                id.as_str(),
+                self.ir.model.faces.iter().any(|face| face.id == *id),
+            ),
+            _ => {
+                return format!(
+                "Appearance binding {} is left out: its target has no placed component geometry",
+                binding.id
+            )
+            }
+        };
+        let reason = if exists {
+            "its target exists in the decoded model but has no placed component geometry"
+        } else {
+            "its target is absent from the decoded model"
+        };
+        format!(
+            "Appearance binding {} to {kind} {id} is left out: {reason}",
+            binding.id
+        )
+    }
+}
 pub use report::{
     Check, Completeness, FeatureOutcome, FeatureStatus, LeftOutGroup, Loss, Mode, Outcome,
     PartHistory, Report, Severity, Stage,

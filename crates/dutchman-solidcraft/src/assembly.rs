@@ -55,11 +55,7 @@ fn report_appearance_bindings(model: &Model, report: &mut Report) -> bool {
             if ids.contains(binding.id.as_str()) {
                 continue;
             }
-            let detail = format!(
-                "Appearance binding {} has no target in a placed component's geometry; \
-                 its appearance is left out",
-                binding.id
-            );
+            let detail = model.unplaced_appearance_binding(binding);
             if !report
                 .losses()
                 .iter()

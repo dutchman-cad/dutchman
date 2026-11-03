@@ -3058,3 +3058,170 @@ fn a_part_placed_at_a_changed_layout_is_not_repeated() {
         ]
     );
 }
+
+/// A saved free edge beside a painted solid, in the same component definition.
+fn bound_components_with_wire(stored: bool) -> Model {
+    let mut model = bound_components("body", stored);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let edge = wire["model"]["edges"][0]["id"].clone();
+    let body = "synthetic:test:body#saved-edge";
+    let region = "synthetic:test:region#saved-edge";
+    let shell = "synthetic:test:shell#saved-edge";
+    wire["model"]["bodies"].as_array_mut().unwrap().push(json!({
+        "id": body, "kind": "wire", "regions": [region], "name": "Body"
+    }));
+    wire["model"]["regions"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "id": region, "body": body, "shells": [shell]
+        }));
+    wire["model"]["shells"].as_array_mut().unwrap().push(json!({
+        "id": shell, "region": region, "members": [{"kind": "wire_edge", "id": edge}]
+    }));
+    wire["model"]["product_definitions"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|definition| definition["id"] == "f3d:model:component#block")
+        .unwrap()["bodies"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!(body));
+    if stored {
+        wire["model"]["features"][0]["outputs"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!(body));
+    }
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model.assembly = dutchman_core::local_assembly(&model).unwrap();
+    model
+}
+
+#[test]
+fn saved_wire_edges_keep_the_solid_appearance_in_each_placement() {
+    for stored in [false, true] {
+        let model = bound_components_with_wire(stored);
+        assert!(model.assembly.as_ref().unwrap().parts[0]
+            .ir
+            .model
+            .bodies
+            .iter()
+            .any(|body| body.id.as_str() == "synthetic:test:body#saved-edge"));
+        let (bytes, report) = written(&model);
+        let doc = document(&bytes);
+        assert!(
+            report
+                .losses()
+                .iter()
+                .all(|loss| loss.subject != "appearance" && !loss.subject.ends_with(": appearance")),
+            "{:?}",
+            report.losses()
+        );
+        assert_eq!(doc["appearances"]["bodies"].as_object().unwrap().len(), 1);
+        let imports: Vec<_> = doc["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|feature| feature["type"] == "import" && feature["suppressed"] == false)
+            .collect();
+        assert_eq!(imports.len(), 1);
+        assert_eq!(imports[0]["body_names"].as_array().unwrap().len(), 1);
+        let name = imports[0]["body_names"][0].as_str().unwrap();
+        assert_eq!(
+            doc["appearances"]["bodies"][name]["color"],
+            json!([255, 0, 0])
+        );
+        if let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) {
+            assert_eq!(
+                evaluate(&cli, &bytes).len(),
+                2,
+                "free edges must not shift the solid's body name"
+            );
+        }
+    }
+}
+
+#[test]
+fn an_unwritable_sibling_keeps_the_written_bodys_appearance() {
+    for stored in [false, true] {
+        let mut model = bound_components_with_wire(stored);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let body = "synthetic:test:body#unresolved-solid";
+        let region = "synthetic:test:region#unresolved-solid";
+        let shell = "synthetic:test:shell#unresolved-solid";
+        let face = "synthetic:test:face#unresolved-solid";
+        let surface = "synthetic:test:surface#unresolved-solid";
+        wire["model"]["bodies"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":body,"kind":"solid","name":"Body","regions":[region]}));
+        wire["model"]["regions"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":region,"body":body,"shells":[shell]}));
+        wire["model"]["shells"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":shell,"region":region,"members":[{"kind":"face","id":face}]}));
+        wire["model"]["faces"].as_array_mut().unwrap().push(json!({"id":face,"shell":shell,"surface":surface,"sense":"forward","loops":{"classification":"unspecified","loops":[]}}));
+        wire["model"]["surfaces"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id":surface,"geometry":{
+            "kind":"unknown"}}));
+        wire["model"]["product_definitions"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|definition| definition["id"] == "f3d:model:component#block")
+            .unwrap()["bodies"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!(body));
+        if stored {
+            wire["model"]["features"][0]["outputs"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!(body));
+        }
+        wire["model"]["appearance_bindings"].as_array_mut().unwrap().push(json!({
+            "id":"synthetic:test:binding#unresolved-solid", "target":{"kind":"body","id":body},"appearance":"synthetic:test:appearance#blue"}));
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        model.assembly = dutchman_core::local_assembly(&model).unwrap();
+        let part = &model.assembly.as_ref().unwrap().parts[0];
+        assert!(
+            part.ir.model.bodies.iter().any(|b| b.id.as_str() == body),
+            "{:?}",
+            part.ir.model.bodies
+        );
+        assert!(
+            part.ir
+                .model
+                .appearance_bindings
+                .iter()
+                .any(|b| b.id.as_str() == "synthetic:test:binding#unresolved-solid"),
+            "{:?}",
+            part.ir.model.appearance_bindings
+        );
+        let (bytes, report) = written(&model);
+        let doc = document(&bytes);
+        let notes: Vec<_> = report
+            .losses()
+            .iter()
+            .filter(|l| l.subject == "appearance" || l.subject.ends_with(": appearance"))
+            .collect();
+        assert_eq!(notes.len(), 1, "{:?}", report.losses());
+        assert!(notes[0].detail.contains(body));
+        assert!(notes[0]
+            .detail
+            .ends_with("its body has no geometry the STEP writer can write"));
+        let looks = doc["appearances"]["bodies"].as_object().unwrap();
+        assert_eq!(looks.len(), 1);
+        assert_eq!(looks.values().next().unwrap()["color"], json!([255, 0, 0]));
+        if let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) {
+            assert_eq!(evaluate(&cli, &bytes).len(), 2);
+        }
+    }
+}

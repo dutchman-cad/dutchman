@@ -36,7 +36,7 @@ mod sweep;
 mod thread;
 
 use std::cell::OnceCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use dutchman_core::{FeatureOutcome, FeatureStatus, Model, Report, Severity};
 use serde_json::Value;
@@ -91,6 +91,7 @@ pub(crate) fn imported(
     let wire = serde_json::to_value(&model.ir)
         .map_err(|err| dutchman_core::Error::Encode(format!("cannot map appearances: {err}")))?;
     let mut ctx = Context::new(wire.get("model").unwrap_or(&Value::Null));
+    ctx.source = Some(model);
     let ids: Vec<_> = model
         .ir
         .model
@@ -370,6 +371,8 @@ struct Context<'a> {
     named_bodies: Vec<(String, String)>,
     /// Region of each explicitly named imported shape.
     imported_regions: BTreeMap<String, String>,
+    /// Bodies proven to produce no solid/surface shape in the STEP restatement.
+    unwritten_bodies: BTreeSet<String>,
     /// Resolved frames of earlier nonbuilding datum planes.
     planes: BTreeMap<String, datum::Frame>,
     /// Whether a feature that builds geometry has been mapped.
@@ -406,6 +409,7 @@ impl<'a> Context<'a> {
             pattern_replay_required: false,
             named_bodies: Vec::new(),
             imported_regions: BTreeMap::new(),
+            unwritten_bodies: BTreeSet::new(),
             planes: BTreeMap::new(),
             builds: false,
             sheet_rules: Vec::new(),
@@ -841,7 +845,13 @@ fn map_into(
     history.stop = blocked;
     history.params = params;
     params::unsigned_dimensions(&mut history, &ctx);
-    history.face_looks = faces::looks(&mut ctx, report);
+    let mut appearance_report = Report::default();
+    history.face_looks = faces::looks(&mut ctx, &mut appearance_report);
+    // A partial prefix becomes a hidden editable copy. Its unnamed final
+    // bodies are mapped by the visible original's Import instead.
+    if history.stop.is_none() {
+        report.append(appearance_report);
+    }
     history.looks = std::mem::take(&mut ctx.looks);
     history.sheet_rules = ctx
         .sheet_rules

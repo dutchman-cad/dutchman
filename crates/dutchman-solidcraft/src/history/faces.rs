@@ -2,8 +2,10 @@
 //!
 //! SolidCraft finds a face look's face by its body and a point on the face. A replayed body is
 //! built where the source's final body is, so a point inside the source face finds the same
-//! face. Points are found for planar faces: the centroid of a triangle of the face's outer
-//! loop that lies inside the loop, so concave faces get a point on them too.
+//! face. Analytic picks handle planes and simple round faces; bounded trim charts
+//! provide interior picks on other resolved surfaces, while respecting holes.
+
+mod uv;
 
 use serde_json::{json, Value};
 
@@ -100,6 +102,7 @@ pub(crate) fn looks(ctx: &mut Context, report: &mut dutchman_core::Report) -> Ve
         }
     }
     let mut applied = BTreeSet::new();
+    let mut named = BTreeSet::new();
     let resolve = |row: &Value| -> Option<Value> {
         let id = row.get("id")?.as_str()?;
         if let Some(bindings) = bound.get(id) {
@@ -126,6 +129,7 @@ pub(crate) fn looks(ctx: &mut Context, report: &mut dutchman_core::Report) -> Ve
         let Some(body) = ctx.row("bodies", body_id) else {
             continue;
         };
+        named.insert(body_id.as_str());
         let body_look = resolve(body);
         if let Some(look) = &body_look {
             body_looks.insert(name.clone(), look.clone());
@@ -137,6 +141,11 @@ pub(crate) fn looks(ctx: &mut Context, report: &mut dutchman_core::Report) -> Ve
             faces(ctx, body)
         };
         let painted: Vec<_> = faces.iter().map(|face| resolve(face)).collect();
+        named.extend(
+            faces
+                .iter()
+                .filter_map(|face| face.get("id").and_then(Value::as_str)),
+        );
         let uniform = painted.first().and_then(Option::as_ref).filter(|first| {
             !bound.contains_key(body_id.as_str())
                 && painted.iter().all(|look| look.as_ref() == Some(*first))
@@ -154,7 +163,7 @@ pub(crate) fn looks(ctx: &mut Context, report: &mut dutchman_core::Report) -> Ve
             let Some(look) = look else { continue };
             let written = if Some(&look) == body_look.as_ref() {
                 true
-            } else if let Some(point) = point_on(ctx, face).and_then(|p| placed(body, p)) {
+            } else if let Some(point) = appearance_point(ctx, face).and_then(|p| placed(body, p)) {
                 out.push(json!({"body": name, "point": point, "look": look}));
                 true
             } else {
@@ -167,7 +176,7 @@ pub(crate) fn looks(ctx: &mut Context, report: &mut dutchman_core::Report) -> Ve
                         dutchman_core::Severity::Dropped,
                         "appearance",
                         format!(
-                            "Face {} has no resolved planar interior point; its colour is left out",
+                            "Face {} has no resolved interior point; its colour is left out",
                             face.get("id").unwrap_or(&Value::Null)
                         ),
                     );
@@ -192,13 +201,21 @@ pub(crate) fn looks(ctx: &mut Context, report: &mut dutchman_core::Report) -> Ve
                 .get("appearance")
                 .and_then(Value::as_str)
                 .and_then(|id| ctx.row("appearances", id));
+            let owner = target.and_then(|id| {
+                if kind == "body" {
+                    return Some(id);
+                }
+                let shell = ctx.row("faces", id)?.get("shell")?.as_str()?;
+                let region = ctx.row("shells", shell)?.get("region")?.as_str()?;
+                ctx.row("regions", region)?.get("body")?.as_str()
+            });
             let reason = if !matches!(kind, "body" | "face") {
                 "its target kind is not supported yet"
             } else if target
                 .and_then(|id| ctx.row(if kind == "body" { "bodies" } else { "faces" }, id))
                 .is_none()
             {
-                "its target does not exist"
+                "its target is absent from the decoded model"
             } else if appearance.is_none() {
                 "its appearance does not exist"
             } else if appearance
@@ -213,8 +230,12 @@ pub(crate) fn looks(ctx: &mut Context, report: &mut dutchman_core::Report) -> Ve
                     .any(|b| b.get("appearance") != binding.get("appearance"))
             }) {
                 "its target has conflicting appearance bindings"
+            } else if owner.is_some_and(|id| ctx.unwritten_bodies.contains(id)) {
+                "its body has no geometry the STEP writer can write"
+            } else if !target.is_some_and(|id| named.contains(id)) {
+                "its target has no written body name"
             } else {
-                "its target has no written body name or resolved planar interior point"
+                "its face has no resolved interior point"
             };
             report.push(
                 dutchman_core::Severity::Dropped,
@@ -232,6 +253,15 @@ pub(crate) fn looks(ctx: &mut Context, report: &mut dutchman_core::Report) -> Ve
     }
     ctx.looks.extend(body_looks);
     out
+}
+
+/// Prefer the actual trim chart: vertices alone cannot distinguish a long
+/// cylindrical arc from its complement, or exclude a hole in a planar face.
+fn appearance_point(ctx: &Context, face: &Value) -> Option<V3> {
+    let geometry = ctx
+        .row("surfaces", face.get("surface")?.as_str()?)?
+        .get("geometry")?;
+    uv::point(ctx, face, geometry).or_else(|| point_on(ctx, face))
 }
 
 fn placed(body: &Value, p: V3) -> Option<V3> {
@@ -279,11 +309,12 @@ pub(super) fn import_names(ctx: &mut Context, ids: &[&str], step: Option<&str>) 
         let Some(body) = ctx.row("bodies", body_id) else {
             continue;
         };
-        if !matches!(
-            body.get("kind").and_then(Value::as_str),
-            Some("solid" | "sheet")
-        ) {
-            return Vec::new();
+        match body.get("kind").and_then(Value::as_str) {
+            // Saved free edges are carried beside solids in STEP, but do not
+            // produce SolidCraft solid/surface bodies or consume their names.
+            Some("wire") => continue,
+            Some("solid" | "sheet") => {}
+            _ => return Vec::new(),
         }
         let base = body.get("name").and_then(Value::as_str).unwrap_or("Body");
         let mut name = base.to_owned();
@@ -300,7 +331,43 @@ pub(super) fn import_names(ctx: &mut Context, ids: &[&str], step: Option<&str>) 
     if let Some(step) = step {
         let shapes = shape_count(step);
         if shapes != named.len() {
-            return Vec::new();
+            // A sibling can have topology that STEP cannot write at all. Prove
+            // each body's shape count using the same guarded restatement before
+            // omitting its name; never shift colours by guessing which vanished.
+            let Some(source) = ctx.source else {
+                return Vec::new();
+            };
+            let bodies: std::collections::BTreeSet<_> =
+                named.iter().map(|(id, _)| id.as_str()).collect();
+            if bodies.len() > 32 {
+                return Vec::new();
+            }
+            let mut omitted = std::collections::BTreeSet::new();
+            for body in bodies {
+                let Ok(part) = dutchman_core::with_bodies(source, &[body], source.name.clone())
+                else {
+                    return Vec::new();
+                };
+                let count = match crate::step::restate(&part, &mut dutchman_core::Report::default())
+                {
+                    Ok(text) => shape_count(&text),
+                    Err(dutchman_core::Error::NoGeometry(_)) => 0,
+                    Err(_) => return Vec::new(),
+                };
+                if count == 0 {
+                    omitted.insert(body.to_owned());
+                } else if count != named.iter().filter(|(id, _)| id == body).count() {
+                    return Vec::new();
+                }
+            }
+            named.retain(|(body, _)| !omitted.contains(body));
+            if shapes != named.len() {
+                return Vec::new();
+            }
+            let retained: std::collections::BTreeSet<_> =
+                named.iter().map(|(_, name)| name.as_str()).collect();
+            regions.retain(|name, _| retained.contains(name.as_str()));
+            ctx.unwritten_bodies.extend(omitted);
         }
     }
     let names = named.iter().map(|(_, name)| name.clone()).collect();
@@ -370,7 +437,7 @@ fn faces<'a>(ctx: &Context<'a>, body: &Value) -> Vec<&'a Value> {
 fn point_on(ctx: &Context, face: &Value) -> Option<V3> {
     let surface = ctx.row("surfaces", face.get("surface")?.as_str()?)?;
     let geometry = surface.get("geometry")?;
-    if geometry.get("kind")?.as_str()? == "cylinder" {
+    if matches!(geometry.get("kind")?.as_str()?, "cylinder" | "cone") {
         return cylinder_point(ctx, face, geometry);
     }
     if geometry.get("kind")?.as_str()? != "plane" {
@@ -439,7 +506,21 @@ fn cylinder_point(ctx: &Context, face: &Value, geometry: &Value) -> Option<V3> {
     let origin = v3(geometry.get("origin"))?;
     let axis = super::sketch::unit(v3(geometry.get("axis"))?)?;
     let reference = v3(geometry.get("ref_direction"))?;
-    let radius = geometry.get("radius")?.as_f64().filter(|r| *r > 0.0)?;
+    let cone = geometry.get("kind").and_then(Value::as_str) == Some("cone");
+    let radius = geometry.get("radius")?.as_f64().filter(|r| *r >= 0.0)?;
+    let growth = if cone {
+        geometry.get("half_angle")?.as_f64()?.tan()
+    } else {
+        0.0
+    };
+    let ratio = if cone {
+        geometry.get("ratio")?.as_f64()?
+    } else {
+        1.0
+    };
+    if !growth.is_finite() || !ratio.is_finite() || ratio <= 0.0 {
+        return None;
+    }
     let side = super::sketch::unit(super::sketch::cross(axis, reference))?;
     let reference = super::sketch::unit(super::sketch::cross(side, axis))?;
     let loops = face.pointer("/loops/loops")?.as_array()?;
@@ -467,7 +548,9 @@ fn cylinder_point(ctx: &Context, face: &Value, geometry: &Value) -> Option<V3> {
                 d[2] - height * axis[2],
             ];
             heights.push(height);
-            angles.push(dot(radial, side).atan2(dot(radial, reference)));
+            if dot(radial, radial) > 1e-16 {
+                angles.push((dot(radial, side) / ratio).atan2(dot(radial, reference)));
+            }
         }
     }
     let low = heights.iter().copied().fold(f64::INFINITY, f64::min);
@@ -504,12 +587,16 @@ fn cylinder_point(ctx: &Context, face: &Value, geometry: &Value) -> Option<V3> {
         return None;
     };
     let mid_height = (low + high) / 2.0;
+    let radius = radius + mid_height * growth;
+    if !radius.is_finite() || radius <= 0.0 {
+        return None;
+    }
     let p = [0, 1, 2].map(|i| {
         origin.get(i).copied().unwrap_or(0.0)
             + mid_height * axis.get(i).copied().unwrap_or(0.0)
             + radius
                 * (middle.cos() * reference.get(i).copied().unwrap_or(0.0)
-                    + middle.sin() * side.get(i).copied().unwrap_or(0.0))
+                    + ratio * middle.sin() * side.get(i).copied().unwrap_or(0.0))
     });
     p.iter().all(|c| c.is_finite()).then_some(p)
 }
@@ -598,6 +685,17 @@ mod tests {
     }
 
     #[test]
+    fn a_conical_appearance_uses_the_radius_at_the_picked_height() {
+        let (mut model, face) = cylinder_face(&[[5.0, 0.0, 0.0], [10.0, 0.0, 10.0]], 1);
+        model["surfaces"][0]["geometry"]["kind"] = json!("cone");
+        model["surfaces"][0]["geometry"]["half_angle"] = json!(0.5_f64.atan());
+        model["surfaces"][0]["geometry"]["ratio"] = json!(1.0);
+        let ctx = Context::new(&model);
+        let p = point_on(&ctx, &face).unwrap();
+        assert!((p[0] + 7.5).abs() < 1e-9 && p[1].abs() < 1e-9 && (p[2] - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
     fn a_quarter_cylinder_gets_a_point_in_the_middle_of_its_arc() {
         let corners = [
             [5.0, 0.0, 0.0],
@@ -617,6 +715,29 @@ mod tests {
 #[cfg(test)]
 mod import_tests {
     use super::*;
+
+    #[test]
+    fn wire_regions_do_not_consume_or_discard_solid_names() {
+        let model = json!({
+            "bodies": [{"id": "wire", "name": "Body", "kind": "wire"},
+                       {"id": "a", "name": "Body", "kind": "solid"},
+                       {"id": "b", "name": "Body", "kind": "sheet"}],
+            "regions": [{"id": "rw", "body": "wire", "shells": ["sw"]},
+                        {"id": "ra", "body": "a", "shells": ["sa"]},
+                        {"id": "rw2", "body": "wire", "shells": ["sw2"]},
+                        {"id": "rb", "body": "b", "shells": ["sb"]}]
+        });
+        let mut ctx = Context::new(&model);
+        let step = "#1=MANIFOLD_SOLID_BREP('',#2);\n#3=SHELL_BASED_SURFACE_MODEL('',(#4));";
+        assert_eq!(
+            import_names(&mut ctx, &["wire", "a", "b"], Some(step)),
+            ["Body", "Body (2)"]
+        );
+        assert_eq!(
+            ctx.named_bodies,
+            [("a".into(), "Body".into()), ("b".into(), "Body (2)".into())]
+        );
+    }
 
     #[test]
     fn import_names_validate_before_committing_and_skip_empty_regions() {

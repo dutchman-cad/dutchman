@@ -71,7 +71,39 @@ pub(crate) fn fusion(model: Model, report: &mut Report) -> Model {
         return model;
     }
     match filtered(&model, true) {
-        Ok(Some((shown, count))) => {
+        Ok(Some((mut shown, count))) => {
+            // Do not later describe a deliberately filtered target as a
+            // decoder omission. Truly dangling assignments remain for mapping
+            // to diagnose against the decoded model.
+            let before: BTreeSet<_> = model
+                .ir
+                .model
+                .bodies
+                .iter()
+                .map(|b| b.id.as_str())
+                .chain(model.ir.model.faces.iter().map(|f| f.id.as_str()))
+                .collect();
+            let kept: BTreeSet<_> = shown
+                .ir
+                .model
+                .bodies
+                .iter()
+                .map(|b| b.id.as_str())
+                .chain(shown.ir.model.faces.iter().map(|f| f.id.as_str()))
+                .collect();
+            shown.ir.model.appearance_bindings.retain(|binding| {
+                use cadmpeg_ir::appearance::AppearanceTarget;
+                let (kind,id) = match &binding.target {
+                    AppearanceTarget::Body(id) => ("body",id.as_str()),
+                    AppearanceTarget::Face(id) => ("face",id.as_str()),
+                    _ => return true,
+                };
+                if before.contains(id) && !kept.contains(id) {
+                    report.push(Severity::Dropped,"appearance",format!(
+                        "Appearance binding {} to {kind} {id} is left out: its target belongs only to consumed or removed Fusion geometry",binding.id));
+                    false
+                } else { true }
+            });
             report.push(Severity::Info, "bodies", format!(
                 "{count} bodies Fusion keeps only as consumed tools or removed bodies were not converted"
             ));
@@ -457,6 +489,46 @@ mod tests {
 
     use super::*;
     use crate::{Format, Report};
+
+    #[test]
+    fn consumed_geometry_appearance_targets_are_not_reported_as_decoder_omissions() {
+        let mut model = two_cubes(Some(false));
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let body = wire["model"]["bodies"][1]["id"].clone();
+        let face = wire["model"]["faces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["id"].as_str().unwrap().ends_with("~copy"))
+            .unwrap()["id"]
+            .clone();
+        wire["model"]["appearances"] = json!([{
+            "id":"synthetic:test:appearance#red", "base_color":{"r":1.0,"g":0.0,"b":0.0,"a":1.0}
+        }]);
+        wire["model"]["appearance_bindings"] = json!([
+            {"id":"synthetic:test:binding#body", "target":{"kind":"body","id":body},"appearance":"synthetic:test:appearance#red"},
+            {"id":"synthetic:test:binding#face", "target":{"kind":"face","id":face},"appearance":"synthetic:test:appearance#red"},
+            {"id":"synthetic:test:binding#missing", "target":{"kind":"face","id":"synthetic:test:face#missing"},"appearance":"synthetic:test:appearance#red"}
+        ]);
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let mut report = Report::default();
+        let shown = fusion(model, &mut report);
+        assert_eq!(shown.ir.model.bodies.len(), 1);
+        assert_eq!(shown.ir.model.appearance_bindings.len(), 1);
+        assert!(shown.ir.model.appearance_bindings[0]
+            .id
+            .as_str()
+            .ends_with("#missing"));
+        let notes: Vec<_> = report
+            .losses()
+            .iter()
+            .filter(|l| l.subject == "appearance")
+            .collect();
+        assert_eq!(notes.len(), 2);
+        assert!(notes.iter().all(|l| l
+            .detail
+            .ends_with("its target belongs only to consumed or removed Fusion geometry")));
+    }
 
     /// cadmpeg's example 10 mm cube twice over: the second a copy of every geometry row under
     /// new ids, its body `visible` as given.

@@ -66,26 +66,55 @@ SolidCraft CLI to replay the history, the extrude waits for one like a blend doe
 
 Body and face appearance bindings follow the component definition's own BREP ids into its
 written geometry, including imported and stored solids. Every placement inherits that
-geometry's looks. A body binding supplies the body colour, and face bindings override it per face.
+geometry's looks. Complete xref and instance identities are kept distinct through the shared
+component index. Saved wire edges beside a solid do not consume its imported body name or
+discard its appearance. When STEP omits an unwritable sibling body, Dutchman checks each
+body separately, for groups of up to 32 bodies, before keeping the remaining body names
+and colours. A body binding supplies
+the body colour, and face bindings override it per face.
 When a body has no body binding and all its faces have the same resolved appearance,
 Dutchman writes one body colour, which SolidCraft shows in its body appearance controls.
-Mixed appearances remain face looks, selected by points in the component's coordinates.
+Mixed appearances remain face looks, selected by interior points in the component's
+coordinates. Resolved analytic and NURBS faces use bounded trim-curve sampling in surface
+coordinates, with spatial edge evaluation when parameter-space curves are unavailable.
+Planes, cylinders and cones also have analytic picks when a trim chart is unavailable.
+A projected trim must stay within
+0.002 mm of its support, and its pick must clear the sampled boundary by eight times that
+deviation. Cylindrical and conical trim charts account for periodic seams and holes;
+narrow torus bands also check their trim orientation and retry across the minor-angle seam.
+Sampling preserves exact knot endpoints. Spherical corners bounded by three minor
+great-circle arcs use an oriented interior pick across the pole. Disconnected charts and
+carriers that cannot be evaluated retain a Dropped note.
+Resolved trim charts take precedence over vertex-only picks, so a cylindrical face keeps
+its own long arc and a planar appearance cannot pick through a hole in its outer boundary.
 Imported body names are made unique across the design so an unpainted namesake in another
 component cannot receive a painted body's appearance.
+When a partial or unverified editable history is hidden beside the final shape, the
+visible final-shape Import receives its own names and colours. Names remain distinct
+from those of the editable copy.
+When a partial history is kept hidden, appearance losses refer to the visible final
+shape rather than to final bodies absent from that partial copy.
 The look keeps the resolved colour, opacity, and appearance name; it does not infer a
 physical material from a visual preset.
 
 A binding whose target or appearance cannot be resolved is reported as Dropped under
-`appearance`. Mixed curved faces without a resolved planar interior point cannot receive
-SolidCraft's point-selected face looks yet; their bindings are also reported as Dropped.
+`appearance`. An unplaced binding identifies its body or face target and distinguishes a
+target absent from the decoded model from existing geometry that is not placed. Missing
+decoded targets need a cadmpeg decoding fix; Dutchman does not guess another instance by
+matching an id suffix. Bindings to consumed or removed Fusion geometry are reported
+separately when that geometry is filtered out. Faces without a resolved interior point
+cannot receive SolidCraft's point-selected face looks yet; their bindings are also reported
+as Dropped. A decoded body without geometry that STEP can write retains a separate note;
+its writable siblings can still receive their colours.
 Uniformly painted curved bodies can still use a body colour. Conflicting assignments to
 one target are left out and reported. Textures and shader properties are not mapped by this
 look mapping.
 
 The pinned cadmpeg CADIR supports body and face appearance targets, but has no component or
-occurrence appearance target kind. Those assignments need a cadmpeg IR extension before
-Dutchman can receive them. A source appearance absent from CADIR cannot be reconstructed;
-remaining grey bodies may therefore still need additional decoding in cadmpeg.
+occurrence appearance target kind. cadmpeg must project those assignments onto body/face
+targets, or represent them through an IR extension, before Dutchman can map them. Source
+assignments absent from CADIR cannot be reconstructed; remaining grey bodies may therefore
+still need additional decoding in cadmpeg.
 
 ## Components
 

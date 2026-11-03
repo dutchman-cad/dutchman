@@ -9187,6 +9187,109 @@ fn assert_partial(document: &Value, report: &Report, sketches: usize) {
         .all(|id| *id < document["next_id"].as_u64().unwrap()));
 }
 
+#[test]
+fn partial_history_appearance_bindings_reach_the_visible_original() {
+    for named_prefix in [false, true] {
+        let mut model = partial_history_model();
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let body = wire["model"]["bodies"][0]["id"].clone();
+        if !named_prefix {
+            for feature in wire["model"]["features"].as_array_mut().unwrap() {
+                if feature["definition"]["definition"] == "extrude" {
+                    feature["outputs"] = json!([]);
+                }
+            }
+        }
+        wire["model"]["appearances"] = json!([
+            {"id":"synthetic:test:appearance#red", "base_color":{"r":1.0,"g":0.0,"b":0.0,"a":1.0}},
+            {"id":"synthetic:test:appearance#blue", "base_color":{"r":0.0,"g":0.0,"b":1.0,"a":1.0}}
+        ]);
+        wire["model"]["appearance_bindings"] = json!([
+            {"id":"synthetic:test:binding#body", "target":{"kind":"body","id":body},"appearance":"synthetic:test:appearance#red"},
+            {"id":"synthetic:test:binding#face", "target":{"kind":"face","id":"synthetic:cube:face#top"},"appearance":"synthetic:test:appearance#blue"}
+        ]);
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (doc, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert_partial(&doc, &report, 2);
+        let original = doc["features"].as_array().unwrap().last().unwrap();
+        let name = original["body_names"][0].as_str().unwrap();
+        assert_eq!(
+            doc["appearances"]["bodies"][name]["color"],
+            json!([255, 0, 0])
+        );
+        let face = doc["appearances"]["faces"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|face| face["body"] == name)
+            .unwrap();
+        assert_eq!(face["look"]["color"], json!([0, 0, 255]));
+        assert_eq!(name.contains("Original geometry"), named_prefix);
+        assert!(
+            !report
+                .losses()
+                .iter()
+                .any(|loss| loss.subject == "appearance"),
+            "{:?}",
+            report.losses()
+        );
+        if let Some(cli) = solidcraft() {
+            let dir = tempfile::tempdir().unwrap();
+            let design = dir.path().join("partial.solidcraft");
+            let script = dir.path().join("looks.json");
+            let output = dir.path().join("looks.out.json");
+            std::fs::write(
+                &design,
+                written_with(
+                    &model,
+                    &SolidCraftWriter::new().verification(Verification::Off),
+                )
+                .0,
+            )
+            .unwrap();
+            std::fs::write(
+                &script,
+                json!([
+                    {"command":"document.inspect","params":{"measure":false}},
+                    {"command":"appearance.list","params":{"body":name}}
+                ])
+                .to_string(),
+            )
+            .unwrap();
+            assert!(std::process::Command::new(cli)
+                .arg("run")
+                .arg(&script)
+                .arg("--in")
+                .arg(&design)
+                .arg("--results")
+                .arg("--json-out")
+                .arg(&output)
+                .status()
+                .unwrap()
+                .success());
+            let results: Value = serde_json::from_slice(&std::fs::read(output).unwrap()).unwrap();
+            let bodies = results[0]["bodies"].as_array().unwrap();
+            assert_eq!(bodies.len(), 2, "{results}");
+            assert!(
+                bodies
+                    .iter()
+                    .any(|b| b["name"] == name && b["visible"] == true),
+                "{results}"
+            );
+            assert_eq!(
+                results[1]["body"]["appearance"]["color"], "#ff0000",
+                "{results}"
+            );
+            let faces = results[1]["body"]["faces"].as_array().unwrap();
+            assert_eq!(faces.len(), 1, "{results}");
+            assert_eq!(faces[0]["appearance"]["color"], "#0000ff", "{results}");
+        }
+    }
+}
+
 fn with_later_blocker(mut model: Model) -> Model {
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     wire["model"]["features"]

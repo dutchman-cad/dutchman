@@ -109,6 +109,9 @@ pub(super) struct Index<'a> {
     pub document: &'a Value,
     pub rows: BTreeMap<String, Entry<'a>>,
     pub arenas: Vec<&'a str>,
+    /// Reverse presentation edges, shared by all component slices. Ids are
+    /// complete identities, including instance scope; suffixes are not aliases.
+    pub bindings: BTreeMap<&'a str, Vec<&'a Value>>,
     // Decoded models have unique ids. Preserve the old selection behavior for callers
     // passing an in-progress model with duplicate ids: follow the last, emit all.
     pub duplicates: Vec<(String, Entry<'a>)>,
@@ -116,10 +119,22 @@ pub(super) struct Index<'a> {
 
 impl<'a> Index<'a> {
     fn new(document: &'a Value) -> Self {
+        let mut bindings: BTreeMap<&str, Vec<&Value>> = BTreeMap::new();
+        for binding in document
+            .pointer("/model/appearance_bindings")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let Some(target) = binding.pointer("/target/id").and_then(Value::as_str) {
+                bindings.entry(target).or_default().push(binding);
+            }
+        }
         Self {
             document,
             rows: BTreeMap::new(),
             arenas: Vec::new(),
+            bindings,
             duplicates: Vec::new(),
         }
     }

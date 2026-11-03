@@ -892,11 +892,7 @@ fn local_components_with_threads(
             report.push(
                 Severity::Dropped,
                 "appearance",
-                format!(
-                    "Appearance binding {} has no target in a placed component's geometry; \
-                     its appearance is left out",
-                    binding.id
-                ),
+                model.unplaced_appearance_binding(binding),
             );
         }
     }
@@ -3049,24 +3045,19 @@ fn slice(
     }
     // Bindings point to topology, rather than topology pointing to its bindings.
     // Keep that reverse edge and the appearance asset in each definition's slice.
-    for binding in wire
-        .get("appearance_bindings")
-        .and_then(Value::as_array)
-        .into_iter()
+    let bindings: Vec<_> = keep
+        .keys()
+        .filter_map(|id| slices.bindings.get(id))
         .flatten()
-    {
-        if binding
-            .pointer("/target/id")
-            .and_then(Value::as_str)
-            .is_some_and(|id| keep.contains_key(id))
+        .copied()
+        .collect();
+    for binding in bindings {
+        for id in [binding.get("id"), binding.get("appearance")]
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
         {
-            for id in [binding.get("id"), binding.get("appearance")]
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-            {
-                keep.insert(id, ());
-            }
+            keep.insert(id, ());
         }
     }
     // Visit just the reached rows, then restore their original order within each arena.
@@ -3665,6 +3656,145 @@ mod tests {
         assert!(losses[0]
             .detail
             .contains("synthetic:test:appearance-binding#missing"));
+        assert!(losses[0]
+            .detail
+            .contains("to face synthetic:test:face#missing"));
+        assert!(losses[0]
+            .detail
+            .ends_with("its target is absent from the decoded model"));
+    }
+
+    #[test]
+    fn an_unplaced_appearance_target_is_distinguished_from_a_missing_target() {
+        let mut model = with_components(true);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let body = wire["model"]["bodies"][0]["id"].clone();
+        wire["model"]["product_definitions"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "id": "synthetic:test:component#empty", "kind": "part", "bodies": []
+            }));
+        for occurrence in wire["model"]["occurrences"].as_array_mut().unwrap() {
+            occurrence["prototype"]["definition"] = json!("synthetic:test:component#empty");
+        }
+        wire["model"]["appearances"] = json!([{
+            "id": "synthetic:test:appearance#red", "base_color": {"r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0}
+        }]);
+        wire["model"]["appearance_bindings"] = json!([{
+            "id": "synthetic:test:appearance-binding#unplaced", "target": {"kind": "body", "id": body},
+            "appearance": "synthetic:test:appearance#red"
+        }]);
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let mut report = Report::default();
+        assert!(matches!(
+            local(&model, 1, &mut report),
+            Components::Assembly(_)
+        ));
+        let losses: Vec<_> = report
+            .losses()
+            .iter()
+            .filter(|loss| loss.subject == "appearance")
+            .collect();
+        assert_eq!(losses.len(), 1);
+        assert!(losses[0].detail.ends_with(
+            "its target exists in the decoded model but has no placed component geometry"
+        ));
+    }
+
+    #[test]
+    fn shared_slices_keep_complete_instance_scopes_and_only_their_appearances() {
+        let model = with_components(true);
+        let original = serde_json::to_value(&model.ir).unwrap();
+        let mut wire = original.clone();
+        let geometry = wire["model"].as_object_mut().unwrap();
+        geometry.remove("product_definitions");
+        geometry.remove("occurrences");
+        let ids: BTreeSet<String> = geometry
+            .values()
+            .filter_map(Value::as_array)
+            .flatten()
+            .filter_map(|row| row["id"].as_str().map(str::to_owned))
+            .collect();
+        fn scoped(value: &Value, ids: &BTreeSet<String>, scope: usize) -> Value {
+            match value {
+                Value::String(id) if ids.contains(id) => json!(format!(
+                    "f3d:xref/role-test/reference-0/occurrence-{scope}/{}",
+                    id.split_once(':').map_or(id.as_str(), |(_, tail)| tail)
+                )),
+                Value::Array(rows) => rows.iter().map(|row| scoped(row, ids, scope)).collect(),
+                Value::Object(fields) => fields
+                    .iter()
+                    .map(|(key, value)| (key.clone(), scoped(value, ids, scope)))
+                    .collect(),
+                _ => value.clone(),
+            }
+        }
+        let a = scoped(&Value::Object(geometry.clone()), &ids, 0);
+        let b = scoped(&Value::Object(geometry.clone()), &ids, 1);
+        for (arena, rows) in geometry.iter_mut() {
+            *rows = json!(a[arena]
+                .as_array()
+                .unwrap()
+                .iter()
+                .chain(b[arena].as_array().unwrap())
+                .cloned()
+                .collect::<Vec<_>>());
+        }
+        let body_a = a["bodies"][0]["id"].clone();
+        let body_b = b["bodies"][0]["id"].clone();
+        geometry.insert("appearances".into(), json!([
+            {"id": "synthetic:test:appearance#red", "base_color": {"r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0}},
+            {"id": "synthetic:test:appearance#blue", "base_color": {"r": 0.0, "g": 0.0, "b": 1.0, "a": 1.0}}
+        ]));
+        geometry.insert("appearance_bindings".into(), json!([
+            {"id": "synthetic:test:binding#red", "target": {"kind": "body", "id": body_a}, "appearance": "synthetic:test:appearance#red"},
+            {"id": "synthetic:test:binding#blue", "target": {"kind": "body", "id": body_b}, "appearance": "synthetic:test:appearance#blue"}
+        ]));
+        geometry.insert(
+            "product_definitions".into(),
+            json!([
+                {"id": "synthetic:test:component#a", "kind": "part", "bodies": [body_a]},
+                {"id": "synthetic:test:component#b", "kind": "part", "bodies": [body_b]}
+            ]),
+        );
+        let rows: Vec<Value> = (0..4).map(|key| json!({
+            "id": format!("synthetic:test:occurrence#{key}"), "ordinal": key, "parent": {"kind": "root"},
+            "prototype": {"scope": "local", "definition": if key < 2 {"synthetic:test:component#a"} else {"synthetic:test:component#b"}},
+            "transform": [[1,0,0,key * 30],[0,1,0,0],[0,0,1,0]], "scale": [1,1,1]
+        })).collect();
+        geometry.insert("occurrences".into(), json!(rows));
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        };
+        for threads in [1, 4] {
+            let (assembly, _) = local_components_with_threads(
+                &model,
+                &BTreeMap::new(),
+                threads,
+                &mut Report::default(),
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(assembly.parts.len(), 2);
+            assert_eq!(
+                assembly
+                    .placements
+                    .iter()
+                    .map(|p| p.part)
+                    .collect::<Vec<_>>(),
+                [0, 0, 1, 1]
+            );
+            for (part, color) in assembly.parts.iter().zip(["red", "blue"]) {
+                assert_eq!(part.ir.model.appearance_bindings.len(), 1);
+                assert_eq!(part.ir.model.appearances.len(), 1);
+                assert_eq!(
+                    part.ir.model.appearance_bindings[0].appearance.as_str(),
+                    format!("synthetic:test:appearance#{color}")
+                );
+            }
+        }
     }
 
     #[test]

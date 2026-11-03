@@ -348,9 +348,16 @@ The CLI and desktop display small estimates as “under 0.1 GB” and “under a
 JSON `estimate.peak_bytes` and `estimate.seconds` remain numeric and unrounded.
 
 Appearance bindings that cannot reach written component geometry, resolve an appearance, or
-select a mixed-colour face are recorded in `losses` with subject `appearance` and level
-`Dropped`. Their messages identify the binding. Uniform face appearances carried as a body
-colour are preserved and do not produce a loss.
+select a mixed-colour face are recorded in `losses` with subject `appearance` (possibly
+prefixed with a part name) and level `Dropped`. Their messages identify the binding.
+Unplaced body and face bindings also identify
+the target and distinguish “its target is absent from the decoded model” from “its target
+exists in the decoded model but has no placed component geometry”. These use the existing
+loss fields and schema. Targets deliberately filtered as consumed or removed Fusion
+geometry have a separate message. Face-pick failures distinguish an unnamed written body
+from a face without a resolved interior point. A decoded body proven to have no writable
+STEP shape says “its body has no geometry the STEP writer can write”. Uniform face
+appearances carried as a body colour are preserved and do not produce a loss.
 
 ### Stages
 

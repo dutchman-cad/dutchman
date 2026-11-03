@@ -201,6 +201,13 @@ Repeated stderr notes of the same kind are grouped with a count. `--verbose`, `-
 and JSON retain each individual loss. Fusion’s material warning can also appear for a
 default material: the decoded model does not establish that no source appearance was lost.
 
+A Dropped appearance binding names its body or face target. “Its target is absent from the
+decoded model” means no decoded geometry can receive it; “its target exists in the decoded
+model but has no placed component geometry” means the target was decoded but is not placed.
+Bindings to consumed or removed Fusion geometry have a separate explanation. “Its body has
+no geometry the STEP writer can write” means the decoded target exists, but its shape cannot
+be carried through STEP. Compare the named part with the source design when reviewing these losses.
+
 Lines from the examples above, in plain words:
 
 - `Info: history: flattened: the design carries no feature history`: the file has no
