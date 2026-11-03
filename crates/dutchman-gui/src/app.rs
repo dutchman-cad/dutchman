@@ -902,6 +902,9 @@ impl App {
                         ui.label(format!("Reading: {}", estimate_text(split.read)));
                     }
                 });
+                if let Some(parts) = parts.filter(|parts| parts.split.is_none()) {
+                    ui.label(format!("Reading and converting together: {}", estimate_text(parts.conversion)));
+                }
                 egui::Frame::group(ui.style()).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.heading("Convert to SolidCraft");
@@ -920,7 +923,7 @@ impl App {
                     if let Some(parts) = sizes.and_then(|sizes| self.desktop_parts(sizes, Some(available))) {
                         if let Some(split) = parts.split {
                             ui.label(format!("Converting: {}", estimate_text(split.convert)));
-                        } else { ui.label(format!("Reading and converting together: {}", estimate_text(parts.conversion))); }
+                        }
                         if parts.history_omitted { ui.label("Standard leaves feature history out to fit in free memory."); }
                     }
                     ui.separator();
