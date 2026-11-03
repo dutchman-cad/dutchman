@@ -546,21 +546,21 @@ fn mcp_narrows_checks_and_builds_a_report_with_anonymous_results() {
 #[test]
 fn local_check_tools_return_anonymous_reports_and_fixed_errors() {
     let dir = tempfile::tempdir().unwrap();
-    let input = dir.path().join("private-project");
+    let input = dir.path().join("zq-secret-project");
     std::fs::create_dir(&input).unwrap();
-    let file = input.join("private-part.f3d");
+    let file = input.join("zq-secret-part.f3d");
     std::fs::copy(fixture("generated_unit_cube.f3d"), &file).unwrap();
     let mut client = Client::start();
     for (tool, arguments) in [
         (
             "diagnose",
             json!({"input": file,"out": dir.path().join("ranked"),"part":1,
-                "step_path":dir.path().join("private-missing.step"),
+                "step_path":dir.path().join("zq-secret-missing.step"),
                 "time_limit":"30s","memory_limit_mb":2048}),
         ),
         (
             "compare_step",
-            json!({"input": file,"step_path": dir.path().join("private-missing.step"),
+            json!({"input": file,"step_path": dir.path().join("zq-secret-missing.step"),
                 "time_limit":30,"memory_mb":2048}),
         ),
         (
@@ -571,7 +571,7 @@ fn local_check_tools_return_anonymous_reports_and_fixed_errors() {
         let result = client.call(tool, arguments);
         assert_eq!(result["isError"], false, "{result}");
         let text = result.to_string();
-        assert!(!text.contains("private-"), "{text}");
+        assert!(!text.contains("zq-secret-"), "{text}");
         assert!(
             !text.contains(&dir.path().to_string_lossy().to_string()),
             "{text}"
@@ -580,6 +580,6 @@ fn local_check_tools_return_anonymous_reports_and_fixed_errors() {
     let failed = client.call("diagnose", json!({"input":file,"out":false}));
     assert_eq!(failed["isError"], true);
     assert_eq!(failed["structuredContent"]["input"], Value::Null);
-    assert!(!failed.to_string().contains("private-"));
+    assert!(!failed.to_string().contains("zq-secret-"));
     client.finish();
 }
