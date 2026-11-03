@@ -128,6 +128,20 @@ impl dutchman_core::MemberObserver for MemberProgress {
             serde_json::json!({"dutchman_phase": phase, "event": event, "ms": ms, "bytes": bytes})
         );
     }
+    fn member_classified(
+        &self,
+        path: &str,
+        ms: u64,
+        nested_scan_ms: u64,
+        layers_ms: u64,
+        metadata_ms: u64,
+    ) {
+        eprintln!(
+            "{}",
+            classified_record(path, ms, nested_scan_ms, layers_ms, metadata_ms)
+        );
+    }
+
     fn member_event(
         &self,
         path: &str,
@@ -145,6 +159,17 @@ impl dutchman_core::MemberObserver for MemberProgress {
             serde_json::json!({"dutchman_member": path, "event": event, "ms": ms, "code": code})
         );
     }
+}
+
+fn classified_record(
+    path: &str,
+    ms: u64,
+    nested_scan_ms: u64,
+    layers_ms: u64,
+    metadata_ms: u64,
+) -> Value {
+    serde_json::json!({"dutchman_member_classified": path, "ms": ms,
+        "nested_scan_ms": nested_scan_ms, "layers_ms": layers_ms, "metadata_ms": metadata_ms})
 }
 
 impl ConvertOptions {
@@ -409,6 +434,21 @@ fn follow_stages(
                         record.get("bytes").and_then(Value::as_u64).unwrap_or(0),
                     );
                 }
+                continue;
+            }
+            if let Some(member) = record
+                .get("dutchman_member_classified")
+                .and_then(Value::as_str)
+            {
+                // Copy only fixed numeric fields; stderr cannot introduce log categories.
+                let ms = |key| record.get(key).and_then(Value::as_u64).unwrap_or(0);
+                log.member_classified(
+                    member,
+                    ms("ms"),
+                    ms("nested_scan_ms"),
+                    ms("layers_ms"),
+                    ms("metadata_ms"),
+                );
                 continue;
             }
             if let Some(member) = record.get("dutchman_member").and_then(Value::as_str) {
@@ -701,6 +741,57 @@ mod tree_tests {
                 std::thread::sleep(Duration::from_millis(10));
             }
             assert_eq!(resident_bytes(pid).unwrap_or(0), 0);
+        }
+    }
+}
+
+#[cfg(test)]
+mod classification_tests {
+    use super::*;
+
+    #[test]
+    fn member_classification_protocol_round_trip_allows_only_fixed_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("log.jsonl");
+        let salt = crate::anon::Salt::parse("00112233445566778899aabbccddeeff").unwrap();
+        let options = ConvertOptions {
+            diagnostics_salt: Some(salt.clone()),
+            ..Default::default()
+        };
+        let log = crate::diagnostics::Log::open(&path, Path::new("Private.f3z"), &options).unwrap();
+        let mut record = classified_record("/private/SecretMember.f3d", 19, 11, 5, 3);
+        record["type"] = "PrivateType".into();
+        record["PrivateLabel"] = "PrivateValue".into();
+        let mut malformed = classified_record("/private/Second.f3d", 0, 0, 0, 0);
+        malformed["ms"] = "PrivateTiming".into();
+        malformed["layers_ms"] = (-1).into();
+        let stream = format!("{record}\n{malformed}\n");
+        follow_stages(
+            stream.as_bytes(),
+            &Mutex::new(Stage::Input),
+            &|_| {},
+            Some(&log),
+        );
+        drop(log);
+        let text = std::fs::read_to_string(path).unwrap();
+        let rows: Vec<Value> = text
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[1]["type"], "member_classified");
+        assert_eq!(
+            rows[1]["member"],
+            salt.member_id("/private/SecretMember.f3d")
+        );
+        assert_eq!(rows[1]["ms"], 19);
+        assert_eq!(rows[1]["nested_scan_ms"], 11);
+        assert_eq!(rows[1]["layers_ms"], 5);
+        assert_eq!(rows[1]["metadata_ms"], 3);
+        assert_eq!(rows[2]["ms"], 0);
+        assert_eq!(rows[2]["layers_ms"], 0);
+        for secret in ["Private", "/private", "SecretMember", "Second.f3d"] {
+            assert!(!text.contains(secret));
         }
     }
 }

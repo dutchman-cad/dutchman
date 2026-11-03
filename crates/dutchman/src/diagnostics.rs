@@ -29,6 +29,7 @@ struct State {
     member: Option<String>,
     error: Option<String>,
     member_decodes: BTreeMap<String, u64>,
+    member_classifications: u64,
     synced: Instant,
 }
 
@@ -87,6 +88,7 @@ impl Log {
             member: None,
             error: None,
             member_decodes: BTreeMap::new(),
+            member_classifications: 0,
             synced: Instant::now(),
         }));
         let pid = Arc::new(AtomicU32::new(std::process::id()));
@@ -199,6 +201,18 @@ impl Log {
         if let Some(phase) = phase_code(phase) {
             self.sink.phase_event(phase, event, ms, bytes);
         }
+    }
+
+    pub fn member_classified(
+        &self,
+        member: &str,
+        ms: u64,
+        nested_scan_ms: u64,
+        layers_ms: u64,
+        metadata_ms: u64,
+    ) {
+        self.sink
+            .member_classified(member, ms, nested_scan_ms, layers_ms, metadata_ms);
     }
 
     pub fn member_event(
@@ -322,6 +336,31 @@ impl MemberObserver for Sink {
             }
         }
     }
+    fn member_classified(
+        &self,
+        member: &str,
+        ms: u64,
+        nested_scan_ms: u64,
+        layers_ms: u64,
+        metadata_ms: u64,
+    ) {
+        if let Ok(mut state) = self.state.lock() {
+            // Bound records independently of the decoder's archive member cap.
+            if state.member_classifications >= 100_000 {
+                return;
+            }
+            state.member_classifications += 1;
+            write_record(
+                &mut state,
+                &self.id,
+                self.started,
+                json!({"type": "member_classified", "member": self.salt.member_id(member),
+                    "ms": ms, "nested_scan_ms": nested_scan_ms,
+                    "layers_ms": layers_ms, "metadata_ms": metadata_ms}),
+            );
+        }
+    }
+
     fn member_event(&self, member: &str, event: MemberEvent, ms: u64, code: Option<&'static str>) {
         if let Ok(mut state) = self.state.lock() {
             let id = self.salt.member_id(member);
@@ -834,6 +873,41 @@ mod tests {
             )["kind"],
             "other"
         );
+    }
+
+    #[test]
+    fn member_classification_is_anonymous_and_bounded() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("log.jsonl");
+        let salt = anon::Salt::parse("00112233445566778899aabbccddeeff").unwrap();
+        let options = ConvertOptions {
+            diagnostics_salt: Some(salt.clone()),
+            ..Default::default()
+        };
+        let log = Log::open(&path, Path::new("PrivateAssembly.f3z"), &options).unwrap();
+        let member = "/private/SecretMember.f3d";
+        log.observer().member_classified(member, 19, 11, 5, 3);
+        log.member_event(member, MemberEvent::Start, 0, None);
+        // Exercise the boundary without writing 100,000 records.
+        log.sink.state.lock().unwrap().member_classifications = 99_999;
+        log.member_classified(member, 20, 12, 5, 3);
+        log.member_classified("/private/Other.f3d", 21, 13, 5, 3);
+        drop(log);
+        let records = lines(&path);
+        let classified = &records[1];
+        assert_eq!(classified["type"], "member_classified");
+        assert_eq!(classified["member"], salt.member_id(member));
+        assert_eq!(classified["member"], records[2]["member"]);
+        assert_eq!(classified["ms"], 19);
+        assert_eq!(classified["nested_scan_ms"], 11);
+        assert_eq!(classified["layers_ms"], 5);
+        assert_eq!(classified["metadata_ms"], 3);
+        assert_eq!(records.len(), 4);
+        assert_eq!(records[3]["ms"], 20);
+        let text = std::fs::read_to_string(path).unwrap();
+        for secret in ["PrivateAssembly", "/private", "SecretMember", "Other.f3d"] {
+            assert!(!text.contains(secret));
+        }
     }
 
     #[test]

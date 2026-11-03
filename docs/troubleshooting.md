@@ -204,15 +204,13 @@ container again. Drawing conversions keep their drawing graph and do not take th
 A long `container_prepare` phase before the first `.f3z` member starts belongs to cadmpeg.
 Its `archive_scan`, `archive_classify` and `archive_session_open` phases say which step took
 the time.
-At the pinned revision, `container::scan` opens every outer ZIP entry, including temporarily
-inflating deferred document members and discarding their expanded bytes. Then
-`F3zSession::open_scanned` calls `archive::model_root` and `archive::classify_members`:
-classification opens and scans every F3D member, including unreachable members.
-`open_scanned` then calls `ArchiveSession::with_member_scan` again for each classified
-member to obtain cross-reference metadata through `xref::decode` and
-`design_model_selection`. `with_member_scan` expands the outer member and scans its
-nested container anew. These passes run before `decode_in_context` emits member start.
-The log cannot distinguish their individual costs without additional upstream callbacks.
+During `archive_classify`, `member_classified` records identify each classified F3D member
+by the same anonymous id as member decode rows, including unreachable members. `ms` is its
+total preparation time; `nested_scan_ms`, `layers_ms` and `metadata_ms` show time spent
+expanding and scanning the nested container, classifying and merging layers, and extracting
+reference metadata. These records arrive before the first member decode starts, so a slow
+preparation can be traced to a member and stage without exposing its path. Records are
+capped at 100,000 per conversion and include completed work before a refusal.
 The actual member decode reopens its scan again. Final composition and document hashing
 after the last member are timed as `container_compose`.
 

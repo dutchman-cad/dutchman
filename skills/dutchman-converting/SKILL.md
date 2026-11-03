@@ -285,7 +285,10 @@ The app has **Save a diagnostic log (no names or contents from your file)** and
 unfinished-run notice on next launch. Logs flush every record and sync at least every five
 seconds and at stage changes. They hold stages, resource heartbeats, anonymous member
 sizes and decoder events, and loss-code counts; no names, paths, contents, geometry, or
-messages. Per-member records appear when the decoder reports them. Ask the user to review
+messages. Per-member records appear when the decoder reports them. For a slow `.f3z`
+preparation, compare `member_classified` records by anonymous member id: `ms` is the total,
+and `nested_scan_ms`, `layers_ms` and `metadata_ms` locate the stage taking time. These
+records precede member decoding and are capped at 100,000 per conversion. Ask the user to review
 and share this JSONL log with the Dutchman issue; keep ordinary logs private. A combined
 `report_anon` shares its salt and file ids with diagnostics; keep the salt/key private.
 See `docs/troubleshooting.md#diagnostic-logs-for-unfinished-runs` and `docs/json.md` for the schema.

@@ -666,7 +666,9 @@ Anonymous diagnostic logs include timed decoder preparation phases and, on failu
 failure stage and error category. Model check failures add check-code counts and available
 referenced curve-kind counts. A geometry-only recovery rechecks the decoded model in memory
 only when failing checks involve history, sketches, or parameters; geometry failures stop
-without repeating the decode. See [diagnostic fields](json.md#dutchmandiagnostics1).
+without repeating the decode. Fusion archives also record anonymous `member_classified`
+timings for nested scanning, layer classification and reference metadata extraction before
+the first member decode starts. See [diagnostic fields](json.md#dutchmandiagnostics1).
 
 ## `repro`: make a minimum reproduction
 

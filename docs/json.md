@@ -705,6 +705,7 @@ conversion's start. A batch/watch log interleaves conversions; group by `file` a
 | `design` | `count` of successful designs read and `total` (null while unknown). Written when these counts change. |
 | `heartbeat` | `stage`; `rss_bytes`; `cpu_ticks` (process user + system CPU ticks); `cpu_ticks_per_second`; `cpu_ms` (derived process CPU time); `member` (last started member id, or null). Every 30 seconds from an independent timer. Linux reads `/proc`; unavailable resource measurements are null. Windows and macOS use sysinfo; their CPU ticks are milliseconds (`cpu_ticks_per_second`: 1000). |
 | `member` | `member` (salted id); `event`: `start`, `finish`, or `fail`; `ms` (0 at start, duration at finish/failure); `code` (fixed decoder error category on failure, else null). |
+| `member_classified` | `member` (the same salted id as member rows); `ms` (total preparation duration); `nested_scan_ms` (member expansion and nested scanning); `layers_ms` (layer classification and merging); `metadata_ms` (reference metadata extraction). All durations are milliseconds. |
 | `phase` | `phase` (fixed category); `event`: `start` or `finish`; `ms` (0 at start, elapsed duration at finish); `bytes` (source container length, not inflated bytes). |
 | `end` | `error` (anonymous failure facts, or null on success); `ok` (boolean); `stage` last reached; `losses` (code-to-count object); `repeated_losses` (total extra occurrences of identical losses); `member_decodes` (member-id-to-start-count object); `redecoded` (sum of starts after each member's first start). |
 
@@ -725,9 +726,12 @@ Fusion archive's preparation, inside `container_prepare`), `container_compose` (
 `model_validation` (including any geometry-only recheck). Without member callbacks,
 `container_prepare` covers the whole codec call. A finish closes the timed scope, including
 error returns; it does not claim success. Start records identify a phase even if the
-process is killed before it finishes. Cadmpeg currently supplies no callbacks within
-container preparation, so inflation, scanning, classification, and reference metadata
-work share that phase rather than claiming separate measured durations.
+process is killed before it finishes. During `archive_classify`, one `member_classified`
+record identifies each classified F3D member, including unreachable members, before the
+first member decode starts. Its fixed timing fields separate nested scanning, layer work,
+and metadata extraction without exposing the member path. Durations include completed
+work before a refusal; a classification record does not claim success. Classification
+records are capped at 100,000 per conversion.
 
 Each `members` entry is `{id, compressed_bytes, uncompressed_bytes, nested_content_bytes}`.
 The last value is the sum of a nested design archive's declared uncompressed content sizes,

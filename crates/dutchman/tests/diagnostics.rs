@@ -28,6 +28,9 @@ fn archive(path: &Path) {
         zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     zip.start_file("ZebraWidget.f3d", stored).unwrap();
     zip.write_all(&std::fs::read(fixture()).unwrap()).unwrap();
+    // An unreachable member is still classified during archive preparation.
+    zip.start_file("PrivateUnreachable.f3d", stored).unwrap();
+    zip.write_all(&std::fs::read(fixture()).unwrap()).unwrap();
     zip.start_file("Manifest.json", stored).unwrap();
     zip.write_all(br#"{"root":"ZebraWidget.f3d"}"#).unwrap();
     zip.start_file("DesignDescription.json", stored).unwrap();
@@ -149,6 +152,27 @@ fn fusion_member_events_reach_both_direct_and_isolated_logs() {
             .unwrap();
         let first_member = lines.iter().position(|v| v["type"] == "member").unwrap();
         assert!(prepared < first_member);
+        let classifications: Vec<_> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| row["type"] == "member_classified")
+            .collect();
+        assert_eq!(classifications.len(), 2, "{lines:?}");
+        let ids: std::collections::BTreeSet<_> = classifications
+            .iter()
+            .map(|(index, row)| {
+                assert!(*index < first_member);
+                for field in ["ms", "nested_scan_ms", "layers_ms", "metadata_ms"] {
+                    assert!(row[field].as_u64().is_some(), "{row}");
+                }
+                let id = row["member"].as_str().unwrap();
+                assert!(members.iter().any(|member| member["id"] == id));
+                id
+            })
+            .collect();
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(id));
+
         let end = lines.last().unwrap();
         assert_eq!(end["type"], "end");
         assert_eq!(end["member_decodes"][id], 1);
@@ -157,6 +181,7 @@ fn fusion_member_events_reach_both_direct_and_isolated_logs() {
         for secret in [
             "ZebraWidget",
             "PrivateAssembly",
+            "PrivateUnreachable",
             "Manifest.json",
             "unit cube",
         ] {

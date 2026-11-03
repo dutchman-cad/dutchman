@@ -71,6 +71,17 @@ pub trait MemberObserver: Send + Sync {
     /// Fixed phase categories only. Bytes are the source container length, not inflated size.
     fn phase_event(&self, _phase: &'static str, _event: MemberEvent, _ms: u64, _bytes: u64) {}
 
+    /// Preparation timings in milliseconds. Paths remain private until hashed by the sink.
+    fn member_classified(
+        &self,
+        _path: &str,
+        _ms: u64,
+        _nested_scan_ms: u64,
+        _layers_ms: u64,
+        _metadata_ms: u64,
+    ) {
+    }
+
     fn member_event(&self, path: &str, event: MemberEvent, ms: u64, code: Option<&'static str>);
 }
 

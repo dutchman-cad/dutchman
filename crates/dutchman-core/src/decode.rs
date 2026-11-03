@@ -374,6 +374,20 @@ impl cadmpeg_codec_f3d::F3zMemberObserver for Members {
         self.step.borrow_mut().take();
     }
 
+    fn member_classified(
+        &self,
+        path: &str,
+        elapsed: std::time::Duration,
+        nested_scan: std::time::Duration,
+        layers: std::time::Duration,
+        metadata: std::time::Duration,
+    ) {
+        let ms =
+            |duration: std::time::Duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
+        self.sink
+            .member_classified(path, ms(elapsed), ms(nested_scan), ms(layers), ms(metadata));
+    }
+
     fn member_started(&self, path: &str) {
         self.phase.borrow_mut().take();
         let mut started = self.started.borrow_mut();
