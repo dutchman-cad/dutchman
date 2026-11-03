@@ -804,25 +804,77 @@ mod option_tests {
     fn standard_leaves_history_out_for_single_parts_before_decode() {
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../dutchman-core/tests/fixtures/synthetic_cube.ipt");
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("cube.ipt");
+        std::fs::copy(&fixture, &input).unwrap();
+        // The 5 KiB cube has equal history-on/off memory estimates after flooring.
+        // Unused trailing sectors raise its metadata size above the 40,000-byte
+        // crossover while preserving the synthetic part for the writer below.
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&input)
+            .unwrap()
+            .set_len(64 << 10)
+            .unwrap();
         let options = ConvertOptions {
             no_verify: true,
             ..Default::default()
         };
         let mut reduced = options.choices();
         reduced.history = false;
-        let available = choices::estimate(&fixture, &reduced).unwrap().peak_bytes;
-        let writer = options.preflight(&fixture, Some(available)).unwrap();
+        let tiny = choices::estimate(&fixture, &reduced).unwrap().peak_bytes;
+        assert_eq!(
+            choices::estimate(&fixture, &options.choices())
+                .unwrap()
+                .peak_bytes,
+            tiny
+        );
+        assert!(options
+            .preflight(&fixture, Some(tiny))
+            .unwrap()
+            .history_note
+            .is_none());
+        let without = choices::estimate(&input, &reduced).unwrap().peak_bytes;
+        let with = choices::estimate(&input, &options.choices())
+            .unwrap()
+            .peak_bytes;
+        assert!(with > without);
+        let available = without + (with - without) / 2;
+        let writer = options.preflight(&input, Some(available)).unwrap();
         assert!(writer.history_note.is_some());
-        let fusion = Path::new(env!("CARGO_MANIFEST_DIR"))
+        let fusion_fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../dutchman-core/tests/fixtures/generated_unit_cube.f3d");
-        let fusion_available = choices::estimate(&fusion, &reduced).unwrap().peak_bytes;
+        let fusion = dir.path().join("cube.f3d");
+        std::fs::copy(&fusion_fixture, &fusion).unwrap();
+        // The tiny Fusion cube is also below the conversion-cost crossover.
+        // A synthetic unused member makes the history budget distinguishable.
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&fusion)
+            .unwrap();
+        let mut archive = zip::ZipWriter::new_append(file).unwrap();
+        archive
+            .start_file(
+                "memory-budget.bin",
+                zip::write::SimpleFileOptions::default(),
+            )
+            .unwrap();
+        std::io::Write::write_all(&mut archive, &vec![0; 1 << 20]).unwrap();
+        archive.finish().unwrap();
+        let fusion_without = choices::estimate(&fusion, &reduced).unwrap().peak_bytes;
+        let fusion_with = choices::estimate(&fusion, &options.choices())
+            .unwrap()
+            .peak_bytes;
+        assert!(fusion_with > fusion_without);
+        let fusion_available = fusion_without + (fusion_with - fusion_without) / 2;
         assert!(options
             .preflight(&fusion, Some(fusion_available))
             .unwrap()
             .history_note
             .is_some());
         let part =
-            dutchman_core::read(Format::InventorPart, &fixture, &mut Report::default()).unwrap();
+            dutchman_core::read(Format::InventorPart, &input, &mut Report::default()).unwrap();
         assert!(part.assembly.is_none());
         let mut report = Report::default();
         writer.write(&part, &mut Vec::new(), &mut report).unwrap();
@@ -835,8 +887,8 @@ mod option_tests {
             .collect();
         assert_eq!(reasons.len(), 1);
         assert_eq!(reasons[0].severity, dutchman_core::Severity::Info);
-        let mut json = convert_success(&fixture, Path::new("test.solidcraft"), &report);
-        json::conversion_choices(&mut json, &fixture, &options);
+        let mut json = convert_success(&input, Path::new("test.solidcraft"), &report);
+        json::conversion_choices(&mut json, &input, &options);
         assert_eq!(json["choices"]["history"], false);
     }
 

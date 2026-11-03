@@ -454,6 +454,12 @@ impl App {
     }
 
     #[cfg(feature = "test-support")]
+    pub fn memory_estimate_text_for_test(&self, input: &Path) -> Option<String> {
+        self.memory_parts_for_test(input)
+            .map(dutchman::choices::desktop_estimate_text)
+    }
+
+    #[cfg(feature = "test-support")]
     pub fn memory_parts_for_test(
         &self,
         input: &Path,
@@ -902,6 +908,18 @@ impl App {
         )
     }
 
+    fn file_estimate_text(&self, path: &Path, estimate: Estimate) -> String {
+        self.sizes
+            .iter()
+            .find(|(input, _)| input == path)
+            .and_then(|(_, sizes)| *sizes)
+            .and_then(|sizes| self.desktop_parts(sizes, self.estimate_available()))
+            .map_or_else(
+                || estimate_text(estimate),
+                dutchman::choices::desktop_estimate_text,
+            )
+    }
+
     fn memory_dialog(&mut self, ctx: &egui::Context) {
         let Some((path, MemoryCheck::TooBig { available, .. })) = self.memory_warning.clone()
         else {
@@ -966,7 +984,7 @@ impl App {
                     });
                 });
                 if let Some(parts) = sizes.and_then(|sizes| self.desktop_parts(sizes, Some(available))) {
-                    ui.label(RichText::new(memory_total_text(parts.total)).strong());
+                    ui.label(RichText::new(memory_total_text(&dutchman::choices::desktop_estimate_text(parts))).strong());
                     ui.label("Memory adds the read peak and extra memory for conversion and checking.");
                     ui.label(format!("About {:.1} GB of memory free.", gigabytes(available)));
                     will_not_fit = parts.conversion.peak_bytes > available;
@@ -976,7 +994,7 @@ impl App {
                         ui.colored_label(theme::palette(ui).lantern_text, "The check is skipped when it cannot fit after reading; conversion still continues.");
                     }
                 } else if sizes_ready { ui.label("Estimate unavailable. Convert to check this file again."); } else { ui.label("Working out…"); }
-                ui.label("Estimates can be well above what's used.");
+                ui.label("Estimates can be off by a few GB either way");
             });
             ui.separator();
             ui.horizontal(|ui| {
@@ -1539,12 +1557,12 @@ impl App {
                                 if path == input || path.starts_with(input) {
                                     if let Some(estimate) = estimate {
                                         let text = if path == input {
-                                            estimate_text(*estimate)
+                                            self.file_estimate_text(path, *estimate)
                                         } else {
                                             format!(
                                                 "{}: {}",
                                                 file_name(path),
-                                                estimate_text(*estimate)
+                                                self.file_estimate_text(path, *estimate)
                                             )
                                         };
                                         ui.label(RichText::new(text).small().color(p.tide));
@@ -2420,9 +2438,8 @@ fn preset_description(preset: Preset) -> &'static str {
     }
 }
 
-fn memory_total_text(total: Estimate) -> String {
-    let text = estimate_text(total);
-    let (memory, time) = text.split_once(", ").unwrap_or((&text, ""));
+fn memory_total_text(text: &str) -> String {
+    let (memory, time) = text.split_once(", ").unwrap_or((text, ""));
     format!("Total time: {time} · Most memory at once: {memory}")
 }
 

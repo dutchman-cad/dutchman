@@ -99,6 +99,18 @@ pub struct Estimate {
     pub time_band: Option<f64>,
 }
 
+impl Estimate {
+    /// Independent history fits cannot make retaining history cheaper than omitting it.
+    fn at_least(self, without_history: Self) -> Self {
+        Self {
+            peak_bytes: self.peak_bytes.max(without_history.peak_bytes),
+            seconds: self.seconds.max(without_history.seconds),
+            seconds_exact: self.seconds_exact.max(without_history.seconds_exact),
+            ..self
+        }
+    }
+}
+
 /// A human-readable estimate shared by the CLI and desktop app.
 pub fn estimate_text(estimate: Estimate) -> String {
     format!(
@@ -310,14 +322,15 @@ struct Stages {
 
 impl Stages {
     fn split(&self, sizes: Sizes, choices: &Choices, template: Estimate) -> ReadConvertSplit {
+        let geometry = self.convert.estimate(sizes, template);
         let convert = if choices.history {
-            &self.history
+            self.history.estimate(sizes, template).at_least(geometry)
         } else {
-            &self.convert
+            geometry
         };
         ReadConvertSplit {
             read: self.read.estimate(sizes, template),
-            convert: convert.estimate(sizes, template),
+            convert,
         }
     }
 }
@@ -867,20 +880,26 @@ fn check_cost(sizes: Sizes, choices: &Choices, conversion: Estimate) -> Estimate
     };
     match &coefficients.model {
         CostModel::Stages(stages) => {
-            let check = if choices.history {
-                &stages.check
+            let geometry = stages
+                .geometry_check
+                .estimate(sizes, coefficients.template());
+            if choices.history {
+                stages
+                    .check
+                    .estimate(sizes, coefficients.template())
+                    .at_least(geometry)
             } else {
-                &stages.geometry_check
-            };
-            check.estimate(sizes, coefficients.template())
+                geometry
+            }
         }
         CostModel::Legacy(legacy) => {
             let seconds_exact = if cfg!(target_os = "windows") {
                 legacy.startup.as_ref().map_or(0.0, |startup| {
+                    let shape = startup.windows_verify_shape - startup.windows_shape;
                     if choices.history {
-                        startup.windows_verify_history - startup.windows_history
+                        (startup.windows_verify_history - startup.windows_history).max(shape)
                     } else {
-                        startup.windows_verify_shape - startup.windows_shape
+                        shape
                     }
                 })
             } else {
@@ -1009,12 +1028,26 @@ impl LegacyCost {
                 }
             });
         let seconds_exact = fixed + time_rate * sizes.bytes as f64 / (1 << 20) as f64;
-        Estimate {
+        let estimate = Estimate {
             peak_bytes: (self.base_bytes as f64 + self.bytes_per_byte * sizes.bytes as f64 * factor)
                 .ceil() as u64,
             seconds: seconds_exact.ceil() as u64,
             seconds_exact,
             ..template
+        };
+        if choices.history {
+            // Also cover combined models, including platform-specific startup/content
+            // rates whose history and geometry fits may cross at larger sizes.
+            estimate.at_least(self.estimate(
+                sizes,
+                &Choices {
+                    history: false,
+                    ..*choices
+                },
+                template,
+            ))
+        } else {
+            estimate
         }
     }
 }
@@ -1113,6 +1146,38 @@ pub struct DesktopEstimate {
     pub history_omitted: bool,
 }
 
+/// Desktop totals add the durations as displayed for each stage. A sub-minute
+/// stage contributes its displayed upper bound and keeps the total an upper bound.
+/// Raw estimates and JSON retain fractional seconds and their usual rounding.
+pub fn desktop_estimate_text(parts: DesktopEstimate) -> String {
+    let stages = match parts.split {
+        Some(split) => [Some(split.read), Some(split.convert), parts.check],
+        None => [Some(parts.conversion), None, parts.check],
+    };
+    let mut minutes = 0_u64;
+    let mut under = false;
+    for stage in stages.into_iter().flatten() {
+        minutes = minutes.saturating_add(stage.seconds.div_ceil(60).max(1));
+        under |= stage.seconds < 60;
+    }
+    let time = if under {
+        if minutes == 1 {
+            "under a minute".to_owned()
+        } else {
+            format!("under {minutes} min")
+        }
+    } else {
+        time_text(
+            Estimate {
+                seconds: minutes.saturating_mul(60),
+                ..parts.total
+            },
+            false,
+        )
+    };
+    format!("{}, {time}", memory_text(parts.total, false))
+}
+
 /// Read peak and additional conversion cost beyond that peak.
 #[derive(Clone, Copy, Debug)]
 pub struct ReadConvertSplit {
@@ -1198,6 +1263,96 @@ mod tests {
     use std::io::Write;
 
     #[test]
+    fn history_never_reduces_estimated_memory_or_time_for_any_format() {
+        fn assert_at_least(history: Estimate, geometry: Estimate, context: &str) {
+            assert!(
+                history.peak_bytes >= geometry.peak_bytes,
+                "{context}: memory"
+            );
+            assert!(
+                history.seconds >= geometry.seconds,
+                "{context}: rounded time"
+            );
+            assert!(
+                history.seconds_exact >= geometry.seconds_exact,
+                "{context}: time"
+            );
+        }
+
+        for format in Format::ALL {
+            for bytes in [
+                0,
+                1,
+                5120,
+                39_999,
+                40_000,
+                40_001,
+                1 << 16,
+                1 << 20,
+                10 << 20,
+                100 << 20,
+                1 << 30,
+                u64::MAX,
+            ] {
+                for members in [0, 1, 20, 100, 10_000, u64::MAX] {
+                    let sizes = Sizes {
+                        format,
+                        bytes,
+                        members,
+                    };
+                    let context = format!("{format:?}, {bytes} bytes, {members} members");
+                    let history = Choices::of(Preset::Full);
+                    let geometry = Choices {
+                        history: false,
+                        ..history
+                    };
+                    assert_at_least(
+                        sizes.calculate(&history).unwrap(),
+                        sizes.calculate(&geometry).unwrap(),
+                        &context,
+                    );
+                    if let (Some(history), Some(geometry)) = (
+                        read_convert_split(sizes, &history),
+                        read_convert_split(sizes, &geometry),
+                    ) {
+                        assert_eq!(history.read, geometry.read, "{context}");
+                        assert_at_least(history.convert, geometry.convert, &context);
+                    }
+                    for no_verify in [false, true] {
+                        let options = ConvertOptions {
+                            preset: Preset::Full,
+                            no_verify,
+                            ..Default::default()
+                        };
+                        let history_parts =
+                            desktop_estimate_parts(sizes, &options, true, None).unwrap();
+                        let geometry_options = ConvertOptions {
+                            import_only: true,
+                            ..options.clone()
+                        };
+                        let geometry_parts =
+                            desktop_estimate_parts(sizes, &geometry_options, true, None).unwrap();
+                        assert_at_least(history_parts.total, geometry_parts.total, &context);
+                        assert_eq!(
+                            Some(history_parts.total),
+                            estimate_from_sizes(sizes, &history, &options)
+                        );
+                        assert_eq!(
+                            Some(geometry_parts.total),
+                            estimate_from_sizes(sizes, &geometry, &geometry_options)
+                        );
+                        if let (Some(history), Some(geometry)) =
+                            (history_parts.check, geometry_parts.check)
+                        {
+                            assert_at_least(history, geometry, &context);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn fitted_fusion_stages_pin_content_member_and_retention_costs() {
         for (format, read_bytes, read_seconds, geometry, history, geometry_check, history_check) in [
             (
@@ -1207,7 +1362,9 @@ mod tests {
                 (1_584_864_000, 17.2),
                 (2_735_297_600, 35.0),
                 (765_000_000, 46.03),
-                (1_214_000_000, 38.032),
+                // The independent history-time fit is lower (38.032 s), so use
+                // the geometry check as the minimum when retaining history.
+                (1_214_000_000, 46.03),
             ),
             (
                 Format::FusionMultiDocument,
@@ -1569,9 +1726,11 @@ mod tests {
     fn measured_native_floors_are_separate_from_legacy_content_growth() {
         let dir = tempfile::tempdir().unwrap();
         // Fresh phase measurements have separate preparation floors for the two
-        // modes. Only larger-part content growth retains the old heuristic.
+        // modes, but history cannot fall below the geometry floor (formerly 32 MB
+        // versus 33 MB for Inventor). Tiny Inventor parts therefore cost the same;
+        // the steeper history slope takes over above 40,000 content bytes.
         for (extension, shape_floor, history_floor, history_growth) in [
-            ("ipt", 33_000_000, 32_000_000, 256_000),
+            ("ipt", 33_000_000, 33_000_000, 128_000),
             ("sldprt", 33_000_000, 42_000_000, 217_600),
         ] {
             let path = dir.path().join(format!("synthetic.{extension}"));
@@ -1580,7 +1739,7 @@ mod tests {
             let full = estimate(&path, &Choices::of(Preset::Full)).unwrap();
             assert_eq!(fast.peak_bytes, shape_floor);
             assert_eq!(full.peak_bytes, history_floor);
-            // Content still costs more when history is kept.
+            // Content growth follows the larger of the two fitted costs.
             std::fs::write(&path, [0; 5120]).unwrap();
             let fast_content = estimate(&path, &Choices::of(Preset::Fast)).unwrap();
             let full_content = estimate(&path, &Choices::of(Preset::Full)).unwrap();
@@ -1902,6 +2061,47 @@ mod startup_regression_tests {
 #[cfg(test)]
 mod cached_estimate_tests {
     use super::*;
+
+    #[test]
+    fn desktop_total_time_adds_displayed_stages_and_subminute_bounds() {
+        let stage = |seconds: f64| Estimate {
+            peak_bytes: 1_000_000_000,
+            seconds: seconds.ceil() as u64,
+            seconds_exact: seconds,
+            band: 0.5,
+            memory_band: 0.5,
+            time_band: None,
+        };
+        for (read, convert, check, expected) in [
+            (40.0, 61.0, Some(61.0), "about 3.0 GB, under 5 min"),
+            (60.0, 61.0, Some(120.0), "about 3.0 GB, roughly 5 min"),
+            (40.0, 61.0, None, "about 2.0 GB, under 3 min"),
+            (60.0, 60.0, None, "about 2.0 GB, roughly 2 min"),
+            (59.0, 60.0, None, "about 2.0 GB, under 2 min"),
+            (59.1, 60.0, None, "about 2.0 GB, roughly 2 min"),
+            (0.01, 0.02, Some(0.03), "about 3.0 GB, under 3 min"),
+        ] {
+            let read = stage(read);
+            let convert = stage(convert);
+            let check = check.map(stage);
+            let conversion = combine_held_stages(read, convert);
+            let total = check.map_or(conversion, |check| combine_held_stages(conversion, check));
+            let mut parts = DesktopEstimate {
+                conversion,
+                split: Some(ReadConvertSplit { read, convert }),
+                check,
+                total,
+                history_omitted: false,
+            };
+            assert_eq!(desktop_estimate_text(parts), expected);
+            // Presentation must leave the raw memory and fractional timing intact.
+            assert_eq!(parts.total, total);
+            if check.is_none() {
+                parts.split = None;
+                assert_eq!(desktop_estimate_text(parts), estimate_text(total));
+            }
+        }
+    }
 
     #[test]
     fn desktop_parts_share_the_row_total_and_add_overlapping_memory() {

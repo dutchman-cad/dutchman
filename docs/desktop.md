@@ -66,11 +66,15 @@ is off, using that mode's measured allowance. It is greyed out with a reason whe
 SolidCraft CLI was found. Preset descriptions appear on hover or keyboard focus in the menu
 and selector, here and in the main window.
 
-**Total time** adds reading, conversion and checking time. **Most memory at once** adds
+**Total time** adds the rounded durations displayed for reading, conversion and checking
+when checking is enabled and available. Sub-minute stages contribute an upper bound:
+**under a minute + roughly 2 min + roughly 2 min** shows **under 5 min**.
+The file row uses the same calculation. CLI/MCP totals continue to add fractional phase
+times before rounding. **Most memory at once** adds
 the read peak and the extra memory for conversion and checking. This total matches
 the file row. Free memory appears below it. If reading and converting alone will not fit,
 the warning points to the preset and checkboxes; otherwise it says the check is skipped
-when it cannot fit after reading. **Estimates can be well above what's used.**
+when it cannot fit after reading. **Estimates can be off by a few GB either way**
 
 Archive sizes are read in the background once; changing choices updates the figures without
 reading the archive again. Standard leaves history out when doing so fits free memory,

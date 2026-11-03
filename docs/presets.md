@@ -41,15 +41,21 @@ reading through native decode, conversion after decode, and checking. Conversion
 validation, visibility filtering, component extraction, mapping and writing. The read
 figure is its peak; conversion and checking figures are extra memory above the preceding
 peak. Their memory and time add to the total shown in the desktop box and file row.
-History on/off have independent conversion and checking models. Geometry-only conversion
-also checks its converted shape unless `--no-verify` is selected.
+History on/off have independent conversion and checking fits. For each stage, history-on
+memory and time use the greater of the history-on and history-off fits: retaining history
+cannot reduce either estimate. Combined models for other formats enforce the same minimum,
+including platform-specific timing. Tiny parts can consequently have equal history-on/off
+memory estimates; Standard only omits history when the history estimate exceeds free memory
+and the history-free estimate fits. Geometry-only conversion also checks its converted shape
+unless `--no-verify` is selected.
 
 Memory is `fixed MB + content bytes × B/B + member count × MB/member` after converting
 MB to bytes. A fitted content plateau, where listed, limits only the variable memory
 cost. It is an empirical estimate, not a ceiling on allocations. Time is `fixed seconds +
 content MiB × s/MiB + member count × s/member`. All coefficients live in `COEFFICIENTS`
 in `crates/dutchman/src/choices.rs`. Decimal MB/GB are used for memory; MiB is 1,048,576
-bytes. Fractional phase times add before `seconds` rounds up.
+bytes. Fractional phase times add before `seconds` rounds up. Desktop labels instead add
+the displayed stage durations, preserving sub-minute bounds (see [the desktop guide](desktop.md)).
 
 | Format | Stage | Fixed MB | B/B | MB/member | Content plateau MB | Fixed s | s/MiB | s/member |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
@@ -104,7 +110,8 @@ no measured content growth. FreeCAD retains its combined model: 29 MB plus 150 B
 a 1.04 history multiplier on content and its previous startup terms. Other unmeasured
 formats retain combined heuristics.
 
-The largest absolute misses after rounding the coefficients are:
+The largest absolute misses in the independent fits after rounding the coefficients,
+before applying the history-off minimum, are:
 
 | Fit | Peak-memory miss | Time miss |
 |---|---:|---:|

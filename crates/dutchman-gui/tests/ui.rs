@@ -1679,10 +1679,14 @@ fn memory_harness(
         .show_memory_check_for_test(input.clone(), check, sizes);
     std::fs::remove_file(&input).unwrap(); // All subsequent UI changes must use cached sizes.
     harness.run_steps(8);
-    let total = harness.state().memory_estimate_for_test(&input).unwrap();
     assert!(
         harness
-            .query_all_by_label(&dutchman::choices::estimate_text(total))
+            .query_all_by_label(
+                &harness
+                    .state()
+                    .memory_estimate_text_for_test(&input)
+                    .unwrap()
+            )
             .count()
             > 0
     );
@@ -1690,8 +1694,7 @@ fn memory_harness(
 }
 
 #[cfg(feature = "test-support")]
-fn memory_total_label(total: dutchman::choices::Estimate) -> String {
-    let text = dutchman::choices::estimate_text(total);
+fn memory_total_label(text: &str) -> String {
     let (memory, time) = text.split_once(", ").unwrap();
     format!("Total time: {time} · Most memory at once: {memory}")
 }
@@ -1725,17 +1728,21 @@ fn memory_choices_share_the_row_total_and_update_without_rereading() {
         click_memory(&mut h, label);
         h.run_steps(8);
         let total = h.state().memory_estimate_for_test(&input).unwrap();
-        assert!(h.query_by_label(&memory_total_label(total)).is_some());
+        assert!(h
+            .query_by_label(&memory_total_label(
+                &h.state().memory_estimate_text_for_test(&input).unwrap()
+            ))
+            .is_some());
         assert!(
-            h.query_all_by_label(&dutchman::choices::estimate_text(total))
+            h.query_all_by_label(&h.state().memory_estimate_text_for_test(&input).unwrap())
                 .count()
                 > 0
         );
         if label == "Check in SolidCraft" {
             assert!(total.peak_bytes < before.peak_bytes);
         } else if label == "Feature history" {
-            // Independent measured modes can differ in either direction.
-            assert_ne!(total, before);
+            // Retaining history never costs less than the same geometry-only choices.
+            assert!(total.peak_bytes <= before.peak_bytes);
         } else {
             assert_eq!(total, before);
         }
@@ -1751,7 +1758,7 @@ fn memory_choices_share_the_row_total_and_update_without_rereading() {
         .get_by_label("Check in SolidCraft")
         .accesskit_node()
         .is_disabled());
-    h.get_by_label("Estimates can be well above what's used.");
+    h.get_by_label("Estimates can be off by a few GB either way");
 }
 
 #[test]
@@ -1775,6 +1782,12 @@ fn memory_dialog_shows_the_calibrated_split_from_cached_sizes() {
         .is_none());
     let total = h.state().memory_estimate_for_test(&input).unwrap();
     let check = parts.check.unwrap();
+    // Under a minute + roughly 2 min + roughly 2 min must not become 3 min.
+    assert!(h
+        .state()
+        .memory_estimate_text_for_test(&input)
+        .unwrap()
+        .ends_with("under 5 min"));
     assert_eq!(
         total.peak_bytes,
         read.peak_bytes + convert.peak_bytes + check.peak_bytes
@@ -1783,8 +1796,11 @@ fn memory_dialog_shows_the_calibrated_split_from_cached_sizes() {
         total.seconds_exact,
         read.seconds_exact + convert.seconds_exact + check.seconds_exact
     );
-    h.get_by_label(&memory_total_label(total));
-    h.get_by_label(&dutchman::choices::estimate_text(total));
+    h.get_by_label(&memory_total_label(
+        &h.state().memory_estimate_text_for_test(&input).unwrap(),
+    ));
+    h.get_by_label(&h.state().memory_estimate_text_for_test(&input).unwrap());
+    h.get_by_label("Estimates can be off by a few GB either way");
 }
 
 #[test]
