@@ -9283,9 +9283,21 @@ fn partial_history_appearance_bindings_reach_the_visible_original() {
                 results[1]["body"]["appearance"]["color"], "#ff0000",
                 "{results}"
             );
+            // SolidCraft 0.18 lists every face; newer releases list only faces with their own
+            // look. Either way exactly one face is blue.
             let faces = results[1]["body"]["faces"].as_array().unwrap();
-            assert_eq!(faces.len(), 1, "{results}");
-            assert_eq!(faces[0]["appearance"]["color"], "#0000ff", "{results}");
+            let blue = faces
+                .iter()
+                .filter(|face| face["appearance"]["color"] == "#0000ff")
+                .count();
+            assert_eq!(blue, 1, "{results}");
+            assert!(
+                faces.iter().all(|face| matches!(
+                    face["appearance"]["color"].as_str(),
+                    Some("#0000ff" | "#ff0000")
+                )),
+                "{results}"
+            );
         }
     }
 }
