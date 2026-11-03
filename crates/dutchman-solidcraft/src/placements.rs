@@ -104,7 +104,17 @@ impl Copies<'_> {
                         "mirrored assembly needs more than 100000 component definitions".to_owned(),
                     ));
                 }
-                let mut copy = part.clone();
+                // The subtree is prepared recursively below. Cloning it here would
+                // retain a complete throwaway copy while preparing another copy,
+                // repeated at every nesting level. Copy only this model's own data.
+                let mut copy = Model {
+                    ir: part.ir.clone(),
+                    fidelity: part.fidelity.clone(),
+                    name: part.name.clone(),
+                    source_file: part.source_file.clone(),
+                    assembly: None,
+                    source_step: part.source_step.clone(),
+                };
                 if mirrored {
                     copy.name = format!("{} (mirrored)", part.name);
                 }

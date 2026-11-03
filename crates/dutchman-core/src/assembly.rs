@@ -7,6 +7,7 @@
 //! part file is read once, however often it is placed.
 
 mod freecad;
+mod slicing;
 mod solidworks;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -683,7 +684,9 @@ fn local_components_with_threads(
     threads: usize,
     report: &mut Report,
 ) -> Result<Option<(Assembly, Vec<String>)>, String> {
-    let document = serde_json::to_value(&model.ir).map_err(|err| err.to_string())?;
+    let packed = serde_json::to_string(&model.ir).map_err(|err| err.to_string())?;
+    let source = slicing::Packed::read(&packed)?;
+    let document = source.document()?;
     let wire = document.get("model").unwrap_or(&Value::Null);
     let arena = |name: &str| {
         wire.get(name)
@@ -724,6 +727,8 @@ fn local_components_with_threads(
     }
     occurrences.sort_by_key(|row| row.get("ordinal").and_then(Value::as_u64));
 
+    let slices = slicing::Index::packed(&source, &document)?;
+
     let definitions: BTreeMap<&str, &Value> = arena("product_definitions")
         .iter()
         .filter_map(|row| Some((row.get("id")?.as_str()?, row)))
@@ -758,7 +763,7 @@ fn local_components_with_threads(
         .collect();
     let prepared = prepare_slices(
         model,
-        &document,
+        &slices,
         &definitions,
         &occurrences,
         &loose,
@@ -776,7 +781,7 @@ fn local_components_with_threads(
         left_out: Vec::new(),
         all_owned: loose.is_empty(),
         model,
-        document: &document,
+        slices: &slices,
         definitions,
         children,
         layouts,
@@ -2141,7 +2146,7 @@ pub(crate) enum HistoryOwner<'a> {
 
 fn prepare_slices<'a>(
     model: &Model,
-    document: &Value,
+    slices: &slicing::Index<'_>,
     definitions: &BTreeMap<&'a str, &'a Value>,
     occurrences: &[&'a Value],
     loose: &[&'a str],
@@ -2190,10 +2195,9 @@ fn prepare_slices<'a>(
     // Slicing clones geometry and history arenas; a single dense body can dominate.
     let entities = crate::parts::entity_count(model);
     let entities_per_body = entities.div_ceil(model.ir.model.bodies.len().max(1) as u64);
-    // Each slice also indexes all source rows before following the selected bodies.
+    // The row index and compact source are shared; workers allocate only their slice.
     let estimate =
-        crate::parallel::part_peak_bytes(entities_per_body.saturating_mul(largest as u64), largest)
-            .saturating_add(entities.saturating_mul(128));
+        crate::parallel::part_peak_bytes(entities_per_body.saturating_mul(largest as u64), largest);
     // The shared empty template is a helper, not another part worker slot.
     let workers = crate::parallel::workers(threads, jobs.len().saturating_sub(1), estimate);
     report.set_threads(threads, workers);
@@ -2201,7 +2205,7 @@ fn prepare_slices<'a>(
         return BTreeMap::new();
     }
     let prepared = crate::parallel::prepare_ordered(&jobs, workers, |(key, bodies)| {
-        only(model, document, bodies, key.owner(), String::new())
+        only_indexed(model, slices, bodies, key.owner(), String::new())
     });
     jobs.into_iter()
         .zip(prepared)
@@ -2216,7 +2220,7 @@ struct Tree<'a> {
     external_built: BTreeMap<usize, usize>,
     left_out: Vec<LeftOut>,
     model: &'a Model,
-    document: &'a Value,
+    slices: &'a slicing::Index<'a>,
     definitions: BTreeMap<&'a str, &'a Value>,
     /// Occurrences placed inside each occurrence, by its id.
     children: BTreeMap<&'a str, Vec<&'a Value>>,
@@ -2260,7 +2264,7 @@ impl<'a> Tree<'a> {
                 part.name = name;
                 Ok(part)
             }
-            None => only(self.model, self.document, bodies, key.owner(), name),
+            None => only_indexed(self.model, self.slices, bodies, key.owner(), name),
         }
     }
 
@@ -2411,7 +2415,7 @@ impl<'a> Tree<'a> {
             .map(|bodies| bodies.iter().filter_map(Value::as_str).collect())
             .unwrap_or_default();
         let inserted_name = if external {
-            inserted_design_name(self.document, occurrence)
+            inserted_design_name(self.slices.document, occurrence)
         } else {
             None
         };
@@ -2606,9 +2610,20 @@ pub(crate) fn only(
     owner: HistoryOwner<'_>,
     name: String,
 ) -> Result<Model, String> {
-    match slice(model, document, bodies, owner, name.clone(), true) {
+    let slices = slicing::Index::value(document)?;
+    only_indexed(model, &slices, bodies, owner, name)
+}
+
+fn only_indexed(
+    model: &Model,
+    slices: &slicing::Index<'_>,
+    bodies: &[&str],
+    owner: HistoryOwner<'_>,
+    name: String,
+) -> Result<Model, String> {
+    match slice(model, slices, bodies, owner, name.clone(), true) {
         Ok(part) => Ok(part),
-        Err(_) => slice(model, document, bodies, owner, name, false),
+        Err(_) => slice(model, slices, bodies, owner, name, false),
     }
 }
 
@@ -2619,7 +2634,8 @@ pub(crate) fn geometry_only(
     bodies: &[&str],
     name: String,
 ) -> Result<Model, String> {
-    slice(model, document, bodies, HistoryOwner::Unknown, name, false)
+    let slices = slicing::Index::value(document)?;
+    slice(model, &slices, bodies, HistoryOwner::Unknown, name, false)
 }
 
 /// [`only`] with its `history` or [`geometry_only`] without. A feature is the part's when
@@ -2628,29 +2644,22 @@ pub(crate) fn geometry_only(
 /// only other bodies. Timeline dependencies do not establish component membership.
 fn slice(
     model: &Model,
-    document: &Value,
+    slices: &slicing::Index<'_>,
     bodies: &[&str],
     owner: HistoryOwner<'_>,
     name: String,
     history: bool,
 ) -> Result<Model, String> {
+    let document = slices.document;
     let wire = document
         .get("model")
         .and_then(Value::as_object)
         .ok_or("the model is malformed")?;
-    // Every row by id, with its arena.
-    let mut rows: BTreeMap<&str, (&str, &Value)> = BTreeMap::new();
-    for (arena, values) in wire {
-        for row in values.as_array().map_or(&[][..], Vec::as_slice) {
-            if let Some(id) = row.get("id").and_then(Value::as_str) {
-                rows.insert(id, (arena.as_str(), row));
-            }
-        }
-    }
+    let rows = &slices.rows;
     let mut keep: BTreeMap<&str, ()> = BTreeMap::new();
     let mut queue: Vec<&str> = Vec::new();
     for body in bodies {
-        if rows.contains_key(body) && keep.insert(body, ()).is_none() {
+        if rows.contains_key(*body) && keep.insert(body, ()).is_none() {
             queue.push(body);
         }
     }
@@ -2730,11 +2739,14 @@ fn slice(
         }
     }
     while let Some(id) = queue.pop() {
-        let Some((arena, row)) = rows.get(id) else {
+        let Some(entry) = rows.get(id) else {
             continue;
         };
+        let arena = entry.arena;
+        let value = entry.row.value()?;
+        let row = value.as_ref();
         let mut refs = Vec::new();
-        if *arena == "features" {
+        if arena == "features" {
             for (key, value) in row.as_object().into_iter().flatten() {
                 if key != "dependencies" && key != "regeneration_parent" {
                     strings(value, &mut refs);
@@ -2743,15 +2755,18 @@ fn slice(
         } else {
             strings(row, &mut refs);
         }
-        if history && *arena == "sketches" {
+        if history && arena == "sketches" {
             refs.extend(binders.get(id).into_iter().flatten().copied());
         }
         for reference in refs {
-            if let Some((arena, row)) = rows.get(reference) {
-                let follow = !NOT_GEOMETRY.contains(arena)
-                    || (history && !bodies.is_empty() && *arena == "features" && !foreign(row));
-                if follow && keep.insert(reference, ()).is_none() {
-                    queue.push(reference);
+            if let Some((id, entry)) = rows.get_key_value(reference) {
+                let follow = !NOT_GEOMETRY.contains(&entry.arena)
+                    || (history
+                        && !bodies.is_empty()
+                        && entry.arena == "features"
+                        && !foreign(entry.row.value()?.as_ref()));
+                if follow && keep.insert(id.as_str(), ()).is_none() {
+                    queue.push(id.as_str());
                 }
             }
         }
@@ -2778,54 +2793,65 @@ fn slice(
             }
         }
     }
-    let mut reduced = serde_json::Map::new();
-    for (arena, values) in wire {
-        let kept: Vec<Value> = values
-            .as_array()
-            .map_or(&[][..], Vec::as_slice)
+    // Visit just the reached rows, then restore their original order within each arena.
+    // No component rebuilds a global index or scans the complete geometry again.
+    let mut selected: BTreeMap<&str, Vec<(usize, slicing::Selected<'_>)>> = slices
+        .arenas
+        .iter()
+        .map(|arena| (*arena, Vec::new()))
+        .collect();
+    for entry in keep.keys().filter_map(|id| rows.get(*id)).chain(
+        slices
+            .duplicates
             .iter()
-            .filter(|row| {
-                row.get("id")
+            .filter_map(|(id, entry)| keep.contains_key(id.as_str()).then_some(entry)),
+    ) {
+        let row = if entry.arena == "features" {
+            let mut row = entry.row.value()?.into_owned();
+            if let Some(fields) = row.as_object_mut() {
+                // A predecessor outside this slice is not part of its timeline.
+                if fields
+                    .get("regeneration_parent")
                     .and_then(Value::as_str)
-                    .is_some_and(|id| keep.contains_key(id))
-            })
-            .cloned()
-            .map(|mut row| {
-                if arena == "features" {
-                    if let Some(fields) = row.as_object_mut() {
-                        // A predecessor outside this slice is not part of its timeline.
-                        if fields
-                            .get("regeneration_parent")
-                            .and_then(Value::as_str)
-                            .is_some_and(|id| !keep.contains_key(id))
-                        {
-                            fields.remove("regeneration_parent");
-                        }
-                        if let Some(ids) =
-                            fields.get_mut("dependencies").and_then(Value::as_array_mut)
-                        {
-                            ids.retain(|id| id.as_str().is_some_and(|id| keep.contains_key(id)));
-                        }
-                    }
+                    .is_some_and(|id| !keep.contains_key(id))
+                {
+                    fields.remove("regeneration_parent");
                 }
-                row
-            })
-            .collect();
-        reduced.insert(arena.clone(), Value::Array(kept));
+                if let Some(ids) = fields.get_mut("dependencies").and_then(Value::as_array_mut) {
+                    ids.retain(|id| id.as_str().is_some_and(|id| keep.contains_key(id)));
+                }
+            }
+            slicing::Selected::Value(std::borrow::Cow::Owned(row))
+        } else {
+            entry.row.selected()
+        };
+        selected
+            .entry(entry.arena)
+            .or_default()
+            .push((entry.ordinal, row));
     }
+    let reduced = selected
+        .into_iter()
+        .map(|(arena, mut rows)| {
+            rows.sort_by_key(|(ordinal, _)| *ordinal);
+            (arena, rows.into_iter().map(|(_, row)| row).collect())
+        })
+        .collect();
     // The document's other fields, without copying its model or native records: those are
     // the bulk of a large archive, and each part would otherwise copy them once.
-    let mut fields: serde_json::Map<String, Value> = document
+    let fields: serde_json::Map<String, Value> = document
         .as_object()
         .into_iter()
         .flatten()
         .filter(|(key, _)| key.as_str() != "model" && key.as_str() != "native")
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
-    fields.insert("model".to_owned(), Value::Object(reduced));
-    let part = Value::Object(fields);
+    let part = slicing::Part {
+        fields,
+        model: reduced,
+    };
     // cadmpeg is third-party code; a panic in it is a reason, not a crash.
-    let text = part.to_string();
+    let text = serde_json::to_string(&part).map_err(|err| err.to_string())?;
     let ir = std::panic::catch_unwind(|| cadmpeg_ir::CadIr::from_json(&text))
         .map_err(|_| "cadmpeg failed unexpectedly on a component's geometry".to_owned())?
         .map_err(|err| format!("a component's geometry does not stand alone: {err}"))?;
@@ -5519,6 +5545,59 @@ mod tests {
             let parallel =
                 local_components_with_threads(&model, &BTreeMap::new(), 4, &mut Report::default());
             assert_eq!(format!("{serial:?}"), format!("{parallel:?}"));
+        }
+    }
+
+    #[test]
+    fn compact_component_rows_keep_headers_history_placements_and_arena_order() {
+        for mut model in [
+            nested(true, None),
+            with_history(true),
+            with_history(false),
+            with_components(true),
+            with_inserted_design(json!([])),
+        ] {
+            // Selection must preserve source order, even when ids sort differently.
+            model.ir.model.points.reverse();
+            model.ir.fragment = true;
+            let expanded = serde_json::to_value(&model.ir).unwrap();
+            let text = serde_json::to_string(&model.ir).unwrap();
+            let packed = slicing::Packed::read(&text).unwrap();
+            let document = packed.document().unwrap();
+            let index = slicing::Index::packed(&packed, &document).unwrap();
+            assert_eq!(source_posed(&expanded), source_posed(&document));
+            for occurrence in listed(expanded.pointer("/model/occurrences")) {
+                assert_eq!(
+                    inserted_design_name(&expanded, occurrence),
+                    inserted_design_name(&document, occurrence)
+                );
+            }
+            let mut selections = vec![(HistoryOwner::Root, Vec::new())];
+            for definition in &model.ir.model.product_definitions {
+                selections.push((
+                    HistoryOwner::Definition(definition.id.as_str()),
+                    definition.bodies.iter().map(|id| id.as_str()).collect(),
+                ));
+            }
+            selections.push((
+                HistoryOwner::Unknown,
+                model
+                    .ir
+                    .model
+                    .bodies
+                    .iter()
+                    .map(|body| body.id.as_str())
+                    .collect(),
+            ));
+            for (owner, bodies) in selections {
+                let expected = only(&model, &expanded, &bodies, owner, "part".to_owned()).unwrap();
+                let actual =
+                    only_indexed(&model, &index, &bodies, owner, "part".to_owned()).unwrap();
+                assert_eq!(
+                    serde_json::to_value(&actual.ir).unwrap(),
+                    serde_json::to_value(&expected.ir).unwrap()
+                );
+            }
         }
     }
 }

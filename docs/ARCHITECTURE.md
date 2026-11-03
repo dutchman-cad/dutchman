@@ -142,9 +142,21 @@ Checks: an end-to-end test converts a synthetic `.f3d` and compares the containe
 `document.json` with a golden file; a non-blocking CI job opens the result in a released
 SolidCraft CLI (`scripts/solidcraft-roundtrip.sh`).
 
-After decode, the core precomputes component slices on bounded scoped workers. Tree building
-consumes them in its original order and assigns the original part names; identical empty
-assembly holders share an empty model. Failed preparations retry serially where needed.
+After decode, the core indexes component geometry once per design. The index borrows rows
+from one compact JSON document; only structure and history are expanded into JSON values.
+A component follows references from its bodies and history, then emits just the reached
+rows in their original arena order. Bounded scoped workers share the index. Tree building
+consumes prepared slices in its original order and assigns the original part names;
+identical empty assembly holders share an empty model. Failed preparations retry serially
+through the same index where needed. Name collection streams compact JSON, and Fusion
+visibility filtering avoids expanding the model when no consumed or removed body needs
+to be omitted.
+
+Placement admission copies each model's own data once and prepares its children recursively;
+it does not keep a throwaway clone of the original child tree during that recursion.
+Sketch ownership reads the admitted feature and definition records directly. Reference
+sketch mapping expands only the neutral model, once, without native records or a second
+copy of the geometry arenas.
 
 Assembly leaf parts prepare on bounded scoped workers: STEP restatement, history mapping,
 blend proving, and SolidCraft replay checks each own their reports and temporary data.

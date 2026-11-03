@@ -139,6 +139,15 @@ history unverified, and reports `History check skipped: needs about N GB, M GB f
 Unknown memory measurements allow checking. This is a conservative estimate, not a memory
 reservation; simultaneous work can change what is free.
 
+Component extraction shares one geometry index per design, across workers and serial
+retries. Geometry stays in compact JSON until a component reaches it; each component
+copies only its selected rows. Name collection also streams the design, and Fusion skips
+visibility expansion when there are no consumed or removed bodies. The decoded design
+and extracted parts still remain in memory for mapping. Placement admission copies each model's own data without first cloning
+its entire child tree. Sketch ownership reads only its feature and definition records;
+reference sketches expand the neutral model once, without native payloads or a second
+geometry copy. Checking adds its own allowance as described above.
+
 `--no-verify` keeps checking off. `--no-memory-check` forces requested checking even if
 memory is low. Desktop Advanced offers the same override as **Convert and check history
 even if memory is low**. CLI, desktop, web conversions and MCP use the same policy.

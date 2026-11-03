@@ -878,11 +878,15 @@ pub(crate) fn sketches_where(
     if count == 0 {
         return (kept, 0);
     }
-    let document = match serde_json::to_value(&model.ir) {
-        Ok(document) if check_version(&document).is_ok() => document,
-        _ => return (kept, count),
+    if model.ir.check_decode_depth().is_err() || !IR_VERSIONS.contains(&model.ir.ir_version()) {
+        return (kept, count);
+    }
+    // Reference sketches read only neutral arenas. Keep one expanded model, without
+    // expanding native records or cloning the entire model a second time.
+    let wire = match serde_json::to_value(&model.ir.model) {
+        Ok(wire) => wire,
+        Err(_) => return (kept, count),
     };
-    let wire = document.get("model").cloned().unwrap_or(Value::Null);
     let mut param_notes = Report::default();
     let (params, param_names) = params::map(model, &mut param_notes);
     let mut ctx = Context::new(&wire);

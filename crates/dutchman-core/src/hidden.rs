@@ -57,6 +57,19 @@ pub(crate) fn fusion(model: Model, report: &mut Report) -> Model {
             "{hidden} user-hidden Fusion bodies were kept; parts with both shown and hidden bodies are shown whole"
         ));
     }
+    // Fusion needs no visibility rewrite when it has no unowned hidden bodies.
+    // Avoid expanding all geometry and native records just to discover that.
+    // A mixed namespace still follows the existing FreeCAD container handling.
+    if model.ir.native.namespace("fcstd").is_none()
+        && !model
+            .ir
+            .model
+            .bodies
+            .iter()
+            .any(|body| body.visible == Some(false) && !owned.contains(body.id.as_str()))
+    {
+        return model;
+    }
     match filtered(&model, true) {
         Ok(Some((shown, count))) => {
             report.push(Severity::Info, "bodies", format!(
@@ -566,6 +579,19 @@ mod tests {
                     "tools": {"kind": "bodies", "value": [id("body", 0)]}}}}]);
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         model
+    }
+
+    #[test]
+    fn fusion_without_removed_bodies_keeps_the_whole_model() {
+        let mut model = two_cubes(None);
+        model.source_step = Some("stored source".to_owned());
+        assert!(filtered(&model, true).unwrap().is_none());
+        let expected = serde_json::to_value(&model.ir).unwrap();
+        let mut report = Report::default();
+        let kept = fusion(model, &mut report);
+        assert_eq!(serde_json::to_value(&kept.ir).unwrap(), expected);
+        assert_eq!(kept.source_step.as_deref(), Some("stored source"));
+        assert!(report.losses().is_empty());
     }
 
     #[test]

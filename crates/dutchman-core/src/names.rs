@@ -4,6 +4,7 @@
 
 use std::path::Path;
 
+use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde_json::Value;
 
 use crate::{Model, Report};
@@ -54,8 +55,108 @@ pub(crate) fn saw_model(model: &Model, report: &mut Report) {
     if let Some(file) = &model.source_file {
         saw_stored(file, report);
     }
-    if let Ok(document) = serde_json::to_value(&model.ir) {
+    saw_serialized(&model.ir, report);
+}
+
+fn saw_serialized(value: &impl serde::Serialize, report: &mut Report) {
+    // The old value tree expanded every coordinate and native payload just to visit
+    // names. Walk compact JSON instead, retaining only names in the report.
+    if let Ok(text) = serde_json::to_vec(value) {
+        let mut reader = serde_json::Deserializer::from_slice(&text);
+        if (Names {
+            report,
+            named: false,
+        })
+        .deserialize(&mut reader)
+        .is_ok()
+        {
+            return;
+        }
+    }
+    // Caller-built native records can exceed the text reader's nesting limit. Keep
+    // the original behavior for those; any names already seen are the same set.
+    if let Ok(document) = serde_json::to_value(value) {
         walk(&document, None, report);
+    }
+}
+
+struct Names<'a> {
+    report: &'a mut Report,
+    named: bool,
+}
+
+impl<'de> DeserializeSeed<'de> for Names<'_> {
+    type Value = ();
+
+    fn deserialize<D: serde::Deserializer<'de>>(self, reader: D) -> Result<(), D::Error> {
+        reader.deserialize_any(self)
+    }
+}
+
+impl<'de> Visitor<'de> for Names<'_> {
+    type Value = ();
+
+    fn expecting(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        out.write_str("a serialized design")
+    }
+
+    fn visit_str<E: serde::de::Error>(self, text: &str) -> Result<(), E> {
+        if self.named {
+            saw_stored(text, self.report);
+        }
+        Ok(())
+    }
+
+    fn visit_bool<E: serde::de::Error>(self, _: bool) -> Result<(), E> {
+        Ok(())
+    }
+
+    fn visit_i64<E: serde::de::Error>(self, _: i64) -> Result<(), E> {
+        Ok(())
+    }
+
+    fn visit_u64<E: serde::de::Error>(self, _: u64) -> Result<(), E> {
+        Ok(())
+    }
+
+    fn visit_f64<E: serde::de::Error>(self, _: f64) -> Result<(), E> {
+        Ok(())
+    }
+
+    fn visit_unit<E: serde::de::Error>(self) -> Result<(), E> {
+        Ok(())
+    }
+
+    fn visit_seq<A: SeqAccess<'de>>(self, mut rows: A) -> Result<(), A::Error> {
+        while rows
+            .next_element_seed(Names {
+                report: self.report,
+                named: self.named,
+            })?
+            .is_some()
+        {}
+        Ok(())
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut fields: A) -> Result<(), A::Error> {
+        // Value's object walk is alphabetical. Keep that order at the report's
+        // name limit too, while borrowing compact subtrees rather than expanding them.
+        let mut ordered = std::collections::BTreeMap::new();
+        while let Some((key, value)) =
+            fields.next_entry::<String, &'de serde_json::value::RawValue>()?
+        {
+            ordered.insert(key, value);
+        }
+        for (key, value) in ordered {
+            let mut reader = serde_json::Deserializer::from_str(value.get());
+            Names {
+                report: self.report,
+                named: naming(&key),
+            }
+            .deserialize(&mut reader)
+            .map_err(<A::Error as serde::de::Error>::custom)?;
+        }
+        Ok(())
     }
 }
 
@@ -124,5 +225,57 @@ mod tests {
         for name in ["Someone's Projects", "Rover Mk2", "arm.ipt", "arm", "srv"] {
             assert!(report.names().contains(name), "{name}");
         }
+    }
+
+    #[test]
+    fn streaming_names_match_the_value_walk_in_arrays_escaped_keys_and_deep_records() {
+        let mut deep = json!("Deep private name");
+        for _ in 0..160 {
+            deep = json!([deep]);
+        }
+        for document in [
+            json!({
+                "native": {"arbitrary": {"name": ["a\\b.f3d", {"id": "not a name", "title": "Bügel"}]}},
+                "display_\"name": "Escaped \\\" name",
+                "geometry": {"coordinates": [0, -1, 2.5, true, null], "source_name": "part"},
+                "description": ["first", ["second"]]
+            }),
+            json!({"name": deep}),
+        ] {
+            let mut expected = Report::default();
+            walk(&document, None, &mut expected);
+            let mut actual = Report::default();
+            saw_serialized(&document, &mut actual);
+            assert_eq!(actual.names(), expected.names());
+        }
+    }
+
+    #[test]
+    fn streaming_names_keep_the_same_names_at_the_report_limit() {
+        #[derive(serde::Serialize)]
+        struct SourceOrder {
+            z_name: &'static str,
+            a_name: &'static str,
+            b_name: &'static str,
+        }
+        let source = SourceOrder {
+            z_name: "Zed",
+            a_name: "Aye",
+            b_name: "Bee",
+        };
+        let mut expected = Report::default();
+        let mut actual = Report::default();
+        // Leave two slots below Report's 100,000-name ceiling.
+        for i in 0..99_998 {
+            let name = format!("existing{i:06}");
+            expected.saw(&name);
+            actual.saw(&name);
+        }
+        walk(&serde_json::to_value(&source).unwrap(), None, &mut expected);
+        saw_serialized(&source, &mut actual);
+        assert_eq!(actual.names(), expected.names());
+        assert!(actual.names().contains("Aye"));
+        assert!(actual.names().contains("Bee"));
+        assert!(!actual.names().contains("Zed"));
     }
 }

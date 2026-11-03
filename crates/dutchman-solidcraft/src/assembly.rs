@@ -1499,40 +1499,71 @@ fn snap(frame: &[[f64; 4]; 3]) -> Value {
 /// The component definition that owns each sketch of `model`, by sketch id: the one listing
 /// it, else the one that owns the feature building it.
 fn sketch_owners(model: &Model) -> BTreeMap<String, String> {
-    let Ok(wire) = serde_json::to_value(&model.ir) else {
-        return BTreeMap::new();
-    };
-    let rows = |arena: &str| {
-        wire.pointer(&format!("/model/{arena}"))
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default()
-    };
+    use cadmpeg_ir::features::{FeatureDefinition, FeatureOperation};
+
     let mut owners = BTreeMap::new();
-    for feature in rows("features") {
-        let sketch = feature
-            .pointer("/definition/sketch/sketch")
-            .and_then(Value::as_str);
-        let owner = feature.get("product_definition").and_then(Value::as_str);
-        if let (Some(sketch), Some(owner)) = (sketch, owner) {
-            owners.insert(sketch.to_owned(), owner.to_owned());
-        }
+    if model.ir.check_decode_depth().is_err() {
+        return owners;
     }
-    for definition in rows("product_definitions") {
-        let Some(id) = definition.get("id").and_then(Value::as_str) else {
+    // Ownership does not require expanding geometry or native payloads. Match the
+    // same direct sketch operation as the previous /definition/sketch/sketch lookup.
+    for feature in &model.ir.model.features {
+        let FeatureDefinition::Operation(FeatureOperation::Sketch { sketch }) =
+            feature.evaluation.definition()
+        else {
             continue;
         };
-        for sketch in definition
-            .get("sketches")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str)
-        {
-            owners.insert(sketch.to_owned(), id.to_owned());
+        if let (Some(sketch), Some(owner)) = (sketch.id(), &feature.product_definition) {
+            owners.insert(sketch.to_string(), owner.to_string());
+        }
+    }
+    // An explicit definition list takes precedence over its feature's owner.
+    for definition in &model.ir.model.product_definitions {
+        for sketch in &definition.sketches {
+            owners.insert(sketch.to_string(), definition.id.to_string());
         }
     }
     owners
+}
+
+#[cfg(test)]
+#[test]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
+fn sketch_owner_lists_override_feature_owners_and_unresolved_sketches_have_none() {
+    let mut wire = serde_json::to_value(cadmpeg_ir::CadIr::empty()).unwrap();
+    let owner_a = "test:model:component#a";
+    let owner_b = "test:model:component#b";
+    let listed = "test:model:sketch#listed";
+    let feature_only = "test:model:sketch#feature";
+    wire["model"]["product_definitions"] = json!([
+        {"id": owner_a, "kind": "part", "bodies": [], "sketches": [listed]},
+        {"id": owner_b, "kind": "part", "bodies": []}
+    ]);
+    wire["model"]["features"] = json!([
+        {"id": "test:model:feature#listed", "ordinal": 0, "product_definition": owner_b,
+            "suppressed": false, "outputs": [], "definition": {"definition": "sketch",
+                "sketch": {"space": "planar", "sketch": listed}}},
+        {"id": "test:model:feature#feature", "ordinal": 1, "product_definition": owner_b,
+            "suppressed": false, "outputs": [], "definition": {"definition": "sketch",
+                "sketch": {"space": "planar", "sketch": feature_only}}},
+        {"id": "test:model:feature#unresolved", "ordinal": 2, "product_definition": owner_b,
+            "suppressed": false, "outputs": [], "definition": {"definition": "sketch", "sketch": {"space": "unresolved"}}}
+    ]);
+    let model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        fidelity: None,
+        name: "synthetic".to_owned(),
+        source_file: None,
+        assembly: None,
+        source_step: None,
+    };
+    assert_eq!(
+        sketch_owners(&model),
+        BTreeMap::from([
+            (listed.to_owned(), owner_a.to_owned()),
+            (feature_only.to_owned(), owner_b.to_owned()),
+        ])
+    );
 }
 
 /// A component name as a parameter-name prefix: letters, digits and underscores.
