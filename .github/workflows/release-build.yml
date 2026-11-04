@@ -139,6 +139,18 @@ jobs:
           name: windows-installer-logs
           path: dist/*.log
           if-no-files-found: ignore
+      # On a pull request, keep the built installer for a manual check on a real Windows PC,
+      # even when a later updater test fails. Release runs publish it with the archive below.
+      - name: Keep the Windows installer for review
+        if: always() && runner.os == 'Windows' && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-installer
+          path: |
+            dist/dutchman-*.msi
+            dist/dutchman-*.msi.sha256
+          if-no-files-found: ignore
+          retention-days: 3
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ARCHIVE }}
