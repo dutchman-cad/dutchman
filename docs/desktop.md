@@ -165,6 +165,14 @@ Small imports avoid extra preparation workers.
 The window opens where and at the size it was last closed. A saved size smaller than the
 app's minimum, 520 by 420 points, is ignored, and the window opens at its default size instead.
 
+With no saved size, the window opens centred at 1180 by 800 points, or 90% of the screen where
+that is smaller, which fits the whole main screen with the **Advanced** choices open and nothing
+scrolled. From 1100 points wide, **Designs** and **Output folder** stand in a left column and
+**Results** in a right column. Results that do not fit scroll inside their own column, and a
+long list of designs scrolls inside **Designs**; the rest of the screen stays in place. Below
+1100 points the main screen is one column, **Designs**, **Output folder**, then **Results**,
+and scrolls as one page (down to the 520 point minimum).
+
 ## Reporting a problem
 
 The window's title and top row show its version beside **Dutchman Convert**, for example

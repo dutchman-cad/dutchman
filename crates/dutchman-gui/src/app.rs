@@ -117,6 +117,11 @@ pub struct App {
     salt: Option<dutchman::anon::Salt>,
     /// Shows a file in the system's file manager.
     file_manager: fn(&Path) -> Result<(), String>,
+    /// Frames left to size and centre the window once the monitor is known; none once done or
+    /// when a saved window was restored.
+    fit_frames: Option<u8>,
+    /// Whether the main screen's page needed to scroll in the last frame.
+    page_scrolls: bool,
 }
 
 #[derive(PartialEq)]
@@ -273,6 +278,12 @@ fn gigabytes(bytes: u64) -> f64 {
     bytes as f64 / 1_000_000_000.0
 }
 
+/// How many frames to wait for the monitor's size before leaving the window as it opened.
+const FIT_FRAMES: u8 = 30;
+
+/// The most of the Designs list shown before it scrolls, in a wide window.
+const INPUT_LIST_HEIGHT: f32 = 140.0;
+
 /// What to scroll into view.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Reveal {
@@ -361,6 +372,11 @@ impl App {
             },
             salt: None,
             file_manager: platform::reveal,
+            fit_frames: cc
+                .storage
+                .is_some_and(|storage| storage.get_string("window").is_none())
+                .then_some(FIT_FRAMES),
+            page_scrolls: false,
         }
     }
 
@@ -1258,6 +1274,44 @@ impl App {
         }
     }
 
+    /// Whether the main screen needs to scroll as it is: false when everything is in view.
+    /// Results that do not fit scroll inside their own column and do not count.
+    pub fn page_scrolls(&self) -> bool {
+        self.page_scrolls
+    }
+
+    /// On the first frames of a window with no saved size, sizes it to fit the main screen and
+    /// centres it on its monitor, once the monitor's size is known.
+    fn fit_window(&mut self, ctx: &egui::Context) {
+        let Some(left) = self.fit_frames else {
+            return;
+        };
+        let (monitor, maximized) = ctx.input(|input| {
+            let viewport = input.viewport();
+            (
+                viewport.monitor_size,
+                viewport.maximized.unwrap_or(false) || viewport.fullscreen.unwrap_or(false),
+            )
+        });
+        match monitor {
+            Some(monitor) if monitor.x > 0.0 && monitor.y > 0.0 => {
+                self.fit_frames = None;
+                if !maximized {
+                    let monitor = [monitor.x, monitor.y];
+                    let size = crate::fit_size(monitor);
+                    let at = crate::centred_position(monitor, size);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size.into()));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(at.into()));
+                }
+            }
+            _ if left > 0 => {
+                self.fit_frames = Some(left - 1);
+                ctx.request_repaint();
+            }
+            _ => self.fit_frames = None,
+        }
+    }
+
     /// Draws the window, for eframe and for tests.
     pub fn ui(&mut self, ctx: &egui::Context) {
         if ctx.input(|input| {
@@ -1296,7 +1350,7 @@ impl App {
                     .fill(ctx.style().visuals.panel_fill)
                     .inner_margin(Margin::symmetric(
                         theme::SPACE_8 as i8,
-                        theme::SPACE_4 as i8,
+                        theme::BAR_PADDING as i8,
                     )),
             )
             .show_separator_line(false)
@@ -1315,7 +1369,7 @@ impl App {
                     .fill(ctx.style().visuals.panel_fill)
                     .inner_margin(Margin::symmetric(
                         theme::SPACE_8 as i8,
-                        theme::SPACE_4 as i8,
+                        theme::BAR_PADDING as i8,
                     )),
             )
             .show(ctx, |ui| self.actions_ui(ui, ctx, view.summary.as_deref()));
@@ -1328,38 +1382,16 @@ impl App {
                         left: theme::SPACE_8 as i8,
                         right: theme::SPACE_8 as i8,
                         top: 0,
-                        bottom: theme::SPACE_4 as i8,
+                        bottom: theme::SPACE_2 as i8,
                     }),
             )
             .show(ctx, |ui| {
                 ui.style_mut().spacing.scroll = egui::style::ScrollStyle::solid();
-                ScrollArea::vertical()
-                    .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        if let Some(path) = self.unfinished_diagnostic.clone() {
-                            ui.label("The last run didn't finish. Its diagnostic log is here:");
-                            ui.label(platform::display_path(&path));
-                            ui.horizontal(|ui| {
-                                if ui.button("Open folder").clicked() {
-                                    if let Err(message) = platform::reveal(&path) {
-                                        self.notice = Some(message);
-                                    }
-                                }
-                                if ui.button("Dismiss").clicked() {
-                                    self.unfinished_diagnostic = None;
-                                }
-                            });
-                            ui.add_space(theme::SPACE_4);
-                        }
-                        self.inputs_panel(ui);
-                        ui.add_space(theme::SPACE_4);
-                        self.output_panel(ui, ctx);
-                        if !self.rows.is_empty() {
-                            ui.add_space(theme::SPACE_8);
-                            self.results(ui, &view);
-                        }
-                    });
+                if ui.available_width() + 2.0 * theme::SPACE_8 >= crate::WIDE_BREAKPOINT {
+                    self.wide_page(ui, ctx, &view);
+                } else {
+                    self.narrow_page(ui, ctx, &view);
+                }
             });
         if let Some(action) = self.consent.window(ctx) {
             self.notice = None;
@@ -1382,12 +1414,82 @@ impl App {
         self.refresh_estimates(ctx);
     }
 
+    /// The notice about a run that did not finish, above the main screen.
+    fn unfinished_notice(&mut self, ui: &mut egui::Ui) {
+        if let Some(path) = self.unfinished_diagnostic.clone() {
+            ui.label("The last run didn't finish. Its diagnostic log is here:");
+            ui.label(platform::display_path(&path));
+            ui.horizontal(|ui| {
+                if ui.button("Open folder").clicked() {
+                    if let Err(message) = platform::reveal(&path) {
+                        self.notice = Some(message);
+                    }
+                }
+                if ui.button("Dismiss").clicked() {
+                    self.unfinished_diagnostic = None;
+                }
+            });
+            ui.add_space(theme::SPACE_4);
+        }
+    }
+
+    /// A narrow window: one column, Designs, Output folder, then Results, scrolling as one page.
+    fn narrow_page(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, view: &present::RunView) {
+        let area = ScrollArea::vertical()
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded)
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                self.unfinished_notice(ui);
+                self.inputs_panel(ui);
+                ui.add_space(theme::SPACE_4);
+                self.output_panel(ui, ctx);
+                if !self.rows.is_empty() {
+                    ui.add_space(theme::SPACE_8);
+                    self.results(ui, view, false);
+                }
+            });
+        self.page_scrolls = area.content_size.y > area.inner_rect.height() + 1.0;
+    }
+
+    /// A wide window: Designs and Output folder on the left, Results on the right. The page
+    /// scrolls only if the window is too short for the left column; results scroll in their own
+    /// column.
+    fn wide_page(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, view: &present::RunView) {
+        self.unfinished_notice(ui);
+        let rect = ui.available_rect_before_wrap();
+        let gap = theme::SPACE_8;
+        let left_width = ((rect.width() - gap) * 0.54).round();
+        let left = egui::Rect::from_min_size(rect.min, egui::vec2(left_width, rect.height()));
+        let right = egui::Rect::from_min_max(
+            egui::pos2(rect.min.x + left_width + gap, rect.min.y),
+            rect.max,
+        );
+        let mut scrolls = false;
+        ui.scope_builder(egui::UiBuilder::new().max_rect(left), |ui| {
+            let area = ScrollArea::vertical()
+                .id_salt("main-left")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    self.inputs_panel(ui);
+                    ui.add_space(theme::SPACE_4);
+                    self.output_panel(ui, ctx);
+                });
+            scrolls = area.content_size.y > area.inner_rect.height() + 1.0;
+        });
+        ui.scope_builder(egui::UiBuilder::new().max_rect(right), |ui| {
+            self.results(ui, view, true);
+        });
+        ui.advance_cursor_after_rect(rect);
+        self.page_scrolls = scrolls;
+    }
+
     fn title(&mut self, ui: &mut egui::Ui) {
         let narrow = ui.available_width() < 850.0;
         let compact = ui.available_width() < 1200.0;
+        let two_rows = ui.available_width() < 1000.0;
         // Give the controls their own row before the title and toolbar compete for space.
         // The wide title includes a subtitle, so it needs more room than the compact title.
-        if compact {
+        if two_rows {
             ui.horizontal(|ui| self.title_brand(ui, compact));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 self.title_controls(ui, narrow);
@@ -1613,46 +1715,58 @@ impl App {
             } else {
                 let mut remove = None;
                 let running = self.running();
+                // A long list scrolls inside the card when the columns stand side by side.
+                let height = if is_wide(ui) {
+                    INPUT_LIST_HEIGHT
+                } else {
+                    f32::INFINITY
+                };
+                ScrollArea::vertical()
+                    .id_salt("main-designs")
+                    .max_height(height)
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| {
                 for (index, input) in self.inputs.iter().enumerate() {
-                    egui::Sides::new().shrink_left().truncate().show(
-                        ui,
-                        |ui| {
-                            path_label(ui, &p, input);
-                            for (path, estimate) in &self.estimates {
-                                if path == input || path.starts_with(input) {
-                                    if let Some(estimate) = estimate {
-                                        let text = if path == input {
-                                            self.file_estimate_text(path, *estimate)
-                                        } else {
-                                            format!(
-                                                "{}: {}",
-                                                file_name(path),
-                                                self.file_estimate_text(path, *estimate)
-                                            )
-                                        };
-                                        ui.label(RichText::new(text).small().color(p.tide));
-                                        if self.sizes.iter().find(|(p, _)| p == path).and_then(|(_, sizes)| *sizes).is_some_and(|sizes| dutchman::choices::desktop_estimate(sizes, &self.options, self.checker.is_ok(), self.estimate_available()).1) {
-                                            ui.label(RichText::new("Standard leaves feature history out to fit in free memory.").small());
+                            egui::Sides::new().shrink_left().truncate().show(
+                                ui,
+                                |ui| {
+                                    path_label(ui, &p, input);
+                                    for (path, estimate) in &self.estimates {
+                                        if path == input || path.starts_with(input) {
+                                            if let Some(estimate) = estimate {
+                                                let text = if path == input {
+                                                    self.file_estimate_text(path, *estimate)
+                                                } else {
+                                                    format!(
+                                                        "{}: {}",
+                                                        file_name(path),
+                                                        self.file_estimate_text(path, *estimate)
+                                                    )
+                                                };
+                                                ui.label(RichText::new(text).small().color(p.tide));
+                                                if self.sizes.iter().find(|(p, _)| p == path).and_then(|(_, sizes)| *sizes).is_some_and(|sizes| dutchman::choices::desktop_estimate(sizes, &self.options, self.checker.is_ok(), self.estimate_available()).1) {
+                                                    ui.label(RichText::new("Standard leaves feature history out to fit in free memory.").small());
+                                                }
+                                            }
                                         }
                                     }
-                                }
-                            }
-                            if let Some(format) = dutchman_core::Format::from_path(input) {
-                                let level = format
-                                    .headline_level()
-                                    .map(|level| format!("  {level}"))
-                                    .unwrap_or_default();
-                                ui.label(format!("{}{level}", format.status_for(input)));
-                            }
-                        },
-                        |ui| {
-                            let button = egui::Button::new(RichText::new("Remove").small());
-                            if ui.add_enabled(!running, button).clicked() {
-                                remove = Some(index);
-                            }
-                        },
-                    );
-                }
+                                    if let Some(format) = dutchman_core::Format::from_path(input) {
+                                        let level = format
+                                            .headline_level()
+                                            .map(|level| format!("  {level}"))
+                                            .unwrap_or_default();
+                                        ui.label(format!("{}{level}", format.status_for(input)));
+                                    }
+                                },
+                                |ui| {
+                                    let button = egui::Button::new(RichText::new("Remove").small());
+                                    if ui.add_enabled(!running, button).clicked() {
+                                        remove = Some(index);
+                                    }
+                                },
+                            );
+                        }
+                    });
                 if let Some(index) = remove {
                     self.inputs.remove(index);
                 }
@@ -1718,6 +1832,7 @@ impl App {
     }
 
     fn choices_ui(&mut self, ui: &mut egui::Ui) {
+        let wide = is_wide(ui);
         self.preset_ui(ui);
         egui::CollapsingHeader::new("Advanced").show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -1748,9 +1863,11 @@ impl App {
                 (choices.history, choices.sketches, choices.joints);
             // Switches narrow the selected base; Fast has nothing further to leave out.
             ui.add_enabled_ui(self.options.preset != Preset::Fast, |ui| {
-                let changed = ui.checkbox(&mut history, "Feature history").changed()
-                    | ui.checkbox(&mut sketches, "Sketches").changed()
-                    | ui.checkbox(&mut joints, "Joints").changed();
+                let changed = side_by_side(ui, wide, |ui| {
+                    ui.checkbox(&mut history, "Feature history").changed()
+                        | ui.checkbox(&mut sketches, "Sketches").changed()
+                        | ui.checkbox(&mut joints, "Joints").changed()
+                });
                 if changed {
                     set_choices(&mut self.options, history, sketches, joints);
                     self.custom = true;
@@ -1765,6 +1882,7 @@ impl App {
 
     fn output_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let p = *theme::palette(ui);
+        let wide = is_wide(ui);
         section_label(ui, &p, "Output folder");
         panel(ui, &p, false, |ui| {
             let running = self.running();
@@ -1820,27 +1938,31 @@ impl App {
                             );
                         });
                 });
-                let mut replace = !self.options.no_clobber;
-                if ui
-                    .checkbox(&mut replace, "Replace designs already in the output folder")
-                    .changed()
-                {
-                    self.options.no_clobber = !replace;
-                }
-                if ui.small_button("SolidCraft version…").clicked() {
-                    self.solidcraft_open = true;
-                }
-                let mut verify = !self.options.no_verify;
-                if ui
-                    .checkbox(&mut verify, "Check feature history in SolidCraft")
-                    .changed()
-                {
-                    self.options.no_verify = !verify;
-                }
-                ui.checkbox(
-                    &mut self.options.no_memory_check,
-                    "Convert and check history even if memory is low",
-                ).on_hover_text("Force the conversion and history check despite the memory estimate. This can run out of memory. Checking history off stays off.");
+                side_by_side(ui, wide, |ui| {
+                    let mut replace = !self.options.no_clobber;
+                    if ui
+                        .checkbox(&mut replace, "Replace designs already in the output folder")
+                        .changed()
+                    {
+                        self.options.no_clobber = !replace;
+                    }
+                    if ui.small_button("SolidCraft version…").clicked() {
+                        self.solidcraft_open = true;
+                    }
+                });
+                side_by_side(ui, wide, |ui| {
+                    let mut verify = !self.options.no_verify;
+                    if ui
+                        .checkbox(&mut verify, "Check feature history in SolidCraft")
+                        .changed()
+                    {
+                        self.options.no_verify = !verify;
+                    }
+                    ui.checkbox(
+                        &mut self.options.no_memory_check,
+                        "Convert and check history even if memory is low",
+                    ).on_hover_text("Force the conversion and history check despite the memory estimate. This can run out of memory. Checking history off stays off.");
+                });
                 let checker = match &self.checker {
                     Ok(cli) => format!("Checks with {}.", display(cli)),
                     Err(dutchman_solidcraft::NoCli::Blocked(why)) => why.clone(),
@@ -1994,7 +2116,9 @@ impl App {
         )
     }
 
-    fn results(&mut self, ui: &mut egui::Ui, view: &present::RunView) {
+    /// The results. With `own_scroll` they fill the rest of the column and scroll inside it,
+    /// and a placeholder shows until there are any.
+    fn results(&mut self, ui: &mut egui::Ui, view: &present::RunView, own_scroll: bool) {
         let p = *theme::palette(ui);
         let heading = section_label(ui, &p, "Results");
         let reveal = self.reveal.take();
@@ -2005,28 +2129,48 @@ impl App {
         let mut action = None;
         let log_ready = !self.running();
         let running = !log_ready || self.diagnosis.is_some();
-        let mut files: Vec<_> = view.files.iter().collect();
-        files.sort_by_key(|(index, _)| *index);
-        for (index, file) in files {
-            let index = *index;
-            let Some(row) = self.rows.get(index) else {
-                continue;
-            };
-            let shown = card(ui, &p, |ui| {
-                let policy = self.report_policy.policy();
-                let log = self
-                    .row_logs
-                    .get(&index)
-                    .map(|path| (path.as_path(), log_ready));
-                let chosen = row_ui(ui, &p, index, row, file, policy, self.has_app, running, log);
-                if let Some(chosen) = chosen {
-                    action = Some(chosen);
-                }
+        if own_scroll && self.rows.is_empty() {
+            panel(ui, &p, false, |ui| {
+                ui.set_min_height(theme::SPACE_8 * 3.0);
+                ui.label(RichText::new("Converted designs appear here.").color(p.tide));
             });
-            if first == Some(index) {
-                shown.scroll_to_me(Some(Align::Min));
+        }
+        let mut cards = |ui: &mut egui::Ui| {
+            let mut files: Vec<_> = view.files.iter().collect();
+            files.sort_by_key(|(index, _)| *index);
+            for (index, file) in files {
+                let index = *index;
+                let Some(row) = self.rows.get(index) else {
+                    continue;
+                };
+                let shown = card(ui, &p, |ui| {
+                    let policy = self.report_policy.policy();
+                    let log = self
+                        .row_logs
+                        .get(&index)
+                        .map(|path| (path.as_path(), log_ready));
+                    let chosen =
+                        row_ui(ui, &p, index, row, file, policy, self.has_app, running, log);
+                    if let Some(chosen) = chosen {
+                        action = Some(chosen);
+                    }
+                });
+                if first == Some(index) {
+                    shown.scroll_to_me(Some(Align::Min));
+                }
+                ui.add_space(theme::SPACE_2);
             }
-            ui.add_space(theme::SPACE_2);
+        };
+        if own_scroll && !self.rows.is_empty() {
+            let mut area = ScrollArea::vertical()
+                .id_salt("main-results")
+                .auto_shrink([false, false]);
+            if reveal == Some(Reveal::Results) {
+                area = area.vertical_scroll_offset(0.0);
+            }
+            area.show(ui, |ui| cards(ui));
+        } else {
+            cards(ui);
         }
         if action.is_some() {
             self.notice = None;
@@ -2114,6 +2258,7 @@ impl eframe::App for App {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.fit_window(ctx);
         self.ui(ctx);
     }
 }
@@ -2545,6 +2690,20 @@ fn step_text(ui: &mut egui::Ui, p: &Palette, text: &str) {
 }
 
 /// History decisions must be visible even while the full loss log is collapsed.
+/// Whether the window is wide enough for the main screen's two columns.
+fn is_wide(ui: &egui::Ui) -> bool {
+    ui.ctx().content_rect().width() >= crate::WIDE_BREAKPOINT
+}
+
+/// Runs `body` with its controls in one row that wraps when `wide`, else one under another.
+fn side_by_side<R>(ui: &mut egui::Ui, wide: bool, body: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    if wide {
+        ui.horizontal_wrapped(body).inner
+    } else {
+        body(ui)
+    }
+}
+
 fn history_info(report: Option<&Value>) -> Vec<&str> {
     report
         .and_then(|report| report.get("losses"))
@@ -2623,9 +2782,10 @@ fn framed(
         .fill(fill)
         .stroke(stroke)
         .corner_radius(CornerRadius::same(theme::RADIUS_LG))
-        .inner_margin(Margin::same(theme::SPACE_4 as i8))
+        .inner_margin(Margin::same(theme::CARD_PADDING as i8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
+            theme::compact_rows(ui);
             body(ui);
         })
         .response

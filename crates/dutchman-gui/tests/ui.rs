@@ -147,7 +147,7 @@ fn assert_header_fits(h: &Harness<'_, App>, width: f32, update: bool, theme: &st
 #[test]
 fn header_controls_fit_without_overlapping_the_title() {
     for width in [
-        520.0, 600.0, 760.0, 913.0, 914.0, 1000.0, 1263.0, 1264.0, 1400.0,
+        520.0, 600.0, 760.0, 913.0, 914.0, 1000.0, 1100.0, 1180.0, 1263.0, 1264.0, 1400.0,
     ] {
         for update in [false, true] {
             for (theme, label) in [
@@ -2593,5 +2593,214 @@ fn part_positions_last_shown_names_the_program() {
             1,
             "{files:?}"
         );
+    }
+}
+
+/// A window of the default size for a monitor of `monitor` points, with one converted design
+/// as the only result, and the Advanced choices open.
+fn fit_harness(size: [f32; 2], theme: ThemePreference, work: &Path) -> Harness<'static, App> {
+    let input = work.join("generated_unit_cube.f3d");
+    std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(size[0], size[1]))
+        .build_eframe(|cc| App::new(cc));
+    harness.ctx.set_theme(theme);
+    harness.state_mut().preview_solidcraft(Some("0.30.9"));
+    // A fixed checker, so no path of the machine running the test is shown.
+    harness.state_mut().set_checker_for_test(true);
+    harness.state_mut().add_inputs([input]);
+    harness.state_mut().set_out_dir(work.join("converted"));
+    harness.state_mut().set_verify(false);
+    harness.run_steps(8);
+    harness.get_by_label("Advanced").click_accesskit();
+    harness.run_steps(8);
+    convert(&mut harness);
+    harness
+}
+
+/// Every control and heading of the main screen sits inside the window, above the Convert row.
+fn assert_main_screen_in_view(h: &Harness<'_, App>, size: [f32; 2]) {
+    let window = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(size[0], size[1]));
+    let convert_row = h.get_by_label("Convert").rect().top();
+    for label in [
+        "DESIGNS",
+        "Add files…",
+        "OUTPUT FOLDER",
+        "Preset",
+        "Part positions",
+        "Feature history",
+        "Joints",
+        "Output format",
+        "Replace designs already in the output folder",
+        "Open diagnostics folder",
+        "RESULTS",
+        "Open in SolidCraft",
+    ] {
+        let rect = h.get_by_label(label).rect();
+        assert!(
+            window.contains_rect(rect),
+            "{size:?}: {label} {rect:?} outside the window"
+        );
+        assert!(
+            rect.bottom() <= convert_row,
+            "{size:?}: {label} {rect:?} runs under the Convert row at {convert_row}"
+        );
+    }
+}
+
+#[test]
+fn the_default_size_fits_the_main_screen_without_scrolling() {
+    for monitor in [[1440.0, 900.0], [1920.0, 1080.0]] {
+        let size = dutchman_gui::fit_size(monitor);
+        assert!(size[0] <= monitor[0] * 0.9 && size[1] <= monitor[1] * 0.9);
+        assert!(size[0] >= dutchman_gui::WIDE_BREAKPOINT);
+        let work = tempfile::tempdir().unwrap();
+        let h = fit_harness(size, ThemePreference::Light, work.path());
+        assert_eq!(h.state().rows().len(), 1);
+        assert!(
+            !h.state().page_scrolls(),
+            "{monitor:?}: the page scrolls at {size:?}"
+        );
+        assert_main_screen_in_view(&h, size);
+        // Designs and the output choices sit beside the results, not above them.
+        let designs = h.get_by_label("DESIGNS").rect();
+        let results = h.get_by_label("RESULTS").rect();
+        assert!(
+            results.left() > designs.right(),
+            "{monitor:?}: not side by side"
+        );
+    }
+}
+
+#[test]
+fn the_default_size_is_centred_and_capped_at_the_monitor() {
+    assert_eq!(
+        dutchman_gui::fit_size([1920.0, 1080.0]),
+        dutchman_gui::FIT_SIZE
+    );
+    assert_eq!(
+        dutchman_gui::fit_size([1440.0, 900.0]),
+        dutchman_gui::FIT_SIZE
+    );
+    // A small monitor takes 90% of it, never less than the smallest usable window.
+    assert_eq!(dutchman_gui::fit_size([1280.0, 720.0]), [1152.0, 648.0]);
+    assert_eq!(dutchman_gui::fit_size([400.0, 300.0]), [520.0, 420.0]);
+    assert_eq!(
+        dutchman_gui::centred_position([1920.0, 1080.0], [1180.0, 800.0]),
+        [370.0, 140.0]
+    );
+    assert_eq!(
+        dutchman_gui::centred_position([400.0, 300.0], [520.0, 420.0]),
+        [0.0, 0.0]
+    );
+}
+
+#[test]
+fn many_results_scroll_in_their_own_column_and_not_the_page() {
+    let out = tempfile::tempdir().unwrap();
+    let size = dutchman_gui::FIT_SIZE;
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(size[0], size[1]))
+        .build_eframe(|cc| App::new(cc));
+    // One folder of three designs gives three results from one entry in Designs.
+    let folder = out.path().join("Designs");
+    std::fs::create_dir_all(&folder).unwrap();
+    for name in [
+        "generated_unit_cube.f3d",
+        "synthetic_cube.ipt",
+        "solidworks_cube.sldprt",
+    ] {
+        std::fs::copy(fixture(name), folder.join(name)).unwrap();
+    }
+    h.state_mut().add_inputs([folder]);
+    h.state_mut().set_out_dir(out.path().join("converted"));
+    h.state_mut().set_verify(false);
+    h.run_steps(8);
+    h.get_by_label("Advanced").click_accesskit();
+    h.run_steps(8);
+    convert(&mut h);
+    assert_eq!(h.state().rows().len(), 3);
+    assert!(!h.state().page_scrolls());
+    let convert_row = h.get_by_label("Convert").rect().top();
+    assert!(h.get_by_label("Open diagnostics folder").rect().bottom() <= convert_row);
+    assert!(h.get_by_label("RESULTS").rect().bottom() <= convert_row);
+}
+
+#[test]
+fn a_narrow_window_keeps_the_single_column() {
+    let work = tempfile::tempdir().unwrap();
+    let size = [520.0, 1600.0];
+    let h = fit_harness(size, ThemePreference::Light, work.path());
+    let window = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(size[0], size[1]));
+    let designs = h.get_by_label("DESIGNS").rect();
+    let output = h.get_by_label("OUTPUT FOLDER").rect();
+    let results = h.get_by_label("RESULTS").rect();
+    assert!(
+        output.top() > designs.bottom(),
+        "Output folder is below Designs"
+    );
+    assert!(
+        results.top() > output.bottom(),
+        "Results is below the options"
+    );
+    for label in [
+        "DESIGNS",
+        "Add files…",
+        "OUTPUT FOLDER",
+        "Preset",
+        "RESULTS",
+    ] {
+        let rect = h.get_by_label(label).rect();
+        assert!(
+            window.contains_rect(rect),
+            "{label} {rect:?} outside the window"
+        );
+    }
+    // The column keeps its width: nothing runs past the right edge.
+    assert!(h.get_by_label("Open in SolidCraft").rect().right() <= size[0]);
+}
+
+#[test]
+#[ignore = "renders GPU screenshots of the default window size; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn fit_screenshots() {
+    // Isolate settings and paths so no image shows the owner's home folder.
+    if std::env::var_os("DUTCHMAN_FIT_CHILD").is_none() {
+        let home = tempfile::tempdir().unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "fit_screenshots", "--nocapture"])
+            .env("DUTCHMAN_FIT_CHILD", "1")
+            .env("HOME", home.path())
+            .env("LOCALAPPDATA", home.path())
+            .env("XDG_CONFIG_HOME", home.path().join("config"))
+            .env("XDG_CACHE_HOME", home.path().join("cache"))
+            .env("XDG_DATA_HOME", home.path().join("data"))
+            .env("XDG_STATE_HOME", home.path().join("state"))
+            .status()
+            .unwrap();
+        assert!(status.success(), "screenshot child failed: {status}");
+        return;
+    }
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let cases = [
+        ("fit-1440x900", dutchman_gui::fit_size([1440.0, 900.0])),
+        ("fit-1920x1080", dutchman_gui::fit_size([1920.0, 1080.0])),
+        ("fit-520", [520.0, 1500.0]),
+    ];
+    for (theme, label) in [
+        (ThemePreference::Light, "Day"),
+        (ThemePreference::Dark, "Night"),
+    ] {
+        for (name, size) in cases {
+            let work = tempfile::tempdir().unwrap();
+            let mut h = fit_harness(size, theme, work.path());
+            if size[0] >= dutchman_gui::WIDE_BREAKPOINT {
+                assert!(!h.state().page_scrolls(), "{name}: the page scrolls");
+            }
+            h.render()
+                .unwrap()
+                .save(dir.join(format!("{name}-{label}.png")))
+                .unwrap();
+        }
     }
 }

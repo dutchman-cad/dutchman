@@ -100,6 +100,22 @@ pub const SPACE_2: f32 = 8.0;
 pub const SPACE_4: f32 = 16.0;
 pub const SPACE_8: f32 = 32.0;
 
+/// The padding above and below the title row and the Convert row.
+pub const BAR_PADDING: f32 = 10.0;
+/// The padding inside a card or panel.
+pub const CARD_PADDING: f32 = 12.0;
+/// The height of a row of controls inside a card or panel.
+const ROW_HEIGHT: f32 = 24.0;
+/// The gap between rows inside a card or panel.
+const ROW_GAP: f32 = 4.0;
+
+/// Tightens the rows of controls inside a card or panel, so more of them fit in view.
+pub fn compact_rows(ui: &mut egui::Ui) {
+    let spacing = ui.spacing_mut();
+    spacing.item_spacing.y = ROW_GAP;
+    spacing.interact_size.y = ROW_HEIGHT;
+}
+
 // Radius tokens.
 pub const RADIUS_SM: u8 = 2;
 pub const RADIUS_MD: u8 = 4;

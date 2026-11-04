@@ -37,6 +37,32 @@ const APP_ID: &str = "dutchman";
 /// The smallest window the app can be used in, in points.
 const MIN_INNER_SIZE: [f32; 2] = [520.0, 420.0];
 
+/// Width in points from which the main screen puts Designs and Output folder beside Results.
+pub const WIDE_BREAKPOINT: f32 = 1100.0;
+/// The size in points the main screen fits in with nothing scrolled, when the screen is large
+/// enough: wide enough for two columns, tall enough for the Advanced choices.
+pub const FIT_SIZE: [f32; 2] = [1180.0, 800.0];
+/// The share of the monitor the default window may take.
+const MONITOR_SHARE: f32 = 0.9;
+
+/// The default window size for a monitor of `monitor` points: [`FIT_SIZE`], and never more than
+/// 90% of the monitor, nor less than the smallest usable window.
+pub fn fit_size(monitor: [f32; 2]) -> [f32; 2] {
+    let size = |fit: f32, monitor: f32, min: f32| fit.min(monitor * MONITOR_SHARE).max(min);
+    [
+        size(FIT_SIZE[0], monitor[0], MIN_INNER_SIZE[0]),
+        size(FIT_SIZE[1], monitor[1], MIN_INNER_SIZE[1]),
+    ]
+}
+
+/// The top left corner that centres a window of `size` points on a monitor of `monitor` points.
+pub fn centred_position(monitor: [f32; 2], size: [f32; 2]) -> [f32; 2] {
+    [
+        ((monitor[0] - size[0]) / 2.0).max(0.0),
+        ((monitor[1] - size[1]) / 2.0).max(0.0),
+    ]
+}
+
 /// The window's options: its size, title and icon.
 pub fn options() -> eframe::NativeOptions {
     if let Some(dir) = eframe::storage_dir(APP_ID) {
@@ -45,7 +71,8 @@ pub fn options() -> eframe::NativeOptions {
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_title(window_title())
         .with_app_id(APP_ID)
-        .with_inner_size([760.0, 680.0])
+        // Open at the fitted size; the first frame caps it to the monitor once its size is known.
+        .with_inner_size(FIT_SIZE)
         .with_min_inner_size(MIN_INNER_SIZE)
         .with_drag_and_drop(true);
     if let Some(icon) = icon() {
