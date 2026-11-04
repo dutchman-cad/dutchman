@@ -20,10 +20,19 @@ pub(super) fn admit(
     stored: &BTreeMap<String, Placement3x4>,
     proposals: &BTreeMap<String, (Option<String>, Placement3x4)>,
     candidates: &BTreeSet<String>,
-    fixed: &BTreeSet<String>,
+    shown: &BTreeSet<String>,
+    pinned: &BTreeSet<String>,
+    guarded: &BTreeSet<String>,
     references: &BTreeMap<&str, &Value>,
     counts: &mut PartPositionCounts,
-) -> Result<BTreeSet<String>, String> {
+) -> Result<(BTreeSet<String>, BTreeSet<String>), String> {
+    // Displayed poses bypass the current-pose guards, but a displayed holder (bound or
+    // derived) is withdrawn with everything below it when its new pose carries a body
+    // outside the envelope.
+    let mut fixed = shown.clone();
+    fixed.extend(pinned.iter().cloned());
+    let mut guarded = guarded.clone();
+    let mut below_of: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
     let rows = document
         .pointer("/model/occurrences")
         .and_then(Value::as_array)
@@ -38,19 +47,45 @@ pub(super) fn admit(
         > 10_000_000
     {
         counts.unsupported = counts.unsupported.saturating_add(candidates.len() as u64);
-        return Ok(BTreeSet::new());
+        return Ok((BTreeSet::new(), fixed));
     }
     let by_id: BTreeMap<_, _> = rows
         .iter()
         .filter_map(|row| Some((row.get("id")?.as_str()?, row)))
         .collect();
-    let mut posed = source_posed(document);
+    for (id, row) in &by_id {
+        if let Some(parent) = row.pointer("/parent/occurrence").and_then(Value::as_str) {
+            below_of.entry(parent).or_default().push(id);
+        }
+    }
+    let subtree = |root: &str| {
+        let mut all = BTreeSet::new();
+        let mut open = vec![root];
+        while let Some(at) = open.pop() {
+            for child in below_of.get(at).into_iter().flatten() {
+                if all.insert((*child).to_owned()) {
+                    open.push(child);
+                }
+            }
+        }
+        all
+    };
+    let source = source_posed(document);
+    let mut posed = source.clone();
     let mut baseline = Skeleton::build(document, stored)?;
     baseline.solve(&posed);
     let baseline_worlds = baseline.worlds();
     // Displayed poses outrank joint solving as well as the current-pose guards.
     posed.extend(fixed.iter().cloned());
     let definitions = position_bounds::definitions(model);
+    let definitions_with_bodies: BTreeSet<_> = model
+        .ir
+        .model
+        .product_definitions
+        .iter()
+        .filter(|d| !d.bodies.is_empty())
+        .map(|d| d.id.as_str())
+        .collect();
     let mut envelope: Option<Bounds> = None;
     for (id, row) in &by_id {
         let inner = definition_key(row)
@@ -79,21 +114,15 @@ pub(super) fn admit(
             }
         }
     }
-    let definitions_with_bodies: BTreeSet<_> = model
-        .ir
-        .model
-        .product_definitions
-        .iter()
-        .filter(|d| !d.bodies.is_empty())
-        .map(|d| d.id.as_str())
-        .collect();
     let mut accepted = candidates.clone();
     // Rejecting a pose can reveal another conflict. Each pass removes candidates;
     // a fixed cap bounds hostile dependency chains and conservatively keeps the rest stored.
     for _ in 0..MAX_DEPTH {
-        if accepted.is_empty() {
-            return Ok(accepted);
+        if accepted.is_empty() && guarded.is_empty() {
+            return Ok((accepted, fixed));
         }
+        posed = source.clone();
+        posed.extend(fixed.iter().cloned());
         let mut worlds = BTreeMap::new();
         // A proposal stores a desired world pose. Retained stored children follow
         // their parents; explicit current children retain their document-world pose.
@@ -105,7 +134,7 @@ pub(super) fn admit(
                 stored,
                 proposals,
                 &accepted,
-                fixed,
+                &fixed,
                 &mut worlds,
                 &mut open,
                 0,
@@ -194,6 +223,7 @@ pub(super) fn admit(
         // Check the entire placed subtree, including bodies owned by its holder.
         let mut geometry: BTreeMap<&str, (Option<Bounds>, bool)> = BTreeMap::new();
         let mut unsafe_paths = BTreeSet::new();
+        let mut unsafe_bodies: Vec<Vec<usize>> = Vec::new();
         for (id, row) in &by_id {
             let has_bodies =
                 definition_key(row).is_some_and(|id| definitions_with_bodies.contains(id));
@@ -206,7 +236,7 @@ pub(super) fn admit(
             let moved = baseline_worlds
                 .get(*id)
                 .zip(after.get(*id))
-                .is_some_and(|(a, b)| !same(a, b));
+                .is_some_and(|(a, b)| !super::poses::close(a, b));
             if has_bodies
                 && moved
                 && (missing
@@ -216,6 +246,21 @@ pub(super) fn admit(
             {
                 if let Some(path) = trial.paths.get(*id) {
                     unsafe_paths.insert(path.path.clone());
+                    // A part with a displayed pose of its own is only counted when what is
+                    // known of it (its vertices, or its complete bounds) leaves the envelope;
+                    // missing bounds cannot be blamed on the holder.
+                    let certain = definition_key(row)
+                        .and_then(|id| definitions.get(id))
+                        .and_then(|v| v.0)
+                        .zip(after.get(*id))
+                        .map(|(b, w)| b.placed(w));
+                    let outside = [bound, certain]
+                        .into_iter()
+                        .flatten()
+                        .any(|part| !envelope.is_some_and(|all| all.contains(part)));
+                    if !fixed.contains(*id) || outside {
+                        unsafe_bodies.push(path.path.clone());
+                    }
                 }
             }
             let mut at = Some(*id);
@@ -277,6 +322,33 @@ pub(super) fn admit(
                 rejected.entry(id.clone()).or_insert(Rejection::Bounds);
             }
         }
+        // A withdrawn holder takes its whole subtree back to first placement. Only the
+        // lowest displayed holder above an unsafe body is withdrawn in each pass.
+        let mut withdrawn = BTreeSet::new();
+        for holder in &guarded {
+            let Some(path) = trial.paths.get(holder.as_str()).map(|p| &p.path) else {
+                withdrawn.insert(holder.clone());
+                continue;
+            };
+            let holds = |bad: &Vec<usize>| bad.starts_with(path);
+            if !unsafe_bodies.iter().any(holds) {
+                continue;
+            }
+            let lower = guarded.iter().any(|other| {
+                other != holder
+                    && trial
+                        .paths
+                        .get(other.as_str())
+                        .is_some_and(|p| p.path.len() > path.len() && p.path.starts_with(path))
+                    && trial
+                        .paths
+                        .get(other.as_str())
+                        .is_some_and(|p| unsafe_bodies.iter().any(|bad| bad.starts_with(&p.path)))
+            });
+            if !lower {
+                withdrawn.insert(holder.clone());
+            }
+        }
         for members in groups.values().filter(|members| members.len() > 1) {
             let deltas: Option<Vec<_>> = members
                 .iter()
@@ -309,8 +381,20 @@ pub(super) fn admit(
                 }
             }
         }
-        if rejected.is_empty() {
-            return Ok(accepted);
+        if rejected.is_empty() && withdrawn.is_empty() {
+            return Ok((accepted, fixed));
+        }
+        for holder in &withdrawn {
+            guarded.remove(holder);
+            fixed.remove(holder);
+            counts.bounds += 1;
+            for id in subtree(holder) {
+                guarded.remove(&id);
+                fixed.remove(&id);
+                if accepted.remove(&id) {
+                    counts.bounds += 1;
+                }
+            }
         }
         for (id, why) in rejected {
             if accepted.remove(&id) {
@@ -323,7 +407,14 @@ pub(super) fn admit(
         }
     }
     counts.unsupported = counts.unsupported.saturating_add(accepted.len() as u64);
-    Ok(BTreeSet::new())
+    // A bounded trial that never settles cannot certify the displayed holders either.
+    for holder in &guarded {
+        for id in subtree(holder) {
+            fixed.remove(&id);
+        }
+        fixed.remove(holder);
+    }
+    Ok((BTreeSet::new(), fixed))
 }
 
 fn affects(a: &[usize], b: &[usize]) -> bool {

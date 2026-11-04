@@ -5322,13 +5322,14 @@ mod tests {
         assert!(near(&frame, &at([120.0, 0.0, 0.0], 0.0)), "{frame:?}");
         assert_eq!(notes.len(), 1, "{notes:?}");
         // A decoder-bound display pose works without any native current pose,
-        // survives compact metadata extraction, and outranks this touching joint.
+        // survives compact metadata extraction, and outranks this touching joint
+        // (1 mm from where the joint puts the frame, so its blocks stay in the model's extent).
         wire["native"]["f3d"]["design_component_occurrences"] = json!([]);
         let occurrence = wire["model"]["occurrences"][0]["id"].clone();
         wire["native"]["f3d"]["display_poses"] = json!([{
             "id": "f3d:scene:display-pose#0", "stream": "world", "byte_offset": 0,
             "path": [1, 7], "binding": {"state": "bound", "occurrence": occurrence},
-            "transform": [[1,0,0,240],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
+            "transform": [[1,0,0,21],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
         }]);
         let displayed = Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
@@ -5340,7 +5341,7 @@ mod tests {
                 .unwrap();
             assert!(near(
                 &world_at(&assembly, &[0]).unwrap(),
-                &at([240.0, 0.0, 0.0], 0.0)
+                &at([21.0, 0.0, 0.0], 0.0)
             ));
         }
         let assembly = local_assembly_with_positions(&displayed, crate::PartPositions::FirstPlaced)
@@ -6841,5 +6842,175 @@ mod tests {
         .unwrap();
         assert_eq!(assembly.placements[0].transform[0][3], 0.0);
         assert!(report.part_positions().unwrap().1.joints > 0);
+    }
+
+    /// `model` with these saved-scene displayed poses (occurrence key, x in mm).
+    fn with_displayed(model: &Model, poses: &[(u32, f64)]) -> Model {
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["native"]["f3d"]["display_poses"] = json!(poses
+            .iter()
+            .map(|(key, x)| json!({
+                "id": format!("f3d:scene:display-pose#{key}"), "stream": "world", "byte_offset": 0,
+                "path": [1, key], "binding": {"state": "bound", "occurrence": format!("f3d:model:occurrence#{key}")},
+                "transform": [[1,0,0,x],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
+            }))
+            .collect::<Vec<_>>());
+        Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model.clone()
+        }
+    }
+
+    /// Two frames, each holding two blocks, so the frame component can be shared.
+    fn two_frames() -> Model {
+        nested(
+            false,
+            Some(json!([
+                placed(0, "frame", root(), 100.0),
+                placed(1, "block", inside(0), 0.0),
+                placed(2, "block", inside(0), 30.0),
+                placed(3, "frame", root(), 300.0),
+                placed(4, "block", inside(3), 0.0),
+                placed(5, "block", inside(3), 30.0),
+            ])),
+        )
+    }
+
+    #[test]
+    fn displayed_poses_that_keep_the_relative_placement_keep_a_shared_component_shared() {
+        use crate::PartPositions::{FirstPlaced, LastShown, Smart};
+        let model = two_frames();
+        let first = local_assembly_with_positions(&model, FirstPlaced)
+            .unwrap()
+            .unwrap();
+        // Scene matrices are float32: each instance carries its own rounding.
+        let same = with_displayed(
+            &model,
+            &[
+                (0, 100.0002),
+                (1, 100.0001),
+                (2, 129.9998),
+                (3, 300.0003),
+                (4, 299.9999),
+                (5, 330.0002),
+            ],
+        );
+        for mode in [Smart, LastShown] {
+            let shown = local_assembly_with_positions(&same, mode).unwrap().unwrap();
+            assert_eq!(shown.parts.len(), first.parts.len(), "{mode:?}");
+            assert_eq!(shown.placements.len(), first.placements.len(), "{mode:?}");
+        }
+        // A block that really sits elsewhere in one instance needs its own copy.
+        let differs = with_displayed(
+            &model,
+            &[
+                (0, 100.0),
+                (1, 100.0),
+                (2, 130.0),
+                (3, 300.0),
+                (4, 300.0),
+                (5, 336.0),
+            ],
+        );
+        let shown = local_assembly_with_positions(&differs, LastShown)
+            .unwrap()
+            .unwrap();
+        assert!(shown.parts.len() > first.parts.len());
+    }
+
+    #[test]
+    fn a_displayed_holder_that_carries_a_body_outside_the_extent_keeps_its_first_placement() {
+        use crate::PartPositions::{FirstPlaced, LastShown, Smart};
+        // Only the holder is displayed; its blocks follow it, 4900 mm outside the model.
+        let far = with_displayed(&two_frames(), &[(0, 5000.0)]);
+        let moved = local_assembly_with_positions(&far, LastShown)
+            .unwrap()
+            .unwrap();
+        assert!(near(
+            &world_at(&moved, &[0, 0]).unwrap(),
+            &at([5000.0, 0.0, 0.0], 0.0)
+        ));
+        let mut report = Report::default();
+        let (kept, _) =
+            local_components_with_threads(&far, &BTreeMap::new(), 1, Smart, &mut report)
+                .unwrap()
+                .unwrap();
+        let first = local_assembly_with_positions(&far, FirstPlaced)
+            .unwrap()
+            .unwrap();
+        for path in [vec![0], vec![0, 0], vec![0, 1], vec![1, 1]] {
+            assert!(
+                near(
+                    &world_at(&kept, &path).unwrap(),
+                    &world_at(&first, &path).unwrap()
+                ),
+                "{path:?}"
+            );
+        }
+        let counts = report.part_positions().unwrap().1;
+        assert_eq!((counts.displayed, counts.bounds), (0, 1), "{counts:?}");
+        assert_eq!(counts.total(), 6);
+        // A part with a pose of its own far outside the model takes its displayed holder
+        // back to the first placement too, along with the parts below it.
+        let apart = with_displayed(&two_frames(), &[(0, 100.0), (1, 5000.0), (2, 130.0)]);
+        let (kept, _) = local_components_with_threads(
+            &apart,
+            &BTreeMap::new(),
+            1,
+            Smart,
+            &mut Report::default(),
+        )
+        .unwrap()
+        .unwrap();
+        for path in [vec![0], vec![0, 0], vec![0, 1]] {
+            assert!(
+                near(
+                    &world_at(&kept, &path).unwrap(),
+                    &world_at(&first, &path).unwrap()
+                ),
+                "{path:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_conflicting_holder_keeps_its_first_placement_inside_a_holder_that_moves() {
+        use crate::PartPositions::{FirstPlaced, LastShown, Smart};
+        let model = nested(
+            false,
+            Some(json!([
+                placed(0, "frame", root(), 100.0),
+                placed(1, "frame", inside(0), 0.0),
+                placed(2, "block", inside(1), 0.0),
+                placed(3, "block", inside(1), 30.0),
+                placed(4, "block", inside(0), 60.0),
+            ])),
+        );
+        // Blocks 2 and 3 ask for frame worlds 100 and 130, which disagree, and the outer
+        // frame is shown 1 mm along.
+        let shown = with_displayed(&model, &[(0, 101.0), (2, 100.0), (3, 160.0)]);
+        let first = local_assembly_with_positions(&shown, FirstPlaced)
+            .unwrap()
+            .unwrap();
+        for mode in [Smart, LastShown] {
+            let mut report = Report::default();
+            let (placed, _) =
+                local_components_with_threads(&shown, &BTreeMap::new(), 1, mode, &mut report)
+                    .unwrap()
+                    .unwrap();
+            assert!(near(
+                &world_at(&placed, &[0]).unwrap(),
+                &at([101.0, 0.0, 0.0], 0.0)
+            ));
+            // The conflicted holder stays where it was first placed, not 1 mm along.
+            assert!(
+                near(
+                    &world_at(&placed, &[0, 0]).unwrap(),
+                    &world_at(&first, &[0, 0]).unwrap()
+                ),
+                "{mode:?}"
+            );
+            assert_eq!(report.part_positions().unwrap().1.holder_conflicts, 1);
+        }
     }
 }

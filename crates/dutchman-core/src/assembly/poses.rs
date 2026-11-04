@@ -46,7 +46,7 @@ pub(super) fn select(
     // behavior exactly, including existing path and component-operation placement.
     let stored = Selected::new();
     let mut current = Selected::new();
-    let mut display = BTreeSet::new();
+    let mut display = BTreeSet::<String>::new();
     let mut uses = BTreeMap::<(Option<String>, &str), Vec<&str>>::new();
     let mut counts = PartPositionCounts::default();
     let mut displayed = if mode == PartPositions::FirstPlaced {
@@ -55,13 +55,24 @@ pub(super) fn select(
         displayed_poses(document)?
     };
     displayed.retain(|id, _| by_id.contains_key(id));
+    let mut children = BTreeMap::<&str, Vec<&str>>::new();
+    for (id, row) in &by_id {
+        if let Some(parent) = row.pointer("/parent/occurrence").and_then(Value::as_str) {
+            children.entry(parent).or_default().push(id);
+        }
+    }
+    let mut derived = BTreeSet::<&str>::new();
+    // Holders whose displayed children disagree keep their first placement.
+    let mut conflicted = BTreeSet::<&str>::new();
     if !displayed.is_empty() {
-        let (derived, conflicts) = derive_holders(&by_id, &mut displayed)?;
-        counts.derived_holders = derived.len() as u64;
+        let (found, conflicts) = derive_holders(&by_id, &mut displayed)?;
+        derived = found;
         counts.holder_conflicts = conflicts.len() as u64;
+        counts.derived_holders = derived.len() as u64;
+        conflicted = conflicts.clone();
         if !conflicts.is_empty() {
             report.push(Severity::Info, "part positions", format!(
-                "{} holders keep their existing placement source because displayed children do not agree within 0.001 mm and 1e-6 rotation entries",
+                "{} holders keep their first placement because displayed children do not agree within 0.001 mm and 1e-6 rotation entries",
                 conflicts.len()
             ));
         }
@@ -140,47 +151,70 @@ pub(super) fn select(
         .filter(|id| !display.contains(**id))
         .map(|id| (*id).to_owned())
         .collect();
-    let accepted = if mode == PartPositions::Smart && !candidates.is_empty() {
+    // A conflicted holder stays where it was first placed even inside a holder that moves;
+    // the subtree it holds then keeps that placement too, except parts with a displayed pose.
+    let mut pinned = BTreeSet::<String>::new();
+    if !display.is_empty() {
+        for holder in &conflicted {
+            if !display.contains(*holder) {
+                if let Some(world) = baseline.get(*holder) {
+                    current.insert(*holder, Pose::Document(None, *world));
+                    pinned.insert((*holder).to_owned());
+                }
+            }
+        }
+    }
+    // Displayed holders move whole subtrees, so Smart checks the geometry below them too.
+    let guarded: BTreeSet<String> = display
+        .iter()
+        .filter(|id| children.contains_key(id.as_str()))
+        .cloned()
+        .collect();
+    let accepted = if mode == PartPositions::Smart && !(candidates.is_empty() && guarded.is_empty())
+    {
         let proposals = current
             .iter()
             .map(|(id, Pose::Document(member, pose))| ((*id).to_owned(), (member.clone(), *pose)))
             .collect();
-        super::position_smart::admit(
+        let (accepted, kept) = super::position_smart::admit(
             model,
             document,
             &baseline,
             &proposals,
             &candidates,
             &display,
+            &pinned,
+            &guarded,
             &references,
             &mut counts,
-        )?
+        )?;
+        display = kept.into_iter().filter(|id| !pinned.contains(id)).collect();
+        accepted
     } else {
         candidates
     };
     counts.displayed = display.len() as u64;
+    counts.derived_holders = derived.iter().filter(|id| display.contains(**id)).count() as u64;
     counts.current = accepted.len() as u64;
     counts.first_placed = (by_id.len() as u64)
         .saturating_sub(counts.displayed)
         .saturating_sub(counts.current);
     let mut selected = stored;
     for (id, pose) in current {
-        if accepted.contains(id) || display.contains(id) {
+        if accepted.contains(id) || display.contains(id) || pinned.contains(id) {
             selected.insert(id, pose);
         }
     }
     let mut worlds = BTreeMap::new();
+    for id in by_id.keys() {
+        let _ = world(id, &by_id, &selected, &mut worlds, 0)?;
+    }
+    // A local placement that matches the stored one keeps it exactly, so a shared
+    // component whose instances keep the same relative placement stays shared.
+    let mut settled = BTreeMap::new();
     let mut updates = BTreeMap::new();
     for id in by_id.keys() {
-        let placed = world(id, &by_id, &selected, &mut worlds, 0)?;
-        let outer = by_id
-            .get(id)
-            .and_then(|row| row.pointer("/parent/occurrence"))
-            .and_then(Value::as_str)
-            .map(|parent| world(parent, &by_id, &selected, &mut worlds, 0))
-            .transpose()?
-            .unwrap_or(IDENTITY);
-        updates.insert((*id).to_owned(), compose(&inverse(&outer), &placed));
+        settle(id, &by_id, &worlds, &mut settled, &mut updates, 0)?;
     }
     if let Some(rows) = document
         .pointer_mut("/model/occurrences")
@@ -197,7 +231,58 @@ pub(super) fn select(
         }
     }
     report.record_part_positions(mode, counts);
+    // Pinned holders are placed where they were first placed, so joints check them too.
+    display.extend(pinned);
     Ok(display)
+}
+
+/// Placements agree when rotation entries are within 1e-6 and origins within 0.001 mm.
+pub(super) fn close(a: &Placement3x4, b: &Placement3x4) -> bool {
+    let mut origin = 0.0;
+    for (x, y) in a.iter().zip(b) {
+        for (column, (p, q)) in x.iter().zip(y).enumerate() {
+            if column == 3 {
+                origin += (p - q).powi(2);
+            } else if (p - q).abs() > 1e-6 {
+                return false;
+            }
+        }
+    }
+    origin.sqrt() <= 1e-3
+}
+
+/// The local placement written for `id`, given the already settled world of its parent.
+fn settle(
+    id: &str,
+    rows: &BTreeMap<&str, &Value>,
+    placed: &BTreeMap<String, Placement3x4>,
+    settled: &mut BTreeMap<String, Placement3x4>,
+    updates: &mut BTreeMap<String, Placement3x4>,
+    depth: usize,
+) -> Result<Placement3x4, String> {
+    if depth > MAX_DEPTH {
+        return Err("current poses nest too deeply or name a component inside itself".to_owned());
+    }
+    if let Some(world) = settled.get(id) {
+        return Ok(*world);
+    }
+    let row = rows.get(id).ok_or("a posed component names no parent")?;
+    let outer = match row.pointer("/parent/occurrence").and_then(Value::as_str) {
+        Some(parent) => settle(parent, rows, placed, settled, updates, depth + 1)?,
+        None => IDENTITY,
+    };
+    let want = placed.get(id).ok_or("a placement is missing")?;
+    let stored = transform(row)?;
+    let local = compose(&inverse(&outer), want);
+    let local = if close(&compose(&outer, &stored), want) {
+        stored
+    } else {
+        local
+    };
+    let world = compose(&outer, &local);
+    updates.insert(id.to_owned(), local);
+    settled.insert(id.to_owned(), world);
+    Ok(world)
 }
 
 /// Only explicit decoder bindings establish a displayed pose. Older pins omit this arena.
@@ -284,6 +369,7 @@ fn derive_holders<'a>(
             return Err("displayed-pose parents form a cycle or nest too deeply".to_owned());
         }
         let mut first = None;
+        let mut shown = Vec::new();
         let mut low = [[f64::INFINITY; 4]; 3];
         let mut high = [[f64::NEG_INFINITY; 4]; 3];
         for child in children.get(id).into_iter().flatten() {
@@ -310,6 +396,7 @@ fn derive_holders<'a>(
                     local
                 };
                 let candidate = compose(pose, &inverse(&local));
+                shown.push((*pose, local));
                 first.get_or_insert(candidate);
                 for ((low, high), row) in low.iter_mut().zip(&mut high).zip(candidate) {
                     for ((lo, hi), value) in low.iter_mut().zip(high).zip(row) {
@@ -332,6 +419,10 @@ fn derive_holders<'a>(
                         }
                     }
                 }
+                // The derived world must reproduce every displayed child.
+                agrees &= shown
+                    .iter()
+                    .all(|(pose, local)| close(&compose(&first, local), pose));
                 if agrees && translation_span.sqrt() <= 1e-3 {
                     displayed.insert(id, first);
                     derived.insert(id);
@@ -522,7 +613,8 @@ mod tests {
             .iter()
             .collect();
         assert_eq!(world_placements(&rows).unwrap()["holder"], at(40.0));
-        assert!(!held.contains("holder"));
+        // The holder is pinned where it was first placed, which joints check but do not solve.
+        assert!(held.contains("holder"));
         let counts = report.part_positions().unwrap().1;
         assert_eq!(counts.derived_holders, 0);
         assert_eq!(counts.holder_conflicts, 1);

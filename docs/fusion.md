@@ -126,8 +126,15 @@ pose bound to it by the decoder's `native.f3d.display_poses` arena. Only rows wi
 root-design world matrices are already in millimetres and bypass the current-pose guards.
 Missing holder worlds are derived bottom-up as child displayed world × inverse of child
 local placement, only when all available children agree within 0.001 mm and 1e-6 rotation
-entries. Conflicts retain the existing placement source and are reported. Admitted float32
-scene rotations are normalized before inversion; translations are unchanged.
+entries and reproduce each of them. A holder whose children conflict keeps its first
+placement, even inside a holder that moves, and is reported. Admitted float32 scene rotations
+are normalized before inversion; translations are unchanged.
+Smart also checks every displayed holder (bound or derived): when a part below it that follows
+its pose, or a part with a displayed pose that is known to lie outside, would leave the
+first-placement assembly bounds grown by 10%, the holder and everything inside it keep their
+first placement. A local placement that matches the stored one within 0.001 mm and 1e-6
+rotation entries is written unchanged, so components whose copies keep the same arrangement
+stay shared.
 An absent arena supplies no displayed poses; unbound scene matrices do not choose a
 placement. Otherwise it accepts a native
 current pose only when touching joints close (or there are none), the placed geometry fits

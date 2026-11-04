@@ -587,6 +587,8 @@ Fallback current poses may be stale. An Info note counts the selected rules. JSO
 `choices.part_positions` and `part_positions` counts and fallback reasons.
 
 Missing assembly holder poses are inferred bottom-up from displayed children only when
-their world-pose estimates agree within 0.001 mm and 1e-6 rotation entries. Conflicts keep
-the existing placement source and are reported. JSON `part_positions` adds `derived_holders`
+their world-pose estimates agree within 0.001 mm and 1e-6 rotation entries and reproduce
+every displayed child. A conflicted holder keeps its first placement, even inside a holder
+that moves, and is reported. Smart also keeps the first placement of a displayed holder (and
+everything inside it) when a part below it would leave the bounds grown by 10%. JSON `part_positions` adds `derived_holders`
 and `holder_conflicts`; `bound_displayed` and `derived_holders` partition `displayed`, preserving the displayed/current/first-placement total.
