@@ -8,6 +8,88 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
+## 0.2.7 (2026-11-04)
+
+### Assemblies
+
+- Fewer false "colour dropped" notes on Fusion assemblies: colour assignments that do reach the design are no longer reported as lost, including on parts placed more than once and beside a hidden editable history copy. No visible change on the public test assemblies.
+- Put face colours on the right faces where a pick landed on the wrong arc of a cylinder or inside a hole, for example on painted stepper motor bodies.
+- Keep body colours when a component also contains saved wire edges or a body that cannot be written.
+- Say plainly when a colour's target is missing from the decoded design.
+- Change the Fusion assembly default to Smart part positions, accepting current poses only when joints, bounds, and repeated inserted designs agree. Use `--part-positions first-placed` to restore the old placement choice.
+- Add Part positions choices Smart, As Fusion last showed them, and As first placed to the CLI, remembered desktop Advanced settings, and MCP. Keep `--stored-placements` as a first-placed alias.
+- Report the selected mode, placement rule counts, and fallback reasons in JSON and an Info note.
+- Compose current poses with the containing document's insertion and retain ambiguous decoded placements with reported counts.
+- Prefer decoder-bound saved-scene displayed poses in Smart and As Fusion last showed them, without current-pose guards; skip ambiguous and unbound rows and support decoders without the arena.
+- Keep joints closed at displayed poses by deriving missing holder placements from agreeing children, and report derived holders and conflicts.
+- Keep groups whose joints already close at their stored poses before placing other joined parts, and prefer a non-identity stored world pose when starting an unplaced joint group.
+- Carry the smallest connected holder or its origin body assembly when a joint places it, leaving unrelated children of identity organisers where they belong.
+- Resolve isolated child pose markers within a posed component against already closing joints, while preserving explicit holder and independently contained poses.
+- Apply joint offsets and angular offsets in the second connector's frame, keeping joined parts at their stored poses when those frames already close.
+- Keep slider translation offsets and use the matching distance direction for aligned connector frames.
+- Recheck joint closure after all parts are placed and suppress conflicting joints that would move them again on open.
+- Convert large assemblies faster with less temporary memory while keeping their geometry, history and placements.
+- Reduce memory used to prepare nested placements and reference sketches.
+- Keep a sub-assembly shared across its copies when Fusion shows every copy with the same arrangement inside it; Smart and As Fusion last showed them now write the same components and occurrences as As first placed in that case.
+- In Smart, keep the first placement of a sub-assembly, and everything inside it, when parts below it would leave the model's extent (grown by 10%) at the position Fusion shows.
+- Keep a sub-assembly whose displayed parts do not agree on where it sits at its first placement, even inside a sub-assembly that moves, and use a sub-assembly position worked out from its displayed parts only when it reproduces all of them.
+
+### Desktop app
+
+- Save each conversion's full local JSON report beside its design, and save failed reports as .failed.json.
+- Copy a prompt from converted cards with losses to ask an assistant about the saved result, reading installed guidance first and using plain JSON and the bundled command line without extra setup or another whole-file conversion.
+- Read saved results through the optional read_report MCP tool, including losses grouped by code and stage, feature outcomes, placements and verification.
+- Dutchman finds `solidcraft-cli` and the SolidCraft app when they sit beside it, and the SolidCraft
+  version panel can choose the `solidcraft-cli` to check with and remembers it.
+- When only the SolidCraft app is found, the panel says why that is not enough and which Windows
+  downloads include `solidcraft-cli`.
+- Open the window at a size that shows the whole main screen at once, centred on the screen, with no scrolling. A window size you saved is still restored.
+- Show Designs and Output folder beside Results in a wide window; narrow windows keep one column.
+- Scroll long results inside the Results column, and a long list of designs inside Designs, instead of scrolling the whole screen.
+- Tighten the spacing of the options so more fit in view, and show the page scrollbar only when it is needed.
+- Keep expanded loss notes inside their result card, including long feature ids, while wrapping ordinary text at spaces.
+- Adjust presets, retained content and history checking in the memory warning, with live
+  memory and time estimates matching the file row and choices remembered in the main window.
+- Show when Standard leaves history out, when checking may be skipped, and when the choices
+  still will not fit. Keep conversion and cancel buttons visible in narrow and short windows.
+- Read archive sizes in the background and reuse them when choices change.
+- Show measured estimates for reading, converting to SolidCraft and checking history, with memory and time for each and the same total in the file row.
+- Use the displayed check allowance when deciding whether a history check fits in free memory.
+- Count geometry checking when feature history is off and let Check in SolidCraft turn it off.
+- Keep history memory and time estimates at least as high as the same conversion and check without history, including small parts.
+- Add the displayed stage durations for the total time in the memory box and file row, preserving sub-minute bounds.
+- Explain that estimates can be off by a few GB either way.
+- Keep the title and every header control visible at narrow window widths, including when an update is available.
+- The memory warning shows the same figure as the file's row: the memory converting needs. It
+  showed about twice that, adding a history check that is skipped when it would not fit.
+- Name the original program in the Part positions choice, such as "As Inventor last showed them", when every queued design comes from one program, and say "As last shown in the original program" otherwise.
+- Report converted files with lost features, wrong placement or missing colours from a section that starts closed on the result card.
+- Review the exact anonymous metadata before sending, or use the existing private-send steps to share the file.
+- Preview and send converted-file summaries with `dutchman report` or the MCP reporting tools.
+- Open at the default size when the saved window size is too small to use, for example after Dutchman Convert was closed while minimized, instead of restoring a window about 100 pixels wide.
+- Find the right diagnostic log on each result card with Show this run's log and Copy log to…;
+  batch cards share one log and retries keep the other cards linked to their original run.
+- Include date, time, Dutchman version and result in automatic log names, keeping running
+  names after crashes and recognising older logs when keeping the newest ten.
+- Open the right diagnostics folder on Windows and select the run's log with native paths.
+- Identify the run's log in report review and copied Discord messages, explain that it has
+  no design names or contents, and show an advisory notice for logs from another version.
+
+### Command line and install
+
+- Install Dutchman Convert on Windows without administrator rights, with a Start menu shortcut and commands on your user PATH. The portable ZIP remains available.
+- Update Windows installer copies with Install (closes Dutchman), a verified installer and automatic restart. Portable ZIP copies offer Update now and Restart now; Scoop copies keep Update with Scoop.
+- Uninstall Windows installer copies while keeping settings and diagnostic logs.
+- Include the agent skill, Markdown documentation, and a short AGENTS.md beside installed release programs.
+
+### Reports
+
+- Count dropped colours by cause in anonymous reports and diagnostic logs: wire bodies or saved free edges, unmatched face picks, absent targets, unwritable bodies and other mapping gaps.
+- Keep retained colours out of dropped-assignment counts and omit appearance identifiers and example messages from anonymous cause entries.
+- Diagnostic logs show anonymous per-member Fusion archive preparation timings for nested scanning, layer classification and reference metadata extraction before decoding starts.
+- Diagnostic logs time each step of preparing a Fusion archive: scanning it, classifying its
+  documents, and opening the session.
+
 ## 0.2.6 (2026-11-02)
 
 ### Formats
