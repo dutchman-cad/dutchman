@@ -62,9 +62,16 @@ function Check-Installed([string]$ExpectedVersion) {
     Assert-True (![string]::IsNullOrWhiteSpace($iconValue)) 'Missing Add/Remove Programs icon'
     $icon = ([Environment]::ExpandEnvironmentVariables($iconValue) -replace ',\s*-?\d+$', '').Trim('"')
     Assert-True (Test-Path -LiteralPath $icon) 'The Add/Remove Programs icon file is missing'
-    $machine = @(Get-ChildItem 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall' | Get-ItemProperty |
-        Where-Object { $_.DisplayName -eq 'Dutchman Convert' })
-    Assert-True ($machine.Count -eq 0) 'Installer created a machine-wide uninstall entry'
+    # A machine-wide install registers the product under the LocalSystem SID; a per-user one
+    # only under the installing user's SID (checked above).
+    $machine = @(Get-ChildItem 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Products' -ErrorAction SilentlyContinue |
+        ForEach-Object { Get-ItemProperty (Join-Path $_.PSPath 'InstallProperties') -ErrorAction SilentlyContinue } |
+        Where-Object { $_ -and $_.DisplayName -eq 'Dutchman Convert' })
+    Assert-True ($machine.Count -eq 0) 'Installer registered a machine-wide product'
+    # Windows Installer may also list the product in the HKLM Uninstall key; show it for the log.
+    Get-ChildItem 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall' | Get-ItemProperty |
+        Where-Object { $_.DisplayName -eq 'Dutchman Convert' } |
+        ForEach-Object { Write-Host "HKLM Uninstall entry $($_.PSChildName): WindowsInstaller=$($_.WindowsInstaller) InstallLocation=$($_.InstallLocation)" }
     # Read the new PATH in a new shell, as a newly opened terminal would.
     $output = & pwsh -NoProfile -Command '$env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User"); dutchman --version; exit $LASTEXITCODE'
     Assert-True ($LASTEXITCODE -eq 0 -and ($output -match [regex]::Escape($Version))) 'dutchman --version failed in a fresh shell'
