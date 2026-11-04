@@ -2,11 +2,15 @@
 """Stage installed guidance and optionally generate a WiX fragment for those exact files."""
 import argparse
 import hashlib
+import uuid
 from pathlib import Path
 import shutil
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
+# Per-user components keep an HKCU value as key path, so WiX cannot generate their GUIDs.
+# Each installed path gets a stable GUID derived from it, so upgrades keep the same component.
+GUID_NAMESPACE = uuid.UUID("46db5fe6-d099-4a7d-ad78-9d644d1d01b6")
 IMAGE_LIMIT = 256 * 1024
 
 
@@ -48,7 +52,8 @@ def wix_fragment(destination: Path, files: list[Path], output: Path) -> None:
                 node = ET.SubElement(directories[previous][0], "Directory", Id=dir_id, Name=part)
                 directories[current] = (node, dir_id)
         component_id = ident("Guide_", relative)
-        component = ET.SubElement(directories[relative.parent][0], "Component", Id=component_id, Guid="*")
+        component = ET.SubElement(directories[relative.parent][0], "Component", Id=component_id,
+                                  Guid=str(uuid.uuid5(GUID_NAMESPACE, relative.as_posix())).upper())
         ET.SubElement(component, "File", Id=ident("GuideFile_", relative), Source=str((destination / relative).resolve()))
         ET.SubElement(component, "RegistryValue", Root="HKCU", Key=r"Software\Dutchman CAD\Dutchman Convert",
                       Name=component_id, Type="integer", Value="1", KeyPath="yes")

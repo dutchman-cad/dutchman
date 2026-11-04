@@ -9,7 +9,7 @@
     <StandardDirectory Id="LocalAppDataFolder">
       <Directory Id="ProgramsFolder" Name="Programs">
         <Directory Id="INSTALLFOLDER" Name="Dutchman">
-          <Component Id="Gui">
+          <Component Id="Gui" Guid="64288D1A-B56B-5A99-B814-6E4C534B0809">
             <File Id="GuiExe" Source="$(var.BinDir)\dutchman-gui.exe" />
             <!-- The updater checks this HKCU value AND the expected executable location. -->
             <RegistryKey Root="HKCU" Key="Software\Dutchman CAD\Dutchman Convert" ForceDeleteOnUninstall="yes">
@@ -18,15 +18,15 @@
             <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
             <RemoveFolder Id="RemoveEmptyProgramsFolder" Directory="ProgramsFolder" On="uninstall" />
           </Component>
-          <Component Id="Cli">
+          <Component Id="Cli" Guid="FC9F79B9-9E85-5329-A6B7-9F3F9D7ADEDB">
             <File Source="$(var.BinDir)\dutchman.exe" />
             <RegistryValue Root="HKCU" Key="Software\Dutchman CAD\Dutchman Convert" Name="Cli" Type="integer" Value="1" KeyPath="yes" />
           </Component>
-          <Component Id="Mcp">
+          <Component Id="Mcp" Guid="AC4A6F62-8565-5E76-BC9A-04CF5F080EE4">
             <File Source="$(var.BinDir)\dutchman-mcp.exe" />
             <RegistryValue Root="HKCU" Key="Software\Dutchman CAD\Dutchman Convert" Name="Mcp" Type="integer" Value="1" KeyPath="yes" />
           </Component>
-          <Component Id="Notices">
+          <Component Id="Notices" Guid="910B0283-2CF3-5219-A99A-AB5A80F74ED7">
             <File Source="LICENSE" />
             <File Source="NOTICE" />
             <File Source="crates/dutchman-gui/assets/fonts/Spectral-OFL.txt" />
@@ -34,7 +34,7 @@
             <File Source="licences/sysinfo-MIT.txt" />
             <RegistryValue Root="HKCU" Key="Software\Dutchman CAD\Dutchman Convert" Name="Notices" Type="integer" Value="1" KeyPath="yes" />
           </Component>
-          <Component Id="UserPath">
+          <Component Id="UserPath" Guid="AFDB8835-23DC-58B6-B1BA-9A6AFF1068C9">
             <Environment Id="DutchmanPath" Name="PATH" Value="[INSTALLFOLDER]" Action="set" Part="last" System="no" Permanent="no" />
             <RegistryValue Root="HKCU" Key="Software\Dutchman CAD\Dutchman Convert" Name="Path" Type="integer" Value="1" KeyPath="yes" />
           </Component>
@@ -42,7 +42,7 @@
       </Directory>
     </StandardDirectory>
     <StandardDirectory Id="ProgramMenuFolder">
-      <Component Id="StartMenu">
+      <Component Id="StartMenu" Guid="57F88D13-B1A9-5ECF-9F88-AD43924605B6">
         <Shortcut Id="DutchmanShortcut" Name="Dutchman Convert" Target="[#GuiExe]" WorkingDirectory="INSTALLFOLDER" Icon="Dutchman.ico" />
         <RegistryValue Root="HKCU" Key="Software\Dutchman CAD\Dutchman Convert" Name="Shortcut" Type="integer" Value="1" KeyPath="yes" />
       </Component>
