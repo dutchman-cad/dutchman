@@ -141,9 +141,10 @@ $password = ConvertTo-SecureString ('Dm1!' + [guid]::NewGuid().ToString('N')) -A
 New-LocalUser -Name $user -Password $password -PasswordNeverExpires | Out-Null
 # A new local account is in no group; a normal Windows user is in Users (S-1-5-32-545).
 Add-LocalGroupMember -SID 'S-1-5-32-545' -Member $user
-# The hosted runner sets the machine policy DisableMsi=1, which allows only managed (admin
-# deployed) MSI packages for non-administrators and rejects the rest with 1625. A home or
-# office PC without that policy allows them; lift it for this phase and restore it after.
+# The hosted runner is Windows Server, where Windows Installer behaves as DisableMsi=1 when
+# the policy is not set: non-administrators may install only managed (admin deployed)
+# packages, and others fail with 1625. Windows 10 and 11 allow them; set DisableMsi=0 for
+# this phase, as on a PC, and restore the runner's setting after.
 $policyKey = 'HKLM:\Software\Policies\Microsoft\Windows\Installer'
 $policyBefore = (Get-ItemProperty $policyKey -Name DisableMsi -ErrorAction SilentlyContinue).DisableMsi
 Write-Host "EVIDENCE runner policy DisableMsi=$policyBefore"
