@@ -54,8 +54,13 @@ function Check-Installed([string]$ExpectedVersion) {
     Assert-True ($entries.Count -eq 1) 'Expected one per-user uninstall entry'
     Assert-True ($entries[0].DisplayVersion -eq $ExpectedVersion) 'Wrong installed version'
     Assert-True ($entries[0].Publisher -eq 'Dutchman CAD') 'Wrong publisher'
-    Assert-True (![string]::IsNullOrWhiteSpace($entries[0].DisplayIcon)) 'Missing Add/Remove Programs icon'
-    $icon = ([Environment]::ExpandEnvironmentVariables($entries[0].DisplayIcon) -replace ',\s*-?\d+$', '').Trim('"')
+    # ARPPRODUCTICON is published as ProductIcon on the per-user product key, which Add/Remove
+    # Programs reads; InstallProperties has no DisplayIcon for an MSI product.
+    $packed = Split-Path $entries[0].PSParentPath -Leaf
+    $published = Get-ItemProperty "HKCU:\Software\Microsoft\Installer\Products\$packed" -ErrorAction SilentlyContinue
+    $iconValue = if ($published -and $published.ProductIcon) { $published.ProductIcon } else { $entries[0].DisplayIcon }
+    Assert-True (![string]::IsNullOrWhiteSpace($iconValue)) 'Missing Add/Remove Programs icon'
+    $icon = ([Environment]::ExpandEnvironmentVariables($iconValue) -replace ',\s*-?\d+$', '').Trim('"')
     Assert-True (Test-Path -LiteralPath $icon) 'The Add/Remove Programs icon file is missing'
     $machine = @(Get-ChildItem 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall' | Get-ItemProperty |
         Where-Object { $_.DisplayName -eq 'Dutchman Convert' })
