@@ -23,6 +23,10 @@ use eframe::egui::{self, ThemePreference};
 use egui_kittest::kittest::Queryable;
 use egui_kittest::Harness;
 
+#[cfg(feature = "test-support")]
+#[path = "support/losses.rs"]
+mod loss_fixture;
+
 fn fixture(name: &str) -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../dutchman-core/tests/fixtures")
@@ -357,7 +361,7 @@ fn screenshots() {
     std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
     let failed_input = designs.join("container_metadata_only.f3d");
     std::fs::copy(fixture("container_metadata_only.f3d"), &failed_input).unwrap();
-    let mut index = format!("# Dutchman desktop UI review\n\nBuilt from Dutchman {}. 1100 × 800 logical pixels, one PNG per state and theme. Day = light; Night = dark.\n\n", env!("CARGO_PKG_VERSION"));
+    let mut index = format!("# Dutchman desktop UI review\n\nBuilt from Dutchman {}. Usually 1100 × 800 logical pixels; long-loss frames use 520 or 1000 × 900. One PNG per state and theme. Day = light; Night = dark.\n\n", env!("CARGO_PKG_VERSION"));
     for (theme, name) in [
         (ThemePreference::Light, "light"),
         (ThemePreference::Dark, "dark"),
@@ -400,6 +404,39 @@ fn screenshots() {
         (ThemePreference::Light, "light"),
         (ThemePreference::Dark, "dark"),
     ] {
+        #[cfg(feature = "test-support")]
+        for width in [520.0, 1000.0] {
+            let mut harness = screenshot_harness(theme);
+            harness.set_size(egui::vec2(width, 900.0));
+            harness.state_mut().set_checker_for_test(true);
+            harness
+                .state_mut()
+                .preview_result_for_test(dutchman_gui::app::Row {
+                    input: PathBuf::from("synthetic.f3d"),
+                    output: Some(PathBuf::from("converted/synthetic.sc")),
+                    status: Status::Converted,
+                    progress: None,
+                    job: None,
+                    size: None,
+                    report: Some(loss_fixture::report()),
+                });
+            harness.run_steps(8);
+            harness.get_by_label_contains("Losses:").scroll_to_me();
+            harness.run_steps(8);
+            harness.get_by_label_contains("Losses:").click_accesskit();
+            harness.run_steps(8);
+            harness.get_by_label("Save the full log…").scroll_to_me();
+            harness.run_steps(8);
+            assert!(harness.query_by_label_contains("/home/").is_none());
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                &format!("15-long-losses-{width}"),
+                name,
+                "Expanded synthetic losses with long native ids and an oversized unbroken token.",
+            );
+        }
         let mut harness = screenshot_harness(theme);
         harness.state_mut().updater.preview(dutchman_gui::update::Release {
             fixes_reports: Vec::new(),

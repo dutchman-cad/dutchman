@@ -480,6 +480,12 @@ impl App {
         };
     }
 
+    /// Supplies a synthetic result without decoding a design for UI review.
+    #[cfg(feature = "test-support")]
+    pub fn preview_result_for_test(&mut self, row: Row) {
+        self.rows = vec![row];
+    }
+
     /// The rows of the current or last run.
     pub fn rows(&self) -> &[Row] {
         &self.rows
@@ -2347,11 +2353,19 @@ fn loss_line(ui: &mut egui::Ui, p: &Palette, loss: &present::LossLine) {
         "Dropped" => p.danger,
         _ => p.tide,
     };
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = theme::SPACE_1;
-        ui.label(RichText::new(level).monospace().color(colour));
-        ui.label(RichText::new(&loss.text).monospace().color(p.ink));
-    });
+    // One paragraph keeps the label within the card. egui prefers word boundaries and
+    // falls back to splitting oversized ids; break_anywhere would also split normal words.
+    let font = egui::TextStyle::Monospace.resolve(ui.style());
+    let mut job = egui::text::LayoutJob::default();
+    let format = |color| egui::TextFormat {
+        font_id: font.clone(),
+        color,
+        ..Default::default()
+    };
+    job.append(level, 0.0, format(colour));
+    job.append(&loss.text, theme::SPACE_1, format(p.ink));
+    job.wrap.max_width = ui.available_width();
+    ui.add(egui::Label::new(job).wrap());
 }
 
 fn section_label(ui: &mut egui::Ui, p: &Palette, text: &str) -> egui::Response {
@@ -2945,6 +2959,114 @@ mod tests {
                     .count(),
                 0
             );
+        }
+    }
+
+    mod loss_fixture {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/support/losses.rs"
+        ));
+    }
+
+    #[test]
+    fn expanded_loss_labels_stay_inside_the_card() {
+        use egui_kittest::kittest::Queryable;
+        let row = Row {
+            input: PathBuf::from("synthetic.f3d"),
+            output: Some(PathBuf::from("converted/synthetic.sc")),
+            status: Status::Converted,
+            progress: None,
+            job: None,
+            size: None,
+            report: Some(loss_fixture::report()),
+        };
+        let view = row.view();
+        let lines = &view.components[0].lines;
+        assert_eq!(lines.len(), 3);
+        for width in [520.0, 1000.0] {
+            let mut installed = false;
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size(egui::vec2(width, 900.0))
+                .build_state(
+                    |ctx, card_rect| {
+                        // Font definitions take effect on the following frame.
+                        if !installed {
+                            theme::install(ctx);
+                            installed = true;
+                            return;
+                        }
+                        egui::CentralPanel::default().show(ctx, |ui| {
+                            let p = *theme::palette(ui);
+                            *card_rect = card(ui, &p, |ui| {
+                                row_ui(
+                                    ui,
+                                    &p,
+                                    0,
+                                    &row,
+                                    &view,
+                                    ReportPolicy::bundled(),
+                                    true,
+                                    false,
+                                    None,
+                                );
+                            })
+                            .rect;
+                        });
+                    },
+                    egui::Rect::NOTHING,
+                );
+            harness.run_steps(8);
+            harness.get_by_label(&view.loss_summary).click_accesskit();
+            harness.run_steps(8);
+            let card_rect = *harness.state();
+            assert!(card_rect.left() >= 0.0 && card_rect.right() <= width);
+            for loss in lines {
+                let label = format!("{}{}", loss.level, loss.text);
+                let rect = harness.get_by_label(&label).rect();
+                assert!(
+                    rect.left() >= card_rect.left() && rect.right() <= card_rect.right(),
+                    "{width}px: loss {label} at {rect:?} exceeds card {card_rect:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn loss_prose_wraps_at_spaces() {
+        let mut installed = false;
+        let mut harness = egui_kittest::Harness::builder().build_ui(|ui| {
+            if !installed {
+                theme::install(ui.ctx());
+                installed = true;
+                return;
+            }
+            let p = *theme::palette(ui);
+            ui.set_width(240.0);
+            loss_line(
+                ui,
+                &p,
+                &present::LossLine {
+                    level: "Info".into(),
+                    text: "ordinary words should wrap at spaces whenever they fit on a line".into(),
+                    full_text: String::new(),
+                },
+            );
+        });
+        harness.run_steps(2);
+        // Inspect the actual rendered paragraph, including the coloured severity prefix.
+        let output = harness.output();
+        let galley = output
+            .shapes
+            .iter()
+            .find_map(|shape| match &shape.shape {
+                egui::Shape::Text(text) => Some(&text.galley),
+                _ => None,
+            })
+            .unwrap();
+        assert!(galley.rows.len() > 1);
+        for row in galley.rows.iter().take(galley.rows.len() - 1) {
+            assert!(row.glyphs.last().unwrap().chr.is_whitespace());
         }
     }
 

@@ -89,6 +89,9 @@ explains this when its estimate exceeds free memory. Conversion can still contin
 When Standard leaves history out to fit in memory, its result card shows the
 history Info message even with the full loss log collapsed. The original geometry is kept.
 
+Expanded **Losses** lists wrap long feature ids inside their result card. Ordinary text
+wraps at spaces.
+
 A converted design opens in SolidCraft from its card: the app that `SOLIDCRAFT_APP` names, else
 `solidcraft` on `PATH` or beside Dutchman, else the system's app for `.sc` files. When an Inventor assembly's part
 files are not found, its card names them: **Search a folder…** or **Find a file…** converts it
