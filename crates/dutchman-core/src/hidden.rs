@@ -99,7 +99,7 @@ pub(crate) fn fusion(model: Model, report: &mut Report) -> Model {
                     _ => return true,
                 };
                 if before.contains(id) && !kept.contains(id) {
-                    report.push(Severity::Dropped,"appearance",format!(
+                    report.push_appearance(crate::AppearanceLoss::Other,format!(
                         "Appearance binding {} to {kind} {id} is left out: its target belongs only to consumed or removed Fusion geometry",binding.id));
                     false
                 } else { true }
@@ -525,6 +525,9 @@ mod tests {
             .filter(|l| l.subject == "appearance")
             .collect();
         assert_eq!(notes.len(), 2);
+        assert!(notes
+            .iter()
+            .all(|loss| loss.code.as_deref() == Some("dutchman/appearance.other")));
         assert!(notes.iter().all(|l| l
             .detail
             .ends_with("its target belongs only to consumed or removed Fusion geometry")));

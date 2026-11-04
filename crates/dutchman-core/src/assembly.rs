@@ -889,9 +889,8 @@ fn local_components_with_threads(
     bindings(&assembly, &mut kept);
     for binding in &model.ir.model.appearance_bindings {
         if !kept.contains(binding.id.as_str()) {
-            report.push(
-                Severity::Dropped,
-                "appearance",
+            report.push_appearance(
+                model.unplaced_appearance_cause(binding),
                 model.unplaced_appearance_binding(binding),
             );
         }
@@ -3653,6 +3652,10 @@ mod tests {
             .collect();
         assert_eq!(losses.len(), 1);
         assert_eq!(losses[0].severity, Severity::Dropped);
+        assert_eq!(
+            losses[0].code.as_deref(),
+            Some("dutchman/appearance.target-absent")
+        );
         assert!(losses[0]
             .detail
             .contains("synthetic:test:appearance-binding#missing"));
@@ -3697,6 +3700,7 @@ mod tests {
             .filter(|loss| loss.subject == "appearance")
             .collect();
         assert_eq!(losses.len(), 1);
+        assert_eq!(losses[0].code.as_deref(), Some("dutchman/appearance.other"));
         assert!(losses[0].detail.ends_with(
             "its target exists in the decoded model but has no placed component geometry"
         ));

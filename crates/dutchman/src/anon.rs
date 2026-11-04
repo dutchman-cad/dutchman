@@ -515,7 +515,9 @@ fn losses(files: &[File], scrub: &Scrubber) -> Value {
                     "upstream".to_owned(),
                     loss.get("upstream").cloned().unwrap_or(Value::Null),
                 );
-                cause.fields.insert("example".to_owned(), json!(message));
+                if !code.starts_with("dutchman/appearance.") {
+                    cause.fields.insert("example".to_owned(), json!(message));
+                }
             }
             cause.add(file);
         }
@@ -658,9 +660,27 @@ pub(crate) fn subject_kind(subject: &str) -> &'static str {
         .unwrap_or("other")
 }
 
+/// Exact allow-list: design-derived strings must never become appearance categories.
+const APPEARANCE_CODES: [&str; 6] = [
+    "dutchman/appearance.redundant-face",
+    "dutchman/appearance.wire",
+    "dutchman/appearance.face-pick-missed",
+    "dutchman/appearance.target-absent",
+    "dutchman/appearance.unwritable-body",
+    "dutchman/appearance.other",
+];
+
 /// `code` when it is a code (lower-case letters, digits and `_ . / -`, at most 80), else
 /// `fallback`: cadmpeg's codes are fixed words, and nothing else is let through as one.
 pub(crate) fn generic(code: &str, fallback: &str) -> String {
+    if code.starts_with("dutchman/") {
+        return if APPEARANCE_CODES.contains(&code) {
+            code
+        } else {
+            "dutchman/other"
+        }
+        .to_owned();
+    }
     let fixed = !code.is_empty()
         && code.len() <= 80
         && code.chars().all(|c| {
@@ -958,6 +978,19 @@ fn long_ids(text: &str) -> String {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn appearance_codes_use_an_exact_allow_list() {
+        for code in APPEARANCE_CODES {
+            assert_eq!(generic(code, "cadmpeg/other"), code);
+        }
+        for code in [
+            "dutchman/appearance.private-name",
+            "dutchman/appearance.face-pick-missed/private-id",
+        ] {
+            assert_eq!(generic(code, "cadmpeg/other"), "dutchman/other");
+        }
+    }
 
     #[test]
     fn a_salt_reads_back_as_it_was_written() {

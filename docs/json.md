@@ -197,7 +197,7 @@ Explicit output paths keep their given extension. The container format stays `so
 | `completeness` | For an assembly: `placed` counts placements with geometry and assembly holders of children; `placed_empty` counts placements of leaf parts with no bodies. Empty leaves no longer inflate `placed`. `placements` is `placed + placed_empty + sum(left_out.count)`. Counts include every recorded placement through placed sub-assemblies, each as often as placed. `left_out` lists those not placed by cause, most first: `file` (the file placed, or `null`), `reason`, `stage` and `count`. Absent for a single part. |
 | `joints` | For an assembly whose joints were written: how many of each kind, `{"revolute": 5, "rigid": 1}` (kinds `revolute`, `slider`, `rigid`). Grounded joints count as `rigid`, fixing their occurrence to the design at its stored placement. Absent when none were. |
 | `names` | Every name the conversion met, sorted: the paths and folders it read from, and the names the design gives its parts, components, bodies, features, sketches, parameters and properties. For tools that take names out of a report before it is shared (the anonymous report does); absent when there were none. |
-| `losses` | What did not survive intact. `level` is `Info` (no effect on geometry), `Degraded` (carried in a weaker form) or `Dropped` (left out). `code` is cadmpeg's stable loss code when cadmpeg reported it, else `null`; `subject` says what was affected; `message` is for people. `stage` and `upstream` say where it arose (below). |
+| `losses` | What did not survive intact. `level` is `Info` (no effect on geometry), `Degraded` (carried in a weaker form) or `Dropped` (left out). `code` is a stable cadmpeg or Dutchman loss code when available, else `null`; `subject` says what was affected; `message` is for people. `stage` and `upstream` say where it arose (below). |
 
 An empty leaf retains its component and joints and adds a `Degraded` loss whose
 `subject` is `part N`, using the anonymous catalog number from `diagnose` and `--part`.
@@ -1147,3 +1147,19 @@ unknown context values are null. Keep the gzip and prepared metadata private.
 
 Cut refusals (including the fragment byte limit) return `ok: true` and
 `bundle_available: false`, with a plain `summary` and `private_send`; no bundle is saved.
+
+### Appearance loss codes
+
+Dropped appearance assignments use `dutchman/appearance.wire` (wire body or saved free
+edge), `dutchman/appearance.face-pick-missed` (face geometry has no resolved output pick),
+`dutchman/appearance.target-absent` (target absent from the decoded model),
+`dutchman/appearance.unwritable-body` (body cannot be written), or
+`dutchman/appearance.other` (other mapping gaps). `dutchman/appearance.redundant-face`
+is reserved for face colours equal to their body colour; these are retained and have no
+loss count. Kept assignments never produce dropped appearance losses.
+
+These fixed categories reach both `dutchman.report-anon/1` loss counts and
+`dutchman.diagnostics/1` `end.losses`. Anonymous appearance entries omit `example` and
+contain no binding or target ids or names. See [the anonymous report](report-anon.md#appearance-loss-causes).
+Ordinary conversion losses keep `subject`, `message`, `stage` and `upstream` as before;
+Dutchman's appearance codes have `stage: "map"` and `upstream: null`.

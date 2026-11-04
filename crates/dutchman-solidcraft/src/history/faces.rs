@@ -7,6 +7,7 @@
 
 mod uv;
 
+use dutchman_core::AppearanceLoss;
 use serde_json::{json, Value};
 
 use super::sketch::{dot, v3, V3};
@@ -101,6 +102,14 @@ pub(crate) fn looks(ctx: &mut Context, report: &mut dutchman_core::Report) -> Ve
             bound.entry(id).or_default().push(binding);
         }
     }
+    let wire_edges: BTreeSet<&str> = ctx
+        .arena("shells")
+        .iter()
+        .filter_map(|shell| shell.get("members").and_then(Value::as_array))
+        .flatten()
+        .filter(|member| member.get("kind").and_then(Value::as_str) == Some("wire_edge"))
+        .filter_map(|member| member.get("id").and_then(Value::as_str))
+        .collect();
     let mut applied = BTreeSet::new();
     let mut named = BTreeSet::new();
     let resolve = |row: &Value| -> Option<Value> {
@@ -172,9 +181,8 @@ pub(crate) fn looks(ctx: &mut Context, report: &mut dutchman_core::Report) -> Ve
                     .and_then(Value::as_str)
                     .is_some_and(|id| !bound.contains_key(id))
                 {
-                    report.push(
-                        dutchman_core::Severity::Dropped,
-                        "appearance",
+                    report.push_appearance(
+                        AppearanceLoss::FacePickMissed,
                         format!(
                             "Face {} has no resolved interior point; its colour is left out",
                             face.get("id").unwrap_or(&Value::Null)
@@ -209,37 +217,63 @@ pub(crate) fn looks(ctx: &mut Context, report: &mut dutchman_core::Report) -> Ve
                 let region = ctx.row("shells", shell)?.get("region")?.as_str()?;
                 ctx.row("regions", region)?.get("body")?.as_str()
             });
-            let reason = if !matches!(kind, "body" | "face") {
-                "its target kind is not supported yet"
+            let wire = owner
+                .and_then(|id| ctx.row("bodies", id))
+                .is_some_and(|body| body.get("kind").and_then(Value::as_str) == Some("wire"))
+                || (kind == "edge" && target.is_some_and(|id| wire_edges.contains(id)));
+            let (cause, reason) = if wire {
+                (
+                    AppearanceLoss::Wire,
+                    "its target is a wire body or saved free edge",
+                )
+            } else if !matches!(kind, "body" | "face") {
+                (
+                    AppearanceLoss::Other,
+                    "its target kind is not supported yet",
+                )
             } else if target
                 .and_then(|id| ctx.row(if kind == "body" { "bodies" } else { "faces" }, id))
                 .is_none()
             {
-                "its target is absent from the decoded model"
+                (
+                    AppearanceLoss::TargetAbsent,
+                    "its target is absent from the decoded model",
+                )
             } else if appearance.is_none() {
-                "its appearance does not exist"
+                (AppearanceLoss::Other, "its appearance does not exist")
             } else if appearance
                 .and_then(|a| a.get("base_color"))
                 .and_then(super::extrude::look)
                 .is_none()
             {
-                "its appearance has no resolved base colour"
+                (
+                    AppearanceLoss::Other,
+                    "its appearance has no resolved base colour",
+                )
             } else if target.and_then(|id| bound.get(id)).is_some_and(|bindings| {
                 bindings
                     .iter()
                     .any(|b| b.get("appearance") != binding.get("appearance"))
             }) {
-                "its target has conflicting appearance bindings"
+                (
+                    AppearanceLoss::Other,
+                    "its target has conflicting appearance bindings",
+                )
             } else if owner.is_some_and(|id| ctx.unwritten_bodies.contains(id)) {
-                "its body has no geometry the STEP writer can write"
+                (
+                    AppearanceLoss::UnwritableBody,
+                    "its body has no geometry the STEP writer can write",
+                )
             } else if !target.is_some_and(|id| named.contains(id)) {
-                "its target has no written body name"
+                (AppearanceLoss::Other, "its target has no written body name")
             } else {
-                "its face has no resolved interior point"
+                (
+                    AppearanceLoss::FacePickMissed,
+                    "its face has no resolved interior point",
+                )
             };
-            report.push(
-                dutchman_core::Severity::Dropped,
-                "appearance",
+            report.push_appearance(
+                cause,
                 format!(
                     "Appearance binding {} to {kind} {} is left out: {reason}",
                     binding

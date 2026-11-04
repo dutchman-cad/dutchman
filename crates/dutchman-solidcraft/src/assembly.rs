@@ -61,7 +61,7 @@ fn report_appearance_bindings(model: &Model, report: &mut Report) -> bool {
                 .iter()
                 .any(|loss| loss.subject == "appearance" && loss.detail.ends_with(&detail))
             {
-                report.push(Severity::Dropped, "appearance", detail);
+                report.push_appearance(model.unplaced_appearance_cause(binding), detail);
             }
         }
         for part in &assembly.parts {
@@ -76,9 +76,20 @@ fn report_appearance_bindings(model: &Model, report: &mut Report) -> bool {
 
 fn unwritten_appearances(part: &Model, report: &mut Report) {
     for binding in &part.ir.model.appearance_bindings {
-        report.push(
-            Severity::Dropped,
-            "appearance",
+        let cause = match part.unplaced_appearance_cause(binding) {
+            dutchman_core::AppearanceLoss::Other
+                if matches!(
+                    binding.target,
+                    cadmpeg_ir::appearance::AppearanceTarget::Body(_)
+                        | cadmpeg_ir::appearance::AppearanceTarget::Face(_)
+                ) =>
+            {
+                dutchman_core::AppearanceLoss::UnwritableBody
+            }
+            cause => cause,
+        };
+        report.push_appearance(
+            cause,
             format!(
                 "Appearance binding {} is left out: its component has no written geometry",
                 binding.id

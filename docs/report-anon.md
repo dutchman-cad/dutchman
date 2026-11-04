@@ -44,7 +44,7 @@ private names and paths. The CLI and MCP summary paths are described in
   out where it stands as a word of its own; plain lower-case words (`import`, `parts`) are
   left, as messages are made of them.
 - **No names in codes.** A loss code is cadmpeg's own fixed code, or `dutchman/` and one of a
-  fixed set of words (`history`, `feature`, `sketch`, `joints`, `parts`, …, `other`).
+  fixed set of words (`history`, `feature`, `sketch`, `joints`, `parts`, …, `other`) or an exact [appearance cause](#appearance-loss-causes).
 - **No geometry**: no coordinates, sizes, volumes or models.
 - **No salt.** The salt is printed on your screen when the run ends, and written to the key
   file if you ask for one. It is never in the report.
@@ -103,7 +103,7 @@ When a maintainer asks about `f3a9c0e1d2b4f5a6`, look it up in your key.
 | `skipped_by_extension` | The skipped files by extension: lower case, `none`, or `other` for one that is not 1–8 letters and digits. |
 | `stages` | For each stage (`input`, `decode`, `project`, `map`, `write`, `solidcraft`; see [Stages](json.md#stages)): the files that `failed` there, the `losses` that arose there, and the `files` with either. |
 | `errors` | Every distinct failure, most files first. Messages that differ only in their numbers are one cause. |
-| `losses` | Every distinct loss: by cadmpeg's loss `code`, or for Dutchman's own by `dutchman/<kind>` (what it is about: `appearance`, `assembly`, `bodies`, `components`, `constraints`, `feature`, `full`, `geometry`, `history`, `joints`, `occurrence`, `parameter`, `parts`, `pattern`, `profile`, `sketch`, `validation`, `writer`, else `other`) and message. `example` is one message, cleaned. |
+| `losses` | Every distinct loss: by cadmpeg's loss `code`, or for Dutchman's own by a fixed appearance cause code (counts only), or `dutchman/<kind>` (what it is about: `appearance`, `assembly`, `bodies`, `components`, `constraints`, `feature`, `full`, `geometry`, `history`, `joints`, `occurrence`, `parameter`, `parts`, `pattern`, `profile`, `sketch`, `validation`, `writer`, else `other`) and message. `example` is one message, cleaned, except for appearance cause codes, which carry counts only. |
 | `blocked_features` | The source features that kept a history from being written, by `kind` and `reason`. |
 | `verification` | Why histories were written unchecked (`unverified`), not written (`flattened`), or not applicable, by reason. |
 | `timing` | Times per file, in milliseconds: the nearest-rank 50th, 90th and 99th percentiles, the longest and the total. Files that were never started (a path that does not exist) are not timed. |
@@ -114,3 +114,23 @@ Every cause carries `files` (how many files show it), `occurrences` (how many ti
 
 The report's fields are added to, never renamed or removed, while its schema stays
 `dutchman.report-anon/1`.
+
+## Appearance loss causes
+
+Appearance assignments left out of the output use these fixed codes in both the anonymous
+report and the diagnostic log's `end.losses` counts. These categories never contain a target
+id, binding id, colour name or component name. Anonymous appearance entries have no `example`.
+
+| Code | Cause |
+|---|---|
+| `dutchman/appearance.redundant-face` | Face colour equals its body's colour, with no visible effect. Reserved: these assignments are retained and produce no loss count. |
+| `dutchman/appearance.wire` | Target is a wire body or saved free edge. |
+| `dutchman/appearance.face-pick-missed` | Face geometry could not be matched to an output face with a resolved interior pick. |
+| `dutchman/appearance.target-absent` | Target is absent from the decoded model. |
+| `dutchman/appearance.unwritable-body` | Target belongs to a body with no geometry the writer can write. |
+| `dutchman/appearance.other` | Another appearance mapping gap, such as a missing colour, conflicting assignments or no placed component geometry. |
+
+The exact codes above are allow-listed; arbitrary `dutchman/appearance.*` strings are not
+accepted as categories. Assignments kept as body colours, uniform face colours or individual
+face colours are not counted as dropped. Multiple dropped assignments count individually,
+even when they share a target. Ordinary conversion reports retain their human explanations.

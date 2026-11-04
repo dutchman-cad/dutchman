@@ -94,6 +94,37 @@ pub fn read_stage(code: &str) -> Stage {
     }
 }
 
+/// Stable, name-free categories for appearance assignments left out of the output.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AppearanceLoss {
+    /// A redundant face colour (retained assignments do not produce a loss).
+    RedundantFace,
+    /// A wire body or saved free edge.
+    Wire,
+    /// Face geometry could not supply an output pick.
+    FacePickMissed,
+    /// The assignment's target is absent from the decoded model.
+    TargetAbsent,
+    /// The target belongs to a body with no writable geometry.
+    UnwritableBody,
+    /// Any other appearance mapping gap.
+    Other,
+}
+
+impl AppearanceLoss {
+    /// Its stable report code, never derived from design contents.
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::RedundantFace => "dutchman/appearance.redundant-face",
+            Self::Wire => "dutchman/appearance.wire",
+            Self::FacePickMissed => "dutchman/appearance.face-pick-missed",
+            Self::TargetAbsent => "dutchman/appearance.target-absent",
+            Self::UnwritableBody => "dutchman/appearance.unwritable-body",
+            Self::Other => "dutchman/appearance.other",
+        }
+    }
+}
+
 /// One thing that did not survive the conversion intact.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Loss {
@@ -102,8 +133,7 @@ pub struct Loss {
     /// What was affected, in the source's terms (for example `feature "Extrusion3"`), or the
     /// loss code when cadmpeg reported it.
     pub subject: String,
-    /// cadmpeg's stable loss code (`step/attribute.source-record-not-written`), when cadmpeg
-    /// reported the loss.
+    /// A stable cadmpeg or Dutchman loss code, when available.
     pub code: Option<String>,
     /// What happened to it.
     pub detail: String,
@@ -311,6 +341,17 @@ impl Report {
         detail: impl Into<String>,
     ) {
         self.push_at(Stage::Map, severity, subject, detail);
+    }
+
+    /// Records a dropped appearance with a fixed cause and a human-readable explanation.
+    pub fn push_appearance(&mut self, cause: AppearanceLoss, detail: impl Into<String>) {
+        self.losses.push(Loss {
+            severity: Severity::Dropped,
+            subject: "appearance".to_owned(),
+            code: Some(cause.code().to_owned()),
+            detail: detail.into(),
+            stage: Stage::Map,
+        });
     }
 
     /// Records a loss that arose at `stage`.

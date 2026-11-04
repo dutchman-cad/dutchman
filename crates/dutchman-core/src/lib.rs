@@ -54,6 +54,37 @@ pub struct Model {
 }
 
 impl Model {
+    /// Classifies an assignment no placed component retained, using decoded identities.
+    pub fn unplaced_appearance_cause(
+        &self,
+        binding: &cadmpeg_ir::appearance::AppearanceBinding,
+    ) -> AppearanceLoss {
+        use cadmpeg_ir::appearance::AppearanceTarget;
+        match &binding.target {
+            AppearanceTarget::Body(id) => match self.ir.model.bodies.iter().find(|b| b.id == *id) {
+                None => AppearanceLoss::TargetAbsent,
+                Some(body) if body.kind == cadmpeg_ir::topology::BodyKind::Wire => {
+                    AppearanceLoss::Wire
+                }
+                Some(_) => AppearanceLoss::Other,
+            },
+            AppearanceTarget::Face(id) if !self.ir.model.faces.iter().any(|f| f.id == *id) => {
+                AppearanceLoss::TargetAbsent
+            }
+            AppearanceTarget::Edge(id)
+                if self
+                    .ir
+                    .model
+                    .shells
+                    .iter()
+                    .any(|s| s.wire_edges().contains(id)) =>
+            {
+                AppearanceLoss::Wire
+            }
+            _ => AppearanceLoss::Other,
+        }
+    }
+
     /// Explains an assignment that no placed component retained. Body and face
     /// identities are checked exactly, without conflating different instances.
     pub fn unplaced_appearance_binding(
@@ -91,8 +122,8 @@ impl Model {
     }
 }
 pub use report::{
-    Check, Completeness, FeatureOutcome, FeatureStatus, LeftOutGroup, Loss, Mode, Outcome,
-    PartHistory, Report, Severity, Stage,
+    AppearanceLoss, Check, Completeness, FeatureOutcome, FeatureStatus, LeftOutGroup, Loss, Mode,
+    Outcome, PartHistory, Report, Severity, Stage,
 };
 
 /// Whether a source-native CADIR operation identifies a construction binder. Keep native

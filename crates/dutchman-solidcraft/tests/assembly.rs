@@ -2232,6 +2232,7 @@ fn missing_face_appearance_bindings_are_reported() {
             .iter()
             .any(|loss| loss.subject == "appearance"
                 && loss.severity == dutchman_core::Severity::Dropped
+                && loss.code.as_deref() == Some("dutchman/appearance.target-absent")
                 && loss
                     .detail
                     .contains("synthetic:test:appearance-binding#missing")),
@@ -3250,6 +3251,10 @@ fn an_unwritable_sibling_keeps_the_written_bodys_appearance() {
             .filter(|l| l.subject == "appearance" || l.subject.ends_with(": appearance"))
             .collect();
         assert_eq!(notes.len(), 1, "{:?}", report.losses());
+        assert_eq!(
+            notes[0].code.as_deref(),
+            Some("dutchman/appearance.unwritable-body")
+        );
         assert!(notes[0].detail.contains(body));
         assert!(notes[0]
             .detail
