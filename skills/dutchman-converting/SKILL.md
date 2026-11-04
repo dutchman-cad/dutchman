@@ -5,6 +5,12 @@ description: Use when someone wants a CAD file (Fusion, Inventor, SolidWorks, Fr
 
 # Converting CAD files with Dutchman
 
+On Windows, the per-user MSI installs `dutchman`, `dutchman-mcp`, and `dutchman-gui` under
+`%LOCALAPPDATA%\Programs\Dutchman` and adds that folder to the user PATH. Start a new
+terminal or restart the MCP client after installation. MSI copies update from the app's
+**Install (closes Dutchman)** button; Scoop copies keep **Update with Scoop**, and portable
+ZIP copies offer **Update now**, then **Restart now** after verification and replacement. Uninstall keeps settings and diagnostic logs.
+
 The `dutchman` command also dispatches installed Dutchman CAD tools such as `pilot` and
 `fixtures` through `dutchman-<tool>` beside the command or on `PATH`. `dutchman --help`
 lists them. These external commands provide their own interfaces; the conversion MCP tools

@@ -59,6 +59,16 @@ class ReleaseNotes(unittest.TestCase):
         self.assertEqual([line for line in body.splitlines()
                           if line.startswith(("| Linux", "| Windows"))], other_rows)
 
+    def test_windows_installer_downloads(self):
+        from downloads import table
+        for version in ("latest", "0.2.7", "1.0.0"):
+            body = table(version)
+            self.assertIn("x86_64-pc-windows-msvc.msi.sha256", body)
+            self.assertLess(body.index("x86_64-pc-windows-msvc.msi"),
+                            body.index("x86_64-pc-windows-msvc.zip"))
+        for version in ("0.2.6", "nightly"):
+            self.assertNotIn(".msi", table(version))
+
     def test_nightly_download_choices(self):
         result = subprocess.run(
             [sys.executable, str(ROOT / "scripts/downloads.py"), "nightly"],

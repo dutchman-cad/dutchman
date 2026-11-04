@@ -23,6 +23,12 @@ The original `losses`, `history` (including features and parts), `completeness`,
 This local tool returns names and paths; anonymous diagnostic tools keep their anonymous
 schemas. See [MCP privacy and usage](mcp.md#read-an-existing-result).
 
+The Windows per-user installer includes `dutchman` and `dutchman-mcp` on the user PATH.
+Their JSON schemas are the same as those from the portable ZIP; installer updates and logs
+are described in [the desktop guide](desktop.md#updates). Release packages include this
+Markdown schema guide and an `AGENTS.md` explaining how to read saved `<stem>.report.json`
+files, including `ok`, `losses`, `history`, and `verification`.
+
 ## Project inputs
 
 Files whose names start with `~$` are lock files. They are ignored in project planning

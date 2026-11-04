@@ -62,7 +62,11 @@ an AI assistant convert CAD files with Dutchman on your machine: it provides con
 tools. Conversion tools return the same JSON report as the matching `dutchman … --json` command
 ([json.md](json.md)).
 
-It comes in every release archive and with `cargo install` (see the [guide](install.md)).
+It comes in every release archive, the Windows per-user MSI, and with `cargo install`
+(see the [guide](install.md)). After installing the MSI, restart your MCP client to pick up
+the user PATH entry for `%LOCALAPPDATA%\Programs\Dutchman`. Release packages also keep the
+conversion skill in `skills/` and this Markdown guide in `docs/`, beside an installed
+`AGENTS.md` explaining full-path commands and saved reports.
 It speaks JSON-RPC over stdio, one message per line, and takes no arguments: the client starts
 it and talks to it.
 

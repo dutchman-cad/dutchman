@@ -20,6 +20,31 @@ fn archive(target: &str, web: bool) {
         include_str!("../../../scripts/archive-readme.py"),
     )
     .unwrap();
+    fs::write(
+        dir.join("scripts/package-docs.py"),
+        include_str!("../../../scripts/package-docs.py"),
+    )
+    .unwrap();
+    for (name, contents) in [
+        (
+            "AGENTS.md",
+            "Contributor instructions must not be shipped.\n",
+        ),
+        ("assets/install/AGENTS.md", "Installed guidance fixture\n"),
+        ("docs/guide.md", "Offline documentation fixture\n"),
+        (
+            "skills/dutchman-converting/SKILL.md",
+            "Read ../../docs/guide.md.\n",
+        ),
+        (
+            "skills/dutchman-converting/resource.txt",
+            "Local skill resource\n",
+        ),
+    ] {
+        let path = dir.join(name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
+    }
     for name in ["LICENSE", "NOTICE", "README.md"] {
         fs::write(dir.join(name), "Archive fixture\n").unwrap();
     }
@@ -81,6 +106,24 @@ fn archive(target: &str, web: bool) {
     assert!(files
         .lines()
         .any(|path| path == "fixture/licences/dependency-MIT.txt"));
+    for name in [
+        "AGENTS.md",
+        "docs/guide.md",
+        "skills/dutchman-converting/SKILL.md",
+        "skills/dutchman-converting/resource.txt",
+    ] {
+        assert!(
+            files.lines().any(|path| path == format!("fixture/{name}")),
+            "Missing bundled guide: {name}"
+        );
+    }
+    let guide = Command::new("tar")
+        .args(["xzOf", "dist/fixture.tar.gz", "fixture/AGENTS.md"])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(guide.status.success());
+    assert_eq!(guide.stdout, b"Installed guidance fixture\n");
     assert!(dir.join("dist/fixture.tar.gz.sha256").is_file());
 }
 

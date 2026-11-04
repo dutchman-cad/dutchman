@@ -394,3 +394,63 @@ fn github_atom_release_metadata_keeps_fixes_without_showing_machine_text() {
     assert!(!release.notes.contains("fixes_reports"));
     assert!(release.notes.contains("A conversion fix."));
 }
+
+#[test]
+fn msi_handoff_blocks_new_conversions_until_failure_or_restart() {
+    let mut updater = Updater::new(None);
+    updater.install = Install::Msi("C:/Local/Programs/Dutchman".into());
+    for (phase, blocked) in [
+        (Phase::Idle, false),
+        (Phase::Running, true),
+        (Phase::Ready, true),
+        (Phase::Restarting, true),
+        (Phase::Restarted, true),
+        (Phase::Failed("Download failed".into()), false),
+    ] {
+        updater.job.preview("v1.2.3".into(), phase, "");
+        assert_eq!(updater.blocks_conversions(), blocked);
+    }
+    updater.install = Install::Direct;
+    assert!(!updater.blocks_conversions());
+}
+
+#[test]
+fn msi_confirmation_waits_for_active_files_and_cannot_be_bypassed_when_they_finish() {
+    let mut updater = Updater::new(None);
+    updater.install = Install::Msi("installed".into());
+    updater.job.preview("v1.2.3".into(), Phase::Ready, "");
+    assert!(!updater.msi_can_handoff(false));
+    assert!(!updater.msi_can_handoff(true));
+    assert!(!updater.stopping_for_install());
+    updater.msi_finish_confirmed = true;
+    assert!(updater.stopping_for_install());
+    assert!(!updater.msi_can_handoff(false));
+    assert!(updater.msi_can_handoff(true));
+    updater
+        .job
+        .preview("v1.2.3".into(), Phase::Failed("Helper failed".into()), "");
+    assert!(!updater.stopping_for_install());
+    assert!(!updater.blocks_conversions());
+    updater.install = Install::Zip("portable".into());
+    for (phase, blocked) in [
+        (Phase::Running, false),
+        (Phase::Installed, false),
+        (Phase::Restarting, true),
+        (Phase::Restarted, true),
+    ] {
+        updater.job.preview("v1.2.3".into(), phase, "");
+        assert_eq!(updater.blocks_conversions(), blocked);
+    }
+}
+
+#[test]
+fn a_verified_msi_reopens_a_hidden_progress_window_before_closing() {
+    let mut updater = Updater::new(None);
+    updater.allowed = false;
+    updater.install = Install::Msi("installed".into());
+    updater.open = false;
+    updater.job.preview("v1.2.3".into(), Phase::Ready, "");
+    updater.tick(&egui::Context::default());
+    assert!(updater.open);
+    assert!(updater.rx.is_none());
+}

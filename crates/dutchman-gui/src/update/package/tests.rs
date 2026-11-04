@@ -147,3 +147,82 @@ fn restart_uses_stable_paths_and_argument_lists() {
         .any(|(key, value)| key == "HOMEBREW_NO_AUTO_UPDATE"
             && value == Some(std::ffi::OsStr::new("1"))));
 }
+
+#[test]
+fn msi_identity_requires_both_the_user_location_and_installer_registration() {
+    let local = Path::new("C:/Users/Owner Name/AppData/Local");
+    let registered = Path::new("C:\\Users\\Owner Name\\AppData\\Local\\Programs\\Dutchman\\");
+    let exe =
+        Path::new("c:\\users\\owner name\\appdata\\local\\programs\\dutchman\\DUTCHMAN-GUI.EXE");
+    assert_eq!(
+        Install::detect_msi(exe, local, registered),
+        Install::Msi(local.join("Programs/Dutchman"))
+    );
+    assert!(matches!(
+        Install::detect_msi(
+            Path::new(r"\\?\C:\Users\Owner Name\AppData\Local\Programs\Dutchman\dutchman-gui.exe"),
+            local,
+            registered
+        ),
+        Install::Msi(_)
+    ));
+    for (exe, registered) in [
+        (exe, Path::new("")),
+        (exe, Path::new("C:/Other/Programs/Dutchman")),
+        (Path::new("C:/Downloads/dutchman-gui.exe"), registered),
+        (
+            Path::new("C:/Users/Other/AppData/Local/Programs/Dutchman/dutchman-gui.exe"),
+            registered,
+        ),
+        (
+            Path::new("C:/Users/Owner Name/AppData/Local/Programs/Dutchman-old/dutchman-gui.exe"),
+            registered,
+        ),
+    ] {
+        assert_eq!(Install::detect_msi(exe, local, registered), Install::Direct);
+    }
+}
+
+#[test]
+fn update_actions_follow_install_kind() {
+    let msi = Install::Msi("C:/Local/Programs/Dutchman".into());
+    assert_eq!(msi.label(), "Install (closes Dutchman)");
+    for (install, action) in [
+        (Install::Direct, Action::Download),
+        (msi.clone(), Action::Msi),
+        (Install::Zip("portable".into()), Action::Zip),
+        (Install::Scoop("shims".into()), Action::Scoop),
+        (Install::Cask("brew".into()), Action::Homebrew),
+        (Install::Formula("brew".into()), Action::Homebrew),
+    ] {
+        assert_eq!(install.action(), action);
+    }
+    assert_eq!(Install::Direct.label(), "Download");
+    assert_eq!(Install::Zip("portable".into()).label(), "Update now");
+    assert!(msi.source().is_none());
+    assert!(msi.command().is_none());
+    assert!(plan(&msi).is_err()); // Windows updates must use the detached helper.
+    assert_eq!(
+        msi.restart().unwrap().program,
+        PathBuf::from("C:/Local/Programs/Dutchman/dutchman-gui.exe")
+    );
+    assert_eq!(Install::Scoop("shims".into()).label(), "Update with Scoop");
+    assert_eq!(Install::Cask("brew".into()).label(), "Update with Homebrew");
+    assert!(Install::Direct.command().is_none());
+    assert!(plan(&Install::Direct).is_err());
+}
+
+#[test]
+fn portable_detection_requires_all_three_release_programs() {
+    let folder = tempfile::tempdir().unwrap();
+    let exe = folder.path().join("dutchman-gui.exe");
+    for name in ["dutchman-gui.exe", "dutchman.exe"] {
+        std::fs::write(folder.path().join(name), b"program").unwrap();
+    }
+    assert_eq!(Install::detect_zip(&exe), Install::Direct);
+    std::fs::write(folder.path().join("dutchman-mcp.exe"), b"program").unwrap();
+    assert_eq!(
+        Install::detect_zip(&exe),
+        Install::Zip(folder.path().to_owned())
+    );
+}

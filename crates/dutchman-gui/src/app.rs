@@ -542,7 +542,7 @@ impl App {
     /// Converts the row at `index` again, searching `folder` too for its assemblies' part
     /// files.
     pub fn search_for_row(&mut self, index: usize, folder: PathBuf, ctx: &egui::Context) {
-        if self.running() {
+        if self.running() || self.updater.blocks_conversions() {
             return;
         }
         let Some(job_index) = index.checked_sub(self.offset) else {
@@ -806,6 +806,9 @@ impl App {
     }
 
     fn start(&mut self, ctx: &egui::Context) {
+        if self.updater.blocks_conversions() {
+            return;
+        }
         self.refresh_blocked_checker();
         let Some(out_dir) = self.out_dir.clone() else {
             return;
@@ -1334,6 +1337,13 @@ impl App {
         }) {
             self.refresh_blocked_checker();
         }
+        if self.updater.stopping_for_install() {
+            self.pending = None;
+            if let Some(run) = &self.run {
+                run.stop();
+                self.diagnostic_stopped = true;
+            }
+        }
         self.updater.tick(ctx);
         self.report_policy.tick(ctx, self.updater.automatic());
         self.receive(ctx);
@@ -1409,7 +1419,9 @@ impl App {
         self.private_send_window(ctx);
         self.updater.report_ids = self.consent.ids.clone();
         self.solidcraft_window(ctx);
-        self.updater.windows(ctx, !self.running());
+        let can_restart =
+            !self.running() && (!self.updater.windows_package() || self.diagnosis.is_none());
+        self.updater.windows(ctx, can_restart);
         self.memory_dialog(ctx);
         self.refresh_estimates(ctx);
     }
@@ -1800,21 +1812,24 @@ impl App {
             }
             ui.add_space(theme::SPACE_2);
             ui.horizontal(|ui| {
-                ui.add_enabled_ui(!self.running(), |ui| {
-                    if ui.button("Add files…").clicked() {
-                        worker::pick(Pick::Files, self.sender.clone(), ui.ctx().clone());
-                    }
-                    if ui.button("Check a folder").clicked() {
-                        self.notice = None;
-                        self.doctor = Some(crate::doctor::Page::new(None));
-                    }
-                    if ui.button("Add folder…").clicked() {
-                        worker::pick(Pick::Folder, self.sender.clone(), ui.ctx().clone());
-                    }
-                    if !self.inputs.is_empty() && ui.button("Clear").clicked() {
-                        self.inputs.clear();
-                    }
-                });
+                ui.add_enabled_ui(
+                    !self.running() && !self.updater.blocks_conversions(),
+                    |ui| {
+                        if ui.button("Add files…").clicked() {
+                            worker::pick(Pick::Files, self.sender.clone(), ui.ctx().clone());
+                        }
+                        if ui.button("Check a folder").clicked() {
+                            self.notice = None;
+                            self.doctor = Some(crate::doctor::Page::new(None));
+                        }
+                        if ui.button("Add folder…").clicked() {
+                            worker::pick(Pick::Folder, self.sender.clone(), ui.ctx().clone());
+                        }
+                        if !self.inputs.is_empty() && ui.button("Clear").clicked() {
+                            self.inputs.clear();
+                        }
+                    },
+                );
             });
         });
     }
@@ -2079,7 +2094,9 @@ impl App {
                     }
                 }
             } else {
-                let ready = !self.inputs.is_empty() && self.out_dir.is_some();
+                let ready = !self.updater.blocks_conversions()
+                    && !self.inputs.is_empty()
+                    && self.out_dir.is_some();
                 let convert = egui::Button::new(
                     RichText::new("Convert")
                         .color(if ready { p.on_spectre } else { p.tide })
@@ -2092,7 +2109,9 @@ impl App {
                     self.start(ctx);
                 }
                 if !ready {
-                    let why = if self.inputs.is_empty() {
+                    let why = if self.updater.blocks_conversions() {
+                        "Finish updating before starting another conversion."
+                    } else if self.inputs.is_empty() {
                         "Add designs to convert."
                     } else {
                         "Choose an output folder."
@@ -2145,7 +2164,7 @@ impl App {
         let first = (reveal == Some(Reveal::FirstIssue)).then_some(view.first_to_show);
         let mut action = None;
         let log_ready = !self.running();
-        let running = !log_ready || self.diagnosis.is_some();
+        let running = !log_ready || self.diagnosis.is_some() || self.updater.blocks_conversions();
         if own_scroll && self.rows.is_empty() {
             panel(ui, &p, false, |ui| {
                 ui.set_min_height(theme::SPACE_8 * 3.0);

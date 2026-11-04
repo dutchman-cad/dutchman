@@ -5,7 +5,8 @@
 #
 # Takes dutchman, dutchman-mcp and dutchman-gui (plus dutchman-web on Linux) and writes
 # dist/<name>.zip (Windows) or dist/<name>.tar.gz, holding a <name> folder with the programs,
-# LICENSE, NOTICE, the dependency and font licences, and the README, its links pinned to <ref>
+# LICENSE, NOTICE, dependency and font licences, skills, docs, installed AGENTS.md, and the
+# README with its links pinned to <ref>
 # (a tag or a commit). An optional binaries-dir supplies prebuilt programs instead of
 # target/<target>/release.
 # Prints the archive's file name. The programs are run once to check them, unless this machine
@@ -30,6 +31,7 @@ for program in "${programs[@]}"; do
   cp "${4:-target/$target/release}/$program$exe" "dist/$name/"
 done
 cp LICENSE NOTICE "dist/$name/"
+python3 scripts/package-docs.py "dist/$name"
 # The archive holds none of the files the README links to: point them at the ref.
 python3 -I scripts/archive-readme.py "$ref" README.md "dist/$name/README.md"
 cp crates/dutchman-gui/assets/fonts/*.txt licences/*.txt "dist/$name/licences/"

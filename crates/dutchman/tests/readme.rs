@@ -18,6 +18,7 @@ fn the_readme_links_the_latest_published_downloads() {
     for target in [
         "macos-universal.dmg",
         "macos-universal.tar.gz",
+        "x86_64-pc-windows-msvc.msi",
         "x86_64-pc-windows-msvc.zip",
         "x86_64-unknown-linux-gnu.tar.gz",
         "aarch64-unknown-linux-gnu.tar.gz",
@@ -67,7 +68,9 @@ fn macos_installation_has_complete_archive_steps_and_current_dmg_links() {
         "curl -fLO \"$base/dutchman-macos-universal.tar.gz.sha256\"",
         "shasum -a 256 -c dutchman-macos-universal.tar.gz.sha256",
         "tar xzf dutchman-macos-universal.tar.gz",
-        "install -m 755 dutchman dutchman-mcp dutchman-gui",
+        "cp -R . \"$HOME/.local/lib/dutchman/\"",
+        "for program in dutchman dutchman-mcp dutchman-gui; do",
+        "ln -sfn \"$HOME/.local/lib/dutchman/$program\"",
         "xattr -dr com.apple.quarantine . 2>/dev/null || true",
         "dutchman --version",
     ] {

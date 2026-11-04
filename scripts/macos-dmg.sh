@@ -43,6 +43,8 @@ lipo -info "$app/Contents/MacOS/Dutchman"
 
 cp "$root/crates/dutchman-gui/assets/Dutchman.icns" "$app/Contents/Resources/Dutchman.icns"
 cp "$root/LICENSE" "$root/NOTICE" "$app/Contents/Resources/"
+# Keep non-code guidance in Resources so strict code signing can seal the bundle.
+python3 "$root/scripts/package-docs.py" "$app/Contents/Resources"
 cp "$root"/crates/dutchman-gui/assets/fonts/*.txt "$root"/licences/*.txt "$app/Contents/Resources/licences/"
 
 cat > "$app/Contents/Info.plist" <<PLIST

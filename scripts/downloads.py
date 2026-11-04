@@ -19,6 +19,8 @@ END = "<!-- /downloads -->"
 
 # The first release with the macOS disk image, Dutchman.app for Apple silicon and Intel.
 DMG_SINCE = (0, 1, 3)
+# The first release after 0.2.6 adds a stable-only Windows installer.
+MSI_SINCE = (0, 2, 7)
 
 # (who it is for, target, archive extension)
 PLATFORMS = [
@@ -45,6 +47,12 @@ def table(version: str) -> str:
         url = f"{base}/{name}"
         rows.append(f"| Mac (any Mac): the desktop app | [{name}]({url}) | [SHA-256]({url}.sha256) |")
     for who, target, ext in PLATFORMS:
+        if ext == "zip" and (version == "latest" or (version != "nightly" and
+                tuple(int(n) for n in version.split(".")[:3]) >= MSI_SINCE)):
+            name = f"{stem}-{target}.msi"
+            url = f"{base}/{name}"
+            rows.append(f"| Windows, 64-bit: installer | [{name}]({url}) | [SHA-256]({url}.sha256) |")
+            who = "Windows, 64-bit: portable ZIP"
         name = f"{stem}-{target}.{ext}"
         url = f"{base}/{name}"
         rows.append(f"| {who} | [{name}]({url}) | [SHA-256]({url}.sha256) |")

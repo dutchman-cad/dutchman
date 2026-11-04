@@ -1459,6 +1459,7 @@ dependencies = [
  "roxmltree 0.21.2",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "ureq",
  "zip",

@@ -1,7 +1,8 @@
 name: Release builds
 
 # Builds the dutchman command, the dutchman-mcp server and the dutchman-gui app for each
-# platform and keeps the archives as workflow artifacts, with a macOS disk image holding
+# platform and keeps the archives and per-user Windows MSI as workflow artifacts. The MSI
+# is installed, upgraded and uninstalled on Windows. A macOS disk image holds
 # Dutchman Convert.app for Apple silicon and Intel. Runs for a release tag, on demand, and
 # for a pull request that changes the packaging; never for every push to main, as the
 # account runs few macOS jobs at once. Release notes alone do not trigger it: ci.yml's
@@ -21,8 +22,20 @@ on:
       - scripts/macos-dmg.sh
       - scripts/archive-readme.py
       - scripts/downloads.py
+      - scripts/package-docs.py
+      - assets/install/**
+      - skills/**
+      - docs/**
       - crates/dutchman-gui/assets/Dutchman.icns
       - assets/dmg/**
+      - assets/windows/**
+      - scripts/windows-msi.ps1
+      - scripts/test-windows-msi.ps1
+      - crates/dutchman-gui/examples/ico.rs
+      - crates/dutchman-gui/src/app.rs
+      - crates/dutchman-gui/src/update.rs
+      - crates/dutchman-gui/src/update/**
+      - crates/dutchman-gui/assets/dutchman-app-icon.svg
       - docker/**
 
 permissions:
@@ -91,12 +104,47 @@ jobs:
             | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "dutchman"))')
           archive=$(scripts/package-archive.sh ${{ matrix.target }} "dutchman-${version}-${{ matrix.target }}" "v$version")
           echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
+      - uses: actions/setup-dotnet@v5
+        if: runner.os == 'Windows'
+        with:
+          dotnet-version: '6.0.x'
+      - name: Install WiX (build tool only)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 4.0.6
+          if ($LASTEXITCODE -ne 0) { throw 'Could not install WiX' }
+          "$env:USERPROFILE\.dotnet\tools" >> $env:GITHUB_PATH
+      - name: Build and test per-user Windows installer
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $metadata = cargo metadata --format-version 1 --no-deps | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) { throw 'Could not read the release version' }
+          $version = ($metadata.packages | Where-Object name -eq 'dutchman').version
+          cargo run --release --locked -p dutchman-gui --target x86_64-pc-windows-msvc --example ico -- dist/Dutchman.ico
+          if ($LASTEXITCODE -ne 0) { throw 'Could not render the Windows icon' }
+          ./scripts/windows-msi.ps1 -Version $version
+          ./scripts/test-windows-msi.ps1 -Version $version
+          $env:DUTCHMAN_PORTABLE_TEST_ARCHIVE = (Resolve-Path "dist/$env:ARCHIVE").Path
+          cargo test --release --locked -p dutchman-gui --target x86_64-pc-windows-msvc --lib update:: -- --include-ignored
+          if ($LASTEXITCODE -ne 0) { throw 'The Windows updater tests failed' }
+      - name: Keep Windows installer logs
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-installer-logs
+          path: dist/*.log
+          if-no-files-found: ignore
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ env.ARCHIVE }}
           path: |
             dist/${{ env.ARCHIVE }}
             dist/${{ env.ARCHIVE }}.sha256
+            dist/*.msi
+            dist/*.msi.sha256
           retention-days: 30
 
   # Each Mac target gets an Apple silicon runner; Intel stays cross-compiled.

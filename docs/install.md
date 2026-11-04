@@ -1,6 +1,54 @@
 # Install
 
-Dutchman installs as three programs: `dutchman` (the command line), `dutchman-mcp` (the MCP server), and `dutchman-gui` (the desktop app, Dutchman Convert). Release archives, the macOS disk image, Homebrew, and Scoop install all three; `cargo install` and Docker leave out the desktop app.
+Dutchman installs as three programs: `dutchman` (the command line), `dutchman-mcp` (the MCP server), and `dutchman-gui` (the desktop app, Dutchman Convert). Release archives, the Windows installer, the macOS disk image, Homebrew, and Scoop install all three; `cargo install` and Docker leave out the desktop app.
+
+## Included guidance
+
+Every release archive (including the Windows ZIP) includes `skills/`, the `docs/` Markdown,
+and a short top-level `AGENTS.md` for assistants started in the install folder. The MSI
+installs them under `%LOCALAPPDATA%\Programs\Dutchman` and removes them on uninstall.
+The macOS app keeps them in `Dutchman Convert.app/Contents/Resources`; its installed guide
+points to the commands in `Contents/Helpers`.
+The skill includes all its local resources and referenced documentation. The guide explains
+saved `<stem>.report.json` reports and commands run by the full path in that folder.
+
+All Markdown docs and images up to 256 KiB are included. Larger images and non-Markdown
+examples are omitted; links to repository source or generated reproduction kits still
+refer to those sources. Keep the whole unpacked folder when installing an archive, so
+these guides stay beside the programs. Portable Windows updates refresh them too.
+
+## Windows: the installer
+
+Download `dutchman-VERSION-x86_64-pc-windows-msvc.msi` and its `.msi.sha256` from the
+[latest release](https://github.com/dutchman-cad/dutchman/releases/latest). The README links
+the same files under versionless names. Check the hash in PowerShell before opening it:
+
+```powershell
+Get-FileHash dutchman-VERSION-x86_64-pc-windows-msvc.msi -Algorithm SHA256
+Get-Content dutchman-VERSION-x86_64-pc-windows-msvc.msi.sha256
+```
+
+The installer needs no administrator rights. It installs `dutchman-gui.exe`, `dutchman.exe`,
+and `dutchman-mcp.exe` in `%LOCALAPPDATA%\Programs\Dutchman`, adds that folder to your user
+PATH, and adds **Dutchman Convert** to Start. Open a new terminal to use `dutchman --version`.
+Installed apps shows **Dutchman Convert**, its version, publisher **Dutchman CAD**, and icon.
+Newer installers upgrade this copy in place; older versions are refused. Uninstall through
+Windows Settings removes the programs, shortcut, and PATH entry, and keeps
+`%LOCALAPPDATA%\Dutchman` (including diagnostic logs) and the app's versioned settings in
+`%APPDATA%\Dutchman Convert VERSION\data`.
+
+The [portable ZIP](#from-a-release-archive) remains available beside the installer. Choose
+one installation method; Scoop installations continue to update through Scoop.
+
+### Windows first run
+
+Dutchman Convert's Windows installer and programs are unsigned. SmartScreen may stop the
+first launch with **Windows protected your PC**:
+
+1. Click **More info**.
+2. Click **Run anyway**.
+
+Windows remembers the approval for that download. A new version may ask again.
 
 ## Homebrew or Scoop
 
@@ -119,13 +167,17 @@ curl -fLO "$base/dutchman-$VERSION-$TARGET.tar.gz.sha256"
 sha256sum -c dutchman-$VERSION-$TARGET.tar.gz.sha256
 tar xzf dutchman-$VERSION-$TARGET.tar.gz
 mkdir -p "$HOME/.local/bin"
-install -m 755 dutchman-$VERSION-$TARGET/dutchman* "$HOME/.local/bin/"
+mkdir -p "$HOME/.local/lib/dutchman"
+cp -R dutchman-$VERSION-$TARGET/. "$HOME/.local/lib/dutchman/"
+for program in dutchman dutchman-mcp dutchman-gui dutchman-web; do
+  ln -sfn "$HOME/.local/lib/dutchman/$program" "$HOME/.local/bin/$program"
+done
 export PATH="$HOME/.local/bin:$PATH"
 dutchman --version
 ```
 
 The `export` lasts for this shell; add the same line to your shell's profile (`~/.bashrc`,
-`~/.zshrc`) to keep it. The `dutchman*` pattern installs the desktop app, `dutchman-gui`, too.
+`~/.zshrc`) to keep it. The complete release folder keeps the desktop app and local guidance together.
 
 On Linux, launch the desktop app with `dutchman-gui` from a terminal. It needs an X11 or
 Wayland desktop session with working OpenGL. See [Troubleshooting](troubleshooting.md) if no
@@ -149,7 +201,11 @@ this unpacked release, install its programs and run the command:
 cd dutchman-*-macos-universal
 xattr -dr com.apple.quarantine . 2>/dev/null || true
 mkdir -p "$HOME/.local/bin"
-install -m 755 dutchman dutchman-mcp dutchman-gui "$HOME/.local/bin/"
+mkdir -p "$HOME/.local/lib/dutchman"
+cp -R . "$HOME/.local/lib/dutchman/"
+for program in dutchman dutchman-mcp dutchman-gui; do
+  ln -sfn "$HOME/.local/lib/dutchman/$program" "$HOME/.local/bin/$program"
+done
 export PATH="$HOME/.local/bin:$PATH"
 dutchman --version
 dutchman --help

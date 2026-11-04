@@ -261,6 +261,40 @@ close. Finish active conversions before confirming. Output goes to
 incomplete result opens the update window with its error, output tail, and **Copy command**;
 the log is consumed once and deleted. Success opens no update window.
 
+Windows copies have two update paths, using the versioned package and its `.sha256` from
+the same stable release. Nothing changes until the SHA-256 matches; a failed download or
+checksum check deletes the download and leaves the installed copy untouched. **Download**
+remains available for a manual install.
+
+- **MSI: Install (closes Dutchman).** Detection requires the running executable at
+  `%LOCALAPPDATA%\Programs\Dutchman\dutchman-gui.exe` and a matching `InstallDir` string in
+  `HKCU\Software\Dutchman CAD\Dutchman Convert`, written by the MSI. Paths are compared
+  without case, separator, trailing separator, or Windows extended-prefix differences.
+  After download and verification, the install window reopens if hidden. Dutchman asks
+  before closing if conversions are running:
+  **Finish files and install** stops new files from starting, lets active files finish,
+  then closes and installs. If the files finish before you answer, **Close and install**
+  still asks for your confirmation. **Cancel install** deletes the prepared download and
+  keeps Dutchman open; a queue already asked to stop stays stopped. New conversions wait
+  while the installer is being prepared. Close an open diagnosis window after it finishes.
+  With no running conversions, Dutchman closes normally so settings save. A detached
+  PowerShell helper waits for the process to exit, runs `msiexec /i <file> /qb /norestart`
+  without administrator rights, and restarts Dutchman after the installer finishes.
+  Its verbose log is `%LOCALAPPDATA%\Dutchman\diagnostics\msi-update.log`. The helper
+  waits up to two minutes for exit and up to 15 minutes for installation. Failed or
+  incomplete installations show the log location on the next start. Uninstall keeps settings and logs.
+- **Portable ZIP: Update now.** When neither MSI nor Scoop identifies the copy, all three
+  release programs beside the Windows executable identify a portable folder. Dutchman
+  downloads and verifies the ZIP, stages all three programs and bundled guidance on the
+  install volume, renames the originals to `.old`, and puts the new files beside them.
+  If replacement fails, it attempts to restore the originals and explains any recovery
+  needed. The running app keeps working; **Restart now** becomes available once conversions
+  finish. A detached helper waits for this copy to exit before opening the updated app.
+  The next start deletes the `.old` backups. A folder without write access offers the manual
+  download fallback. Other Windows copies keep **Download**.
+
+Scoop and Homebrew retain their package-manager paths. macOS and Linux downloads are unchanged.
+
 No package-manager commands run until confirmed. Missing commands, failed commands, and a
 15-minute update timeout retain the copy-command fallback. **Copy command** remains a
 secondary action for both package managers; close Dutchman before running it with Scoop.
@@ -292,7 +326,7 @@ desktop portal, and dropping files works without it.
 
 ## What the update check sends
 
-For direct downloads, each check sends an HTTPS GET to
+For direct downloads, MSI installations, and portable Windows ZIP copies, each check sends an HTTPS GET to
 `https://github.com/dutchman-cad/dutchman/releases.atom` with
 `User-Agent: Dutchman-update-check/<version>` and, on repeat checks, `If-None-Match`
 containing the feed ETag GitHub returned. An unchanged feed (304) needs no API request.
@@ -300,6 +334,26 @@ Only a newer stable `vX.Y.Z` release triggers one GET to
 `https://api.github.com/repos/dutchman-cad/dutchman/releases/latest` for package links;
 if the feed fails, one API request is tried instead, then the next automatic check is in
 an hour.
+
+For both Windows MSI and portable ZIP installations, the automatic and manual checks fetch
+exactly the Atom feed and, under the conditions above, the latest-release API. They fetch no
+package-manager metadata. Clicking **Install (closes Dutchman)** additionally fetches:
+
+- `https://github.com/dutchman-cad/dutchman/releases/download/vX.Y.Z/dutchman-X.Y.Z-x86_64-pc-windows-msvc.msi.sha256`
+- `https://github.com/dutchman-cad/dutchman/releases/download/vX.Y.Z/dutchman-X.Y.Z-x86_64-pc-windows-msvc.msi`
+
+Clicking **Update now** in a portable ZIP copy additionally fetches:
+
+- `https://github.com/dutchman-cad/dutchman/releases/download/vX.Y.Z/dutchman-X.Y.Z-x86_64-pc-windows-msvc.zip.sha256`
+- `https://github.com/dutchman-cad/dutchman/releases/download/vX.Y.Z/dutchman-X.Y.Z-x86_64-pc-windows-msvc.zip`
+
+These are the offered stable release's published checksums and packages. All four asset
+requests use the same User-Agent, without an ETag. Each download follows at most five redirects,
+only over HTTPS to this repository's GitHub release-download path,
+`release-assets.githubusercontent.com`, or `objects.githubusercontent.com`. Checksums are
+limited to 4 KiB, packages to 512 MiB, and selected ZIP contents to 512 MiB across at most
+1,000 archive entries. No other URL is fetched by either Windows update path. Installing,
+swapping, cleanup, and **Restart now** make no additional update requests.
 
 For package-manager installations, the hourly check first sends an HTTPS GET to exactly one
 of these public package files, using the same User-Agent and a conditional `If-None-Match`
@@ -316,8 +370,9 @@ stable version. If its feed entry is missing, the window links to the release pa
 Package metadata failures retry in an hour without offering a feed-only update.
 
 These update-check requests send no cookies, identifiers, usage data, file names, paths, or
-file contents. Clicking an update button also runs the package manager, which contacts its
-own configured package sources and download hosts using its own network and privacy settings. GitHub sees the connecting IP address, ordinary HTTPS request metadata,
+file contents. Clicking **Update with Homebrew** or confirming **Update with Scoop** runs
+that package manager, which contacts its own configured package sources and download hosts
+using its own network and privacy settings. GitHub sees the connecting IP address, ordinary HTTPS request metadata,
 the app version in the User-Agent, and the public feed or package ETag. Clicking **Download** opens
 the release asset or page in the default browser, under that browser's privacy settings.
 

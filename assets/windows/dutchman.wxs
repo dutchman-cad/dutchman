@@ -1,0 +1,60 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="Dutchman Convert" Manufacturer="Dutchman CAD" Version="$(var.Version)"
+           UpgradeCode="46DB5FE6-D099-4A7D-AD78-9D644D1D01B6" Scope="perUser" InstallerVersion="500">
+    <MajorUpgrade Schedule="afterInstallInitialize" DowngradeErrorMessage="A newer Dutchman Convert is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+    <Icon Id="Dutchman.ico" SourceFile="$(var.Icon)" />
+    <Property Id="ARPPRODUCTICON" Value="Dutchman.ico" />
+    <Property Id="ARPNOMODIFY" Value="1" />
+    <StandardDirectory Id="LocalAppDataFolder">
+      <Directory Id="ProgramsFolder" Name="Programs">
+        <Directory Id="INSTALLFOLDER" Name="Dutchman">
+          <Component Id="Gui">
+            <File Id="GuiExe" Source="$(var.BinDir)\dutchman-gui.exe" />
+            <!-- The updater checks this HKCU value AND the expected executable location. -->
+            <RegistryKey Root="HKCU" Key="Software\Dutchman CAD\Dutchman Convert" ForceDeleteOnUninstall="yes">
+              <RegistryValue Name="InstallDir" Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+            </RegistryKey>
+            <RemoveFolder Id="RemoveInstallFolder" On="uninstall" />
+            <RemoveFolder Id="RemoveEmptyProgramsFolder" Directory="ProgramsFolder" On="uninstall" />
+          </Component>
+          <Component Id="Cli">
+            <File Source="$(var.BinDir)\dutchman.exe" />
+            <RegistryValue Root="HKCU" Key="Software\Dutchman CAD\Dutchman Convert" Name="Cli" Type="integer" Value="1" KeyPath="yes" />
+          </Component>
+          <Component Id="Mcp">
+            <File Source="$(var.BinDir)\dutchman-mcp.exe" />
+            <RegistryValue Root="HKCU" Key="Software\Dutchman CAD\Dutchman Convert" Name="Mcp" Type="integer" Value="1" KeyPath="yes" />
+          </Component>
+          <Component Id="Notices">
+            <File Source="LICENSE" />
+            <File Source="NOTICE" />
+            <File Source="crates/dutchman-gui/assets/fonts/Spectral-OFL.txt" />
+            <File Source="crates/dutchman-gui/assets/fonts/IBM-Plex-OFL.txt" />
+            <File Source="licences/sysinfo-MIT.txt" />
+            <RegistryValue Root="HKCU" Key="Software\Dutchman CAD\Dutchman Convert" Name="Notices" Type="integer" Value="1" KeyPath="yes" />
+          </Component>
+          <Component Id="UserPath">
+            <Environment Id="DutchmanPath" Name="PATH" Value="[INSTALLFOLDER]" Action="set" Part="last" System="no" Permanent="no" />
+            <RegistryValue Root="HKCU" Key="Software\Dutchman CAD\Dutchman Convert" Name="Path" Type="integer" Value="1" KeyPath="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+    <StandardDirectory Id="ProgramMenuFolder">
+      <Component Id="StartMenu">
+        <Shortcut Id="DutchmanShortcut" Name="Dutchman Convert" Target="[#GuiExe]" WorkingDirectory="INSTALLFOLDER" Icon="Dutchman.ico" />
+        <RegistryValue Root="HKCU" Key="Software\Dutchman CAD\Dutchman Convert" Name="Shortcut" Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </StandardDirectory>
+    <Feature Id="Dutchman" Title="Dutchman Convert">
+      <ComponentGroupRef Id="GuideFiles" />
+      <ComponentRef Id="Gui" />
+      <ComponentRef Id="Cli" />
+      <ComponentRef Id="Mcp" />
+      <ComponentRef Id="UserPath" />
+      <ComponentRef Id="Notices" />
+      <ComponentRef Id="StartMenu" />
+    </Feature>
+  </Package>
+</Wix>

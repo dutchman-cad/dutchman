@@ -30,6 +30,9 @@ ron = "0.11"
 serde = { version = "1", features = ["derive"] }
 rfd = "0.15"
 serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+zip.workspace = true
 image = { version = "0.25", default-features = false, features = ["png"] }
 roxmltree.workspace = true
 ureq = { version = "2.12", default-features = false, features = ["tls"] }
@@ -38,8 +41,6 @@ ureq = { version = "2.12", default-features = false, features = ["tls"] }
 ron = "0.11"
 egui_kittest = { version = "0.33", features = ["eframe", "wgpu"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
-tempfile.workspace = true
-zip.workspace = true
 
 [lints]
 workspace = true

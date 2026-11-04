@@ -8,7 +8,7 @@ use eframe::egui;
 use serde_json::Value;
 
 mod package;
-use package::{Install, Job, Phase};
+use package::{Action, Install, Job, Phase};
 
 const FEED: &str = "https://github.com/dutchman-cad/dutchman/releases.atom";
 const API: &str = "https://api.github.com/repos/dutchman-cad/dutchman/releases/latest";
@@ -379,7 +379,9 @@ pub struct Updater {
     job: Job,
     closing: bool,
     scoop_confirm: bool,
-    scoop_failure: bool,
+    msi_needs_confirm: bool,
+    msi_finish_confirmed: bool,
+    windows_failure: bool,
     automatic: bool,
     skipped: String,
     remind_at: u64,
@@ -398,14 +400,16 @@ impl Updater {
     pub fn new(settings: Option<&Value>) -> Self {
         let get = |key| settings.and_then(|v| v.get(key));
         let install = Install::current();
-        let failure = package::scoop_startup(&install);
+        let failure = package::windows_startup(&install);
         let mut updater = Self {
             report_ids: Vec::new(),
             install,
             job: Job::new(),
             closing: false,
             scoop_confirm: false,
-            scoop_failure: false,
+            msi_needs_confirm: false,
+            msi_finish_confirmed: false,
+            windows_failure: false,
             automatic: get("automatic").and_then(Value::as_bool).unwrap_or(true),
             skipped: get("skipped").and_then(Value::as_str).unwrap_or("").into(),
             remind_at: get("remind_at").and_then(Value::as_u64).unwrap_or(0),
@@ -430,13 +434,34 @@ impl Updater {
                 .job
                 .preview(failure.tag, Phase::Failed(failure.error), &failure.output);
             updater.open = true;
-            updater.scoop_failure = true;
+            updater.windows_failure = true;
         }
         updater
     }
     /// Whether the reader leaves automatic checks on.
     pub fn automatic(&self) -> bool {
         self.automatic
+    }
+    /// Do not start a conversion while an MSI download is preparing to close the app.
+    pub fn blocks_conversions(&self) -> bool {
+        (self.install.action() == Action::Msi && self.job.holds_release())
+            || (self.install.action() == Action::Zip
+                && matches!(
+                    self.job.snapshot().phase,
+                    Phase::Restarting | Phase::Restarted
+                ))
+    }
+    pub fn windows_package(&self) -> bool {
+        matches!(self.install.action(), Action::Msi | Action::Zip)
+    }
+    pub fn stopping_for_install(&self) -> bool {
+        self.install.action() == Action::Msi
+            && self.msi_finish_confirmed
+            && self.job.snapshot().phase == Phase::Ready
+    }
+    fn msi_can_handoff(&mut self, can_restart: bool) -> bool {
+        self.msi_needs_confirm |= !can_restart;
+        can_restart && (!self.msi_needs_confirm || self.msi_finish_confirmed)
     }
     pub fn newer_known(&self) -> bool {
         self.release.is_some()
@@ -490,11 +515,14 @@ impl Updater {
         if self.job.snapshot().phase == Phase::Restarted {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
-        if self.scoop_failure {
+        if self.install.action() == Action::Msi && self.job.snapshot().phase == Phase::Ready {
+            self.open = true;
+        }
+        if self.windows_failure {
             if self.open {
                 return;
             }
-            self.scoop_failure = false;
+            self.windows_failure = false;
         }
         if self.job.holds_release() {
             return;
@@ -607,8 +635,8 @@ impl Updater {
                 .default_width(420.0)
                 .show(ctx, |ui| {
                     // After a successful package update only the result and Restart apply.
-                    let installed =
-                        matches!(self.job.snapshot().phase, Phase::Installed | Phase::Restarted);
+                    let installed = self.job.snapshot().phase == Phase::Installed
+                        || (self.job.snapshot().phase == Phase::Restarted && self.install.action() != Action::Msi);
                     if installed {
                         ui.heading(format!("Dutchman {} is installed", self.job.tag.trim_start_matches('v')));
                         self.package_ui(ui, &release, can_restart);
@@ -628,12 +656,13 @@ impl Updater {
                         });
                     self.package_ui(ui, &release, can_restart);
                     ui.horizontal(|ui| {
-                        if self.install == Install::Direct
+                        if self.install.action() == Action::Download
                             && ui
                                 .add(egui::Button::new("Download").fill(ui.visuals().selection.bg_fill))
                                 .clicked()
                         {
-                            ctx.open_url(egui::OpenUrl::new_tab(&release.download));
+                            let url = if cfg!(windows) { format!("{RELEASES}/tag/{}", release.tag) } else { release.download.clone() };
+                            ctx.open_url(egui::OpenUrl::new_tab(url));
                         }
                         if ui.add_enabled(!self.job.busy(), egui::Button::new("Skip this version")).clicked() {
                             self.skipped = release.tag.clone();
@@ -649,13 +678,17 @@ impl Updater {
         self.open = open && self.open;
     }
     fn package_ui(&mut self, ui: &mut egui::Ui, release: &Release, can_restart: bool) {
+        if matches!(self.install.action(), Action::Msi | Action::Zip) {
+            self.windows_ui(ui, release, can_restart);
+            return;
+        }
         let Some(command) = self.install.command() else {
             return;
         };
         let progress = self.job.snapshot();
         match &progress.phase {
             Phase::Idle => {
-                if matches!(self.install, Install::Scoop(_)) {
+                if self.install.action() == Action::Scoop {
                     if self.scoop_confirm {
                         ui.label("Dutchman closes, Scoop updates it, and Dutchman opens again.");
                         ui.horizontal(|ui| {
@@ -666,7 +699,7 @@ impl Updater {
                                 self.skipped.clear();
                                 self.remind_at = 0;
                                 self.scoop_confirm = false;
-                                self.job.handoff_scoop(
+                                self.job.handoff_windows(
                                     self.install.clone(),
                                     release.tag.clone(),
                                     ui.ctx(),
@@ -679,7 +712,7 @@ impl Updater {
                         if !can_restart {
                             ui.label("Finish the current conversion before updating.");
                         }
-                    } else if ui.button("Update with Scoop").clicked() {
+                    } else if ui.button(self.install.label()).clicked() {
                         self.scoop_confirm = true;
                     }
                 } else if ui.button(self.install.label()).clicked() {
@@ -689,7 +722,7 @@ impl Updater {
                         .start(self.install.clone(), release.tag.clone(), ui.ctx());
                 }
             }
-            Phase::Running | Phase::Restarting => {
+            Phase::Running | Phase::Ready | Phase::Restarting => {
                 ui.horizontal(|ui| {
                     ui.spinner();
                     ui.label(if progress.phase == Phase::Restarting {
@@ -755,6 +788,81 @@ impl Updater {
         if ui.button("Copy command").clicked() {
             ui.ctx().copy_text(command.into());
         }
+    }
+
+    fn windows_ui(&mut self, ui: &mut egui::Ui, release: &Release, can_restart: bool) {
+        match self.job.snapshot().phase {
+            Phase::Idle => {
+                if self.install.action() == Action::Msi {
+                    ui.label("Download and verify the installer, then close Dutchman, install, and open it again.");
+                } else {
+                    ui.label("Download and verify the ZIP, replace the programs, then restart when you are ready.");
+                }
+                if ui.button(self.install.label()).clicked() {
+                    self.msi_needs_confirm = false;
+                    self.msi_finish_confirmed = false;
+                    self.skipped.clear();
+                    self.remind_at = 0;
+                    self.job
+                        .prepare_windows(self.install.clone(), release.tag.clone(), ui.ctx());
+                }
+            }
+            Phase::Running | Phase::Restarting => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("Preparing the Windows update…");
+                });
+            }
+            Phase::Ready => {
+                if self.msi_can_handoff(can_restart) {
+                    self.job
+                        .handoff_windows(self.install.clone(), release.tag.clone(), ui.ctx());
+                } else {
+                    if self.msi_finish_confirmed {
+                        ui.label("Finishing the current files before closing and installing. New files will not start. Close any diagnosis window when it finishes.");
+                    } else {
+                        ui.label("The installer is verified. Finish the current files, then close Dutchman and install?");
+                        if ui
+                            .button(if can_restart {
+                                "Close and install"
+                            } else {
+                                "Finish files and install"
+                            })
+                            .clicked()
+                        {
+                            self.msi_finish_confirmed = true;
+                        }
+                    }
+                    if ui.button("Cancel install").clicked() {
+                        self.msi_needs_confirm = false;
+                        self.msi_finish_confirmed = false;
+                        self.job = Job::new();
+                    }
+                }
+            }
+            Phase::Installed => {
+                ui.label("The new programs are ready. Restart Dutchman to use them.");
+                if ui
+                    .add_enabled(can_restart, egui::Button::new("Restart now"))
+                    .clicked()
+                {
+                    self.job.restart(self.install.clone(), ui.ctx());
+                }
+                if !can_restart {
+                    ui.label("Finish the current conversion before restarting.");
+                }
+            }
+            Phase::Restarted => {
+                ui.label("Restarting Dutchman…");
+            }
+            Phase::Failed(error) => {
+                ui.label(error);
+                if ui.button("Try again").clicked() {
+                    self.job = Job::new();
+                }
+            }
+        }
+        ui.hyperlink_to("Download", format!("{RELEASES}/tag/{}", release.tag));
     }
 
     /// Supplies a Homebrew job without starting any processes, for GPU screenshots.

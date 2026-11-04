@@ -24,3 +24,7 @@ from them with Spectral installed.
 Keep clear space of one hull height (a sixth of the mark's height) on every side. Use the mark at
 16 px or larger and the lockup at 120 px wide or larger. Don't recolour, rotate, outline or shadow
 the mark, separate the lantern, or place the mark on a photograph.
+
+The Windows installer renders the same app SVG into a multi-size ICO at build time with
+`cargo run -p dutchman-gui --example ico -- dist/Dutchman.ico`. The icon is used for its Start
+menu shortcut and Installed apps entry; no external artwork is included.

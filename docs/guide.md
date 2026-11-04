@@ -37,7 +37,8 @@ A design stores its geometry compressed, so a large assembly stays small: SolidC
 
 - **Mac:** `brew install --cask dutchman-cad/tap/dutchman-convert` for the app, or
   `brew install dutchman-cad/tap/dutchman` for the commands.
-- **Windows:** `scoop bucket add dutchman-cad https://github.com/dutchman-cad/scoop-bucket`,
+- **Windows:** the [per-user installer](install.md#windows-the-installer) adds the app to Start
+  and the commands to your user PATH without administrator rights. Or `scoop bucket add dutchman-cad https://github.com/dutchman-cad/scoop-bucket`,
   then `scoop install dutchman-cad/dutchman`.
 - **Any system:** a [release archive](install.md#from-a-release-archive), [Docker](docker.md),
   or [from source](install.md#from-source).

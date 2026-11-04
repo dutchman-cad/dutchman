@@ -23,6 +23,10 @@ the skill also uses `solidcraft-cli` or SolidCraft's own MCP server; SolidCraft'
 
 ## Install
 
+Release packages already include this folder and the referenced Markdown docs. Start an
+assistant in the install folder and read its `AGENTS.md`, or copy this skill into your
+assistant's skill directory. No repository download is needed for the bundled skill.
+
 Claude Code, for all projects:
 
 ```sh

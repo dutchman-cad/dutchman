@@ -11,9 +11,17 @@ use eframe::egui;
 
 use super::{version, MAX_BYTES};
 
+mod msi;
 mod scoop;
+mod windows;
 
-pub(super) use scoop::startup as scoop_startup;
+pub(super) fn windows_startup(install: &Install) -> Option<scoop::Failure> {
+    if matches!(install, Install::Msi(_)) {
+        msi::startup()
+    } else {
+        scoop::startup(install)
+    }
+}
 
 const TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const TAIL_LINES: usize = 12;
@@ -22,9 +30,22 @@ const LINE_BYTES: usize = 2048;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Install {
     Direct,
+    #[cfg_attr(not(windows), allow(dead_code))] // Constructed by Windows install detection.
+    Msi(PathBuf),
+    #[cfg_attr(not(windows), allow(dead_code))]
+    Zip(PathBuf),
     Cask(PathBuf),
     Formula(PathBuf),
     Scoop(PathBuf),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Action {
+    Download,
+    Homebrew,
+    Zip,
+    Scoop,
+    Msi,
 }
 
 impl Install {
@@ -52,6 +73,40 @@ impl Install {
         Self::Direct
     }
 
+    // Both inputs come from this user: LOCALAPPDATA and the installer's HKCU value.
+    // Normalise separators and case explicitly so the pure check is testable on Linux.
+    #[cfg(any(windows, test))]
+    pub fn detect_msi(exe: &Path, local: &Path, registered: &Path) -> Self {
+        let normal = |p: &Path| {
+            p.to_string_lossy()
+                .replace('\\', "/")
+                .trim_start_matches("//?/")
+                .trim_end_matches('/')
+                .to_lowercase()
+        };
+        let expected = local.join("Programs/Dutchman");
+        if normal(registered) == normal(&expected)
+            && normal(exe) == format!("{}/dutchman-gui.exe", normal(&expected))
+        {
+            Self::Msi(expected)
+        } else {
+            Self::Direct
+        }
+    }
+
+    #[cfg(any(windows, test))]
+    fn detect_zip(exe: &Path) -> Self {
+        if let Some(folder) = exe.parent() {
+            if ["dutchman-gui.exe", "dutchman.exe", "dutchman-mcp.exe"]
+                .iter()
+                .all(|name| folder.join(name).is_file())
+            {
+                return Self::Zip(folder.to_path_buf());
+            }
+        }
+        Self::Direct
+    }
+
     pub fn current() -> Self {
         let Some(exe) = std::env::current_exe()
             .ok()
@@ -60,6 +115,30 @@ impl Install {
             return Self::Direct;
         };
         let install = Self::detect(&exe);
+        #[cfg(windows)]
+        if install == Self::Direct
+            && exe
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.eq_ignore_ascii_case("dutchman-gui.exe"))
+        {
+            if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+                if let Some(registered) = msi::registered_folder() {
+                    let msi = Self::detect_msi(&exe, Path::new(&local), &registered);
+                    if msi != Self::Direct {
+                        return msi;
+                    }
+                }
+            }
+        }
+        #[cfg(windows)]
+        if install == Self::Direct {
+            let portable = Self::detect_zip(&exe);
+            if portable != Self::Direct {
+                windows::cleanup(&portable);
+                return portable;
+            }
+        }
         // Homebrew moves a cask's bundle into /Applications, unlike a formula's symlink.
         if install == Self::Direct && exe.starts_with("/Applications/Dutchman Convert.app") {
             for prefix in ["/opt/homebrew", "/usr/local"] {
@@ -76,7 +155,7 @@ impl Install {
             Self::Cask(_) => Some("https://raw.githubusercontent.com/dutchman-cad/homebrew-tap/main/Casks/dutchman-convert.rb"),
             Self::Formula(_) => Some("https://raw.githubusercontent.com/dutchman-cad/homebrew-tap/main/Formula/dutchman.rb"),
             Self::Scoop(_) => Some("https://raw.githubusercontent.com/dutchman-cad/scoop-bucket/main/bucket/dutchman.json"),
-            Self::Direct => None,
+            Self::Direct | Self::Msi(_) | Self::Zip(_) => None,
         }
     }
 
@@ -87,15 +166,27 @@ impl Install {
             }
             Self::Formula(_) => Some("brew update && brew upgrade dutchman-cad/tap/dutchman"),
             Self::Scoop(_) => Some("scoop update; if ($?) { scoop update dutchman }"),
-            Self::Direct => None,
+            Self::Direct | Self::Msi(_) | Self::Zip(_) => None,
+        }
+    }
+
+    pub fn action(&self) -> Action {
+        match self {
+            Self::Direct => Action::Download,
+            Self::Zip(_) => Action::Zip,
+            Self::Cask(_) | Self::Formula(_) => Action::Homebrew,
+            Self::Scoop(_) => Action::Scoop,
+            Self::Msi(_) => Action::Msi,
         }
     }
 
     pub fn label(&self) -> &'static str {
-        if matches!(self, Self::Scoop(_)) {
-            "Update with Scoop"
-        } else {
-            "Update with Homebrew"
+        match self.action() {
+            Action::Download => "Download",
+            Action::Homebrew => "Update with Homebrew",
+            Action::Scoop => "Update with Scoop",
+            Action::Msi => "Install (closes Dutchman)",
+            Action::Zip => "Update now",
         }
     }
 
@@ -107,6 +198,9 @@ impl Install {
             )),
             Self::Formula(prefix) => Ok(Spec::new(prefix.join("bin/dutchman-gui"), &[])),
             Self::Scoop(shims) => Ok(Spec::new(shims.join("dutchman-gui.exe"), &[])),
+            Self::Msi(folder) | Self::Zip(folder) => {
+                Ok(Spec::new(folder.join("dutchman-gui.exe"), &[]))
+            }
             Self::Direct => {
                 Err("This copy uses a direct download. Download and open the new version.".into())
             }
@@ -260,9 +354,14 @@ fn plan(install: &Install) -> Result<Vec<Spec>, String> {
             upgrade.no_auto_update = true;
             Ok(vec![Spec::new(brew, &["update"]), upgrade])
         }
+        Install::Msi(_) => Err(
+            "Windows installer updates need Dutchman to close. Choose Install (closes Dutchman)."
+                .into(),
+        ),
         Install::Scoop(_) => {
             Err("Scoop needs Dutchman to close before updating. Choose Update and restart.".into())
         }
+        Install::Zip(_) => Err("Choose Update now to update this portable copy.".into()),
         Install::Direct => Err("Use Download to update this copy.".into()),
     }
 }
@@ -406,6 +505,7 @@ fn execute(
 pub enum Phase {
     Idle,
     Running,
+    Ready,
     Installed,
     Failed(String),
     Restarting,
@@ -442,6 +542,7 @@ impl Progress {
 pub struct Job {
     progress: Arc<Mutex<Progress>>,
     pub tag: String,
+    prepared: Arc<Mutex<Option<windows::Verified>>>,
 }
 impl Default for Job {
     fn default() -> Self {
@@ -456,6 +557,7 @@ impl Job {
                 tail: VecDeque::new(),
             })),
             tag: String::new(),
+            prepared: Arc::new(Mutex::new(None)),
         }
     }
     pub fn snapshot(&self) -> Progress {
@@ -470,12 +572,15 @@ impl Job {
             })
     }
     pub fn busy(&self) -> bool {
-        matches!(self.snapshot().phase, Phase::Running | Phase::Restarting)
+        matches!(
+            self.snapshot().phase,
+            Phase::Running | Phase::Ready | Phase::Restarting
+        )
     }
     pub fn holds_release(&self) -> bool {
         matches!(
             self.snapshot().phase,
-            Phase::Running | Phase::Installed | Phase::Restarting | Phase::Restarted
+            Phase::Running | Phase::Ready | Phase::Installed | Phase::Restarting | Phase::Restarted
         )
     }
     pub fn start(&mut self, install: Install, tag: String, ctx: &egui::Context) {
@@ -507,19 +612,67 @@ impl Job {
             }
         }
     }
-    pub fn handoff_scoop(&mut self, install: Install, tag: String, ctx: &egui::Context) {
+    pub fn prepare_windows(&mut self, install: Install, tag: String, ctx: &egui::Context) {
         if self.snapshot().phase != Phase::Idle {
+            return;
+        }
+        self.tag = tag.clone();
+        self.set_phase(Phase::Running);
+        let progress = self.progress.clone();
+        let prepared = self.prepared.clone();
+        let ctx = ctx.clone();
+        let result = std::thread::Builder::new()
+            .name("windows-download".into())
+            .spawn(move || {
+                let result =
+                    windows::prepare(&install, &tag, &windows::download).and_then(|package| {
+                        if let Some(package) = package {
+                            *prepared
+                                .lock()
+                                .map_err(|_| "The installer download worker stopped.")? =
+                                Some(package);
+                            Ok(Phase::Ready)
+                        } else {
+                            Ok(Phase::Installed)
+                        }
+                    });
+                if let Ok(mut p) = progress.lock() {
+                    p.phase = result.unwrap_or_else(Phase::Failed);
+                }
+                ctx.request_repaint();
+            });
+        if let Err(error) = result {
+            self.set_phase(Phase::Failed(format!(
+                "Could not start the download worker: {error}"
+            )));
+        }
+    }
+
+    pub fn handoff_windows(&mut self, install: Install, tag: String, ctx: &egui::Context) {
+        if self.snapshot().phase != Phase::Idle && self.snapshot().phase != Phase::Ready {
             return;
         }
         self.tag = tag.clone();
         self.set_phase(Phase::Restarting);
         let progress = self.progress.clone();
         let failed = self.progress.clone();
+        let prepared = self.prepared.clone();
         let ctx = ctx.clone();
         if let Err(error) = std::thread::Builder::new()
-            .name("scoop-handoff".into())
+            .name("windows-handoff".into())
             .spawn(move || {
-                let result = scoop::spawn(&install, &tag);
+                let result = if matches!(install, Install::Msi(_)) {
+                    prepared
+                        .lock()
+                        .map_err(|_| "The installer worker stopped.".to_owned())
+                        .and_then(|mut p| {
+                            p.take()
+                                .ok_or("Download the installer before installing.".into())
+                        })
+                        .and_then(|package| msi::spawn(&install, &tag, package))
+                } else {
+                    scoop::spawn(&install, &tag)
+                };
                 if let Ok(mut p) = progress.lock() {
                     p.phase = match result {
                         Ok(()) => Phase::Restarted,
@@ -531,7 +684,7 @@ impl Job {
         {
             if let Ok(mut p) = failed.lock() {
                 p.phase = Phase::Failed(format!(
-                    "Could not start the Scoop hand-off: {error}. Copy the command to retry."
+                    "Could not start the update helper: {error}. Open the release page to retry."
                 ));
             }
         }
@@ -549,15 +702,33 @@ impl Job {
         let progress = self.progress.clone();
         let ctx = ctx.clone();
         let failed = self.progress.clone();
-        if let Err(error) = std::thread::Builder::new().name("package-restart".into()).spawn(move || {
-            let result = install.restart().and_then(|spec| {
-                if matches!(install, Install::Cask(_)) { run_command(&spec, Instant::now() + TIMEOUT, Arc::new(|_| {})) }
-                else { spec.command().stdout(Stdio::null()).stderr(Stdio::null()).spawn().map(|_| ()).map_err(|e| format!("Could not restart Dutchman: {e}. Open it from its installed location.")) }
-            });
-            if let Ok(mut p) = progress.lock() { p.phase = match result { Ok(()) => Phase::Restarted, Err(e) => Phase::Failed(e) }; }
-            ctx.request_repaint();
-        }) { if let Ok(mut p) = failed.lock() { p.phase = Phase::Failed(format!("Could not start the restart worker: {error}")); } }
+        if let Err(error) = std::thread::Builder::new()
+            .name("package-restart".into())
+            .spawn(move || {
+                let result = if matches!(install, Install::Zip(_)) {
+                    windows::restart(&install)
+                } else {
+                    install.restart().and_then(|spec| {
+                        if matches!(install, Install::Cask(_)) {
+                            run_command(&spec, Instant::now() + TIMEOUT, Arc::new(|_| {}))
+                        } else {
+                            spec.command().stdout(Stdio::null()).stderr(Stdio::null())
+                                .spawn().map(|_| ()).map_err(|e| format!("Could not restart Dutchman: {e}. Open it from its installed location."))
+                        }
+                    })
+                };
+                if let Ok(mut p) = progress.lock() {
+                    p.phase = match result { Ok(()) => Phase::Restarted, Err(e) => Phase::Failed(e) };
+                }
+                ctx.request_repaint();
+            })
+        {
+            if let Ok(mut p) = failed.lock() {
+                p.phase = Phase::Failed(format!("Could not start the restart worker: {error}"));
+            }
+        }
     }
+
     pub fn preview(&mut self, tag: String, phase: Phase, output: &str) {
         self.tag = tag;
         if let Ok(mut p) = self.progress.lock() {
