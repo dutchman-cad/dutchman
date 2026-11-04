@@ -162,6 +162,9 @@ app run. Automatic part preparation uses at most two workers, with fewer when a 
 part's temporary peak or the retained preparation queue would consume free memory.
 Small imports avoid extra preparation workers.
 
+The window opens where and at the size it was last closed. A saved size smaller than the
+app's minimum, 520 by 420 points, is ignored, and the window opens at its default size instead.
+
 ## Reporting a problem
 
 The window's title and top row show its version beside **Dutchman Convert**, for example

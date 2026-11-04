@@ -32,13 +32,21 @@ pub fn window_title() -> String {
 /// The issue form for a file that did not convert.
 pub const REPORT_PROBLEM_URL: &str = dutchman::issue::NEW_ISSUE;
 
+/// The name eframe stores the window's saved state under.
+const APP_ID: &str = "dutchman";
+/// The smallest window the app can be used in, in points.
+const MIN_INNER_SIZE: [f32; 2] = [520.0, 420.0];
+
 /// The window's options: its size, title and icon.
 pub fn options() -> eframe::NativeOptions {
+    if let Some(dir) = eframe::storage_dir(APP_ID) {
+        forget_unusable_window(&dir.join("app.ron"), MIN_INNER_SIZE);
+    }
     let mut viewport = eframe::egui::ViewportBuilder::default()
         .with_title(window_title())
-        .with_app_id("dutchman")
+        .with_app_id(APP_ID)
         .with_inner_size([760.0, 680.0])
-        .with_min_inner_size([520.0, 420.0])
+        .with_min_inner_size(MIN_INNER_SIZE)
         .with_drag_and_drop(true);
     if let Some(icon) = icon() {
         viewport = viewport.with_icon(icon);
@@ -46,6 +54,47 @@ pub fn options() -> eframe::NativeOptions {
     eframe::NativeOptions {
         viewport,
         ..Default::default()
+    }
+}
+
+/// The window part of eframe's saved state that decides whether it can be restored.
+#[derive(serde::Deserialize)]
+struct SavedWindow {
+    #[serde(default)]
+    inner_size_points: Option<SavedSize>,
+}
+
+#[derive(serde::Deserialize)]
+struct SavedSize {
+    x: f32,
+    y: f32,
+}
+
+/// Removes a saved window size smaller than `min` from eframe's state file at `path`, so the
+/// window opens at its default size instead. eframe restores any saved size down to 64 by 64
+/// points, which is too small to use, for example after the app was closed while minimized.
+/// Returns whether the file was changed; a missing or unreadable file is left alone.
+pub fn forget_unusable_window(path: &std::path::Path, min: [f32; 2]) -> bool {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(mut state) = ron::from_str::<std::collections::HashMap<String, String>>(&text) else {
+        return false;
+    };
+    let unusable = state
+        .get("window")
+        .and_then(|window| ron::from_str::<SavedWindow>(window).ok())
+        .and_then(|window| window.inner_size_points)
+        .is_some_and(|size| {
+            !(size.x.is_finite() && size.y.is_finite()) || size.x < min[0] || size.y < min[1]
+        });
+    if !unusable {
+        return false;
+    }
+    state.remove("window");
+    match ron::to_string(&state) {
+        Ok(text) => std::fs::write(path, text).is_ok(),
+        Err(_) => false,
     }
 }
 
