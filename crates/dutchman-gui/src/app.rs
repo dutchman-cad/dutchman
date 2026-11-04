@@ -2601,7 +2601,7 @@ fn ai_prompt(input: &Path, output: &Path) -> Result<String, String> {
         "Help me diagnose this Dutchman conversion using the result already saved.\n\
          Original file: {}\nConverted design: {}\nSaved report: {}\nDutchman command: {}\nScratch folder: {}\n\n\
          First read the app's instructions at {} and its conversion skill at {}, in that order. If either file is absent (for example, in a source build), read its corresponding fallback URL:\n\
-         AGENTS.md: https://github.com/dutchman-cad/dutchman/blob/main/AGENTS.md\n\
+         AGENTS.md: https://github.com/dutchman-cad/dutchman/blob/main/assets/install/AGENTS.md\n\
          Conversion skill: https://github.com/dutchman-cad/dutchman/blob/main/skills/dutchman-converting/SKILL.md\n\
          Command reference: {} (fallback: https://github.com/dutchman-cad/dutchman/blob/main/docs/command-line.md).\n\n\
          Then open the saved .report.json directly from disk: it is plain JSON. Explain the losses grouped by code and stage, feature outcomes (including per-part history), placements/completeness, and verification. Distinguish what the report proves from what remains unverified. Do not convert the whole file again.\n\n\
