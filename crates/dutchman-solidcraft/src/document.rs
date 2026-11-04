@@ -58,7 +58,7 @@ pub(crate) fn import_design(model: &Model, step_blob: &str) -> Value {
 
 /// Applies explicit import body names and their definition-level looks.
 pub(crate) fn import_looks(doc: &mut Value, looks: &History) {
-    if let Some(names) = looks.features.first().and_then(|f| f.get("body_names")) {
+    if let Some(names) = looks.import_body_names() {
         if let Some(fields) = doc
             .get_mut("features")
             .and_then(Value::as_array_mut)
@@ -81,7 +81,7 @@ pub(crate) fn import_looks(doc: &mut Value, looks: &History) {
 
 /// Names and colours the visible final shape beside an editable history copy.
 pub(crate) fn original_looks(doc: &mut Value, looks: &History) {
-    if let Some(names) = looks.features.first().and_then(|f| f.get("body_names")) {
+    if let Some(names) = looks.import_body_names() {
         if let Some(fields) = doc
             .get_mut("features")
             .and_then(Value::as_array_mut)
@@ -412,6 +412,7 @@ mod history_tests {
 
     fn history() -> History {
         History {
+            default_bodies: Default::default(),
             params: vec![json!({"name": "d1", "expr": "10 mm", "unit": "mm", "model": true})],
             features: vec![
                 json!({"id": 1, "name": "Sketch1", "type": "sketch", "suppressed": false}),

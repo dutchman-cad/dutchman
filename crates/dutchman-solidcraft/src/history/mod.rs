@@ -49,6 +49,9 @@ const IR_VERSIONS: [&str; 6] = ["6", "7", "8", "9", "10", "11"];
 /// A replayable history: SolidCraft parameters and features in timeline order.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct History {
+    /// Imported names that previously came from STEP rather than CADIR. They
+    /// must not reserve slots in the existing explicit-name allocator.
+    pub(crate) default_bodies: BTreeMap<String, String>,
     /// Why the editable timeline stops before the source ends.
     pub(crate) stop: Option<String>,
     /// The source row that emitted each feature, including auxiliary features.
@@ -109,6 +112,7 @@ pub(crate) fn imported(
         },
         looks: ctx.looks,
         face_looks,
+        default_bodies: ctx.default_bodies,
         ..History::default()
     })
 }
@@ -122,6 +126,46 @@ enum Mapped {
 }
 
 impl History {
+    /// Names inferred from a STEP default select looks, but must not override
+    /// the import's existing naming behaviour or its automatic body numbering.
+    pub(crate) fn preserve_import_names(&mut self) {
+        for feature in &mut self.features {
+            if feature
+                .get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| kind != "import")
+            {
+                continue;
+            }
+            let defaults = feature
+                .get("body_names")
+                .and_then(Value::as_array)
+                .is_some_and(|names| {
+                    !names.is_empty()
+                        && names.iter().all(|name| {
+                            name.as_str()
+                                .is_some_and(|name| self.default_bodies.contains_key(name))
+                        })
+                });
+            if defaults {
+                if let Some(fields) = feature.as_object_mut() {
+                    fields.remove("body_names");
+                }
+            }
+        }
+    }
+
+    pub(crate) fn import_body_names(&self) -> Option<&Value> {
+        self.features.first()?.get("body_names").filter(|names| {
+            names.as_array().is_some_and(|names| {
+                names.iter().all(|name| {
+                    name.as_str()
+                        .is_some_and(|name| !self.default_bodies.contains_key(name))
+                })
+            })
+        })
+    }
+
     /// Moves the history into component `component` of a design whose features so far end
     /// before id `offset + 1`: every id and sketch reference shifts by `offset`, and each
     /// parameter whose name is in `taken` is renamed (prefixed with `prefix`) everywhere it is
@@ -264,14 +308,9 @@ impl History {
             .collect()
     }
 
-    /// Renames each body this history names that `taken` already holds to `<name> (<label>)`,
-    /// in its features, looks and face looks, so bodies of different parts of one design
-    /// keep their own looks; then adds the names it uses to `taken`.
-    pub(crate) fn rename_bodies(
-        &mut self,
-        label: &str,
-        taken: &mut std::collections::BTreeSet<String>,
-    ) {
+    /// Keeps CADIR's component disambiguation and STEP's numbered default names
+    /// in separate allocation sets, updating features and looks together.
+    pub(crate) fn rename_bodies(&mut self, label: &str, taken: &mut BodyNames) {
         let names: std::collections::BTreeSet<String> = self
             .features
             .iter()
@@ -281,10 +320,13 @@ impl History {
             .map(str::to_owned)
             .collect();
         let mut renamed = BTreeMap::new();
-        for name in names {
+        for name in names
+            .iter()
+            .filter(|name| !self.default_bodies.contains_key(*name))
+        {
             let mut new = name.clone();
             let mut n = 2;
-            while taken.contains(&new) {
+            while taken.explicit.contains(&new) {
                 new = if n == 2 {
                     format!("{name} ({label})")
                 } else {
@@ -292,12 +334,42 @@ impl History {
                 };
                 n += 1;
             }
-            taken.insert(new.clone());
-            if new != name {
-                renamed.insert(name, new);
+            taken.explicit.insert(new.clone());
+            if new != *name {
+                renamed.insert(name.clone(), new);
+            }
+        }
+        // Default names are allocated in import order, including multi-shape
+        // products and repeated product names. They never change the explicit
+        // allocator above, which did not previously see these imports.
+        let mut seen = BTreeSet::new();
+        for name in self
+            .features
+            .iter()
+            .filter_map(|feature| feature.get("body_names").and_then(Value::as_array))
+            .flatten()
+            .filter_map(Value::as_str)
+            .filter(|name| seen.insert(*name))
+        {
+            if let Some(base) = self.default_bodies.get(name) {
+                let mut new = base.clone();
+                let mut n = 2;
+                while taken.all.contains(&new) {
+                    new = format!("{base} ({n})");
+                    n += 1;
+                }
+                taken.all.insert(new.clone());
+                if new != name {
+                    renamed.insert(name.to_owned(), new);
+                }
+            } else {
+                taken
+                    .all
+                    .insert(renamed.get(name).map_or(name, String::as_str).to_owned());
             }
         }
         if renamed.is_empty() {
+            self.preserve_import_names();
             return;
         }
         let rename = |name: &str| {
@@ -336,6 +408,35 @@ impl History {
                 }
             }
         }
+        self.default_bodies = std::mem::take(&mut self.default_bodies)
+            .into_iter()
+            .map(|(name, base)| (rename(&name), base))
+            .collect();
+        self.preserve_import_names();
+    }
+}
+
+/// Explicit CADIR names keep their existing component disambiguation; newly
+/// matched default imports use the names previously allocated by SolidCraft.
+#[derive(Default)]
+pub(crate) struct BodyNames {
+    explicit: BTreeSet<String>,
+    all: BTreeSet<String>,
+}
+
+impl BodyNames {
+    pub(crate) fn add_defaults(&mut self, names: impl IntoIterator<Item = String>) {
+        self.all.extend(names);
+    }
+}
+
+impl FromIterator<String> for BodyNames {
+    fn from_iter<T: IntoIterator<Item = String>>(iter: T) -> Self {
+        let explicit: BTreeSet<_> = iter.into_iter().collect();
+        Self {
+            all: explicit.clone(),
+            explicit,
+        }
     }
 }
 
@@ -369,6 +470,7 @@ struct Context<'a> {
     pattern_replay_required: bool,
     /// The source bodies the history makes under their own names: (CADIR body id, name).
     named_bodies: Vec<(String, String)>,
+    default_bodies: BTreeMap<String, String>,
     /// Region of each explicitly named imported shape.
     imported_regions: BTreeMap<String, String>,
     /// Bodies proven to produce no solid/surface shape in the STEP restatement.
@@ -408,6 +510,7 @@ impl<'a> Context<'a> {
             pattern_features: BTreeMap::new(),
             pattern_replay_required: false,
             named_bodies: Vec::new(),
+            default_bodies: BTreeMap::new(),
             imported_regions: BTreeMap::new(),
             unwritten_bodies: BTreeSet::new(),
             planes: BTreeMap::new(),
@@ -853,6 +956,7 @@ fn map_into(
         report.append(appearance_report);
     }
     history.looks = std::mem::take(&mut ctx.looks);
+    history.default_bodies = std::mem::take(&mut ctx.default_bodies);
     history.sheet_rules = ctx
         .sheet_rules
         .iter()
@@ -1333,13 +1437,43 @@ mod tests {
             ],
             ..History::default()
         };
-        let mut taken = std::collections::BTreeSet::from(["Part".to_owned()]);
+        let mut taken = ["Part".to_owned()].into_iter().collect();
         history.rename_bodies("Second", &mut taken);
         assert_eq!(history.features[0]["body_names"], json!(["Part (Second)"]));
         assert_eq!(history.features[1]["target"], "Part (Second)");
         assert_eq!(history.features[1]["tools"], json!(["Part (Second)"]));
         assert_eq!(history.features[2]["bodies"], json!(["Part (Second)"]));
         assert_eq!(history.features[3]["body"], "Part (Second)");
+    }
+
+    #[test]
+    fn default_import_names_follow_shape_order_without_reserving_cadir_names() {
+        let mut taken: BodyNames = ["Block".to_owned()].into_iter().collect();
+        let mut history = History {
+            features: vec![json!({"body_names": ["Block", "Block (2)"]})],
+            default_bodies: BTreeMap::from([
+                ("Block".to_owned(), "Block".to_owned()),
+                ("Block (2)".to_owned(), "Block".to_owned()),
+            ]),
+            looks: BTreeMap::from([("Block".to_owned(), json!({"color": [255, 0, 0]}))]),
+            face_looks: vec![json!({"body": "Block (2)", "color": [0, 0, 255]})],
+            ..History::default()
+        };
+        history.rename_bodies("Component", &mut taken);
+        assert!(history.features[0].get("body_names").is_none());
+        assert_eq!(
+            history.default_bodies.keys().cloned().collect::<Vec<_>>(),
+            ["Block (2)", "Block (3)"]
+        );
+        assert_eq!(history.looks["Block (2)"]["color"], json!([255, 0, 0]));
+        assert_eq!(history.face_looks[0]["body"], "Block (3)");
+        assert_eq!(taken.explicit, BTreeSet::from(["Block".to_owned()]));
+        let mut next = History {
+            features: vec![json!({"body_names": ["Block (2)"]})],
+            ..History::default()
+        };
+        next.rename_bodies("Later", &mut taken);
+        assert_eq!(next.features[0]["body_names"], json!(["Block (2)"]));
     }
 
     #[test]

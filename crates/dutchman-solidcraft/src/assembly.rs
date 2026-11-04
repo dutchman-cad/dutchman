@@ -145,7 +145,7 @@ pub(crate) fn write(
         looks: BTreeMap::new(),
         face_looks: Vec::new(),
         has_appearances,
-        bodies: BTreeSet::new(),
+        bodies: history::BodyNames::default(),
         names: Vec::new(),
         placed: BTreeMap::new(),
         repeats,
@@ -712,7 +712,7 @@ struct Builder<'r> {
     /// Name every imported body when looks are shared across the design.
     has_appearances: bool,
     /// Body names the parts' histories use so far, kept unique across parts.
-    bodies: BTreeSet<String>,
+    bodies: history::BodyNames,
     /// What became of each part's history.
     histories: Vec<Check>,
     /// Every part's features, for the outcome.

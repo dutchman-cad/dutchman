@@ -3127,8 +3127,13 @@ fn saved_wire_edges_keep_the_solid_appearance_in_each_placement() {
             .filter(|feature| feature["type"] == "import" && feature["suppressed"] == false)
             .collect();
         assert_eq!(imports.len(), 1);
-        assert_eq!(imports[0]["body_names"].as_array().unwrap().len(), 1);
-        let name = imports[0]["body_names"][0].as_str().unwrap();
+        assert!(imports[0].get("body_names").is_none());
+        let name = doc["appearances"]["bodies"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .next()
+            .unwrap();
         assert_eq!(
             doc["appearances"]["bodies"][name]["color"],
             json!([255, 0, 0])
@@ -3144,9 +3149,41 @@ fn saved_wire_edges_keep_the_solid_appearance_in_each_placement() {
 }
 
 #[test]
-fn an_unwritable_sibling_keeps_the_written_bodys_appearance() {
+fn saved_wire_edges_keep_the_solid_bodys_original_name() {
     for stored in [false, true] {
-        let mut model = bound_components_with_wire(stored);
+        let model = bound_components_with_wire(stored);
+        let (bytes, _) = written(&model);
+        let doc = document(&bytes);
+        let import = doc["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|feature| feature["type"] == "import" && feature["suppressed"] == false)
+            .unwrap();
+        // These are the names of the STEP products used before wire-edge
+        // correspondence was available, rather than the solid's CADIR "Body".
+        assert!(import.get("body_names").is_none());
+        let expected = if stored { "Stored solid" } else { "Block" };
+        assert!(doc["appearances"]["bodies"].get(expected).is_some());
+        let mut archive = ZipArchive::new(Cursor::new(&bytes)).unwrap();
+        let mut step = String::new();
+        archive
+            .by_name(import["step_blob"].as_str().unwrap())
+            .unwrap()
+            .read_to_string(&mut step)
+            .unwrap();
+        assert!(step.contains(&format!("PRODUCT('{expected}','{expected}'")));
+    }
+}
+
+#[test]
+fn an_unwritable_sibling_keeps_the_written_bodys_appearance() {
+    for (stored, with_wire) in [(false, false), (true, false), (false, true), (true, true)] {
+        let mut model = if with_wire {
+            bound_components_with_wire(stored)
+        } else {
+            bound_components("body", stored)
+        };
         let mut wire = serde_json::to_value(&model.ir).unwrap();
         let body = "synthetic:test:body#unresolved-solid";
         let region = "synthetic:test:region#unresolved-solid";
@@ -3220,6 +3257,13 @@ fn an_unwritable_sibling_keeps_the_written_bodys_appearance() {
         let looks = doc["appearances"]["bodies"].as_object().unwrap();
         assert_eq!(looks.len(), 1);
         assert_eq!(looks.values().next().unwrap()["color"], json!([255, 0, 0]));
+        assert!(looks.contains_key(if stored { "Stored solid" } else { "Block" }));
+        assert!(doc["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|feature| feature["type"] == "import" && feature["suppressed"] == false)
+            .all(|feature| feature.get("body_names").is_none()));
         if let Some(cli) = std::env::var_os(CLI_ENV).map(PathBuf::from) {
             assert_eq!(evaluate(&cli, &bytes).len(), 2);
         }

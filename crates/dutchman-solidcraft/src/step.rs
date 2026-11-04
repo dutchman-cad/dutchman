@@ -170,9 +170,45 @@ fn name_unnamed_product(step: String, design: &str) -> String {
     }
 }
 
+/// The product name of our single-part STEP restatement, used by SolidCraft
+/// when an Import has no explicit body names. STEP escapes a quote by doubling it.
+pub(crate) fn import_name(step: &str) -> Option<String> {
+    let product = step.lines().find_map(|line| {
+        let (_, definition) = line.split_once('=')?;
+        definition.trim_start().strip_prefix("PRODUCT(")
+    })?;
+    let mut chars = product.trim_start().strip_prefix('\'')?.chars().peekable();
+    let mut name = String::new();
+    while let Some(c) = chars.next() {
+        if c == '\'' {
+            if chars.peek() == Some(&'\'') {
+                chars.next();
+            } else {
+                return Some(name);
+            }
+        }
+        name.push(c);
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_import_names_read_the_written_product_and_escaped_quotes() {
+        assert_eq!(
+            import_name("#1 = PRODUCT('Bracket','id','',());"),
+            Some("Bracket".into())
+        );
+        assert_eq!(
+            import_name("#1=PRODUCT('Ray''s bracket','id','',());"),
+            Some("Ray's bracket".into())
+        );
+        assert_eq!(import_name("#1=PRODUCT('unfinished"), None);
+        assert_eq!(import_name("#1=MANIFOLD_SOLID_BREP('',#2);"), None);
+    }
 
     #[test]
     fn a_solid_reduced_to_a_sheet_gets_a_counted_degraded_loss() {

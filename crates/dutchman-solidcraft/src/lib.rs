@@ -403,6 +403,7 @@ impl SolidCraftWriter {
             container::Container::new(step.as_bytes())?
         };
         let mut history = history.clone();
+        history.preserve_import_names();
         history::base::store(&mut history.features, &mut design)?;
         let mut doc: Value = document::history_design(
             model,
@@ -413,7 +414,7 @@ impl SolidCraftWriter {
         );
         if matches!(live, Live::Partial | Live::Unverified) {
             let mut looks = history::imported(model, step, report, false)?;
-            let mut taken = history
+            let mut taken: history::BodyNames = history
                 .features
                 .iter()
                 .filter_map(|feature| feature.get("body_names").and_then(Value::as_array))
@@ -421,6 +422,7 @@ impl SolidCraftWriter {
                 .filter_map(Value::as_str)
                 .map(str::to_owned)
                 .collect();
+            taken.add_defaults(history.default_bodies.keys().cloned());
             looks.rename_bodies("Original geometry", &mut taken);
             document::original_looks(&mut doc, &looks);
         }

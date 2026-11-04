@@ -289,6 +289,7 @@ pub(super) fn import_names(ctx: &mut Context, ids: &[&str], step: Option<&str>) 
         .map(|(_, name)| name.clone())
         .collect();
     let mut regions = std::collections::BTreeMap::new();
+    let mut defaults = false;
     for region in ctx.arena("regions") {
         let Some(body_id) = region
             .get("body")
@@ -312,7 +313,10 @@ pub(super) fn import_names(ctx: &mut Context, ids: &[&str], step: Option<&str>) 
         match body.get("kind").and_then(Value::as_str) {
             // Saved free edges are carried beside solids in STEP, but do not
             // produce SolidCraft solid/surface bodies or consume their names.
-            Some("wire") => continue,
+            Some("wire") => {
+                defaults = true;
+                continue;
+            }
             Some("solid" | "sheet") => {}
             _ => return Vec::new(),
         }
@@ -331,6 +335,7 @@ pub(super) fn import_names(ctx: &mut Context, ids: &[&str], step: Option<&str>) 
     if let Some(step) = step {
         let shapes = shape_count(step);
         if shapes != named.len() {
+            defaults = true;
             // A sibling can have topology that STEP cannot write at all. Prove
             // each body's shape count using the same guarded restatement before
             // omitting its name; never shift colours by guessing which vanished.
@@ -368,6 +373,33 @@ pub(super) fn import_names(ctx: &mut Context, ids: &[&str], step: Option<&str>) 
                 named.iter().map(|(_, name)| name.as_str()).collect();
             regions.retain(|name, _| retained.contains(name.as_str()));
             ctx.unwritten_bodies.extend(omitted);
+        }
+    }
+    if defaults {
+        // These imports previously had no explicit CADIR names. Keep the STEP
+        // product names SolidCraft already gave their surviving shapes, while
+        // still recording the correspondence needed by body and face looks.
+        let Some(base) = step.and_then(crate::step::import_name) else {
+            return Vec::new();
+        };
+        let mut old_regions = std::mem::take(&mut regions);
+        let mut taken: std::collections::BTreeSet<_> = ctx
+            .named_bodies
+            .iter()
+            .map(|(_, name)| name.clone())
+            .collect();
+        for (_, name) in &mut named {
+            let mut new = base.clone();
+            let mut n = 2;
+            while !taken.insert(new.clone()) {
+                new = format!("{base} ({n})");
+                n += 1;
+            }
+            if let Some(region) = old_regions.remove(name) {
+                regions.insert(new.clone(), region);
+            }
+            *name = new.clone();
+            ctx.default_bodies.insert(new, base.clone());
         }
     }
     let names = named.iter().map(|(_, name)| name.clone()).collect();
@@ -728,14 +760,17 @@ mod import_tests {
                         {"id": "rb", "body": "b", "shells": ["sb"]}]
         });
         let mut ctx = Context::new(&model);
-        let step = "#1=MANIFOLD_SOLID_BREP('',#2);\n#3=SHELL_BASED_SURFACE_MODEL('',(#4));";
+        let step = "#1=MANIFOLD_SOLID_BREP('',#2);\n#3=SHELL_BASED_SURFACE_MODEL('',(#4));\n#5=PRODUCT('Block','Block','',());";
         assert_eq!(
             import_names(&mut ctx, &["wire", "a", "b"], Some(step)),
-            ["Body", "Body (2)"]
+            ["Block", "Block (2)"]
         );
         assert_eq!(
             ctx.named_bodies,
-            [("a".into(), "Body".into()), ("b".into(), "Body (2)".into())]
+            [
+                ("a".into(), "Block".into()),
+                ("b".into(), "Block (2)".into())
+            ]
         );
     }
 

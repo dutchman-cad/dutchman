@@ -70,7 +70,9 @@ geometry's looks. Complete xref and instance identities are kept distinct throug
 component index. Saved wire edges beside a solid do not consume its imported body name or
 discard its appearance. When STEP omits an unwritable sibling body, Dutchman checks each
 body separately, for groups of up to 32 bodies, before keeping the remaining body names
-and colours. A body binding supplies
+and colours. These solids keep their existing STEP import names, including numbered
+siblings; matching their colours does not rename them or change other components' names.
+A body binding supplies
 the body colour, and face bindings override it per face.
 When a body has no body binding and all its faces have the same resolved appearance,
 Dutchman writes one body colour, which SolidCraft shows in its body appearance controls.
