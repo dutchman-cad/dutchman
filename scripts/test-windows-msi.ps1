@@ -114,3 +114,68 @@ Run-Msi '/x' $msi 'msi-upgrade-uninstall.log'
 Check-Clean
 # The synthetic upgrade package is never a release asset.
 Remove-Item 'dist/upgrade-from.msi', 'dist/upgrade-from.msi.sha256', 'dist/upgrade-from.wixpdb' -ErrorAction SilentlyContinue
+
+# Evidence that the package is per-user and needs no admin rights. The runner account is an
+# administrator, so install once more as a new standard user, which cannot elevate silently.
+function Invoke-Com($object, [string]$member, [string]$kind, [object[]]$arguments) {
+    $object.GetType().InvokeMember($member, [Reflection.BindingFlags]::$kind, $null, $object, $arguments)
+}
+$windowsInstaller = New-Object -ComObject WindowsInstaller.Installer
+$summary = Invoke-Com $windowsInstaller 'SummaryInformation' 'GetProperty' @($msi, 0)
+$wordCount = [int](Invoke-Com $summary 'Property' 'GetProperty' @(15))
+$database = Invoke-Com $windowsInstaller 'OpenDatabase' 'InvokeMethod' @($msi, 0)
+function Msi-Property([string]$Name) {
+    $view = Invoke-Com $database 'OpenView' 'InvokeMethod' @("SELECT ``Value`` FROM ``Property`` WHERE ``Property``='$Name'")
+    Invoke-Com $view 'Execute' 'InvokeMethod' $null | Out-Null
+    $record = Invoke-Com $view 'Fetch' 'InvokeMethod' $null
+    if ($record) { Invoke-Com $record 'StringData' 'GetProperty' @(1) } else { '<absent>' }
+}
+$allUsers = Msi-Property 'ALLUSERS'
+Write-Host "EVIDENCE package: ALLUSERS=$allUsers MSIINSTALLPERUSER=$(Msi-Property 'MSIINSTALLPERUSER') WordCount=$wordCount"
+Assert-True ($allUsers -eq '<absent>' -or $allUsers -eq '') 'The package sets ALLUSERS, so it may install per-machine'
+Assert-True (($wordCount -band 8) -ne 0) 'The package does not declare that it needs no elevation'
+$database = $null; $summary = $null
+
+$user = 'dutchmanmsitest'
+$password = ConvertTo-SecureString ('Dm1!' + [guid]::NewGuid().ToString('N')) -AsPlainText -Force
+New-LocalUser -Name $user -Password $password -PasswordNeverExpires | Out-Null
+try {
+    $sid = (Get-LocalUser $user).SID.Value
+    $groups = @(Get-LocalGroup | Where-Object { Get-LocalGroupMember $_ -ErrorAction SilentlyContinue | Where-Object { $_.SID.Value -eq $sid } } | ForEach-Object Name)
+    Write-Host "EVIDENCE standard user groups: $($groups -join ', ')"
+    Assert-True ($groups -notcontains 'Administrators') 'The test user must not be an administrator'
+    $credential = New-Object System.Management.Automation.PSCredential(".\$user", $password)
+    $dist = (Resolve-Path dist).Path
+    icacls $dist /grant "${user}:(OI)(CI)M" /T | Out-Null
+    function Run-MsiAsUser([string]$Action, [string]$Log) {
+        $logPath = Join-Path $dist $Log
+        $p = Start-Process "$env:SystemRoot\System32\msiexec.exe" -Credential $credential -LoadUserProfile `
+            -WorkingDirectory $env:SystemRoot -ArgumentList "$Action `"$msi`" /qn /norestart /L*v `"$logPath`"" -Wait -PassThru
+        Write-Host "EVIDENCE standard user msiexec $Action exit $($p.ExitCode)"
+        Assert-True ($p.ExitCode -eq 0) "msiexec $Action as a standard user failed with $($p.ExitCode)"
+    }
+    Run-MsiAsUser '/i' 'msi-standard-user-install.log'
+    $userProfile = (Get-CimInstance Win32_UserProfile | Where-Object SID -eq $sid).LocalPath
+    $userInstall = Join-Path $userProfile 'AppData\Local\Programs\Dutchman'
+    Assert-True (Test-Path (Join-Path $userInstall 'dutchman-gui.exe')) 'The standard user install did not put the app in their LocalAppData'
+    $userProducts = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Installer\UserData\$sid\Products"
+    $userEntries = @(Get-ChildItem $userProducts -ErrorAction SilentlyContinue |
+        ForEach-Object { Get-ItemProperty (Join-Path $_.PSPath 'InstallProperties') -ErrorAction SilentlyContinue } |
+        Where-Object { $_ -and $_.DisplayName -eq 'Dutchman Convert' })
+    Assert-True ($userEntries.Count -eq 1) 'The standard user install is not registered for that user'
+    $systemEntries = @(Get-ChildItem 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Installer\UserData\S-1-5-18\Products' -ErrorAction SilentlyContinue |
+        ForEach-Object { Get-ItemProperty (Join-Path $_.PSPath 'InstallProperties') -ErrorAction SilentlyContinue } |
+        Where-Object { $_ -and $_.DisplayName -eq 'Dutchman Convert' })
+    Assert-True ($systemEntries.Count -eq 0) 'The standard user install registered a machine-wide product'
+    $hklmEntries = @(Get-ChildItem 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall' | Get-ItemProperty |
+        Where-Object { $_.DisplayName -eq 'Dutchman Convert' })
+    Write-Host "EVIDENCE standard user install: HKLM Uninstall entries $($hklmEntries.Count) $($hklmEntries | ForEach-Object { $_.PSChildName })"
+    Run-MsiAsUser '/x' 'msi-standard-user-uninstall.log'
+    Assert-True (!(Test-Path $userInstall)) 'The standard user uninstall left program files'
+    $hklmAfter = @(Get-ChildItem 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall' | Get-ItemProperty |
+        Where-Object { $_.DisplayName -eq 'Dutchman Convert' })
+    Write-Host "EVIDENCE standard user uninstall: HKLM Uninstall entries $($hklmAfter.Count)"
+    Assert-True ($hklmAfter.Count -eq 0) 'The standard user uninstall left an HKLM Uninstall entry'
+} finally {
+    Remove-LocalUser -Name $user -ErrorAction SilentlyContinue
+}
