@@ -3726,7 +3726,7 @@ mod tests {
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let mut report = Report::default();
         assert!(matches!(
-            local(&model, 1, &mut report),
+            local(&model, 1, crate::PartPositions::LastShown, &mut report),
             Components::Assembly(_)
         ));
         let losses: Vec<_> = report
@@ -3812,6 +3812,7 @@ mod tests {
                 &model,
                 &BTreeMap::new(),
                 threads,
+                crate::PartPositions::LastShown,
                 &mut Report::default(),
             )
             .unwrap()
