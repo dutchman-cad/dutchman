@@ -139,6 +139,16 @@ $database = $null; $summary = $null
 $user = 'dutchmanmsitest'
 $password = ConvertTo-SecureString ('Dm1!' + [guid]::NewGuid().ToString('N')) -AsPlainText -Force
 New-LocalUser -Name $user -Password $password -PasswordNeverExpires | Out-Null
+# A new local account is in no group; a normal Windows user is in Users (S-1-5-32-545).
+Add-LocalGroupMember -SID 'S-1-5-32-545' -Member $user
+# The hosted runner sets the machine policy DisableMsi=1, which allows only managed (admin
+# deployed) MSI packages for non-administrators and rejects the rest with 1625. A home or
+# office PC without that policy allows them; lift it for this phase and restore it after.
+$policyKey = 'HKLM:\Software\Policies\Microsoft\Windows\Installer'
+$policyBefore = (Get-ItemProperty $policyKey -Name DisableMsi -ErrorAction SilentlyContinue).DisableMsi
+Write-Host "EVIDENCE runner policy DisableMsi=$policyBefore"
+New-Item -Force $policyKey | Out-Null
+Set-ItemProperty $policyKey -Name DisableMsi -Value 0 -Type DWord
 try {
     $sid = (Get-LocalUser $user).SID.Value
     $groups = @(Get-LocalGroup | Where-Object { Get-LocalGroupMember $_ -ErrorAction SilentlyContinue | Where-Object { $_.SID.Value -eq $sid } } | ForEach-Object Name)
@@ -178,4 +188,6 @@ try {
     Assert-True ($hklmAfter.Count -eq 0) 'The standard user uninstall left an HKLM Uninstall entry'
 } finally {
     Remove-LocalUser -Name $user -ErrorAction SilentlyContinue
+    if ($null -eq $policyBefore) { Remove-ItemProperty $policyKey -Name DisableMsi -ErrorAction SilentlyContinue }
+    else { Set-ItemProperty $policyKey -Name DisableMsi -Value $policyBefore -Type DWord }
 }
