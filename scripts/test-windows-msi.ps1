@@ -4,7 +4,10 @@ $ErrorActionPreference = 'Stop'
 $install = Join-Path $env:LOCALAPPDATA 'Programs\Dutchman'
 $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'Dutchman Convert.lnk'
 $registration = 'HKCU:\Software\Dutchman CAD\Dutchman Convert'
-$uninstall = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall'
+# Windows Installer keeps a per-user product's Add/Remove Programs entry under the user's SID
+# in its own UserData key, not in the HKCU Uninstall key that non-MSI installers use.
+$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+$uninstall = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Installer\UserData\$sid\Products"
 $baselinePath = [string][Environment]::GetEnvironmentVariable('Path', 'User')
 $msi = (Resolve-Path "dist/dutchman-$Version-x86_64-pc-windows-msvc.msi").Path
 $settings = Join-Path $env:APPDATA "Dutchman Convert $Version\data"
@@ -25,8 +28,9 @@ function Run-Msi([string]$Action, [string]$Package, [string]$Log) {
     }
 }
 function Entries {
-    @(Get-ChildItem $uninstall -ErrorAction SilentlyContinue | Get-ItemProperty |
-        Where-Object { $_.DisplayName -eq 'Dutchman Convert' })
+    @(Get-ChildItem $uninstall -ErrorAction SilentlyContinue |
+        ForEach-Object { Get-ItemProperty (Join-Path $_.PSPath 'InstallProperties') -ErrorAction SilentlyContinue } |
+        Where-Object { $_ -and $_.DisplayName -eq 'Dutchman Convert' })
 }
 function Check-Installed([string]$ExpectedVersion) {
     foreach ($name in @('dutchman-gui.exe', 'dutchman.exe', 'dutchman-mcp.exe', 'LICENSE', 'NOTICE', 'Spectral-OFL.txt', 'IBM-Plex-OFL.txt', 'sysinfo-MIT.txt', 'AGENTS.md', 'skills/dutchman-converting/SKILL.md', 'docs/desktop.md', 'docs/json.md')) {
