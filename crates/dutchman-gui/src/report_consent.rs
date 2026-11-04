@@ -84,8 +84,12 @@ impl Consent {
         }
         let mut open = true;
         let mut private = None;
-        egui::Window::new("Send a problem report").open(&mut open).show(ctx, |ui| {
+        egui::Window::new("Send a problem report").default_width(560.0).vscroll(true).open(&mut open).show(ctx, |ui| {
             ui.label(format!("Report {}", card.prepared.report_id));
+            if card.prepared.signature == report_send::CONVERTED_PROBLEM_SIGNATURE {
+                ui.label("This file converted, but the result is wrong.");
+            }
+            ui.label("Descriptions are not supported by anonymous reports yet. Describe the problem in the private DM or GitHub form; leave out private names and paths.");
             if let Some(log) = &card.log {
                 ui.label("This run's log contains no names or contents from the design. It is kept locally; Send uploads only the summary or bundle reviewed below.");
                 if let Err(message) = crate::platform::log_controls(ui, log, card.log_ready) { card.status = message; }
@@ -116,7 +120,18 @@ impl Consent {
             }
             ui.checkbox(&mut card.public_test, "You may use this report in a public test case");
             if ui.button("Send the whole file privately").clicked() { private = Some(Action::Private(card.row, None)); }
-            ui.label(format!("Anonymous summary: {} bytes — app version, operating system, file format, source app, failure details, your sharing choices and a code for updates", card.prepared.metadata("summary", card.public_test).to_string().len()));
+            ui.label(format!("Anonymous summary: {} bytes — app version, operating system, file format, source app, problem signature, your sharing choices and a code for updates", card.prepared.metadata("summary", card.public_test).to_string().len()));
+            let choice = if card.summary { "summary" } else { "bundle" };
+            egui::CollapsingHeader::new("Exact metadata to send")
+                .default_open(true)
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
+                        let metadata = card.prepared.metadata(choice, card.public_test);
+                        ui.add(egui::Label::new(egui::RichText::new(
+                            serde_json::to_string_pretty(&metadata).unwrap_or_default()
+                        ).monospace()).wrap().selectable(true));
+                    });
+                });
             ui.label(format!("Kept locally: {}", card.folder.display()));
             let can_send = card.rx.is_none() && !card.sent && (card.summary || card.prepared.can_send_bundle());
             if ui.add_enabled(can_send, egui::Button::new(if card.failed { "Retry" } else { "Send" })).clicked() {
@@ -266,6 +281,16 @@ mod tests {
             .click_accesskit();
         harness.step();
         assert!(harness.state().card.as_ref().unwrap().public_test);
+        let metadata = harness
+            .state()
+            .card
+            .as_ref()
+            .unwrap()
+            .prepared
+            .metadata("summary", true);
+        assert_eq!(metadata["consent"]["choice"], "summary");
+        assert_eq!(metadata["consent"]["public_test"], true);
+        harness.get_by_label(&serde_json::to_string_pretty(&metadata).unwrap());
         assert!(harness.state().ids.is_empty());
         assert!(!dir.path().join("submission.json").exists());
     }

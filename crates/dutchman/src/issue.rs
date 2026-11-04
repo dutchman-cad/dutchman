@@ -1,4 +1,4 @@
-//! A GitHub issue about one file that did not convert, filled in from its convert report: the
+//! A GitHub issue about one file that failed or converted incorrectly, filled in from its report: the
 //! link that opens the "A file didn't convert" form with the Dutchman version, the system and
 //! the error's stage, upstream and code, and the file's anonymous report to paste into it.
 //! Nothing in it names or shows the file: the error comes from the anonymous report, which has had its paths and
@@ -74,18 +74,26 @@ pub fn fill(report: &Value, anonymous: &Value) -> Issue {
     .filter_map(|(key, label)| field(key).map(|value| format!("{label}: {value}")))
     .collect();
     let anonymous_report = serde_json::to_string_pretty(anonymous).unwrap_or_default();
+    let converted = report.get("ok").and_then(Value::as_bool) == Some(true);
+    let title = if converted {
+        format!("[file] {format} converted incorrectly")
+    } else {
+        format!("[file] {format} failed to convert")
+    };
+    let happened = if converted {
+        "The file converted, but the result is wrong. Describe what differs from the original here."
+    } else {
+        "The conversion failed. The anonymous report has the error."
+    };
     let fields = [
-        ("title", format!("[file] {format} failed to convert")),
+        ("title", title),
         ("format", format.to_owned()),
         (
             "dutchman-version",
             format!("dutchman {}, desktop app", env!("CARGO_PKG_VERSION")),
         ),
         ("os", system()),
-        (
-            "what-happened",
-            "The conversion failed. The anonymous report has the error.".to_owned(),
-        ),
+        ("what-happened", happened.to_owned()),
         ("stage", stage.join(", ")),
         ("report-anon", PASTE_HERE.to_owned()),
     ];

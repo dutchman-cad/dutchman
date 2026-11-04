@@ -3494,3 +3494,45 @@ fn automatic_assembly_workers_use_the_synthetic_free_memory_budget() {
     assert_eq!(report["threads"]["used"], 1);
     assert!(report.get("history_check_skipped").is_none());
 }
+
+#[test]
+fn report_previews_a_converted_result_and_refuses_unconfirmed_sending() {
+    let dir = tempfile::tempdir().unwrap();
+    let folder = dir.path().join("converted-report");
+    let folder_text = folder.to_str().unwrap();
+    let output = dutchman(&[
+        "report",
+        "--folder",
+        folder_text,
+        "--report-id",
+        "f0123456789abcdef",
+        "--source-format",
+        "f3d",
+        "--signature",
+        "converted-with-problem",
+        "--json",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let preview: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(preview["signature"], "converted-with-problem");
+    assert_eq!(preview["default_choice"], "summary");
+    assert_eq!(preview["bundle_available"], false);
+    assert_eq!(preview["metadata"]["consent"]["choice"], "summary");
+    assert_eq!(preview["metadata"]["consent"]["public_test"], false);
+    assert!(preview["metadata"].get("description").is_none());
+    assert!(!String::from_utf8_lossy(&output.stdout).contains(folder_text));
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("claim_secret"));
+    assert!(folder.join("prepared.json").exists());
+    assert!(!folder.join("submission.json").exists());
+    let reopened = dutchman(&["report", "--folder", folder_text]);
+    assert!(reopened.status.success());
+    let reopened: serde_json::Value = serde_json::from_slice(&reopened.stdout).unwrap();
+    assert_eq!(reopened["metadata"], preview["metadata"]);
+    let refused = dutchman(&["report", "--folder", folder_text, "--send-summary"]);
+    assert_eq!(refused.status.code(), Some(2));
+    assert!(!folder.join("submission.json").exists());
+}

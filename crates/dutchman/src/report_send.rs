@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
+/// Fixed category for a file that converted but whose result the user reports as wrong.
+pub const CONVERTED_PROBLEM_SIGNATURE: &str = "converted-with-problem";
+
 pub const SCHEMA: &str = crate::json::REPORT_SEND;
 /// The service limits the complete multipart body, including metadata and framing.
 pub const MAX_REQUEST: usize = 25 * 1024 * 1024;
@@ -177,7 +180,7 @@ impl Prepared {
 
     /// Safe for MCP: sizes and roles only, never geometry or the claim secret.
     pub fn preview(&self) -> Value {
-        json!({"schema": SCHEMA, "ok": true, "report_id": self.report_id, "source_format": self.source_format, "signature": self.signature, "parts": self.parts, "manifest": self.manifest, "bundle_sendable": self.can_send_bundle(), "request_size": self.request_size("bundle", false), "request_limit": MAX_REQUEST, "bundle_limit": MAX_BUNDLE, "private_send": crate::json::DISCORD_URL, "bundle_size": self.bundle_size, "bundle_available": self.bundle_sha256.is_some(), "summary_size": self.metadata("summary", false).to_string().len(), "default_choice": if self.bundle_sha256.is_some() { "bundle" } else { "summary" }, "public_test": false, "summary": if self.bundle_sha256.is_some() && !self.can_send_bundle() { SIZE_NOTICE } else if self.bundle_sha256.is_some() { "Review the bundle parts and sizes. Bundles contain private geometry." } else { "No bundle is available for this failure. Decode refusals have no bundle yet. Choose summary or use the private-send card." }})
+        json!({"schema": SCHEMA, "ok": true, "report_id": self.report_id, "source_format": self.source_format, "signature": self.signature, "parts": self.parts, "manifest": self.manifest, "bundle_sendable": self.can_send_bundle(), "request_size": self.request_size("bundle", false), "request_limit": MAX_REQUEST, "bundle_limit": MAX_BUNDLE, "private_send": crate::json::DISCORD_URL, "bundle_size": self.bundle_size, "bundle_available": self.bundle_sha256.is_some(), "summary_size": self.metadata("summary", false).to_string().len(), "metadata": self.metadata("summary", false), "default_choice": if self.bundle_sha256.is_some() { "bundle" } else { "summary" }, "public_test": false, "summary": if self.bundle_sha256.is_some() && !self.can_send_bundle() { SIZE_NOTICE } else if self.bundle_sha256.is_some() { "Review the bundle parts and sizes. Bundles contain private geometry." } else { "No bundle is available. Choose summary or use the private-send card." }})
     }
 
     /// The exact bounded envelope, without the private secret or local paths.

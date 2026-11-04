@@ -149,7 +149,11 @@ see which of your files it is. [The report's fields](report-anon.md) are all des
 
 ## 5. Report what you found
 
-**One failed file, from the app.** Its card has **Review and send report**. You see what the
+**One failed or wrongly converted file, from the app.** Failed cards have
+**Review and send report**. On a converted card, first expand
+**Something wrong? Report this file** for the same review and private-send steps.
+The review shows the exact anonymous metadata. There is no free-text description in
+this envelope yet; describe the problem in the private DM or GitHub form instead. You see what the
 report holds and choose before anything goes. No GitHub or Discord account is needed, and the app
 says it is sent only after our report service confirms it. A summary holds no names and no
 geometry; a cut-down piece of the failing design, when Dutchman can prove one, holds geometry and

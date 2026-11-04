@@ -44,7 +44,7 @@ pub enum Message {
         problems: Vec<Value>,
         jobs: Vec<Job>,
     },
-    /// A file that failed, and its size when it can be read.
+    /// A finished file, and its size when it can be read.
     Sized { input: PathBuf, size: Option<u64> },
     /// The design result is still available, but its local report could not be saved.
     ReportSaveFailed(String),
@@ -54,16 +54,12 @@ pub enum Message {
     Done,
 }
 
-/// The size of the failed file at `input`, read here so the window never waits on a slow disk.
+/// The size of the file at `input`, read here so the window never waits on a slow disk.
 fn sized(input: &Path) -> Message {
     Message::Sized {
         input: input.to_path_buf(),
         size: std::fs::metadata(input).ok().map(|file| file.len()),
     }
-}
-
-fn failed(report: &Value) -> bool {
-    report.get("ok") != Some(&Value::Bool(true))
 }
 
 fn save_report(output: &Path, report: &Value, send: &impl Fn(Message)) {
@@ -130,9 +126,7 @@ impl Run {
                     if let Event::Finished(index, report) = &event {
                         if let Some(job) = jobs.get(*index) {
                             save_report(&job.output, report, &send);
-                            if failed(report) {
-                                send(sized(&job.input));
-                            }
+                            send(sized(&job.input));
                         }
                     }
                     send(Message::Progress(event));
@@ -166,7 +160,7 @@ impl Run {
                     if let Event::Finished(_, report) = &event {
                         save_report(&output, report, &send);
                     }
-                    if matches!(&event, Event::Finished(_, report) if failed(report)) {
+                    if matches!(&event, Event::Finished(_, _)) {
                         send(sized(&input));
                     }
                     send(Message::Progress(match event {
@@ -404,6 +398,7 @@ mod tests {
         );
         let mut events = Vec::new();
         let mut finished = false;
+        let mut size_received = false;
         loop {
             match receive
                 .recv_timeout(std::time::Duration::from_secs(20))
@@ -414,7 +409,12 @@ mod tests {
                     assert!(!finished);
                     events.push(event);
                 }
+                Message::Sized { size, .. } => {
+                    assert!(size.is_some_and(|bytes| bytes > 0));
+                    size_received = true;
+                }
                 Message::Progress(Event::Finished(index, report)) => {
+                    assert!(size_received);
                     assert_eq!(index, 0);
                     assert_eq!(report["ok"], true);
                     let output = PathBuf::from(report["output"]["path"].as_str().unwrap());

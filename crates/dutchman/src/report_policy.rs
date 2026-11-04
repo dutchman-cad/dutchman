@@ -50,7 +50,7 @@ pub struct ReportPolicy {
     pub message_template: String,
 }
 
-/// What the message says about one failed file.
+/// What the message says about one file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MessageFacts<'a> {
     /// The error's code, if it has one.
@@ -186,6 +186,18 @@ impl ReportPolicy {
             .replace("<n>", &size)
             .replace("<yes|no|unknown>", step)
     }
+
+    /// Keep the bot's report-card prefix so automatic private upload links still work.
+    pub fn converted_message(&self, facts: &MessageFacts<'_>) -> String {
+        let facts = MessageFacts {
+            code: Some(crate::report_send::CONVERTED_PROBLEM_SIGNATURE),
+            ..*facts
+        };
+        format!(
+            "This file converted, but the result is wrong. {}",
+            self.message(&facts)
+        )
+    }
 }
 
 /// `mb` megabytes as the card writes them: 300 MB, 1.5 GB.
@@ -245,6 +257,26 @@ mod tests {
             .keys()
             .map(String::as_str)
             .collect()
+    }
+
+    #[test]
+    fn converted_message_clarifies_the_problem_and_preserves_bot_routing() {
+        let message = policy().converted_message(&MessageFacts {
+            code: None,
+            report_id: "f0123456789abcdef",
+            size_bytes: Some(100),
+            step: None,
+        });
+        assert!(message.starts_with("This file converted, but the result is wrong. "));
+        assert!(message.contains("Report id: f0123456789abcdef"));
+        let routing = policy().message(&MessageFacts {
+            code: Some(crate::report_send::CONVERTED_PROBLEM_SIGNATURE),
+            report_id: "f0123456789abcdef",
+            size_bytes: Some(100),
+            step: None,
+        });
+        assert!(message.ends_with(&routing));
+        assert!(message.contains("Error: converted-with-problem."));
     }
 
     #[test]

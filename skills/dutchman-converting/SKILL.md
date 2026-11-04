@@ -673,6 +673,16 @@ partial-history outputs with intentionally extra hidden bodies. Private whole-de
 snapshot pairs may accompany flags when SolidCraft supports them; never attach these
 to an anonymous public report. A file check's Target part buttons save a local target.
 
+For a converted result with missing features, wrong placement or missing colours, use a
+fresh report folder with `report_preview`, the diagnostic file id, source format and
+`signature: "converted-with-problem"`. Review its `metadata`; submit only summary after
+explicit consent. CLI users can preview with `dutchman report --folder FOLDER --report-id ID
+--source-format f3d --signature converted-with-problem` and send after review with
+`dutchman report --folder FOLDER --send-summary --yes`. No free-text description is
+supported in the anonymous envelope. Describe the problem privately or in the GitHub
+form without private names or paths. The desktop offers these actions under the closed
+**Something wrong? Report this file** section. Failure narrowing is for failed files.
+
 For report sending, call `report_preview` first and show the user the choices, part
 roles and sizes. Never show or transmit bundle contents through an assistant. Call
 `report_submit` with `explicit_yes: true` only after the user's explicit yes to that

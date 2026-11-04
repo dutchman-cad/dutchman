@@ -387,7 +387,7 @@ fn tools() -> Value {
             "inputSchema": {"type": "object", "properties": all, "required": ["inputs", "out_dir"], "additionalProperties": false},
         },
         {
-            "name": "report_preview", "description": "Prepare or preview a local report. Returns only sizes, roles and signature; never bundle contents. Nothing is sent. Reuse the diagnostic file id. Bundle is the default when a proven bundle exists. Decode refusals have no bundle yet.",
+            "name": "report_preview", "description": "Prepare or preview a local report. Returns only sizes, roles and signature; never bundle contents. Nothing is sent. Converted files can use signature converted-with-problem in a fresh folder. Reuse the diagnostic file id. Bundle is the default when a proven bundle exists. Decode refusals have no bundle yet.",
             "inputSchema": {"type": "object", "properties": {"folder": {"type": "string"}, "report_id": {"type": "string"}, "source_format": {"type": "string"}, "signature": {"type": "string"}}, "required": ["folder"], "additionalProperties": false}
         },
         {
@@ -922,6 +922,24 @@ mod tests {
             json!({"folder": dir.path(), "choice": "summary", "explicit_yes": false}),
         );
         assert_eq!(refused["result"]["isError"], true);
+        assert!(!dir.path().join("submission.json").exists());
+    }
+
+    #[test]
+    fn report_preview_accepts_a_converted_file_without_a_failure_or_bundle() {
+        let dir = tempfile::tempdir().unwrap();
+        let preview = call(
+            "report_preview",
+            json!({"folder": dir.path(),
+            "report_id": "f0123456789abcdef", "source_format": "f3d",
+            "signature": crate::report_send::CONVERTED_PROBLEM_SIGNATURE}),
+        );
+        let report = &preview["result"]["structuredContent"];
+        assert_eq!(preview["result"]["isError"], false);
+        assert_eq!(report["default_choice"], "summary");
+        assert_eq!(report["metadata"]["signature"], "converted-with-problem");
+        assert_eq!(report["metadata"]["consent"]["choice"], "summary");
+        assert_eq!(report["bundle_available"], false);
         assert!(!dir.path().join("submission.json").exists());
     }
 

@@ -495,16 +495,42 @@ A planted 1 mm move in a two-instance assembly was detected, and snapshot pairs 
 produced. These small controls establish basic behavior, not a false-positive rate
 for large assemblies or arbitrary designs.
 
-Report consent is per report. In the desktop failed-file card, **Review and send report**
+<a id="report-consent"></a>
+Report consent is per report. On a converted desktop card, expand
+**Something wrong? Report this file**; on a failed card, the actions are already visible.
+**Review and send report**
 opens a review with bundle or summary. A bundle is selected when available; otherwise
 only the anonymous summary is offered and selected: version, OS, format, source app and
-failure signature only. Whole files use the private-send card on Discord. A separate box,
+problem signature only. Converted results use `converted-with-problem` and never
+reuse a prior failure bundle. The review displays the exact metadata and sharing choices.
+Descriptions are not supported in the anonymous envelope; describe the problem privately
+or in the GitHub form without private names or paths. Whole files use the private-send card on Discord. A separate box,
 **You may use this report in a public test case**, starts unticked.
 Nothing is sent before clicking Send. A report is sent only when a matching receipt
 arrives. A temporary failure gets one short retry, then keeps the report locally;
 retrying later requires clicking **Retry**, which appears after a failure. A daily cap
 asks you to try again tomorrow.
-GitHub accepts the anonymous summary only; never attach a geometry bundle there.
+GitHub accepts the anonymous summary only; never attach a geometry bundle there. For a
+converted result the form asks what differs from the original, without claiming conversion failed.
+
+For the CLI, first make a local preview (always printed as JSON):
+
+```sh
+dutchman report --folder reports/converted --report-id f0123456789abcdef --source-format f3d --signature converted-with-problem
+```
+
+Replace the example id with the file id from your diagnostic log or private report key.
+Use a fresh report folder for this converted result. No design is opened or uploaded.
+Read the preview's `metadata`, then send that summary explicitly:
+
+```sh
+dutchman report --folder reports/converted --send-summary --yes
+```
+
+`--public-test` separately permits a public test case and defaults off. The same command
+retries a failed submission only when you run it again. Saved desktop report folders can
+also be reviewed with `dutchman report --folder FOLDER`. MCP offers the same path through
+[`report_preview` and `report_submit`](mcp.md#report-preview-and-sending).
 
 Release builds send to Dutchman's report service; `DUTCHMAN_REPORT_ENDPOINT` at compile
 time replaces it. A debug build has no default: clicking Send keeps the report locally

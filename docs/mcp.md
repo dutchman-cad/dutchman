@@ -781,9 +781,22 @@ uses the conversion's joint setting. See [calibration results](doctor-calibratio
 for the observed false-positive rate and coverage. Optional local snapshot
 pairs never enter the tool result.
 
+<a id="report-preview-and-sending"></a>
+Converted files are reportable too. For lost features, wrong placement or missing colours,
+call `report_preview` with a fresh `folder`, the file's diagnostic `report_id`, its
+`source_format` (for example `f3d`) and `signature: "converted-with-problem"`. This prepares
+an anonymous summary without opening or sending the design. Review the returned `metadata`
+with the user, then call `report_submit` with `choice: "summary"` only after consent.
+There is no description field in the supported anonymous envelope; use the private DM
+or GitHub form for a description without private names or paths.
+The CLI equivalents are `dutchman report --folder FOLDER --report-id ID --source-format f3d
+--signature converted-with-problem`, followed after review by
+`dutchman report --folder FOLDER --send-summary --yes`.
+
 `report_preview` takes `folder` and, for a new report, `report_id`, `source_format`
 and `signature`. Reuse the diagnostic file id. The result shows parts and sizes,
-never bundle contents or claim secrets. Use the folder saved by `extract_repro` to
+never bundle contents or claim secrets. `metadata` shows the exact summary envelope with
+default consent. Use the folder saved by `extract_repro` to
 preview a proven bundle; a new report without a bundle offers summary. Nothing is sent.
 `report_submit` takes `folder`, `choice` (`bundle` or `summary`), `public_test`
 (default false) and `explicit_yes`. Ask the user for explicit consent to this exact

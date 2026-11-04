@@ -1086,6 +1086,8 @@ BBox coordinates beyond 1e12 mm are treated as unavailable measurements.
 
 Preview: `ok`, `report_id` (the diagnostic file id), `source_format`, `signature`,
 `parts` (role and uncompressed `bytes`), `bundle_size` (gzip bytes),
+`metadata` (the exact anonymous summary envelope with default consent: schema, report id,
+app version, OS, source format/app, signature, claim hash and sharing choices),
 `bundle_available`, `summary_size` (summary JSON bytes with default consent), `default_choice` (`bundle` when available, otherwise `summary`), `public_test` (false), `summary`.
 No contents or claim secret are returned. Sending takes explicit consent and returns
 `sent`: true only with a matching Worker `report_id` and unsigned Unix `received`.
@@ -1096,6 +1098,10 @@ The request includes `dutchman_version` (the build version), `source_format`, an
 FreeCAD, CATIA, Creo, NX, Creo View or Rhino). Exchange formats (STEP, IGES, ACIS),
 unclassified `.prt` and unrecognised formats use `unknown`: the authoring app cannot
 be inferred from those formats. No file is opened to derive this field.
+`signature` may be `converted-with-problem` for a converted result reported as wrong.
+There is no free-text description field in this envelope. The CLI `dutchman report`
+returns this same preview and supports explicit summary sending; MCP uses `report_preview`
+and `report_submit`.
 The request records consent choice, text version 1 and public-test permission;
 only a claim hash leaves the app. A local `submission.json` freezes that choice for
 retries; `prepared.json` holds the private claim secret. Keep both private.

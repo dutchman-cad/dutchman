@@ -32,12 +32,35 @@ struct Cli {
     #[arg(long, global = true)]
     quiet: bool,
     /// Never prompt to switch presets; refuse a conversion that exceeds free memory.
+    /// With report --send-summary, explicitly consent to sending the reviewed summary.
     #[arg(long, global = true)]
     yes: bool,
 }
 
 #[derive(Subcommand)]
 enum Command {
+    /// Review a local problem report, including a file that converted with a wrong result.
+    Report {
+        /// Folder holding prepared.json, or a fresh folder for a summary-only report.
+        #[arg(long)]
+        folder: PathBuf,
+        /// Reuse the anonymous file id from the diagnostic log or report key.
+        #[arg(long)]
+        report_id: Option<String>,
+        #[arg(long)]
+        source_format: Option<String>,
+        /// Use converted-with-problem for a converted file with a wrong result.
+        #[arg(long)]
+        signature: Option<String>,
+        /// Send only the anonymous summary after reviewing it; also requires --yes.
+        #[arg(long, requires = "yes")]
+        send_summary: bool,
+        /// Allow this report to be used in a public test case.
+        #[arg(long, requires = "send_summary")]
+        public_test: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Check a folder or project ZIP locally, resuming completed checks on the next run.
     Doctor {
         input: PathBuf,
@@ -316,6 +339,63 @@ fn main() -> ExitCode {
     let quiet = cli.quiet;
     let yes = cli.yes;
     match cli.command {
+        Command::Report {
+            folder,
+            report_id,
+            source_format,
+            signature,
+            send_summary,
+            public_test,
+            json: as_json,
+        } => {
+            let result = (|| {
+                let prepared = if folder.join("prepared.json").exists() {
+                    dutchman::report_send::Prepared::load(&folder)?
+                } else {
+                    dutchman::report_send::Prepared::new(
+                        report_id
+                            .as_deref()
+                            .ok_or("A new report needs --report-id.")?,
+                        source_format
+                            .as_deref()
+                            .ok_or("A new report needs --source-format.")?,
+                        signature
+                            .as_deref()
+                            .ok_or("A new report needs --signature.")?,
+                        None,
+                        &folder,
+                    )?
+                };
+                if send_summary {
+                    dutchman::report_send::submit(
+                        &prepared,
+                        &folder,
+                        "summary",
+                        public_test,
+                        yes,
+                        dutchman::report_send::endpoint().as_deref(),
+                    )
+                } else {
+                    Ok(prepared.preview())
+                }
+            })();
+            match result {
+                Ok(report) => {
+                    print_json(&report);
+                    exit(&report)
+                }
+                Err(message) => {
+                    if as_json {
+                        print_json(
+                            &serde_json::json!({"schema": dutchman::report_send::SCHEMA, "ok": false, "summary": message}),
+                        );
+                    } else {
+                        eprintln!("dutchman: {message}");
+                    }
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Command::Doctor {
             input,
             out,
@@ -1289,6 +1369,39 @@ fn print_losses(losses: &[Value], verbose: bool) {
 #[cfg(test)]
 mod output_tests {
     use super::*;
+
+    #[test]
+    fn report_summary_requires_explicit_consent_and_accepts_converted_signature() {
+        let args = [
+            "dutchman",
+            "report",
+            "--folder",
+            "report",
+            "--report-id",
+            "f0123456789abcdef",
+            "--source-format",
+            "f3d",
+            "--signature",
+            "converted-with-problem",
+        ];
+        assert!(matches!(
+            Cli::try_parse_from(args).unwrap().command,
+            Command::Report {
+                send_summary: false,
+                ..
+            }
+        ));
+        assert!(Cli::try_parse_from(args.into_iter().chain(["--send-summary"])).is_err());
+        assert!(matches!(
+            Cli::try_parse_from(args.into_iter().chain(["--send-summary", "--yes"]))
+                .unwrap()
+                .command,
+            Command::Report {
+                send_summary: true,
+                ..
+            }
+        ));
+    }
 
     #[test]
     fn memory_refusals_exit_two_in_single_and_batch_reports() {

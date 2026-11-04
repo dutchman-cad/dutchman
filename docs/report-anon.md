@@ -16,6 +16,19 @@ next launch. Automatic names include UTC date and time, Dutchman version and res
 uploads only the summary or bundle reviewed there. The Discord DM names that same log;
 you choose whether to attach it. The log has no names or contents from the design.
 
+## Converted files with a wrong result
+
+Converted files are included in this report as well as failures. The desktop's
+**Something wrong? Report this file** section offers anonymous review and private-send
+steps when a converted result has lost features, wrong placement or missing colours.
+The separate endpoint summary envelope (`dutchman.report-send/1`) supports only bounded
+metadata and sharing choices; it has no free-text description field. The review displays
+that exact envelope. Converted-file summaries use `converted-with-problem` as their
+signature, with no geometry or older failure bundle. No description is added to either
+anonymous format. Describe what is wrong in the private DM or GitHub form, leaving out
+private names and paths. The CLI and MCP summary paths are described in
+[the guide](guide.md#report-consent).
+
 ## What it never holds
 
 - **No file or folder names, no paths.** Each file appears only as an id, `f` and 16 hex

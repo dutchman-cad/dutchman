@@ -30,7 +30,7 @@ pub struct Row {
     pub report: Option<Value>,
     /// The job that converts it; none for an input that could not be planned.
     pub job: Option<Job>,
-    /// The file's size once it has failed, for the steps to send it privately.
+    /// The file's size once it has finished, for the steps to send it privately.
     pub size: Option<u64>,
 }
 
@@ -347,7 +347,7 @@ impl App {
         self.options.diagnostics = Some(path);
     }
 
-    /// Supplies a failed row's size without a file of that size, for UI previews.
+    /// Supplies a result row's size without a file of that size, for UI previews.
     pub fn preview_size(&mut self, index: usize, size: u64) {
         if let Some(row) = self.rows.get_mut(index) {
             row.size = Some(size);
@@ -553,6 +553,7 @@ impl App {
         let Some((anonymous, id, report)) = self.anonymous(index)? else {
             return Ok(());
         };
+        let converted = report.get("ok").and_then(Value::as_bool) == Some(true);
         let error = anonymous.pointer("/errors/0");
         let field = |key| {
             error
@@ -580,7 +581,15 @@ impl App {
             &self.out_dir.clone().unwrap_or_else(std::env::temp_dir),
             &id,
         );
-        let signature = signature.hash;
+        let signature = if converted {
+            dutchman::report_send::CONVERTED_PROBLEM_SIGNATURE.to_owned()
+        } else {
+            signature.hash
+        };
+        // A later successful conversion must not reuse a previous failure's bundle.
+        if converted {
+            folder = folder.join("converted");
+        }
         #[cfg(feature = "test-support")]
         let signature = self
             .consent
@@ -588,7 +597,7 @@ impl App {
             .as_ref()
             .and_then(|(_, signature)| signature.clone())
             .unwrap_or(signature);
-        if let Some(row) = self.rows.get(index) {
+        if let Some(row) = self.rows.get(index).filter(|_| !converted) {
             let name = row.input.file_name().unwrap_or_default().to_string_lossy();
             let saved = row
                 .input
@@ -650,12 +659,17 @@ impl App {
             .map(|m| m.len())
             .or(row.size);
         let steps = present::SendSteps::new(policy, size, report, present::Surface::Desktop);
-        let mut message = policy.message(&MessageFacts {
+        let facts = MessageFacts {
             code: present::error_code(report),
             report_id: &id,
             size_bytes: size,
             step: present::step_known(report),
-        });
+        };
+        let mut message = if report.get("ok").and_then(Value::as_bool) == Some(true) {
+            policy.converted_message(&facts)
+        } else {
+            policy.message(&facts)
+        };
         if let Some(log) = self.row_logs.get(&index) {
             message.push_str(&format!(
                 " Run log: {}. It contains no names or contents from the design.",
@@ -2261,6 +2275,24 @@ fn row_ui(
             }
         }
     }
+    if view.can_report && view.report_case == Some(present::ReportCase::Converted) {
+        if let Some(report) = &row.report {
+            egui::CollapsingHeader::new(present::REPORT_CONVERTED)
+                .id_salt(("report-converted", index, &row.input))
+                .default_open(false)
+                .show(ui, |ui| {
+                    let steps = present::SendSteps::new(
+                        policy,
+                        row.size,
+                        report,
+                        present::Surface::Desktop,
+                    );
+                    if let Some(chosen) = send_ui(ui, p, index, &steps) {
+                        action = Some(chosen);
+                    }
+                });
+        }
+    }
     action
 }
 
@@ -2364,7 +2396,7 @@ fn shell_path(path: &Path) -> String {
 /// The narrowest a step card gets before the cards wrap onto another line.
 const MIN_STEP_WIDTH: f32 = 190.0;
 
-/// The way to send a failed file privately, and the anonymous report beside it.
+/// The way to send a file privately, and the anonymous report beside it.
 fn send_ui(
     ui: &mut egui::Ui,
     p: &Palette,
@@ -2376,7 +2408,7 @@ fn send_ui(
         action = Some(Action::Consent(index));
     }
     ui.add_space(theme::SPACE_2);
-    ui.label(RichText::new(present::SEND_INTRO).color(p.ink));
+    ui.label(RichText::new(steps.intro).color(p.ink));
     ui.add_space(theme::SPACE_2);
     let cards: &[usize] = if steps.step_card { &[0, 1, 2] } else { &[0, 1] };
     let gap = ui.spacing().item_spacing.x;
@@ -2722,6 +2754,81 @@ mod tests {
         harness.get_by_label("Diagnose this file").click();
         harness.run_steps(2);
         assert!(*harness.state());
+    }
+
+    #[test]
+    fn converted_card_reports_only_after_expanding_and_reviews_exact_metadata() {
+        use egui_kittest::kittest::Queryable;
+        for width in [1100.0, 520.0] {
+            let dir = tempfile::tempdir().unwrap();
+            // Seed an earlier failed report: a converted card must never reuse its bundle.
+            let input = dir.path().join("synthetic.f3d");
+            let salt = dutchman::anon::Salt::random().unwrap();
+            let id = salt.file_id(&input);
+            let old_folder = dutchman::report_send::local_folder(dir.path(), &id);
+            let mut old =
+                dutchman::report_send::Prepared::new(&id, "f3d", "old-failure", None, &old_folder)
+                    .unwrap();
+            old.bundle_sha256 = Some("old-bundle".into());
+            std::fs::write(
+                old_folder.join("prepared.json"),
+                serde_json::to_vec(&old).unwrap(),
+            )
+            .unwrap();
+            let mut harness = egui_kittest::Harness::builder()
+                .with_size(egui::vec2(width, 1500.0))
+                .build_eframe(|cc| {
+                    let mut app = App::new(cc);
+                    app.out_dir = Some(dir.path().to_path_buf());
+                    app.salt = Some(salt);
+                    app.rows.push(Row {
+                        input: input.clone(), output: Some(dir.path().join("synthetic.sc")),
+                        status: Status::Converted, progress: None, job: None, size: Some(100),
+                        report: Some(json!({"ok": true, "input": {"path": input, "format": "fusion_archive"}})),
+                    });
+                    app
+                });
+            harness.run_steps(8);
+            harness.get_by_label(present::REPORT_CONVERTED);
+            assert!(harness.query_by_label("Review and send report").is_none());
+            assert!(harness.query_by_label(present::SEND_DM_BUTTON).is_none());
+            harness
+                .get_by_label(present::REPORT_CONVERTED)
+                .click_accesskit();
+            harness.run_steps(8);
+            assert!(harness.query_by_label("Diagnose this file").is_none());
+            let review = harness.get_by_label("Review and send report").rect();
+            let join = harness.get_by_label(present::SEND_JOIN_BUTTON).rect();
+            let dm = harness.get_by_label(present::SEND_DM_BUTTON).rect();
+            assert!(review.bottom() < join.top());
+            assert!(join.top() <= dm.top());
+            for rect in [review, join, dm] {
+                assert!(rect.left() >= 0.0 && rect.right() <= width);
+            }
+            harness
+                .get_by_label("Review and send report")
+                .click_accesskit();
+            harness.run_steps(8);
+            harness.get_by_label("This file converted, but the result is wrong.");
+            harness.get_by_label("Anonymous summary only");
+            assert!(harness.query_by_label("Send the bundle").is_none());
+            let card = harness.state().consent.card.as_ref().unwrap();
+            assert_eq!(card.prepared.report_id, id);
+            assert_eq!(
+                card.prepared.signature,
+                dutchman::report_send::CONVERTED_PROBLEM_SIGNATURE
+            );
+            assert!(card.prepared.bundle_sha256.is_none());
+            assert_eq!(card.folder, old_folder.join("converted"));
+            let metadata = card.prepared.metadata("summary", false);
+            let text = serde_json::to_string_pretty(&metadata).unwrap();
+            harness.get_by_label(&text);
+            assert!(!text.contains("synthetic"));
+            assert!(!text.contains("old-failure"));
+            assert!(!text.contains("claim_secret"));
+            assert!(metadata.get("description").is_none());
+            assert!(!card.folder.join("submission.json").exists());
+        }
     }
 
     #[test]

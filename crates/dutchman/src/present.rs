@@ -80,7 +80,20 @@ pub struct FileView {
     pub losses: Vec<LossGroup>,
     pub components: Vec<ComponentView>,
     pub can_report: bool,
+    /// Converted reports start collapsed; failed reports offer help immediately.
+    pub report_case: Option<ReportCase>,
 }
+
+/// Why reporting is offered for this file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReportCase {
+    Failed,
+    Converted,
+}
+
+pub const REPORT_CONVERTED: &str = "Something wrong? Report this file";
+pub const SEND_CONVERTED_INTRO: &str =
+    "If the converted result has lost features, wrong placement or missing colours, help us fix it:";
 
 pub const REPORT_HELP: &str =
     "If the file opens in the app that made it, this is a bug in Dutchman: \
@@ -144,6 +157,7 @@ pub enum Surface {
 pub struct SendSteps {
     /// What to do in the DM.
     pub dm_text: String,
+    pub intro: &'static str,
     /// Whether the file goes in by hand, so the desktop app shows its folder.
     pub drag: bool,
     /// Whether to ask for a STEP export too.
@@ -168,6 +182,11 @@ impl SendSteps {
         };
         Self {
             dm_text,
+            intro: if report.get("ok").and_then(Value::as_bool) == Some(true) {
+                SEND_CONVERTED_INTRO
+            } else {
+                SEND_INTRO
+            },
             drag,
             step_card: !source_is_step(report),
         }
@@ -323,6 +342,15 @@ impl FileView {
             .and_then(Value::as_str)
             .map(str::to_owned);
         let assembly_lines = report.map(json::completeness_lines).unwrap_or_default();
+        let report_case = if missing_parts.is_some() {
+            None
+        } else if progress == Progress::Converted && report.is_some() {
+            Some(ReportCase::Converted)
+        } else if error.is_some() {
+            Some(ReportCase::Failed)
+        } else {
+            None
+        };
         Self {
             name: input
                 .file_name()
@@ -341,7 +369,8 @@ impl FileView {
                 }
             }),
             capability: report.and_then(json::status_line),
-            can_report: error.is_some() && missing_parts.is_none(),
+            can_report: report_case.is_some(),
+            report_case,
             error,
             incomplete,
             missing_parts,
@@ -694,6 +723,40 @@ mod tests {
     }
 
     #[test]
+    fn reporting_distinguishes_converted_and_failed_files_and_excludes_missing_parts() {
+        for report in [
+            json!({"ok": true}),
+            json!({"ok": true, "losses": [{"level": "Dropped", "message": "Colour omitted"}]}),
+            json!({"ok": true, "verification": {"status": "flattened"}}),
+            json!({"ok": true, "completeness": {"placed_empty": 1}}),
+        ] {
+            let view = FileView::from_report(&report);
+            assert!(view.can_report);
+            assert_eq!(view.report_case, Some(ReportCase::Converted));
+        }
+        let failed = FileView::from_report(&json!({"ok": false, "error": {"message": "Stopped"}}));
+        assert!(failed.can_report);
+        assert_eq!(failed.report_case, Some(ReportCase::Failed));
+        for ok in [true, false] {
+            let view = FileView::from_report(&json!({"ok": ok, "error": {"message": "Stopped"},
+                "losses": [{"message": "pin.ipt: not found at its stored path"}]}));
+            assert!(!view.can_report);
+            assert_eq!(view.report_case, None);
+        }
+        for progress in [
+            Progress::Waiting,
+            Progress::Converting,
+            Progress::NotStarted,
+            Progress::Skipped,
+            Progress::Converted,
+        ] {
+            let view = FileView::new(Path::new("part.f3d"), None, progress, None);
+            assert!(!view.can_report);
+            assert_eq!(view.report_case, None);
+        }
+    }
+
+    #[test]
     fn run_order_and_reveal_keep_equal_severity_in_input_order() {
         let report = json!({"results": [
             {"ok": true},
@@ -898,6 +961,13 @@ mod tests {
         }
         assert!(!link.issue.url.contains("private"));
         assert_eq!(link.copy_notice, REPORT_COPIED);
+        let converted = report_link(
+            &json!({"ok": true, "input": {"format_name": "Fusion"}}),
+            &json!({"errors": []}),
+        );
+        assert!(converted.issue.url.contains("converted%20incorrectly"));
+        assert!(converted.issue.url.contains("result%20is%20wrong"));
+        assert!(!converted.issue.url.contains("failed"));
         let long = json!({"errors": [], "losses": [{"message": "x".repeat(issue::MAX_URL)}]});
         let link = report_link(&report, &long);
         assert_eq!(link.copy_notice, REPORT_COPIED);

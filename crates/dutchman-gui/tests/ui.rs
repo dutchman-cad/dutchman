@@ -2325,3 +2325,89 @@ fn ask_ai_screenshots() {
     }
     std::fs::write(dir.join("ask-ai.md"), index).unwrap();
 }
+
+#[test]
+#[ignore = "renders real GPU screenshots"]
+fn converted_report_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    if std::env::var_os("DUTCHMAN_GUI_SCREENSHOT_CHILD").is_none() {
+        let state = tempfile::tempdir().unwrap();
+        if !cfg!(target_os = "linux") {
+            panic!("diagnostics isolation uses XDG_STATE_HOME on Linux");
+        }
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "converted_report_screenshots",
+                "--nocapture",
+            ])
+            .env("DUTCHMAN_GUI_SCREENSHOT_CHILD", "1")
+            .env("XDG_STATE_HOME", state.path())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
+    let work = tempfile::tempdir().unwrap();
+    // Use the real checker through a temporary alias so its displayed path has no home name.
+    let screenshot_cli = work.path().join("solidcraft-cli");
+    #[cfg(unix)]
+    if let Ok(cli) = dutchman_solidcraft::usable_cli(&dutchman_solidcraft::Verification::Auto) {
+        std::os::unix::fs::symlink(cli, &screenshot_cli).unwrap();
+    }
+    let input = work.path().join("Synthetic cube.f3d");
+    std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
+    let mut index =
+        String::from("# Converted file reporting\n\nSynthetic cube, report section expanded.\n\n");
+    for (theme, name) in [
+        (ThemePreference::Light, "day"),
+        (ThemePreference::Dark, "night"),
+    ] {
+        for (width, label) in [(1100.0, "wide"), (520.0, "520")] {
+            let mut h = Harness::builder()
+                .with_size(egui::vec2(width, 1100.0))
+                .build_eframe(|cc| App::new(cc));
+            h.ctx.set_theme(theme);
+            h.state_mut()
+                .set_solidcraft_cli(Some(screenshot_cli.clone()));
+            h.state_mut().set_verify(false);
+            h.state_mut().add_inputs([input.clone()]);
+            h.state_mut()
+                .set_out_dir(work.path().join(format!("converted-{name}-{label}")));
+            convert(&mut h);
+            assert_eq!(h.state().rows()[0].status, Status::Converted);
+            assert!(h.state().rows()[0].size.is_some_and(|bytes| bytes > 0));
+            h.get_by_label(dutchman::present::REPORT_CONVERTED)
+                .scroll_to_me();
+            h.run_steps(8);
+            h.get_by_label(dutchman::present::REPORT_CONVERTED)
+                .click_accesskit();
+            h.run_steps(8);
+            h.get_by_label(dutchman::present::REPORT_BUTTON)
+                .scroll_to_me();
+            h.run_steps(8);
+            h.get_by_label(dutchman::present::SEND_DM_BUTTON);
+            h.get_by_label("Drag the file in (its folder is open).");
+            assert!(h.query_by_label("Diagnose this file").is_none());
+            assert_eq!(h.query_all_by_label_contains("/home/").count(), 0);
+            assert!(h.get_by_label("Converted").rect().top() > 70.0);
+            assert!(
+                h.get_by_label(dutchman::present::REPORT_BUTTON)
+                    .rect()
+                    .bottom()
+                    < 1030.0
+            );
+            shot(
+                &mut h,
+                &dir,
+                &mut index,
+                &format!("converted-report-{label}"),
+                name,
+                "Converted synthetic file with report review and private-send steps expanded.",
+            );
+        }
+    }
+    std::fs::write(dir.join("index.md"), index).unwrap();
+}

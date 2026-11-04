@@ -107,11 +107,17 @@ Output is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro
 
 [Formats](docs/formats.md) has the details for each program, and [Feature history](docs/history.md) what maps onto SolidCraft.
 
-## Send us a file that won't convert
+## Report a file that fails or converts wrong
 
 Make a small public test file from a [fixtures recipe](https://dutchman-cad.github.io/fixtures/),
 or send a file that converts wrong, with its STEP export, to Dutchy in
 [Discord](https://discord.gg/yTcseBEdeu). Share only designs you own and can share.
+
+Converted cards have a closed **Something wrong? Report this file** section. Expand it
+for **Review and send report** and the private-send steps. The anonymous review shows
+exactly which metadata will be sent; descriptions go in the private DM or GitHub form.
+The CLI's `dutchman report` and MCP's `report_preview` / `report_submit` also support
+converted-file summaries. See [Reporting a problem](docs/guide.md#report-consent).
 
 With diagnostic logging enabled, each result card can **Show this run's log** or
 **Copy log to…**. Its name includes the date, time, Dutchman version and result, with no

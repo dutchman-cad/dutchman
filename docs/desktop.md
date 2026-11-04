@@ -188,9 +188,26 @@ this log, and the copied Discord DM names it so you can attach it without guessi
 file belongs to the run. An older log's version is shown as an advisory notice, such as
 "This log is from Dutchman 0.2.5; this is 0.2.6." It never blocks conversion.
 
-When a file fails, its card offers two routes. To send the file, follow the steps on the card:
+When a file converts but has lost features, wrong placement or missing colours, expand
+**Something wrong? Report this file** on its result card. It starts closed. Choose
+**Review and send report** to review the exact metadata before sending an anonymous
+summary, or follow the same private-send steps as a failed card to send the original.
+**Diagnose this file** stays on failed cards: it narrows reproducible conversion failures,
+not visual problems in a converted result. **Add matching STEP** can check a converted
+file locally against an export.
+
+Descriptions are not supported in the anonymous report envelope yet. Describe what is
+wrong in the private DM or GitHub form, leaving out private names and paths. Converted
+summaries use the signature `converted-with-problem` and contain no design geometry;
+they never reuse an earlier failure's bundle. The review shows the exact metadata,
+including sharing choices, and nothing is sent until **Send** is clicked.
+
+To send a file privately, follow the steps on the card:
 join the Discord server, then **Copy and open DM** copies a message and opens Dutchy's
-DM. A file within Discord's upload limit is dragged in, and its folder opens for that; for a
+DM. For a converted result, the copied message starts with a note that the result is
+wrong, followed by the standard routing card with `Error: converted-with-problem`.
+The routing card keeps its fixed wording so automatic upload links work.
+A file within Discord's upload limit is dragged in, and its folder opens for that; for a
 larger one, Dutchy replies with a private upload link. See
 [Send the file privately](troubleshooting.md#send-the-file-privately).
 
@@ -199,7 +216,8 @@ browser with Dutchman's version, your system and the error's stage, upstream and
 in, and copies the file's anonymous report, which names no file and no folder. Paste it into
 the form's **Anonymous report for this file** box and read it before you submit. Never attach
 the design; a link to a file that is already public is welcome. The link stays under 2,000
-characters so GitHub opens it while you are signed in.
+characters so GitHub opens it while you are signed in. For converted files, the form says
+that the result is wrong and asks what differs from the original.
 
 The card takes the invite, the limits, and the message from a small policy built into the app.
 Once a day at most, where update checks run, the app reads a newer copy from
@@ -320,7 +338,7 @@ source and matching STEP or converted geometry side by side. These are whole-des
 views. On a file check, click **Target part N** to save the report target. Comparison
 body numbers still need local resolution to the correct assembly part.
 
-Failed-file cards offer **Review and send report**. Review the part roles and exact
+Failed-file cards and expanded converted-file reporting sections offer **Review and send report**. Review the part roles and exact
 sizes; bundles contain geometry. The public-test permission is separate and unticked.
 Extraction is not supported yet: choose anonymous summary, or use the private-send
 card for the whole file. Send/retry always requires a click. If the endpoint does
