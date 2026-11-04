@@ -1730,6 +1730,17 @@ impl App {
                             egui::Sides::new().shrink_left().truncate().show(
                                 ui,
                                 |ui| {
+                                    // Keep the elided text clear of the Remove button.
+                                    let reserve = ui.spacing().item_spacing.x;
+                                    ui.set_max_width((ui.max_rect().width() - reserve).max(0.0));
+                                    // A narrow row stacks its text, so no piece is squeezed to a stub.
+                                    let stacked = ui.max_rect().width() < 450.0;
+                                    let layout = if stacked {
+                                        egui::Layout::top_down(Align::Min)
+                                    } else {
+                                        egui::Layout::left_to_right(Align::Center)
+                                    };
+                                    ui.with_layout(layout, |ui| {
                                     path_label(ui, &p, input);
                                     for (path, estimate) in &self.estimates {
                                         if path == input || path.starts_with(input) {
@@ -1743,8 +1754,11 @@ impl App {
                                                         self.file_estimate_text(path, *estimate)
                                                     )
                                                 };
-                                                ui.label(RichText::new(text).small().color(p.tide));
-                                                if self.sizes.iter().find(|(p, _)| p == path).and_then(|(_, sizes)| *sizes).is_some_and(|sizes| dutchman::choices::desktop_estimate(sizes, &self.options, self.checker.is_ok(), self.estimate_available()).1) {
+                                                // Room for less than a stub: leave it out rather than draw "…" under the button.
+                                                if ui.available_width() > 48.0 {
+                                                    ui.label(RichText::new(text).small().color(p.tide));
+                                                }
+                                                if self.sizes.iter().find(|(p, _)| p == path).and_then(|(_, sizes)| *sizes).is_some_and(|sizes| dutchman::choices::desktop_estimate(sizes, &self.options, self.checker.is_ok(), self.estimate_available()).1) && ui.available_width() > 48.0 {
                                                     ui.label(RichText::new("Standard leaves feature history out to fit in free memory.").small());
                                                 }
                                             }
@@ -1755,8 +1769,11 @@ impl App {
                                             .headline_level()
                                             .map(|level| format!("  {level}"))
                                             .unwrap_or_default();
-                                        ui.label(format!("{}{level}", format.status_for(input)));
+                                        if ui.available_width() > 48.0 {
+                                            ui.label(format!("{}{level}", format.status_for(input)));
+                                        }
                                     }
+                                    });
                                 },
                                 |ui| {
                                     let button = egui::Button::new(RichText::new("Remove").small());
@@ -2307,41 +2324,52 @@ fn row_ui(
         .output
         .as_ref()
         .filter(|_| row.status == Status::Converted);
-    egui::Sides::new().shrink_left().truncate().show(
-        ui,
-        |ui| {
-            ui.label(RichText::new(word).heading().color(colour));
-            ui.add(egui::Label::new(RichText::new(&view.name).heading()).truncate())
-                .on_hover_text(display(&row.input));
-        },
-        |ui| {
-            let Some(output) = output else { return };
-            if ui.button("Show in folder").clicked() {
-                action = Some(Action::Reveal(output.clone()));
+    let is_macro = output.is_some_and(|output| {
+        output
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("FCMacro"))
+    });
+    // The title has its own full-width line and wraps rather than elides.
+    ui.horizontal_wrapped(|ui| {
+        ui.label(RichText::new(word).heading().color(colour));
+        ui.add(egui::Label::new(RichText::new(&view.name).heading()).wrap())
+            .on_hover_text(display(&row.input));
+    });
+    let step_button = !running && row.report.is_some();
+    if output.is_some() || step_button {
+        // One row of buttons under it.
+        ui.horizontal_wrapped(|ui| {
+            if let Some(output) = output {
+                if is_macro {
+                    if ui.button("Show in folder").clicked() {
+                        action = Some(Action::Reveal(output.clone()));
+                    }
+                    ui.label("Run macro in FreeCAD")
+                        .on_hover_text("In FreeCAD, choose Macro > Macros… > Execute.");
+                } else {
+                    let open = ui.button("Open in SolidCraft");
+                    let open = if has_app {
+                        open
+                    } else {
+                        open.on_hover_text(format!(
+                            "Opens with the system's app for this design. Set {} to choose SolidCraft.",
+                            platform::APP_ENV
+                        ))
+                    };
+                    if open.clicked() {
+                        action = Some(Action::Open(output.clone()));
+                    }
+                    if ui.button("Show in folder").clicked() {
+                        action = Some(Action::Reveal(output.clone()));
+                    }
+                }
             }
-            if output
-                .extension()
-                .and_then(|ext| ext.to_str())
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("FCMacro"))
-            {
-                ui.label("Run macro in FreeCAD")
-                    .on_hover_text("In FreeCAD, choose Macro > Macros… > Execute.");
-                return;
+            if step_button && ui.button("Add matching STEP").clicked() {
+                action = Some(Action::Check(index));
             }
-            let open = ui.button("Open in SolidCraft");
-            let open = if has_app {
-                open
-            } else {
-                open.on_hover_text(format!(
-                    "Opens with the system's app for this design. Set {} to choose SolidCraft.",
-                    platform::APP_ENV
-                ))
-            };
-            if open.clicked() {
-                action = Some(Action::Open(output.clone()));
-            }
-        },
-    );
+        });
+    }
     if row.status == Status::Converting {
         if let Some(event) = row.progress {
             ui.label(event.to_string());
@@ -2358,9 +2386,6 @@ fn row_ui(
         } else {
             ui.add(egui::Spinner::new().size(14.0).color(p.lantern));
         }
-    }
-    if !running && row.report.is_some() && ui.button("Add matching STEP").clicked() {
-        action = Some(Action::Check(index));
     }
     if let Some(status) = &view.capability {
         ui.label(status);
@@ -2380,17 +2405,19 @@ fn row_ui(
     }
     if let Some(message) = &view.error {
         ui.label(RichText::new(message).color(p.danger));
-        if let Some((path, ready)) = log {
-            if let Err(message) = platform::log_controls(ui, path, ready) {
-                action = Some(Action::Notice(message));
+        ui.horizontal_wrapped(|ui| {
+            if let Some((path, ready)) = log {
+                if let Err(message) = platform::log_controls(ui, path, ready) {
+                    action = Some(Action::Notice(message));
+                }
             }
-        }
-        if ui
-            .add_enabled(!running, egui::Button::new("Diagnose this file"))
-            .clicked()
-        {
-            action = Some(Action::Diagnose(index));
-        }
+            if ui
+                .add_enabled(!running, egui::Button::new("Diagnose this file"))
+                .clicked()
+            {
+                action = Some(Action::Diagnose(index));
+            }
+        });
         if view.can_report {
             if let Some(report) = &row.report {
                 let steps =

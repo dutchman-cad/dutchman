@@ -2607,6 +2607,7 @@ fn fit_harness(size: [f32; 2], theme: ThemePreference, work: &Path) -> Harness<'
     harness.ctx.set_theme(theme);
     harness.state_mut().preview_solidcraft(Some("0.30.9"));
     // A fixed checker, so no path of the machine running the test is shown.
+    #[cfg(feature = "test-support")]
     harness.state_mut().set_checker_for_test(true);
     harness.state_mut().add_inputs([input]);
     harness.state_mut().set_out_dir(work.join("converted"));
@@ -2758,6 +2759,89 @@ fn a_narrow_window_keeps_the_single_column() {
     }
     // The column keeps its width: nothing runs past the right edge.
     assert!(h.get_by_label("Open in SolidCraft").rect().right() <= size[0]);
+}
+
+#[test]
+fn the_remove_button_does_not_overlap_the_row_text() {
+    for width in [520.0, 1180.0] {
+        let work = tempfile::tempdir().unwrap();
+        let h = fit_harness([width, 1500.0], ThemePreference::Light, work.path());
+        let remove = h.get_by_label("Remove").rect();
+        let mut seen = 0;
+        for node in h.get_all_by_role(egui::accesskit::Role::Label) {
+            let rect = node.rect();
+            // Text on the Remove button's own line.
+            if rect.bottom() > remove.top()
+                && rect.top() < remove.bottom()
+                && rect.right() > 0.0
+                && rect != remove
+            {
+                seen += 1;
+                assert!(
+                    rect.right() <= remove.left() + 0.5 || rect.left() >= remove.right() - 0.5,
+                    "{width}: text {rect:?} overlaps Remove {remove:?}"
+                );
+            }
+        }
+        assert!(seen > 0, "{width}: found no text beside Remove");
+    }
+}
+
+#[test]
+fn a_result_title_has_its_own_line_above_one_row_of_buttons() {
+    for size in [[1180.0, 800.0], [520.0, 1500.0]] {
+        let work = tempfile::tempdir().unwrap();
+        let h = fit_harness(size, ThemePreference::Light, work.path());
+        let name = h
+            .get_all_by_label("generated_unit_cube.f3d")
+            .rfind(|node| node.rect().top() > 80.0)
+            .expect("result title");
+        let name = name.rect();
+        // The whole name is laid out on one line: nothing is elided.
+        assert!(name.width() > 150.0, "{size:?}: name {name:?}");
+        let open = h.get_by_label("Open in SolidCraft").rect();
+        let show = h.get_by_label("Show in folder").rect();
+        let step = h.get_by_label("Add matching STEP").rect();
+        for b in [open, show, step] {
+            assert!(
+                b.top() >= name.bottom() - 0.5,
+                "{size:?}: {b:?} not below {name:?}"
+            );
+        }
+        // One row, in order.
+        assert!((open.center().y - show.center().y).abs() < 1.0);
+        assert!(open.right() <= show.left());
+        if size[0] > 1000.0 {
+            assert!((open.center().y - step.center().y).abs() < 1.0);
+            assert!(show.right() <= step.left());
+        }
+    }
+}
+
+#[test]
+fn a_very_long_result_name_wraps_instead_of_eliding() {
+    let work = tempfile::tempdir().unwrap();
+    let long = "a_very_long_generated_unit_cube_design_name_".repeat(3) + ".f3d";
+    let input = work.path().join(&long);
+    std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(520.0, 1500.0))
+        .build_eframe(|cc| App::new(cc));
+    #[cfg(feature = "test-support")]
+    h.state_mut().set_checker_for_test(true);
+    h.state_mut().add_inputs([input]);
+    h.state_mut().set_out_dir(work.path().join("converted"));
+    h.state_mut().set_verify(false);
+    h.run_steps(8);
+    convert(&mut h);
+    let titles: Vec<_> = h
+        .get_all_by_label(&long)
+        .filter(|node| node.rect().top() > 300.0)
+        .collect();
+    let title = titles.last().expect("result title");
+    // Wrapped onto several lines, so taller than one heading line.
+    assert!(title.rect().height() > 40.0, "{:?}", title.rect());
+    assert!(title.rect().right() <= 520.0);
 }
 
 #[test]
