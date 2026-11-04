@@ -2349,8 +2349,15 @@ fn ask_ai_copies_paths_reads_installed_guidance_then_plain_json() {
                 .fold(folder.to_path_buf(), |path, component| path.join(component)))
             .to_string()
         ));
+        // The installed AGENTS.md is for people using the app; the repository root's is for
+        // contributors, so the fallback names the installed one's source.
+        let source = if relative == "AGENTS.md" {
+            "assets/install/AGENTS.md"
+        } else {
+            relative
+        };
         assert!(prompt.contains(&format!(
-            "https://github.com/dutchman-cad/dutchman/blob/main/{relative}"
+            "https://github.com/dutchman-cad/dutchman/blob/main/{source}"
         )));
     }
     assert!(prompt.contains("If either file is absent"));
