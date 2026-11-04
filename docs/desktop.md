@@ -353,12 +353,14 @@ Open **Advanced → Part positions** to choose:
 - **Smart** (default): accept current poses only when touching joints close, geometry fits
   within first-placement assembly bounds grown by 10%, and repeated inserted designs move
   together. Keep first placements when a check cannot be established.
-- **As Fusion last showed them**: use current poses where available, then first placements.
+- **As last shown in the original program**: use current poses where available, then first placements.
+  The desktop app names the program (for example **As Inventor last showed them**) when
+  every queued design comes from one.
   Current poses can be stale when a bound displayed pose is unavailable.
 - **As first placed**: place parts where they were first placed, ignoring later moves.
 
 The choice is remembered. **As first placed** restores the old placement choice. Joints work
 from the selected placements. The report's Info note counts the placement rules and explains
-Smart's fallbacks. Smart and **As Fusion last showed them** first use decoder-bound saved-scene
+Smart's fallbacks. Smart and **As last shown in the original program** first use decoder-bound saved-scene
 displayed poses when available, without the current-pose guards. Ambiguous and unbound
 scene rows do not select placements; older decoders can omit the arena.

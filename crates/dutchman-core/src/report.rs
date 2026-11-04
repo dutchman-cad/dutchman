@@ -450,7 +450,7 @@ impl Report {
             .part_positions
             .get_or_insert((mode, Default::default()));
         self.push(Severity::Info, "part positions", format!(
-            "{} parts placed as Fusion last showed them ({} directly bound, {} holders derived from displayed children), {} at current poses, {} as first placed ({mode}); first-placement reasons: {} without a current pose, {} ambiguous, {} unsupported, {} joint checks, {} bounds checks, {} inserted-design checks; {} holder conflicts",
+            "{} parts placed as last shown in the original program ({} directly bound, {} holders derived from displayed children), {} at current poses, {} as first placed ({mode}); first-placement reasons: {} without a current pose, {} ambiguous, {} unsupported, {} joint checks, {} bounds checks, {} inserted-design checks; {} holder conflicts",
             counts.displayed, counts.displayed.saturating_sub(counts.derived_holders), counts.derived_holders, counts.current, counts.first_placed, counts.no_current_pose, counts.ambiguous, counts.unsupported, counts.joints, counts.bounds, counts.instances, counts.holder_conflicts
         ));
     }

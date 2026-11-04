@@ -221,7 +221,7 @@ fn option_properties() -> Map<String, Value> {
         "history": {"type": "boolean", "default": true, "description": "Keep feature history when the preset allows it; false narrows the preset like import_only."},
         "sketches": {"type": "boolean", "default": true, "description": "Keep reference sketches when the preset allows it. Sketches needed by retained history stay."},
         "joints": {"type": "boolean", "default": true, "description": "Keep assembly joints when the preset allows it; false keeps the selected placements before joint solving."},
-        "part_positions": {"type": "string", "enum": ["smart", "last-shown", "first-placed"], "default": "smart", "description": "Part positions: Smart, As Fusion last showed them, or As first placed."},
+        "part_positions": {"type": "string", "enum": ["smart", "last-shown", "first-placed"], "default": "smart", "description": "Part positions: Smart, As last shown in the original program, or As first placed."},
         "stored_placements": {"type": "boolean", "default": false, "description": "Place parts where they were first placed, ignoring later moves"},
         "no_memory_check": {"type": "boolean", "default": false, "description": "Run and check history even when estimated peak memory exceeds available memory; also disables Standard's history budget and history-check skipping."},
         "import_only": {

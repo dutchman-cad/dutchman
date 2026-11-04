@@ -572,7 +572,7 @@ an anonymous summary or the private-send card. Nothing is sent by diagnosis.
 
 ## Assembly placements
 
-**Part positions** offers **Smart** (default), **As Fusion last showed them**, and
+**Part positions** offers **Smart** (default), **As last shown in the original program**, and
 **As first placed**. Smart accepts current poses only when touching joints close, geometry
 stays within first-placement assembly bounds grown by 10%, and repeated inserted designs
 move together. It keeps first placements when a check fails or cannot be established.

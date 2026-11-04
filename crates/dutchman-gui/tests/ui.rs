@@ -2560,3 +2560,38 @@ fn part_positions_screenshot() {
         "Advanced open with the Part positions choices listed.",
     );
 }
+
+#[test]
+fn part_positions_last_shown_names_the_program() {
+    let cases: [(&[&str], &str); 5] = [
+        (&["a.f3d", "b.f3d"], "As Fusion last showed them"),
+        (&["a.ipt", "b.iam"], "As Inventor last showed them"),
+        (&["a.sldprt"], "As SolidWorks last showed them"),
+        (&["a.f3d", "b.ipt"], "As last shown in the original program"),
+        (&[], "As last shown in the original program"),
+    ];
+    for (files, expected) in cases {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1000.0, 800.0))
+            .build_eframe(|cc| App::new(cc));
+        harness
+            .state_mut()
+            .add_inputs(files.iter().map(PathBuf::from));
+        harness.run_steps(8);
+        harness.get_by_label("Advanced").click_accesskit();
+        harness.run_steps(8);
+        harness.get_by_label("Part positions").click_accesskit();
+        harness.run_steps(8);
+        harness.get_by_label(expected);
+        assert_eq!(
+            harness
+                .query_all_by_label_contains("last showed them")
+                .count()
+                + harness
+                    .query_all_by_label_contains("last shown in the original")
+                    .count(),
+            1,
+            "{files:?}"
+        );
+    }
+}

@@ -34,6 +34,20 @@ pub struct Row {
     pub size: Option<u64>,
 }
 
+/// The "last shown" Part positions choice, naming the program when every queued design comes from one.
+fn last_shown_label(inputs: &[PathBuf]) -> String {
+    let mut families = inputs
+        .iter()
+        .map(|input| dutchman_core::Format::from_path(input).map(|format| format.family()));
+    if let Some(Some(first @ ("Fusion" | "Inventor" | "SolidWorks" | "FreeCAD"))) = families.next()
+    {
+        if families.all(|family| family == Some(first)) {
+            return format!("As {first} last showed them");
+        }
+    }
+    "As last shown in the original program".to_owned()
+}
+
 impl Row {
     fn view(&self) -> FileView {
         let mut view = FileView::new(
@@ -1707,10 +1721,11 @@ impl App {
         self.preset_ui(ui);
         egui::CollapsingHeader::new("Advanced").show(ui, |ui| {
             ui.horizontal(|ui| {
+                let last_shown = last_shown_label(&self.inputs);
                 let label = |mode| match mode {
-                    dutchman_core::PartPositions::Smart => "Smart",
-                    dutchman_core::PartPositions::LastShown => "As Fusion last showed them",
-                    dutchman_core::PartPositions::FirstPlaced => "As first placed",
+                    dutchman_core::PartPositions::Smart => "Smart".to_owned(),
+                    dutchman_core::PartPositions::LastShown => last_shown.clone(),
+                    dutchman_core::PartPositions::FirstPlaced => "As first placed".to_owned(),
                 };
                 egui::ComboBox::from_label("Part positions")
                     .selected_text(label(self.options.part_positions))

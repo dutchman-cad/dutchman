@@ -81,7 +81,7 @@ checksum verification and adding the programs to your PATH.
 Fusion assemblies default to **Smart** part positions. Decoder-bound displayed poses take
 precedence when available; otherwise current poses are accepted when
 joints close, assembly bounds are respected, and repeated inserted designs move together.
-Other parts keep their first placement. Choose **As Fusion last showed them** to use all
+Other parts keep their first placement. Choose **As last shown in the original program** to use all
 available current poses, or **As first placed** to restore the old placement choice:
 `--part-positions first-placed`, also available under **Advanced → Part positions** in the
 desktop app. Joints work from the selected placements. Reports count the placement rules.
