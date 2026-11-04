@@ -1,5 +1,22 @@
 # The command line
 
+## Continue from a desktop result
+
+The desktop **Ask your AI about this file** prompt reads the installed
+`AGENTS.md` and conversion skill first (with GitHub URL fallbacks when absent), then the
+saved plain `<stem>.report.json`. It names the full path of `dutchman` beside the running app
+(`dutchman.exe` on Windows, `Contents/Helpers/dutchman` in a macOS app bundle). There is
+no server to connect. Optional follow-up commands
+use `--json` and a fresh scratch folder next to the converted design. `inspect INPUT --json`
+reads without converting; `diagnose INPUT --out SCRATCH --time-limit 30s --json` tries
+parts separately. For a specific trial use
+`convert INPUT -o SCRATCH/trial.sc --part P --stop-at-feature N --no-clobber --json`.
+`--stop-at-feature` requires `--part`; feature numbers count active timeline features,
+and 0 tries stored shape only. Once diagnosis has identified a failing part,
+`repro INPUT --out FRESH_SCRATCH --from-diagnose DIAGNOSIS --json` reuses that diagnosis.
+Do not run a whole-file conversion again or overwrite the original, converted design,
+or saved report. Nothing is sent without asking. See [desktop usage](desktop.md#ask-your-ai-about-this-file).
+
 ## Project inputs
 
 Files whose names start with `~$` are lock files. They are ignored in project planning

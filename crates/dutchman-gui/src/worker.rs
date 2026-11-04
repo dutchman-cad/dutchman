@@ -10,6 +10,7 @@ use std::sync::Arc;
 use dutchman::batch::{self, Event, Job};
 use dutchman::choices::{self, Estimate, MemoryCheck};
 use dutchman::ConvertOptions;
+use dutchman_core::Writer;
 use eframe::egui;
 use serde_json::Value;
 
@@ -45,6 +46,8 @@ pub enum Message {
     },
     /// A file that failed, and its size when it can be read.
     Sized { input: PathBuf, size: Option<u64> },
+    /// The design result is still available, but its local report could not be saved.
+    ReportSaveFailed(String),
     /// A job of the run started or finished.
     Progress(Event),
     /// The run is over: every job finished, or it was stopped.
@@ -61,6 +64,12 @@ fn sized(input: &Path) -> Message {
 
 fn failed(report: &Value) -> bool {
     report.get("ok") != Some(&Value::Bool(true))
+}
+
+fn save_report(output: &Path, report: &Value, send: &impl Fn(Message)) {
+    if let Err(message) = dutchman::saved_report::save(output, report) {
+        send(Message::ReportSaveFailed(message));
+    }
 }
 
 /// A run in progress.
@@ -97,6 +106,19 @@ impl Run {
                     .filter_map(|report| report.pointer("/input/path")?.as_str())
                     .map(PathBuf::from)
                     .collect();
+                for report in &problems {
+                    if let Some(name) = report
+                        .pointer("/input/path")
+                        .and_then(Value::as_str)
+                        .and_then(|path| Path::new(path).file_name())
+                    {
+                        save_report(
+                            &out_dir.join(name).with_extension(writer.extension()),
+                            report,
+                            &send,
+                        );
+                    }
+                }
                 send(Message::Planned {
                     problems,
                     jobs: jobs.clone(),
@@ -106,8 +128,11 @@ impl Run {
                 }
                 batch::run_each(&jobs, &writer, batch::workers(None), &flag, |event| {
                     if let Event::Finished(index, report) = &event {
-                        if let Some(job) = jobs.get(*index).filter(|_| failed(report)) {
-                            send(sized(&job.input));
+                        if let Some(job) = jobs.get(*index) {
+                            save_report(&job.output, report, &send);
+                            if failed(report) {
+                                send(sized(&job.input));
+                            }
                         }
                     }
                     send(Message::Progress(event));
@@ -130,6 +155,7 @@ impl Run {
         let writer = options.writer();
         let flag = Arc::clone(&stop);
         let input = job.input.clone();
+        let output = job.output.clone();
         std::thread::spawn(move || {
             let send = |message: Message| {
                 let _ = messages.send(message);
@@ -137,6 +163,9 @@ impl Run {
             };
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 batch::run_each(&[job], &writer, 1, &flag, |event| {
+                    if let Event::Finished(_, report) = &event {
+                        save_report(&output, report, &send);
+                    }
                     if matches!(&event, Event::Finished(_, report) if failed(report)) {
                         send(sized(&input));
                     }
@@ -388,6 +417,13 @@ mod tests {
                 Message::Progress(Event::Finished(index, report)) => {
                     assert_eq!(index, 0);
                     assert_eq!(report["ok"], true);
+                    let output = PathBuf::from(report["output"]["path"].as_str().unwrap());
+                    assert!(output.is_file());
+                    let saved: Value = serde_json::from_slice(
+                        &std::fs::read(dutchman::saved_report::path(&output, true)).unwrap(),
+                    )
+                    .unwrap();
+                    assert_eq!(saved, report);
                     finished = true;
                 }
                 Message::Done => break,
@@ -433,5 +469,9 @@ mod tests {
         assert_eq!(report.pointer("/error/message").and_then(Value::as_str), Some("Dutchman doesn't convert IGES yet: open it in SolidCraft directly (File > Import)."));
         assert!(dutchman::json::fixtures_pitch(&reports).is_none());
         assert!(!outputs.join("design.solidcraft").exists());
+        let saved: Value =
+            serde_json::from_slice(&std::fs::read(outputs.join("design.failed.json")).unwrap())
+                .unwrap();
+        assert_eq!(&saved, report);
     }
 }

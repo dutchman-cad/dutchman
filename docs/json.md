@@ -1,5 +1,28 @@
 # Machine-readable reports
 
+## Saved desktop and watch reports
+
+The desktop app saves each converted file's full `dutchman.convert/1` report as
+`<stem>.report.json` beside its design. Failed files save `<stem>.failed.json` in the
+output folder. Watch mode uses the same names and schema. These are the same per-file
+reports as CLI `convert --json`, including local paths, names and detailed losses; keep
+them local. They are not anonymous reports.
+
+MCP `read_report` reads a saved report without opening or decoding its source or design.
+It preserves every saved field and adds optional `loss_groups` to `dutchman.convert/1`:
+
+| Field | Meaning |
+|---|---|
+| `loss_groups` | Array grouped by the pair `(code, stage)`, ordered by code then stage, with missing values first. |
+| `loss_groups[].code`, `.stage` | Original loss code and stage, or `null` when not recorded. |
+| `loss_groups[].count` | Number of original losses in this group. |
+| `loss_groups[].losses` | Full original loss entries, in their saved order within this group. |
+
+The original `losses`, `history` (including features and parts), `completeness`, and
+`verification` fields retain their saved values. No result is recomputed or inferred.
+This local tool returns names and paths; anonymous diagnostic tools keep their anonymous
+schemas. See [MCP privacy and usage](mcp.md#read-an-existing-result).
+
 ## Project inputs
 
 Files whose names start with `~$` are lock files. They are ignored in project planning

@@ -96,6 +96,7 @@ fn an_mcp_client_converts_through_dutchman() {
     assert_eq!(
         names,
         [
+            "read_report",
             "doctor",
             "compare_step",
             "convert",
@@ -581,5 +582,124 @@ fn local_check_tools_return_anonymous_reports_and_fixed_errors() {
     assert_eq!(failed["isError"], true);
     assert_eq!(failed["structuredContent"]["input"], Value::Null);
     assert!(!failed.to_string().contains("zq-secret-"));
+    client.finish();
+}
+
+#[test]
+fn read_report_preserves_saved_losses_after_original_and_design_are_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("original.f3d");
+    let output = dir.path().join("result.sc");
+    std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
+    let mut client = Client::start();
+    let converted = client.call(
+        "convert",
+        json!({"input": input, "output": output, "verify": false}),
+    );
+    assert_eq!(converted["isError"], false);
+    let saved = converted["structuredContent"].clone();
+    assert!(!saved["losses"].as_array().unwrap().is_empty());
+    dutchman::saved_report::save(&output, &saved).unwrap();
+    std::fs::remove_file(&input).unwrap();
+    std::fs::remove_file(&output).unwrap();
+    for path in [&output, &output.with_extension("report.json")] {
+        let reply = client.call("read_report", json!({"input": path}));
+        assert_eq!(reply["isError"], false);
+        let mut read = reply["structuredContent"].clone();
+        let groups = read.as_object_mut().unwrap().remove("loss_groups").unwrap();
+        assert_eq!(read, saved);
+        let count: u64 = groups
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|g| g["count"].as_u64().unwrap())
+            .sum();
+        assert_eq!(count, saved["losses"].as_array().unwrap().len() as u64);
+        for group in groups.as_array().unwrap() {
+            for loss in group["losses"].as_array().unwrap() {
+                assert_eq!(loss["code"], group["code"]);
+                assert_eq!(loss["stage"], group["stage"]);
+                assert!(saved["losses"].as_array().unwrap().contains(loss));
+            }
+        }
+    }
+    assert!(!input.exists());
+    assert!(!output.exists());
+    client.finish();
+}
+
+#[test]
+fn read_report_groups_by_both_code_and_stage_and_keeps_all_recorded_outcomes() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("saved.report.json");
+    let saved = json!({"schema": dutchman::json::CONVERT, "ok": true,
+        "input": {"path": "/private/part.f3d"}, "output": {"path": "/private/part.sc"},
+        "losses": [
+            {"code": "test", "stage": "decode", "message": "first"},
+            {"code": "test", "stage": "write", "message": "second"},
+            {"code": "test", "stage": "decode", "message": "third"},
+            {"code": null, "stage": "write", "message": "uncoded"}],
+        "history": {"features": [{"name": "Private feature", "status": "blocked"}], "parts": [{"features": []}]},
+        "completeness": {"placed": 3, "placements": 4, "left_out": [{"file": "missing.ipt", "count": 1}]},
+        "verification": {"status": "partial"}});
+    std::fs::write(&path, saved.to_string()).unwrap();
+    let mut client = Client::start();
+    let reply = client.call("read_report", json!({"input": path}));
+    assert_eq!(reply["isError"], false);
+    let mut read = reply["structuredContent"].clone();
+    let groups = read.as_object_mut().unwrap().remove("loss_groups").unwrap();
+    assert_eq!(read, saved);
+    assert_eq!(groups.as_array().unwrap().len(), 3);
+    let decode = groups
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|g| g["stage"] == "decode")
+        .unwrap();
+    assert_eq!(decode["count"], 2);
+    assert_eq!(
+        decode["losses"],
+        json!([saved["losses"][0], saved["losses"][2]])
+    );
+    client.finish();
+}
+
+#[test]
+fn read_report_refuses_missing_malformed_wrong_schema_and_oversized_reports() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("saved.report.json");
+    let mut client = Client::start();
+    assert_eq!(
+        client.call("read_report", json!({"input": path}))["isError"],
+        true
+    );
+    for bytes in [
+        "not JSON",
+        "{}",
+        r#"{"schema":"dutchman.convert-all/1","ok":true}"#,
+        r#"{"schema":"dutchman.convert/1","ok":true}"#,
+    ] {
+        std::fs::write(&path, bytes).unwrap();
+        assert_eq!(
+            client.call("read_report", json!({"input": path}))["isError"],
+            true
+        );
+    }
+    std::fs::File::create(&path)
+        .unwrap()
+        .set_len(dutchman::saved_report::MAX_BYTES + 1)
+        .unwrap();
+    assert_eq!(
+        client.call("read_report", json!({"input": path}))["isError"],
+        true
+    );
+    let failed = dir.path().join("part.failed.json");
+    std::fs::write(&failed, json!({"schema": dutchman::json::CONVERT, "ok": false, "error": {"message": "not supported yet"}}).to_string()).unwrap();
+    let reply = client.call("read_report", json!({"input": failed}));
+    assert_eq!(reply["isError"], true);
+    assert_eq!(
+        reply["structuredContent"]["error"]["message"],
+        "not supported yet"
+    );
     client.finish();
 }

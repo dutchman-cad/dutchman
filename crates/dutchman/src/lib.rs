@@ -27,6 +27,7 @@ pub mod progress;
 pub mod report_policy;
 pub mod report_send;
 pub mod repro;
+pub mod saved_report;
 pub mod stop;
 pub mod watch;
 pub mod worker;

@@ -1,5 +1,36 @@
 # The MCP server
 
+## Read an existing result
+
+`read_report` takes `input`, the absolute path of a `.sc` design or its adjacent
+`<stem>.report.json`. Legacy `.solidcraft`/`.solvecraft` design paths and explicit
+`.failed.json` reports also work. It reads only the saved JSON; neither the original nor
+the design needs to exist, and nothing is decoded, converted, verified again, or written.
+Desktop conversions and watch mode save these per-file reports. A missing sidecar is
+reported as an error; the tool never falls back to converting.
+
+```json
+{"name":"read_report","arguments":{"input":"/models/converted/part.report.json"}}
+```
+
+The reply preserves the `dutchman.convert/1` report, including `losses`, feature outcomes
+under `history` (including per-part history), placements under `completeness`, and
+`verification` when recorded. It adds `loss_groups`, grouped by `(code, stage)` with
+`count` and every original loss in `losses`; absent codes/stages are `null`. Fields absent
+from the saved report remain absent. A saved failure retains `ok: false` and is returned
+as an MCP tool error with its original error details. Reports over 64 MiB, unreadable JSON,
+and other schemas are refused.
+
+This is a **local report tool**, like `convert` and `inspect`: its full reply includes
+private paths, file/feature names and messages. Use it only with a client keeping that
+content local; do not paste the reply into an issue or send it to a remote assistant.
+The anonymous diagnostic tools below continue to exclude these details. `read_report`
+sends nothing, but an MCP client controls where it forwards a tool reply.
+
+The desktop **Ask your AI about this file** prompt needs no MCP connection: it opens the
+installed instructions and conversion skill first (with GitHub URL fallbacks when absent),
+then the same JSON directly, and uses the bundled command line only for focused follow-up work.
+
 ## Project inputs
 
 Files whose names start with `~$` are lock files. They are ignored in project planning
@@ -325,6 +356,7 @@ change replay order: the neutral ordinal controls it.
 | `convert` | `input`, `output` (optional for `dry_run`), and optionally `threads`, `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `dry_run`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `overwrite`, `project`, `search` | `dutchman.convert/1` | the `output` file |
 | `convert_all` | `inputs`, `out_dir`, and optionally `jobs`, `timeout`, `max_memory_mb`, `journal`, `report_anon`, `report_salt`, `report_key`, `threads`, `preset`, `history`, `sketches`, `joints`, `no_memory_check`, `import_only`, `verify`, `solidcraft`, `solidcraft_version`, `verify_timeout`, `overwrite`, `project`, `search` | `dutchman.convert-all/1` | designs and the default log inside `out_dir`, plus `journal`, `report_anon`, and `report_key` at their specified paths |
 | `formats` | none | `dutchman.formats/1` | nothing |
+| `read_report` | `input` (saved report or its design) | `dutchman.convert/1` plus `loss_groups`, with private local names and paths | nothing |
 
 The formats report includes each reader's status and cadmpeg's published headline
 `level` (`L0`–`L9`, or `null` when none is published). The level supplements the status.

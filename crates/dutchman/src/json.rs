@@ -650,6 +650,31 @@ fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
     out
 }
 
+/// Index a saved conversion's original losses by code and stage, preserving every field.
+/// This local report keeps names and paths, unlike the anonymous diagnostic schemas.
+pub(crate) fn with_loss_groups(mut report: Value) -> Value {
+    let mut groups: BTreeMap<(Option<String>, Option<String>), Vec<Value>> = BTreeMap::new();
+    for loss in report
+        .get("losses")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let field = |key| loss.get(key).and_then(Value::as_str).map(str::to_owned);
+        groups
+            .entry((field("code"), field("stage")))
+            .or_default()
+            .push(loss.clone());
+    }
+    let groups: Vec<Value> = groups.into_iter().map(|((code, stage), losses)| {
+        json!({"code": code, "stage": stage, "count": losses.len(), "losses": losses})
+    }).collect();
+    if let Some(fields) = report.as_object_mut() {
+        fields.insert("loss_groups".into(), json!(groups));
+    }
+    report
+}
+
 pub fn losses(report: &Report) -> Value {
     report
         .losses()

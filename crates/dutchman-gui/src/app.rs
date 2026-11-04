@@ -1132,6 +1132,7 @@ impl App {
                         row.size = size;
                     }
                 }
+                Message::ReportSaveFailed(message) => self.notice = Some(message),
                 Message::Progress(Event::Started(index)) => {
                     if let Some(row) = self.rows.get_mut(self.offset + index) {
                         row.status = Status::Converting;
@@ -2230,8 +2231,128 @@ fn row_ui(
                 action = Some(Action::Pick(Pick::SaveLog(index)));
             }
         }
+        if row
+            .report
+            .as_ref()
+            .and_then(|r| r.get("losses"))
+            .and_then(Value::as_array)
+            .is_some_and(|losses| !losses.is_empty())
+        {
+            if let Some(output) = row.output.as_deref() {
+                let copied = ui.id().with(("ask-ai-copied", &row.input, output));
+                if ui.button("Ask your AI about this file").clicked() {
+                    match ai_prompt(&row.input, output) {
+                        Ok(prompt) => {
+                            ui.ctx().copy_text(prompt);
+                            ui.data_mut(|data| data.insert_temp(copied, true));
+                        }
+                        Err(message) => action = Some(Action::Notice(message)),
+                    }
+                }
+                if ui.data(|data| data.get_temp::<bool>(copied).unwrap_or(false)) {
+                    ui.label("Copied. Paste it into your AI assistant.");
+                }
+            }
+        }
     }
     action
+}
+
+/// Clipboard-only handoff using a plain JSON report and the bundled command line.
+fn ai_prompt(input: &Path, output: &Path) -> Result<String, String> {
+    let input = std::path::absolute(input).map_err(|err| err.to_string())?;
+    let output = std::path::absolute(output).map_err(|err| err.to_string())?;
+    let report = dutchman::saved_report::path(&output, true);
+    let executable = std::env::current_exe().map_err(|err| {
+        format!(
+            "Could not locate dutchman beside the app: {err}. Check where Dutchman is installed."
+        )
+    })?;
+    if [&input, &output, &executable]
+        .into_iter()
+        .any(|path| path.to_str().is_none())
+    {
+        return Err("Copying an AI prompt for non-Unicode paths is not supported yet. Choose Unicode file and output paths, then try again.".into());
+    }
+    let app_folder = executable
+        .parent()
+        .ok_or("Could not locate the app's folder. Check where Dutchman is installed.")?;
+    let agents = app_folder.join("AGENTS.md");
+    let skill = app_folder
+        .join("skills")
+        .join("dutchman-converting")
+        .join("SKILL.md");
+    let command_docs = app_folder.join("docs").join("command-line.md");
+    let cli = bundled_cli(&executable)?;
+    let command = format!(
+        "{}{}",
+        if cfg!(windows) { "& " } else { "" },
+        shell_path(&cli)
+    );
+    let scratch = output.with_file_name(format!(
+        "{}-ai",
+        output.file_stem().unwrap_or_default().to_string_lossy()
+    ));
+    let original = shell_path(&input);
+    let inspection = shell_path(&scratch.join("inspect.json"));
+    let diagnosis = shell_path(&scratch.join("diagnosis"));
+    let diagnosis_json = shell_path(&scratch.join("diagnose.json"));
+    let trial = shell_path(&scratch.join("part-P-feature-N.sc"));
+    let trial_json = shell_path(&scratch.join("trial-P-N.json"));
+    let repro = shell_path(&scratch.join("repro"));
+    let repro_json = shell_path(&scratch.join("repro.json"));
+    Ok(format!(
+        "Help me diagnose this Dutchman conversion using the result already saved.\n\
+         Original file: {}\nConverted design: {}\nSaved report: {}\nDutchman command: {}\nScratch folder: {}\n\n\
+         First read the app's instructions at {} and its conversion skill at {}, in that order. If either file is absent (for example, in a source build), read its corresponding fallback URL:\n\
+         AGENTS.md: https://github.com/dutchman-cad/dutchman/blob/main/AGENTS.md\n\
+         Conversion skill: https://github.com/dutchman-cad/dutchman/blob/main/skills/dutchman-converting/SKILL.md\n\
+         Command reference: {} (fallback: https://github.com/dutchman-cad/dutchman/blob/main/docs/command-line.md).\n\n\
+         Then open the saved .report.json directly from disk: it is plain JSON. Explain the losses grouped by code and stage, feature outcomes (including per-part history), placements/completeness, and verification. Distinguish what the report proves from what remains unverified. Do not convert the whole file again.\n\n\
+         Only investigate specific losses that need more evidence. Use the full Dutchman command path above, bundled with the app. Create a fresh scratch folder next to the result at the path above; if it exists, choose an unused numbered suffix and adjust every path below. Keep all new outputs, reports, logs, and reproduction files inside it. Never overwrite the original, the converted design, or its saved report.\n\n\
+         Optional commands, only as needed (use --json; redirect stdout to the indicated scratch JSON file):\n\
+         {command} inspect {original} --json > {inspection}\n\
+         {command} diagnose {original} --out {diagnosis} --time-limit 30s --json > {diagnosis_json}\n\
+         {command} convert {original} -o {trial} --part P --stop-at-feature N --no-clobber --json > {trial_json}\n\
+         Replace P with the part number established by diagnosis and N with the active timeline feature number; 0 tries stored shape only. Always keep --part on a conversion trial. Inspection reads the original without converting. Diagnosis reads the original and tries parts separately; run it only if that extra work is needed for a specific loss.\n\n\
+         Only if diagnosis has already identified a failing part, a local reproduction kit can reuse it without converting the whole file:\n\
+         {command} repro {original} --out {repro} --from-diagnose {diagnosis} --json > {repro_json}\n\n\
+         Send nothing anywhere without asking me first. These paths, the full report, and any reproduction geometry are private local information. Do not upload files or submit an issue without my permission. Dutchman has only copied this prompt; nothing has been sent.",
+        serde_json::json!(input), serde_json::json!(output), serde_json::json!(report), serde_json::json!(cli), serde_json::json!(scratch), serde_json::json!(agents), serde_json::json!(skill), serde_json::json!(command_docs)
+    ))
+}
+
+/// macOS bundles keep commands in Helpers because Dutchman/dutchman collide on disk.
+fn bundled_cli(executable: &Path) -> Result<PathBuf, String> {
+    let folder = executable
+        .parent()
+        .ok_or("Could not locate the app's folder. Check where Dutchman is installed.")?;
+    if folder.file_name() == Some(std::ffi::OsStr::new("MacOS")) {
+        if let Some(contents) = folder
+            .parent()
+            .filter(|p| p.file_name() == Some(std::ffi::OsStr::new("Contents")))
+        {
+            if contents.parent().and_then(Path::extension) == Some(std::ffi::OsStr::new("app")) {
+                return Ok(contents.join("Helpers").join("dutchman"));
+            }
+        }
+    }
+    Ok(folder.join(if cfg!(windows) {
+        "dutchman.exe"
+    } else {
+        "dutchman"
+    }))
+}
+
+/// Quote an argument for the system shell (PowerShell on Windows).
+fn shell_path(path: &Path) -> String {
+    let path = path.to_string_lossy();
+    let escaped = if cfg!(windows) {
+        path.replace('\'', "''")
+    } else {
+        path.replace('\'', "'\\''")
+    };
+    format!("'{escaped}'")
 }
 
 /// The narrowest a step card gets before the cards wrap onto another line.
@@ -2466,6 +2587,51 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn bundled_command_paths_match_archives_windows_and_macos_app_layout() {
+        let folder = Path::new("installed").join("Dutchman Convert");
+        let executable = folder.join(if cfg!(windows) {
+            "dutchman-gui.exe"
+        } else {
+            "dutchman-gui"
+        });
+        assert_eq!(
+            bundled_cli(&executable).unwrap(),
+            folder.join(if cfg!(windows) {
+                "dutchman.exe"
+            } else {
+                "dutchman"
+            })
+        );
+        let contents = folder.join("Dutchman Convert.app").join("Contents");
+        assert_eq!(
+            bundled_cli(&contents.join("MacOS").join("Dutchman")).unwrap(),
+            contents.join("Helpers").join("dutchman")
+        );
+    }
+
+    #[test]
+    fn prompt_paths_are_shell_quoted_with_spaces_and_apostrophes() {
+        let path = Path::new("private designs").join("owner's part.f3d");
+        let quoted = shell_path(&path);
+        let expected = if cfg!(windows) {
+            "'private designs\\owner''s part.f3d'"
+        } else {
+            "'private designs/owner'\\''s part.f3d'"
+        };
+        assert_eq!(quoted, expected);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_unicode_prompt_paths_return_a_message_instead_of_panicking() {
+        use std::os::unix::ffi::OsStringExt;
+        let input = PathBuf::from(std::ffi::OsString::from_vec(b"part-\xff.f3d".to_vec()));
+        assert!(ai_prompt(&input, Path::new("part.sc"))
+            .unwrap_err()
+            .contains("non-Unicode paths is not supported yet"));
+    }
 
     #[test]
     fn results_scroll_to_the_last_private_send_option() {

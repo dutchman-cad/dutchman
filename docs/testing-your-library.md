@@ -11,6 +11,23 @@ Fusion (`.f3d`, `.f3z`) libraries are the main target. Inventor (`.ipt`, `.iam`)
 SolidWorks (`.sldprt`) and FreeCAD (`.FCStd`) files are welcome too,
 including ones you cannot open any more.
 
+## Ask your AI about one result
+
+In the desktop app, choose **Ask your AI about this file** on a converted card with
+losses, then paste the copied prompt into your own assistant with local file and command
+access. No server setup is needed. The prompt names the original, design, and adjacent
+`<stem>.report.json`; it first reads the installed `AGENTS.md` and conversion skill, then
+opens that plain JSON,
+without converting the whole file again. Full guidance paths come from the running app's
+folder; matching GitHub URLs are fallbacks when those files are absent in a source build.
+The report has the CLI's `dutchman.convert/1` schema and includes private local paths, so
+keep it local.
+
+For a specific loss needing more evidence, the prompt uses the full `dutchman` command
+path beside the app, with `--json`, and puts follow-up outputs in a new scratch folder
+next to the result. It keeps the original and converted design untouched and asks before
+sending anything anywhere. The button only copies text; nothing is sent.
+
 ## Everything stays on your machine
 
 - Converting and checking your files makes **no network connections**. Dutchman reads your

@@ -1,5 +1,15 @@
 # Getting started
 
+## Ask your assistant about a saved desktop result
+
+A desktop conversion saves `<stem>.report.json` beside its design (`.failed.json` for a
+failure), using the CLI's full per-file JSON schema. These reports contain private local
+paths. A converted card with losses has **Ask your AI about this file**: copy the prompt
+and paste it into an assistant with local file and command access. It first reads the installed `AGENTS.md` and conversion skill (with GitHub URL fallbacks
+when absent), then the plain JSON, and uses the full path of `dutchman` beside the app for focused follow-up work in a
+fresh scratch folder. It does not require a server connection, asks before sending
+anything, and says not to convert the whole file again. See [desktop usage](desktop.md#ask-your-ai-about-this-file).
+
 ## Project inputs
 
 Files whose names start with `~$` are lock files. They are ignored in project planning

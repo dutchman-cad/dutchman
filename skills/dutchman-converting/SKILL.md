@@ -710,3 +710,32 @@ when reusing an older log is advisory; conversion proceeds. Desktop result cards
 other cards linked to their original run. Report review and the copied Discord DM identify
 that run's log. The log contains no names or contents from the design. Send uploads only
 the summary or bundle reviewed in the consent screen; the log stays local.
+
+## Start from an existing desktop result
+
+When the person already has a converted design and `<stem>.report.json`, open that plain
+JSON directly to begin diagnosis, after reading the app's installed `AGENTS.md` and
+conversion skill. The copied prompt gives full local guidance paths derived from the
+running app's folder and matching GitHub URL fallbacks when those files are absent. It uses
+`dutchman.convert/1`; explain the saved
+losses grouped by code and stage, feature outcomes (including history parts), placements
+and verification. Do not convert the whole file again. The desktop **Ask your AI about
+this file** button copies the original, design, report and full path of the bundled
+`dutchman` command, so no server installation or connection is needed.
+
+Use that exact executable for focused follow-up only when a loss needs more evidence.
+`inspect INPUT --json` reads without converting. `diagnose INPUT --out SCRATCH
+--time-limit 30s --json` reads the original and tries parts separately. For a known part
+use `convert INPUT -o SCRATCH/trial.sc --part P --stop-at-feature N --no-clobber --json`;
+N counts active timeline features and 0 means stored shape only. Only after diagnosis
+identifies a failing part, use `repro INPUT --out FRESH_SCRATCH --from-diagnose DIAGNOSIS
+--json` to reuse it. Create fresh scratch folders next to the result; keep every new
+output there and never overwrite the original, converted design or saved report.
+Ask before sending anything anywhere.
+
+If a local MCP client is already connected, optional `read_report(input)` reads the same
+saved report without decoding; `.sc` resolves to the adjacent `.report.json` and explicit
+`.failed.json` works too. It returns every original field plus `loss_groups` entries with
+`code`, `stage`, `count`, and original `losses`. Unlike anonymous diagnostic tools, this
+local tool returns private paths, names and messages, like `convert` and `inspect`.
+Keep the report and reply local; do not put them in an issue or remote assistant.

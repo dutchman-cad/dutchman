@@ -2129,3 +2129,162 @@ fn run_log_screenshots() {
     }
     std::fs::write(dir.join("run-logs.md"), index).unwrap();
 }
+
+fn ai_result_card(theme: ThemePreference) -> (Harness<'static, App>, tempfile::TempDir) {
+    let work = tempfile::tempdir().unwrap();
+    let input = work.path().join("synthetic-part.f3d");
+    std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
+    let mut harness = screenshot_harness(theme);
+    harness.state_mut().add_inputs([input]);
+    harness
+        .state_mut()
+        .set_out_dir(work.path().join("converted"));
+    harness.state_mut().set_verify(false);
+    harness
+        .state_mut()
+        .set_diagnostic_log(work.path().join("run.jsonl"));
+    convert(&mut harness);
+    assert_eq!(harness.state().rows()[0].status, Status::Converted);
+    harness
+        .get_by_label("Ask your AI about this file")
+        .scroll_to_me();
+    harness.run_steps(8);
+    (harness, work)
+}
+
+fn copy_ai_prompt(harness: &mut Harness<'static, App>) -> String {
+    assert!(harness
+        .query_by_label("Copied. Paste it into your AI assistant.")
+        .is_none());
+    harness
+        .get_by_label("Ask your AI about this file")
+        .click_accesskit();
+    harness.step();
+    let prompt = harness
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            egui::OutputCommand::CopyText(text) => Some(text.clone()),
+            _ => None,
+        })
+        .unwrap();
+    assert!(!harness
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .any(|command| matches!(command, egui::OutputCommand::OpenUrl(_))));
+    harness.run_steps(8);
+    harness.get_by_label("Copied. Paste it into your AI assistant.");
+    prompt
+}
+
+#[test]
+fn ask_ai_copies_paths_reads_installed_guidance_then_plain_json() {
+    let (mut harness, _work) = ai_result_card(ThemePreference::Light);
+    let prompt = copy_ai_prompt(&mut harness);
+    let row = &harness.state().rows()[0];
+    let output = row.output.as_ref().unwrap();
+    for path in [&row.input, output, &output.with_extension("report.json")] {
+        assert!(
+            prompt.contains(&serde_json::json!(path).to_string()),
+            "{prompt}"
+        );
+    }
+    let report: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(output.with_extension("report.json")).unwrap())
+            .unwrap();
+    assert_eq!(Some(&report), row.report.as_ref());
+    assert!(prompt.contains("Then open the saved .report.json directly from disk"));
+    let executable = std::env::current_exe().unwrap();
+    let folder = executable.parent().unwrap();
+    let guidance = prompt.find("First read the app's instructions").unwrap();
+    let saved_json = prompt.find("Then open the saved .report.json").unwrap();
+    assert!(guidance < saved_json);
+    for relative in [
+        "AGENTS.md",
+        "skills/dutchman-converting/SKILL.md",
+        "docs/command-line.md",
+    ] {
+        assert!(prompt.contains(
+            &serde_json::json!(relative
+                .split('/')
+                .fold(folder.to_path_buf(), |path, component| path.join(component)))
+            .to_string()
+        ));
+        assert!(prompt.contains(&format!(
+            "https://github.com/dutchman-cad/dutchman/blob/main/{relative}"
+        )));
+    }
+    assert!(prompt.contains("If either file is absent"));
+    assert!(!prompt.to_ascii_lowercase().contains("mcp"));
+    assert!(prompt.contains("Send nothing anywhere without asking me first"));
+    assert!(
+        prompt.contains("Never overwrite the original, the converted design, or its saved report")
+    );
+    assert!(prompt.contains("Do not convert the whole file again"));
+    for tool in [
+        "inspect",
+        "diagnose",
+        "--part P --stop-at-feature N --no-clobber --json",
+        "--from-diagnose",
+    ] {
+        assert!(prompt.contains(tool));
+    }
+    let executable = std::env::current_exe().unwrap();
+    let cli = executable.parent().unwrap().join(if cfg!(windows) {
+        "dutchman.exe"
+    } else {
+        "dutchman"
+    });
+    assert!(prompt.contains(&serde_json::json!(cli).to_string()));
+}
+
+#[test]
+#[ignore = "renders the AI result card in Day and Night with a GPU"]
+fn ask_ai_screenshots() {
+    // Keep diagnostics recovery paths private and out of the pictures.
+    if std::env::var_os("DUTCHMAN_AI_SCREENSHOT_CHILD").is_none() {
+        let state = tempfile::tempdir().unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "ask_ai_screenshots", "--nocapture"])
+            .env("DUTCHMAN_AI_SCREENSHOT_CHILD", "1")
+            .env("XDG_STATE_HOME", state.path())
+            .env("LOCALAPPDATA", state.path())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut index = String::new();
+    for (theme, name) in [
+        (ThemePreference::Light, "day"),
+        (ThemePreference::Dark, "night"),
+    ] {
+        let (mut harness, _work) = ai_result_card(theme);
+        // Show neutral checker metadata rather than the machine's installed CLI path.
+        #[cfg(feature = "test-support")]
+        harness.state_mut().set_checker_for_test(true);
+        let prompt = copy_ai_prompt(&mut harness);
+        std::fs::write(dir.join(format!("prompt-{name}.txt")), prompt).unwrap();
+        harness
+            .get_by_label("Copied. Paste it into your AI assistant.")
+            .scroll_to_me();
+        harness.run_steps(8);
+        let button = harness.get_by_label("Ask your AI about this file").rect();
+        assert!(button.top() > 60.0 && button.bottom() < 800.0, "{button:?}");
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "ask-ai",
+            name,
+            "Converted synthetic file with a saved report and copied AI prompt.",
+        );
+    }
+    std::fs::write(dir.join("ask-ai.md"), index).unwrap();
+}

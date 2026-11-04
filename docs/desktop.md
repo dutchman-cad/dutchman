@@ -1,5 +1,33 @@
 # The desktop app
 
+## Ask your AI about this file
+
+Each completed conversion saves its full `dutchman.convert/1` JSON report beside the
+design as `<stem>.report.json`, the same schema as CLI `convert --json`. Failed files
+save `<stem>.failed.json` in the output folder instead. Reports include local paths,
+file and feature names, and detailed messages: they stay local and are not anonymous.
+If saving fails, the app shows a notice; the conversion result is still available.
+
+A converted card with losses offers **Ask your AI about this file**. It copies a ready
+prompt naming the original, converted design, saved report, and full path of the
+`dutchman` command beside the running app (`dutchman.exe` beside `dutchman-gui.exe`
+on Windows; `Contents/Helpers/dutchman` inside a macOS app bundle). **Copied. Paste it into your AI assistant.** appears below the button.
+Nothing is sent and no server connection or extra setup is needed. Use an assistant
+that can read local files and run local commands.
+
+The prompt first reads `AGENTS.md` and `skills/dutchman-converting/SKILL.md` in the
+running app's folder, then the plain JSON already on disk, without converting again.
+It includes full paths derived from the running app and the corresponding GitHub URLs
+as fallbacks when the installed files are absent, as in a source build. It also names
+the bundled `docs/command-line.md` and its fallback URL.
+It asks for losses grouped by code and stage, feature outcomes, placements, and
+verification. Only when a particular loss needs more evidence does it suggest `inspect`,
+`diagnose`, a part-limited `convert --part P --stop-at-feature N`, or `repro` using an
+existing diagnosis of a failing part, all with `--json`. New work goes in a fresh scratch
+folder next to the result, keeping the original, design and saved report untouched.
+The prompt says to ask before sending anything anywhere. Pasting into an assistant is
+your choice; check that assistant's privacy settings before sharing private paths or reports.
+
 ## Project inputs
 
 Files whose names start with `~$` are lock files. They are ignored in project planning

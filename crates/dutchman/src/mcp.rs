@@ -125,6 +125,8 @@ fn answer(method: &str, params: &Value) -> Result<Value, (i64, String)> {
                 "serverInfo": {"name": "dutchman", "version": env!("CARGO_PKG_VERSION")},
                 "instructions": format!(
                     "Converts native CAD files ({}) into SolidCraft designs (.sc). Use \
+                     read_report to diagnose an existing desktop or watch result without decoding; \
+                     its full report contains private local paths and must stay local. Use \
                      inspect to see what a file would carry across, convert for one file, \
                      convert_all for many. Paths are on the machine running this server; give \
                      absolute paths. Use diagnose_narrow for anonymous local failure narrowing and rebuild recipes; no diagnostic tool sends files.",
@@ -148,6 +150,7 @@ fn answer(method: &str, params: &Value) -> Result<Value, (i64, String)> {
             let (report, schema) = match name {
                 "convert" => (convert(arguments), crate::json::CONVERT),
                 "inspect" => (inspect(arguments), crate::json::INSPECT),
+                "read_report" => (read_report(arguments), crate::json::CONVERT),
                 "formats" => (
                     only(arguments, &[]).map(|()| crate::formats::json()),
                     crate::formats::SCHEMA,
@@ -345,6 +348,14 @@ fn tools() -> Value {
         json!({"type":"integer","minimum":1,"description":"Alias of memory_mb; choose one."}),
     );
     let mut listed = json!([
+        {
+            "name": "read_report",
+            "description": "Read a saved per-file conversion report without decoding or converting. Returns the full dutchman.convert/1 report plus loss_groups by code and stage, including feature outcomes, placements and verification when recorded. LOCAL USE ONLY: like convert and inspect, this reply contains private names and paths; keep it out of remote assistants and public reports. Anonymous diagnostic tools remain anonymous.",
+            "inputSchema": {"type": "object", "properties": {
+                "input": {"type": "string", "description": "Absolute path of a .sc design (reads its adjacent <stem>.report.json), .report.json, or .failed.json. The original and design need not exist."}
+            }, "required": ["input"], "additionalProperties": false},
+            "annotations": {"readOnlyHint": true, "destructiveHint": false, "openWorldHint": false}
+        },
         {"name": "doctor", "title": "Check a folder", "description": "Check a folder or project ZIP locally with CPU and total memory budgets and private checkpoints. Returns anonymous findings grouped by signature. Nothing is sent.",
             "inputSchema": {"type": "object", "properties": doctor_properties, "required": ["input", "out"], "additionalProperties": false}},
         {"name": "compare_step", "title": "Compare matching STEP", "description": "Compare stored geometry with a STEP export under resource limits. Anonymous body numbers and measurements only; advisory, worst first. Nothing is sent.",
@@ -408,6 +419,11 @@ fn repro(arguments: &Arguments) -> Result<Value, String> {
         &path(arguments, "out")?,
         flag(arguments, "include_local_key", false)?,
     )
+}
+
+fn read_report(arguments: &Arguments) -> Result<Value, String> {
+    only(arguments, &["input"])?;
+    crate::saved_report::read(&path(arguments, "input")?)
 }
 
 fn diagnostic_settings(arguments: &Arguments) -> Result<crate::diagnose::Settings, String> {

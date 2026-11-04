@@ -122,6 +122,10 @@ same log. [Reporting a problem](docs/desktop.md#reporting-a-problem) explains wh
 
 ## Use from scripts and AI agents
 
+For a desktop result with losses, **Ask your AI about this file** copies a prompt for
+your assistant to read the saved JSON and bundled guidance, then use the bundled command
+line for focused follow-up. No server setup is needed. See [desktop usage](docs/desktop.md#ask-your-ai-about-this-file).
+
 `dutchman --json` prints one machine-readable report, and `dutchman-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io) server on stdio with conversion, diagnosis, and reporting tools. The core conversion tools return the same reports as their matching `--json` commands:
 
 | Tool | Arguments | Returns |
@@ -130,6 +134,7 @@ same log. [Reporting a problem](docs/desktop.md#reporting-a-problem) explains wh
 | `convert` | `input`, `output`, and the convert options ([all arguments](docs/mcp.md#tools)) | `dutchman.convert/1` |
 | `convert_all` | `inputs` (files and folders), `out_dir`, and optionally `jobs` and the convert options | `dutchman.convert-all/1` |
 | `formats` | none | `dutchman.formats/1` |
+| `read_report` | `input` (saved `.report.json` or its `.sc`; local paths stay private) | `dutchman.convert/1` plus `loss_groups` |
 
 For Claude Code:
 
