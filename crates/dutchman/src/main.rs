@@ -528,6 +528,13 @@ fn main() -> ExitCode {
                 }
                 return run_tool(&path, &rest);
             }
+            // A known Dutchman CAD tool that isn't installed says so, rather than suggesting a
+            // built-in command with a similar name (`pilot` is close to `report`).
+            let known_tool = matches!(name, "pilot" | "fixtures" | "print" | "printers");
+            if known_tool {
+                eprintln!("{}", dutchman_launcher::not_installed_message(name));
+                return ExitCode::FAILURE;
+            }
             if let Err(error) = suggestion_command.try_get_matches_from(std::env::args_os()) {
                 if error
                     .get(clap::error::ContextKind::SuggestedSubcommand)
