@@ -2411,3 +2411,54 @@ fn converted_report_screenshots() {
     }
     std::fs::write(dir.join("index.md"), index).unwrap();
 }
+
+#[test]
+#[ignore = "renders a GPU screenshot of the Part positions choices"]
+fn part_positions_screenshot() {
+    // Isolate settings and paths so the image never shows the owner's home folder.
+    if std::env::var_os("DUTCHMAN_PART_POSITIONS_CHILD").is_none() {
+        let home = tempfile::tempdir().unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "part_positions_screenshot"])
+            .env("DUTCHMAN_PART_POSITIONS_CHILD", "1")
+            .env("HOME", home.path())
+            .env("LOCALAPPDATA", home.path())
+            .env("XDG_CONFIG_HOME", home.path().join("config"))
+            .env("XDG_CACHE_HOME", home.path().join("cache"))
+            .env("XDG_DATA_HOME", home.path().join("data"))
+            .env("XDG_STATE_HOME", home.path().join("state"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+        return;
+    }
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let input = work.path().join("synthetic-part.f3d");
+    std::fs::copy(fixture("container_metadata_only.f3d"), &input).unwrap();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1000.0, 800.0))
+        .build_eframe(|cc| App::new(cc));
+    harness.ctx.set_theme(ThemePreference::Light);
+    harness.state_mut().add_inputs([input]);
+    harness
+        .state_mut()
+        .set_out_dir(work.path().join("converted"));
+    wait_for_estimate(&mut harness);
+    harness.get_by_label("Advanced").click_accesskit();
+    harness.run_steps(8);
+    harness.get_by_label("Part positions").click_accesskit();
+    harness.run_steps(8);
+    harness.get_by_label("As Fusion last showed them");
+    harness.get_by_label("As first placed");
+    let mut index = String::new();
+    shot(
+        &mut harness,
+        &dir,
+        &mut index,
+        "part-positions",
+        "day",
+        "Advanced open with the Part positions choices listed.",
+    );
+}
