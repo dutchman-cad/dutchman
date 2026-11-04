@@ -102,6 +102,7 @@ pub fn prepare(jobs: &mut [Job], options: &ConvertOptions) {
         }
         job.search.also.clone_from(&options.search);
         job.search.threads = options.threads;
+        job.search.part_positions = options.effective_part_positions();
     }
 }
 
@@ -198,7 +199,7 @@ fn convert_all_prepared(
                             choices.history = false;
                         }
                     }
-                    report.get("choices") == Some(&report::choice_values(options.preset, choices))
+                    report.get("choices") == Some(&report::placement_choices(options, choices))
                 })
         })
         .collect();
@@ -619,6 +620,7 @@ fn plan_with_limit(
                 replace,
                 search: PartSearch {
                     threads: 0,
+                    part_positions: dutchman_core::PartPositions::Smart,
                     project: root.is_dir().then(|| root.to_path_buf()),
                     also: Vec::new(),
                 },

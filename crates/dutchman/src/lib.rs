@@ -121,6 +121,9 @@ impl Writer for OutputWriter {
 /// How a design is converted.
 #[derive(Clone, Debug, clap::Args)]
 pub struct ConvertOptions {
+    /// Part positions: smart, last-shown, or first-placed.
+    #[arg(long, value_name = "MODE", default_value_t = dutchman_core::PartPositions::Smart)]
+    pub part_positions: dutchman_core::PartPositions,
     /// Maximum assembly part workers (0: automatic, at most two; 1: serial), capped by free memory.
     #[arg(long, value_name = "N", default_value_t = 0)]
     pub threads: usize,
@@ -153,6 +156,9 @@ pub struct ConvertOptions {
     /// Leave assembly joints out.
     #[arg(long)]
     pub no_joints: bool,
+    /// Place parts where they were first placed, ignoring later moves
+    #[arg(long, conflicts_with = "part_positions")]
+    pub stored_placements: bool,
     /// Convert and check history even when their estimates exceed free memory.
     #[arg(long)]
     pub no_memory_check: bool,
@@ -209,6 +215,8 @@ impl Default for ConvertOptions {
             import_only: false,
             no_sketches: false,
             no_joints: false,
+            stored_placements: false,
+            part_positions: dutchman_core::PartPositions::Smart,
             no_memory_check: false,
             solidcraft: None,
             solidcraft_version: None,
@@ -265,10 +273,20 @@ impl ConvertOptions {
         choices
     }
 
+    /// The legacy switch is an alias of first-placed.
+    pub fn effective_part_positions(&self) -> dutchman_core::PartPositions {
+        if self.stored_placements {
+            dutchman_core::PartPositions::FirstPlaced
+        } else {
+            self.part_positions
+        }
+    }
+
     /// Where these options say to look for an assembly's part files.
     pub fn part_search(&self) -> PartSearch {
         PartSearch {
             threads: self.threads,
+            part_positions: self.effective_part_positions(),
             project: self.project.clone(),
             also: self.search.clone(),
         }

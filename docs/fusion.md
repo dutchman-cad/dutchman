@@ -87,6 +87,42 @@ occurrence appearance target kind. Those assignments need a cadmpeg IR extension
 Dutchman can receive them. A source appearance absent from CADIR cannot be reconstructed;
 remaining grey bodies may therefore still need additional decoding in cadmpeg.
 
+## Assembly placements
+
+**Part positions** defaults to **Smart**. For each occurrence, Smart prefers a displayed
+pose bound to it by the decoder's `native.f3d.display_poses` arena. Only rows with
+`binding.state: "bound"` select a pose; ambiguous and unbound rows are skipped. These
+root-design world matrices are already in millimetres and bypass the current-pose guards.
+Missing holder worlds are derived bottom-up as child displayed world × inverse of child
+local placement, only when all available children agree within 0.001 mm and 1e-6 rotation
+entries. Conflicts retain the existing placement source and are reported. Admitted float32
+scene rotations are normalized before inversion; translations are unchanged.
+An absent arena supplies no displayed poses; unbound scene matrices do not choose a
+placement. Otherwise it accepts a native
+current pose only when touching joints close (or there are none), the placed geometry fits
+inside the assembly's first-placement bounds grown by 10%, and copies of the same inserted
+design keep their relative placement. Other occurrences retain their first placement.
+
+Bounds checks use conservative geometry envelopes. Unsupported or missing bounds keep the
+first placement, as do unsupported touching joints and ambiguous pose carriers. Rejections
+are deterministic. Joints then work from the selected placements as before.
+
+**As Fusion last showed them** prefers the displayed-pose source, then uses current poses
+where available without Smart's checks, and first placements otherwise. Until displayed
+poses are bound by the decoder, this option relies on current poses, which can be stale.
+**As first placed** ignores later poses throughout. Native current-pose matrices use centimetres and are
+converted to millimetres. A pose in an inserted design is composed with that document's
+insertion. Definition-local operation poses are not used as world poses. First placements retain
+the decoder's existing path and component-operation placements; native current-pose records
+remain a separate selectable source.
+
+Select with CLI `--part-positions smart|last-shown|first-placed`, desktop **Advanced →
+Part positions**, or MCP `part_positions`. The desktop remembers the choice. To restore
+the old placement choice, use `--part-positions first-placed`; `--stored-placements` remains
+an alias. Reports include an Info summary of the rule counts, `choices.part_positions`,
+and `part_positions` counts and fallback reasons. Counts describe source occurrences,
+including assembly holders, rather than additional history representations in the output.
+
 ## Components
 
 Assemblies with multiple top-level designs group each design's features into a uniquely

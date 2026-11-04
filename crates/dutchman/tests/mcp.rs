@@ -271,11 +271,15 @@ fn dry_run_estimates_without_decoding_or_writing_and_narrows_presets() {
     std::fs::write(&input, b"not a CAD design; pre-read only").unwrap();
     let output = dir.path().join("never-written.solidcraft");
     let mut client = Client::start();
-    for preset in ["fast", "standard", "full"] {
+    for (preset, positions) in [
+        ("fast", "smart"),
+        ("standard", "last-shown"),
+        ("full", "first-placed"),
+    ] {
         let reply = client.call(
             "convert",
             json!({"input": input, "output": output, "dry_run": true,
-            "preset": preset, "history": false, "sketches": false, "joints": false}),
+            "preset": preset, "part_positions":positions, "history": false, "sketches": false, "joints": false}),
         );
         assert_eq!(reply["isError"], false, "{reply}");
         let report = &reply["structuredContent"];
@@ -284,7 +288,7 @@ fn dry_run_estimates_without_decoding_or_writing_and_narrows_presets() {
         assert!(report["estimate"]["band"].as_f64().unwrap() > 0.0);
         assert_eq!(
             report["choices"],
-            json!({"preset": preset, "history": false, "sketches": false, "joints": false})
+            json!({"preset": preset, "part_positions":positions, "stored_placements":positions=="first-placed", "history": false, "sketches": false, "joints": false})
         );
         assert!(report["fits"].is_boolean() || report["fits"].is_null());
         assert!(!output.exists());

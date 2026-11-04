@@ -562,3 +562,24 @@ upload overhead. Dutchman keeps gzip bundles at least 64 KiB below that cap and 
 size before enabling Send. If it will not fit, use the
 private-send card or send a summary. Decode refusals have no bundle yet; choose
 an anonymous summary or the private-send card. Nothing is sent by diagnosis.
+
+## Assembly placements
+
+**Part positions** offers **Smart** (default), **As Fusion last showed them**, and
+**As first placed**. Smart accepts current poses only when touching joints close, geometry
+stays within first-placement assembly bounds grown by 10%, and repeated inserted designs
+move together. It keeps first placements when a check fails or cannot be established.
+Last-shown accepts available current poses without those checks. First-placed ignores later
+moves and restores the old placement choice. Joints work from the selected placements.
+
+Use CLI `--part-positions smart|last-shown|first-placed`, MCP `part_positions`, or desktop
+**Advanced → Part positions** (remembered). `--stored-placements` remains a first-placed
+alias. Smart and last-shown prefer decoder-bound displayed poses when available, without
+current-pose guards. Ambiguous and unbound rows are skipped; an absent arena supplies none.
+Fallback current poses may be stale. An Info note counts the selected rules. JSON includes
+`choices.part_positions` and `part_positions` counts and fallback reasons.
+
+Missing assembly holder poses are inferred bottom-up from displayed children only when
+their world-pose estimates agree within 0.001 mm and 1e-6 rotation entries. Conflicts keep
+the existing placement source and are reported. JSON `part_positions` adds `derived_holders`
+and `holder_conflicts`; `bound_displayed` and `derived_holders` partition `displayed`, preserving the displayed/current/first-placement total.

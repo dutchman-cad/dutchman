@@ -73,13 +73,13 @@ Batch `jobs` limits simultaneous files, while `threads` limits part workers per 
 The CLI equivalent is `--threads N` on `convert`, `convert-all`, and `watch`.
 `no_memory_check` does not remove the part-worker memory cap.
 
-Use `preset: "standard"` by default. `fast` keeps geometry at stored placements,
+Use `preset: "standard"` by default. `fast` keeps geometry at the selected placements,
 without history, reference sketches, or joints; `full` keeps everything that maps and
 never drops history to fit memory. Standard drops history when its
 estimate exceeds free memory and the history-free estimate fits, with one Info line
 under `history` explaining the choice. `history: false` (also `import_only: true`),
 `sketches: false`, and `joints: false` narrow any preset. Sketches needed by retained
-history stay; with joints off, stored placements stay. FreeCAD output honours history
+history stay; with joints off, the selected placements stay. FreeCAD output honours history
 only, not the sketch or joint choices.
 
 Before a costly conversion, call `convert` with `dry_run: true`; omit `output` if desired.
@@ -749,3 +749,25 @@ saved report without decoding; `.sc` resolves to the adjacent `.report.json` and
 `code`, `stage`, `count`, and original `losses`. Unlike anonymous diagnostic tools, this
 local tool returns private paths, names and messages, like `convert` and `inspect`.
 Keep the report and reply local; do not put them in an issue or remote assistant.
+
+### Assembly placements
+
+Part positions defaults to Smart. Use CLI `--part-positions smart|last-shown|first-placed`,
+MCP `part_positions`, or desktop Advanced → Part positions: Smart / As Fusion last showed
+them / As first placed. The desktop remembers the choice. First-placed restores the old
+placement choice; `--stored-placements` and MCP `stored_placements: true` remain aliases.
+Smart admits current poses only when touching joints close, geometry fits inside
+first-placement assembly bounds grown by 10%, and repeated inserted designs move together.
+Missing or unsupported checks keep first placements. Last-shown uses available current
+poses without those checks; these can be stale. Joints work from the selected placements.
+Smart and last-shown prefer decoder-bound saved-scene displayed poses without current-pose
+guards. Ambiguous and unbound rows are skipped; an absent arena supplies none. An unbound
+scene matrix is not evidence for a named occurrence's placement. Explain the Info
+summary and JSON `part_positions` rule counts and fallback reasons. Requested selection is
+`choices.part_positions`; compatibility `choices.stored_placements` is true only for
+first-placed.
+
+Missing assembly holder poses are inferred bottom-up from displayed children only when
+their world-pose estimates agree within 0.001 mm and 1e-6 rotation entries. Conflicts keep
+the existing placement source and are reported. JSON `part_positions` adds `derived_holders`
+and `holder_conflicts`; `bound_displayed` and `derived_holders` partition `displayed`, preserving the displayed/current/first-placement total.

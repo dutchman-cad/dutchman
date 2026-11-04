@@ -89,10 +89,12 @@ jobs:
           # the recorded SHA-256. The converted part names carry the file's name, so the file is
           # saved under its original name.
           - name: railcore
+            positions: smart
             file: RailCore II 300ZL - Nov 2019.f3z
             url: https://raw.githubusercontent.com/railcore/parts/81ef3be6c712e56782142dbce4b736994c4a1477/DXF/f3z/RailCore%20II%20300ZL%20-%20Nov%202019.f3z
             sha256: eb4afd93e0a5bba9159090909532a91862385f8fcf17ee74c4b687fa45b434fe
           - name: robot-arm
+            positions: last-shown
             file: Assem1.f3z
             url: https://raw.githubusercontent.com/Adriaeik/fusion2URDF/4411ffbdffc0364dc6f5922c40b3e14fd7b642f8/examples/Assem1_description/Assem1.f3z
             sha256: 3fd57697437949374b76df74dbc69342d286512f0ef8f4580b5dca7c1d6dfe44
@@ -112,7 +114,7 @@ jobs:
           chmod +x bin/dutchman
           mkdir out
           bin/dutchman convert "in/${{ matrix.file }}" -o out/${{ matrix.name }}.sc \
-            --preset standard --no-verify 2> out/convert.log
+            --preset standard --part-positions "${{ matrix.positions }}" --no-verify 2> out/convert.log
           python3 scripts/placements.py out/${{ matrix.name }}.sc \
             --out out/${{ matrix.name }}.json --check corpus/placements/${{ matrix.name }}.json
       - uses: actions/upload-artifact@v7

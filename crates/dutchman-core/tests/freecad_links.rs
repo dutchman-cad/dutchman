@@ -217,6 +217,7 @@ fn external_links_use_search_folders_and_case_insensitive_filenames() {
         &project.join("A01a.FCStd"),
         &PartSearch {
             threads: 0,
+            part_positions: dutchman_core::PartPositions::Smart,
             project: Some(project.clone()),
             also: vec![library],
         },

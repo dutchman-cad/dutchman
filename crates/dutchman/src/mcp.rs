@@ -220,7 +220,9 @@ fn option_properties() -> Map<String, Value> {
         "preset": {"type": "string", "enum": ["fast", "standard", "full"], "default": "standard", "description": "Fast keeps shape only; Standard keeps history, sketches and joints but budgets history before decoding; Full never drops history for memory."},
         "history": {"type": "boolean", "default": true, "description": "Keep feature history when the preset allows it; false narrows the preset like import_only."},
         "sketches": {"type": "boolean", "default": true, "description": "Keep reference sketches when the preset allows it. Sketches needed by retained history stay."},
-        "joints": {"type": "boolean", "default": true, "description": "Keep assembly joints when the preset allows it; false keeps stored placements."},
+        "joints": {"type": "boolean", "default": true, "description": "Keep assembly joints when the preset allows it; false keeps the selected placements before joint solving."},
+        "part_positions": {"type": "string", "enum": ["smart", "last-shown", "first-placed"], "default": "smart", "description": "Part positions: Smart, As Fusion last showed them, or As first placed."},
+        "stored_placements": {"type": "boolean", "default": false, "description": "Place parts where they were first placed, ignoring later moves"},
         "no_memory_check": {"type": "boolean", "default": false, "description": "Run and check history even when estimated peak memory exceeds available memory; also disables Standard's history budget and history-check skipping."},
         "import_only": {
             "type": "boolean",
@@ -550,7 +552,7 @@ fn count(arguments: &Arguments, key: &str) -> Result<Option<NonZeroUsize>, Strin
     }
 }
 
-const OPTIONS: [&str; 17] = [
+const OPTIONS: [&str; 19] = [
     "diagnostics",
     "diagnostics_default",
     "threads",
@@ -558,6 +560,8 @@ const OPTIONS: [&str; 17] = [
     "history",
     "sketches",
     "joints",
+    "stored_placements",
+    "part_positions",
     "no_memory_check",
     "to",
     "import_only",
@@ -589,6 +593,7 @@ fn part_search(arguments: &Arguments) -> Result<PartSearch, String> {
     };
     Ok(PartSearch {
         threads: 0,
+        part_positions: dutchman_core::PartPositions::Smart,
         project,
         also,
     })
@@ -621,6 +626,21 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
             .and_then(|n| usize::try_from(n).ok())
             .ok_or_else(|| "threads must be a whole number of at least 0".to_owned())?,
     };
+    let part_positions = match arguments.get("part_positions") {
+        None | Some(Value::Null) => dutchman_core::PartPositions::Smart,
+        Some(Value::String(value)) => value.parse()?,
+        Some(_) => {
+            return Err("part_positions must be smart, last-shown, or first-placed".to_owned())
+        }
+    };
+    if flag(arguments, "stored_placements", false)?
+        && arguments.contains_key("part_positions")
+        && part_positions != dutchman_core::PartPositions::FirstPlaced
+    {
+        return Err(
+            "stored_placements selects first-placed; choose one part_positions setting".to_owned(),
+        );
+    }
     let import_only = flag(arguments, "import_only", false)?;
     let history = flag(arguments, "history", true)?;
     let diagnostics_default = flag(arguments, "diagnostics_default", false)?;
@@ -652,6 +672,8 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
         import_only: import_only || !history,
         no_sketches: !flag(arguments, "sketches", true)?,
         no_joints: !flag(arguments, "joints", true)?,
+        stored_placements: flag(arguments, "stored_placements", false)?,
+        part_positions,
         no_memory_check: flag(arguments, "no_memory_check", false)?,
         no_verify: !flag(arguments, "verify", true)?,
         no_clobber: !flag(arguments, "overwrite", true)?,
@@ -687,7 +709,7 @@ fn convert(arguments: &Arguments) -> Result<Value, String> {
         return Ok(json!({
             "ok": true,
             "estimate": crate::json::estimate(estimate),
-            "choices": crate::json::choice_values(options.preset, choices),
+            "choices": crate::json::placement_choices(&options, choices),
             "fits": estimate.zip(available).map(|(e, free)| e.peak_bytes <= free),
         }));
     }
@@ -826,6 +848,45 @@ mod tests {
             json!({"memory_mb": 255}),
         ] {
             assert!(diagnostic_settings(arguments.as_object().unwrap()).is_err());
+        }
+    }
+
+    #[test]
+    fn placement_setting_reaches_workers_search_and_reports() {
+        use dutchman_core::PartPositions;
+        for mode in [
+            PartPositions::Smart,
+            PartPositions::LastShown,
+            PartPositions::FirstPlaced,
+        ] {
+            let arguments = json!({"part_positions": mode.name()});
+            let parsed = options(arguments.as_object().unwrap()).unwrap();
+            assert_eq!(parsed.effective_part_positions(), mode);
+            assert_eq!(parsed.part_search().part_positions, mode);
+            assert!(parsed
+                .to_args()
+                .windows(2)
+                .any(|pair| pair[0] == "--part-positions" && pair[1] == mode.name()));
+            assert_eq!(
+                crate::json::placement_choices(&parsed, parsed.choices())["part_positions"],
+                mode.name()
+            );
+        }
+        let alias = options(json!({"stored_placements":true}).as_object().unwrap()).unwrap();
+        assert_eq!(alias.effective_part_positions(), PartPositions::FirstPlaced);
+        assert_eq!(
+            options(&Arguments::new())
+                .unwrap()
+                .effective_part_positions(),
+            PartPositions::Smart
+        );
+        for bad in [
+            json!({"stored_placements":"true"}),
+            json!({"part_positions":"maybe"}),
+            json!({"part_positions":true}),
+            json!({"part_positions":"smart","stored_placements":true}),
+        ] {
+            assert!(options(bad.as_object().unwrap()).is_err());
         }
     }
 

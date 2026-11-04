@@ -7,6 +7,10 @@
 //! part file is read once, however often it is placed.
 
 mod freecad;
+mod poses;
+mod position_bounds;
+mod position_skeleton;
+mod position_smart;
 mod slicing;
 mod solidworks;
 
@@ -61,7 +65,7 @@ pub struct Assembly {
     /// Why each joint the file records was left out or changed, for the writer to report: a
     /// writer that builds that joint some other way leaves its note out.
     pub joint_notes: Vec<JointNote>,
-    /// Placements before joint solving; empty when they were not captured.
+    /// Selected source placements before joint solving; empty when not captured.
     pub stored_placements: Vec<Placement3x4>,
 }
 
@@ -649,8 +653,13 @@ pub(crate) enum Components {
 
 /// The components a design defines and places itself (as Fusion designs do), as an assembly
 /// of part models each holding only its component's bodies, plus the design's loose bodies.
-pub(crate) fn local(model: &Model, threads: usize, report: &mut Report) -> Components {
-    match local_components_with_threads(model, &BTreeMap::new(), threads, report) {
+pub(crate) fn local(
+    model: &Model,
+    threads: usize,
+    positions: crate::PartPositions,
+    report: &mut Report,
+) -> Components {
+    match local_components_with_threads(model, &BTreeMap::new(), threads, positions, report) {
         Ok(Some((assembly, _))) => Components::Assembly(Box::new(assembly)),
         Ok(None) => Components::None,
         Err(reason) => Components::Unplaceable(reason),
@@ -661,32 +670,57 @@ pub(crate) fn local(model: &Model, threads: usize, report: &mut Report) -> Compo
 /// holding only its component's bodies, plus the design's loose bodies; `None` when it places
 /// no components of its own, `Err` with the reason when they cannot be placed.
 pub fn local_assembly(model: &Model) -> Result<Option<Assembly>, String> {
-    Ok(local_components(model)?.map(|(assembly, _)| assembly))
+    local_assembly_with_positions(model, crate::PartPositions::Smart)
+}
+
+/// Build a decoded model at a selected position policy, reusing its source CADIR.
+pub fn local_assembly_with_positions(
+    model: &Model,
+    positions: crate::PartPositions,
+) -> Result<Option<Assembly>, String> {
+    Ok(local_components_with_threads(
+        model,
+        &BTreeMap::new(),
+        1,
+        positions,
+        &mut Report::default(),
+    )?
+    .map(|(assembly, _)| assembly))
 }
 
 /// [`local_assembly`], with why each joint left out was.
+#[cfg(test)]
 fn local_components(model: &Model) -> Result<Option<(Assembly, Vec<String>)>, String> {
     local_components_with(model, &BTreeMap::new())
 }
 
 type ExternalParts = BTreeMap<String, Result<(usize, std::rc::Rc<Model>), LeftOut>>;
 
+#[cfg(test)]
 fn local_components_with(
     model: &Model,
     external: &ExternalParts,
 ) -> Result<Option<(Assembly, Vec<String>)>, String> {
-    local_components_with_threads(model, external, 1, &mut Report::default())
+    local_components_with_threads(
+        model,
+        external,
+        1,
+        crate::PartPositions::LastShown,
+        &mut Report::default(),
+    )
 }
 
 fn local_components_with_threads(
     model: &Model,
     external: &ExternalParts,
     threads: usize,
+    positions: crate::PartPositions,
     report: &mut Report,
 ) -> Result<Option<(Assembly, Vec<String>)>, String> {
     let packed = serde_json::to_string(&model.ir).map_err(|err| err.to_string())?;
     let source = slicing::Packed::read(&packed)?;
-    let document = source.document()?;
+    let mut document = source.document()?;
+    let displayed = poses::select(model, &mut document, positions, report)?;
     let wire = document.get("model").unwrap_or(&Value::Null);
     let arena = |name: &str| {
         wire.get(name)
@@ -852,7 +886,8 @@ fn local_components_with_threads(
     held.dedup();
     // Occurrences the file places at the pose it shows them in: their joints are checked
     // where they are, not solved again.
-    let posed_ids = source_posed(&document);
+    let mut posed_ids = source_posed(&document);
+    posed_ids.extend(displayed);
     let posed: BTreeSet<Vec<usize>> = tree
         .paths
         .iter()
@@ -911,7 +946,7 @@ fn local_components_with_threads(
     Ok(Some((assembly, texts)))
 }
 
-/// The occurrences cadmpeg places at the pose the file shows them in, which a Fusion design
+/// The occurrences placed at a source pose, which a Fusion design
 /// stores for some occurrences beside their placements: an external occurrence with a
 /// current pose or with poses of the occurrences inside it, and a local occurrence with a
 /// current pose. When an inserted design has no current pose of its own, contained poses
@@ -3652,7 +3687,7 @@ mod tests {
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let mut report = Report::default();
         assert!(matches!(
-            local(&model, 1, &mut report),
+            local(&model, 1, crate::PartPositions::LastShown, &mut report),
             Components::Assembly(_)
         ));
         let losses: Vec<_> = report
@@ -3834,6 +3869,7 @@ mod tests {
                 &model,
                 &BTreeMap::new(),
                 threads,
+                crate::PartPositions::LastShown,
                 &mut Report::default(),
             )
             .unwrap()
@@ -3922,6 +3958,7 @@ mod tests {
                     &model,
                     &BTreeMap::new(),
                     threads,
+                    crate::PartPositions::LastShown,
                     &mut Report::default(),
                 )
                 .unwrap()
@@ -3962,6 +3999,7 @@ mod tests {
                 &model,
                 &BTreeMap::new(),
                 threads,
+                crate::PartPositions::LastShown,
                 &mut Report::default(),
             )
             .unwrap()
@@ -4900,10 +4938,19 @@ mod tests {
     /// so the occurrences that name them as their `native_ref` are posed.
     fn with_current_poses(model: Model, ids: &[&str]) -> Model {
         let mut wire = serde_json::to_value(&model.ir).unwrap();
-        wire["native"]["f3d"]["design_component_occurrences"] = ids
+        let occurrences: Vec<_> = wire["model"]["occurrences"]
+            .as_array()
+            .unwrap()
             .iter()
-            .map(|id| json!({"id": id, "current_pose": {"carrier_record_index": 3}}))
             .collect();
+        let worlds = world_placements(&occurrences).unwrap();
+        let records = ids.iter().filter_map(|native| {
+            let occurrence = occurrences.iter().find(|row| row["native_ref"] == *native)?;
+            let mut pose = worlds[occurrence["id"].as_str().unwrap()];
+            for row in &mut pose { row[3] /= 10.0; }
+            Some(json!({"id": native, "current_pose": {"carrier_record_index": 3, "transform": pose}}))
+        }).collect::<Vec<_>>();
+        wire["native"]["f3d"]["design_component_occurrences"] = json!(records);
         Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
             ..model
@@ -5106,8 +5153,8 @@ mod tests {
 
     #[test]
     fn an_occurrence_the_file_poses_is_checked_by_its_joint_not_moved() {
-        // The frame (stored at x = 100) has a current pose in cadmpeg's records; a joint to
-        // the design that would put it at x = 20 is checked and reported, and the frame stays.
+        // CADIR retained x = 100 from a component operation. The native current pose
+        // selects x = 120; a joint that would put it at x = 20 is checked, not solved.
         let mut frame = placed(0, "frame", root(), 100.0);
         frame["native_ref"] = json!("f3d:Design/BulkStream.dat:design-component-occurrence#7");
         let model = nested(
@@ -5129,7 +5176,7 @@ mod tests {
             serde_json::to_value(&with_joints(model.clone(), joints.clone()).ir).unwrap();
         wire["native"]["f3d"]["design_component_occurrences"] = json!([
             {"id": "f3d:Design/BulkStream.dat:design-component-occurrence#7",
-             "current_pose": {"carrier_record_index": 9}},
+             "current_pose": {"carrier_record_index": 9, "transform": at([12.0, 0.0, 0.0], 0.0)}},
         ]);
         let posed = Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
@@ -5137,8 +5184,37 @@ mod tests {
         };
         let (assembly, notes) = local_components(&posed).unwrap().unwrap();
         let frame = world_at(&assembly, &[0]).unwrap();
-        assert!(near(&frame, &at([100.0, 0.0, 0.0], 0.0)), "{frame:?}");
+        assert!(near(&frame, &at([120.0, 0.0, 0.0], 0.0)), "{frame:?}");
         assert_eq!(notes.len(), 1, "{notes:?}");
+        // A decoder-bound display pose works without any native current pose,
+        // survives compact metadata extraction, and outranks this touching joint.
+        wire["native"]["f3d"]["design_component_occurrences"] = json!([]);
+        let occurrence = wire["model"]["occurrences"][0]["id"].clone();
+        wire["native"]["f3d"]["display_poses"] = json!([{
+            "id": "f3d:scene:display-pose#0", "stream": "world", "byte_offset": 0,
+            "path": [1, 7], "binding": {"state": "bound", "occurrence": occurrence},
+            "transform": [[1,0,0,240],[0,1,0,0],[0,0,1,0],[0,0,0,1]]
+        }]);
+        let displayed = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model.clone()
+        };
+        for mode in [crate::PartPositions::Smart, crate::PartPositions::LastShown] {
+            let assembly = local_assembly_with_positions(&displayed, mode)
+                .unwrap()
+                .unwrap();
+            assert!(near(
+                &world_at(&assembly, &[0]).unwrap(),
+                &at([240.0, 0.0, 0.0], 0.0)
+            ));
+        }
+        let assembly = local_assembly_with_positions(&displayed, crate::PartPositions::FirstPlaced)
+            .unwrap()
+            .unwrap();
+        assert!(near(
+            &world_at(&assembly, &[0]).unwrap(),
+            &at([20.0, 0.0, 0.0], 0.0)
+        ));
         // Without the pose the same joint places the frame.
         let (assembly, _) = local_components(&with_joints(model, joints))
             .unwrap()
@@ -5226,7 +5302,7 @@ mod tests {
         // A reference's own current pose holds the reference, while its children
         // still need their joints unless they carry current poses of their own.
         wire["native"]["f3d"]["xref_references"][0]["current_pose"] =
-            json!({"carrier_record_index": 21});
+            json!({"carrier_record_index": 21, "transform": at([10.0, 0.0, 0.0], 0.0)});
         let own_pose = Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
             ..model
@@ -6184,9 +6260,15 @@ mod tests {
                 placed(3, "block", inside(1), 30.0),
             ])),
         );
-        let (assembly, _) = local_components_with_threads(&model, &BTreeMap::new(), 1, &mut report)
-            .unwrap()
-            .unwrap();
+        let (assembly, _) = local_components_with_threads(
+            &model,
+            &BTreeMap::new(),
+            1,
+            crate::PartPositions::LastShown,
+            &mut report,
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(assembly.parts.len(), 2);
         assert_eq!(assembly.parts[0].name, "Frame");
         assert_eq!(assembly.parts[1].name, "Frame (2)");
@@ -6286,9 +6368,15 @@ mod tests {
                 noisy,
             ])),
         );
-        let (assembly, _) = local_components_with_threads(&model, &BTreeMap::new(), 1, &mut report)
-            .unwrap()
-            .unwrap();
+        let (assembly, _) = local_components_with_threads(
+            &model,
+            &BTreeMap::new(),
+            1,
+            crate::PartPositions::LastShown,
+            &mut report,
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(assembly.parts.len(), 1);
         assert_eq!(assembly.placements[0].part, assembly.placements[1].part);
         assert!(!report
@@ -6395,10 +6483,20 @@ mod tests {
             with_history(false),
             with_components(true),
         ] {
-            let serial =
-                local_components_with_threads(&model, &BTreeMap::new(), 1, &mut Report::default());
-            let parallel =
-                local_components_with_threads(&model, &BTreeMap::new(), 4, &mut Report::default());
+            let serial = local_components_with_threads(
+                &model,
+                &BTreeMap::new(),
+                1,
+                crate::PartPositions::LastShown,
+                &mut Report::default(),
+            );
+            let parallel = local_components_with_threads(
+                &model,
+                &BTreeMap::new(),
+                4,
+                crate::PartPositions::LastShown,
+                &mut Report::default(),
+            );
             assert_eq!(format!("{serial:?}"), format!("{parallel:?}"));
         }
     }
@@ -6454,5 +6552,159 @@ mod tests {
                 );
             }
         }
+    }
+    #[test]
+    fn smart_positions_admit_free_parts_and_reject_bounds_or_nonrigid_copies() {
+        use crate::PartPositions;
+        for (x, copies, expected, reason) in [
+            (10.0, false, 10.0, "current"),
+            (1000.0, false, 0.0, "bounds"),
+            (10.0, true, 0.0, "instances"),
+        ] {
+            let model = with_components(true);
+            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            wire["model"]["occurrences"][0]["native_ref"] =
+                json!("f3d:Design/BulkStream.dat:design-component-occurrence#11");
+            wire["native"]["f3d"]["design_component_occurrences"] = json!([
+                {"id":"f3d:Design/BulkStream.dat:design-component-occurrence#11", "transform": at([0.0,0.0,0.0],0.0), "current_pose":{"transform":at([x/10.0,0.0,0.0],0.0)}}
+            ]);
+            if copies {
+                wire["model"]["occurrences"][0]["native_ref"] = json!("f3d:xref:reference#1");
+                wire["model"]["occurrences"][1]["native_ref"] = json!("f3d:xref:reference#2");
+                wire["native"]["f3d"]["design_component_occurrences"] = json!([]);
+                wire["native"]["f3d"]["xref_references"] = json!([
+                    {"id":"f3d:xref:reference#1", "relative_path":"same.f3d", "transform": at([0.0,0.0,0.0],0.0), "current_pose":{"transform":at([x/10.0,0.0,0.0],0.0)}},
+                    {"id":"f3d:xref:reference#2", "relative_path":"same.f3d", "transform":at([3.0,0.0,0.0],0.0)}
+                ]);
+            }
+            let model = Model {
+                ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+                ..model
+            };
+            let mut report = Report::default();
+            let (assembly, _) = local_components_with_threads(
+                &model,
+                &BTreeMap::new(),
+                1,
+                PartPositions::Smart,
+                &mut report,
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(
+                assembly.placements[0].transform[0][3], expected,
+                "{reason}: {report:?}"
+            );
+            let counts = report.part_positions().unwrap().1;
+            assert_eq!(counts.total(), 2);
+            match reason {
+                "current" => assert_eq!(counts.current, 1),
+                "bounds" => assert_eq!(counts.bounds, 1),
+                _ => assert_eq!(counts.instances, 1),
+            }
+            let shown = local_assembly_with_positions(&model, PartPositions::LastShown)
+                .unwrap()
+                .unwrap();
+            assert_eq!(shown.placements[0].transform[0][3], x);
+            let first = local_assembly_with_positions(&model, PartPositions::FirstPlaced)
+                .unwrap()
+                .unwrap();
+            assert_eq!(first.placements[0].transform[0][3], 0.0);
+        }
+    }
+
+    #[test]
+    fn smart_positions_admit_rigid_inserted_copies_independently_of_record_order() {
+        for reversed in [false, true] {
+            let model = with_components(true);
+            let mut wire = serde_json::to_value(&model.ir).unwrap();
+            let mut third = wire["model"]["occurrences"][1].clone();
+            third["id"] = json!("f3d:model:occurrence#third");
+            third["ordinal"] = json!(2);
+            third["transform"] = json!(at([100.0, 0.0, 0.0], 0.0));
+            wire["model"]["occurrences"]
+                .as_array_mut()
+                .unwrap()
+                .push(third);
+            wire["model"]["occurrences"][0]["native_ref"] = json!("f3d:xref:reference#1");
+            wire["model"]["occurrences"][1]["native_ref"] = json!("f3d:xref:reference#2");
+            let mut records = vec![
+                json!({"id":"f3d:xref:reference#1","relative_path":"same.f3d","current_pose":{"transform":at([1.0,0.0,0.0],0.0)}}),
+                json!({"id":"f3d:xref:reference#2","relative_path":"same.f3d","current_pose":{"transform":at([4.0,0.0,0.0],0.0)}}),
+            ];
+            if reversed {
+                records.reverse();
+                wire["model"]["occurrences"]
+                    .as_array_mut()
+                    .unwrap()
+                    .reverse();
+            }
+            wire["native"]["f3d"]["xref_references"] = json!(records);
+            let model = Model {
+                ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+                ..model
+            };
+            let mut report = Report::default();
+            let (assembly, _) = local_components_with_threads(
+                &model,
+                &BTreeMap::new(),
+                1,
+                crate::PartPositions::Smart,
+                &mut report,
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(
+                assembly
+                    .placements
+                    .iter()
+                    .map(|p| p.transform[0][3])
+                    .collect::<Vec<_>>(),
+                vec![10.0, 40.0, 100.0]
+            );
+            let counts = report.part_positions().unwrap().1;
+            assert_eq!(counts.current, 2);
+            assert_eq!(counts.first_placed, 1);
+            assert_eq!(counts.instances, 0);
+        }
+    }
+
+    #[test]
+    fn smart_positions_reject_a_pose_that_breaks_a_touching_fixed_joint() {
+        let model = with_components(true);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let mut records = Vec::new();
+        for (index, x) in [(0, 10.0), (1, 30.0)] {
+            wire["model"]["occurrences"][index]["native_ref"] = json!(format!(
+                "f3d:Design/BulkStream.dat:design-component-occurrence#{index}"
+            ));
+            records.push(json!({"id":format!("f3d:Design/BulkStream.dat:design-component-occurrence#{index}"),"transform":at([if index==0 {0.0}else{3.0},0.0,0.0],0.0),"current_pose":{"transform":at([x/10.0,0.0,0.0],0.0)}}));
+        }
+        wire["native"]["f3d"]["design_component_occurrences"] = json!(records);
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        };
+        let model = with_joints(
+            model,
+            json!([joint(
+                1,
+                json!({"kind":"fixed"}),
+                connector_at(0, &[], at([30.0, 0.0, 0.0], 0.0)),
+                connector_at(1, &[], facing(IDENTITY))
+            )]),
+        );
+        let mut report = Report::default();
+        let (assembly, _) = local_components_with_threads(
+            &model,
+            &BTreeMap::new(),
+            1,
+            crate::PartPositions::Smart,
+            &mut report,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(assembly.placements[0].transform[0][3], 0.0);
+        assert!(report.part_positions().unwrap().1.joints > 0);
     }
 }

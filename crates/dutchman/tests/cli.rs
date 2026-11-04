@@ -2272,11 +2272,20 @@ fn memory_refusal_precedes_decode_and_returns_exit_two() {
 }
 
 #[test]
-fn estimates_are_text_only_and_respect_quiet() {
+fn part_positions_reports_keep_estimates_text_only_and_respect_quiet() {
     let dir = tempfile::tempdir().unwrap();
     let input = PathBuf::from(fixture("synthetic_cube.ipt"));
     let output = dir.path().join("cube.solidcraft");
-    for flags in [vec![], vec!["--quiet"], vec!["--json"]] {
+    for (flags, mode) in [
+        (vec![], "smart"),
+        (vec!["--quiet"], "smart"),
+        (vec!["--json"], "smart"),
+        (vec!["--json", "--stored-placements"], "first-placed"),
+        (
+            vec!["--json", "--part-positions", "last-shown"],
+            "last-shown",
+        ),
+    ] {
         let mut args = vec![
             "convert",
             input.to_str().unwrap(),
@@ -2298,21 +2307,23 @@ fn estimates_are_text_only_and_respect_quiet() {
             let report: serde_json::Value = serde_json::from_str(&text).unwrap();
             assert!(report["estimate"]["peak_bytes"].is_u64());
             assert!(report["estimate"]["seconds"].is_u64());
+            assert_eq!(report["part_positions"]["mode"], mode);
+            assert_eq!(report["part_positions"]["total"], 0);
             assert_eq!(
                 report["choices"],
-                serde_json::json!({"preset": "fast", "history": false, "sketches": false, "joints": false})
+                serde_json::json!({"preset": "fast", "history": false, "sketches": false, "joints": false, "part_positions":mode, "stored_placements":mode=="first-placed"})
             );
         }
     }
 }
 
 #[test]
-fn narrowing_choices_reach_batch_workers_and_invalidate_journal_reuse() {
+fn part_positions_and_narrowing_choices_invalidate_journal_reuse() {
     let dir = tempfile::tempdir().unwrap();
     let input = fixture("synthetic_cube.ipt");
     let out_dir = dir.path().join("out");
     let journal = dir.path().join("journal.jsonl");
-    let run = |sketches: bool| {
+    let run = |sketches: bool, positions: &str| {
         let mut args = vec![
             "convert-all",
             &input,
@@ -2322,6 +2333,8 @@ fn narrowing_choices_reach_batch_workers_and_invalidate_journal_reuse() {
             journal.to_str().unwrap(),
             "--preset",
             "full",
+            "--part-positions",
+            positions,
             "--no-history",
             "--no-joints",
             "--no-memory-check",
@@ -2333,20 +2346,31 @@ fn narrowing_choices_reach_batch_workers_and_invalidate_journal_reuse() {
         }
         json_of(&dutchman(&args))
     };
-    let first = run(true);
+    let first = run(true, "smart");
     assert_eq!(first["converted"], 1, "{first}");
     assert_eq!(first["resumed"], 0);
     assert_eq!(
         first["results"][0]["choices"],
-        serde_json::json!({"preset": "full", "history": false, "sketches": true, "joints": false})
+        serde_json::json!({"preset": "full", "history": false, "sketches": true, "joints": false, "part_positions":"smart", "stored_placements":false})
     );
-    assert_eq!(run(true)["resumed"], 1);
-    let changed = run(false);
+    assert_eq!(run(true, "smart")["resumed"], 1);
+    let changed = run(false, "smart");
     assert_eq!(
         changed["resumed"], 0,
         "changing a choice must reconvert: {changed}"
     );
     assert_eq!(changed["results"][0]["choices"]["sketches"], false);
+    let moved = run(false, "first-placed");
+    assert_eq!(
+        moved["resumed"], 0,
+        "changing part positions must reconvert"
+    );
+    assert_eq!(
+        moved["results"][0]["choices"]["part_positions"],
+        "first-placed"
+    );
+    assert_eq!(moved["results"][0]["choices"]["stored_placements"], true);
+    assert_eq!(run(false, "first-placed")["resumed"], 1);
 }
 
 #[test]

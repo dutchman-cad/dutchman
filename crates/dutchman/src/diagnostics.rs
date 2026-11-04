@@ -112,7 +112,7 @@ impl Log {
                    "version": os_version()},
             "cpu_count": std::thread::available_parallelism().ok().map(usize::from),
             "total_memory_bytes": total_memory(), "available_memory_bytes": choices::available_memory(),
-            "choices": crate::json::choice_values(options.preset, options.choices()),
+            "choices": crate::json::placement_choices(options, options.choices()),
             "threads": options.diagnostics_threads,
             "input": {"format": dutchman_core::Format::from_path(input).map(|f| f.id()),
                       "size_bytes": std::fs::metadata(input).ok().map(|m| m.len())},

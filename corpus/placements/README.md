@@ -52,19 +52,39 @@ float32 4×4 transforms in centimetres. Absolute translation checks accept the r
 relative translation and rotation checks use the converted design's full, unrounded transforms.
 
 ```sh
-dutchman convert Assem1.f3z -o robot-arm.sc --preset standard --no-verify
+dutchman convert Assem1.f3z --part-positions last-shown -o robot-arm.sc --preset standard --no-verify
 python3 scripts/placements.py robot-arm.sc --out corpus/placements/robot-arm.json
 python3 scripts/fusion_scene_placements.py Assem1.f3z corpus/placements/robot-arm.json \
   --mapping corpus/placements/robot-arm.scene.json --out robot-arm-absolute.json
 ```
 
-The absolute check fails: all 38 mapped parts exceed 0.1 mm, with a maximum of 597.217100 mm at
-`dito_MIR:1`. Fusion's current pose differs from the stored occurrence poses that Dutchman uses;
-the arm was moved after storing those poses. All seven root parts' native `current_pose` records
-match the scene within 0.000064 mm and 1.25e-8 rad. Their decoded stored transforms differ by
-154.824–578.362 mm, with a maximum rotation error of 0.496408 rad. This change retains Dutchman's
-stored-pose selection. Three assembly holders have no independently assigned scene entry and
-remain explicitly unmatched.
+The explicit last-shown mode matches all 38 independently mapped part origins within 0.1 mm;
+the maximum error of the rounded golden is 0.000669 mm. Three assembly holders have no
+independently assigned scene entry and remain explicitly unmatched (exit 4). Before selecting
+current poses, all 38 mapped parts exceeded 0.1 mm, with a maximum of 597.217100 mm at
+`dito_MIR:1`. The seven root parts' native `current_pose` records match within 0.000064 mm
+and 1.25e-8 rad; their decoded stored transforms differ by 154.824–578.362 mm.
+
+The scene also contains stored transforms. Matching an arbitrary `TransformAttribute` matrix
+does not establish a displayed pose. Count matches against `OverrideTransformAttribute`
+matrices instead:
+
+```sh
+python3 scripts/fusion_scene_placements.py Assem1.f3z robot-arm.sc --overrides \
+  --out robot-arm-overrides.json
+```
+
+With the full preset, displayed-pose matches rise from 0/41 to 40/41. There are 39 overrides;
+a holder shares a matching pose, so the match count can exceed the override count. These
+checks require translation within 0.1 mm and axis entries within 1e-3. A match means a pose
+Fusion displays. Overrides are not yet bound to named occurrences; identical parts could
+swap unnoticed. This aggregate count always exits 4 to retain that limitation. It accepts a
+SolidCraft design, whose unrounded transforms allow both translation and rotation checks.
+The robot-arm golden explicitly uses `--part-positions last-shown`, preserving its check
+against Fusion's displayed poses. With a decoder that supplies bound displayed poses, Smart uses them without a bounds veto.
+When that arena is absent, Smart may retain first placements if its current-pose bounds
+check fails. Use `--part-positions first-placed` (or the
+`--stored-placements` alias) to ignore later poses.
 
 Relative checks separate that arm movement from the gripper joint. The joint's first operand
 is `griper:1/Assem1 component 1:1/frame:1`; its second is `Assem1 component 2:1/Part02:1`

@@ -127,6 +127,58 @@ def pose_error(actual, expected):
     return math.dist(actual[3][:3], expected[3][:3]), math.atan2(sine, cosine)
 
 
+def overrides(data):
+    """Read displayed-pose matrices, without claiming a named occurrence binding."""
+    name = "OverrideTransformAttribute".encode("utf-16le")
+    marker = struct.pack("<I", len(name) // 2) + name
+    result = []
+    offset = data.find(marker)
+    while offset >= 0:
+        matrix_offset = offset + len(marker) + 5
+        result.append((matrix_offset, scene_matrix(data, matrix_offset)))
+        if len(result) > 100_000:
+            raise ValueError("Scene has more than 100000 overrides")
+        offset = data.find(marker, matrix_offset + 64)
+    return result
+
+
+def compare_overrides(source, worlds, tolerance=0.1, axis_tolerance=1e-3):
+    """Count poses Fusion displays; identical parts could swap unnoticed."""
+    data = scene_bytes(source)
+    if data is None:
+        return {"status": "no scene: not checked", "placements": []}, 3
+    matrices = overrides(data)
+    if not matrices:
+        return {"status": "no displayed-pose overrides: not checked", "placements": []}, 4
+    if len(worlds) > 100_000:
+        raise ValueError("Expected at most 100000 placements")
+    # Index translation cells; check neighbouring cells to retain tolerance at boundaries.
+    cells = {}
+    for offset, matrix in matrices:
+        key = tuple(math.floor(v / tolerance) for v in matrix[3][:3])
+        cells.setdefault(key, []).append((offset, matrix))
+    rows = []
+    for path, world in sorted(worlds.items()):
+        key = tuple(math.floor(v / tolerance) for v in world[3][:3])
+        matches = []
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for dz in (-1, 0, 1):
+                    for offset, matrix in cells.get((key[0] + dx, key[1] + dy, key[2] + dz), []):
+                        if (math.dist(world[3][:3], matrix[3][:3]) <= tolerance
+                                and max(abs(world[i][j] - matrix[i][j])
+                                        for i in range(3) for j in range(3)) <= axis_tolerance):
+                            matches.append(offset)
+        rows.append({"path": path, "matches": matches})
+    matched = sum(bool(row["matches"]) for row in rows)
+    return {"status": "displayed poses counted; occurrence bindings not checked",
+            "source": str(source), "scene_member": SCENE, "overrides": len(matrices),
+            "total": len(rows), "matched": matched, "unmatched": len(rows) - matched,
+            "tolerance_mm": tolerance, "axis_tolerance": axis_tolerance,
+            "limitation": "A match means a pose Fusion displays. Overrides are not bound to named occurrences; identical parts could swap unnoticed.",
+            "placements": rows}, 4
+
+
 def checked_scene(source, mapping):
     data = scene_bytes(source)
     if data is None:
@@ -221,6 +273,7 @@ def main(argv=None):
     parser.add_argument("source")
     parser.add_argument("placements", help="Placement golden JSON, or a SolidCraft design for relative checks")
     parser.add_argument("--mapping", help="Independent part-to-scene offsets, bound to source and scene SHA-256")
+    parser.add_argument("--overrides", action="store_true", help="Count poses Fusion displays; requires a design; identical parts could swap unnoticed")
     parser.add_argument("--relative-to", metavar="ANCHOR", help="Compare full transforms relative to this occurrence path; requires a design")
     parser.add_argument("--path", action="append", help="Check this path (repeatable); requires --relative-to")
     parser.add_argument("--path-prefix", help="Check paths starting with this prefix; requires --relative-to")
@@ -228,13 +281,18 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         mapping = read_json(args.mapping) if args.mapping else None
-        if args.relative_to:
+        if args.overrides and (args.mapping or args.relative_to or args.path or args.path_prefix):
+            raise ValueError("Override counts cannot be combined with mapped or relative checks")
+        if args.relative_to or args.overrides:
             with zipfile.ZipFile(args.placements) as archive:
                 document = json.loads(member(archive, "document.json", MAX_ROOT))
             if document.get("units", "mm") != "mm":
                 raise ValueError("Expected a design in millimetres")
-            report, code = compare_relative(args.source, world_transforms(document), mapping,
-                                            args.relative_to, args.path, args.path_prefix)
+            if args.overrides:
+                report, code = compare_overrides(args.source, world_transforms(document))
+            else:
+                report, code = compare_relative(args.source, world_transforms(document), mapping,
+                                                args.relative_to, args.path, args.path_prefix)
         else:
             if args.path or args.path_prefix:
                 raise ValueError("Path selection requires --relative-to")
@@ -244,7 +302,10 @@ def main(argv=None):
                 json.dump(report, stream, indent=2, ensure_ascii=False)
                 stream.write("\n")
         print(report["status"])
-        if "total" in report:
+        if "matched" in report:
+            print("poses: {total}; at a displayed pose: {matched}; unmatched: {unmatched}; overrides: {overrides}".format(**report))
+            print(report["limitation"])
+        elif "total" in report:
             print("placements: {total}; compared: {compared}; over tolerance: {over_tolerance}; unmatched: {unmatched}".format(**report))
             print("maximum compared translation error: %s mm" % report["max_distance_mm"])
             if "anchor" in report:

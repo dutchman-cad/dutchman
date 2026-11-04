@@ -15,17 +15,19 @@ mod locate;
 mod memory;
 mod names;
 pub mod parallel;
+mod part_positions;
 pub mod parts;
 pub mod placement;
 mod progress;
+pub use part_positions::{PartPositionCounts, PartPositions};
 mod report;
 pub mod repro;
 
 use std::path::Path;
 
 pub use assembly::{
-    frame_aligned, local_assembly, Assembly, Joint, JointNote, LeftOut, Motion, Placement,
-    MAX_DEPTH, MAX_PARTS, MAX_PLACEMENTS,
+    frame_aligned, local_assembly, local_assembly_with_positions, Assembly, Joint, JointNote,
+    LeftOut, Motion, Placement, MAX_DEPTH, MAX_PARTS, MAX_PLACEMENTS,
 };
 pub use error::{CheckFacts, Error, FILE_DID_NOT_CONVERT, RELEASES};
 pub use format::Format;
@@ -261,15 +263,21 @@ pub fn read_with_progress(
     if let Some(searched) = finder.searched_note() {
         report.push_at(Stage::Input, Severity::Info, "parts search", searched);
     }
-    local_components(&mut model, finder.threads, report);
+    local_components(&mut model, finder.threads, search.part_positions, report);
+    report.note_part_positions(search.part_positions);
     Ok(model)
 }
 
 /// Gathers the components a single file places itself into `model.assembly`, and records the
 /// assembly's completeness.
-fn local_components(model: &mut Model, threads: usize, report: &mut Report) {
+fn local_components(
+    model: &mut Model,
+    threads: usize,
+    positions: PartPositions,
+    report: &mut Report,
+) {
     if model.assembly.is_none() {
-        match assembly::local(model, threads, report) {
+        match assembly::local(model, threads, positions, report) {
             assembly::Components::None => {}
             // The writer reports the assembly's joint notes: what it leaves out depends on
             // what it can build.
@@ -329,7 +337,8 @@ pub fn read_bytes(
     report.saw(&name.display().to_string());
     names::saw_stored(&name.display().to_string(), report);
     let mut model = decode_bytes(format, name, bytes, report, None)?;
-    local_components(&mut model, 1, report);
+    local_components(&mut model, 1, PartPositions::Smart, report);
+    report.note_part_positions(PartPositions::Smart);
     Ok(model)
 }
 

@@ -62,7 +62,9 @@ CAD extension selects conversion.
 | `--preset fast`, `--preset standard`, `--preset full` | What to keep; Standard is the default. See [Choosing what to keep](presets.md). |
 | `--no-history`, `--import-only` | Leave feature history out; keep geometry and the preset's reference sketches. |
 | `--no-sketches` | Leave reference sketches out; sketches needed by retained history stay. |
-| `--no-joints` | Leave assembly joints out and retain stored placements. |
+| `--no-joints` | Leave assembly joints out and retain the selected placements before joint solving. |
+| `--part-positions MODE` | Part positions: `smart` (default), `last-shown`, or `first-placed`. |
+| `--stored-placements` | Alias of `--part-positions first-placed`: place parts where they were first placed, ignoring later moves. |
 | `--no-memory-check` | Bypass the memory refusal, Standard's history budget, and automatic history-check skipping. |
 | `--yes` | Never prompt to switch presets; refuse an over-budget conversion with exit 2. |
 | `--solidcraft PATH` | The `solidcraft-cli` that checks a converted history. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH` or beside `dutchman`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`, else the install folder recorded in the registry). |
@@ -374,3 +376,22 @@ Pilot-only installations can ship the small `dutchman-launcher` binary renamed t
 It runs installed tools and identifies itself as `dutchman launcher <version>` with
 `--version`. Get [Dutchman Convert](https://github.com/dutchman-cad/dutchman) for `convert`,
 `convert-all`, `watch`, `inspect`, and `formats`.
+
+## Assembly placements
+
+`--part-positions smart|last-shown|first-placed` selects **Part positions** for `convert`,
+`convert-all`, and `watch`:
+
+- `smart` (default): use current poses only when touching joints close, geometry stays inside
+  first-placement assembly bounds grown by 10%, and repeated inserted designs move together.
+- `last-shown`: use current poses where available, including later moves, then first placements.
+- `first-placed`: place parts where they were first placed, ignoring later moves.
+
+Decoder-bound saved-scene displayed poses take precedence in Smart and last-shown,
+without the current-pose guards. Ambiguous and unbound rows are skipped. If the decoder
+omits the arena or an occurrence has no bound display pose, last-shown relies on current
+poses, which may be stale. Smart keeps first
+placements when a check cannot be established. Joints work from the selected placements.
+`--stored-placements` is an alias of `--part-positions first-placed` and restores the old
+placement choice. JSON reports record `choices.part_positions` and per-rule `part_positions`
+counts; an Info note summarises them.

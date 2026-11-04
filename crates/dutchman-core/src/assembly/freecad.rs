@@ -203,14 +203,19 @@ pub(super) fn resolve(
         });
         external.insert(id.to_owned(), result);
     }
-    let mut assembly =
-        match local_components_with_threads(&model, &external, finder.threads, report) {
-            Ok(assembly) => assembly.map(|(assembly, _)| assembly),
-            // Preserve the geometry fallback for documents whose local product ownership
-            // cannot be mapped. External-only documents have no such fallback.
-            Err(_) if external.is_empty() => return Ok(None),
-            Err(reason) => return Err(Error::Assembly(reason)),
-        };
+    let mut assembly = match local_components_with_threads(
+        &model,
+        &external,
+        finder.threads,
+        finder.part_positions,
+        report,
+    ) {
+        Ok(assembly) => assembly.map(|(assembly, _)| assembly),
+        // Preserve the geometry fallback for documents whose local product ownership
+        // cannot be mapped. External-only documents have no such fallback.
+        Err(_) if external.is_empty() => return Ok(None),
+        Err(reason) => return Err(Error::Assembly(reason)),
+    };
     if let Some(assembly) = &mut assembly {
         if joints.is_empty()
             && model.ir.model.assembly_joints.is_empty()

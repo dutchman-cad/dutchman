@@ -201,6 +201,8 @@ impl ConvertOptions {
             args.push("--freecad-timeout".into());
             args.push(self.freecad_timeout.to_string().into());
         }
+        args.push("--part-positions".into());
+        args.push(self.effective_part_positions().name().into());
         args.push("--preset".into());
         args.push(self.preset.name().into());
         for (enabled, flag) in [

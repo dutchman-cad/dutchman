@@ -143,7 +143,7 @@ Fast keeps shape only and skips the memory guard. Standard keeps history, sketch
 and joints, leaving history out when its estimate exceeds free memory and
 the history-free estimate fits. Full never drops history for memory. Reference sketches
 are controlled by `sketches`; sketches needed by retained history stay. Disabling
-joints retains stored placements and adds an Info report line. FreeCAD output honours
+joints retains the selected placements and adds an Info report line. FreeCAD output honours
 history only; sketch and joint choices do not control that writer.
 
 A conversion that exceeds available memory refuses with the same message as the CLI:
@@ -824,3 +824,26 @@ Decode refusals have no bundle yet.
 
 A cut refused by the fragment limits returns a normal unavailable-bundle result,
 with a plain explanation and summary or private-send options; it is not a tool error.
+
+## Assembly placements
+
+Conversion tools accept `part_positions`: `"smart"` (default), `"last-shown"`, or
+`"first-placed"`. Smart accepts current poses only when touching joints close (or there are
+none), geometry fits in first-placement assembly bounds grown by 10%, and repeated inserted
+designs move together. It keeps first placements when a check fails or cannot be established.
+Last-shown uses available current poses without those checks; first-placed ignores later
+moves throughout. Joints work from the selected placements.
+
+Smart and last-shown prefer decoder-bound saved-scene displayed poses, without current-pose
+guards. Only bound rows are used; ambiguous and unbound rows are skipped, and an absent
+arena supplies none. Fallback current poses may be stale. To restore the old
+placement choice, pass `part_positions: "first-placed"`. The boolean `stored_placements: true`
+remains an alias; conflicting choices are rejected. Reports and dry runs include
+`choices.part_positions`; successful reads add an Info summary and `part_positions` rule
+counts and fallback reasons. `choices.stored_placements` remains a compatibility boolean,
+true only for first-placed.
+
+Missing assembly holder poses are inferred bottom-up from displayed children only when
+their world-pose estimates agree within 0.001 mm and 1e-6 rotation entries. Conflicts keep
+the existing placement source and are reported. JSON `part_positions` adds `derived_holders`
+and `holder_conflicts`; `bound_displayed` and `derived_holders` partition `displayed`, preserving the displayed/current/first-placement total.

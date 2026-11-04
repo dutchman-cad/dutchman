@@ -448,6 +448,13 @@ pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value
     if !report.joints().is_empty() {
         out.insert("joints".to_owned(), json!(report.joints()));
     }
+    if let Some((mode, c)) = report.part_positions() {
+        out.insert("part_positions".to_owned(), json!({"mode":mode.name(), "total":c.total(),
+            "displayed":c.displayed, "current":c.current, "first_placed":c.first_placed,
+            "derived_holders":c.derived_holders, "holder_conflicts":c.holder_conflicts,
+            "bound_displayed":c.displayed.saturating_sub(c.derived_holders),
+            "fallbacks":{"no_current_pose":c.no_current_pose,"ambiguous":c.ambiguous,"unsupported":c.unsupported,"joints":c.joints,"bounds":c.bounds,"instances":c.instances}}));
+    }
     out.insert("losses".to_owned(), losses(report));
     if !report.names().is_empty() {
         out.insert("names".to_owned(), json!(report.names()));
@@ -884,7 +891,7 @@ pub fn conversion_choices(report: &mut Value, input: &Path, options: &crate::Con
                 input, &choices, options,
             )),
         );
-        fields.insert("choices".to_owned(), choice_values(options.preset, choices));
+        fields.insert("choices".to_owned(), placement_choices(options, choices));
     }
 }
 
@@ -896,6 +903,25 @@ pub fn estimate(estimate: Option<crate::choices::Estimate>) -> Value {
     })
 }
 
+/// The selected placements alongside the effective retention choices.
+pub fn placement_choices(
+    options: &crate::ConvertOptions,
+    choices: crate::choices::Choices,
+) -> Value {
+    let mut value = choice_values(options.preset, choices);
+    if let Some(fields) = value.as_object_mut() {
+        fields.insert(
+            "part_positions".to_owned(),
+            json!(options.effective_part_positions().name()),
+        );
+        fields.insert(
+            "stored_placements".to_owned(),
+            json!(options.effective_part_positions() == dutchman_core::PartPositions::FirstPlaced),
+        );
+    }
+    value
+}
+
 /// The selected preset and its effective narrowed choices.
 pub fn choice_values(preset: crate::choices::Preset, choices: crate::choices::Choices) -> Value {
     json!({"preset": preset.name(), "history": choices.history, "sketches": choices.sketches, "joints": choices.joints})
@@ -904,6 +930,48 @@ pub fn choice_values(preset: crate::choices::Preset, choices: crate::choices::Ch
 #[cfg(test)]
 #[allow(clippy::indexing_slicing)]
 mod tests {
+    #[test]
+    fn placement_counts_accumulate_and_keep_fallbacks_separate() {
+        use dutchman_core::{PartPositionCounts, PartPositions};
+        let mut report = Report::default();
+        report.record_part_positions(
+            PartPositions::Smart,
+            PartPositionCounts {
+                current: 2,
+                first_placed: 3,
+                joints: 1,
+                bounds: 2,
+                ..Default::default()
+            },
+        );
+        let mut nested = Report::default();
+        nested.record_part_positions(
+            PartPositions::Smart,
+            PartPositionCounts {
+                displayed: 3,
+                derived_holders: 2,
+                holder_conflicts: 1,
+                first_placed: 2,
+                ambiguous: 2,
+                ..Default::default()
+            },
+        );
+        report.append(nested);
+        let out = success("dutchman.convert/1", Value::Null, &report);
+        let counts = &out["part_positions"];
+        assert_eq!(counts["mode"], "smart");
+        assert_eq!(counts["total"], 10);
+        assert_eq!(counts["displayed"], 3);
+        assert_eq!(counts["bound_displayed"], 1);
+        assert_eq!(counts["derived_holders"], 2);
+        assert_eq!(counts["holder_conflicts"], 1);
+        assert_eq!(counts["current"], 2);
+        assert_eq!(counts["first_placed"], 5);
+        assert_eq!(counts["fallbacks"]["joints"], 1);
+        assert_eq!(counts["fallbacks"]["bounds"], 2);
+        assert_eq!(counts["fallbacks"]["ambiguous"], 2);
+    }
+
     use dutchman_core::FeatureOutcome;
 
     use super::*;

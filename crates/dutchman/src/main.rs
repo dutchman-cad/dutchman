@@ -851,6 +851,7 @@ fn main() -> ExitCode {
             &input,
             &dutchman::PartSearch {
                 threads: 0,
+                part_positions: dutchman_core::PartPositions::Smart,
                 project,
                 also: search,
             },

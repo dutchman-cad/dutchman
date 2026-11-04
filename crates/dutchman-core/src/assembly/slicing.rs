@@ -22,7 +22,7 @@ impl<'a> Packed<'a> {
         serde_json::from_str(text).map_err(|err| err.to_string())
     }
 
-    /// The assembly algorithms inspect these arenas, and three native placement records.
+    /// The assembly algorithms inspect these arenas and native placement records.
     /// Extracted parts retain every header field and omit native records, as before.
     pub fn document(&self) -> Result<Value, String> {
         let mut fields = self.fields.clone();
@@ -59,6 +59,7 @@ impl<'a> Packed<'a> {
                     "xref_designs",
                     "xref_references",
                     "design_component_occurrences",
+                    "display_poses",
                 ] {
                     if let Some(rows) = arenas.get(name) {
                         selected.insert(

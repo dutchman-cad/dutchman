@@ -141,12 +141,18 @@ pub(super) fn resolve(
             unresolved.push(left);
         }
     }
-    let mut assembly = local_components_with_threads(model, &external, finder.threads, report)
-        .map_err(Error::Assembly)?
-        .map(|(assembly, _)| assembly)
-        .ok_or_else(|| {
-            Error::Assembly("no component placements could be read from the assembly".to_owned())
-        })?;
+    let mut assembly = local_components_with_threads(
+        model,
+        &external,
+        finder.threads,
+        finder.part_positions,
+        report,
+    )
+    .map_err(Error::Assembly)?
+    .map(|(assembly, _)| assembly)
+    .ok_or_else(|| {
+        Error::Assembly("no component placements could be read from the assembly".to_owned())
+    })?;
     // Layout numbers are local to this component-tree build. Distinct assembly files
     // must not make unrelated leaf parts share a writer definition just because both
     // were assigned layout 0. Already resolved external trees keep their own namespace.

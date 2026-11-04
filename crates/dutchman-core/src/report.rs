@@ -143,6 +143,7 @@ const MAX_NAMES: usize = 100_000;
 #[derive(Clone, Debug, Default)]
 pub struct Report {
     threads: Option<(usize, usize)>,
+    part_positions: Option<(crate::PartPositions, crate::PartPositionCounts)>,
     history_check_skipped: Option<(u64, u64)>,
     losses: Vec<Loss>,
     outcome: Option<Outcome>,
@@ -387,9 +388,38 @@ impl Report {
         }
     }
 
+    /// Accumulate source-occurrence placement rules for this conversion.
+    pub fn record_part_positions(
+        &mut self,
+        mode: crate::PartPositions,
+        counts: crate::PartPositionCounts,
+    ) {
+        match &mut self.part_positions {
+            Some((_, total)) => total.add(counts),
+            None => self.part_positions = Some((mode, counts)),
+        }
+    }
+    /// Selected policy and disjoint placement counts, with fallback reasons.
+    pub fn part_positions(&self) -> Option<(crate::PartPositions, crate::PartPositionCounts)> {
+        self.part_positions
+    }
+    /// One user-facing placement summary after the whole source has been read.
+    pub(crate) fn note_part_positions(&mut self, mode: crate::PartPositions) {
+        let (mode, counts) = *self
+            .part_positions
+            .get_or_insert((mode, Default::default()));
+        self.push(Severity::Info, "part positions", format!(
+            "{} parts placed as Fusion last showed them ({} directly bound, {} holders derived from displayed children), {} at current poses, {} as first placed ({mode}); first-placement reasons: {} without a current pose, {} ambiguous, {} unsupported, {} joint checks, {} bounds checks, {} inserted-design checks; {} holder conflicts",
+            counts.displayed, counts.displayed.saturating_sub(counts.derived_holders), counts.derived_holders, counts.current, counts.first_placed, counts.no_current_pose, counts.ambiguous, counts.unsupported, counts.joints, counts.bounds, counts.instances, counts.holder_conflicts
+        ));
+    }
+
     /// Records every loss of `other`, after this report's own.
     pub fn append(&mut self, other: Report) {
         self.merge_threads(other.threads);
+        if let Some((mode, counts)) = other.part_positions {
+            self.record_part_positions(mode, counts);
+        }
         self.merge_history_check(other.history_check_skipped);
         self.losses.extend(other.losses);
         self.names.extend(other.names);
@@ -398,6 +428,9 @@ impl Report {
     /// Records every loss of `other` under `prefix` (`part.ipt: …`), after this report's own.
     pub fn append_prefixed(&mut self, other: Report, prefix: &str) {
         self.merge_threads(other.threads);
+        if let Some((mode, counts)) = other.part_positions {
+            self.record_part_positions(mode, counts);
+        }
         self.merge_history_check(other.history_check_skipped);
         self.losses
             .extend(other.losses.into_iter().map(|loss| Loss {

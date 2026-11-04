@@ -194,6 +194,18 @@ fn restore_choices(options: &mut ConvertOptions, settings: &Value) -> bool {
         .get("no_verify")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    options.part_positions = settings
+        .get("part_positions")
+        .and_then(Value::as_str)
+        .and_then(|value| value.parse().ok())
+        .unwrap_or_else(|| {
+            if settings.get("stored_placements").and_then(Value::as_bool) == Some(true) {
+                dutchman_core::PartPositions::FirstPlaced
+            } else {
+                dutchman_core::PartPositions::Smart
+            }
+        });
+    options.stored_placements = false;
     options.no_joints = settings
         .get("no_joints")
         .and_then(Value::as_bool)
@@ -239,6 +251,7 @@ fn saved_choices(options: &ConvertOptions, custom: bool) -> Value {
         "import_only": options.import_only,
         "no_sketches": options.no_sketches, "no_joints": options.no_joints,
         "no_verify": options.no_verify,
+        "part_positions": options.effective_part_positions().name(),
     })
 }
 
@@ -1676,6 +1689,28 @@ impl App {
     fn choices_ui(&mut self, ui: &mut egui::Ui) {
         self.preset_ui(ui);
         egui::CollapsingHeader::new("Advanced").show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let label = |mode| match mode {
+                    dutchman_core::PartPositions::Smart => "Smart",
+                    dutchman_core::PartPositions::LastShown => "As Fusion last showed them",
+                    dutchman_core::PartPositions::FirstPlaced => "As first placed",
+                };
+                egui::ComboBox::from_label("Part positions")
+                    .selected_text(label(self.options.part_positions))
+                    .show_ui(ui, |ui| {
+                        for mode in [
+                            dutchman_core::PartPositions::Smart,
+                            dutchman_core::PartPositions::LastShown,
+                            dutchman_core::PartPositions::FirstPlaced,
+                        ] {
+                            ui.selectable_value(
+                                &mut self.options.part_positions,
+                                mode,
+                                label(mode),
+                            );
+                        }
+                    });
+            });
             let choices = self.options.choices();
             let (mut history, mut sketches, mut joints) =
                 (choices.history, choices.sketches, choices.joints);
@@ -2864,16 +2899,25 @@ mod tests {
     }
 
     #[test]
-    fn checking_history_defaults_on_and_the_memory_override_respects_off() {
+    fn part_positions_and_history_choices_default_and_roundtrip() {
         use egui_kittest::kittest::Queryable;
         let mut harness = egui_kittest::Harness::builder()
             .with_size(egui::vec2(1200.0, 1800.0))
             .build_eframe(|cc| App::new(cc));
         harness.run_steps(8);
         assert!(!harness.state().options.no_verify);
+        assert!(!harness.state().options.stored_placements);
         assert!(!harness.state().options.no_memory_check);
         harness.get_by_label("Advanced").click_accesskit();
         harness.run_steps(8);
+        harness.get_by_label("Part positions").click_accesskit();
+        harness.run_steps(8);
+        harness.get_by_label("As first placed").click_accesskit();
+        harness.run_steps(8);
+        assert_eq!(
+            harness.state().options.part_positions,
+            dutchman_core::PartPositions::FirstPlaced
+        );
         harness
             .get_by_label("Check feature history in SolidCraft")
             .click_accesskit();
@@ -2922,7 +2966,7 @@ mod tests {
     }
 
     #[test]
-    fn old_import_only_settings_restore_the_history_checkbox() {
+    fn part_positions_restore_legacy_settings_and_remember_choices() {
         for import_only in [false, true] {
             let mut options = ConvertOptions::default();
             let custom = restore_choices(&mut options, &json!({"import_only": import_only}));
@@ -2939,6 +2983,7 @@ mod tests {
         options.no_memory_check = true;
         options.no_verify = true;
         options.diagnostics_default = true;
+        options.stored_placements = true;
         let saved = saved_choices(&options, true);
         let mut restored = ConvertOptions::default();
         assert!(restore_choices(&mut restored, &saved));
@@ -2947,7 +2992,28 @@ mod tests {
         assert!(!restored.no_memory_check);
         assert!(restored.no_verify);
         assert!(restored.diagnostics_default);
+        assert_eq!(
+            restored.effective_part_positions(),
+            dutchman_core::PartPositions::FirstPlaced
+        );
         assert!(restored.diagnostics.is_none());
+        for mode in [
+            dutchman_core::PartPositions::Smart,
+            dutchman_core::PartPositions::LastShown,
+            dutchman_core::PartPositions::FirstPlaced,
+        ] {
+            options.stored_placements = false;
+            options.part_positions = mode;
+            let mut restored = ConvertOptions::default();
+            restore_choices(&mut restored, &saved_choices(&options, true));
+            assert_eq!(restored.effective_part_positions(), mode);
+        }
+        let mut legacy = ConvertOptions::default();
+        restore_choices(&mut legacy, &json!({"stored_placements":true}));
+        assert_eq!(
+            legacy.effective_part_positions(),
+            dutchman_core::PartPositions::FirstPlaced
+        );
     }
 
     #[test]

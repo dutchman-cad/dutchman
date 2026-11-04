@@ -67,6 +67,29 @@ class ScenePlacementsTest(unittest.TestCase):
         self.assertEqual(report["placements"][0]["scene_mm"], [30, 0, 0])
         self.assertEqual(scene.compare(source, self.golden(30), mapping)[1], 0)
 
+    def test_overrides_ignore_plain_transforms_and_check_translation_and_axes(self):
+        name = "OverrideTransformAttribute"
+        marker = struct.pack("<I", len(name)) + name.encode("utf-16le") + bytes(5)
+        data = matrix(2) + marker + packed(pose(30, 0.5)) + bytes(12)
+        report, code = scene.compare_overrides(self.source(data), {
+            "stored": pose(20), "current": pose(30, 0.5),
+            "wrong rotation": pose(30), "outside tolerance": pose(30.11, 0.5),
+            "duplicate": pose(30, 0.5),
+        })
+        self.assertEqual(code, 4)  # No named-occurrence binding, even for matching poses.
+        self.assertEqual(report["overrides"], 1)
+        self.assertEqual(report["matched"], 2)
+        self.assertEqual(report["total"], 5)
+        self.assertIn("identical parts could swap", report["limitation"])
+
+    def test_missing_or_truncated_overrides_are_not_a_pass(self):
+        self.assertEqual(scene.compare_overrides(self.source(None), {})[1], 3)
+        self.assertEqual(scene.compare_overrides(self.source(matrix(2)), {})[1], 4)
+        name = "OverrideTransformAttribute"
+        data = struct.pack("<I", len(name)) + name.encode("utf-16le") + bytes(5)
+        with self.assertRaises(ValueError):
+            scene.overrides(data)
+
     def test_no_scene_is_not_a_pass_in_the_command(self):
         source = self.source(None)
         golden = os.path.join(self.directory, "golden.json")
