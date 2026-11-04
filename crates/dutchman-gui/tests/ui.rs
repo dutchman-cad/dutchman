@@ -71,20 +71,118 @@ fn the_window_offers_the_file_problem_form_and_names_its_version() {
     );
 }
 
-#[test]
-fn the_top_row_names_the_app_and_its_version_at_the_narrowest_width() {
-    let mut harness = Harness::builder()
-        .with_size(egui::vec2(520.0, 420.0))
+fn header_harness(width: f32, theme: ThemePreference, update: bool) -> Harness<'static, App> {
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(width, 680.0))
         .build_eframe(|cc| App::new(cc));
-    harness.run_steps(8);
-    let name = harness.get_by_label("Dutchman Convert").rect();
-    let version = harness
+    h.ctx.set_theme(theme);
+    h.state_mut().preview_solidcraft(Some("0.30.9"));
+    if update {
+        h.state_mut()
+            .updater
+            .preview(dutchman_gui::update::Release {
+                fixes_reports: Vec::new(),
+                tag: "v0.2.6".into(),
+                notes: "Release notes".into(),
+                download: "https://github.com/dutchman-cad/dutchman/releases/tag/v0.2.6".into(),
+            });
+    }
+    h.run_steps(8);
+    h
+}
+
+fn assert_header_fits(h: &Harness<'_, App>, width: f32, update: bool, theme: &str) {
+    let name = h.get_by_label("Dutchman Convert").rect();
+    let version = h
         .get_by_label(&format!("v{}", dutchman::BUILD_VERSION))
         .rect();
-    let report = harness.get_by_label("Report a problem").rect();
     assert!(version.left() >= name.right());
-    assert!(version.bottom() <= 80.0);
-    assert!(report.left() >= 0.0 && report.right() <= 520.0);
+    let mut title = name.union(version);
+    if let Some(subtitle) = h.query_by_label("Converts native CAD designs into SolidCraft designs.")
+    {
+        title = title.union(subtitle.rect());
+    }
+    let window = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 680.0));
+    assert!(window.contains_rect(title));
+    let narrow = width - 64.0 < 850.0;
+    let mut labels = vec!["Settings", "Report a problem"];
+    let found = h
+        .query_by_label(if narrow { "0.30" } else { "SolidCraft 0.30" })
+        .is_some();
+    labels.push(match (narrow, found) {
+        (true, true) => "0.30",
+        (false, true) => "SolidCraft 0.30",
+        (true, false) => "not found",
+        (false, false) => "SolidCraft not found",
+    });
+    if narrow {
+        labels.push(theme);
+    } else {
+        labels.extend(["Night", "Day", "System"]);
+    }
+    if update {
+        labels.push(if narrow { "Update" } else { "Update to 0.2.6" });
+    }
+    let mut rects = Vec::new();
+    for label in labels {
+        let rect = h.get_by_label(label).rect();
+        assert!(
+            !rect.intersects(title),
+            "{width}: {label} {rect:?} overlaps title {title:?}"
+        );
+        assert!(
+            window.contains_rect(rect),
+            "{width}: {label} {rect:?} outside window"
+        );
+        for other in &rects {
+            assert!(
+                !rect.intersects(*other),
+                "{width}: {label} overlaps another control"
+            );
+        }
+        rects.push(rect);
+    }
+}
+
+#[test]
+fn header_controls_fit_without_overlapping_the_title() {
+    for width in [
+        520.0, 600.0, 760.0, 913.0, 914.0, 1000.0, 1263.0, 1264.0, 1400.0,
+    ] {
+        for update in [false, true] {
+            for (theme, label) in [
+                (ThemePreference::Light, "Day"),
+                (ThemePreference::Dark, "Night"),
+                (ThemePreference::System, "System"),
+            ] {
+                let mut h = header_harness(width, theme, update);
+                assert_header_fits(&h, width, update, label);
+                h.state_mut().preview_solidcraft(None);
+                h.run_steps(8);
+                assert_header_fits(&h, width, update, label);
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore = "renders real GPU screenshots; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn header_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    for (theme, label) in [
+        (ThemePreference::Light, "Day"),
+        (ThemePreference::Dark, "Night"),
+    ] {
+        for width in [520.0, 760.0] {
+            let mut h = header_harness(width, theme, true);
+            assert_header_fits(&h, width, true, label);
+            h.render()
+                .unwrap()
+                .save(dir.join(format!("header-{width}-{label}.png")))
+                .unwrap();
+        }
+    }
 }
 
 #[test]

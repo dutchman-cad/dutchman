@@ -1342,70 +1342,87 @@ impl App {
     }
 
     fn title(&mut self, ui: &mut egui::Ui) {
-        let p = theme::palette(ui);
         let narrow = ui.available_width() < 850.0;
         let compact = ui.available_width() < 1200.0;
-        ui.horizontal(|ui| {
-            let mark = if ui.visuals().dark_mode {
-                egui::include_image!("../assets/dutchman-mark-night.svg")
-            } else {
-                egui::include_image!("../assets/dutchman-mark.svg")
-            };
-            ui.add(egui::Image::new(mark).fit_to_exact_size(egui::vec2(40.0, 40.0)));
-            ui.add_space(theme::SPACE_2);
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 0.0;
-                ui.with_layout(Layout::left_to_right(Align::Max), |ui| {
-                    ui.spacing_mut().item_spacing.x = theme::SPACE_2;
-                    if compact {
-                        ui.label(RichText::new(crate::APP_NAME).heading());
-                    } else {
-                        ui.label(RichText::new(crate::APP_NAME).text_style(theme::title()));
-                    }
-                    ui.label(RichText::new(crate::version_label()).small().color(p.tide));
-                });
-                if !compact {
-                    ui.label(
-                        RichText::new("Converts native CAD designs into SolidCraft designs.")
-                            .small()
-                            .color(p.tide),
-                    );
-                }
-            });
+        // Give the controls their own row before the title and toolbar compete for space.
+        // The wide title includes a subtitle, so it needs more room than the compact title.
+        if compact {
+            ui.horizontal(|ui| self.title_brand(ui, compact));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.hyperlink_to("Report a problem", crate::REPORT_PROBLEM_URL);
-                ui.add_space(theme::SPACE_2);
-                let current = ui.ctx().options(|o| o.theme_preference);
-                let themes = [
-                    (ThemePreference::Dark, "Night"),
-                    (ThemePreference::Light, "Day"),
-                    (ThemePreference::System, "System"),
-                ];
-                if narrow {
-                    let label = match current {
-                        ThemePreference::Dark => "Night",
-                        ThemePreference::Light => "Day",
-                        ThemePreference::System => "System",
-                    };
-                    ui.menu_button(label, |ui| {
-                        for (preference, name) in themes {
-                            if ui.selectable_label(current == preference, name).clicked() {
-                                ui.ctx().set_theme(preference);
-                                ui.close();
-                            }
-                        }
-                    });
+                self.title_controls(ui, narrow);
+            });
+        } else {
+            ui.horizontal(|ui| {
+                self.title_brand(ui, compact);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    self.title_controls(ui, narrow);
+                });
+            });
+        }
+    }
+
+    fn title_brand(&self, ui: &mut egui::Ui, compact: bool) {
+        let p = theme::palette(ui);
+        let mark = if ui.visuals().dark_mode {
+            egui::include_image!("../assets/dutchman-mark-night.svg")
+        } else {
+            egui::include_image!("../assets/dutchman-mark.svg")
+        };
+        ui.add(egui::Image::new(mark).fit_to_exact_size(egui::vec2(40.0, 40.0)));
+        ui.add_space(theme::SPACE_2);
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            ui.with_layout(Layout::left_to_right(Align::Max), |ui| {
+                ui.spacing_mut().item_spacing.x = theme::SPACE_2;
+                if compact {
+                    ui.label(RichText::new(crate::APP_NAME).heading());
                 } else {
-                    for (preference, name) in themes {
-                        if ui.selectable_label(current == preference, name).clicked() {
-                            ui.ctx().set_theme(preference);
-                        }
+                    ui.label(RichText::new(crate::APP_NAME).text_style(theme::title()));
+                }
+                ui.label(RichText::new(crate::version_label()).small().color(p.tide));
+            });
+            if !compact {
+                ui.label(
+                    RichText::new("Converts native CAD designs into SolidCraft designs.")
+                        .small()
+                        .color(p.tide),
+                );
+            }
+        });
+    }
+
+    fn title_controls(&mut self, ui: &mut egui::Ui, narrow: bool) {
+        ui.hyperlink_to("Report a problem", crate::REPORT_PROBLEM_URL);
+        ui.add_space(theme::SPACE_2);
+        let current = ui.ctx().options(|o| o.theme_preference);
+        let themes = [
+            (ThemePreference::Dark, "Night"),
+            (ThemePreference::Light, "Day"),
+            (ThemePreference::System, "System"),
+        ];
+        if narrow {
+            let label = match current {
+                ThemePreference::Dark => "Night",
+                ThemePreference::Light => "Day",
+                ThemePreference::System => "System",
+            };
+            ui.menu_button(label, |ui| {
+                for (preference, name) in themes {
+                    if ui.selectable_label(current == preference, name).clicked() {
+                        ui.ctx().set_theme(preference);
+                        ui.close();
                     }
                 }
-                self.solidcraft_pill(ui, narrow);
-                self.updater.header(ui, narrow);
             });
-        });
+        } else {
+            for (preference, name) in themes {
+                if ui.selectable_label(current == preference, name).clicked() {
+                    ui.ctx().set_theme(preference);
+                }
+            }
+        }
+        self.solidcraft_pill(ui, narrow);
+        self.updater.header(ui, narrow);
     }
 
     fn solidcraft_report(&self) -> Value {
