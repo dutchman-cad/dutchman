@@ -8,7 +8,11 @@ use sha2::{Digest, Sha256};
 use super::{Install, Spec};
 use crate::update::{version, RELEASES};
 
+/// Largest download accepted; release ZIPs are about 170 MB.
 const MAX_PACKAGE: u64 = 512 * 1024 * 1024;
+/// Largest total unpacked from an update ZIP. The three release programs alone unpack to
+/// about 575 MB, so this is separate from, and larger than, the download limit.
+const MAX_UNPACKED: u64 = 2 * 1024 * 1024 * 1024;
 const GUIDES: [&str; 3] = ["AGENTS.md", "docs", "skills"];
 const PROGRAMS: [&str; 3] = ["dutchman-gui.exe", "dutchman.exe", "dutchman-mcp.exe"];
 
@@ -186,7 +190,7 @@ fn apply_zip(path: &Path, stem: &str, installed: &Path) -> Result<(), String> {
                 "Could not write beside Dutchman: {e}. Open the release page for a manual update."
             )
         })?;
-    let mut remaining = MAX_PACKAGE;
+    let mut remaining = MAX_UNPACKED;
     for name in PROGRAMS {
         if !installed.join(name).is_file() || installed.join(format!("{name}.old")).exists() {
             return Err(
@@ -197,9 +201,14 @@ fn apply_zip(path: &Path, stem: &str, installed: &Path) -> Result<(), String> {
         let mut entry = archive
             .by_name(&format!("{stem}/{name}"))
             .map_err(|_| format!("The update ZIP is missing {name}. Open the release page."))?;
+        if entry.size() > remaining {
+            return Err(
+                "The update ZIP unpacks to more than Dutchman accepts. Open the release page."
+                    .into(),
+            );
+        }
         if !entry.is_file()
             || entry.size() == 0
-            || entry.size() > remaining
             || entry.unix_mode().is_some_and(|m| m & 0o170000 == 0o120000)
         {
             return Err(
