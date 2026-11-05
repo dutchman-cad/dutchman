@@ -159,8 +159,9 @@ Show selects the exact file on Windows and macOS, or opens its folder on Linux. 
 a save dialog with the same filename and copies the log to the location you choose.
 A batch shares one log, so every card opens or copies that same file. A retry has its own
 log; the other cards keep their original log. Windows folder paths use backslashes.
-On launch, an unfinished conversion in the newest default log shows **The last run didn't
-finish. Its diagnostic log is here:** with **Open folder** and **Dismiss** buttons.
+On launch, an unfinished conversion in the newest default log shows one line, **The last run
+didn't finish.**, with **Open its log folder** and **Dismiss** (hover for the log's place). In a
+wide window it sits at the top of the Results column, so the main screen still fits.
 
 Default diagnostic filenames use UTC on every platform, formatted from the system clock
 without launching a timestamp command. Diagnostic OS and total-memory metadata are read

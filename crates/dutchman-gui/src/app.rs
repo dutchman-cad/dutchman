@@ -412,6 +412,11 @@ impl App {
         self.options.solidcraft_version = Some(self.detected_version);
     }
 
+    /// Shows the notice for a run that didn't finish, with its log at `path`, for UI previews.
+    pub fn preview_unfinished_run(&mut self, path: PathBuf) {
+        self.unfinished_diagnostic = Some(path);
+    }
+
     /// Supplies a SolidCraft app without its CLI, whatever this machine has, for UI previews.
     pub fn preview_solidcraft_app(&mut self, found: bool) {
         self.has_app = found;
@@ -1481,12 +1486,18 @@ impl App {
     }
 
     /// The notice about a run that did not finish, above the main screen.
+    /// After a run that didn't finish: one compact line, with the log's place on hover, so it
+    /// never pushes the main screen into scrolling. Wide windows show it above the results.
     fn unfinished_notice(&mut self, ui: &mut egui::Ui) {
         if let Some(path) = self.unfinished_diagnostic.clone() {
-            ui.label("The last run didn't finish. Its diagnostic log is here:");
-            ui.label(platform::display_path(&path));
-            ui.horizontal(|ui| {
-                if ui.button("Open folder").clicked() {
+            ui.horizontal_wrapped(|ui| {
+                ui.label("The last run didn't finish.")
+                    .on_hover_text(platform::display_path(&path));
+                if ui
+                    .button("Open its log folder")
+                    .on_hover_text(platform::display_path(&path))
+                    .clicked()
+                {
                     if let Err(message) = platform::reveal(&path) {
                         self.notice = Some(message);
                     }
@@ -1521,7 +1532,6 @@ impl App {
     /// scrolls only if the window is too short for the left column; results scroll in their own
     /// column.
     fn wide_page(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, view: &present::RunView) {
-        self.unfinished_notice(ui);
         let rect = ui.available_rect_before_wrap();
         let gap = theme::SPACE_8;
         let left_width = ((rect.width() - gap) * 0.54).round();
@@ -1543,6 +1553,7 @@ impl App {
             scrolls = area.content_size.y > area.inner_rect.height() + 1.0;
         });
         ui.scope_builder(egui::UiBuilder::new().max_rect(right), |ui| {
+            self.unfinished_notice(ui);
             self.results(ui, view, true);
         });
         ui.advance_cursor_after_rect(rect);
@@ -3447,8 +3458,8 @@ mod tests {
             });
         harness.run_steps(8);
         harness.get_by_label("Open diagnostics folder");
-        harness.get_by_label("Open folder");
-        harness.get_by_label("The last run didn't finish. Its diagnostic log is here:");
+        harness.get_by_label("Open its log folder");
+        harness.get_by_label("The last run didn't finish.");
         // Toggle through accessibility rather than a pointer position, which depends on how
         // the platform's fonts lay the form out.
         // Every run keeps its log: there is no checkbox to turn that off.

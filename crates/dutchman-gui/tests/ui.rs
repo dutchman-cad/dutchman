@@ -3022,6 +3022,17 @@ fn the_default_size_fits_the_main_screen_without_scrolling() {
             "{monitor:?}: the page scrolls at {size:?}"
         );
         assert_main_screen_in_view(&h, size);
+        // After a run that didn't finish, its notice still fits: nothing scrolls or moves out.
+        let mut h = h;
+        h.state_mut()
+            .preview_unfinished_run(work.path().join("2026-11-05_010203_dutchman_running.jsonl"));
+        h.run_steps(4);
+        assert!(h.get_by_label("The last run didn't finish.").rect().width() > 0.0);
+        assert!(
+            !h.state().page_scrolls(),
+            "{monitor:?}: the unfinished-run notice makes the page scroll at {size:?}"
+        );
+        assert_main_screen_in_view(&h, size);
         // Designs and the output choices sit beside the results, not above them.
         let designs = h.get_by_label("DESIGNS").rect();
         let results = h.get_by_label("RESULTS").rect();
@@ -3244,6 +3255,20 @@ fn fit_screenshots() {
                 .unwrap()
                 .save(dir.join(format!("{name}-{label}.png")))
                 .unwrap();
+            if name == "fit-1440x900" {
+                h.state_mut().preview_unfinished_run(
+                    work.path().join("2026-11-05_010203_dutchman_running.jsonl"),
+                );
+                h.run_steps(4);
+                assert!(
+                    !h.state().page_scrolls(),
+                    "{name}: the notice makes the page scroll"
+                );
+                h.render()
+                    .unwrap()
+                    .save(dir.join(format!("{name}-unfinished-{label}.png")))
+                    .unwrap();
+            }
         }
     }
 }
