@@ -84,6 +84,68 @@ pub(super) fn crossing(sketch: &Value, entities: &[&Value]) -> BTreeSet<String> 
         .collect()
 }
 
+/// The source curves that bound a trimmed profile region some feature selects from `sketch`.
+pub(super) fn trimmed_region_curves(sketch: &Value, features: &[Value]) -> BTreeSet<String> {
+    fn walk(value: &Value, sketch: &str, found: &mut BTreeSet<String>, depth: usize) {
+        if depth > 32 {
+            return;
+        }
+        match value {
+            Value::Object(fields) => {
+                if fields.get("kind").and_then(Value::as_str) == Some("sketch_regions")
+                    && value.pointer("/value/sketch").and_then(Value::as_str) == Some(sketch)
+                {
+                    for region in value
+                        .pointer("/value/regions")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                        .filter(|region| {
+                            region.get("region").and_then(Value::as_str) == Some("trimmed")
+                        })
+                    {
+                        let rings = region
+                            .get("outer_boundary")
+                            .into_iter()
+                            .chain(
+                                region
+                                    .get("hole_boundaries")
+                                    .and_then(Value::as_array)
+                                    .into_iter()
+                                    .flatten(),
+                            )
+                            .filter_map(Value::as_array);
+                        for ring in rings {
+                            found.extend(
+                                ring.iter()
+                                    .filter_map(|use_| use_.get("entity")?.as_str())
+                                    .map(str::to_owned),
+                            );
+                        }
+                    }
+                    return;
+                }
+                for child in fields.values() {
+                    walk(child, sketch, found, depth + 1);
+                }
+            }
+            Value::Array(items) => {
+                for item in items {
+                    walk(item, sketch, found, depth + 1);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut found = BTreeSet::new();
+    if let Some(id) = sketch.get("id").and_then(Value::as_str) {
+        for feature in features {
+            walk(super::operation(feature), id, &mut found, 0);
+        }
+    }
+    found
+}
+
 /// The curves that the sketch's consumers (every feature naming it) select whole-loop regions
 /// from, when every consumer is such a selection: the source entities of the selected loops.
 /// `None` when some consumer needs the sketch's curves as geometry, or nothing selects a region.
@@ -873,6 +935,27 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn curves_bounding_a_selected_trimmed_region_are_named() {
+        let sketch = json!({"id": "s"});
+        let features = vec![
+            json!({"id": "e", "definition": {"definition": "extrude", "profile": {
+                "kind": "sketch_regions", "value": {"sketch": "s", "regions": [
+                    {"region": "trimmed",
+                     "outer_boundary": [{"entity": "top"}, {"entity": "divider"}],
+                     "hole_boundaries": [[{"entity": "circle"}]]},
+                    {"region": "loops", "outer": 0}]}}}}),
+            json!({"id": "f", "definition": {"definition": "extrude", "profile": {
+                "kind": "sketch_regions", "value": {"sketch": "other", "regions": [
+                    {"region": "trimmed", "outer_boundary": [{"entity": "elsewhere"}]}]}}}}),
+        ];
+        let found = trimmed_region_curves(&sketch, &features);
+        assert_eq!(
+            found.into_iter().collect::<Vec<_>>(),
+            ["circle", "divider", "top"]
+        );
+    }
 
     fn line(id: &str, a: P2, b: P2) -> Value {
         json!({"id": id, "geometry": {"kind": "line",
