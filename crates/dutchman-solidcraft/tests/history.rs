@@ -10822,6 +10822,36 @@ fn shells_require_their_own_historical_input_faces() {
 }
 
 #[test]
+fn a_body_the_source_leaves_unnamed_gets_a_name_later_features_can_target() {
+    let model = cube_with_history(10.0, whole_sketch(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["bodies"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("name");
+    let changed = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    };
+    let (document, report) = convert(
+        &changed,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let extrude = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["type"] == "extrude")
+        .unwrap_or_else(|| panic!("{}", history_line(&report)));
+    assert_eq!(
+        extrude["body_names"],
+        json!(["Body 1"]),
+        "{}",
+        history_line(&report)
+    );
+}
+
+#[test]
 fn through_all_cuts_require_a_body_before_the_cut_in_ordinal_order() {
     const CUT_SKETCH: &str = "test:model:sketch#cut";
     for with_boss in [false, true] {
