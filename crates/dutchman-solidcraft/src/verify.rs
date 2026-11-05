@@ -201,7 +201,9 @@ pub(crate) fn discover_in(
         }),
     }
     if let Some(path) = named.filter(|path| path.is_file()) {
-        places[0].outcome = "used";
+        if let Some(first) = places.first_mut() {
+            first.outcome = "used";
+        }
         return Discovery {
             cli: Some(path),
             places,
@@ -313,14 +315,24 @@ pub fn search_report(verification: &Verification, with_paths: bool) -> Value {
         .map(|place| {
             let mut entry = serde_json::json!({"place": place.label, "outcome": place.outcome});
             if let (true, Some(path)) = (with_paths, &place.path) {
-                entry["path"] = serde_json::json!(path.display().to_string());
+                if let Some(fields) = entry.as_object_mut() {
+                    fields.insert(
+                        "path".to_owned(),
+                        serde_json::json!(path.display().to_string()),
+                    );
+                }
             }
             entry
         })
         .collect();
     let mut report = serde_json::json!({"outcome": outcome, "places": places});
     if let (true, Some(cli)) = (with_paths, &found) {
-        report["cli"] = serde_json::json!(cli.display().to_string());
+        if let Some(fields) = report.as_object_mut() {
+            fields.insert(
+                "cli".to_owned(),
+                serde_json::json!(cli.display().to_string()),
+            );
+        }
     }
     report
 }
