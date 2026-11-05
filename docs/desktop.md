@@ -217,7 +217,9 @@ summaries use the signature `converted-with-problem` and contain no design geome
 they never reuse an earlier failure's bundle. The review shows the exact metadata,
 including sharing choices, and nothing is sent until **Send** is clicked.
 
-To send a file privately, follow the steps on the card:
+On a failed card, these other ways are folded under **Help us fix it**, below **Review and send
+report**, so the whole card fits the window; a converted result has them under **Something
+wrong? Report this file**. To send a file privately, follow the steps on the card:
 join the Discord server, then **Copy and open DM** copies a message and opens Dutchy's
 DM. For a converted result, the copied message starts with a note that the result is
 wrong, followed by the standard routing card with `Error: converted-with-problem`.

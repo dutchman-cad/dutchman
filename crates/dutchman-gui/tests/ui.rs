@@ -260,7 +260,12 @@ fn a_file_that_cannot_convert_says_why() {
     assert!(!dir.path().join("out/broken.sc").exists());
 
     // The failed row says to report it, and its button opens the form filled in, without
-    // the file's name.
+    // the file's name. The other ways to send it are folded until asked for.
+    harness.get_by_label("Review and send report");
+    assert!(harness
+        .query_by_label("Report anonymously on GitHub")
+        .is_none());
+    open_help(&mut harness);
     harness
         .get_by_label("Report anonymously on GitHub")
         .click_accesskit();
@@ -305,7 +310,16 @@ fn failed_card(name: &str, bytes: usize, width: f32) -> (Harness<'static, App>, 
         .set_diagnostic_log(dir.path().join("log.jsonl"));
     convert(&mut harness);
     assert_eq!(harness.state().rows()[0].status, Status::Failed);
+    open_help(&mut harness);
     (harness, dir)
+}
+
+/// Opens a failed card's folded "Help us fix it" section.
+fn open_help(harness: &mut Harness<'static, App>) {
+    harness
+        .get_by_label(dutchman::present::SEND_FOLD)
+        .click_accesskit();
+    harness.run_steps(8);
 }
 
 static SHOWN: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
@@ -2985,8 +2999,49 @@ fn part_positions_last_shown_names_the_program() {
 /// A window of the default size for a monitor of `monitor` points, with one converted design
 /// as the only result, and the Advanced choices open.
 fn fit_harness(size: [f32; 2], theme: ThemePreference, work: &Path) -> Harness<'static, App> {
-    let input = work.join("generated_unit_cube.f3d");
-    std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
+    fit_harness_for(size, theme, work, "generated_unit_cube.f3d")
+}
+
+/// [`fit_harness`] with a file that cannot convert: its failed card is the one result.
+fn failed_fit_harness(
+    size: [f32; 2],
+    theme: ThemePreference,
+    work: &Path,
+) -> Harness<'static, App> {
+    let h = fit_harness_for(size, theme, work, "container_metadata_only.f3d");
+    assert_eq!(h.state().rows()[0].status, Status::Failed);
+    h
+}
+
+/// A failed card fits the window at once: its title, log, Diagnose and the report button
+/// sit between the RESULTS heading and the Convert row, with nothing scrolling.
+fn assert_failed_card_in_view(h: &Harness<'_, App>, name: impl std::fmt::Debug) {
+    assert!(!h.state().page_scrolls(), "{name:?}: the page scrolls");
+    let heading = h.get_by_label("RESULTS").rect();
+    let convert_row = h.get_by_label("Convert").rect().top();
+    for label in [
+        "Failed",
+        "Show this run's log",
+        "Diagnose this file",
+        "Review and send report",
+        dutchman::present::SEND_FOLD,
+    ] {
+        let rect = h.get_by_label(label).rect();
+        assert!(
+            rect.top() >= heading.bottom() && rect.bottom() <= convert_row,
+            "{name:?}: {label} {rect:?} out of view between {heading:?} and {convert_row}"
+        );
+    }
+}
+
+fn fit_harness_for(
+    size: [f32; 2],
+    theme: ThemePreference,
+    work: &Path,
+    name: &str,
+) -> Harness<'static, App> {
+    let input = work.join(name);
+    std::fs::copy(fixture(name), &input).unwrap();
     let mut harness = Harness::builder()
         .with_size(egui::vec2(size[0], size[1]))
         .build_eframe(|cc| test_app(cc));
@@ -3102,6 +3157,11 @@ fn the_default_size_fits_the_main_screen_without_scrolling() {
             "{monitor:?}: the prompt takes {} px",
             copy.top() - ask.bottom()
         );
+        // A failed file's card fits too, with its other ways to report folded.
+        let work = tempfile::tempdir().unwrap();
+        let h = failed_fit_harness(size, ThemePreference::Light, work.path());
+        assert_failed_card_in_view(&h, monitor);
+        assert!(h.query_by_label("Open invite").is_none());
     }
 }
 
@@ -3329,6 +3389,20 @@ fn fit_screenshots() {
                 h.render()
                     .unwrap()
                     .save(dir.join(format!("{name}-unfinished-{label}.png")))
+                    .unwrap();
+            }
+            if size[0] >= dutchman_gui::WIDE_BREAKPOINT {
+                let work = tempfile::tempdir().unwrap();
+                let mut h = failed_fit_harness(size, theme, work.path());
+                assert_failed_card_in_view(&h, name);
+                h.render()
+                    .unwrap()
+                    .save(dir.join(format!("{name}-failed-{label}.png")))
+                    .unwrap();
+                open_help(&mut h);
+                h.render()
+                    .unwrap()
+                    .save(dir.join(format!("{name}-failed-help-{label}.png")))
                     .unwrap();
             }
         }

@@ -809,7 +809,7 @@ impl App {
                     present::Surface::Desktop,
                 );
                 let palette = theme::palette(ui);
-                action = send_ui(ui, palette, index, &steps);
+                action = send_ui(ui, palette, index, &steps, false);
             });
         if action.is_some() {
             self.notice = None;
@@ -2537,7 +2537,8 @@ fn row_ui(
             if let Some(report) = &row.report {
                 let steps =
                     present::SendSteps::new(policy, row.size, report, present::Surface::Desktop);
-                if let Some(chosen) = send_ui(ui, p, index, &steps) {
+                // Folded, so the whole failed card fits the window at once.
+                if let Some(chosen) = send_ui(ui, p, index, &steps, true) {
                     action = Some(chosen);
                 }
             }
@@ -2657,7 +2658,7 @@ fn row_ui(
                         report,
                         present::Surface::Desktop,
                     );
-                    if let Some(chosen) = send_ui(ui, p, index, &steps) {
+                    if let Some(chosen) = send_ui(ui, p, index, &steps, false) {
                         action = Some(chosen);
                     }
                 });
@@ -2836,16 +2837,40 @@ fn test_diagnostics_folder() -> Option<PathBuf> {
 const MIN_STEP_WIDTH: f32 = 190.0;
 
 /// The way to send a file privately, and the anonymous report beside it.
+/// "Review and send report", then the other ways to send the file: in a collapsed
+/// "Help us fix it" section when `fold`, else shown in full.
 fn send_ui(
+    ui: &mut egui::Ui,
+    p: &Palette,
+    index: usize,
+    steps: &present::SendSteps,
+    fold: bool,
+) -> Option<Action> {
+    let mut action = None;
+    if ui.button("Review and send report").clicked() {
+        action = Some(Action::Consent(index));
+    }
+    let other = if fold {
+        egui::CollapsingHeader::new(present::SEND_FOLD)
+            .id_salt(("send-fold", index))
+            .default_open(false)
+            .show(ui, |ui| send_ways_ui(ui, p, index, steps))
+            .body_returned
+            .flatten()
+    } else {
+        send_ways_ui(ui, p, index, steps)
+    };
+    other.or(action)
+}
+
+/// Discord, the DM with Dutchy, a STEP export and the anonymous GitHub report.
+fn send_ways_ui(
     ui: &mut egui::Ui,
     p: &Palette,
     index: usize,
     steps: &present::SendSteps,
 ) -> Option<Action> {
     let mut action = None;
-    if ui.button("Review and send report").clicked() {
-        action = Some(Action::Consent(index));
-    }
     ui.add_space(theme::SPACE_2);
     ui.label(RichText::new(steps.intro).color(p.ink));
     ui.add_space(theme::SPACE_2);
@@ -2913,7 +2938,10 @@ fn step_title(ui: &mut egui::Ui, p: &Palette, text: &str) {
 }
 
 fn step_text(ui: &mut egui::Ui, p: &Palette, text: &str) {
-    ui.label(RichText::new(text).small().color(p.tide));
+    // Left-aligned: a justified column would stretch the gaps between words.
+    ui.with_layout(Layout::top_down(Align::Min), |ui| {
+        ui.label(RichText::new(text).small().color(p.tide));
+    });
 }
 
 /// History decisions must be visible even while the full loss log is collapsed.
@@ -3124,6 +3152,13 @@ mod tests {
                 }
                 app
             });
+        harness.run_steps(8);
+        // The other ways to send a failed file are folded under "Help us fix it".
+        harness
+            .query_all_by_label(present::SEND_FOLD)
+            .last()
+            .unwrap()
+            .click_accesskit();
         harness.run_steps(8);
         harness
             .query_all_by_label(present::SEND_DM_BUTTON)
@@ -3935,7 +3970,8 @@ mod tests {
             "Losses: 1 Degraded",
             "Losses: 1 Dropped",
             "cannot read this design: no geometry could be read",
-            "Report anonymously on GitHub",
+            "Review and send report",
+            present::SEND_FOLD,
         ] {
             assert!(harness.query_by_label(label).is_some(), "missing {label}");
         }

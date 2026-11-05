@@ -10,7 +10,8 @@ report (replace `part.f3d` with your file or folder):
 dutchman convert-all --out-dir converted --report-anon report-anon.json part.f3d
 ```
 
-In the desktop app, **Report anonymously on GitHub** on the failed file does this for you. Review
+In the desktop app, **Report anonymously on GitHub** on the failed file (under **Help us fix it**)
+does this for you. Review
 `report-anon.json`, then paste it into the
 [**A file didn't convert**](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
 form on Dutchman's issues (for a whole library, the **Library test report** form). Keep
@@ -73,7 +74,7 @@ Nothing is sent: the zip stays on your machine until you send it. See
 
 If a file opens in the app that made it but Dutchman can't convert it, it's a bug in Dutchman,
 and the file is the quickest way to fix it. A failed file's card in the desktop and web apps
-has the steps:
+has the steps (in the desktop app, open **Help us fix it** under **Review and send report**):
 
 1. **Join our Discord server.** Already in? Skip this step.
 2. **DM Dutchy.** The button copies a message and opens Dutchy's DM. Paste the message.

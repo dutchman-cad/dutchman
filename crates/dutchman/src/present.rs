@@ -131,6 +131,8 @@ pub fn report_link(report: &Value, anonymous: &Value) -> ReportLink {
 
 /// The secondary way to report a failed file: nothing of the file, no names.
 pub const REPORT_BUTTON: &str = "Report anonymously on GitHub";
+/// The folded section of a failed card that holds the other ways to send the file.
+pub const SEND_FOLD: &str = "Help us fix it";
 pub const SEND_INTRO: &str =
     "If this file opens in the app that made it, it's a bug in Dutchman. Help us fix it:";
 pub const SEND_JOIN_TITLE: &str = "Join our Discord server";
