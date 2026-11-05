@@ -188,8 +188,9 @@ still mounts, retains all three items and passes `hdiutil verify`.
 
 ## Stable and nightly
 
-A stable release depends on cadmpeg at one commit of its `main` branch, pinned as the same
-`rev` for every cadmpeg crate in the workspace `Cargo.toml`. Move the pin after a batch of
+A stable release depends on cadmpeg at one commit of its `main` branch, taken from cadmpeg's
+own repository (`https://github.com/cadmpeg/cadmpeg`) and pinned as the same `rev` for every
+cadmpeg crate in the workspace `Cargo.toml`. Move the pin after a batch of
 cadmpeg merges: set the new commit, run `cargo update -p cadmpeg-core -p cadmpeg-ir -p
 cadmpeg-registry`, then the full tests, the SolidCraft round trip and the anonymous-report
 leak check on a real library before merging it. The pin pull request must pass the "Placements" check
