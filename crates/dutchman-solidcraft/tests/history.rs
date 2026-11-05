@@ -3922,7 +3922,11 @@ fn overlapping_crossing_curves_keep_the_refusal() {
         &SolidCraftWriter::new().verification(Verification::Off),
     );
     assert_reference_sketches(&document, 1);
-    assert!(history_line(&report).contains("a profile crossed by its own sketch's curves"));
+    assert!(
+        history_line(&report).contains("a profile crossed by its own sketch's curves"),
+        "{}",
+        history_line(&report)
+    );
 }
 
 /// A bow tie uses each curve once but intersects itself between curve endpoints.

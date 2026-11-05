@@ -818,6 +818,16 @@ pub(super) fn merged_regions(members: &[Value], entities: &[&Value]) -> bool {
         };
         pieces.push((id, piece));
     }
+    // A curve the loop runs along twice (there and back) is a cut inside the loop, which the
+    // region split handles; it does not mean regions were merged. Leave such curves out, so the
+    // curves on either side of a cut still count as neighbours.
+    let counts = pieces
+        .iter()
+        .fold(BTreeMap::<&str, usize>::new(), |mut counts, (id, _)| {
+            *counts.entry(*id).or_default() += 1;
+            counts
+        });
+    pieces.retain(|(id, _)| counts.get(id).copied() == Some(1));
     let mut low = [f64::MAX; 2];
     let mut high = [f64::MIN; 2];
     for (_, piece) in &pieces {
@@ -844,10 +854,7 @@ pub(super) fn merged_regions(members: &[Value], entities: &[&Value]) -> bool {
             let (Some(&(id_a, a)), Some(&(id_b, b))) = (pieces.get(i), pieces.get(j)) else {
                 return false;
             };
-            // A curve the loop runs along twice (there and back) is a cut inside the loop,
-            // which the region split handles; it does not mean regions were merged.
-            let retraced = |id: &str| pieces.iter().filter(|(other, _)| *other == id).count() > 1;
-            if id_a == id_b || retraced(id_a) || retraced(id_b) {
+            if id_a == id_b {
                 continue;
             }
             let adjacent = j == i + 1 || (i == 0 && j + 1 == count);
