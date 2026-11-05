@@ -104,7 +104,7 @@ run instead; nothing does this by itself.
 | Pull request that changes packaging, or with the `release-build` label | Full build; superseded runs are cancelled |
 | Any other pull request | `ci.yml` only: debug build and tests on every platform |
 | Push to `main` | `ci.yml` only; it saves the debug Rust caches that pull requests restore |
-| Weekly schedule, or run by hand (`gh workflow run release-build.yml --ref <branch>`) | Full build (the weekly run keeps the Rust caches warm) |
+| Run by hand (`gh workflow run release-build.yml --ref <branch>`) | Full build |
 | Nightly | Its own daily build of `main`, unchanged |
 
 A full build makes each platform's archive
@@ -122,7 +122,7 @@ archives. The per-chip Mac archives remain release assets for Homebrew. On Windo
 installs the MSI, upgrades it from a lower version and over a second build of the same version
 (`MajorUpgrade` allows same-version upgrades, so rc.2 installs over rc.1),
 refuses a downgrade, installs as a standard user, uninstalls, and runs the release-mode updater
-tests. Rust caches are kept per target and profile and saved by `main` and candidate tag runs.
+tests. Rust caches are kept per target and profile for those checks and saved only by pushes to `main`. The full release builds (candidates, packaging pull requests, runs by hand) restore and save no cache: what users download is always built from scratch.
 
 The `plan` job in `release-build.yml` starts the builds for a pull request that:
    - changes `.github/workflows/`, `Cargo.toml` other than its version lines (it holds the
@@ -200,11 +200,8 @@ each day from Dutchman's `main` against cadmpeg's `main` (`scripts/use-cadmpeg-m
 `.github/workflows/nightly.yml`). The stable release after the pin moves carries it.
 
 Nightly and release macOS builds use the same release profile, target triples, packages, and
-default features, with one shared Rust cache key per target (`macos-release-<target>`).
-Main's nightly saves caches that tag builds can restore. The nightly restores the cache before
-updating cadmpeg so its key reflects the same pinned manifests as a release from that commit;
-Cargo still rebuilds dependencies changed by the nightly update. A different Rust toolchain,
-changed dependencies, or an absent cache can still require a cold build.
+default features. The nightly keeps its own Rust cache per target (`macos-release-<target>`);
+release candidate builds use no cache and build from scratch.
 
 Regular releases build with the `release` profile: thin LTO and 16 codegen units. A major or
 stable release, starting with 0.3.0, builds with a slower, fully optimised profile instead

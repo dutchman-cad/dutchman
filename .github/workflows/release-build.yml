@@ -19,11 +19,13 @@ name: Release builds
 #
 # The `plan` job decides, and every other job waits on it, so this workflow reports on every pull
 # request and the builds show as skipped when they are not needed. The builds run for:
+# These builds restore and save no Rust cache: what users download is built from scratch, never from
+# a cache another run could have written.
 #   - a release-candidate tag `v*-rc.*` (the plan job first fails if the tag's X.Y.Z differs from
 #     Cargo.toml's version; the dry-run tags `v0.0.0-rc.dryrun*` skip that check);
-#   - a run started by hand on any branch (`gh workflow run release-build.yml --ref <branch>`), a
-#     weekly schedule that keeps the Rust caches warm, and a call from release.yml (only its
-#     explicit `build_if_missing` run);
+#   - a run started by hand on any branch (`gh workflow run release-build.yml --ref <branch>`), and
+#     a call from release.yml (only its explicit `build_if_missing` run, which may name only a
+#     release tag);
 #   - a pull request that changes the packaging (the paths in the `plan` job; for Cargo.toml,
 #     anything but the version lines), or carries the `release-build` label (the label starts
 #     the run when it is added). Other pull requests, and pushes to main, get the debug build and
@@ -37,11 +39,9 @@ on:
   workflow_call:
     inputs:
       ref:
-        description: "The tag to build (empty: the ref of the caller)"
+        description: "The release tag to build, refs/tags/v... (empty: the ref of the caller)"
         type: string
         default: ""
-  schedule:
-    - cron: "41 3 * * 1"
   pull_request:
     types: [opened, synchronize, reopened, labeled]
 
@@ -69,6 +69,16 @@ jobs:
     outputs:
       full: ${{ steps.plan.outputs.full }}
     steps:
+      # A caller may only name a release tag; the build never checks out another ref.
+      - name: Check the requested ref
+        if: inputs.ref != ''
+        env:
+          REF: ${{ inputs.ref }}
+        run: |
+          case "$REF" in
+            refs/tags/v[0-9]*) echo "Building $REF." ;;
+            *) echo "::error::Only a release tag (refs/tags/v...) can be built here, not $REF."; exit 1 ;;
+          esac
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
@@ -178,11 +188,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      # One cache per target and profile, saved by main (weekly, by hand) and candidate tag runs and restored by pull requests.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: release-${{ matrix.target }}
-          save-if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
       - name: Build archive programs
         shell: bash
         run: |
@@ -269,11 +274,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-      # Share each target's release dependencies with main's nightly, including tag runs.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: macos-release-${{ matrix.target }}
-          save-if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
       - name: Build archive programs
         run: cargo build --release --locked -p dutchman -p dutchman-gui --target ${{ matrix.target }}
       - name: Package
