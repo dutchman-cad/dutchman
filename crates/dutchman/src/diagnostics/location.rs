@@ -256,7 +256,12 @@ fn retain(folder: &Path, current: &Path) -> Result<(), String> {
 
 /// Newest default log with an unfinished conversion, for the app's launch notice.
 pub fn unfinished_default_log() -> Option<PathBuf> {
-    let path = logs(&default_folder().ok()?).into_iter().next()?;
+    unfinished_log_in(&default_folder().ok()?)
+}
+
+/// Newest log in `folder` with an unfinished conversion.
+pub fn unfinished_log_in(folder: &Path) -> Option<PathBuf> {
+    let path = logs(folder).into_iter().next()?;
     unfinished(&path).then_some(path)
 }
 

@@ -301,6 +301,7 @@ impl App {
         theme::install(&cc.egui_ctx);
         egui_extras::install_image_loaders(&cc.egui_ctx);
         let (sender, messages) = channel();
+        let diagnostics_folder = test_diagnostics_folder();
         let stored = cc
             .storage
             .and_then(|storage| storage.get_string(SETTINGS_KEY))
@@ -346,8 +347,8 @@ impl App {
             diagnostic_automatic: false,
             row_logs: Default::default(),
             ai_prompts: Default::default(),
-            diagnostics_folder: test_diagnostics_folder(),
-            unfinished_diagnostic: dutchman::diagnostics::unfinished_default_log(),
+            diagnostics_folder: diagnostics_folder.clone(),
+            unfinished_diagnostic: unfinished_diagnostic(diagnostics_folder.as_deref()),
             rows: Vec::new(),
             offset: 0,
             run: None,
@@ -2765,9 +2766,32 @@ fn ai_prompt_ui(ui: &mut egui::Ui, index: usize, ai: Option<&AiPrompt>) -> Optio
     action
 }
 
+/// A folder that replaces the platform diagnostics folder for every app created after it is
+/// set, for tests (which must neither fill, prune nor read the real folder) and embedding.
+static DIAGNOSTICS_FOLDER: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Keeps run logs under `folder` instead of the platform diagnostics folder, for every app
+/// created afterwards, and reads unfinished runs from there. Only the first call counts.
+pub fn set_diagnostics_folder(folder: PathBuf) {
+    let _ = DIAGNOSTICS_FOLDER.set(folder);
+}
+
+/// The unfinished run log the launch notice offers, from this process's diagnostics folder.
+fn unfinished_diagnostic(folder: Option<&Path>) -> Option<PathBuf> {
+    match folder {
+        Some(folder) => dutchman::diagnostics::unfinished_log_in(folder),
+        None => dutchman::diagnostics::unfinished_default_log(),
+    }
+}
+
 /// Tests keep their run logs in a folder of their own, so that they neither fill nor prune
 /// the real diagnostics folder.
 fn test_diagnostics_folder() -> Option<PathBuf> {
+    if let Some(folder) = DIAGNOSTICS_FOLDER.get() {
+        static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        return Some(folder.join(format!("app-{n}")));
+    }
     #[cfg(any(test, feature = "test-support"))]
     {
         static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);

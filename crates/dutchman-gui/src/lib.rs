@@ -10,7 +10,7 @@ pub mod report_policy;
 pub mod theme;
 pub mod worker;
 
-pub use app::App;
+pub use app::{set_diagnostics_folder, App};
 
 /// The app's name, as its window and the macOS app bundle show it.
 pub const APP_NAME: &str = "Dutchman Convert";

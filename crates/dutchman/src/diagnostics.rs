@@ -15,6 +15,7 @@ use dutchman_core::{MemberObserver, ProgressEvent, Stage};
 mod location;
 pub use location::{
     default_folder, finish_default_log, new_default_log, new_log_in, unfinished_default_log,
+    unfinished_log_in,
 };
 use serde_json::{json, Value};
 

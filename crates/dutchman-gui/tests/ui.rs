@@ -19,6 +19,20 @@ use std::time::{Duration, Instant};
 
 use dutchman_gui::app::Status;
 use dutchman_gui::App;
+
+/// An app whose run logs, and the unfinished-run notice, use a folder of this test process,
+/// never the real diagnostics folder (CI runs these tests without the test-support feature).
+fn test_app(cc: &eframe::CreationContext<'_>) -> App {
+    static FOLDER: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    let folder = FOLDER.get_or_init(|| {
+        std::env::temp_dir().join(format!(
+            "dutchman-gui-ui-diagnostics-{}",
+            std::process::id()
+        ))
+    });
+    dutchman_gui::set_diagnostics_folder(folder.clone());
+    App::new(cc)
+}
 use eframe::egui::{self, ThemePreference};
 use egui_kittest::kittest::Queryable;
 use egui_kittest::Harness;
@@ -36,7 +50,7 @@ fn fixture(name: &str) -> PathBuf {
 fn harness() -> Harness<'static, App> {
     Harness::builder()
         .with_size(egui::vec2(760.0, 680.0))
-        .build_eframe(|cc| App::new(cc))
+        .build_eframe(|cc| test_app(cc))
 }
 
 /// Presses Convert and runs the window until the run is over.
@@ -74,7 +88,7 @@ fn the_window_offers_the_file_problem_form_and_names_its_version() {
 fn header_harness(width: f32, theme: ThemePreference, update: bool) -> Harness<'static, App> {
     let mut h = Harness::builder()
         .with_size(egui::vec2(width, 680.0))
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| test_app(cc));
     h.ctx.set_theme(theme);
     h.state_mut().preview_solidcraft(Some("0.30.9"));
     if update {
@@ -191,7 +205,7 @@ fn designs_convert_from_the_window() {
     // Keep Convert and all three results visible without scrolling.
     let mut harness = Harness::builder()
         .with_size(egui::vec2(760.0, 1280.0))
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| test_app(cc));
     harness.state_mut().add_inputs([
         fixture("generated_unit_cube.f3d"),
         fixture("synthetic_cube.ipt"),
@@ -215,7 +229,7 @@ fn designs_convert_from_the_window() {
 fn the_format_list_shows_headlines_beside_reader_status() {
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1200.0, 1800.0))
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| test_app(cc));
     harness.run_steps(8);
     harness.get_by_label("Formats").click_accesskit();
     harness.run_steps(8);
@@ -279,7 +293,7 @@ fn failed_card(name: &str, bytes: usize, width: f32) -> (Harness<'static, App>, 
     std::fs::write(&broken, vec![b'x'; bytes]).unwrap();
     let mut harness = Harness::builder()
         .with_size(egui::vec2(width, 1100.0))
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| test_app(cc));
     harness.state_mut().set_file_manager(|path| {
         SHOWN.lock().unwrap().push(path.to_path_buf());
         Ok(())
@@ -562,7 +576,7 @@ fn screenshots() {
         ] {
             let mut preview = Harness::builder()
                 .with_size(egui::vec2(width, 680.0))
-                .build_eframe(|cc| App::new(cc));
+                .build_eframe(|cc| test_app(cc));
             preview.ctx.set_theme(theme);
             preview.state_mut().preview_solidcraft(found);
             if update {
@@ -855,7 +869,7 @@ fn screenshots() {
 fn screenshot_harness(theme: ThemePreference) -> Harness<'static, App> {
     let harness = Harness::builder()
         .with_size(egui::vec2(1100.0, 800.0))
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| test_app(cc));
     harness.ctx.set_theme(theme);
     harness
 }
@@ -924,7 +938,7 @@ fn dropped_files_and_results_show_format_status_and_one_invitation() {
     std::fs::write(&second, b"SPLMSSTR").unwrap();
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1100.0, 1400.0))
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| test_app(cc));
     harness.state_mut().add_inputs([first, second]);
     harness.state_mut().set_out_dir(dir.path().join("out"));
     harness.run_steps(8);
@@ -967,7 +981,7 @@ fn solidcraft_status_panel_waits_for_a_click_and_shares_version_notices() {
     ] {
         let mut harness = Harness::builder()
             .with_size(egui::vec2(1120.0, 680.0))
-            .build_eframe(|cc| App::new(cc));
+            .build_eframe(|cc| test_app(cc));
         harness.state_mut().preview_solidcraft(found);
         harness.run_steps(8);
         assert!(harness.query_by_label("SolidCraft version").is_none());
@@ -1002,7 +1016,7 @@ fn solidcraft_panel_takes_a_chosen_cli_and_explains_the_app_alone() {
     script(&app, "solidcraft 0.30.0");
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1120.0, 680.0))
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| test_app(cc));
     harness.state_mut().preview_solidcraft(None);
     harness.state_mut().preview_solidcraft_app(true);
     harness.run_steps(8);
@@ -1040,7 +1054,7 @@ fn update_pill_adapts_to_width_and_waits_for_a_click() {
     for (width, label) in [(760.0, "Update"), (1000.0, "Update to 0.2.6")] {
         let mut harness = Harness::builder()
             .with_size(egui::vec2(width, 680.0))
-            .build_eframe(|cc| App::new(cc));
+            .build_eframe(|cc| test_app(cc));
         harness
             .state_mut()
             .updater
@@ -1343,7 +1357,7 @@ fn solidworks_folder_shows_the_plan_and_hides_inventor_settings() {
     std::fs::write(dir.path().join("~$main.SLDASM"), b"lock").unwrap();
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1100.0, 1200.0))
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| test_app(cc));
     harness.state_mut().add_inputs([dir.path().to_path_buf()]);
     let started = Instant::now();
     loop {
@@ -1685,7 +1699,7 @@ mod consent_e2e {
         let out = tempfile::tempdir().unwrap();
         let mut harness = Harness::builder()
             .with_size(egui::vec2(1100.0, 1500.0))
-            .build_eframe(|cc| App::new(cc));
+            .build_eframe(|cc| test_app(cc));
         harness
             .state_mut()
             .set_report_transport_for_test(stub.endpoint.clone(), None);
@@ -1982,7 +1996,7 @@ fn memory_harness(
     };
     let mut harness = Harness::builder()
         .with_size(egui::vec2(width, height))
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| test_app(cc));
     harness.state_mut().add_inputs([input.clone()]);
     harness.state_mut().set_out_dir(dir.path().join("out"));
     harness.state_mut().set_checker_for_test(true);
@@ -2452,7 +2466,7 @@ fn ai_result_card_at(
     std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
     let mut harness = Harness::builder()
         .with_size(egui::vec2(width, 800.0))
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| test_app(cc));
     harness.ctx.set_theme(theme);
     harness.state_mut().add_inputs([input]);
     harness
@@ -2644,7 +2658,7 @@ fn a_report_button_opens_the_section_for_a_result_with_losses_only() {
     }
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1100.0, 800.0))
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| test_app(cc));
     let dir = tempfile::tempdir().unwrap();
     let input = dir.path().join("Clean.f3d");
     harness
@@ -2805,7 +2819,7 @@ fn converted_report_screenshots() {
         for (width, label) in [(1100.0, "wide"), (520.0, "520")] {
             let mut h = Harness::builder()
                 .with_size(egui::vec2(width, 1100.0))
-                .build_eframe(|cc| App::new(cc));
+                .build_eframe(|cc| test_app(cc));
             h.ctx.set_theme(theme);
             h.state_mut()
                 .set_solidcraft_cli(Some(screenshot_cli.clone()));
@@ -2882,7 +2896,7 @@ fn part_positions_screenshot() {
     std::fs::copy(fixture("container_metadata_only.f3d"), &input).unwrap();
     let mut harness = Harness::builder()
         .with_size(egui::vec2(1000.0, 800.0))
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| test_app(cc));
     harness.ctx.set_theme(ThemePreference::Light);
     harness.state_mut().add_inputs([input]);
     harness
@@ -2918,7 +2932,7 @@ fn part_positions_last_shown_names_the_program() {
     for (files, expected) in cases {
         let mut harness = Harness::builder()
             .with_size(egui::vec2(1000.0, 800.0))
-            .build_eframe(|cc| App::new(cc));
+            .build_eframe(|cc| test_app(cc));
         harness
             .state_mut()
             .add_inputs(files.iter().map(PathBuf::from));
@@ -2948,7 +2962,7 @@ fn fit_harness(size: [f32; 2], theme: ThemePreference, work: &Path) -> Harness<'
     std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
     let mut harness = Harness::builder()
         .with_size(egui::vec2(size[0], size[1]))
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| test_app(cc));
     harness.ctx.set_theme(theme);
     harness.state_mut().preview_solidcraft(Some("0.30.9"));
     // A fixed checker, so no path of the machine running the test is shown.
@@ -3047,7 +3061,7 @@ fn many_results_scroll_in_their_own_column_and_not_the_page() {
     let size = dutchman_gui::FIT_SIZE;
     let mut h = Harness::builder()
         .with_size(egui::vec2(size[0], size[1]))
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| test_app(cc));
     // One folder of three designs gives three results from one entry in Designs.
     let folder = out.path().join("Designs");
     std::fs::create_dir_all(&folder).unwrap();
@@ -3171,7 +3185,7 @@ fn a_very_long_result_name_wraps_instead_of_eliding() {
     std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
     let mut h = Harness::builder()
         .with_size(egui::vec2(520.0, 1500.0))
-        .build_eframe(|cc| App::new(cc));
+        .build_eframe(|cc| test_app(cc));
     #[cfg(feature = "test-support")]
     h.state_mut().set_checker_for_test(true);
     h.state_mut().add_inputs([input]);
