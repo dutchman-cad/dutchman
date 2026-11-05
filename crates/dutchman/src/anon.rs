@@ -264,8 +264,10 @@ pub fn write(
             None
         }
     };
-    let solidcraft_search = (options.to == crate::OutputFormat::Solidcraft && solidcraft.is_none())
-        .then(|| options.solidcraft_search(false));
+    let solidcraft_search = (options.to == crate::OutputFormat::Solidcraft
+        && solidcraft.is_none()
+        && options.searches_for_solidcraft())
+    .then(|| options.solidcraft_search(false));
     let run = Run {
         verify: !options.no_verify && solidcraft.is_some(),
         solidcraft_search,

@@ -260,6 +260,12 @@ impl ConvertOptions {
         }
     }
 
+    /// Whether reports look for SolidCraft at all: not when verification is off and the target
+    /// release is given, since then nothing may run solidcraft-cli.
+    pub(crate) fn searches_for_solidcraft(&self) -> bool {
+        !(self.no_verify && self.solidcraft_version.is_some())
+    }
+
     /// How the SolidCraft CLI search went, for reports; `with_paths` adds the local paths.
     pub(crate) fn solidcraft_search(&self, with_paths: bool) -> Value {
         let detection = self

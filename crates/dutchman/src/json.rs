@@ -786,7 +786,7 @@ pub(crate) fn solidcraft_info(options: &crate::ConvertOptions) -> Option<Value> 
     let found = options
         .reported_solidcraft_version()
         .and_then(|line| solidcraft_release(&line));
-    let searched = found.is_none();
+    let searched = found.is_none() && options.searches_for_solidcraft();
     let mut values = solidcraft_values(options.solidcraft_version, found);
     if let (true, Some(fields)) = (searched, values.as_object_mut()) {
         fields.insert("search".to_owned(), options.solidcraft_search(true));
