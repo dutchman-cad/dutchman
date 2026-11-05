@@ -715,7 +715,7 @@ page output and its reported limitations. Existing `formats` fields keep their m
 Live diagnostics are opt-in on CLI `convert`, `convert-all`, and `watch`, MCP `convert`
 and `convert_all`, and the desktop app. See [locations and sharing](troubleshooting.md#diagnostic-logs-for-unfinished-runs).
 `--diagnostics-default` creates a unique UTC timestamp file in the platform's diagnostic
-folder, retaining ten logs, including legacy time-only names. Automatic names include the
+folder, retaining 50 logs, including legacy time-only names. Automatic names include the
 Dutchman version and `running`, then change to `converted`, `failed` or `stopped` after all
 writers close. A crash or rename failure leaves `running`; a rename failure never changes
 the conversion result. `--diagnostics PATH` appends to an explicit file without retention

@@ -130,7 +130,7 @@ pub struct ConvertOptions {
     /// Append an anonymous live diagnostic log, including progress while a conversion runs.
     #[arg(long, value_name = "PATH")]
     pub diagnostics: Option<PathBuf>,
-    /// Save a diagnostic log in the platform's default folder, keeping the newest ten.
+    /// Save a diagnostic log in the platform's default folder, keeping the newest 50.
     #[arg(long, conflicts_with = "diagnostics")]
     pub diagnostics_default: bool,
     /// Private salt shared with an anonymous report when one is requested.

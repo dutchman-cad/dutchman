@@ -815,15 +815,17 @@ fn screenshots() {
             "Unfinished-run banner detected from an isolated temporary default diagnostic log.",
         );
         harness
-            .get_by_label("Save a diagnostic log (no names or contents from your file)")
+            .get_by_label("Open diagnostics folder")
             .scroll_to_me();
         harness.run_steps(8);
-        harness
-            .get_by_label("Save a diagnostic log (no names or contents from your file)")
-            .click_accesskit();
-        harness.run_steps(8);
-        harness.get_by_label("Open diagnostics folder");
-        shot(&mut harness, &dir, &mut index, "12-diagnostics", name, "Diagnostics checkbox on and Open diagnostics folder button; scrolled to show the controls.");
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "12-diagnostics",
+            name,
+            "Open diagnostics folder button; scrolled to show the controls.",
+        );
         harness
             .get_by_label("The last run didn't finish. Its diagnostic log is here:")
             .scroll_to_me();
@@ -1676,6 +1678,81 @@ mod consent_e2e {
         harness.run_steps(8);
     }
 
+    /// Reports a converted result as `losses` describes it, through the card and the consent
+    /// screen to a stub endpoint; returns what the endpoint received.
+    fn send_converted(report: Value) -> Value {
+        let stub = Stub::new(201);
+        let out = tempfile::tempdir().unwrap();
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(1100.0, 1500.0))
+            .build_eframe(|cc| App::new(cc));
+        harness
+            .state_mut()
+            .set_report_transport_for_test(stub.endpoint.clone(), None);
+        harness.state_mut().set_out_dir(out.path().to_path_buf());
+        let input = out.path().join("Bracket.f3d");
+        let mut report = report;
+        report["input"] = json!({"path": input, "format": "fusion_archive"});
+        harness
+            .state_mut()
+            .preview_result_for_test(dutchman_gui::app::Row {
+                input: input.clone(),
+                output: Some(out.path().join("Bracket.sc")),
+                status: Status::Converted,
+                progress: None,
+                report: Some(report),
+                job: None,
+                size: Some(100),
+            });
+        harness.run_steps(8);
+        harness
+            .get_by_label(dutchman::present::REPORT_CONVERTED)
+            .click_accesskit();
+        harness.run_steps(8);
+        harness
+            .get_by_label("Review and send report")
+            .click_accesskit();
+        harness.run_steps(8);
+        harness
+            .get_by_label("Anonymous summary only")
+            .click_accesskit();
+        harness.run_steps(3);
+        harness.get_by_label("Send").click_accesskit();
+        harness.run_steps(3);
+        let sent = stub.requests.recv_timeout(Duration::from_secs(10)).unwrap();
+        stub.release.send(()).unwrap();
+        wait_for(&mut harness, SENT);
+        stub.thread.join().unwrap();
+        sent
+    }
+
+    #[test]
+    fn a_converted_result_with_any_loss_can_be_reported() {
+        let cases = [
+            // Only a note that history was not kept (Info).
+            json!({"ok": true, "mode": "import", "losses": [{"level": "Info", "subject": "history",
+                "message": "The original geometry is kept alongside the resolved sketches."}]}),
+            // Partial history: some features kept, some not.
+            json!({"ok": true, "mode": "partial_history", "history": {"mapped": 2, "total": 9},
+                "losses": [{"level": "Info", "subject": "history", "message": "7 features were not kept."}]}),
+            // Features blocked or flattened.
+            json!({"ok": true, "mode": "history", "verification": {"status": "flattened", "reason": "fillet is not mapped yet"},
+                "losses": [{"level": "Dropped", "subject": "feature", "message": "Fillet cannot be mapped yet"}]}),
+            json!({"ok": true, "mode": "history", "losses": [{"level": "Degraded", "subject": "feature", "message": "edge selection cannot resolve"}]}),
+            // Parts unplaced.
+            json!({"ok": true, "mode": "import", "completeness": {"placed": 2, "placed_empty": 1, "placements": 3, "left_out": []}}),
+            // Colours dropped.
+            json!({"ok": true, "mode": "import", "losses": [{"level": "Dropped", "subject": "appearance", "message": "Colour omitted"}]}),
+        ];
+        for report in cases {
+            let sent = send_converted(report.clone());
+            assert_eq!(sent["signature"], "converted-with-problem", "{report}");
+            assert_eq!(sent["source_format"], "f3d");
+            assert_eq!(sent["consent"]["choice"], "summary");
+            assert!(!sent.to_string().contains("Bracket"));
+        }
+    }
+
     fn local_case(status: u16) {
         let stub = Stub::new(status);
         let (mut harness, _out, folder) = review(stub.endpoint, None, status == 201);
@@ -2366,19 +2443,23 @@ fn run_log_screenshots() {
     std::fs::write(dir.join("run-logs.md"), index).unwrap();
 }
 
-fn ai_result_card(theme: ThemePreference) -> (Harness<'static, App>, tempfile::TempDir) {
+fn ai_result_card_at(
+    theme: ThemePreference,
+    width: f32,
+) -> (Harness<'static, App>, tempfile::TempDir) {
     let work = tempfile::tempdir().unwrap();
     let input = work.path().join("synthetic-part.f3d");
     std::fs::copy(fixture("generated_unit_cube.f3d"), &input).unwrap();
-    let mut harness = screenshot_harness(theme);
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(width, 800.0))
+        .build_eframe(|cc| App::new(cc));
+    harness.ctx.set_theme(theme);
     harness.state_mut().add_inputs([input]);
     harness
         .state_mut()
         .set_out_dir(work.path().join("converted"));
     harness.state_mut().set_verify(false);
-    harness
-        .state_mut()
-        .set_diagnostic_log(work.path().join("run.jsonl"));
+    // No diagnostic log is chosen: the run still keeps one in the diagnostics folder.
     convert(&mut harness);
     assert_eq!(harness.state().rows()[0].status, Status::Converted);
     harness
@@ -2388,24 +2469,31 @@ fn ai_result_card(theme: ThemePreference) -> (Harness<'static, App>, tempfile::T
     (harness, work)
 }
 
-fn copy_ai_prompt(harness: &mut Harness<'static, App>) -> String {
-    assert!(harness
-        .query_by_label("Copied. Paste it into your AI assistant.")
-        .is_none());
+fn ai_result_card(theme: ThemePreference) -> (Harness<'static, App>, tempfile::TempDir) {
+    ai_result_card_at(theme, 1100.0)
+}
+
+const COPIED: &str = "Copied. Paste it into your AI assistant.";
+
+fn copied_texts(harness: &Harness<'static, App>) -> Vec<String> {
     harness
-        .get_by_label("Ask your AI about this file")
-        .click_accesskit();
-    harness.step();
-    let prompt = harness
         .output()
         .platform_output
         .commands
         .iter()
-        .find_map(|command| match command {
+        .filter_map(|command| match command {
             egui::OutputCommand::CopyText(text) => Some(text.clone()),
             _ => None,
         })
-        .unwrap();
+        .collect()
+}
+
+/// Clicks `label` and returns what the click copied.
+fn copy_with(harness: &mut Harness<'static, App>, label: &str) -> String {
+    harness.get_by_label(label).click_accesskit();
+    harness.step();
+    let mut copied = copied_texts(harness);
+    assert_eq!(copied.len(), 1, "{label}: {copied:?}");
     assert!(!harness
         .output()
         .platform_output
@@ -2413,89 +2501,212 @@ fn copy_ai_prompt(harness: &mut Harness<'static, App>) -> String {
         .iter()
         .any(|command| matches!(command, egui::OutputCommand::OpenUrl(_))));
     harness.run_steps(8);
-    harness.get_by_label("Copied. Paste it into your AI assistant.");
-    prompt
+    harness.get_by_label(COPIED);
+    copied.remove(0)
+}
+
+fn copy_ai_prompt(harness: &mut Harness<'static, App>) -> String {
+    copy_with(harness, "Ask your AI about this file")
+}
+
+/// The text of the prompt box under the button.
+#[cfg(feature = "test-support")]
+fn shown_prompt(harness: &Harness<'static, App>) -> String {
+    harness
+        .get_by_role(egui::accesskit::Role::MultilineTextInput)
+        .value()
+        .unwrap()
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn ask_ai_copies_a_short_prompt_naming_files_that_exist() {
+    let (mut harness, _work) = ai_result_card(ThemePreference::Light);
+    assert!(harness.query_by_label(COPIED).is_none());
+    assert!(harness
+        .query_by_role(egui::accesskit::Role::MultilineTextInput)
+        .is_none());
+    let prompt = copy_ai_prompt(&mut harness);
+    assert!(!prompt.contains('\n'));
+    let row = &harness.state().rows()[0];
+    let output = row.output.as_ref().unwrap();
+    let report = output.with_extension("report.json");
+    // The run's log is in the diagnostics folder (isolated under test), not beside the design.
+    let folder = harness.state().diagnostics_folder_for_test().unwrap();
+    let log = std::fs::read_dir(folder)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "jsonl"))
+        .expect("a log in the diagnostics folder");
+    assert!(log.starts_with(folder));
+    assert!(std::fs::read_dir(output.parent().unwrap())
+        .unwrap()
+        .all(|entry| entry
+            .unwrap()
+            .path()
+            .extension()
+            .is_none_or(|ext| ext != "jsonl")));
+    for path in [&row.input, output, &report, &log] {
+        assert!(path.exists(), "{path:?}");
+        assert!(prompt.contains(&path.display().to_string()), "{prompt}");
+    }
+    // The guide is beside the app when installed, else on GitHub.
+    let guide = std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("AGENTS.md");
+    if guide.is_file() {
+        assert!(prompt.contains(&guide.display().to_string()));
+    } else {
+        assert!(prompt.contains(
+            "https://github.com/dutchman-cad/dutchman/blob/main/assets/install/AGENTS.md"
+        ));
+    }
+    assert!(prompt.contains("Don't send any files anywhere without asking me"));
+    // Short apart from the paths it names (these are long temporary ones).
+    let paths: usize = [&row.input, output, &report, &log]
+        .iter()
+        .map(|path| path.display().to_string().len())
+        .sum();
+    assert!(
+        prompt.len() - paths < 600,
+        "{} bytes: {prompt}",
+        prompt.len()
+    );
+    assert!(prompt.matches(". ").count() <= 6, "{prompt}");
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&report).unwrap()).unwrap();
+    assert_eq!(Some(&saved), row.report.as_ref());
+    // The same text is shown under the button, and Copy copies it again.
+    assert_eq!(shown_prompt(&harness), prompt);
+    assert_eq!(copy_with(&mut harness, "Copy"), prompt);
+    assert_eq!(shown_prompt(&harness), prompt);
+    harness.get_by_label("Close").click_accesskit();
+    harness.run_steps(4);
+    assert!(harness
+        .query_by_role(egui::accesskit::Role::MultilineTextInput)
+        .is_none());
 }
 
 #[test]
-fn ask_ai_copies_paths_reads_installed_guidance_then_plain_json() {
+fn ask_ai_copies_every_time_and_after_a_new_conversion() {
     let (mut harness, _work) = ai_result_card(ThemePreference::Light);
-    let prompt = copy_ai_prompt(&mut harness);
-    let row = &harness.state().rows()[0];
-    let output = row.output.as_ref().unwrap();
-    for path in [&row.input, output, &output.with_extension("report.json")] {
+    let first = copy_ai_prompt(&mut harness);
+    // Copied goes away after a short while and the button is as before.
+    std::thread::sleep(Duration::from_millis(2200));
+    harness.run_steps(4);
+    assert!(harness.query_by_label(COPIED).is_none());
+    assert_eq!(copy_ai_prompt(&mut harness), first);
+    // Straight away again: it copies again, without waiting.
+    harness
+        .get_by_label("Ask your AI about this file")
+        .click_accesskit();
+    harness.step();
+    assert_eq!(copied_texts(&harness), std::slice::from_ref(&first));
+    harness.run_steps(8);
+    // Converting again replaces the card: no stale prompt or Copied, and the button works.
+    harness.get_by_label("Convert").click_accesskit();
+    harness.step();
+    wait_for_conversion(&mut harness);
+    harness.run_steps(8);
+    assert!(harness.query_by_label(COPIED).is_none());
+    assert!(harness
+        .query_by_role(egui::accesskit::Role::MultilineTextInput)
+        .is_none());
+    let again = copy_ai_prompt(&mut harness);
+    assert!(again.starts_with("Help me with a Dutchman conversion."));
+}
+
+#[cfg(feature = "test-support")]
+#[test]
+fn a_report_button_opens_the_section_for_a_result_with_losses_only() {
+    for width in [1100.0, 520.0] {
+        // With losses: the cube. Without: a synthetic clean result.
+        let (mut harness, work) = ai_result_card_at(ThemePreference::Light, width);
+        assert!(harness
+            .query_by_label(dutchman::present::REPORT_CONVERTED)
+            .is_some());
+        assert!(harness.query_by_label("Review and send report").is_none());
+        let button = harness.get_by_label("Report this file…").rect();
         assert!(
-            prompt.contains(&serde_json::json!(path).to_string()),
-            "{prompt}"
+            button.left() >= 0.0 && button.right() <= width,
+            "{button:?}"
+        );
+        let ask = harness.get_by_label("Ask your AI about this file").rect();
+        assert!(ask.left() >= 0.0 && ask.right() <= width, "{ask:?}");
+        harness.get_by_label("Report this file…").click_accesskit();
+        harness.run_steps(8);
+        let review = harness.get_by_label("Review and send report").rect();
+        assert!(
+            review.left() >= 0.0 && review.right() <= width,
+            "{review:?}"
+        );
+        let _ = work;
+    }
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1100.0, 800.0))
+        .build_eframe(|cc| App::new(cc));
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("Clean.f3d");
+    harness
+        .state_mut()
+        .preview_result_for_test(dutchman_gui::app::Row {
+            input: input.clone(),
+            output: Some(dir.path().join("Clean.sc")),
+            status: Status::Converted,
+            progress: None,
+            report: Some(serde_json::json!({"ok": true, "mode": "history",
+            "input": {"path": input, "format": "fusion_archive"}, "losses": []})),
+            job: None,
+            size: Some(100),
+        });
+    harness.run_steps(8);
+    assert!(harness
+        .query_by_label(dutchman::present::REPORT_CONVERTED)
+        .is_some());
+    assert!(harness.query_by_label("Report this file…").is_none());
+    assert!(harness
+        .query_by_label("Ask your AI about this file")
+        .is_none());
+}
+
+#[test]
+fn ask_ai_prompt_fits_a_narrow_window() {
+    let (mut harness, _work) = ai_result_card_at(ThemePreference::Light, 520.0);
+    copy_ai_prompt(&mut harness);
+    harness.get_by_label("Close").scroll_to_me();
+    harness.run_steps(8);
+    for label in ["Copy", "Close", "Ask your AI about this file"] {
+        let rect = harness.get_by_label(label).rect();
+        assert!(
+            rect.left() >= 0.0 && rect.right() <= 520.0,
+            "{label}: {rect:?}"
         );
     }
-    let report: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(output.with_extension("report.json")).unwrap())
-            .unwrap();
-    assert_eq!(Some(&report), row.report.as_ref());
-    assert!(prompt.contains("Then open the saved .report.json directly from disk"));
-    let executable = std::env::current_exe().unwrap();
-    let folder = executable.parent().unwrap();
-    let guidance = prompt.find("First read the app's instructions").unwrap();
-    let saved_json = prompt.find("Then open the saved .report.json").unwrap();
-    assert!(guidance < saved_json);
-    for relative in [
-        "AGENTS.md",
-        "skills/dutchman-converting/SKILL.md",
-        "docs/command-line.md",
-    ] {
-        assert!(prompt.contains(
-            &serde_json::json!(relative
-                .split('/')
-                .fold(folder.to_path_buf(), |path, component| path.join(component)))
-            .to_string()
-        ));
-        // The installed AGENTS.md is for people using the app; the repository root's is for
-        // contributors, so the fallback names the installed one's source.
-        let source = if relative == "AGENTS.md" {
-            "assets/install/AGENTS.md"
-        } else {
-            relative
-        };
-        assert!(prompt.contains(&format!(
-            "https://github.com/dutchman-cad/dutchman/blob/main/{source}"
-        )));
-    }
-    assert!(prompt.contains("If either file is absent"));
-    assert!(!prompt.to_ascii_lowercase().contains("mcp"));
-    assert!(prompt.contains("Send nothing anywhere without asking me first"));
+    let prompt = harness
+        .get_by_role(egui::accesskit::Role::MultilineTextInput)
+        .rect();
     assert!(
-        prompt.contains("Never overwrite the original, the converted design, or its saved report")
+        prompt.left() >= 0.0 && prompt.right() <= 520.0,
+        "{prompt:?}"
     );
-    assert!(prompt.contains("Do not convert the whole file again"));
-    for tool in [
-        "inspect",
-        "diagnose",
-        "--part P --stop-at-feature N --no-clobber --json",
-        "--from-diagnose",
-    ] {
-        assert!(prompt.contains(tool));
-    }
-    let executable = std::env::current_exe().unwrap();
-    let cli = executable.parent().unwrap().join(if cfg!(windows) {
-        "dutchman.exe"
-    } else {
-        "dutchman"
-    });
-    assert!(prompt.contains(&serde_json::json!(cli).to_string()));
 }
 
 #[test]
 #[ignore = "renders the AI result card in Day and Night with a GPU"]
 fn ask_ai_screenshots() {
-    // Keep diagnostics recovery paths private and out of the pictures.
+    // Keep paths private and out of the pictures: work in a fixed folder under /tmp.
+    let root = PathBuf::from("/tmp/dutchman-shots/ask-ai");
     if std::env::var_os("DUTCHMAN_AI_SCREENSHOT_CHILD").is_none() {
-        let state = tempfile::tempdir().unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("state")).unwrap();
         let status = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--ignored", "--exact", "ask_ai_screenshots", "--nocapture"])
             .env("DUTCHMAN_AI_SCREENSHOT_CHILD", "1")
-            .env("XDG_STATE_HOME", state.path())
-            .env("LOCALAPPDATA", state.path())
+            .env("XDG_STATE_HOME", root.join("state"))
+            .env("LOCALAPPDATA", root.join("state"))
+            .env("TMPDIR", &root)
             .status()
             .unwrap();
         assert!(status.success());
@@ -2512,11 +2723,6 @@ fn ask_ai_screenshots() {
         // Show neutral checker metadata rather than the machine's installed CLI path.
         #[cfg(feature = "test-support")]
         harness.state_mut().set_checker_for_test(true);
-        let prompt = copy_ai_prompt(&mut harness);
-        std::fs::write(dir.join(format!("prompt-{name}.txt")), prompt).unwrap();
-        harness
-            .get_by_label("Copied. Paste it into your AI assistant.")
-            .scroll_to_me();
         harness.run_steps(8);
         let button = harness.get_by_label("Ask your AI about this file").rect();
         assert!(button.top() > 60.0 && button.bottom() < 800.0, "{button:?}");
@@ -2524,9 +2730,36 @@ fn ask_ai_screenshots() {
             &mut harness,
             &dir,
             &mut index,
-            "ask-ai",
+            "ask-ai-before",
             name,
-            "Converted synthetic file with a saved report and copied AI prompt.",
+            "Converted synthetic file with losses: the button before any click.",
+        );
+        let prompt = copy_ai_prompt(&mut harness);
+        std::fs::write(dir.join(format!("copied-prompt-{name}.txt")), &prompt).unwrap();
+        if name == "day" {
+            std::fs::write(dir.join("copied-prompt.txt"), &prompt).unwrap();
+        }
+        assert_eq!(harness.query_all_by_label_contains("/home/").count(), 0);
+        harness.get_by_label("Close").scroll_to_me();
+        harness.run_steps(8);
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "ask-ai-copied",
+            name,
+            "Right after the click: Copied, and the prompt open under the button.",
+        );
+        std::thread::sleep(Duration::from_millis(2200));
+        harness.run_steps(8);
+        assert!(harness.query_by_label(COPIED).is_none());
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            "ask-ai-after",
+            name,
+            "Two seconds later: Copied gone, the prompt still open.",
         );
     }
     std::fs::write(dir.join("ask-ai.md"), index).unwrap();
@@ -2585,11 +2818,17 @@ fn converted_report_screenshots() {
             convert(&mut h);
             assert_eq!(h.state().rows()[0].status, Status::Converted);
             assert!(h.state().rows()[0].size.is_some_and(|bytes| bytes > 0));
-            h.get_by_label(dutchman::present::REPORT_CONVERTED)
-                .scroll_to_me();
+            h.get_by_label("Report this file…").scroll_to_me();
             h.run_steps(8);
-            h.get_by_label(dutchman::present::REPORT_CONVERTED)
-                .click_accesskit();
+            shot(
+                &mut h,
+                &dir,
+                &mut index,
+                &format!("converted-button-{label}"),
+                name,
+                "Converted synthetic file with losses: the Report this file button in the card's row.",
+            );
+            h.get_by_label("Report this file…").click_accesskit();
             h.run_steps(8);
             h.get_by_label(dutchman::present::REPORT_BUTTON)
                 .scroll_to_me();

@@ -8,25 +8,24 @@ save `<stem>.failed.json` in the output folder instead. Reports include local pa
 file and feature names, and detailed messages: they stay local and are not anonymous.
 If saving fails, the app shows a notice; the conversion result is still available.
 
-A converted card with losses offers **Ask your AI about this file**. It copies a ready
-prompt naming the original, converted design, saved report, and full path of the
-`dutchman` command beside the running app (`dutchman.exe` beside `dutchman-gui.exe`
-on Windows; `Contents/Helpers/dutchman` inside a macOS app bundle). **Copied. Paste it into your AI assistant.** appears below the button.
-Nothing is sent and no server connection or extra setup is needed. Use an assistant
-that can read local files and run local commands.
+A converted card with losses, and a failed card, offers **Ask your AI about this file**.
+Clicking it always copies a short prompt (a paragraph) and opens it in a read-only text box
+under the button, with **Copy** to copy it again and **Close**. **Copied. Paste it into your AI
+assistant.** shows for about two seconds after each copy. The box stays until you close it or
+the card is replaced by a new conversion. The prompt names the original file, the converted
+design (not for a failed file), the saved report (`<stem>.report.json`, or `<stem>.failed.json`)
+and the log of that run, and tells the assistant to start with the `AGENTS.md` beside the app
+(on GitHub for a source build). That guide, with the bundled conversion skill, explains how
+to read the report and the log and which `dutchman` commands to use in a fresh scratch
+folder, leaving the original, design and report untouched. Nothing is sent and no server
+connection or extra setup is needed. Use an assistant that can read local files and run
+local commands. The prompt says to ask before sending anything anywhere; pasting it into an
+assistant is your choice, so check that assistant's privacy settings before sharing private
+paths or reports.
 
-The prompt first reads `AGENTS.md` and `skills/dutchman-converting/SKILL.md` in the
-running app's folder, then the plain JSON already on disk, without converting again.
-It includes full paths derived from the running app and the corresponding GitHub URLs
-as fallbacks when the installed files are absent, as in a source build. It also names
-the bundled `docs/command-line.md` and its fallback URL.
-It asks for losses grouped by code and stage, feature outcomes, placements, and
-verification. Only when a particular loss needs more evidence does it suggest `inspect`,
-`diagnose`, a part-limited `convert --part P --stop-at-feature N`, or `repro` using an
-existing diagnosis of a failing part, all with `--json`. New work goes in a fresh scratch
-folder next to the result, keeping the original, design and saved report untouched.
-The prompt says to ask before sending anything anywhere. Pasting into an assistant is
-your choice; check that assistant's privacy settings before sharing private paths or reports.
+Every desktop run keeps a local diagnostic log in the diagnostics folder (**Open diagnostics
+folder** opens it), never beside your designs. It holds no names or contents from your file
+and stays on your computer. The folder keeps the newest 50 logs.
 
 ## Project inputs
 
@@ -183,8 +182,7 @@ The window's title and top row show its version beside **Dutchman Convert**, for
 form. `dutchman-gui --version` and `dutchman-gui --help` print and exit without opening a
 window (on Windows, read the version with `dutchman --version`).
 
-With **Save a diagnostic log (no names or contents from your file)** enabled, each result
-card shows its run's log path, **Show this run's log** and **Copy log to…**, available when
+Each result card shows its run's log path, **Show this run's log** and **Copy log to…**, available when
 the run ends. Show selects that file on Windows and macOS, or opens its folder on Linux.
 Copy lets you save it elsewhere,
 using the same filename by default. Every card in a batch uses the same log; retries keep
@@ -193,7 +191,7 @@ the other cards linked to their original run.
 Log names include UTC date and time, Dutchman version and result, for example
 `2026-11-02_163710_dutchman-0.2.6_failed.jsonl`. A live or crashed run keeps `running`;
 completed runs use `converted`, `failed` or `stopped`. **Open diagnostics folder** opens the
-folder containing the newest ten logs, including older time-only names.
+folder containing the newest 50 logs, including older time-only names.
 
 **Review and send report** names this run's log automatically and lets you show or copy it.
 The log contains no names or contents from the design. Send uploads only the summary or
@@ -202,8 +200,10 @@ this log, and the copied Discord DM names it so you can attach it without guessi
 file belongs to the run. An older log's version is shown as an advisory notice, such as
 "This log is from Dutchman 0.2.5; this is 0.2.6." It never blocks conversion.
 
-When a file converts but has lost features, wrong placement or missing colours, expand
-**Something wrong? Report this file** on its result card. It starts closed. Choose
+When a file converts with any loss (history not kept or only partly kept, features flattened
+or blocked, parts unplaced, colours dropped), its card has a **Report this file…** button.
+It opens **Something wrong? Report this file** and brings it into view. A clean result has no
+button, but the same section is there, closed, if it looks wrong anyway. Choose
 **Review and send report** to review the exact metadata before sending an anonymous
 summary, or follow the same private-send steps as a failed card to send the original.
 **Diagnose this file** stays on failed cards: it narrows reproducible conversion failures,

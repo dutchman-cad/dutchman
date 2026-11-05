@@ -726,7 +726,7 @@ that exceed the fragment byte limit. Offer summary or the private-send card.
 
 Automatic diagnostic filenames include UTC date and time, Dutchman version and result.
 They start as `running` and become `converted`, `failed` or `stopped` once writers close;
-a crash or rename failure leaves `running`. Retention keeps ten logs, including legacy
+a crash or rename failure leaves `running`. Retention keeps 50 logs, including legacy
 time-only names. Explicit `--diagnostics PATH` files keep their exact path. A version notice
 when reusing an older log is advisory; conversion proceeds. Desktop result cards offer
 **Show this run's log** and **Copy log to…** for the shared batch log, while retries keep
@@ -736,25 +736,30 @@ the summary or bundle reviewed in the consent screen; the log stays local.
 
 ## Start from an existing desktop result
 
-When the person already has a converted design and `<stem>.report.json`, open that plain
-JSON directly to begin diagnosis, after reading the app's installed `AGENTS.md` and
-conversion skill. The copied prompt gives full local guidance paths derived from the
-running app's folder and matching GitHub URL fallbacks when those files are absent. It uses
-`dutchman.convert/1`; explain the saved
-losses grouped by code and stage, feature outcomes (including history parts), placements
-and verification. Do not convert the whole file again. The desktop **Ask your AI about
-this file** button copies the original, design, report and full path of the bundled
-`dutchman` command, so no server installation or connection is needed.
+The desktop **Ask your AI about this file** button copies a short prompt naming the original
+file, the converted design, the saved `<stem>.report.json` (`<stem>.failed.json` when the
+file did not convert, with no design) and the log of that run, plus this app's `AGENTS.md`.
+Open the report directly from disk: it is plain `dutchman.convert/1` JSON. Explain the saved
+losses grouped by code and stage, feature outcomes (including history parts), placements and
+verification, and say what the report proves and what stays unverified. The log is JSON
+lines with the stage reached, timings and loss counts; it has no names or contents from the
+design. Do not convert the whole file again, and no server installation or connection is
+needed.
 
-Use that exact executable for focused follow-up only when a loss needs more evidence.
-`inspect INPUT --json` reads without converting. `diagnose INPUT --out SCRATCH
---time-limit 30s --json` reads the original and tries parts separately. For a known part
-use `convert INPUT -o SCRATCH/trial.sc --part P --stop-at-feature N --no-clobber --json`;
-N counts active timeline features and 0 means stored shape only. Only after diagnosis
-identifies a failing part, use `repro INPUT --out FRESH_SCRATCH --from-diagnose DIAGNOSIS
---json` to reuse it. Create fresh scratch folders next to the result; keep every new
-output there and never overwrite the original, converted design or saved report.
-Ask before sending anything anywhere.
+Use the `dutchman` executable beside the app, by its full path (`Contents/Helpers/dutchman`
+inside a macOS app bundle), for focused follow-up only when a loss needs more evidence, and
+with `--json`, redirecting each result to a file in a fresh scratch folder next to the
+design (if it exists, pick an unused numbered suffix). `inspect INPUT --json` reads without
+converting. `diagnose INPUT --out SCRATCH/diagnosis --time-limit 30s --json` reads the
+original and tries parts separately. For a known part use `convert INPUT -o
+SCRATCH/trial.sc --part P --stop-at-feature N --no-clobber --json`; P is the part number
+diagnosis found, N counts active timeline features and 0 means stored shape only; always
+keep `--part` on a trial. Only after diagnosis has identified a failing part, use `repro
+INPUT --out SCRATCH/repro --from-diagnose SCRATCH/diagnosis --json` to reuse it. Keep every
+new output in the scratch folder and never overwrite the original, the converted design,
+the saved report or the log. The paths, the report and any reproduction geometry are private:
+do not upload files or file an issue without the person's permission, and ask before
+sending anything anywhere.
 
 If a local MCP client is already connected, optional `read_report(input)` reads the same
 saved report without decoding; `.sc` resolves to the adjacent `.report.json` and explicit

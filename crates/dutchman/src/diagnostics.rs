@@ -13,7 +13,9 @@ pub use dutchman_core::MemberEvent;
 use dutchman_core::{MemberObserver, ProgressEvent, Stage};
 
 mod location;
-pub use location::{default_folder, finish_default_log, new_default_log, unfinished_default_log};
+pub use location::{
+    default_folder, finish_default_log, new_default_log, new_log_in, unfinished_default_log,
+};
 use serde_json::{json, Value};
 
 use crate::{anon, choices, ConvertOptions};

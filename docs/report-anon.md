@@ -8,8 +8,8 @@ For a conversion that never finishes, enable [a live diagnostic log](troubleshoo
 before trying again: `--diagnostics-default`, or `--diagnostics PATH` for an explicit file.
 Unlike this completed-batch report, [`dutchman.diagnostics/1`](json.md#dutchmandiagnostics1)
 writes progress and resource heartbeats during the run, with no messages at all. A run using
-both reports shares this report's salt and file ids. The desktop app can save diagnostics
-and show or copy the exact run's log from each result card, after a stopped run or on its
+both reports shares this report's salt and file ids. The desktop app always keeps diagnostics
+and shows or copies the exact run's log from each result card, after a stopped run or on its
 next launch. Automatic names include UTC date and time, Dutchman version and result
 (`running`, `converted`, `failed` or `stopped`); they never include design names. Explicit
 `--diagnostics PATH` files keep their chosen path. Report review names the run's log, but
@@ -20,7 +20,11 @@ you choose whether to attach it. The log has no names or contents from the desig
 
 Converted files are included in this report as well as failures. The desktop's
 **Something wrong? Report this file** section offers anonymous review and private-send
-steps when a converted result has lost features, wrong placement or missing colours.
+steps for every converted result that has a saved report, whatever it lost: history not kept
+or only partly kept, features flattened or blocked, parts left unplaced, or colours dropped,
+at any loss level. The card has a visible **Report this file…** button that opens the section;
+the section itself starts closed. Only an assembly whose part files were not found
+is offered the missing-parts search instead.
 The separate endpoint summary envelope (`dutchman.report-send/1`) supports only bounded
 metadata and sharing choices; it has no free-text description field. The review displays
 that exact envelope. Converted-file summaries use `converted-with-problem` as their

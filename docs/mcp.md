@@ -409,7 +409,7 @@ against the server's working directory, which the client chooses.
 Both `convert` and `convert_all` accept optional `diagnostics` (an absolute file path), or
 `diagnostics_default: true` for a unique timestamp file in the platform's default diagnostics
 folder. They cannot be combined. Explicit files are appended without retention; the default
-folder keeps the newest ten timestamp logs, including older time-only names. Automatic
+folder keeps the newest 50 timestamp logs, including older time-only names. Automatic
 names include the Dutchman version and result: `running` changes to `converted`, `failed`
 or `stopped` after writers close; a crash or rename failure leaves `running`. Explicit
 paths stay exactly as supplied. Reusing another version's log gives an advisory notice. [The guide](troubleshooting.md#diagnostic-logs-for-unfinished-runs)
@@ -545,7 +545,7 @@ parameter edits, particularly named sketch constraint expressions and object-lab
   `output` file, matching the selected format. `convert_all` writes converted designs and
   its ordinary log inside `out_dir`. If supplied, `diagnostics`, `journal`, `report_anon`,
   and `report_key` are also written at their specified paths. `diagnostics_default` writes
-  in the platform diagnostics folder and retains its newest ten timestamp logs. A failed file creates no design; a mixed batch
+  in the platform diagnostics folder and retains its newest 50 timestamp logs. A failed file creates no design; a mixed batch
   can still write successful designs, logs, and requested reports. A design is written only
   once it is complete. The server has no list of allowed folders: it can read and write
   wherever the account running it can. Point `output` and `out_dir` at a folder for converted

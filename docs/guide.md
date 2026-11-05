@@ -4,11 +4,12 @@
 
 A desktop conversion saves `<stem>.report.json` beside its design (`.failed.json` for a
 failure), using the CLI's full per-file JSON schema. These reports contain private local
-paths. A converted card with losses has **Ask your AI about this file**: copy the prompt
-and paste it into an assistant with local file and command access. It first reads the installed `AGENTS.md` and conversion skill (with GitHub URL fallbacks
-when absent), then the plain JSON, and uses the full path of `dutchman` beside the app for focused follow-up work in a
-fresh scratch folder. It does not require a server connection, asks before sending
-anything, and says not to convert the whole file again. See [desktop usage](desktop.md#ask-your-ai-about-this-file).
+paths. A converted card with losses (and a failed card) has **Ask your AI about this file**: it
+copies a short prompt, shown under the button too, naming the original, the design, the saved
+report and the run's log. Paste it into an assistant with local file and command access.
+It sends the assistant to the installed `AGENTS.md` (or its GitHub copy when absent), which
+explains how to read them and the `dutchman` commands to use in a fresh scratch folder. It does
+not require a server connection and asks before sending anything. See [desktop usage](desktop.md#ask-your-ai-about-this-file).
 
 ## Project inputs
 

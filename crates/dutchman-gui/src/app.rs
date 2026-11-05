@@ -90,6 +90,10 @@ pub struct App {
     diagnostic_stopped: bool,
     diagnostic_automatic: bool,
     row_logs: std::collections::BTreeMap<usize, PathBuf>,
+    /// The AI prompts shown on result cards, by row.
+    ai_prompts: std::collections::BTreeMap<usize, AiPrompt>,
+    /// Where run logs go instead of the platform's diagnostics folder (tests only).
+    diagnostics_folder: Option<PathBuf>,
     unfinished_diagnostic: Option<PathBuf>,
     rows: Vec<Row>,
     /// Rows before the run's first job: inputs that could not be planned.
@@ -199,10 +203,8 @@ fn restore_choices(options: &mut ConvertOptions, settings: &Value) -> bool {
         _ => Preset::Standard,
     };
     select_preset(options, preset);
-    options.diagnostics_default = settings
-        .get("save_diagnostics")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
+    // Every run keeps its log; an older saved "save_diagnostics" choice is ignored.
+    options.diagnostics_default = true;
     options.import_only = settings
         .get("import_only")
         .and_then(Value::as_bool)
@@ -268,7 +270,6 @@ fn found_solidcraft(
 fn saved_choices(options: &ConvertOptions, custom: bool) -> Value {
     serde_json::json!({
         "preset": options.preset.name(), "custom": custom,
-        "save_diagnostics": options.diagnostics_default,
         "import_only": options.import_only,
         "no_sketches": options.no_sketches, "no_joints": options.no_joints,
         "no_verify": options.no_verify,
@@ -344,6 +345,8 @@ impl App {
             diagnostic_stopped: false,
             diagnostic_automatic: false,
             row_logs: Default::default(),
+            ai_prompts: Default::default(),
+            diagnostics_folder: test_diagnostics_folder(),
             unfinished_diagnostic: dutchman::diagnostics::unfinished_default_log(),
             rows: Vec::new(),
             offset: 0,
@@ -532,6 +535,12 @@ impl App {
         self.rows = vec![row];
     }
 
+    /// The folder this app keeps its run logs in under test.
+    #[cfg(feature = "test-support")]
+    pub fn diagnostics_folder_for_test(&self) -> Option<&Path> {
+        self.diagnostics_folder.as_deref()
+    }
+
     /// The rows of the current or last run.
     pub fn rows(&self) -> &[Row] {
         &self.rows
@@ -678,6 +687,32 @@ impl App {
         ctx.copy_text(issue.anonymous_report.clone());
         self.notice = Some(link.copy_notice.to_owned());
         ctx.open_url(egui::OpenUrl::new_tab(issue.url));
+        Ok(())
+    }
+
+    /// Copies the AI prompt for the row at `index` and keeps it shown on its card.
+    fn ask_ai(&mut self, index: usize, ctx: &egui::Context) -> Result<(), String> {
+        let Some(row) = self.rows.get(index) else {
+            return Ok(());
+        };
+        let Some(output) = row.output.as_deref() else {
+            return Ok(());
+        };
+        let converted = row.status == Status::Converted;
+        let text = ai_prompt(
+            &row.input,
+            output,
+            converted,
+            self.row_logs.get(&index).map(PathBuf::as_path),
+        )?;
+        ctx.copy_text(text.clone());
+        self.ai_prompts.insert(
+            index,
+            AiPrompt {
+                text,
+                copied: std::time::Instant::now(),
+            },
+        );
         Ok(())
     }
 
@@ -859,8 +894,19 @@ impl App {
         };
         pending.options.diagnostics_salt = Some(salt.clone());
         self.salt = Some(salt);
-        self.diagnostic_automatic =
-            pending.options.diagnostics_default && pending.options.diagnostics.is_none();
+        // Every run keeps a local log in the diagnostics folder, so that the AI prompt and a
+        // report can name it.
+        pending.options.diagnostics_default = true;
+        self.diagnostic_automatic = pending.options.diagnostics.is_none();
+        if let (Some(folder), None) = (&self.diagnostics_folder, &pending.options.diagnostics) {
+            match dutchman::diagnostics::new_log_in(folder) {
+                Ok(path) => pending.options.diagnostics = Some(path),
+                Err(message) => {
+                    self.notice = Some(message);
+                    return;
+                }
+            }
+        }
         if pending.options.diagnostics_default || pending.options.diagnostics.is_some() {
             let threads = match &pending.kind {
                 RunKind::Batch { .. } => dutchman::batch::workers(None),
@@ -879,6 +925,7 @@ impl App {
         self.run = Some(match pending.kind {
             RunKind::Batch { inputs, out_dir } => {
                 self.row_logs.clear();
+                self.ai_prompts.clear();
                 self.rows.clear();
                 self.offset = 0;
                 Run::start(
@@ -891,6 +938,7 @@ impl App {
             }
             RunKind::Retry { job, index } => {
                 self.row_logs.remove(&(self.offset + index));
+                self.ai_prompts.remove(&(self.offset + index));
                 if let Some(path) = &self.diagnostic_path {
                     self.row_logs.insert(self.offset + index, path.clone());
                 }
@@ -1214,6 +1262,7 @@ impl App {
                     }
                 }
                 Message::Progress(Event::Finished(index, report)) => {
+                    self.ai_prompts.remove(&(self.offset + index));
                     if let Some(row) = self.rows.get_mut(self.offset + index) {
                         row.status = if report.get("ok") == Some(&Value::Bool(true)) {
                             Status::Converted
@@ -2061,13 +2110,6 @@ impl App {
                 }
             });
             ui.horizontal_wrapped(|ui| {
-                ui.add_enabled(
-                    !running,
-                    egui::Checkbox::new(
-                        &mut self.options.diagnostics_default,
-                        "Save a diagnostic log (no names or contents from your file)",
-                    ),
-                );
                 if ui.button("Open diagnostics folder").clicked() {
                     let result = dutchman::diagnostics::default_folder().and_then(|folder| {
                         std::fs::create_dir_all(&folder).map_err(|err| err.to_string())?;
@@ -2189,8 +2231,18 @@ impl App {
                         .row_logs
                         .get(&index)
                         .map(|path| (path.as_path(), log_ready));
-                    let chosen =
-                        row_ui(ui, &p, index, row, file, policy, self.has_app, running, log);
+                    let chosen = row_ui(
+                        ui,
+                        &p,
+                        index,
+                        row,
+                        file,
+                        policy,
+                        self.has_app,
+                        running,
+                        log,
+                        self.ai_prompts.get(&index),
+                    );
                     if let Some(chosen) = chosen {
                         action = Some(chosen);
                     }
@@ -2253,6 +2305,17 @@ impl App {
                 Ok(())
             }
             Some(Action::Dm(index)) => self.dm_dutchy(index, ui.ctx()),
+            Some(Action::AskAi(index)) => self.ask_ai(index, ui.ctx()),
+            Some(Action::OpenReport(index)) => {
+                ui.ctx()
+                    .data_mut(|data| data.insert_temp(egui::Id::new(("open-report", index)), true));
+                ui.ctx().request_repaint();
+                Ok(())
+            }
+            Some(Action::CloseAi(index)) => {
+                self.ai_prompts.remove(&index);
+                Ok(())
+            }
             None => Ok(()),
         };
         if let Err(err) = result {
@@ -2318,6 +2381,12 @@ enum Action {
     Join,
     /// Copy the message about the row's file and open Dutchy's DM.
     Dm(usize),
+    /// Copy the AI prompt for the row and show it on its card.
+    AskAi(usize),
+    /// Close the row's AI prompt.
+    CloseAi(usize),
+    /// Open the row's "Something wrong? Report this file" section.
+    OpenReport(usize),
 }
 
 /// One file's result: its status, what was written, and its losses.
@@ -2332,6 +2401,7 @@ fn row_ui(
     has_app: bool,
     running: bool,
     log: Option<(&Path, bool)>,
+    ai: Option<&AiPrompt>,
 ) -> Option<Action> {
     let mut action = None;
     let colour = match view.status {
@@ -2441,6 +2511,11 @@ fn row_ui(
                 action = Some(Action::Diagnose(index));
             }
         });
+        if row.output.is_some() && row.report.is_some() {
+            if let Some(chosen) = ask_ai_ui(ui, index, ai) {
+                action = Some(chosen);
+            }
+        }
         if view.can_report {
             if let Some(report) = &row.report {
                 let steps =
@@ -2509,39 +2584,54 @@ fn row_ui(
                         });
                     }
                 });
-            if ui.button("Save the full log…").clicked() {
-                action = Some(Action::Pick(Pick::SaveLog(index)));
-            }
         }
-        if row
+        let has_losses = row
             .report
             .as_ref()
             .and_then(|r| r.get("losses"))
             .and_then(Value::as_array)
-            .is_some_and(|losses| !losses.is_empty())
-        {
-            if let Some(output) = row.output.as_deref() {
-                let copied = ui.id().with(("ask-ai-copied", &row.input, output));
-                if ui.button("Ask your AI about this file").clicked() {
-                    match ai_prompt(&row.input, output) {
-                        Ok(prompt) => {
-                            ui.ctx().copy_text(prompt);
-                            ui.data_mut(|data| data.insert_temp(copied, true));
-                        }
-                        Err(message) => action = Some(Action::Notice(message)),
-                    }
+            .is_some_and(|losses| !losses.is_empty());
+        let limited = has_losses
+            || view.status != present::Status::Converted
+            || row
+                .report
+                .as_ref()
+                .and_then(|r| r.get("mode"))
+                .and_then(Value::as_str)
+                == Some("partial_history");
+        let ask = has_losses && row.output.is_some();
+        let report_button = view.can_report && limited;
+        if !view.components.is_empty() || ask || report_button {
+            ui.horizontal_wrapped(|ui| {
+                if !view.components.is_empty() && ui.button("Save the full log…").clicked() {
+                    action = Some(Action::Pick(Pick::SaveLog(index)));
                 }
-                if ui.data(|data| data.get_temp::<bool>(copied).unwrap_or(false)) {
-                    ui.label("Copied. Paste it into your AI assistant.");
+                if ask && ui.button("Ask your AI about this file").clicked() {
+                    action = Some(Action::AskAi(index));
                 }
+                if report_button && ui.button("Report this file…").clicked() {
+                    action = Some(Action::OpenReport(index));
+                }
+            });
+        }
+        if ask {
+            if let Some(chosen) = ai_prompt_ui(ui, index, ai) {
+                action = Some(chosen);
             }
         }
     }
     if view.can_report && view.report_case == Some(present::ReportCase::Converted) {
         if let Some(report) = &row.report {
-            egui::CollapsingHeader::new(present::REPORT_CONVERTED)
+            // "Report this file…" opens the section and brings it into view.
+            let open_id = egui::Id::new(("open-report", index));
+            let force = ui
+                .ctx()
+                .data_mut(|data| data.remove_temp::<bool>(open_id))
+                .is_some();
+            let section = egui::CollapsingHeader::new(present::REPORT_CONVERTED)
                 .id_salt(("report-converted", index, &row.input))
                 .default_open(false)
+                .open(force.then_some(true))
                 .show(ui, |ui| {
                     let steps = present::SendSteps::new(
                         policy,
@@ -2553,106 +2643,132 @@ fn row_ui(
                         action = Some(chosen);
                     }
                 });
+            if force {
+                section.header_response.scroll_to_me(Some(Align::Min));
+            }
         }
     }
     action
 }
 
-/// Clipboard-only handoff using a plain JSON report and the bundled command line.
-fn ai_prompt(input: &Path, output: &Path) -> Result<String, String> {
+/// The short, fill-in-the-blanks prompt for the user's AI assistant. Everything else it needs is
+/// in the saved report, the run's log and the guidance bundled beside the app.
+fn ai_prompt(
+    input: &Path,
+    output: &Path,
+    converted: bool,
+    log: Option<&Path>,
+) -> Result<String, String> {
     let input = std::path::absolute(input).map_err(|err| err.to_string())?;
     let output = std::path::absolute(output).map_err(|err| err.to_string())?;
-    let report = dutchman::saved_report::path(&output, true);
+    let report = dutchman::saved_report::path(&output, converted);
     let executable = std::env::current_exe().map_err(|err| {
         format!(
             "Could not locate dutchman beside the app: {err}. Check where Dutchman is installed."
         )
     })?;
-    if [&input, &output, &executable]
-        .into_iter()
-        .any(|path| path.to_str().is_none())
-    {
-        return Err("Copying an AI prompt for non-Unicode paths is not supported yet. Choose Unicode file and output paths, then try again.".into());
-    }
     let app_folder = executable
         .parent()
         .ok_or("Could not locate the app's folder. Check where Dutchman is installed.")?;
-    let agents = app_folder.join("AGENTS.md");
-    let skill = app_folder
-        .join("skills")
-        .join("dutchman-converting")
-        .join("SKILL.md");
-    let command_docs = app_folder.join("docs").join("command-line.md");
-    let cli = bundled_cli(&executable)?;
-    let command = format!(
-        "{}{}",
-        if cfg!(windows) { "& " } else { "" },
-        shell_path(&cli)
-    );
-    let scratch = output.with_file_name(format!(
-        "{}-ai",
-        output.file_stem().unwrap_or_default().to_string_lossy()
-    ));
-    let original = shell_path(&input);
-    let inspection = shell_path(&scratch.join("inspect.json"));
-    let diagnosis = shell_path(&scratch.join("diagnosis"));
-    let diagnosis_json = shell_path(&scratch.join("diagnose.json"));
-    let trial = shell_path(&scratch.join("part-P-feature-N.sc"));
-    let trial_json = shell_path(&scratch.join("trial-P-N.json"));
-    let repro = shell_path(&scratch.join("repro"));
-    let repro_json = shell_path(&scratch.join("repro.json"));
-    Ok(format!(
-        "Help me diagnose this Dutchman conversion using the result already saved.\n\
-         Original file: {}\nConverted design: {}\nSaved report: {}\nDutchman command: {}\nScratch folder: {}\n\n\
-         First read the app's instructions at {} and its conversion skill at {}, in that order. If either file is absent (for example, in a source build), read its corresponding fallback URL:\n\
-         AGENTS.md: https://github.com/dutchman-cad/dutchman/blob/main/assets/install/AGENTS.md\n\
-         Conversion skill: https://github.com/dutchman-cad/dutchman/blob/main/skills/dutchman-converting/SKILL.md\n\
-         Command reference: {} (fallback: https://github.com/dutchman-cad/dutchman/blob/main/docs/command-line.md).\n\n\
-         Then open the saved .report.json directly from disk: it is plain JSON. Explain the losses grouped by code and stage, feature outcomes (including per-part history), placements/completeness, and verification. Distinguish what the report proves from what remains unverified. Do not convert the whole file again.\n\n\
-         Only investigate specific losses that need more evidence. Use the full Dutchman command path above, bundled with the app. Create a fresh scratch folder next to the result at the path above; if it exists, choose an unused numbered suffix and adjust every path below. Keep all new outputs, reports, logs, and reproduction files inside it. Never overwrite the original, the converted design, or its saved report.\n\n\
-         Optional commands, only as needed (use --json; redirect stdout to the indicated scratch JSON file):\n\
-         {command} inspect {original} --json > {inspection}\n\
-         {command} diagnose {original} --out {diagnosis} --time-limit 30s --json > {diagnosis_json}\n\
-         {command} convert {original} -o {trial} --part P --stop-at-feature N --no-clobber --json > {trial_json}\n\
-         Replace P with the part number established by diagnosis and N with the active timeline feature number; 0 tries stored shape only. Always keep --part on a conversion trial. Inspection reads the original without converting. Diagnosis reads the original and tries parts separately; run it only if that extra work is needed for a specific loss.\n\n\
-         Only if diagnosis has already identified a failing part, a local reproduction kit can reuse it without converting the whole file:\n\
-         {command} repro {original} --out {repro} --from-diagnose {diagnosis} --json > {repro_json}\n\n\
-         Send nothing anywhere without asking me first. These paths, the full report, and any reproduction geometry are private local information. Do not upload files or submit an issue without my permission. Dutchman has only copied this prompt; nothing has been sent.",
-        serde_json::json!(input), serde_json::json!(output), serde_json::json!(report), serde_json::json!(cli), serde_json::json!(scratch), serde_json::json!(agents), serde_json::json!(skill), serde_json::json!(command_docs)
-    ))
-}
-
-/// macOS bundles keep commands in Helpers because Dutchman/dutchman collide on disk.
-fn bundled_cli(executable: &Path) -> Result<PathBuf, String> {
-    let folder = executable
-        .parent()
-        .ok_or("Could not locate the app's folder. Check where Dutchman is installed.")?;
-    if folder.file_name() == Some(std::ffi::OsStr::new("MacOS")) {
-        if let Some(contents) = folder
-            .parent()
-            .filter(|p| p.file_name() == Some(std::ffi::OsStr::new("Contents")))
-        {
-            if contents.parent().and_then(Path::extension) == Some(std::ffi::OsStr::new("app")) {
-                return Ok(contents.join("Helpers").join("dutchman"));
-            }
-        }
+    // A macOS app bundle keeps its guidance in Resources.
+    let agents = [
+        app_folder.join("AGENTS.md"),
+        app_folder.join("..").join("Resources").join("AGENTS.md"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
+    .map_or_else(|| AGENTS_URL.to_owned(), |path| path.display().to_string());
+    let mut text = String::from("Help me with a Dutchman conversion.");
+    text.push_str(&format!(" Original file: {}.", input.display()));
+    if converted {
+        text.push_str(&format!(" Converted design: {}.", output.display()));
     }
-    Ok(folder.join(if cfg!(windows) {
-        "dutchman.exe"
-    } else {
-        "dutchman"
-    }))
+    text.push_str(&format!(
+        " Dutchman saved the full conversion report at {}",
+        report.display()
+    ));
+    match log {
+        Some(log) => text.push_str(&format!(
+            " and its log at {}.",
+            std::path::absolute(log)
+                .unwrap_or_else(|_| log.to_path_buf())
+                .display()
+        )),
+        None => text.push('.'),
+    }
+    text.push_str(&format!(
+        " Start by reading {agents}, which explains how to read them and which Dutchman commands to use. Don't send any files anywhere without asking me."
+    ));
+    Ok(text)
 }
 
-/// Quote an argument for the system shell (PowerShell on Windows).
-fn shell_path(path: &Path) -> String {
-    let path = path.to_string_lossy();
-    let escaped = if cfg!(windows) {
-        path.replace('\'', "''")
-    } else {
-        path.replace('\'', "'\\''")
+/// Where the installed guide is read when it is not beside the app, as in a source build.
+const AGENTS_URL: &str =
+    "https://github.com/dutchman-cad/dutchman/blob/main/assets/install/AGENTS.md";
+
+/// How long "Copied" shows before the button looks as it did.
+const COPIED_FOR: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// The prompt shown on a result card after **Ask your AI about this file**.
+struct AiPrompt {
+    text: String,
+    /// When it was last copied.
+    copied: std::time::Instant,
+}
+
+/// **Ask your AI about this file**: always copies, and the prompt it copied stays open under the
+/// button, with a Copy button, until closed or the card is replaced.
+fn ask_ai_ui(ui: &mut egui::Ui, index: usize, ai: Option<&AiPrompt>) -> Option<Action> {
+    let mut action = None;
+    if ui.button("Ask your AI about this file").clicked() {
+        action = Some(Action::AskAi(index));
+    }
+    ai_prompt_ui(ui, index, ai).or(action)
+}
+
+/// The copied prompt under the button, with "Copied" for a moment after a copy.
+fn ai_prompt_ui(ui: &mut egui::Ui, index: usize, ai: Option<&AiPrompt>) -> Option<Action> {
+    let mut action = None;
+    let Some(ai) = ai else {
+        return action;
     };
-    format!("'{escaped}'")
+    if let Some(left) = COPIED_FOR.checked_sub(ai.copied.elapsed()) {
+        ui.label("Copied. Paste it into your AI assistant.");
+        ui.ctx().request_repaint_after(left);
+    }
+    let mut text = ai.text.as_str();
+    ui.add(
+        egui::TextEdit::multiline(&mut text)
+            .font(egui::TextStyle::Monospace)
+            .desired_width(f32::INFINITY)
+            .desired_rows(3)
+            .id_salt(("ask-ai-text", index)),
+    );
+    ui.horizontal(|ui| {
+        if ui.button("Copy").clicked() {
+            action = Some(Action::AskAi(index));
+        }
+        if ui.button("Close").clicked() {
+            action = Some(Action::CloseAi(index));
+        }
+    });
+    action
+}
+
+/// Tests keep their run logs in a folder of their own, so that they neither fill nor prune
+/// the real diagnostics folder.
+fn test_diagnostics_folder() -> Option<PathBuf> {
+    #[cfg(any(test, feature = "test-support"))]
+    {
+        static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        return Some(std::env::temp_dir().join(format!(
+            "dutchman-gui-test-diagnostics-{}-{n}",
+            std::process::id()
+        )));
+    }
+    #[allow(unreachable_code)]
+    None
 }
 
 /// The narrowest a step card gets before the cards wrap onto another line.
@@ -2912,51 +3028,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn bundled_command_paths_match_archives_windows_and_macos_app_layout() {
-        let folder = Path::new("installed").join("Dutchman Convert");
-        let executable = folder.join(if cfg!(windows) {
-            "dutchman-gui.exe"
-        } else {
-            "dutchman-gui"
-        });
-        assert_eq!(
-            bundled_cli(&executable).unwrap(),
-            folder.join(if cfg!(windows) {
-                "dutchman.exe"
-            } else {
-                "dutchman"
-            })
-        );
-        let contents = folder.join("Dutchman Convert.app").join("Contents");
-        assert_eq!(
-            bundled_cli(&contents.join("MacOS").join("Dutchman")).unwrap(),
-            contents.join("Helpers").join("dutchman")
-        );
-    }
-
-    #[test]
-    fn prompt_paths_are_shell_quoted_with_spaces_and_apostrophes() {
-        let path = Path::new("private designs").join("owner's part.f3d");
-        let quoted = shell_path(&path);
-        let expected = if cfg!(windows) {
-            "'private designs\\owner''s part.f3d'"
-        } else {
-            "'private designs/owner'\\''s part.f3d'"
-        };
-        assert_eq!(quoted, expected);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn non_unicode_prompt_paths_return_a_message_instead_of_panicking() {
-        use std::os::unix::ffi::OsStringExt;
-        let input = PathBuf::from(std::ffi::OsString::from_vec(b"part-\xff.f3d".to_vec()));
-        assert!(ai_prompt(&input, Path::new("part.sc"))
-            .unwrap_err()
-            .contains("non-Unicode paths is not supported yet"));
-    }
-
-    #[test]
     fn results_scroll_to_the_last_private_send_option() {
         use egui_kittest::kittest::Queryable;
         let mut harness = egui_kittest::Harness::builder()
@@ -3018,6 +3089,7 @@ mod tests {
                             ReportPolicy::bundled(),
                             false,
                             false,
+                            None,
                             None,
                         ) {
                             *chosen = true;
@@ -3224,7 +3296,7 @@ mod tests {
         set_choices(&mut options, true, false, true);
         options.no_memory_check = true;
         options.no_verify = true;
-        options.diagnostics_default = true;
+        options.diagnostics_default = false;
         options.stored_placements = true;
         let saved = saved_choices(&options, true);
         let mut restored = ConvertOptions::default();
@@ -3233,7 +3305,14 @@ mod tests {
         assert_eq!(restored.choices(), options.choices());
         assert!(!restored.no_memory_check);
         assert!(restored.no_verify);
+        // An older saved "save_diagnostics" choice changes nothing: every run keeps its log.
         assert!(restored.diagnostics_default);
+        let mut older = ConvertOptions::default();
+        restore_choices(
+            &mut older,
+            &json!({"preset": "full", "save_diagnostics": false}),
+        );
+        assert!(older.diagnostics_default);
         assert_eq!(
             restored.effective_part_positions(),
             dutchman_core::PartPositions::FirstPlaced
@@ -3338,12 +3417,10 @@ mod tests {
         harness.get_by_label("The last run didn't finish. Its diagnostic log is here:");
         // Toggle through accessibility rather than a pointer position, which depends on how
         // the platform's fonts lay the form out.
-        let before = harness.state().options.diagnostics_default;
-        harness
-            .get_by_label("Save a diagnostic log (no names or contents from your file)")
-            .click_accesskit();
-        harness.run_steps(8);
-        assert_ne!(harness.state().options.diagnostics_default, before);
+        // Every run keeps its log: there is no checkbox to turn that off.
+        assert!(harness
+            .query_by_label("Save a diagnostic log (no names or contents from your file)")
+            .is_none());
         harness.get_by_label("Dismiss").click_accesskit();
         harness.run_steps(8);
         assert!(harness.state().unfinished_diagnostic.is_none());
@@ -3590,6 +3667,7 @@ mod tests {
                                     true,
                                     false,
                                     None,
+                                    None,
                                 );
                             })
                             .rect;
@@ -3681,6 +3759,7 @@ mod tests {
                     true,
                     false,
                     None,
+                    None,
                 );
             });
         harness.run_steps(8);
@@ -3732,6 +3811,7 @@ mod tests {
                             ReportPolicy::bundled(),
                             true,
                             false,
+                            None,
                             None,
                         );
                     });
@@ -3824,6 +3904,7 @@ mod tests {
                         ReportPolicy::bundled(),
                         true,
                         false,
+                        None,
                         None,
                     );
                 });

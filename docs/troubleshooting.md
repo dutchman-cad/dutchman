@@ -141,7 +141,7 @@ the log keeps its `running` name and the conversion result is unaffected. The de
 | macOS | `~/Library/Logs/Dutchman/` |
 | Linux | `$XDG_STATE_HOME/dutchman/diagnostics/`, or `~/.local/state/dutchman/diagnostics/` when unset |
 
-The newest ten automatically placed logs are kept. Starting a run removes older logs
+The newest 50 automatically placed logs are kept. Starting a run removes older logs
 whose filenames match this pattern, including older time-only names such as
 `2026-10-29_201500.jsonl`; unrelated files are left alone.
 `--diagnostics /absolute/path/run.jsonl` instead appends to an explicit file, without
@@ -151,8 +151,8 @@ Choose either `--diagnostics-default` or `--diagnostics PATH`.
 The MCP `convert` and `convert_all` tools accept `diagnostics` (an explicit path) or
 `diagnostics_default: true`.
 
-In the desktop app's settings, select **Save a diagnostic log (no names or contents from
-your file)** before starting. **Open diagnostics folder** opens the default folder.
+The desktop app always keeps a diagnostic log of each run (no names or contents from your
+file) in the default folder, which **Open diagnostics folder** opens.
 Each result card offers **Show this run's log** and **Copy log to…** beside the log's path,
 available when the run ends.
 Show selects the exact file on Windows and macOS, or opens its folder on Linux. Copy opens
