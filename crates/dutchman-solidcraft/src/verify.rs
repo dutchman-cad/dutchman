@@ -1193,16 +1193,18 @@ pub(crate) fn evaluate_json(
     let input = dir.join(format!("{name}.solidcraft"));
     let output = dir.join(format!("{name}.json"));
     std::fs::write(&input, design).map_err(|err| format!("cannot stage the design: {err}"))?;
-    let mut child = Command::new(cli)
-        .arg("eval")
-        .arg(&input)
-        .arg("--json-out")
-        .arg(&output)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|err| launch_failure(cli, err))?;
+    // Like every other run of the CLI, retry while the system says it is busy being written.
+    let mut child = spawn(cli, |command| {
+        command
+            .arg("eval")
+            .arg(&input)
+            .arg("--json-out")
+            .arg(&output)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+    })
+    .map_err(|err| launch_failure(cli, err))?;
     let started = Instant::now();
     let status = loop {
         match child.try_wait() {
@@ -1518,7 +1520,10 @@ fn run_script(
 }
 
 /// Starts the CLI, retrying while the system says it is busy being written.
-fn spawn(cli: &Path, configure: impl Fn(&mut Command)) -> std::io::Result<std::process::Child> {
+pub(crate) fn spawn(
+    cli: &Path,
+    configure: impl Fn(&mut Command),
+) -> std::io::Result<std::process::Child> {
     let mut tries = 0;
     loop {
         let mut command = Command::new(cli);

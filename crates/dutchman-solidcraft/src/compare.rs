@@ -221,32 +221,33 @@ fn render_designs(
     converted: &[u8],
     folder: &Path,
 ) -> bool {
-    use std::process::{Command, Stdio};
+    use std::process::Stdio;
     let render = |name: &str, bytes: &[u8]| -> Result<(), ()> {
         std::fs::create_dir_all(folder).map_err(|_| ())?;
         let design = folder.join(format!("{name}.sc"));
         let png = folder.join(format!("{name}.png"));
         std::fs::write(&design, bytes).map_err(|_| ())?;
-        let mut child = Command::new(cli)
-            .arg("snapshot")
-            .arg(&design)
-            .arg("--out")
-            .arg(&png)
-            .args([
-                "--width",
-                "640",
-                "--height",
-                "480",
-                "--view",
-                "iso",
-                "--no-grid",
-                "--no-axes",
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|_| ())?;
+        let mut child = crate::verify::spawn(cli, |command| {
+            command
+                .arg("snapshot")
+                .arg(&design)
+                .arg("--out")
+                .arg(&png)
+                .args([
+                    "--width",
+                    "640",
+                    "--height",
+                    "480",
+                    "--view",
+                    "iso",
+                    "--no-grid",
+                    "--no-axes",
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+        })
+        .map_err(|_| ())?;
         let deadline = std::time::Instant::now() + timeout;
         loop {
             match child.try_wait() {
