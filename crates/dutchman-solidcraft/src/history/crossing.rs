@@ -844,7 +844,10 @@ pub(super) fn merged_regions(members: &[Value], entities: &[&Value]) -> bool {
             let (Some(&(id_a, a)), Some(&(id_b, b))) = (pieces.get(i), pieces.get(j)) else {
                 return false;
             };
-            if id_a == id_b {
+            // A curve the loop runs along twice (there and back) is a cut inside the loop,
+            // which the region split handles; it does not mean regions were merged.
+            let retraced = |id: &str| pieces.iter().filter(|(other, _)| *other == id).count() > 1;
+            if id_a == id_b || retraced(id_a) || retraced(id_b) {
                 continue;
             }
             let adjacent = j == i + 1 || (i == 0 && j + 1 == count);
@@ -1245,11 +1248,27 @@ mod tests {
     }
 
     #[test]
+    fn retraced_cut_lines_are_not_merged_regions() {
+        let lines = [
+            line("a", [0.0, 0.0], [10.0, 0.0]),
+            line("d1", [10.0, 0.0], [0.0, 10.0]),
+            line("d2", [0.0, 0.0], [10.0, 10.0]),
+        ];
+        let lines: Vec<&Value> = lines.iter().collect();
+        // Both diagonals run there and back: they cross, but as cuts, not merged regions.
+        assert!(!merged_regions(
+            &pieces_loop(&["a", "d1", "d1", "d2", "d2"]),
+            &lines
+        ));
+    }
+
+    #[test]
     fn arcs_that_cross_a_line_of_their_own_loop_are_found() {
         let arc = json!({"id": "arc", "geometry": {"kind": "arc",
             "center": {"u": 0.0, "v": 0.0}, "radius": 2.0,
             "start_angle": 0.0, "end_angle": std::f64::consts::PI}});
-        let chord = line("chord", [-1.0, 1.0], [1.0, 1.0]);
+        // The chord runs past the arc on both sides, crossing it twice between ends.
+        let chord = line("chord", [-3.0, 1.0], [3.0, 1.0]);
         let edge = line("edge", [-2.0, 0.0], [2.0, 0.0]);
         let all = [arc, chord, edge];
         let all: Vec<&Value> = all.iter().collect();
