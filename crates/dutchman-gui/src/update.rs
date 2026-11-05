@@ -437,6 +437,8 @@ pub struct Updater {
     fetcher: Fetcher,
     pub open: bool,
     settings: bool,
+    /// Bumped while the window is closed, so each opening starts its notes at the top.
+    notes_epoch: u32,
     status: String,
     allowed: bool,
 }
@@ -468,6 +470,7 @@ impl Updater {
             fetcher: std::sync::Arc::new(fetch),
             open: false,
             settings: false,
+            notes_epoch: 0,
             status: String::new(),
             allowed: network_allowed(),
         };
@@ -666,7 +669,11 @@ impl Updater {
             self.settings = true;
         }
     }
-    pub fn windows(&mut self, ctx: &egui::Context, can_restart: bool) {
+    /// `top` is the bottom edge of the header, so the update window opens below its controls.
+    pub fn windows(&mut self, ctx: &egui::Context, can_restart: bool, top: f32) {
+        if !self.open {
+            self.notes_epoch = self.notes_epoch.wrapping_add(1);
+        }
         let mut settings = self.settings;
         egui::Window::new("Settings")
             .open(&mut settings)
@@ -700,7 +707,7 @@ impl Updater {
             let click = self.click.clone();
             let mut retry = false;
             egui::Window::new("Dutchman update")
-                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-24.0, 72.0))
+                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-24.0, top + 8.0))
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
@@ -738,8 +745,8 @@ impl Updater {
             }
         } else if let Some(release) = self.release.clone() {
             egui::Window::new("Dutchman update")
-                // Under the Update pill, at the header's right.
-                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-24.0, 72.0))
+                // Under the header, at its right.
+                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-24.0, top + 8.0))
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
@@ -756,6 +763,7 @@ impl Updater {
                     ui.heading(format!("Dutchman {} is available", release.tag.trim_start_matches('v')));
                     if let Some(notice) = dutchman::report_send::fixed_notice(&self.report_ids, &release.fixes_reports) { ui.label(notice); }
                     egui::ScrollArea::vertical()
+                        .id_salt(("update-notes", release.tag.clone(), self.notes_epoch))
                         .max_height(320.0)
                         .show(ui, |ui| {
                             if release.notes.is_empty() {

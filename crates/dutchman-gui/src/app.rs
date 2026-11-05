@@ -103,6 +103,8 @@ pub struct App {
     /// The SolidCraft CLI that checks histories when nothing else is chosen, if one is found.
     checker: Result<PathBuf, dutchman_solidcraft::NoCli>,
     solidcraft_open: bool,
+    /// Where the header ends, so its windows open below its controls.
+    header_bottom: f32,
     /// Why the file last chosen as the `solidcraft-cli` cannot be used.
     solidcraft_cli_error: Option<String>,
     found_version: Option<String>,
@@ -352,6 +354,7 @@ impl App {
             has_app: platform::has_solidcraft_app(),
             checker: dutchman_solidcraft::usable_cli(&checking_with),
             solidcraft_open: false,
+            header_bottom: 72.0,
             solidcraft_cli_error: None,
             found_version,
             detected_version,
@@ -1354,7 +1357,7 @@ impl App {
         self.refresh_estimates(ctx);
         let view = self.view();
 
-        egui::TopBottomPanel::top("title")
+        let header = egui::TopBottomPanel::top("title")
             .frame(
                 Frame::new()
                     .fill(ctx.style().visuals.panel_fill)
@@ -1365,6 +1368,7 @@ impl App {
             )
             .show_separator_line(false)
             .show(ctx, |ui| self.title(ui));
+        self.header_bottom = header.response.rect.bottom();
 
         if let Some(page) = &mut self.doctor {
             if page.ui(ctx) {
@@ -1421,7 +1425,7 @@ impl App {
         self.solidcraft_window(ctx);
         let can_restart =
             !self.running() && (!self.updater.windows_package() || self.diagnosis.is_none());
-        self.updater.windows(ctx, can_restart);
+        self.updater.windows(ctx, can_restart, self.header_bottom);
         self.memory_dialog(ctx);
         self.refresh_estimates(ctx);
     }
@@ -1626,7 +1630,7 @@ impl App {
     fn solidcraft_window(&mut self, ctx: &egui::Context) {
         let mut open = self.solidcraft_open;
         egui::Window::new("SolidCraft version")
-            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-24.0, 72.0))
+            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-24.0, self.header_bottom + 8.0))
             .open(&mut open)
             .collapsible(false)
             .resizable(false)

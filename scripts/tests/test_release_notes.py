@@ -120,6 +120,28 @@ class ReleaseNotes(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "dated entry for 1.2.3"):
                     RELEASE_NOTES.body("1.2.3", root)
 
+    def test_placeholders_are_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            notes = root / "release-notes/1.2.3.md"
+            notes.parent.mkdir()
+            (root / "CHANGELOG.md").write_text("## 1.2.3 (2027-01-02)\n", encoding="utf-8")
+            template = "Intro.\n\n## What's new\n\n- **Change.** {}\n"
+            for detail in [
+                'Choose "As (program) last showed them".',
+                "Released as X.Y.Z today.",
+                "Details TBD.",
+                "TODO describe this.",
+                "Done. <!-- fill in -->",
+            ]:
+                with self.subTest(detail=detail):
+                    notes.write_text(template.format(detail), encoding="utf-8")
+                    with self.assertRaisesRegex(ValueError, "placeholder|template text|HTML comment"):
+                        RELEASE_NOTES.body("1.2.3", root)
+            notes.write_text(template.format("Run `tool X.Y.Z` to pin, or\n\n```\nTODO X.Y.Z\n```"),
+                             encoding="utf-8")
+            self.assertIn("#123-2027-01-02", RELEASE_NOTES.body("1.2.3", root))
+
     def test_cli_error(self):
         result = subprocess.run(
             [sys.executable, str(ROOT / "scripts/release-notes.py"), "999.999.999"],

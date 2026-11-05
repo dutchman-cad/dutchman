@@ -25,6 +25,19 @@ def check_images(version: str, notes: str, path: Path, root: Path) -> None:
             raise ValueError(f"docs/images/releases/{version}/{name}: commit the image the notes show.")
 
 
+def check_placeholders(notes: str, path: Path) -> None:
+    """Template text left in the notes would be published as written."""
+    if "(program)" in notes:
+        raise ValueError(f"{path}: replace the placeholder (program) with real wording.")
+    if "<!--" in notes:
+        raise ValueError(f"{path}: remove the HTML comment left in the notes.")
+    prose = re.sub(r"```.*?```|`[^`\n]*`", "", notes, flags=re.DOTALL)
+    for marker in (r"X\.Y\.Z", r"\bTBD\b", r"\bTODO\b"):
+        found = re.search(marker, prose)
+        if found:
+            raise ValueError(f"{path}: finish the template text {found.group(0)!r} before releasing.")
+
+
 def body(version: str, root: Path = ROOT) -> str:
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
         raise ValueError("Use a release version in X.Y.Z form.")
@@ -41,6 +54,7 @@ def body(version: str, root: Path = ROOT) -> str:
     highlights = re.split(r"^##\s", sections[1], maxsplit=1, flags=re.MULTILINE)[0]
     if len(re.findall(r"^\s*[-+*]\s+", highlights, flags=re.MULTILINE)) > 7:
         raise ValueError(f"{path}: What's new has more than 7 bullets; shorten it.")
+    check_placeholders(notes, path)
     check_images(version, notes, path, root)
     changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
     entry = re.search(

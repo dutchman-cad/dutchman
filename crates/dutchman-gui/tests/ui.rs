@@ -1067,6 +1067,107 @@ fn update_pill_adapts_to_width_and_waits_for_a_click() {
 }
 
 #[test]
+fn update_window_stays_clear_of_the_header_controls() {
+    for width in [520.0, 900.0, 1440.0] {
+        let mut harness = Harness::builder()
+            .with_size(egui::vec2(width, 900.0))
+            .build_eframe(|cc| App::new(cc));
+        harness
+            .state_mut()
+            .updater
+            .preview(dutchman_gui::update::Release {
+                fixes_reports: Vec::new(),
+                tag: "v0.2.6".into(),
+                notes: "Release notes".into(),
+                download: "https://github.com/dutchman-cad/dutchman/releases/tag/v0.2.6".into(),
+            });
+        harness.run_steps(8);
+        let pill = if width < 920.0 {
+            "Update"
+        } else {
+            "Update to 0.2.6"
+        };
+        harness.get_by_label(pill).click_accesskit();
+        harness.run_steps(8);
+        assert!(harness
+            .query_by_label("Dutchman 0.2.6 is available")
+            .is_some());
+        let window = harness
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::new("Dutchman update")))
+            .expect("the update window is open");
+        let mut checked = 0;
+        for label in [
+            "Settings",
+            "Report a problem",
+            "System",
+            "Day",
+            "Night",
+            "SolidCraft",
+            "not found",
+            pill,
+        ] {
+            for node in harness.query_all_by_label_contains(label) {
+                let rect = node.rect();
+                if rect.height() > 80.0 {
+                    continue;
+                }
+                checked += 1;
+                assert!(
+                    !window.intersects(rect),
+                    "{width}: window {window:?} covers {label:?} at {rect:?}"
+                );
+            }
+        }
+        assert!(
+            checked >= 4,
+            "{width}: only {checked} header controls found"
+        );
+    }
+}
+
+#[test]
+fn update_notes_open_at_the_top_each_time() {
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(900.0, 760.0))
+        .build_eframe(|cc| App::new(cc));
+    let long: String = (1..=60)
+        .map(|n| format!("Line number {n} of the notes.\n\n"))
+        .collect();
+    for tag in ["v0.2.6", "v0.2.7", "v0.2.7"] {
+        harness
+            .state_mut()
+            .updater
+            .preview(dutchman_gui::update::Release {
+                fixes_reports: Vec::new(),
+                tag: tag.into(),
+                notes: long.clone(),
+                download: format!("https://github.com/dutchman-cad/dutchman/releases/tag/{tag}"),
+            });
+        harness.state_mut().updater.open = true;
+        harness.run_steps(8);
+        harness
+            .get_by_label_contains("Line number 40 of")
+            .scroll_to_me();
+        harness.run_steps(8);
+        // Closing and opening again, or opening another version, starts at the top.
+        harness.state_mut().updater.open = false;
+        harness.run_steps(4);
+    }
+    harness.state_mut().updater.open = true;
+    harness.run_steps(8);
+    let top = harness.get_by_label_contains("Line number 1 of").rect();
+    let window = harness
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::new("Dutchman update")))
+        .unwrap();
+    assert!(
+        window.contains_rect(top),
+        "first line {top:?} not in {window:?}"
+    );
+}
+
+#[test]
 fn homebrew_job_survives_window_close_and_offers_restart_on_success() {
     let mut harness = harness();
     harness
@@ -2939,8 +3040,18 @@ fn update_dialog_screenshots() {
         }
         harness.run_steps(8);
         if state == "available" {
-            harness.get_by_label("What's new").scroll_to_me();
-            harness.run_steps(8);
+            // The notes open at their first line, as the reader sees them.
+            let window = harness
+                .ctx
+                .memory(|m| m.area_rect(egui::Id::new("Dutchman update")))
+                .unwrap();
+            let first = harness
+                .get_by_label_contains("Dutchman Convert 0.2.7 adds")
+                .rect();
+            assert!(
+                window.contains_rect(first),
+                "intro {first:?} not in {window:?}"
+            );
         }
         match state {
             "checking" => assert!(harness
@@ -2974,6 +3085,8 @@ fn update_dialog_screenshots() {
             state,
         );
         if state == "available" {
+            harness.get_by_label("What's new").scroll_to_me();
+            harness.run_steps(8);
             harness
                 .get_by_label_contains("Report problems")
                 .scroll_to_me();
