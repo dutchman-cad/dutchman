@@ -13,9 +13,11 @@ with the current executable's expected per-user location, identifies MSI copies 
 updater; see `docs/desktop.md` for the full check and download disclosure.
 
 The release workflow builds and exercises installation, an upgrade from a synthetic lower
-version, downgrade refusal, and uninstall on windows-latest, including packaging and update
-code pull requests. `scripts/test-windows-msi.ps1` stops on failed assertions and keeps the
-MSI logs as a separate workflow artifact. The release publisher checks MSI checksums and
+version and over a second build of the same version, downgrade refusal, and uninstall on
+windows-latest, for every release candidate and for packaging and update code pull requests.
+`MajorUpgrade` sets `AllowSameVersionUpgrades`, because release candidates of one release all carry
+its version. `scripts/test-windows-msi.ps1` stops on failed assertions and keeps the
+MSI logs as a separate workflow artifact. The release workflow checks MSI checksums and
 creates versionless copies alongside the ZIP and its checksum.
 
 The Windows job also applies the release ZIP over a portable folder while a renamed

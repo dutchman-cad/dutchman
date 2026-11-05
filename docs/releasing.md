@@ -1,6 +1,6 @@
 # Releasing
 
-A release is cut from `main` once CI is green there.
+Each release is built once, as its final release candidate. A candidate is a tag `vX.Y.Z-rc.N` on a `main` commit; it runs the full release build. When one is good, the release tag `vX.Y.Z` on the same commit turns that build into a draft release in about five minutes, with no second build. Ordinary pull requests and pushes to `main` run only the quick debug build and tests.
 
 1. Refresh the SolidCraft window alongside the cadmpeg pin. `WINDOW_OLDEST` stays an
    exact, checksum-pinned release from the rolling 14-day window, never below the internal
@@ -29,16 +29,17 @@ A release is cut from `main` once CI is green there.
    format stay as they are, so check the release notes for a format change before merging.
    Patch releases do nothing. The repository setting "Allow GitHub Actions to create and
    approve pull requests" must be on for the workflow to open the pull request.
-2. Run `python3 scripts/changelog.py release X.Y.Z` to assemble the fragments into a dated
-   `CHANGELOG.md` entry (use `--date YYYY-MM-DD` to override today). Review it, add any known
-   issue, and stage the deleted fragments. Set the workspace `version` in `Cargo.toml`, along
-   with the `version` of the `dutchman-core` and `dutchman-solidcraft` workspace dependencies.
-   Run `cargo build` so `Cargo.lock` follows. Leave the README's download table alone: it
-   links the latest published release's version-less files (`releases/latest/download/`),
-   which the release build uploads beside the versioned ones, so it follows a release only
-   once that release is published (a test checks the table). Write `release-notes/X.Y.Z.md`: one intro paragraph,
-   then `## What's new` with at most 7 bullets, each with a bold lead phrase. Use plain
-   words and Oxford commas; describe the highlights rather than copying the CHANGELOG.
+2. Bump the version in its own small pull request, before the first candidate. Set the
+   workspace `version` in `Cargo.toml` to `X.Y.Z` (and the `version` of the `dutchman-core` and
+   `dutchman-solidcraft` workspace dependencies), and run `cargo build` so `Cargo.lock` follows.
+   Candidates carry the final version, so the programs, archives and installer say `X.Y.Z` and
+   "rc" appears only in the tag name. Only quick checks run on the bump. Leave the README's
+   download table alone: it links the latest published release's version-less files
+   (`releases/latest/download/`), which the release uploads beside the versioned ones, so it
+   follows a release only once that release is published (a test checks the table).
+3. Write `release-notes/X.Y.Z.md` in a documentation-only pull request, before the tag: one
+   intro paragraph, then `## What's new` with at most 7 bullets, each with a bold lead phrase. Use
+   plain words and Oxford commas; describe the highlights rather than copying the CHANGELOG.
    Add `## Known issue` if needed. Images are kept for milestones, such as a design that now
    converts fully: commit one under `docs/images/releases/X.Y.Z/` (from a public, licensed
    file) and place it after the intro as
@@ -47,37 +48,105 @@ A release is cut from `main` once CI is green there.
    fails when a shown image has no alt text or its file is not committed.
    Preview the full body with
    `python3 scripts/release-notes.py X.Y.Z`; it adds the downloads, install commands, and
-   a link to the dated CHANGELOG entry at the tag.
-3. Merge that, then tag the merge commit `vX.Y.Z` and push the tag.
-4. Pushing the tag runs the `Release builds` workflow. It builds each platform's archive
-   (`scripts/package-archive.sh`: `dutchman`, `dutchman-mcp` and `dutchman-gui`, plus `dutchman-web` on Linux, with LICENSE,
-   NOTICE, README and a SHA-256), and the macOS disk image (`scripts/macos-dmg.sh`:
-   Dutchman Convert.app, universal, signed ad hoc), as workflow artifacts. The two Mac targets
-   build in parallel on separate Apple silicon runners (Intel is cross-compiled). A small
-   packaging job checks and unpacks both archives, then uses their binaries to build the
-   universal app with `lipo` and make the disk image, without compiling again. It also makes
-   `dutchman-X.Y.Z-macos-universal.tar.gz` with universal `dutchman`, `dutchman-mcp`, and
-   `dutchman-gui` binaries, using the same archive layout and checksum format as the per-chip
-   archives. The per-chip Mac archives remain release assets for Homebrew. After all builds
-   succeed, the workflow checks every SHA-256 and creates a draft GitHub release from `release-notes/X.Y.Z.md`, with the archives and
-   checksums attached. It fails if a release for that tag already exists. A maintainer
-   verifies the body and downloads, then publishes the release. Before publishing, check
-   that the draft shows tag `vX.Y.Z`, not `untagged-…`.
-   The workflow also runs on demand (`gh workflow run release-build.yml`) and for a pull
-   request that changes the packaging, but those runs keep only workflow artifacts and
-   do not create a draft. It does not run for every push to `main`.
+   a link to the CHANGELOG on `main` (its entry for the release is added after the tag, step 7;
+   once it exists, the link points at the entry). Documentation-only, so it starts no full build.
+4. Tag a candidate and push it: `git tag vX.Y.Z-rc.1 <commit> && git push origin vX.Y.Z-rc.1`.
+   `release-build.yml` runs the full build (see "Release candidates" below) and keeps the
+   release files for 30 days. If it finds a problem, fix it in a pull request and tag
+   `vX.Y.Z-rc.2` on the new `main` commit; a newer candidate cancels a candidate build still
+   running. Candidates install over each other (the MSI allows same-version upgrades).
+5. Cut the release: tag the candidate commit that passed with `vX.Y.Z` (no `-rc`) and push the
+   tag: `git tag vX.Y.Z <commit> && git push origin vX.Y.Z`. The `Release` workflow
+   (`release.yml`) does not build. It finds the successful candidate run for exactly that
+   commit, downloads its release files, checks every SHA-256, the exact file set and that
+   `dutchman --version` from the Linux archive reports `X.Y.Z`, adds the version-less copies,
+   and creates the draft GitHub release from `release-notes/X.Y.Z.md` with the files attached.
+   That takes about five minutes. It fails if a release for that tag already exists, if the tag
+   does not match the `Cargo.toml` version, or if no successful candidate run exists for the
+   commit (it says so; tag a candidate on that commit and wait for it). A maintainer verifies
+   the body and downloads, then publishes the release. Before publishing, check that the draft
+   shows tag `vX.Y.Z`, not `untagged-…`.
    Publishing the release (not the tag or the draft) runs `Release image`
    (`release-image.yml`), which publishes `ghcr.io/dutchman-cad/dutchman:X.Y.Z` and `:latest`
    from the published release's checksum-verified Linux archives, with no second Rust build;
    a draft never reaches the registry. To republish a release's image, run it on demand with
-   that tag (`gh workflow run release-image.yml -f tag=vX.Y.Z`). On-demand and
-   packaging pull-request runs build both image architectures without logging in or pushing.
-5. crates.io: releases ship as GitHub release archives only, until the core API settles. The
+   that tag (`gh workflow run release-image.yml -f tag=vX.Y.Z`). Candidate runs and packaging
+   pull requests build both image architectures without logging in or pushing.
+6. crates.io: releases ship as GitHub release archives only, until the core API settles. The
    crates.io `dutchman` crate stays the 0.0.1 placeholder. When crates are published, the
    order matters: `dutchman` depends on `dutchman-core` and `dutchman-solidcraft`, so those go
    first (`cargo publish -p dutchman-core`, then `-p dutchman-solidcraft`, then `-p dutchman`).
    Both are `publish = false` today, and publishing them makes their APIs public. Run
    `cargo publish --dry-run -p <crate>` before each.
+7. After the release is published: in a documentation-only pull request, run
+   `python3 scripts/changelog.py release X.Y.Z` to fold the fragments into a dated `CHANGELOG.md`
+   entry (use `--date YYYY-MM-DD` to override today), review it, add any known issue, and stage
+   the deleted fragments. It follows the release tag, so it builds nothing.
+
+In short: bump pull request, notes pull request, `vX.Y.Z-rc.1`, fixes and `rc.2`, `vX.Y.Z` on
+the chosen candidate's commit, draft in about five minutes, publish, fold the CHANGELOG.
+
+If a release cannot be drafted because its candidate files are gone (they expire after 30
+days) or the candidate run cannot be used, tag a new candidate on the commit. As a last resort,
+`gh workflow run release.yml -f tag=vX.Y.Z -f build_if_missing=true` builds the release in that
+run instead; nothing does this by itself.
+
+### Release candidates
+
+`release-build.yml` is the full release build. It runs for:
+
+| Trigger | Runs |
+|---|---|
+| Candidate tag `vX.Y.Z-rc.N` | Full build and packaging of that commit; files kept 30 days. Fails first if `X.Y.Z` differs from `Cargo.toml`'s version. A newer candidate cancels a running one. Saves the Rust caches. |
+| Tag `v0.0.0-rc.dryrun*` | The same, without the version check (for measuring) |
+| Release tag `vX.Y.Z` | `release.yml`: the candidate's files become a draft release; nothing is built |
+| Tag `v0.0.0-dryrun*` | The same, but no release is created and the elapsed time is logged |
+| Pull request that changes packaging, or with the `release-build` label | Full build; superseded runs are cancelled |
+| Any other pull request | `ci.yml` only: debug build and tests on every platform |
+| Push to `main` | `ci.yml` only; it saves the debug Rust caches that pull requests restore |
+| Weekly schedule, or run by hand (`gh workflow run release-build.yml --ref <branch>`) | Full build (the weekly run keeps the Rust caches warm) |
+| Nightly | Its own daily build of `main`, unchanged |
+
+A full build makes each platform's archive
+(`scripts/package-archive.sh`: `dutchman`, `dutchman-mcp` and `dutchman-gui`, plus `dutchman-web` on Linux, with LICENSE,
+NOTICE, README and a SHA-256), the Windows per-user MSI, and the macOS disk image
+(`scripts/macos-dmg.sh`: Dutchman Convert.app, universal, signed ad hoc), and keeps exactly the
+files a release attaches, with their `.sha256`, as workflow artifacts
+(`dutchman-X.Y.Z-<target>.tar.gz` or `.zip`, with the MSI, and `dutchman-X.Y.Z-macos`). The two Mac targets
+build in parallel on separate Apple silicon runners (Intel is cross-compiled). A small
+packaging job checks and unpacks both archives, then uses their binaries to build the
+universal app with `lipo` and make the disk image, without compiling again. It also makes
+`dutchman-X.Y.Z-macos-universal.tar.gz` with universal `dutchman`, `dutchman-mcp`, and
+`dutchman-gui` binaries, using the same archive layout and checksum format as the per-chip
+archives. The per-chip Mac archives remain release assets for Homebrew. On Windows the job
+installs the MSI, upgrades it from a lower version and over a second build of the same version
+(`MajorUpgrade` allows same-version upgrades, so rc.2 installs over rc.1),
+refuses a downgrade, installs as a standard user, uninstalls, and runs the release-mode updater
+tests. Rust caches are kept per target and profile and saved by `main` and candidate tag runs.
+
+The `plan` job in `release-build.yml` starts the builds for a pull request that:
+   - changes `.github/workflows/`, `Cargo.toml` other than its version lines (it holds the
+     profiles), `Dockerfile`,
+     `docker/`, `compose.yaml`, `scripts/*msi*`, `scripts/package*`, `scripts/macos-dmg.sh`,
+     `scripts/archive-readme.py`, `scripts/downloads.py`, `assets/install/`, `assets/dmg/`,
+     `assets/windows/`, `skills/`, the app icon and `examples/ico.rs`, or
+     `crates/dutchman-gui/src/update.rs` and `update/`;
+   - carries the `release-build` label (the label starts the run when it is added), for any
+     other change that needs the full builds, such as one to `Cargo.lock` that might break a
+     release link.
+
+Without one of those, the workflow still reports on the pull request, with its builds skipped.
+
+The release tag finds the candidate with `scripts/find-release-run.sh`: a successful run of
+`release-build.yml`, started by pushing a tag `vX.Y.Z-rc.*`, for exactly the tagged commit, which
+still has every release artifact for the version (the newest such run). No other commit
+counts: the release tag goes on the candidate's own commit. A dry run
+(`git tag v0.0.0-rc.dryrun1 <commit>`, then `git tag v0.0.0-dryrun1 <commit>`; push each, then
+delete them with `git push origin :refs/tags/<name>`) does all of it but creating the release.
+
+Programs between releases: `scripts/fetch-ci-binary.sh main <target> <dir>` takes the newest
+nightly build of `main`, `rc` or a tag such as `v0.2.8-rc.1` takes a candidate's, and a pull
+request number takes its full build when it has one (CONTRIBUTING.md).
 
 ## Packaging
 

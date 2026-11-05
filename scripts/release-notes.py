@@ -56,15 +56,20 @@ def body(version: str, root: Path = ROOT) -> str:
         raise ValueError(f"{path}: What's new has more than 7 bullets; shorten it.")
     check_placeholders(notes, path)
     check_images(version, notes, path, root)
-    changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+    # The CHANGELOG entry is folded in after the tag, so it is not there yet when a release is cut:
+    # link the entry when it exists, else the CHANGELOG on main.
+    changelog_path = root / "CHANGELOG.md"
+    changelog = changelog_path.read_text(encoding="utf-8") if changelog_path.is_file() else ""
     entry = re.search(
         rf"^## ({re.escape(version)} \([0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}\))[ \t]*$",
         changelog,
         flags=re.MULTILINE,
     )
     if entry is None:
-        raise ValueError(f"CHANGELOG.md: add a dated entry for {version} before releasing.")
-    anchor = re.sub(r"[^\w -]", "", entry.group(1).lower()).replace(" ", "-")
+        link = f"the {version} entry in the [CHANGELOG]({REPO}/blob/main/CHANGELOG.md)"
+    else:
+        anchor = re.sub(r"[^\w -]", "", entry.group(1).lower()).replace(" ", "-")
+        link = f"[CHANGELOG]({REPO}/blob/v{version}/CHANGELOG.md#{anchor})"
     return (
         f"{notes}\n\n"
         "Made for the current SolidCraft (any release from the last two weeks); older "
@@ -73,7 +78,7 @@ def body(version: str, root: Path = ROOT) -> str:
         "Or install with Homebrew (`brew install dutchman-cad/tap/dutchman`) or Scoop "
         "(`scoop bucket add dutchman-cad https://github.com/dutchman-cad/scoop-bucket`, "
         "then `scoop install dutchman-cad/dutchman`).\n\n"
-        f"Every change in detail: [CHANGELOG]({REPO}/blob/v{version}/CHANGELOG.md#{anchor}).\n\n"
+        f"Every change in detail: {link}.\n\n"
     )
 
 

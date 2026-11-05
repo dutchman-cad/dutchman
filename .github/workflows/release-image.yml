@@ -2,7 +2,7 @@ name: Release image
 
 # Publishes ghcr.io/dutchman-cad/dutchman:X.Y.Z and :latest when a release is published, from
 # that release's own checksum-verified Linux archives, with no second Rust build. A pushed tag
-# only makes a draft (release-build.yml), so nothing reaches the registry before a maintainer
+# only makes a draft (release.yml), so nothing reaches the registry before a maintainer
 # publishes the release. Runs on demand for a published release tag too, to republish its image.
 
 on:

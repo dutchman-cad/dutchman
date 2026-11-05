@@ -1,57 +1,145 @@
 name: Release builds
 
-# Builds the dutchman command, the dutchman-mcp server and the dutchman-gui app for each
-# platform and keeps the archives and per-user Windows MSI as workflow artifacts. The MSI
-# is installed, upgraded and uninstalled on Windows. A macOS disk image holds
-# Dutchman Convert.app for Apple silicon and Intel. Runs for a release tag, on demand, and
-# for a pull request that changes the packaging; never for every push to main, as the
-# account runs few macOS jobs at once. Release notes alone do not trigger it: ci.yml's
-# release-notes job checks them, and the tag build after a release PR builds every platform
-# anyway, so a release PR no longer builds them all twice. A pushed tag also creates a draft
-# release; the container image is published only when the release is (release-image.yml).
+# The full release build: the dutchman command, the dutchman-mcp server and the dutchman-gui
+# app for Linux x86_64 and ARM64 (in debian:bookworm), Windows x86_64 and macOS (Apple silicon
+# and Intel, then a universal archive and disk image), packaged exactly as a release attaches
+# them: archives, the per-user Windows MSI, the disk image, each with its .sha256. The MSI is
+# installed, upgraded (to a newer and to the same version), refused a downgrade, installed as a
+# standard user and uninstalled on Windows, and the release-mode updater tests run there.
+#
+# A release candidate is a tag `vX.Y.Z-rc.N` on the commit that may become the release. Pushing
+# it runs this workflow, and that is the only build the release gets: pushing the release tag
+# `vX.Y.Z` on the same commit makes release.yml download these files, check them and draft the
+# release, without building again. Every release is built once, as its final candidate.
+# Candidates carry the final version: Cargo.toml already says X.Y.Z and so do the programs, the
+# archives and the MSI; "rc" appears only in the tag name. The MSI allows same-version upgrades,
+# so rc.2 installs over rc.1. The files are kept as the artifacts dutchman-<version>-<target>
+# (archive, MSI, checksums) and dutchman-<version>-macos (universal archive, disk image,
+# per-chip archives), for 30 days.
+#
+# The `plan` job decides, and every other job waits on it, so this workflow reports on every pull
+# request and the builds show as skipped when they are not needed. The builds run for:
+#   - a release-candidate tag `v*-rc.*` (the plan job first fails if the tag's X.Y.Z differs from
+#     Cargo.toml's version; the dry-run tags `v0.0.0-rc.dryrun*` skip that check);
+#   - a run started by hand on any branch (`gh workflow run release-build.yml --ref <branch>`), a
+#     weekly schedule that keeps the Rust caches warm, and a call from release.yml (only its
+#     explicit `build_if_missing` run);
+#   - a pull request that changes the packaging (the paths in the `plan` job; for Cargo.toml,
+#     anything but the version lines), or carries the `release-build` label (the label starts
+#     the run when it is added). Other pull requests, and pushes to main, get the debug build and
+#     tests of ci.yml only.
+# A newer candidate tag cancels the candidate build in progress.
 
 on:
   push:
-    tags: ["v*"]
+    tags: ["v*-rc.*"]
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: "The tag to build (empty: the ref of the caller)"
+        type: string
+        default: ""
+  schedule:
+    - cron: "41 3 * * 1"
   pull_request:
-    paths:
-      - .github/workflows/release-build.yml
-      - scripts/package-archive.sh
-      - scripts/package-universal.sh
-      - scripts/macos-dmg.sh
-      - scripts/archive-readme.py
-      - scripts/downloads.py
-      - scripts/package-docs.py
-      - assets/install/**
-      - skills/**
-      - docs/**
-      - crates/dutchman-gui/assets/Dutchman.icns
-      - assets/dmg/**
-      - assets/windows/**
-      - scripts/windows-msi.ps1
-      - scripts/test-windows-msi.ps1
-      - crates/dutchman-gui/examples/ico.rs
-      - crates/dutchman-gui/src/app.rs
-      - crates/dutchman-gui/src/update.rs
-      - crates/dutchman-gui/src/update/**
-      - crates/dutchman-gui/assets/dutchman-app-icon.svg
-      - docker/**
+    types: [opened, synchronize, reopened, labeled]
 
 permissions:
   contents: read
 
-# A newer run for the same ref cancels the one it supersedes.
+# One group for candidate tags: a newer candidate cancels a running candidate build (only the
+# newest candidate matters). Other runs are grouped per ref, and a newer run for the same ref
+# supersedes the older. Adding an unrelated label to a pull request starts a run that decides
+# nothing new; it gets its own group so it cannot cancel a build in progress. A build called by
+# release.yml on a tag is never cancelled and is not in the candidate group.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && 'release-rc' || format('release-full-{0}-{1}', github.ref, github.event.action == 'labeled' && github.event.label.name != 'release-build' && 'label' || 'run') }}
+  cancel-in-progress: ${{ github.event_name == 'push' || !startsWith(github.ref, 'refs/tags/') }}
 
 env:
   CARGO_TERM_COLOR: always
   DUTCHMAN_RELEASE_BUILD: "1"
 
 jobs:
+  # Whether this run builds. Always true except for a pull request, which builds when it carries
+  # the `release-build` label or changes a packaging path.
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      full: ${{ steps.plan.outputs.full }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.ref }}
+      # The candidate carries the final version: tag vX.Y.Z-rc.N must be the Cargo.toml version.
+      - name: Check the candidate tag against Cargo.toml
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          tag=$GITHUB_REF_NAME
+          cargo_version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          if [[ "$tag" == v0.0.0-rc.dryrun* ]]; then
+            echo "Dry run: the version check is skipped. Building the Cargo.toml version $cargo_version."
+            exit 0
+          fi
+          if [[ ! "$tag" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)-rc\.[0-9]+$ ]]; then
+            echo "Candidate tag $tag is not of the form vX.Y.Z-rc.N." >&2
+            exit 1
+          fi
+          if [[ "${BASH_REMATCH[1]}" != "$cargo_version" ]]; then
+            echo "Tag $tag is a candidate for ${BASH_REMATCH[1]}, but Cargo.toml says $cargo_version." >&2
+            echo "Bump the version in its own pull request before the first candidate, then tag again." >&2
+            exit 1
+          fi
+          echo "Candidate $tag matches the workspace version $cargo_version."
+      - id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          LABELLED: ${{ contains(github.event.pull_request.labels.*.name, 'release-build') }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            echo "full=true" >> "$GITHUB_OUTPUT"
+            echo "Not a pull request: full release builds."
+            exit 0
+          fi
+          if [ "$LABELLED" = true ]; then
+            echo "full=true" >> "$GITHUB_OUTPUT"
+            echo "The release-build label is set: full release builds."
+            exit 0
+          fi
+          if ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            echo "full=true" >> "$GITHUB_OUTPUT"
+            echo "The base commit is not available: full release builds."
+            exit 0
+          fi
+          # Packaging (what the archives, the installer, the disk image, the updater and the
+          # image are built from) and every workflow. Cargo.toml is checked below.
+          packaging='^(\.github/workflows/|Dockerfile$|docker/|compose\.yaml$'
+          packaging+='|scripts/[^/]*msi[^/]*$|scripts/package[^/]*$|scripts/macos-dmg\.sh$|scripts/archive-readme\.py$|scripts/downloads\.py$'
+          packaging+='|assets/(install|dmg|windows)/|skills/'
+          packaging+='|crates/dutchman-gui/assets/(Dutchman\.icns|dutchman-app-icon\.svg)$|crates/dutchman-gui/examples/ico\.rs$'
+          packaging+='|crates/dutchman-gui/src/(update\.rs|update/))'
+          matched=$(git diff --name-only "$BASE" HEAD | grep -E "$packaging" || true)
+          # Cargo.toml holds the release profiles; a change other than the version lines (the
+          # release pull request's bump) counts as packaging.
+          cargo=$(git diff -U0 "$BASE" HEAD -- Cargo.toml | grep -E '^[-+][^-+]' \
+            | grep -vE '^[-+](version = "[^"]*"|dutchman-(core|solidcraft) = \{.*version = "[^"]*".*\})$' || true)
+          if [ -n "$cargo" ]; then matched="$matched${matched:+$'\n'}Cargo.toml"; fi
+          if [ -n "$matched" ]; then
+            echo "full=true" >> "$GITHUB_OUTPUT"
+            echo "Packaging files changed: full release builds."
+            echo "$matched" | head -20
+          else
+            echo "full=false" >> "$GITHUB_OUTPUT"
+            echo "No packaging change and no release-build label: the release builds are skipped (ci.yml tests the debug profile)."
+          fi
+
   build:
+    needs: plan
+    if: needs.plan.outputs.full == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -85,12 +173,16 @@ jobs:
             pkg-config python3 libx11-dev libxi-dev libxcursor-dev libxrandr-dev \
             libxkbcommon-dev libwayland-dev libgl1-mesa-dev
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      # One cache per target and profile, saved by main (weekly, by hand) and candidate tag runs and restored by pull requests.
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.container }}-${{ matrix.target }}
+          shared-key: release-${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
       - name: Build archive programs
         shell: bash
         run: |
@@ -163,6 +255,8 @@ jobs:
 
   # Each Mac target gets an Apple silicon runner; Intel stays cross-compiled.
   macos-build:
+    needs: plan
+    if: needs.plan.outputs.full == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -170,6 +264,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -177,6 +273,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: macos-release-${{ matrix.target }}
+          save-if: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
       - name: Build archive programs
         run: cargo build --release --locked -p dutchman -p dutchman-gui --target ${{ matrix.target }}
       - name: Package
@@ -202,6 +299,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
       - uses: actions/download-artifact@v8
         with:
           pattern: macos-archive-*
@@ -232,83 +331,15 @@ jobs:
             dist/*.dmg.sha256
           retention-days: 30
 
-  draft-release:
-    needs: [build, macos]
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    env:
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - uses: actions/checkout@v7
-      # Only the release archives: a Docker build record uploaded by an image build is not a
-      # release file and cannot be downloaded as one.
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: dutchman-[0-9]*
-          path: artifacts
-      - name: Flatten artifacts and check checksums
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir dist
-          while IFS= read -r -d '' file; do
-            name=$(basename "$file")
-            if [[ -e "dist/$name" ]]; then
-              echo "Duplicate release artifact: $name" >&2
-              exit 1
-            fi
-            mv "$file" "dist/$name"
-          done < <(find artifacts -type f -print0)
-          cd dist
-          shopt -s nullglob
-          checksums=(*.sha256)
-          if (( ${#checksums[@]} == 0 )); then
-            echo "No release checksums were downloaded." >&2
-            exit 1
-          fi
-          for checksum in "${checksums[@]}"; do
-            sha256sum --check --strict "$checksum"
-          done
-          for file in *; do
-            if [[ "$file" != *.sha256 && ! -f "$file.sha256" ]]; then
-              echo "Missing release checksum: $file.sha256" >&2
-              exit 1
-            fi
-          done
-          # Version-less copies, so the README's releases/latest/download links always name the
-          # latest published release (dutchman-<version>-<target> -> dutchman-<target>).
-          version="${GITHUB_REF_NAME#v}"
-          for file in dutchman-"$version"-*; do
-            [[ "$file" == *.sha256 ]] && continue
-            latest="dutchman-${file#dutchman-"$version"-}"
-            cp "$file" "$latest"
-            sha256sum "$latest" > "$latest.sha256"
-          done
-      - name: Create draft release
-        shell: bash
-        run: |
-          set -euo pipefail
-          tag="$GITHUB_REF_NAME"
-          version="${tag#v}"
-          existing=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq ".[] | select(.tag_name == \"$tag\") | .html_url")
-          if [[ -n "$existing" ]]; then
-            echo "A release already exists for $tag; remove it explicitly before retrying." >&2
-            exit 1
-          fi
-          python3 scripts/release-notes.py "$version" > notes.md
-          files=(dist/*)
-          gh release create "$tag" --draft --verify-tag --title "Dutchman $version" -F notes.md "${files[@]}"
-
   image-check:
     needs: build
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
       - uses: actions/download-artifact@v8
         with:
           pattern: dutchman-*-unknown-linux-gnu.tar.gz

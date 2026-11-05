@@ -1,7 +1,7 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Package Name="Dutchman Convert" Manufacturer="Dutchman CAD" Version="$(var.Version)"
            UpgradeCode="46DB5FE6-D099-4A7D-AD78-9D644D1D01B6" Scope="perUser" InstallerVersion="500">
-    <MajorUpgrade Schedule="afterInstallInitialize" DowngradeErrorMessage="A newer Dutchman Convert is already installed." />
+    <MajorUpgrade Schedule="afterInstallInitialize" AllowSameVersionUpgrades="yes" DowngradeErrorMessage="A newer Dutchman Convert is already installed." />
     <MediaTemplate EmbedCab="yes" />
     <Icon Id="Dutchman.ico" SourceFile="$(var.Icon)" />
     <Property Id="ARPPRODUCTICON" Value="Dutchman.ico" />

@@ -47,7 +47,7 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
 
-CI runs the tests on Linux, Windows and macOS, and checks that the workspace builds with
+CI runs the debug-profile tests on Linux (x86_64 and ARM64), Windows and macOS, and checks that the workspace builds with
 Rust 1.88. A further job opens every converted fixture in a released SolidCraft
 (`scripts/solidcraft-roundtrip.sh`) and replays the history tests in it. It is informational
 and does not block a merge. To run it locally, put a SolidCraft release's `solidcraft-cli`
@@ -59,20 +59,28 @@ SOLIDCRAFT_CLI=/path/to/solidcraft-cli cargo test -p dutchman-solidcraft --test 
 
 ### Use CI-built binaries instead of building locally
 
-Every pull request, and every push to main that changes code, has CI build `dutchman`,
-`dutchman-mcp` and `dutchman-gui` for Linux x86_64, macOS Apple silicon and Windows x86_64 and
-keep them for 14 days, as the artifacts `dutchman-x86_64-unknown-linux-gnu`,
-`dutchman-aarch64-apple-darwin` and `dutchman-x86_64-pc-windows-msvc`. They are quick builds
-without link-time optimisation, so they run slower than a release, and nothing waits on them.
+Pull requests and pushes to main build the debug profile and run the tests, which is what
+checks them. The optimised programs (thin LTO, the same `dutchman`, `dutchman-mcp` and
+`dutchman-gui` a release ships) come from three places:
+
+- `main`: the nightly build, made every day from main and kept for 7 days. The script says which
+  commit and day it took.
+- a release candidate (`rc`, or a tag such as `v0.2.8-rc.1`): the full release build of a
+  candidate tag, kept for 30 days.
+- a pull request: its full build, which exists only for packaging changes, the `release-build`
+  label, or a run started by hand (`gh pr edit 123 --add-label release-build`, or
+  `gh workflow run release-build.yml --ref my-branch`). The script says so when it has none.
+
 To try a change without building it:
 
 ```sh
-scripts/fetch-ci-binary.sh 123 x86_64-unknown-linux-gnu /tmp/dutchman-pr-123   # pull request 123
-scripts/fetch-ci-binary.sh main aarch64-apple-darwin /tmp/dutchman-main        # latest push to main
+scripts/fetch-ci-binary.sh main aarch64-apple-darwin /tmp/dutchman-main           # newest nightly of main
+scripts/fetch-ci-binary.sh 123 x86_64-unknown-linux-gnu /tmp/dutchman-pr-123      # pull request 123 (if it has a full build)
+scripts/fetch-ci-binary.sh v0.2.8-rc.1 x86_64-pc-windows-msvc /tmp/dutchman-rc    # a release candidate (or: rc)
 ```
 
 The script needs the `gh` command, signed in, and prints the path of the unpacked `dutchman`.
-To fetch by hand: `gh run download <run> -n dutchman-x86_64-unknown-linux-gnu`; a downloaded
+To fetch by hand: `gh run download <run> -n <artifact>`; a downloaded
 artifact has lost its executable bit, so `chmod +x` the programs.
 
 ## Code style

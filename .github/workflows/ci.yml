@@ -21,6 +21,10 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
 
+# Rust build caches (Swatinem/rust-cache): every job names a shared-key per platform and profile,
+# so a pull request restores the cache main saved for the same job. Only pushes to main (and
+# runs started by hand on main) save, so pull requests never evict each other's or main's cache.
+
 jobs:
   # Whether the change touches Rust code, which the macOS tests (macOS runners are scarce) wait on;
   # whether it is code at all (a docs-only change runs only the docs and release-notes jobs);
@@ -95,6 +99,9 @@ jobs:
           python-version: '3.x'
       - run: python3 -m unittest discover -s scripts/tests -v
       - run: python3 scripts/changelog.py check
+      # The installed guidance (docs/, skills/) the archives and installer carry: a change to docs/
+      # no longer starts the release builds, so check here that it still stages.
+      - run: python3 scripts/package-docs.py "$RUNNER_TEMP/guide" --wix "$RUNNER_TEMP/guide.wxs"
 
   clippy:
     needs: changes
@@ -106,17 +113,22 @@ jobs:
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: clippy-linux-debug
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   test:
     needs: changes
     if: needs.changes.outputs.code == 'true'
-    # Inventor and SolidWorks users are mostly on Windows; macOS has a case-insensitive
-    # filesystem. Both matter to finding an assembly's part files.
+    # Debug-profile build and tests on Linux x86_64 and ARM64 and Windows (macOS is test-macos
+    # below). Inventor and SolidWorks users are mostly on Windows; macOS has a case-insensitive
+    # filesystem. Both matter to finding an assembly's part files. The optimised release builds
+    # are not made here: release-build.yml makes them for release and packaging changes.
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest]
     runs-on: ${{ matrix.os }}
     env:
       # Debug info is most of a cold Windows build's time and is not needed to run the tests.
@@ -135,8 +147,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
+          shared-key: test-${{ matrix.os }}-debug
           # Save the build even when a test fails, so the next run does not start cold.
           cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --workspace --locked
       # The desktop app's test seams (fixed checker text, previews, isolated folders) sit behind
       # its test-support feature, which the workspace run above does not turn on; run those
@@ -160,6 +174,9 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test-ubuntu-latest-debug
+          save-if: false
       - run: cargo test --locked -p dutchman --test readme
       - run: cargo test --locked -p dutchman --test cli formats_markdown_matches_the_formats_page
 
@@ -177,7 +194,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
+          shared-key: test-macos-latest-debug
           cache-on-failure: true
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --workspace --locked
 
   # Builds the Docker image (docs/docker.md), converts a fixture in it, starts its MCP server,
@@ -200,7 +219,8 @@ jobs:
           build-args: |
             CARGO_BUILD_JOBS=2
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Only main writes the layer cache; a pull request reads it.
+          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,mode=max' || '' }}
       - name: Convert a fixture in the image
         run: |
           fixtures="$PWD/crates/dutchman-core/tests/fixtures"
@@ -225,55 +245,6 @@ jobs:
           test -s cube.solidcraft
           docker rm -f web
 
-  # Quick release builds of the three programs for each platform, kept as artifacts for 14 days
-  # (dutchman-<target>), so a change can be tried without building it: scripts/fetch-ci-binary.sh.
-  # No job waits on this one; it is not a gate. LTO is off and codegen units are 16 to build faster
-  # than a release; these are not the published release binaries.
-  binaries:
-    name: binaries (${{ matrix.target }})
-    needs: changes
-    if: needs.changes.outputs.code == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-          - os: macos-latest
-            target: aarch64-apple-darwin
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: binaries-${{ matrix.target }}
-          cache-on-failure: true
-      - name: Build
-        run: >
-          cargo build --release --locked -p dutchman -p dutchman-gui
-          --config profile.release.lto=false --config profile.release.codegen-units=16
-      - name: Stage
-        shell: bash
-        run: |
-          exe=""
-          [[ '${{ matrix.target }}' == *windows* ]] && exe=".exe"
-          mkdir -p stage
-          for program in dutchman dutchman-mcp dutchman-gui; do
-            cp "target/release/$program$exe" stage/
-          done
-          cp LICENSE NOTICE stage/
-          stage/dutchman$exe --version
-      - uses: actions/upload-artifact@v7
-        with:
-          name: dutchman-${{ matrix.target }}
-          path: stage/
-          if-no-files-found: error
-          retention-days: 14
-
   msrv:
     needs: changes
     if: needs.changes.outputs.code == 'true'
@@ -282,6 +253,9 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.88
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: msrv-linux-check
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo check --workspace --locked
 
   # Opens converted designs in the newest and oldest releases in the rolling 14-day
@@ -318,6 +292,9 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: roundtrip-linux-debug
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo build --locked -p dutchman --bin dutchman
       - run: df -h / .
       - name: Fetch SolidCraft

@@ -110,10 +110,19 @@ Check-Installed $Version
 $p = Start-Process "$env:SystemRoot\System32\msiexec.exe" -ArgumentList "/i `"$old`" /qn /norestart" -Wait -PassThru
 Assert-True ($p.ExitCode -eq 1603) 'Installing an older MSI should be refused'
 Check-Installed $Version
-Run-Msi '/x' $msi 'msi-upgrade-uninstall.log'
+# Release candidates all carry the release's final version, so a build must install over
+# an earlier build of the same version (AllowSameVersionUpgrades). Build a second package of this
+# version and install it over the first: one entry remains, at this version.
+& ./scripts/windows-msi.ps1 -Version $Version -Output 'dist/same-version.msi'
+$same = (Resolve-Path 'dist/same-version.msi').Path
+Run-Msi '/i' $same 'msi-same-version.log'
+Check-Installed $Version
+# The same-version package replaced the first one, so it is the one to remove.
+Run-Msi '/x' $same 'msi-upgrade-uninstall.log'
 Check-Clean
-# The synthetic upgrade package is never a release asset.
-Remove-Item 'dist/upgrade-from.msi', 'dist/upgrade-from.msi.sha256', 'dist/upgrade-from.wixpdb' -ErrorAction SilentlyContinue
+# The synthetic packages are never release assets.
+Remove-Item 'dist/upgrade-from.msi', 'dist/upgrade-from.msi.sha256', 'dist/upgrade-from.wixpdb',
+    'dist/same-version.msi', 'dist/same-version.msi.sha256', 'dist/same-version.wixpdb' -ErrorAction SilentlyContinue
 
 # Evidence that the package is per-user and needs no admin rights. The runner account is an
 # administrator, so install once more as a new standard user, which cannot elevate silently.

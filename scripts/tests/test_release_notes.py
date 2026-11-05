@@ -115,10 +115,14 @@ class ReleaseNotes(unittest.TestCase):
             picture.parent.mkdir(parents=True)
             picture.write_bytes(b"png")
             self.assertIn("#123-2027-01-02", RELEASE_NOTES.body("1.2.3", root))
+            # Before the CHANGELOG entry exists (it is folded in after the tag), link the file on main.
             for text in ["## Unreleased\n", "## 1.2.3\n", "## 1.2.30 (2027-01-02)\n"]:
                 changelog.write_text(text, encoding="utf-8")
-                with self.assertRaisesRegex(ValueError, "dated entry for 1.2.3"):
-                    RELEASE_NOTES.body("1.2.3", root)
+                body = RELEASE_NOTES.body("1.2.3", root)
+                self.assertIn("the 1.2.3 entry in the [CHANGELOG]", body)
+                self.assertIn("/blob/main/CHANGELOG.md)", body)
+            changelog.unlink()
+            self.assertIn("/blob/main/CHANGELOG.md)", RELEASE_NOTES.body("1.2.3", root))
 
     def test_placeholders_are_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

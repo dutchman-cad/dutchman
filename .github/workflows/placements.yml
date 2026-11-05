@@ -4,9 +4,19 @@ name: Placements
 # corpus/placements/, so a change that scatters parts cannot merge. Pull requests run it only
 # when Rust code, the lockfile or a golden changes; a branch push runs it through its pull
 # request. The Voron assembly needs about 15 GB, so it runs only when the lockfile or
-# dutchman-core changes, or when started by hand.
+# dutchman-core changes, or when started by hand. A push to main that touches the same paths
+# only builds, to save the release-build cache that pull requests restore (they never save it).
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "corpus/placements/**"
+      - "scripts/placements.py"
+      - ".github/workflows/placements.yml"
   pull_request:
     paths:
       - "crates/**"
@@ -22,7 +32,8 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Every push to main finishes, so it saves its cache.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -62,14 +73,15 @@ jobs:
         with:
           shared-key: placements-release
           cache-on-failure: true
-          # Only code of this repository writes the shared cache, never a fork's pull request.
-          save-if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository }}
+          # Only main writes the shared cache; pull requests restore it.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build Dutchman
         run: >
           cargo build --release --locked -p dutchman
           --config profile.release.lto=false --config profile.release.codegen-units=16
       - run: target/release/dutchman --version
       - uses: actions/upload-artifact@v7
+        if: github.event_name != 'push'
         with:
           name: dutchman-bin
           path: target/release/dutchman
@@ -79,6 +91,7 @@ jobs:
   placements:
     name: placements (${{ matrix.name }})
     needs: build
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
@@ -130,7 +143,7 @@ jobs:
   placements-voron:
     name: placements (voron)
     needs: [changes, build]
-    if: needs.changes.outputs.voron == 'true'
+    if: github.event_name != 'push' && needs.changes.outputs.voron == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     steps:

@@ -1,0 +1,234 @@
+name: Release
+
+# Cuts a draft release from a tag `vX.Y.Z`. Nothing is built here: the release was already built
+# once, as its final release candidate (`vX.Y.Z-rc.N` on the same commit, release-build.yml).
+# This finds the successful candidate run for the tagged commit, downloads its release files,
+# checks every SHA-256, the exact file set and that the programs report the version, and creates
+# the draft release from them. That takes about five minutes.
+#
+# If no successful candidate run exists for the exact commit, this fails and says so: tag a
+# candidate on that commit first and wait for it to pass. Only a run started by hand with
+# `build_if_missing: true` builds in its place (gh workflow run release.yml -f tag=vX.Y.Z -f
+# build_if_missing=true); it never happens by itself.
+#
+# A tag named v0.0.0-dryrun<anything> is a dry run: it accepts a v0.0.0-rc.dryrun<anything>
+# candidate run for its commit, does everything except create the release, checks the version
+# against Cargo.toml instead of the tag, and logs the elapsed time from the start of the run.
+# Delete the tags afterwards (git push origin :refs/tags/<name>).
+#
+# The container image is published only when the draft is published (release-image.yml).
+
+on:
+  push:
+    tags: ["v*", "!v*-rc.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: The release tag, vX.Y.Z (it must exist)
+        type: string
+        required: true
+      build_if_missing:
+        description: Build the release here when no successful candidate run exists for the tagged commit
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# A tag's run is never cancelled, and shares no group with the candidate builds.
+concurrency:
+  group: release-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  find:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      run_id: ${{ steps.find.outputs.run_id }}
+      version: ${{ steps.version.outputs.version }}
+      dry: ${{ steps.version.outputs.dry }}
+      tag: ${{ steps.version.outputs.tag }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ inputs.tag || github.ref_name }}
+      - id: version
+        run: |
+          set -euo pipefail
+          cargo_version=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          if [[ "$TAG" == v0.0.0-dryrun* ]]; then
+            echo "Dry run: no release will be created. Using the Cargo.toml version $cargo_version."
+            echo "dry=true" >> "$GITHUB_OUTPUT"
+          else
+            if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Tag $TAG is not a release tag vX.Y.Z." >&2
+              exit 1
+            fi
+            if [[ "${TAG#v}" != "$cargo_version" ]]; then
+              echo "Tag $TAG does not match the workspace version $cargo_version in Cargo.toml." >&2
+              exit 1
+            fi
+            echo "dry=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "version=$cargo_version" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - id: find
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA: ${{ steps.version.outputs.sha }}
+          DRY: ${{ steps.version.outputs.dry }}
+          BUILD_IF_MISSING: ${{ inputs.build_if_missing }}
+        run: |
+          set -uo pipefail
+          # The candidate tags whose run may be used: vX.Y.Z-rc.N for this version.
+          prefix="v$VERSION-rc."
+          [[ "$DRY" == true ]] && prefix="v0.0.0-rc.dryrun"
+          if id=$(scripts/find-release-run.sh "$SHA" "$VERSION" "$prefix"); then
+            echo "run_id=$id" >> "$GITHUB_OUTPUT"
+            echo "Reusing the release files of candidate run $id: https://github.com/$GITHUB_REPOSITORY/actions/runs/$id"
+            exit 0
+          fi
+          if [[ "$BUILD_IF_MISSING" == true ]]; then
+            echo "run_id=" >> "$GITHUB_OUTPUT"
+            echo "::warning::No successful candidate run for $SHA: build_if_missing is set, so the full build runs now."
+            exit 0
+          fi
+          rc="${prefix}1"
+          echo "::error title=No release candidate for $TAG::No successful release-candidate build exists for commit $SHA. Tag that commit $rc (git tag $rc $SHA && git push origin $rc), wait for release-build.yml to pass, then tag the release again. To build here instead, start this workflow by hand with build_if_missing set."
+          exit 1
+
+  # Only for a run started by hand with build_if_missing, when there is no candidate run.
+  build:
+    needs: find
+    if: needs.find.outputs.run_id == ''
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-build.yml
+    with:
+      ref: refs/tags/${{ needs.find.outputs.tag }}
+
+  draft-release:
+    needs: [find, build]
+    if: >-
+      always() && needs.find.result == 'success'
+      && (needs.build.result == 'success' || needs.build.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.find.outputs.version }}
+      TAG: ${{ needs.find.outputs.tag }}
+      DRY: ${{ needs.find.outputs.dry }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ needs.find.outputs.tag }}
+      # Only the release archives: a Docker build record uploaded by an image build is not a
+      # release file and cannot be downloaded as one. Without a green run to reuse, this is the
+      # run of the build job above.
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: dutchman-[0-9]*
+          path: artifacts
+          run-id: ${{ needs.find.outputs.run_id || github.run_id }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+      - name: Flatten artifacts and check checksums and version
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir dist
+          while IFS= read -r -d '' file; do
+            name=$(basename "$file")
+            if [[ -e "dist/$name" ]]; then
+              echo "Duplicate release artifact: $name" >&2
+              exit 1
+            fi
+            mv "$file" "dist/$name"
+          done < <(find artifacts -type f -print0)
+          cd dist
+          shopt -s nullglob
+          checksums=(*.sha256)
+          if (( ${#checksums[@]} == 0 )); then
+            echo "No release checksums were downloaded." >&2
+            exit 1
+          fi
+          for checksum in "${checksums[@]}"; do
+            sha256sum --check --strict "$checksum"
+          done
+          for file in *; do
+            if [[ "$file" != *.sha256 && ! -f "$file.sha256" ]]; then
+              echo "Missing release checksum: $file.sha256" >&2
+              exit 1
+            fi
+          done
+          # Exactly the files a release attaches, all for this version.
+          expected=(
+            "dutchman-$VERSION-x86_64-unknown-linux-gnu.tar.gz"
+            "dutchman-$VERSION-aarch64-unknown-linux-gnu.tar.gz"
+            "dutchman-$VERSION-x86_64-pc-windows-msvc.zip"
+            "dutchman-$VERSION-x86_64-pc-windows-msvc.msi"
+            "dutchman-$VERSION-aarch64-apple-darwin.tar.gz"
+            "dutchman-$VERSION-x86_64-apple-darwin.tar.gz"
+            "dutchman-$VERSION-macos-universal.tar.gz"
+            "dutchman-$VERSION-macos-universal.dmg"
+          )
+          for file in "${expected[@]}"; do
+            [[ -f "$file" ]] || { echo "Missing release file for $VERSION: $file" >&2; exit 1; }
+          done
+          for file in *; do
+            base="${file%.sha256}"
+            found=0
+            for e in "${expected[@]}"; do [[ "$base" == "$e" ]] && found=1; done
+            if (( ! found )); then
+              echo "Unexpected release file (wrong version?): $file" >&2
+              exit 1
+            fi
+          done
+          # The programs inside report the version.
+          mkdir ../check
+          tar xzf "dutchman-$VERSION-x86_64-unknown-linux-gnu.tar.gz" -C ../check
+          reported=$("../check/dutchman-$VERSION-x86_64-unknown-linux-gnu/dutchman" --version)
+          echo "dutchman --version: $reported"
+          grep -qF -- "$VERSION" <<<"$reported" || { echo "dutchman reports a different version than $VERSION." >&2; exit 1; }
+          # Version-less copies, so the README's releases/latest/download links always name the
+          # latest published release (dutchman-<version>-<target> -> dutchman-<target>).
+          for file in dutchman-"$VERSION"-*; do
+            [[ "$file" == *.sha256 ]] && continue
+            latest="dutchman-${file#dutchman-"$VERSION"-}"
+            cp "$file" "$latest"
+            sha256sum "$latest" > "$latest.sha256"
+          done
+          ls -l
+      - name: Create the draft release
+        shell: bash
+        env:
+          STARTED: ${{ github.run_started_at }}
+        run: |
+          set -euo pipefail
+          tag="$TAG"
+          since() { local s=$(( $(date +%s) - $(date -d "$STARTED" +%s) )); echo "$((s / 60)) min $((s % 60)) s"; }
+          if [[ "$DRY" == true ]]; then
+            echo "Dry run: not creating a release for $tag."
+            echo "Dry run: the files were found, downloaded and checked $(since) after the run started." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq ".[] | select(.tag_name == \"$tag\") | .html_url")
+          if [[ -n "$existing" ]]; then
+            echo "A release already exists for $tag; remove it explicitly before retrying." >&2
+            exit 1
+          fi
+          python3 scripts/release-notes.py "$VERSION" > notes.md
+          files=(dist/*)
+          gh release create "$tag" --draft --verify-tag --title "Dutchman $VERSION" -F notes.md "${files[@]}"
+          echo "Draft release for $tag created $(since) after the run started." | tee -a "$GITHUB_STEP_SUMMARY"
