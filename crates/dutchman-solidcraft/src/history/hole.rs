@@ -27,11 +27,14 @@ pub(crate) fn map(
         return Err("a hole with native thread geometry is not mapped yet".to_owned());
     }
     let form = construction.get("kind").unwrap_or(&Value::Null);
+    // Newer SolidCraft drills an entry-recess hole to a point as well.
+    let recess_tip = crate::VersionGate::EntryRecessTip.supported(ctx.target_version);
     if definition.pointer("/bottom/kind").and_then(Value::as_str) == Some("angled")
         && matches!(
             form.get("kind").and_then(Value::as_str),
             Some("counterbore" | "countersink" | "chamfer")
         )
+        && !recess_tip
     {
         return Err("SolidCraft holes take a drill point only on a plain drilled hole".to_owned());
     }
@@ -135,8 +138,19 @@ pub(crate) fn map(
                         return Err("its drill point is deeper than the hole".to_owned());
                     }
                     depth = Some(shoulder);
-                    hole =
-                        json!({"type": "drilled", "tip_angle": format!("{}", angle.to_degrees())});
+                    let tip = format!("{}", angle.to_degrees());
+                    match hole.as_object_mut() {
+                        Some(fields)
+                            if recess_tip
+                                && matches!(
+                                    fields.get("type").and_then(Value::as_str),
+                                    Some("counterbore" | "countersink")
+                                ) =>
+                        {
+                            fields.insert("tip_angle".to_owned(), json!(tip));
+                        }
+                        _ => hole = json!({"type": "drilled", "tip_angle": tip}),
+                    }
                 }
                 Some(other) => {
                     return Err(format!("a hole with a {other} bottom is not mapped yet"))
@@ -1016,10 +1030,19 @@ mod tests {
 
     #[test]
     fn entry_forms_with_a_drill_point_are_not_silently_simplified() {
-        for form in [
-            json!({"kind": "counterbore", "diameter": 8.0, "depth": 2.0}),
-            json!({"kind": "countersink", "diameter": 8.0, "angle": std::f64::consts::FRAC_PI_2}),
-            json!({"kind": "chamfer", "diameter": 8.0, "angle": std::f64::consts::FRAC_PI_2}),
+        for (form, kind) in [
+            (
+                json!({"kind": "counterbore", "diameter": 8.0, "depth": 2.0}),
+                "counterbore",
+            ),
+            (
+                json!({"kind": "countersink", "diameter": 8.0, "angle": std::f64::consts::FRAC_PI_2}),
+                "countersink",
+            ),
+            (
+                json!({"kind": "chamfer", "diameter": 8.0, "angle": std::f64::consts::FRAC_PI_2}),
+                "countersink",
+            ),
         ] {
             for to_tip in [false, true] {
                 let definition = hole(json!({
@@ -1027,8 +1050,23 @@ mod tests {
                     "extent": {"kind": "blind", "length": 6.0},
                     "bottom": {"kind": "angled", "included_angle": 118_f64.to_radians(), "depth_to_tip": to_tip},
                 }));
+                // SolidCraft that drills an entry-recess hole to a point keeps both.
+                let out = mapped(&definition).unwrap();
+                assert_eq!(out["hole"]["type"], kind);
+                assert_eq!(out["hole"]["tip_angle"], "118.00000000000001");
+                // Older SolidCraft would silently drop the point: refused.
+                let model = json!({});
+                let mut ctx = Context::new(&model);
+                ctx.target_version = "0.22.0".parse().unwrap();
+                ctx.sketches.insert("s".to_owned(), sketch());
                 assert_eq!(
-                    mapped(&definition).unwrap_err(),
+                    map(
+                        &json!({"name": "Hole"}),
+                        &definition,
+                        &mut ctx,
+                        &mut Report::default()
+                    )
+                    .unwrap_err(),
                     "SolidCraft holes take a drill point only on a plain drilled hole"
                 );
             }

@@ -17,7 +17,8 @@ history, with no flattened-history warning.
     3D sketches of lines, arcs, circles, splines and points;
   - extrudes and revolves, with their end forms;
   - holes: counterbores, countersinks, chamfered entries, and thread labels on tapped holes;
-    drill points on plain drilled holes only (SolidCraft ignores them on entry recesses);
+    drill points on plain drilled holes, and on counterbores and countersinks for SolidCraft
+    0.22.1 and newer;
   - sweeps, lofts, and coils;
   - linear, circular, and path patterns of features or bodies, body mirrors, and body
     booleans;
@@ -171,10 +172,10 @@ Hole history includes chamfered entries and tapped holes: the hole keeps its bor
 metric thread label such as `M6x1`. A thread's hand, tolerance class, and length don't carry
 across; the report lists them as Degraded. Taper, exit treatments, modeled threads, and entry
 recesses combined with drill points are not supported yet, and the report names the option.
-For a counterbore, countersink, or chamfered entry with a drill point, the reason is
-"SolidCraft holes take a drill point only on a plain drilled hole": SolidCraft 0.21.0 ignores
-`tip_angle` on counterbores and countersinks. SolidCraft 0.22.1 and newer support those drill
-points, but Dutchman retains this limit for compatibility with older releases. Conversion keeps the original geometry.
+A counterbore, countersink, or chamfered entry with a drill point keeps both for SolidCraft
+0.22.1 and newer. For an older target the reason is "SolidCraft holes take a drill point only
+on a plain drilled hole": SolidCraft 0.21.0 ignores `tip_angle` on counterbores and
+countersinks. Conversion keeps the original geometry.
 
 
 3D sketches (Fusion spatial sketches) become SolidCraft sketches with 3D Sketch on, written at

@@ -3417,12 +3417,25 @@ fn unsupported_hole_forms_have_specific_reasons() {
                 hole["bottom"] =
                     json!({"kind": "angled", "included_angle": 1.5, "depth_to_tip": false});
             });
+            // SolidCraft before 0.22.1 drills entry-recess holes flat: refused.
+            let (_, report) = convert(
+                &model,
+                &SolidCraftWriter::new()
+                    .verification(Verification::Off)
+                    .target_version(Some("0.22.0".parse().unwrap())),
+            );
+            assert!(history_line(&report)
+                .contains("SolidCraft holes take a drill point only on a plain drilled hole"));
+            // Later SolidCraft keeps the entry form and its drill point.
             let (_, report) = convert(
                 &model,
                 &SolidCraftWriter::new().verification(Verification::Off),
             );
-            assert!(history_line(&report)
-                .contains("SolidCraft holes take a drill point only on a plain drilled hole"));
+            assert!(
+                !history_line(&report).contains("drill point"),
+                "{}",
+                history_line(&report)
+            );
         }
     }
 }
