@@ -104,19 +104,15 @@ updates `Cargo.lock`; do not commit what it changes either.
 ### Check one file quickly
 
 A `--release` build takes a long time, and a plain debug build converts a large design too
-slowly to wait for. The `check-one` profile is a debug build optimised enough (`opt-level = 2`,
-no debug information) to convert one design in reasonable time, and it builds much faster than
-`--release`:
+slowly to wait for. A debug build optimised enough (`opt-level = 2`, no debug information)
+converts one design in reasonable time, and it builds much faster than `--release`:
 
 ```sh
-cargo build --profile check-one -p dutchman
-target/check-one/dutchman convert path/to/design.f3d --no-verify
+cargo build -p dutchman --config profile.dev.opt-level=2 --config profile.dev.debug=0
+target/debug/dutchman convert path/to/design.f3d --no-verify
 ```
 
-Without the profile, the same settings work as options:
-`cargo build -p dutchman --config profile.dev.opt-level=2 --config profile.dev.debug=0`
-(the program is then in `target/debug/`). Use `--release` for timings and for anything you
-report as a speed.
+Use `--release` for timings and for anything you report as a speed.
 
 ### Use CI-built binaries instead of building locally
 
