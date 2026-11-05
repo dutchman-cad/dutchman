@@ -275,7 +275,11 @@ fn search_note(checking: &dutchman_solidcraft::Verification, found: Option<&str>
     if found.is_some() || *checking != dutchman_solidcraft::Verification::Auto {
         return String::new();
     }
-    let report = dutchman_solidcraft::search_report(checking, false);
+    places_note(&dutchman_solidcraft::search_report(checking, false))
+}
+
+/// The "Looked in" text for a search report.
+fn places_note(report: &Value) -> String {
     let places = report["places"]
         .as_array()
         .into_iter()
@@ -448,6 +452,19 @@ impl App {
         self.detected_version = found.and_then(|v| v.parse().ok()).unwrap_or_default();
         self.detected_version = self.detected_version.min(Default::default());
         self.options.solidcraft_version = Some(self.detected_version);
+    }
+
+    /// Supplies a search that found nothing, with these `(place, outcome)` pairs (outcomes as in
+    /// the search report), for UI previews.
+    #[cfg(feature = "test-support")]
+    pub fn preview_search_for_test(&mut self, places: &[(&str, &str)]) {
+        let places: Vec<Value> = places
+            .iter()
+            .map(|(place, outcome)| serde_json::json!({"place": place, "outcome": outcome}))
+            .collect();
+        self.checker = Err(dutchman_solidcraft::NoCli::NotFound("Not found".into()));
+        self.found_version = None;
+        self.search_note = places_note(&serde_json::json!({"places": places}));
     }
 
     /// Shows the notice for a run that didn't finish, with its log at `path`, for UI previews.

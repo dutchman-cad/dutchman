@@ -3410,6 +3410,80 @@ fn fit_screenshots() {
 }
 
 #[test]
+#[ignore = "renders the SolidCraft version window with a GPU; set DUTCHMAN_GUI_SCREENSHOTS"]
+fn solidcraft_window_screenshots() {
+    // Isolate settings and paths so no image shows the owner's home folder.
+    if std::env::var_os("DUTCHMAN_FIT_CHILD").is_none() {
+        let home = tempfile::tempdir().unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "solidcraft_window_screenshots",
+                "--nocapture",
+            ])
+            .env("DUTCHMAN_FIT_CHILD", "1")
+            .env("HOME", home.path())
+            .env("LOCALAPPDATA", home.path())
+            .env("XDG_CONFIG_HOME", home.path().join("config"))
+            .env("XDG_CACHE_HOME", home.path().join("cache"))
+            .env("XDG_DATA_HOME", home.path().join("data"))
+            .env("XDG_STATE_HOME", home.path().join("state"))
+            .status()
+            .unwrap();
+        assert!(status.success(), "screenshot child failed: {status}");
+        return;
+    }
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    let size = dutchman_gui::fit_size([1440.0, 900.0]);
+    let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(size[0], size[1]));
+    for found in [true, false] {
+        let work = tempfile::tempdir().unwrap();
+        let mut h = fit_harness(size, ThemePreference::Light, work.path());
+        if !found {
+            h.state_mut().preview_solidcraft(None);
+            h.state_mut().preview_search_for_test(&[
+                ("SOLIDCRAFT_CLI", "unset"),
+                ("PATH", "not_found"),
+                ("beside Dutchman", "not_found"),
+                ("Program Files", "not_found"),
+                ("Local app data", "not_found"),
+                ("Windows registry", "not_found"),
+            ]);
+        }
+        h.run_steps(8);
+        h.get_by_label("SolidCraft version…").click_accesskit();
+        h.run_steps(8);
+        let window = h
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::new("SolidCraft version")))
+            .expect("the version window is open");
+        assert!(
+            viewport.contains_rect(window),
+            "{window:?} outside {viewport:?}"
+        );
+        let texts: &[&str] = if found {
+            &["SolidCraft 0.30 is installed."]
+        } else {
+            &["SolidCraft not found.", "Looked in: SOLIDCRAFT_CLI"]
+        };
+        for text in texts {
+            let rect = h.get_by_label_contains(text).rect();
+            assert!(
+                window.contains_rect(rect),
+                "{text}: {rect:?} outside the window {window:?}"
+            );
+        }
+        let name = if found { "found" } else { "not-found" };
+        h.render()
+            .unwrap()
+            .save(dir.join(format!("solidcraft-window-{name}-Day.png")))
+            .unwrap();
+    }
+}
+
+#[test]
 #[ignore = "renders the update window with a GPU; set DUTCHMAN_GUI_SCREENSHOTS to a folder"]
 fn update_dialog_screenshots() {
     let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
