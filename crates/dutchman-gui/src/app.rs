@@ -291,12 +291,16 @@ fn places_note(report: &Value) -> String {
                 Some("not_found") => "not found",
                 _ => "found",
             };
-            format!("{}: {outcome}", place["place"].as_str().unwrap_or_default())
+            format!(
+                "• {}: {outcome}",
+                place["place"].as_str().unwrap_or_default()
+            )
         })
         .collect::<Vec<_>>()
-        .join("; ");
+        .join("\n");
+    // One place per line, so the list reads at a glance.
     format!(
-        "Looked in: {places}. To use another copy, choose it below or set the {} environment \
+        "Looked in:\n{places}\nTo use another copy, choose it below or set the {} environment \
          variable to its full path.",
         dutchman_solidcraft::CLI_ENV
     )
