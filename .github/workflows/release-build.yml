@@ -25,7 +25,7 @@ name: Release builds
 #     Cargo.toml's version; the dry-run tags `v0.0.0-rc.dryrun*` skip that check);
 #   - a run started by hand on any branch (`gh workflow run release-build.yml --ref <branch>`);
 #   - a pull request that changes the packaging (the paths in the `plan` job; for Cargo.toml,
-#     anything but the version lines), or carries the `release-build` label (the label starts
+#     only its [profile.*] tables), or carries the `release-build` label (the label starts
 #     the run when it is added). Other pull requests, and pushes to main, get the debug build and
 #     tests of ci.yml only.
 # A newer candidate tag cancels the candidate build in progress.
@@ -119,11 +119,15 @@ jobs:
           packaging+='|crates/dutchman-gui/assets/(Dutchman\.icns|dutchman-app-icon\.svg)$|crates/dutchman-gui/examples/ico\.rs$'
           packaging+='|crates/dutchman-gui/src/(update\.rs|update/))'
           matched=$(git diff --name-only "$BASE" HEAD | grep -E "$packaging" || true)
-          # Cargo.toml holds the release profiles; a change other than the version lines (the
-          # release pull request's bump) counts as packaging.
-          cargo=$(git diff -U0 "$BASE" HEAD -- Cargo.toml | grep -E '^[-+][^-+]' \
-            | grep -vE '^[-+](version = "[^"]*"|dutchman-(core|solidcraft) = \{.*version = "[^"]*".*\})$' || true)
-          if [ -n "$cargo" ]; then matched="$matched${matched:+$'\n'}Cargo.toml"; fi
+          # Cargo.toml holds the release profiles, which only the release builds use: a change
+          # to a [profile.*] table counts as packaging. Dependency and version changes (a pin
+          # move, the release bump) are tested by ci.yml and built in full at the candidate.
+          cargo=$(git show "$BASE:Cargo.toml" | python3 -c '
+          import sys, tomllib
+          old = tomllib.loads(sys.stdin.read()).get("profile", {})
+          new = tomllib.load(open("Cargo.toml", "rb")).get("profile", {})
+          print("changed" if old != new else "")')
+          if [ -n "$cargo" ]; then matched="$matched${matched:+$'\n'}Cargo.toml (release profiles)"; fi
           if [ -n "$matched" ]; then
             echo "full=true" >> "$GITHUB_OUTPUT"
             echo "Packaging files changed: full release builds."
