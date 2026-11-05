@@ -17,6 +17,7 @@ mod document;
 mod history;
 mod placements;
 mod repeats;
+mod replay;
 mod step;
 #[cfg(test)]
 mod testing;
@@ -40,6 +41,7 @@ pub use verify::{
 };
 
 use document::Live;
+pub use replay::replay_script;
 
 /// The SolidCraft design format this adapter writes: the first in which an Import may name a
 /// non-STEP source file whose geometry it keeps as restated STEP text. Every newer

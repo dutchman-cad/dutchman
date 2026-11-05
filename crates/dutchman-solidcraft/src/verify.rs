@@ -1105,12 +1105,10 @@ pub(crate) fn replay_edges(
     let dir = tempfile::tempdir().map_err(|err| format!("no scratch folder: {err}"))?;
     let input = dir.path().join("history.solidcraft");
     std::fs::write(&input, design).map_err(|err| format!("cannot stage the design: {err}"))?;
-    let roll =
-        |id: u64| serde_json::json!({"command": "timeline.roll_to", "params": {"feature": id}});
+    let roll = |id: u64| crate::replay::roll_commands(id)[0].clone();
     let mut script = Vec::new();
     for id in after {
-        script.push(roll(*id));
-        script.push(serde_json::json!({"command": "document.inspect", "params": {}}));
+        script.extend(crate::replay::roll_commands(*id));
     }
     let results = run_script(cli, deadline, dir.path(), "bodies", &input, &script)?;
     let mut steps = Vec::new();

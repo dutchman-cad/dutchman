@@ -70,6 +70,26 @@ says whether your small file fails the same way, and `--make-report` gathers the
 Nothing is sent: the zip stays on your machine until you send it. See
 [Let Dutchman do all of it](diagnose.md#let-dutchman-do-all-of-it---narrow).
 
+## Replay a history by hand
+
+To find which feature of a converted history goes wrong, convert with `--write-replay`:
+
+```sh
+dutchman convert part.f3d --write-replay
+solidcraft-cli run part.replay.json --in part.sc --results --allow-errors --json-out steps.json
+```
+
+`part.replay.json` is the command script Dutchman gives `solidcraft-cli` to rebuild the
+history: for each feature in order, one `timeline.roll_to` command that rolls the timeline to
+just after it, then one `document.inspect` that lists the bodies there. It is written whether
+or not the history is checked, so it also works with `--no-verify`. Delete the commands after
+the feature you want to look at, or keep only one pair, and run it again to see the bodies at
+that step. `convert-all --write-replay` writes one script per `.sc` design.
+
+A `.sc` design is a ZIP archive. `document.json` holds the design (its features, sketches and
+parameters) and `blobs/*.step` the imported shapes. Any ZIP tool opens it, which shows what
+a design holds without opening SolidCraft.
+
 ## Send the file privately
 
 If a file opens in the app that made it but Dutchman can't convert it, it's a bug in Dutchman,

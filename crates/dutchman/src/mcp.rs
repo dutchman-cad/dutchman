@@ -676,6 +676,7 @@ fn options(arguments: &Arguments) -> Result<ConvertOptions, String> {
         part_positions,
         no_memory_check: flag(arguments, "no_memory_check", false)?,
         no_verify: !flag(arguments, "verify", true)?,
+        write_replay: false,
         no_clobber: !flag(arguments, "overwrite", true)?,
         solidcraft,
         solidcraft_version,

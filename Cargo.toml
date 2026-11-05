@@ -60,3 +60,10 @@ indexing_slicing = "deny"
 lto = "thin"
 codegen-units = 16
 strip = true
+
+# Optimised enough to convert one design in reasonable time, and builds much faster than
+# release: `cargo build --profile check-one -p dutchman`.
+[profile.check-one]
+inherits = "dev"
+opt-level = 2
+debug = 0

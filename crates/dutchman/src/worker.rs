@@ -209,6 +209,7 @@ impl ConvertOptions {
             (self.no_sketches, "--no-sketches"),
             (self.no_joints, "--no-joints"),
             (self.no_memory_check, "--no-memory-check"),
+            (self.write_replay, "--write-replay"),
         ] {
             if enabled {
                 args.push(flag.into());

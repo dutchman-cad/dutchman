@@ -427,6 +427,32 @@ fn json_of(out: &Output) -> serde_json::Value {
 }
 
 #[test]
+fn write_replay_writes_the_script_beside_the_design() {
+    let output = scratch("replay.sc");
+    let script = output.with_extension("replay.json");
+    let _ = std::fs::remove_file(&script);
+    let out = dutchman(&[
+        "convert",
+        "--json",
+        "--no-verify",
+        "--write-replay",
+        &fixture("synthetic_cube.ipt"),
+        output.to_str().unwrap(),
+    ]);
+    assert_eq!(out.status.code(), Some(0));
+    let report = json_of(&out);
+    assert_eq!(report["replay_script"], script.display().to_string());
+    let text = std::fs::read_to_string(&script).unwrap();
+    let commands: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let commands = commands.as_array().unwrap();
+    assert_eq!(commands.len() % 2, 0);
+    for pair in commands.chunks(2) {
+        assert_eq!(pair[0]["command"], "timeline.roll_to");
+        assert_eq!(pair[1]["command"], "document.inspect");
+    }
+}
+
+#[test]
 fn convert_json_reports_what_was_written() {
     let output = scratch("json.solidcraft");
     let out = dutchman(&[

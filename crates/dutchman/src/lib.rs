@@ -176,6 +176,10 @@ pub struct ConvertOptions {
     /// Write history without checking it in SolidCraft.
     #[arg(long)]
     pub no_verify: bool,
+    /// Also write `<design>.replay.json` beside a SolidCraft design: the command script that
+    /// rebuilds its history step by step, for `solidcraft-cli run`.
+    #[arg(long)]
+    pub write_replay: bool,
     /// Check FreeCAD macro output by running FreeCAD headlessly.
     #[arg(long, conflicts_with = "no_verify")]
     pub verify: bool,
@@ -221,6 +225,7 @@ impl Default for ConvertOptions {
             solidcraft: None,
             solidcraft_version: None,
             no_verify: false,
+            write_replay: false,
             verify: false,
             freecad_timeout: 300,
             no_clobber: false,
@@ -551,11 +556,40 @@ fn convert_prepared(
         Ok(report) => convert_success(input, output, &report),
         Err(err) => json::error(json::CONVERT, json::input(input), &err),
     };
+    if options.write_replay && report.get("ok").and_then(Value::as_bool) == Some(true) {
+        write_replay_script(output, &mut report);
+    }
     if let (Some(solidcraft), Some(fields)) = (writer.solidcraft, report.as_object_mut()) {
         fields.insert("solidcraft".to_owned(), solidcraft);
     }
     json::conversion_choices(&mut report, input, options);
     report
+}
+
+/// Writes the command script that rebuilds the history of the SolidCraft design `output` to
+/// `<output>.replay.json` (the file name with `.replay.json` in place of its suffix), and
+/// names it in `report` as `replay_script`; a script that cannot be written is reported as
+/// `replay_script_error`.
+fn write_replay_script(output: &Path, report: &mut Value) {
+    let result = (|| {
+        let design =
+            std::fs::read(output).map_err(|err| format!("cannot read the design: {err}"))?;
+        let script = dutchman_solidcraft::replay_script(&design)?;
+        let text = serde_json::to_string_pretty(&script).map_err(|err| err.to_string())?;
+        let path = output.with_extension("replay.json");
+        std::fs::write(&path, text)
+            .map_err(|err| format!("cannot write {}: {err}", path.display()))?;
+        Ok::<_, String>(path)
+    })();
+    if let Some(fields) = report.as_object_mut() {
+        match result {
+            Ok(path) => fields.insert(
+                "replay_script".to_owned(),
+                json!(path.display().to_string()),
+            ),
+            Err(why) => fields.insert("replay_script_error".to_owned(), json!(why)),
+        };
+    }
 }
 
 /// Converts `input` into `output`, writing nothing else, and returns the `dutchman.convert/1`

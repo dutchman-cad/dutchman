@@ -57,6 +57,67 @@ where `SOLIDCRAFT_CLI` points:
 SOLIDCRAFT_CLI=/path/to/solidcraft-cli cargo test -p dutchman-solidcraft --test history --test assembly
 ```
 
+### Build Dutchman against a local cadmpeg
+
+The workspace `Cargo.toml` pins every cadmpeg crate it names directly (`cadmpeg-codec-f3d`,
+`cadmpeg-core`, `cadmpeg-ir` and `cadmpeg-registry`) to one commit of cadmpeg's repository:
+`git = "https://github.com/cadmpeg/cadmpeg", rev = ...`. To try a change in a cadmpeg
+checkout without pushing it, patch that source to your checkout. Put this in
+`.cargo/config.toml` in the Dutchman checkout, with cadmpeg cloned beside it (change the
+paths if yours is elsewhere). Every cadmpeg crate in `Cargo.lock` needs a line, because the
+registry pulls in the codecs too:
+
+```toml
+[patch."https://github.com/cadmpeg/cadmpeg"]
+cadmpeg-asm = { path = "../cadmpeg/crates/cadmpeg-asm" }
+cadmpeg-codec-catia = { path = "../cadmpeg/crates/cadmpeg-codec-catia" }
+cadmpeg-codec-creo = { path = "../cadmpeg/crates/cadmpeg-codec-creo" }
+cadmpeg-codec-f3d = { path = "../cadmpeg/crates/cadmpeg-codec-f3d" }
+cadmpeg-codec-freecad = { path = "../cadmpeg/crates/cadmpeg-codec-freecad" }
+cadmpeg-codec-iges = { path = "../cadmpeg/crates/cadmpeg-codec-iges" }
+cadmpeg-codec-inventor = { path = "../cadmpeg/crates/cadmpeg-codec-inventor" }
+cadmpeg-codec-nx = { path = "../cadmpeg/crates/cadmpeg-codec-nx" }
+cadmpeg-codec-pvz = { path = "../cadmpeg/crates/cadmpeg-codec-pvz" }
+cadmpeg-codec-rhino = { path = "../cadmpeg/crates/cadmpeg-codec-rhino" }
+cadmpeg-codec-sat = { path = "../cadmpeg/crates/cadmpeg-codec-sat" }
+cadmpeg-codec-sldprt = { path = "../cadmpeg/crates/cadmpeg-codec-sldprt" }
+cadmpeg-codec-step = { path = "../cadmpeg/crates/cadmpeg-codec-step" }
+cadmpeg-container = { path = "../cadmpeg/crates/cadmpeg-container" }
+cadmpeg-core = { path = "../cadmpeg/crates/cadmpeg-core" }
+cadmpeg-ir = { path = "../cadmpeg/crates/cadmpeg-ir" }
+cadmpeg-measure = { path = "../cadmpeg/crates/cadmpeg-measure" }
+cadmpeg-parasolid = { path = "../cadmpeg/crates/cadmpeg-parasolid" }
+cadmpeg-protein = { path = "../cadmpeg/crates/cadmpeg-protein" }
+cadmpeg-registry = { path = "../cadmpeg/crates/cadmpeg-registry" }
+```
+
+Then build as usual (`cargo build -p dutchman`). The patch changes `Cargo.lock`, which now
+names the local paths. Keep both the `Cargo.lock` change and `.cargo/config.toml` out of
+your commits: do not stage them, or run
+`git update-index --assume-unchanged Cargo.lock .cargo/config.toml`
+(undo with `--no-assume-unchanged`) and `git checkout Cargo.lock` when you are done.
+
+To build against a commit of cadmpeg's `main` instead of a local checkout, run
+`scripts/use-cadmpeg-main.sh <cadmpeg commit sha>`. It moves every pin to that commit and
+updates `Cargo.lock`; do not commit what it changes either.
+
+### Check one file quickly
+
+A `--release` build takes a long time, and a plain debug build converts a large design too
+slowly to wait for. The `check-one` profile is a debug build optimised enough (`opt-level = 2`,
+no debug information) to convert one design in reasonable time, and it builds much faster than
+`--release`:
+
+```sh
+cargo build --profile check-one -p dutchman
+target/check-one/dutchman convert path/to/design.f3d --no-verify
+```
+
+Without the profile, the same settings work as options:
+`cargo build -p dutchman --config profile.dev.opt-level=2 --config profile.dev.debug=0`
+(the program is then in `target/debug/`). Use `--release` for timings and for anything you
+report as a speed.
+
 ### Use CI-built binaries instead of building locally
 
 Pull requests and pushes to main build the debug profile and run the tests, which is what
@@ -131,6 +192,8 @@ else's private designs. Native decoding belongs in cadmpeg, not in Dutchman.
   customers.
 - New test files are synthetic: built in code, or taken from cadmpeg's public test suite, with
   their origin written down in `crates/dutchman-core/tests/fixtures/README.md`.
+- Tests for bugs found on private files use generic dimensions and synthetic geometry: never
+  copy a private design's numbers, names or shapes into a test.
 
 ## Test files
 
