@@ -842,12 +842,14 @@ fn map_into(
             }
             Ok(Mapped::Feature(mut mapped)) => {
                 history.mapped += 1;
+                let mut extras = Vec::new();
                 for mut extra in std::mem::take(&mut ctx.extra) {
                     let name = ctx.unique_name(&extra, history.features.iter());
                     if let Some(fields) = extra.as_object_mut() {
                         fields.insert("name".to_owned(), Value::String(name));
                     }
                     history.features.push(extra);
+                    extras.push(history.features.len().saturating_sub(1));
                 }
                 if mapped.get("type").and_then(Value::as_str) == Some("sketch") {
                     references.features.push(mapped.clone());
@@ -872,8 +874,12 @@ fn map_into(
                 }
                 history.features.push(mapped);
                 out.push(outcome(FeatureStatus::Mapped, None));
-                if let Some(pending) = ctx.blends.get_mut(blends) {
-                    pending.feature = history.features.len().saturating_sub(1);
+                let main = history.features.len().saturating_sub(1);
+                for pending in ctx.blends.iter_mut().skip(blends) {
+                    pending.feature = pending
+                        .extra
+                        .and_then(|index| extras.get(index).copied())
+                        .unwrap_or(main);
                     pending.outcome = out.len().saturating_sub(1);
                     pending.subject = describe(feature);
                 }

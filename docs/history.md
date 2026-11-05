@@ -152,7 +152,9 @@ either order) and length; a straight one must lie along the input tangent. Arcs 
 splits into pieces, closed edges and other curves are refused. Equal two-distance chamfers also map; distance-and-angle chamfers map at
 45 degrees on perpendicular faces. Unequal distances and other angles lack a source
 reference-face ordering and are refused specifically. Variable fillets lack a proven
-chain direction. Final-body edge selections never stand in for input geometry.
+chain direction. A fillet with several radius groups becomes one SolidCraft blend per group,
+in the source's order; a later group's straight edge may be shorter than the source edge where
+an earlier group rounded its end. Final-body edge selections never stand in for input geometry.
 
 Unused FreeCAD binders and datum helpers are `not_needed`, with the Info note
 `helper not converted: nothing uses it`. Used datum points and coordinate systems can be

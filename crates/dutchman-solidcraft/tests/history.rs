@@ -8950,7 +8950,7 @@ fn a_fillet_of_tangency_weight_one_maps_as_a_circular_fillet() {
 
 #[cfg(unix)]
 #[test]
-fn blends_keep_multiple_picks_and_refuse_repeated_geometry_and_weighted_groups() {
+fn blends_keep_multiple_picks_and_groups_and_refuse_repeated_geometry_and_weights() {
     let base = input_blend("fillet", json!({"kind": "constant", "radius": 1.0}), false);
     let mut wire = serde_json::to_value(&base.ir).unwrap();
     wire["model"]["features"][2]["definition"]["groups"][0]["edges"]["value"]["edges"] =
@@ -8993,12 +8993,18 @@ fn blends_keep_multiple_picks_and_refuse_repeated_geometry_and_weighted_groups()
             ..base.clone()
         };
         let (_, report) = convert(&model, &writer);
-        let reason = if multiple_groups {
-            "independently dimensioned groups"
+        if multiple_groups {
+            // Several radius groups map, one blend per group.
+            assert!(
+                !history_line(&report).contains("independently dimensioned groups"),
+                "{report:?}"
+            );
         } else {
-            "tangency weight"
-        };
-        assert!(history_line(&report).contains(reason), "{report:?}");
+            assert!(
+                history_line(&report).contains("tangency weight"),
+                "{report:?}"
+            );
+        }
     }
 }
 

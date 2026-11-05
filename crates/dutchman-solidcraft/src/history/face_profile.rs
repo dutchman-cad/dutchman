@@ -164,6 +164,8 @@ pub(super) fn map(
         edges: Vec::new(),
         angle_chamfer: false,
         face: Some(proof),
+        extra: None,
+        trimmed: false,
     });
     Ok((key, json!({"type": "all"})))
 }

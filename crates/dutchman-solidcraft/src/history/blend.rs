@@ -50,6 +50,10 @@ pub(crate) struct Pending {
     /// For an extrude of a face of the model as it was earlier, instead of a blend: the face
     /// to find ([`super::face_profile`]); `edges` is then empty.
     pub(super) face: Option<super::face_profile::Proof>,
+    /// The blend is the `n`th extra feature its source feature emits before its main one.
+    pub(super) extra: Option<usize>,
+    /// An earlier group of the same source blend may have shortened its straight edges.
+    pub(super) trimmed: bool,
 }
 
 /// One selected input edge, from its feature input topology.
@@ -77,9 +81,37 @@ pub(super) fn map(
     let groups = definition
         .get("groups")
         .and_then(Value::as_array)
-        .filter(|groups| groups.len() == 1)
-        .ok_or("blends with several independently dimensioned groups are not supported yet")?;
-    let group = groups.first().ok_or("its edge group is missing")?;
+        .filter(|groups| !groups.is_empty() && groups.len() <= LIMIT)
+        .ok_or("its edge groups are missing")?;
+    // SolidCraft blends take one size each: one feature per group, in source order. A later
+    // group's edges may be shortened by an earlier one where they meet.
+    let mut mapped = Vec::new();
+    for (index, group) in groups.iter().enumerate() {
+        mapped.push(self::group(feature, kind, group, ctx, report, index > 0)?);
+    }
+    let last = mapped.len().saturating_sub(1);
+    let mut main = None;
+    for (index, (out, mut pending)) in mapped.into_iter().enumerate() {
+        if index == last {
+            main = Some(out);
+        } else {
+            pending.extra = Some(ctx.extra.len());
+            ctx.extra.push(out);
+        }
+        ctx.blends.push(pending);
+    }
+    main.ok_or_else(|| "its edge groups are missing".to_owned())
+}
+
+/// One edge group of a blend as a SolidCraft blend, with the proof its edges wait for.
+fn group(
+    feature: &Value,
+    kind: &str,
+    group: &Value,
+    ctx: &mut Context,
+    report: &mut Report,
+    trimmed: bool,
+) -> Result<(Value, Pending), String> {
     let mut out = Map::new();
     out.insert("type".to_owned(), json!(kind));
     out.insert("suppressed".to_owned(), json!(false));
@@ -158,14 +190,16 @@ pub(super) fn map(
             .map(str::to_owned)
             .unwrap_or_else(|| format!("Blend{id}"))),
     );
-    ctx.blends.push(Pending {
+    let pending = Pending {
         feature: 0,
         outcome: 0,
         subject: String::new(),
         edges: inputs,
         angle_chamfer,
         face: None,
-    });
+        extra: None,
+        trimmed,
+    };
     if weighted {
         report.push(
             Severity::Info,
@@ -173,7 +207,7 @@ pub(super) fn map(
             "tangency weight 1.0 treated as a circular fillet",
         );
     }
-    Ok(Value::Object(out))
+    Ok((Value::Object(out), pending))
 }
 
 /// Input edges selected in the blend's own feature input topology, with their midpoints.
@@ -453,9 +487,16 @@ pub(crate) fn prove(pending: &Pending, bodies: &ReplayedBodies) -> Result<String
             .map(|(_, edges)| edges.as_slice())
             .ok_or(INPUT)?;
         let edge = edges.get(*e).ok_or(INPUT)?;
-        if !same(input.ends, (edge.start, edge.end))
-            || !same_length(edge.length, input.length)
-            || straight(edge) != input.straight
+        // A straight edge an earlier group shortened still runs along the input edge, inside it.
+        let shortened = pending.trimmed
+            && input.straight
+            && straight(edge)
+            && on_segment(edge.start, input.ends)
+            && on_segment(edge.end, input.ends);
+        if !shortened
+            && (!same(input.ends, (edge.start, edge.end))
+                || !same_length(edge.length, input.length)
+                || straight(edge) != input.straight)
             || (input.straight && !parallel(sub(edge.end, edge.start), input.tangent))
         {
             return Err(INPUT.to_owned());
@@ -658,6 +699,43 @@ mod tests {
     fn edge(feature: &str, entity: &str, role: u32) -> Value {
         json!({"feature": feature,
             "local_id": format!("inventor:nmx:INV_NMX_SWEEPGENERATED_TAG:sketch-entity:{entity}:role:{role}")})
+    }
+
+    #[test]
+    fn each_radius_group_becomes_its_own_blend_in_source_order() {
+        let sample = |edge: &str, start: [f64; 3], end: [f64; 3]| {
+            let p = |c: [f64; 3]| json!({"x": c[0], "y": c[1], "z": c[2]});
+            let mid = [(start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0, 0.0];
+            json!({"edge": edge, "start": p(start), "end": p(end), "interior": p(mid),
+                "tangent": p([end[0] - start[0], end[1] - start[1], 0.0])})
+        };
+        let model = json!({"feature_input_topologies": [{"id": "st", "input_of": "f",
+            "edges": ["a", "b"],
+            "edge_geometry": [sample("a", [0.0; 3], [10.0, 0.0, 0.0]),
+                sample("b", [10.0, 0.0, 0.0], [10.0, 10.0, 0.0])]}]});
+        let group = |edge: &str, radius: f64| {
+            json!({"edges": {"kind": "historical", "value": {"state": "st", "edges": [edge], "native": "n"}},
+                "radius": {"kind": "constant", "radius": radius}})
+        };
+        let definition =
+            json!({"definition": "fillet", "groups": [group("a", 3.0), group("b", 2.0)]});
+        let mut ctx = Context::new(&model);
+        let main = super::map(
+            &json!({"id": "f", "name": "Fillet"}),
+            &definition,
+            &mut ctx,
+            &mut dutchman_core::Report::default(),
+        )
+        .unwrap();
+        assert_eq!(main["radius"], "2 mm");
+        assert_eq!(main["edges"], json!([[10.0, 5.0, 0.0]]));
+        let [first] = ctx.extra.as_slice() else {
+            panic!("one earlier group: {:?}", ctx.extra);
+        };
+        assert_eq!(first["radius"], "3 mm");
+        assert_ne!(first["id"], main["id"]);
+        let pending: Vec<_> = ctx.blends.iter().map(|p| (p.extra, p.trimmed)).collect();
+        assert_eq!(pending, [(Some(0), false), (None, true)]);
     }
 
     #[test]
