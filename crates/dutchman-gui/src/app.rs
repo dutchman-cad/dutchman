@@ -2677,7 +2677,10 @@ fn ai_prompt(
     ]
     .into_iter()
     .find(|path| path.is_file())
-    .map_or_else(|| AGENTS_URL.to_owned(), |path| path.display().to_string());
+    .map_or_else(
+        || agents_url(dutchman::BUILD_VERSION),
+        |path| path.display().to_string(),
+    );
     let mut text = String::from("Help me with a Dutchman conversion.");
     text.push_str(&format!(" Original file: {}.", input.display()));
     if converted {
@@ -2702,9 +2705,16 @@ fn ai_prompt(
     Ok(text)
 }
 
-/// Where the installed guide is read when it is not beside the app, as in a source build.
-const AGENTS_URL: &str =
-    "https://github.com/dutchman-cad/dutchman/blob/main/assets/install/AGENTS.md";
+/// Where the installed guide is read when it is not beside the app, as in a source build: the
+/// copy at this build's own version, so the instructions match the app. A release links its
+/// tag (`v0.2.7`); a nightly (`0.2.8-nightly.abc1234`) links the commit it was built from.
+pub fn agents_url(version: &str) -> String {
+    let rev = match version.split_once("-nightly.") {
+        Some((_, commit)) if !commit.is_empty() => commit.to_owned(),
+        _ => format!("v{version}"),
+    };
+    format!("https://github.com/dutchman-cad/dutchman/blob/{rev}/assets/install/AGENTS.md")
+}
 
 /// How long "Copied" shows before the button looks as it did.
 const COPIED_FOR: std::time::Duration = std::time::Duration::from_secs(2);

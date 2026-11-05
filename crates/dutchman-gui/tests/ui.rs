@@ -2559,9 +2559,7 @@ fn ask_ai_copies_a_short_prompt_naming_files_that_exist() {
     if guide.is_file() {
         assert!(prompt.contains(&guide.display().to_string()));
     } else {
-        assert!(prompt.contains(
-            "https://github.com/dutchman-cad/dutchman/blob/main/assets/install/AGENTS.md"
-        ));
+        assert!(prompt.contains(&dutchman_gui::app::agents_url(dutchman::BUILD_VERSION)));
     }
     assert!(prompt.contains("Don't send any files anywhere without asking me"));
     // Short apart from the paths it names (these are long temporary ones).
@@ -3340,4 +3338,16 @@ fn update_dialog_screenshots() {
             );
         }
     }
+}
+
+#[test]
+fn the_guide_link_names_this_builds_version() {
+    assert_eq!(
+        dutchman_gui::app::agents_url("0.2.7"),
+        "https://github.com/dutchman-cad/dutchman/blob/v0.2.7/assets/install/AGENTS.md"
+    );
+    assert_eq!(
+        dutchman_gui::app::agents_url("0.2.8-nightly.abc1234"),
+        "https://github.com/dutchman-cad/dutchman/blob/abc1234/assets/install/AGENTS.md"
+    );
 }
