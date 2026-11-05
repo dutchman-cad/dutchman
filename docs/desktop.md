@@ -10,7 +10,7 @@ If saving fails, the app shows a notice; the conversion result is still availabl
 
 A converted card with losses, and a failed card, offers **Ask your AI about this file**.
 Clicking it always copies a short prompt (a paragraph) and opens it in a read-only text box
-under the button, with **Copy** to copy it again and **Close**. **Copied. Paste it into your AI
+under the button (about five lines tall, scrolling inside), with **Copy** to copy it again and **Close**. **Copied. Paste it into your AI
 assistant.** shows for about two seconds after each copy. The box stays until you close it or
 the card is replaced by a new conversion. The prompt names the original file, the converted
 design (not for a failed file), the saved report (`<stem>.report.json`, or `<stem>.failed.json`)

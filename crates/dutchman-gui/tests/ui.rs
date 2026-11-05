@@ -3043,6 +3043,41 @@ fn the_default_size_fits_the_main_screen_without_scrolling() {
             results.left() > designs.right(),
             "{monitor:?}: not side by side"
         );
+        // With the Ask-your-AI prompt open, the whole card still shows without scrolling:
+        // the box keeps to a few lines and scrolls inside.
+        let mut h = h;
+        h.get_by_label("Ask your AI about this file")
+            .click_accesskit();
+        h.run_steps(8);
+        assert!(
+            !h.state().page_scrolls(),
+            "{monitor:?}: the open prompt makes the page scroll at {size:?}"
+        );
+        assert_main_screen_in_view(&h, size);
+        let heading = h.get_by_label("RESULTS").rect();
+        let top = h.get_by_label("Open in SolidCraft").rect();
+        assert!(
+            top.top() >= heading.bottom(),
+            "{monitor:?}: the card's top {top:?} scrolled under RESULTS {heading:?}"
+        );
+        let convert_row = h.get_by_label("Convert").rect().top();
+        for label in ["Copy", "Close"] {
+            let rect = h.get_by_label(label).rect();
+            assert!(
+                rect.bottom() <= convert_row,
+                "{monitor:?}: {label} {rect:?} below the Convert row at {convert_row}"
+            );
+        }
+        // The box's own rect is its whole text; what shows is the space between the button
+        // and the Copy row under it: the Report row, "Copied" and about five lines (uncapped,
+        // the whole prompt took about 400 px).
+        let ask = h.get_by_label("Ask your AI about this file").rect();
+        let copy = h.get_by_label("Copy").rect();
+        assert!(
+            copy.top() - ask.bottom() < 220.0,
+            "{monitor:?}: the prompt takes {} px",
+            copy.top() - ask.bottom()
+        );
     }
 }
 

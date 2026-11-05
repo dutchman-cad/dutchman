@@ -2749,6 +2749,9 @@ fn ask_ai_ui(ui: &mut egui::Ui, index: usize, ai: Option<&AiPrompt>) -> Option<A
     ai_prompt_ui(ui, index, ai).or(action)
 }
 
+/// Lines of the prompt box shown at once; the rest scrolls inside it.
+const AI_PROMPT_LINES: f32 = 5.0;
+
 /// The copied prompt under the button, with "Copied" for a moment after a copy.
 fn ai_prompt_ui(ui: &mut egui::Ui, index: usize, ai: Option<&AiPrompt>) -> Option<Action> {
     let mut action = None;
@@ -2760,13 +2763,20 @@ fn ai_prompt_ui(ui: &mut egui::Ui, index: usize, ai: Option<&AiPrompt>) -> Optio
         ui.ctx().request_repaint_after(left);
     }
     let mut text = ai.text.as_str();
-    ui.add(
-        egui::TextEdit::multiline(&mut text)
-            .font(egui::TextStyle::Monospace)
-            .desired_width(f32::INFINITY)
-            .desired_rows(3)
-            .id_salt(("ask-ai-text", index)),
-    );
+    // At most about five lines tall, scrolling inside, so the card still fits the window.
+    let line = ui.text_style_height(&egui::TextStyle::Monospace);
+    ScrollArea::vertical()
+        .id_salt(("ask-ai-scroll", index))
+        .max_height(line * AI_PROMPT_LINES + 8.0)
+        .show(ui, |ui| {
+            ui.add(
+                egui::TextEdit::multiline(&mut text)
+                    .font(egui::TextStyle::Monospace)
+                    .desired_width(f32::INFINITY)
+                    .desired_rows(3)
+                    .id_salt(("ask-ai-text", index)),
+            );
+        });
     ui.horizontal(|ui| {
         if ui.button("Copy").clicked() {
             action = Some(Action::AskAi(index));
