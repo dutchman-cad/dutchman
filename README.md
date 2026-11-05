@@ -59,14 +59,14 @@ Every download holds the desktop app (`dutchman-gui`), the `dutchman` command, a
 
    <a href="https://dutchman-cad.github.io/view.html?src=https://raw.githubusercontent.com/dutchman-cad/dutchman/main/docs/images/readme-result-day.png&alt=The%20CC0%20bracket%27s%20result%3A%20mapped%20feature%20history%20and%20Open%20in%20SolidCraft"><img alt="The CC0 bracket's result: mapped feature history and Open in SolidCraft" src="docs/images/readme-result-day.png" width="100%"></a>
 
-## What's new in 0.2.6
+## What's new in 0.2.7
 
-- **SolidWorks assemblies:** placed parts and nested sub-assemblies, with missing references reported.
-- **Whole projects:** folders and ZIPs, a project inventory, and matching STEP fallbacks.
-- **Local diagnosis without an AI assistant:** isolate a failure, check a small rebuild, or check a folder with `doctor`.
-- **More editable geometry:** better placements, parameter expressions, and shorter assembly timelines.
-- **Review before sharing:** anonymous summaries, private-file sharing steps, and consent before sending.
-- **SolidCraft 0.30:** the newest known target, with support back to 0.18.2.
+- **Smart part positions:** Fusion assemblies come in posed the way Fusion last showed them, where the joints and the model agree. A robot arm arrives folded, not stretched out.
+- **Faster, lighter big assemblies:** the Voron Trident converts in 3:18 instead of 8:16 with 10.5 GB instead of 17.2 GB, and all three big Vorons now fit on a 16 GB computer.
+- **Windows installer:** installs without administrator rights, with a Start menu shortcut and the commands on your PATH, and updates itself.
+- **Everything on one screen:** the main window opens at a size that shows all of it, with Results beside Designs in a wide window.
+- **Ask your AI about a converted file:** copy a prompt from a result card, and your assistant explains what was lost and why from the saved report, with no setup.
+- **Report converted files that came out wrong:** review the exact anonymous details, then send them from the result card.
 
 [Release notes](https://github.com/dutchman-cad/dutchman/releases/latest) · [Changelog](CHANGELOG.md)
 
