@@ -209,7 +209,7 @@ mod tests {
                 state,
             );
         harness.run_steps(3);
-        harness.get_by_label(&crate::platform::display_path(&log));
+        harness.get_by_label(&format!("Run log: {}", crate::platform::display_path(&log)));
         harness.get_by_label("Show this run's log");
         assert!(harness
             .get_by_label("Copy log to…")

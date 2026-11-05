@@ -2389,7 +2389,10 @@ fn run_log_buttons_share_the_batch_log_and_review_names_it() {
     harness.run_steps(8);
     harness
         .get_by_label("Send a problem report")
-        .get_by_label(&dutchman_gui::platform::display_path(&log));
+        .get_by_label(&format!(
+            "Run log: {}",
+            dutchman_gui::platform::display_path(&log)
+        ));
     harness.get_by_label("This run's log contains no names or contents from the design. It is kept locally; Send uploads only the summary or bundle reviewed below.");
 }
 
