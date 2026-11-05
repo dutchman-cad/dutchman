@@ -40,9 +40,14 @@ fn garbage_and_oversize_inputs_are_bounded() {
         "9".repeat(200)
     );
     assert!(parse_feed(long.as_bytes()).unwrap().is_none());
-    assert!(plain_text(&"é".repeat(MAX_BYTES)).chars().count() <= MAX_NOTES);
+    assert!(
+        notes::html_to_markdown(&"é".repeat(MAX_BYTES))
+            .chars()
+            .count()
+            <= notes::MAX_NOTES
+    );
     assert_eq!(
-        plain_text("<a href='file:///secret'>hello</a>").trim(),
+        notes::html_to_markdown("<a href='file:///secret'>hello</a>").trim(),
         "hello"
     );
 }
@@ -67,7 +72,7 @@ fn run_check(feed: Result<Response, String>, known: &str) -> (Result<Checked, St
             })
         }
     };
-    let checked = check(&fetch, known, Some("feed-etag"));
+    let checked = check(&fetch, known, Some("feed-etag"), false);
     (checked, calls.into_inner())
 }
 
@@ -88,7 +93,7 @@ fn unchanged_and_old_feeds_never_call_api() {
 }
 
 #[test]
-fn new_feed_tag_calls_api_once_and_keeps_feed_notes() {
+fn new_feed_tag_is_offered_from_the_feed_alone() {
     let (checked, calls) = run_check(
         Ok(Response::Body {
             bytes: atom(&["v9.0.0"]),
@@ -97,9 +102,11 @@ fn new_feed_tag_calls_api_once_and_keeps_feed_notes() {
         "v1.0.0",
     );
     let checked = checked.unwrap();
-    assert_eq!(calls.iter().filter(|(url, _)| url == API).count(), 1);
+    assert!(calls.iter().all(|(url, _)| url != API));
     assert_eq!(checked.etag.as_deref(), Some("next"));
-    assert_eq!(checked.release.unwrap().notes.trim(), "Safer & faster.");
+    let release = checked.release.unwrap();
+    assert_eq!(release.notes.trim(), "Safer & faster.");
+    assert!(release.download.contains("/v9.0.0"), "{}", release.download);
 }
 
 #[test]
@@ -219,7 +226,7 @@ fn completed_checks_schedule_an_hour_and_only_manual_checks_open_the_window() {
     for manual in [false, true] {
         let mut updater = Updater::new(None);
         updater.allowed = true;
-        updater.manual = manual;
+        updater.fresh = manual;
         let (tx, rx) = channel();
         updater.rx = Some(rx);
         tx.send(Ok(Checked {
@@ -377,7 +384,10 @@ fn release_metadata_reads_only_lowercase_report_hashes_without_an_extra_request(
         assert_eq!(url, API);
         Ok(Response::Body { bytes: serde_json::json!({"tag_name": "v9.0.0", "assets": [], "fixes_reports": [hash, "A".repeat(64), "bad"]}).to_string().into_bytes(), etag: None })
     };
-    let release = check(&fetch, "v1.0.0", None).unwrap().release.unwrap();
+    let release = check(&fetch, "v1.0.0", None, false)
+        .unwrap()
+        .release
+        .unwrap();
     assert_eq!(release.fixes_reports, vec![hash]);
     assert_eq!(
         dutchman::report_send::fixed_notice(&[id.into()], &release.fixes_reports).unwrap(),
@@ -453,4 +463,192 @@ fn a_verified_msi_reopens_a_hidden_progress_window_before_closing() {
     updater.tick(&egui::Context::default());
     assert!(updater.open);
     assert!(updater.rx.is_none());
+}
+
+const FIXTURE: &[u8] = include_bytes!("fixtures/releases.atom");
+
+#[test]
+fn feed_fixture_picks_the_newest_stable_release_whatever_the_order() {
+    let release = parse_feed(FIXTURE).unwrap().unwrap();
+    assert_eq!(release.tag, "v0.2.7");
+    assert!(release.notes.contains("## What's new"), "{}", release.notes);
+    assert!(release.notes.contains("`dutchman report`"));
+    assert!(!release.notes.contains("<"), "no markup is left");
+    assert!(
+        !release.notes.contains("raw.githubusercontent"),
+        "images are dropped"
+    );
+    let tags: Vec<_> = feed_entries(FIXTURE)
+        .unwrap()
+        .into_iter()
+        .map(|r| r.tag)
+        .collect();
+    assert_eq!(
+        tags,
+        ["v0.2.6", "v0.2.7"],
+        "nightly and -rc tags are skipped"
+    );
+}
+
+#[test]
+fn download_names_follow_the_release_tag() {
+    assert_eq!(
+        asset_name("v0.2.7", "macos", "aarch64", false).unwrap(),
+        "dutchman-0.2.7-macos-universal.dmg"
+    );
+    assert_eq!(
+        asset_name("v0.2.7", "windows", "x86_64", false).unwrap(),
+        "dutchman-0.2.7-x86_64-pc-windows-msvc.zip"
+    );
+    assert_eq!(
+        asset_name("v0.2.7", "linux", "x86_64", false).unwrap(),
+        "dutchman-0.2.7-x86_64-unknown-linux-gnu.tar.gz"
+    );
+    assert!(asset_name("v0.2.7", "linux", "x86_64", true).is_none());
+    for (os, arch, appimage) in [
+        ("macos", "aarch64", false),
+        ("windows", "x86_64", false),
+        ("linux", "aarch64", false),
+    ] {
+        let name = asset_name("v0.2.7", os, arch, appimage).unwrap();
+        assert!(matches_asset(&name, os, arch, appimage), "{name}");
+    }
+}
+
+fn updater_with(
+    fetch: impl Fn(&str, Option<&str>) -> Result<Response, String> + Send + Sync + 'static,
+    cached: &str,
+) -> Updater {
+    let mut updater = Updater::new(None);
+    updater.install = Install::Direct;
+    updater.allowed = true;
+    updater.fetcher = std::sync::Arc::new(fetch);
+    updater.release = Some(Release {
+        fixes_reports: Vec::new(),
+        tag: cached.into(),
+        notes: "Old notes".into(),
+        download: RELEASES.into(),
+    });
+    updater.etag = Some("old-etag".into());
+    updater.next = now() + HOUR;
+    updater
+}
+
+fn finish(updater: &mut Updater, ctx: &egui::Context) {
+    for _ in 0..500 {
+        updater.tick(ctx);
+        if updater.rx.is_none() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    panic!("the check did not finish");
+}
+
+#[test]
+fn pressing_update_asks_again_and_a_newer_release_replaces_the_cached_one() {
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = seen.clone();
+    let mut updater = updater_with(
+        move |url, etag| {
+            log.lock()
+                .unwrap()
+                .push((url.to_owned(), etag.map(str::to_owned)));
+            Ok(Response::Body {
+                bytes: atom(&["v9.0.0", "v8.0.0"]),
+                etag: Some("new".into()),
+            })
+        },
+        "v8.0.0",
+    );
+    let ctx = egui::Context::default();
+    updater.press(&ctx);
+    // While it runs the window says so; the cached offer is not shown.
+    assert_eq!(updater.click, Click::Checking);
+    assert!(updater.open);
+    finish(&mut updater, &ctx);
+    assert_eq!(updater.release.as_ref().unwrap().tag, "v9.0.0");
+    assert_eq!(updater.click, Click::None);
+    assert!(updater.open);
+    // One request to the feed, with no ETag, so GitHub cannot answer "unchanged".
+    assert_eq!(*seen.lock().unwrap(), [(FEED.to_owned(), None)]);
+}
+
+#[test]
+fn pressing_update_drops_a_cached_release_that_is_no_longer_newer() {
+    let current = format!("v{}", env!("CARGO_PKG_VERSION"));
+    let mut updater = updater_with(
+        move |_, _| {
+            Ok(Response::Body {
+                bytes: atom(&[&current]),
+                etag: None,
+            })
+        },
+        "v8.0.0",
+    );
+    let ctx = egui::Context::default();
+    updater.press(&ctx);
+    finish(&mut updater, &ctx);
+    assert!(updater.release.is_none());
+    assert_eq!(updater.click, Click::UpToDate);
+    assert!(!updater.newer_known());
+}
+
+#[test]
+fn a_failed_check_says_why_and_retry_checks_again() {
+    let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let counted = attempts.clone();
+    let mut updater = updater_with(
+        move |url, _| {
+            use std::sync::atomic::Ordering::SeqCst;
+            let n = counted.fetch_add(1, SeqCst);
+            match (url == FEED, n) {
+                (true, 0) => Err("dns error: failed to lookup address".into()),
+                (false, _) => Err("status code 403".into()),
+                _ => Ok(Response::Body {
+                    bytes: atom(&["v9.0.0"]),
+                    etag: None,
+                }),
+            }
+        },
+        "v8.0.0",
+    );
+    let ctx = egui::Context::default();
+    updater.press(&ctx);
+    finish(&mut updater, &ctx);
+    // Feed down, API limited: the reason is the limit.
+    assert_eq!(
+        updater.click,
+        Click::Failed("GitHub is limiting requests right now. Try again in a few minutes.".into())
+    );
+    updater.press(&ctx);
+    finish(&mut updater, &ctx);
+    assert_eq!(updater.release.as_ref().unwrap().tag, "v9.0.0");
+    assert_eq!(updater.click, Click::None);
+    assert!(failure_text("dns error: failed to lookup address").contains("internet connection"));
+    assert!(failure_text("weird").starts_with("Could not check"));
+}
+
+#[test]
+fn background_checks_still_reuse_the_etag_and_the_cached_release() {
+    let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let log = seen.clone();
+    let mut updater = updater_with(
+        move |url, etag| {
+            log.lock()
+                .unwrap()
+                .push((url.to_owned(), etag.map(str::to_owned)));
+            Ok(Response::Unchanged)
+        },
+        "v8.0.0",
+    );
+    let ctx = egui::Context::default();
+    updater.start(&ctx, false);
+    finish(&mut updater, &ctx);
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [(FEED.to_owned(), Some("old-etag".to_owned()))]
+    );
+    assert_eq!(updater.release.as_ref().unwrap().tag, "v8.0.0");
+    assert_eq!(updater.click, Click::None);
 }

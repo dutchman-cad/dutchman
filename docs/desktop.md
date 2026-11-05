@@ -76,7 +76,8 @@ history** unchecked and Standard as the base.
 Queued files show **about N GB, about M min** when an estimate is available. Files in queued
 folders are listed with their estimates too. Estimates below 0.1 GB show **under 0.1 GB**,
 and times below 60 seconds show **under a minute**, just as in the CLI. **M GB of memory free** appears
-once when the machine's free memory can be read. These are estimates, not limits or promises; an unavailable estimate
+once when the machine's free memory can be read. On a Mac this counts memory the system can give back
+(not in use by apps, system or compression), not only the few pages it keeps empty. These are estimates, not limits or promises; an unavailable estimate
 leaves no label. Planning and estimation run in the background.
 
 Before a conversion or retry, Dutchman compares conversion memory, without the history
@@ -240,9 +241,15 @@ builds all stop it, and the built-in copy is used.
 
 ## Updates
 
-Release builds check for updates at startup and every hour while open. A small **Update**
-button beside the theme switch opens the new version and plain-text release notes; an available update never
-opens a window automatically. **Download** opens the package for this platform (or the release page).
+Release builds check for updates at startup and every hour while open, reading GitHub's
+releases feed (the GitHub API is asked only if the feed cannot be read). Those background
+checks may reuse an earlier answer. A small **Update** button beside the theme switch appears
+when a newer release is known, and it never opens a window by itself. Pressing it, or
+**Check now** in Settings, always asks GitHub for the latest release at that moment and
+ignores earlier answers: the window shows **Checking for updates…**, then the newest version
+with its release notes, **Dutchman is up to date**, or why the check failed (no connection,
+GitHub limiting requests, or another error) with **Retry**. The notes are shown with their
+headings, bold text, `code` and bullet lists; links show as their text. **Download** opens the package for this platform (or the release page).
 Homebrew and Scoop installations offer **Update with Homebrew** or **Update with Scoop**.
 Homebrew runs `brew update` followed by `brew upgrade --cask dutchman-cad/tap/dutchman-convert`
 (or `brew upgrade dutchman-cad/tap/dutchman` for the formula), with

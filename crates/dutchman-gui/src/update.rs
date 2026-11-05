@@ -7,6 +7,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use eframe::egui;
 use serde_json::Value;
 
+mod notes;
 mod package;
 use package::{Action, Install, Job, Phase};
 
@@ -14,7 +15,6 @@ const FEED: &str = "https://github.com/dutchman-cad/dutchman/releases.atom";
 const API: &str = "https://api.github.com/repos/dutchman-cad/dutchman/releases/latest";
 const RELEASES: &str = "https://github.com/dutchman-cad/dutchman/releases";
 const MAX_BYTES: usize = 1_048_576;
-const MAX_NOTES: usize = 8_000;
 const HOUR: u64 = 3600;
 const THREE_DAYS: u64 = 3 * 24 * HOUR;
 
@@ -40,34 +40,6 @@ fn version(tag: &str) -> Option<(u64, u64, u64)> {
     };
     let result = (number()?, number()?, number()?);
     parts.next().is_none().then_some(result)
-}
-
-fn plain_text(html: &str) -> String {
-    let mut text = String::new();
-    let mut in_tag = false;
-    for c in html.chars().take(MAX_BYTES) {
-        match c {
-            '<' => {
-                in_tag = true;
-                text.push(' ');
-            }
-            '>' => in_tag = false,
-            _ if !in_tag => text.push(c),
-            _ => {}
-        }
-        if text.len() >= MAX_NOTES {
-            break;
-        }
-    }
-    text.replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&nbsp;", " ")
-        .chars()
-        .take(MAX_NOTES)
-        .collect()
 }
 
 // Release notes carry this small machine-readable comment through GitHub's Atom
@@ -138,7 +110,7 @@ fn feed_entries(body: &[u8]) -> Result<Vec<Release>, String> {
             releases.push(Release {
                 fixes_reports: notes_fixes(field("content")),
                 tag: tag.into(),
-                notes: plain_text(field("content")),
+                notes: notes::html_to_markdown(field("content")),
                 download: format!("{RELEASES}/tag/{tag}"),
             });
         }
@@ -160,13 +132,26 @@ struct Checked {
     etag: Option<String>,
 }
 
+/// Asks for the newest stable release.
+///
+/// The releases Atom feed is read first, so ordinary checks never touch the rate-limited API:
+/// it names every release by tag, carries the notes, and the download names follow from the
+/// tag. The API is asked only when the feed cannot be fetched or read. A `fresh` check (the
+/// reader pressed Update or Check now) sends no ETag and compares with this build, not with
+/// what an earlier check found, so a newer release always replaces a cached one and a release
+/// no longer offered is dropped.
 fn check(
     fetch: &impl Fn(&str, Option<&str>) -> Result<Response, String>,
     known: &str,
     etag: Option<&str>,
+    fresh: bool,
 ) -> Result<Checked, String> {
-    let mut feed_etag = None;
-    let mut feed_release = None;
+    let current = format!("v{}", env!("CARGO_PKG_VERSION"));
+    let (known, etag) = if fresh {
+        (current.as_str(), None)
+    } else {
+        (known, etag)
+    };
     match fetch(FEED, etag) {
         Ok(Response::Unchanged) => {
             return Ok(Checked {
@@ -177,19 +162,54 @@ fn check(
         }
         Ok(Response::Body { bytes, etag }) => {
             if let Ok(top) = parse_feed(&bytes) {
-                feed_etag = etag;
-                if top.as_ref().and_then(|r| version(&r.tag)) <= version(known) {
-                    return Ok(Checked {
-                        clear_release: false,
-                        release: None,
-                        etag: feed_etag,
+                let newer = top
+                    .filter(|r| version(&r.tag) > version(known))
+                    .map(|mut release| {
+                        release.download = download_url(&release.tag);
+                        release
                     });
-                }
-                feed_release = top;
+                return Ok(Checked {
+                    clear_release: fresh && newer.is_none(),
+                    release: newer,
+                    etag,
+                });
             }
         }
         Err(_) => {}
     }
+    check_api(fetch, known, fresh)
+}
+
+/// The file this installation downloads from a release, or the release page when its name is not known.
+fn download_url(tag: &str) -> String {
+    let appimage = std::env::current_exe()
+        .ok()
+        .is_some_and(|path| is_appimage(&path));
+    match asset_name(tag, std::env::consts::OS, std::env::consts::ARCH, appimage) {
+        Some(name) => format!("{RELEASES}/download/{tag}/{name}"),
+        None => format!("{RELEASES}/tag/{tag}"),
+    }
+}
+
+/// The release file name for a platform, as the release workflow names it.
+fn asset_name(tag: &str, os: &str, arch: &str, appimage: bool) -> Option<String> {
+    let version = tag.strip_prefix('v')?;
+    match os {
+        "macos" => Some(format!("dutchman-{version}-macos-universal.dmg")),
+        "windows" => Some(format!("dutchman-{version}-{arch}-pc-windows-msvc.zip")),
+        "linux" if !appimage => Some(format!(
+            "dutchman-{version}-{arch}-unknown-linux-gnu.tar.gz"
+        )),
+        _ => None,
+    }
+}
+
+/// The fallback when the feed is unavailable: GitHub's API, one request.
+fn check_api(
+    fetch: &impl Fn(&str, Option<&str>) -> Result<Response, String>,
+    known: &str,
+    fresh: bool,
+) -> Result<Checked, String> {
     let Response::Body { bytes, .. } = fetch(API, None)? else {
         return Err("Release details could not be read.".into());
     };
@@ -204,18 +224,7 @@ fn check(
     {
         return Err("No stable release was found.".into());
     }
-    // Do not memoize a feed tag until the API has caught up with it.
-    if feed_release
-        .as_ref()
-        .is_some_and(|r| version(&r.tag) > version(tag))
-    {
-        return Err("Release details are not available yet.".into());
-    }
-    let notes = feed_release
-        .as_ref()
-        .filter(|r| r.tag == tag)
-        .map(|r| r.notes.clone())
-        .unwrap_or_default();
+    let body = value.get("body").and_then(Value::as_str).unwrap_or("");
     let appimage = std::env::current_exe()
         .ok()
         .is_some_and(|path| is_appimage(&path));
@@ -232,27 +241,23 @@ fn check(
                 && url.starts_with("https://github.com/dutchman-cad/dutchman/releases/download/"))
             .then(|| url.to_owned())
         })
-        .unwrap_or_else(|| format!("{RELEASES}/tag/{tag}"));
+        .unwrap_or_else(|| download_url(tag));
+    let newer = version(tag) > version(known);
     Ok(Checked {
-        clear_release: false,
-        release: (version(tag) > version(known)).then(|| Release {
+        clear_release: fresh && !newer,
+        release: newer.then(|| Release {
             fixes_reports: {
                 let mut fixes = report_fixes(&value);
-                fixes.extend(notes_fixes(
-                    value.get("body").and_then(Value::as_str).unwrap_or(""),
-                ));
-                if let Some(release) = feed_release.as_ref().filter(|r| r.tag == tag) {
-                    fixes.extend(release.fixes_reports.clone());
-                }
+                fixes.extend(notes_fixes(body));
                 fixes.sort();
                 fixes.dedup();
                 fixes
             },
             tag: tag.into(),
-            notes,
+            notes: body.chars().take(notes::MAX_NOTES).collect(),
             download,
         }),
-        etag: feed_etag,
+        etag: None,
     })
 }
 
@@ -373,6 +378,41 @@ pub(crate) fn now() -> u64 {
         .as_secs()
 }
 
+/// What the update window shows after Update is pressed, until a release is offered.
+#[derive(Clone, Debug, PartialEq)]
+enum Click {
+    None,
+    Checking,
+    UpToDate,
+    Failed(String),
+}
+
+/// Why a check failed, in words for people.
+fn failure_text(error: &str) -> String {
+    let e = error.to_ascii_lowercase();
+    if e.contains("429") || e.contains("403") || e.contains("rate limit") {
+        "GitHub is limiting requests right now. Try again in a few minutes.".into()
+    } else if [
+        "dns",
+        "connection",
+        "connect",
+        "timed out",
+        "timeout",
+        "network",
+        "resolve",
+        "offline",
+    ]
+    .iter()
+    .any(|word| e.contains(word))
+    {
+        "Could not reach GitHub. Check your internet connection and try again.".into()
+    } else {
+        "Could not check for updates. Try again, or open the releases page.".into()
+    }
+}
+
+type Fetcher = std::sync::Arc<dyn Fn(&str, Option<&str>) -> Result<Response, String> + Send + Sync>;
+
 pub struct Updater {
     pub report_ids: Vec<String>,
     install: Install,
@@ -389,7 +429,12 @@ pub struct Updater {
     etag: Option<String>,
     next: u64,
     rx: Option<Receiver<Result<Checked, String>>>,
-    manual: bool,
+    /// The check in flight was asked for by the reader, so it ignores earlier results.
+    fresh: bool,
+    /// The reader asked from the update window, which then shows the outcome.
+    window_check: bool,
+    click: Click,
+    fetcher: Fetcher,
     pub open: bool,
     settings: bool,
     status: String,
@@ -417,7 +462,10 @@ impl Updater {
             etag: None,
             next: 0,
             rx: None,
-            manual: false,
+            fresh: false,
+            window_check: false,
+            click: Click::None,
+            fetcher: std::sync::Arc::new(fetch),
             open: false,
             settings: false,
             status: String::new(),
@@ -474,37 +522,48 @@ impl Updater {
             .as_ref()
             .is_some_and(|r| r.tag != self.skipped && time >= self.remind_at)
     }
-    fn start(&mut self, ctx: &egui::Context, manual: bool) {
-        if !self.allowed || self.rx.is_some() || self.job.holds_release() {
+    /// Starts a check. A `fresh` one asks GitHub now and ignores every earlier result.
+    fn start(&mut self, ctx: &egui::Context, fresh: bool) {
+        if !self.allowed
+            || self.job.holds_release()
+            || (self.rx.is_some() && (self.fresh || !fresh))
+        {
             return;
         }
-        let known = self
-            .release
-            .as_ref()
-            .map(|r| r.tag.clone())
-            .unwrap_or_else(|| format!("v{}", env!("CARGO_PKG_VERSION")));
-        let etag = self.etag.clone();
+        let current = format!("v{}", env!("CARGO_PKG_VERSION"));
+        let known = match (&self.release, fresh) {
+            (Some(r), false) => r.tag.clone(),
+            _ => current.clone(),
+        };
+        let etag = if fresh { None } else { self.etag.clone() };
         let install = self.install.clone();
+        let fetcher = self.fetcher.clone();
         let (tx, rx) = channel();
         self.rx = Some(rx);
-        self.manual = manual;
+        self.fresh = fresh;
         self.status = "Checking for updates…".into();
         let ctx = ctx.clone();
         std::thread::spawn(move || {
+            let fetch = |url: &str, etag: Option<&str>| fetcher(url, etag);
             let result = if install.source().is_some() {
-                check_package(
-                    &fetch,
-                    &install,
-                    &format!("v{}", env!("CARGO_PKG_VERSION")),
-                    &known,
-                    etag.as_deref(),
-                )
+                check_package(&fetch, &install, &current, &known, etag.as_deref())
             } else {
-                check(&fetch, &known, etag.as_deref())
+                check(&fetch, &known, etag.as_deref(), fresh)
             };
             let _ = tx.send(result);
             ctx.request_repaint();
         });
+    }
+    /// The Update button: always asks GitHub for the latest release at this moment.
+    fn press(&mut self, ctx: &egui::Context) {
+        self.open = true;
+        self.window_check = true;
+        self.click = Click::Checking;
+        self.start(ctx, true);
+        if !(self.rx.is_some() && self.fresh) {
+            // Nothing could be asked (checks are off, or an update is already installing).
+            self.click = Click::None;
+        }
     }
     pub fn tick(&mut self, ctx: &egui::Context) {
         if self.job.busy() && ctx.input(|i| i.viewport().close_requested()) {
@@ -537,6 +596,8 @@ impl Updater {
             };
             if let Some(result) = result {
                 self.rx = None;
+                let fresh = std::mem::take(&mut self.fresh);
+                let window = std::mem::take(&mut self.window_check);
                 self.next = now().saturating_add(HOUR);
                 match result {
                     Ok(checked) => {
@@ -553,13 +614,23 @@ impl Updater {
                             "Dutchman is up to date."
                         }
                         .into();
-                        if self.manual && self.release.is_some() {
+                        if fresh && self.release.is_some() {
                             self.open = true;
                         }
+                        if window {
+                            self.click = if self.release.is_some() {
+                                Click::None
+                            } else {
+                                Click::UpToDate
+                            };
+                        }
                     }
-                    Err(_) => {
-                        self.status =
-                            "Could not check for updates. Try Check now or retry in an hour.".into()
+                    Err(error) => {
+                        let text = failure_text(&error);
+                        self.status = text.clone();
+                        if window {
+                            self.click = Click::Failed(text);
+                        }
                     }
                 }
             }
@@ -588,7 +659,7 @@ impl Updater {
                 .add(egui::Button::new(label).corner_radius(egui::CornerRadius::same(16)))
                 .clicked()
             {
-                self.open = true;
+                self.press(ui.ctx());
             }
         }
         if ui.small_button("Settings").clicked() {
@@ -625,7 +696,47 @@ impl Updater {
             });
         self.settings = settings;
         let mut open = self.open;
-        if let Some(release) = self.release.clone() {
+        if self.click != Click::None && self.open {
+            let click = self.click.clone();
+            let mut retry = false;
+            egui::Window::new("Dutchman update")
+                .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-24.0, 72.0))
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .default_width(420.0)
+                .show(ctx, |ui| match &click {
+                    Click::Checking => {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label("Checking for updates…");
+                        });
+                    }
+                    Click::UpToDate => {
+                        ui.heading("Dutchman is up to date");
+                        ui.label(format!(
+                            "You have the newest version, {}.",
+                            env!("CARGO_PKG_VERSION")
+                        ));
+                    }
+                    Click::Failed(text) => {
+                        ui.heading("Could not check for updates");
+                        ui.label(text);
+                        ui.horizontal(|ui| {
+                            retry = ui
+                                .add(
+                                    egui::Button::new("Retry").fill(ui.visuals().selection.bg_fill),
+                                )
+                                .clicked();
+                            ui.hyperlink_to("Releases page", RELEASES);
+                        });
+                    }
+                    Click::None => {}
+                });
+            if retry {
+                self.press(ctx);
+            }
+        } else if let Some(release) = self.release.clone() {
             egui::Window::new("Dutchman update")
                 // Under the Update pill, at the header's right.
                 .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-24.0, 72.0))
@@ -645,13 +756,13 @@ impl Updater {
                     ui.heading(format!("Dutchman {} is available", release.tag.trim_start_matches('v')));
                     if let Some(notice) = dutchman::report_send::fixed_notice(&self.report_ids, &release.fixes_reports) { ui.label(notice); }
                     egui::ScrollArea::vertical()
-                        .max_height(240.0)
+                        .max_height(320.0)
                         .show(ui, |ui| {
                             if release.notes.is_empty() {
                                 ui.label("Release notes could not be read. Open the release page to read them.");
                                 ui.hyperlink_to("Release page", format!("{RELEASES}/tag/{}", release.tag));
                             } else {
-                                ui.label(notes_body(&release.notes, &release.tag));
+                                notes::show(ui, notes_body(&release.notes, &release.tag));
                             }
                         });
                     self.package_ui(ui, &release, can_restart);
@@ -676,6 +787,9 @@ impl Updater {
                 });
         }
         self.open = open && self.open;
+        if !self.open {
+            self.click = Click::None;
+        }
     }
     fn package_ui(&mut self, ui: &mut egui::Ui, release: &Release, can_restart: bool) {
         if matches!(self.install.action(), Action::Msi | Action::Zip) {
@@ -889,6 +1003,25 @@ impl Updater {
         self.job = Job::new();
         self.scoop_confirm = true;
         self.open = true;
+    }
+    /// Offers the newest release in a releases feed without networking, for GPU screenshots.
+    pub fn preview_feed(&mut self, atom: &[u8]) {
+        if let Ok(Some(release)) = parse_feed(atom) {
+            self.preview(release);
+            self.open = true;
+        }
+    }
+    /// Shows the update window as it is while the latest release is being asked for.
+    pub fn preview_checking(&mut self) {
+        self.allowed = false;
+        self.open = true;
+        self.click = Click::Checking;
+    }
+    /// Shows the update window after a failed check, with its Retry button.
+    pub fn preview_failed(&mut self, error: &str) {
+        self.allowed = false;
+        self.open = true;
+        self.click = Click::Failed(failure_text(error));
     }
     /// Supplies a release without networking for UI previews and GPU screenshots.
     pub fn preview(&mut self, release: Release) {

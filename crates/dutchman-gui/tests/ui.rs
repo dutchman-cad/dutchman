@@ -2895,3 +2895,97 @@ fn fit_screenshots() {
         }
     }
 }
+
+#[test]
+#[ignore = "renders the update window with a GPU; set DUTCHMAN_GUI_SCREENSHOTS to a folder"]
+fn update_dialog_screenshots() {
+    let dir = PathBuf::from(std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS").unwrap());
+    std::fs::create_dir_all(&dir).unwrap();
+    // Settings, window size and diagnostics come from a temporary home, never the reader's.
+    if std::env::var_os("DUTCHMAN_GUI_SCREENSHOT_CHILD").is_none() {
+        let home = tempfile::tempdir().unwrap();
+        let status = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--ignored",
+                "--exact",
+                "update_dialog_screenshots",
+                "--nocapture",
+            ])
+            .env("DUTCHMAN_GUI_SCREENSHOT_CHILD", "1")
+            .env("HOME", home.path())
+            .env("XDG_CONFIG_HOME", home.path().join("config"))
+            .env("XDG_CACHE_HOME", home.path().join("cache"))
+            .env("XDG_DATA_HOME", home.path().join("data"))
+            .env("XDG_STATE_HOME", home.path().join("state"))
+            .status()
+            .unwrap();
+        assert!(status.success(), "screenshot child failed: {status}");
+        return;
+    }
+    let feed = include_bytes!("../src/update/fixtures/releases.atom");
+    let mut index = String::new();
+    for state in ["checking", "available", "failed"] {
+        let mut harness = screenshot_harness(ThemePreference::Light);
+        harness.set_size(egui::vec2(900.0, 760.0));
+        #[cfg(feature = "test-support")]
+        harness.state_mut().set_checker_for_test(true);
+        match state {
+            "checking" => harness.state_mut().updater.preview_checking(),
+            "available" => harness.state_mut().updater.preview_feed(feed),
+            _ => harness
+                .state_mut()
+                .updater
+                .preview_failed("dns error: failed to lookup address information"),
+        }
+        harness.run_steps(8);
+        if state == "available" {
+            harness.get_by_label("What's new").scroll_to_me();
+            harness.run_steps(8);
+        }
+        match state {
+            "checking" => assert!(harness
+                .query_by_label_contains("Checking for updates")
+                .is_some()),
+            "available" => {
+                assert!(harness
+                    .query_by_label_contains("Dutchman 0.2.7 is available")
+                    .is_some());
+                assert!(harness.query_by_label_contains("What's new").is_some());
+            }
+            _ => assert!(harness.query_by_label("Retry").is_some()),
+        }
+        let homes: Vec<_> = harness
+            .query_all_by_label_contains("/home/")
+            .map(|n| {
+                format!(
+                    "{:?} {:?}",
+                    egui_kittest::kittest::NodeT::accesskit_node(&n).value(),
+                    egui_kittest::kittest::NodeT::accesskit_node(&n).role()
+                )
+            })
+            .collect();
+        assert!(homes.is_empty(), "{homes:?}");
+        shot(
+            &mut harness,
+            &dir,
+            &mut index,
+            &format!("update-{state}"),
+            "light",
+            state,
+        );
+        if state == "available" {
+            harness
+                .get_by_label_contains("Report problems")
+                .scroll_to_me();
+            harness.run_steps(8);
+            shot(
+                &mut harness,
+                &dir,
+                &mut index,
+                "update-available-code",
+                "light",
+                "inline code",
+            );
+        }
+    }
+}
