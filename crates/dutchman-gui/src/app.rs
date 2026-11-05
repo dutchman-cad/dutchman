@@ -2510,19 +2510,24 @@ fn row_ui(
     }
     if let Some(message) = &view.error {
         ui.label(RichText::new(message).color(p.danger));
-        ui.horizontal_wrapped(|ui| {
-            if let Some((path, ready)) = log {
-                if let Err(message) = platform::log_controls(ui, path, ready) {
-                    action = Some(Action::Notice(message));
-                }
-            }
+        let mut diagnose = |ui: &mut egui::Ui| {
             if ui
                 .add_enabled(!running, egui::Button::new("Diagnose this file"))
                 .clicked()
             {
                 action = Some(Action::Diagnose(index));
             }
-        });
+        };
+        match log {
+            Some((path, ready)) => {
+                if let Err(message) = platform::log_controls_with(ui, path, ready, diagnose) {
+                    action = Some(Action::Notice(message));
+                }
+            }
+            None => {
+                ui.horizontal_wrapped(|ui| diagnose(ui));
+            }
+        }
         if row.output.is_some() && row.report.is_some() {
             if let Some(chosen) = ask_ai_ui(ui, index, ai) {
                 action = Some(chosen);

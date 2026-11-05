@@ -153,6 +153,27 @@ pub fn save_log(source: PathBuf) {
 
 /// Shared by result and report cards: always acts on their own run's log.
 pub fn log_controls(ui: &mut eframe::egui::Ui, path: &Path, ready: bool) -> Result<(), String> {
+    log_controls_with(ui, path, ready, |_| {})
+}
+
+/// [`log_controls`], with `more` buttons after them on the same row. Laid out top to bottom
+/// in their own block, so a row around them cannot squeeze the buttons beside the log line.
+pub fn log_controls_with(
+    ui: &mut eframe::egui::Ui,
+    path: &Path,
+    ready: bool,
+    more: impl FnOnce(&mut eframe::egui::Ui),
+) -> Result<(), String> {
+    ui.vertical(|ui| log_controls_in(ui, path, ready, more))
+        .inner
+}
+
+fn log_controls_in(
+    ui: &mut eframe::egui::Ui,
+    path: &Path,
+    ready: bool,
+    more: impl FnOnce(&mut eframe::egui::Ui),
+) -> Result<(), String> {
     // Named as the run log, so the path doesn't read as stray text; long paths are cut and
     // shown whole on hover.
     let shown = display_path(path);
@@ -196,6 +217,7 @@ pub fn log_controls(ui: &mut eframe::egui::Ui, path: &Path, ready: bool) -> Resu
         {
             save_log(path.into());
         }
+        more(ui);
     });
     result
 }

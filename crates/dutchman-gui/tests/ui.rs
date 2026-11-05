@@ -1587,16 +1587,37 @@ mod consent_e2e {
         harness.state_mut().add_inputs([input]);
         harness.state_mut().set_out_dir(out.path().to_path_buf());
         harness.state_mut().set_verify(false);
+        // A log path as long as a Windows temp folder's, so every platform checks that a
+        // long "Run log:" line keeps to one line and leaves the buttons beside it alone.
+        let logs = [
+            "Users",
+            "RUNNERADMIN",
+            "AppData",
+            "Local",
+            "Temp",
+            ".tmpAbCdEf",
+        ]
+        .iter()
+        .fold(out.path().to_path_buf(), |dir, part| dir.join(part));
+        std::fs::create_dir_all(&logs).unwrap();
         harness
             .state_mut()
-            .set_diagnostic_log(out.path().join("diagnostics.jsonl"));
+            .set_diagnostic_log(logs.join("diagnostics.jsonl"));
         convert(&mut harness);
         assert_eq!(harness.state().rows()[0].status, Status::Failed);
         harness.get_by_label("RESULTS").scroll_to_me();
         harness.run_steps(8);
         assert!(harness.query_by_label("0 converted, 1 failed").is_some());
         let diagnose = harness.get_by_label("Diagnose this file").rect();
-        assert!(diagnose.top() > 70.0 && diagnose.bottom() < 730.0);
+        assert!(
+            diagnose.top() > 70.0 && diagnose.bottom() < 730.0,
+            "{diagnose:?}"
+        );
+        let show = harness.get_by_label("Show this run's log").rect();
+        assert!(
+            show.height() < 40.0,
+            "Show this run's log is squeezed: {show:?}"
+        );
         if capture_walkthrough {
             walkthrough(&mut harness, "01-failed-card");
         }
