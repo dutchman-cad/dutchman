@@ -201,8 +201,11 @@ offset, or a resolved parallel planar face on an earlier named body. One-sided e
 carry draft (positive grows outward), end on such a face with an offset, or end on a resolved
 parallel plane. Before any body-building feature, a plane end uses its origin as a fixed
 To Object point (SolidCraft accepts a free point without a construction plane or body face).
-After earlier geometry, `to_plane` ends wait on input face geometry: SolidCraft may
-reinterpret a point as a body face, and final-body faces cannot prove the timeline state. Two-sided extrudes may use a non-blind positive-normal end when
+After earlier geometry, a `to_plane` end whose plane is a face's surface (`source:
+face_surface`) uses the same point, since a pick of that face ends at the same plane; other
+`to_plane` ends wait on input face geometry: SolidCraft may reinterpret a point as a body
+face, and final-body faces cannot prove the timeline state. A parallel `from_plane` start
+becomes a start offset along the sketch normal. Two-sided extrudes may use a non-blind positive-normal end when
 the negative-normal end is blind.
 Extrudes map as new body, join, cut or intersect (a new body keeps its source name and colour);
 revolves about a line in the sketch plane (a line of the profile's sketch stays that line)

@@ -69,6 +69,32 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         // Both offsets are measured along the profile normal, regardless of travel.
         extent.insert("start_offset".to_owned(), json!(mm(offset)));
     }
+    if definition.pointer("/start/kind").and_then(Value::as_str) == Some("from_plane") {
+        // A start plane parallel to the sketch is a start offset along the sketch normal.
+        let plane = definition
+            .pointer("/start/plane")
+            .ok_or("its starting plane is missing")?;
+        let plane_normal = v3(plane.get("normal"))
+            .and_then(unit)
+            .ok_or("its starting plane normal is malformed")?;
+        if dot(plane_normal, sketch.normal).abs() < ALONG_NORMAL {
+            return Err(
+                "a starting plane not parallel to the extrude sketch is not supported yet"
+                    .to_owned(),
+            );
+        }
+        let origin = v3(plane.get("origin")).ok_or("its starting plane origin is malformed")?;
+        let offset: f64 = origin
+            .iter()
+            .zip(sketch.origin)
+            .zip(sketch.normal)
+            .map(|((coordinate, origin), normal)| (coordinate - origin) * normal)
+            .sum();
+        if offset.abs() > 1e-9 {
+            start_height = offset;
+            extent.insert("start_offset".to_owned(), json!(mm(offset)));
+        }
+    }
     if definition.pointer("/start/kind").and_then(Value::as_str) == Some("from_face") {
         let start = definition.get("start").ok_or("its start is malformed")?;
         let point = super::faces::pick(ctx, start.get("face"), sketch.normal)?;
@@ -276,10 +302,12 @@ fn side(side: Option<&Value>, ctx: &Context, normal: [f64; 3]) -> Result<Side, S
             }
             // A free point works before any body exists. Later, SolidCraft may
             // reinterpret it as a face pick. Final-body faces cannot prove that
-            // the same face exists at this point of the timeline.
-            if ctx.builds {
+            // the same face exists at this point of the timeline, unless the plane is
+            // itself a face's surface: then a pick of that face ends at the same plane.
+            let on_face = termination.get("source").and_then(Value::as_str) == Some("face_surface");
+            if ctx.builds && !on_face {
                 return Err(
-                    "a to-plane extrude after earlier geometry is not supported yet: CADIR does not supply the input face geometry needed to distinguish a plane point from an existing body face"
+                    "a to-plane extrude ending at a work plane or point after earlier geometry is not supported yet: CADIR does not supply the input face geometry needed to distinguish a plane point from an existing body face"
                         .to_owned(),
                 );
             }
@@ -319,7 +347,7 @@ fn put(out: &mut Map<String, Value>, side: Side, key: &str) {
 fn start_offset(start: Option<&Value>) -> Result<Option<f64>, String> {
     let start = start.unwrap_or(&Value::Null);
     match start.get("kind").and_then(Value::as_str) {
-        None | Some("profile_plane") | Some("from_face") => Ok(None),
+        None | Some("profile_plane") | Some("from_face") | Some("from_plane") => Ok(None),
         Some("offset_profile_plane") => number(start.get("offset"))
             .map(|offset| (offset != 0.0).then_some(offset))
             .ok_or_else(|| "its start offset is malformed".to_owned()),

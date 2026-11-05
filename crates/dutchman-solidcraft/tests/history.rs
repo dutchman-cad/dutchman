@@ -7085,19 +7085,75 @@ fn face_ended_extrude(from_face: bool, offset: f64, resolved: bool) -> Model {
     model
 }
 
+/// [`face_ended_extrude`] with its second extrude ending at a plane at height `z`, whose
+/// source (`face_surface`, `work_plane`, ...) is `source`.
+fn extrude_ending_at_plane(z: f64, source: Option<&str>) -> Model {
+    let mut model = face_ended_extrude(false, 0.0, false);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let mut termination = json!({
+        "kind": "to_plane", "native": "synthetic plane", "plane": {
+            "origin": {"x": 0.0, "y": 5.0, "z": z},
+            "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
+            "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0}
+        }
+    });
+    if let Some(source) = source {
+        termination["source"] = json!(source);
+    }
+    wire["model"]["features"][2]["definition"]["extent"]["side"]["termination"] = termination;
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn plane_ended_extrudes_after_bodies_end_on_a_face_surface() {
+    // The plane is the surface of a face: a SolidCraft pick there ends at the same plane.
+    let (document, report) = convert(
+        &extrude_ending_at_plane(10.0, Some("face_surface")),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("3 of 3 features mapped"),
+        "{}",
+        history_line(&report)
+    );
+    assert_eq!(
+        document["features"][2]["extent"]["to"],
+        json!([0.0, 5.0, 10.0])
+    );
+}
+
+#[test]
+fn plane_started_extrudes_start_at_the_plane_offset() {
+    // The fixture's second extrude starts 12 mm above the sketch and runs down to the top
+    // face; the same start given as a plane gives the same start offset.
+    let mut model = face_ended_extrude(false, 0.0, false);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["features"][2]["definition"]["start"] = json!({
+        "kind": "from_plane", "native": "synthetic plane", "source": "face_surface", "plane": {
+            "origin": {"x": 0.0, "y": 0.0, "z": 12.0},
+            "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
+            "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0}
+        }
+    });
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let line = history_line(&report);
+    assert!(!line.contains("extrude starts are not mapped"), "{line}");
+    assert_eq!(
+        document["features"][2]["extent"]["start_offset"], "12 mm",
+        "{line}\n{}",
+        document["features"]
+    );
+}
+
 #[test]
 fn plane_ended_extrudes_after_bodies_need_input_face_geometry() {
-    for z in [10.0, 5.0] {
-        let mut model = face_ended_extrude(false, 0.0, false);
-        let mut wire = serde_json::to_value(&model.ir).unwrap();
-        wire["model"]["features"][2]["definition"]["extent"]["side"]["termination"] = json!({
-            "kind": "to_plane", "native": "synthetic plane", "plane": {
-                "origin": {"x": 0.0, "y": 5.0, "z": z},
-                "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
-                "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0}
-            }
-        });
-        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    for (z, source) in [(10.0, None), (5.0, None), (10.0, Some("work_plane"))] {
+        let model = extrude_ending_at_plane(z, source);
         let (document, report) = convert(
             &model,
             &SolidCraftWriter::new().verification(Verification::Off),

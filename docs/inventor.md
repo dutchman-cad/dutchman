@@ -32,10 +32,13 @@ State as of the cadmpeg commit Dutchman pins (see `Cargo.toml`).
 
 Resolved `to_plane` extrude ends map before any body-building feature when the terminating
 plane is parallel to the sketch. The plane origin becomes a fixed SolidCraft To Object point;
-a construction plane or body face need not exist there. After earlier geometry, `to_plane`
-ends are not supported yet: SolidCraft can reinterpret a point on an existing face as a
-different end, and CADIR supplies no input face geometry to prove which face exists then.
-Final-body faces cannot establish that timeline state. Tilted plane ends and native,
+a construction plane or body face need not exist there. After earlier geometry, a `to_plane`
+end maps when the plane is a face's surface (its `source` is `face_surface`): a SolidCraft
+pick of that face ends at the same plane. Other plane ends after earlier geometry (a work
+plane or point) are not supported yet: SolidCraft can reinterpret a point on an existing face
+as a different end, and CADIR supplies no input face geometry to prove which face exists then.
+Final-body faces cannot establish that timeline state. A `from_plane` start parallel to the
+sketch maps as a start offset along the sketch normal. Tilted plane ends and native,
 generated, or historical vertex selections are not supported yet. Symmetric To Object ends
 and non-blind ends against the sketch normal on two-sided extrudes remain unsupported.
 
