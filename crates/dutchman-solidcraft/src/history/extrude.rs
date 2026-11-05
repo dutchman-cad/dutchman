@@ -149,7 +149,12 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
     if definition.get("solid").and_then(Value::as_bool) == Some(false) {
         return Err("sheet extrudes are not mapped yet".to_owned());
     }
-    let operation = operation(definition.get("op"))?;
+    let operation = match operation(definition.get("op"))? {
+        // A join before any feature built a body has nothing to join: it makes the first body,
+        // which is then named like any other new body.
+        "join" if !ctx.builds => "new_body",
+        operation => operation,
+    };
     if operation == "cut"
         && extent.get("through_all").and_then(Value::as_bool) == Some(true)
         && ctx.named_bodies.is_empty()

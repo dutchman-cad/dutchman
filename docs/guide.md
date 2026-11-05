@@ -375,7 +375,8 @@ faces cannot establish which face existed before shelling.
 
 A body made by a new-body feature is named from the source; when the source leaves it
 unnamed, it is named "Body 1", "Body 2" and so on (the first number not yet taken), so later
-features can still target it. A through-all cut with no earlier named body (no earlier
+features can still target it. An extrude stored as a join before any feature has built a
+body makes that first body. A through-all cut with no earlier named body (no earlier
 new-body feature mapped) is `blocked` before replay, with a reason asking for its
 body-producing feature to resolve first. Source storage order does not
 change replay order: the neutral ordinal controls it.
