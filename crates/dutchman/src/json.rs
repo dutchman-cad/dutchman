@@ -786,7 +786,12 @@ pub(crate) fn solidcraft_info(options: &crate::ConvertOptions) -> Option<Value> 
     let found = options
         .reported_solidcraft_version()
         .and_then(|line| solidcraft_release(&line));
-    Some(solidcraft_values(options.solidcraft_version, found))
+    let searched = found.is_none();
+    let mut values = solidcraft_values(options.solidcraft_version, found);
+    if let (true, Some(fields)) = (searched, values.as_object_mut()) {
+        fields.insert("search".to_owned(), options.solidcraft_search(true));
+    }
+    Some(values)
 }
 
 /// Normalize a discovered CLI version line for presentation.

@@ -73,7 +73,7 @@ When a maintainer asks about `f3a9c0e1d2b4f5a6`, look it up in your key.
 {
   "schema": "dutchman.report-anon/1",
   "versions": {"dutchman": "0.1.5", "cadmpeg": "0.6.5+63ebadd", "solidcraft": "0.18.2",
-               "os": "linux", "arch": "x86_64"},
+               "solidcraft_search": null, "os": "linux", "arch": "x86_64"},
   "run": {"verify": true, "import_only": false, "jobs": 8, "timeout_s": 900,
           "max_memory_mb": 8192, "resumed": 0},
   "totals": {"files": 105, "converted": 77, "history_verified": 3, "history_unverified": 0,
@@ -100,7 +100,7 @@ When a maintainer asks about `f3a9c0e1d2b4f5a6`, look it up in your key.
 
 | Field | Meaning |
 |---|---|
-| `versions` | Dutchman's version, the cadmpeg it was built with (its version and the commit Dutchman pins), the SolidCraft CLI that checked the designs (`null` when none did), and the operating system and processor. |
+| `versions` | Dutchman's version, the cadmpeg it was built with (its version and the commit Dutchman pins), the SolidCraft CLI that checked the designs (`null` when none did), `solidcraft_search` (when none did: how the search for `solidcraft-cli` went, as `{"outcome", "places"}` with only generic place names such as `SOLIDCRAFT_CLI`, `PATH` and `Program Files` and an outcome for each, never a path; `null` otherwise), and the operating system and processor. |
 | `run` | How the batch ran: whether designs were checked in SolidCraft, `--import-only`, files at once, one file's time and memory limits, and how many results came from `--journal`. |
 | `totals` | Every file: `converted`, then how: `history_verified` (editable history, checked against the original in SolidCraft), `history_unverified`, `geometry_only`; `degraded` counts converted files with at least one `Degraded` or `Dropped` loss; `incomplete` counts converted assemblies with placements left out; `failed`; `skipped` (not in a format Dutchman knows). |
 | `formats` | The same counts per input format (`fusion_archive`, `fusion_multi_document`, `inventor_part`, `inventor_assembly`, `solidworks_part`, `solidworks_assembly`, `freecad_document`, `unknown`), each with its `timing`. |

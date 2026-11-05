@@ -43,6 +43,7 @@ and requested reports.
 | `missing.f3d: No such file or directory (os error 2)` | Check the path. |
 | `part.f3d: the file is … bytes, over Dutchman's 1073741824-byte limit` | Dutchman opens files up to 1 GiB. |
 | `history: …; unverified: …` | Not an error: the history was written without the SolidCraft check. Install `solidcraft-cli`, or point `--solidcraft` or `SOLIDCRAFT_CLI` at it, and convert again. |
+| `history: …; unverified: no solidcraft-cli found …` | Dutchman looked for `solidcraft-cli` in `SOLIDCRAFT_CLI`, `PATH`, beside `dutchman` and the SolidCraft install folders and found none. `SOLIDCRAFT_CLI` is an environment variable holding the full path of the `solidcraft-cli` to use; the search order is in [How Dutchman finds SolidCraft](desktop.md#how-dutchman-finds-solidcraft). The JSON report's `solidcraft.search` lists each place tried. |
 | `history: flattened: replay differs (…)` | Not an error: the history did not rebuild the same shape in SolidCraft. A retained editable timeline is hidden beside the imported final shape when possible. `--no-verify` keeps the history, unchecked. |
 
 ## A large file takes hours, runs out of memory, or fails in one part

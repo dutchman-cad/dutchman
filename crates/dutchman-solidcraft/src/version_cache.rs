@@ -37,14 +37,20 @@ fn version_at(cli: &Path, live: bool, cache: Option<PathBuf>) -> Answer {
     if !live {
         return Ok(None);
     }
+    let started = std::time::Instant::now();
     let probed = probe_version(&cli);
+    // A first start can be slow (the system scanning a fresh install); a probe that ran out of
+    // time is asked again next time rather than remembered as "no version" for the whole session.
+    let timed_out = matches!(probed, Ok(None)) && started.elapsed() >= super::VERSION_TIMEOUT;
     if let (Some(path), Ok(Some((line, true)))) = (cache, &probed) {
         if parse_version(line).is_some() && identity(&cli) == key {
             let _ = save(&path, key, line);
         }
     }
     let answer = probed.map(|answer| answer.map(|(line, _)| line));
-    versions.insert(cli, answer.clone());
+    if !timed_out {
+        versions.insert(cli, answer.clone());
+    }
     answer
 }
 
@@ -233,7 +239,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn timeout_is_bounded_and_remembered_only_in_process() {
+    fn timeout_is_bounded_and_asked_again_next_time() {
         let _turn = crate::testing::scripts();
         let dir = tempfile::tempdir().unwrap();
         let cli = script(dir.path(), "sleepy", "exec sleep 30");
@@ -245,7 +251,7 @@ mod tests {
         assert!(!cache.exists());
         assert_eq!(
             std::fs::read_to_string(cli.with_extension("count")).unwrap(),
-            "run\n"
+            "run\nrun\n"
         );
     }
 

@@ -126,6 +126,8 @@ impl Salt {
 pub struct Run {
     /// SolidCraft's version, when a SolidCraft CLI checked the designs.
     pub solidcraft: Option<String>,
+    /// How the SolidCraft CLI search went when none was found: generic place names only.
+    pub solidcraft_search: Option<Value>,
     /// Whether written designs were checked in SolidCraft.
     pub verify: bool,
     /// Whether only geometry was asked for.
@@ -182,6 +184,7 @@ pub fn report(
             "dutchman": env!("CARGO_PKG_VERSION"),
             "cadmpeg": CADMPEG_VERSION,
             "solidcraft": run.solidcraft.as_deref().map(version_only),
+            "solidcraft_search": run.solidcraft_search,
             "os": std::env::consts::OS,
             "arch": std::env::consts::ARCH,
         }),
@@ -261,8 +264,11 @@ pub fn write(
             None
         }
     };
+    let solidcraft_search = (options.to == crate::OutputFormat::Solidcraft && solidcraft.is_none())
+        .then(|| options.solidcraft_search(false));
     let run = Run {
         verify: !options.no_verify && solidcraft.is_some(),
+        solidcraft_search,
         solidcraft,
         import_only: options.import_only,
         jobs: crate::batch::workers(settings.jobs),

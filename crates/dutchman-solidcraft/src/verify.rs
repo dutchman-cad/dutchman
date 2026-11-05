@@ -13,7 +13,7 @@ use serde_json::Value;
 mod version_cache;
 
 /// How long CLI version discovery may run.
-const VERSION_TIMEOUT: Duration = Duration::from_secs(3);
+pub(crate) const VERSION_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// The relative difference in volume at which a replay no longer matches the original, when
 /// SolidCraft gives no area and box to bound its meshes' error by (see [`mesh_slack`]).
@@ -67,38 +67,262 @@ pub(crate) enum Outcome {
 }
 
 /// The SolidCraft CLI `verification` checks with: for [`Verification::Auto`], the one
-/// `SOLIDCRAFT_CLI` names, else the newest `solidcraft-cli` found on `PATH`, beside this program,
-/// or inside an installed SolidCraft app: on macOS `SolidCraft*.app` in `/Applications` or `~/Applications`, newest
-/// version first; on Windows `SolidCraft\solidcraft-cli.exe` in Program Files or `%LOCALAPPDATA%`,
-/// else in the install folder the installer recorded in the registry (`InstallDir`, or beside
-/// the registered `solidcraft.exe`).
+/// `SOLIDCRAFT_CLI` names (when that file exists), else the newest `solidcraft-cli` found on
+/// `PATH`, beside this program, or inside an installed SolidCraft app: on macOS `SolidCraft*.app`
+/// in `/Applications` or `~/Applications`, newest version first; on Windows
+/// `SolidCraft\solidcraft-cli.exe` in Program Files or `%LOCALAPPDATA%`, else in the install
+/// folder the installer recorded in the registry (`InstallDir`, or beside the registered
+/// `solidcraft.exe`). The command line, the desktop app, the server and the reports all search
+/// through this one function, so they find the same CLI (see [`discover`]).
 pub fn find_cli(verification: &Verification) -> Result<PathBuf, String> {
     match verification {
         Verification::Off => Err("verification turned off".to_owned()),
         Verification::With(path) => Ok(path.clone()),
-        Verification::Auto => std::env::var_os(CLI_ENV)
-            .map(PathBuf::from)
-            .filter(|path| !path.as_os_str().is_empty())
-            .or_else(|| {
-                let beside_this = std::env::current_exe()
-                    .ok()
-                    .and_then(|program| beside(&program));
-                newest_cli(
-                    on_path().into_iter().chain(beside_this).chain(installed()),
-                    &|cli| {
-                        version_of(cli)
-                            .ok()
-                            .flatten()
-                            .and_then(|line| parse_version(&line))
-                    },
-                )
-            })
-            .ok_or_else(|| {
-                format!(
-                    "no {CLI_NAME} found (install SolidCraft, set {CLI_ENV}, or add it to PATH)"
-                )
-            }),
+        Verification::Auto => discover().cli.ok_or_else(|| {
+            format!("no {CLI_NAME} found (install SolidCraft, set {CLI_ENV}, or add it to PATH)")
+        }),
     }
+}
+
+/// One place the search for the SolidCraft CLI looks, and what it found there.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Place {
+    /// A generic name for the place (`SOLIDCRAFT_CLI`, `PATH`, `Program Files`), never a path.
+    pub label: &'static str,
+    /// `unset`, `set_but_missing`, `not_found`, `found`, or `used` (the CLI that was chosen).
+    pub outcome: &'static str,
+    /// The CLI file found there (or the file `SOLIDCRAFT_CLI` names), for local reports only.
+    pub path: Option<PathBuf>,
+}
+
+/// Where the search looked and the CLI it chose.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Discovery {
+    /// The CLI chosen, if any.
+    pub cli: Option<PathBuf>,
+    /// The places tried, in search order.
+    pub places: Vec<Place>,
+}
+
+/// Where the search looks, as plain values, so the order can be tested without a real
+/// SolidCraft installed.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Sources {
+    /// The value of `SOLIDCRAFT_CLI`.
+    pub env_cli: Option<std::ffi::OsString>,
+    /// The value of `PATH`.
+    pub path: Option<std::ffi::OsString>,
+    /// The folder of the running program.
+    pub program_folder: Option<PathBuf>,
+    /// Windows folders that may hold a `SolidCraft` folder, labelled.
+    pub windows_bases: Vec<(&'static str, PathBuf)>,
+    /// Folders that hold `SolidCraft*.app` bundles (macOS), labelled.
+    pub app_folders: Vec<(&'static str, PathBuf)>,
+    /// Whether to read the Windows registry for the install folder.
+    pub registry: bool,
+}
+
+impl Sources {
+    /// The places this system installs SolidCraft.
+    fn system() -> Self {
+        let var = |name: &str| std::env::var_os(name).filter(|value| !value.is_empty());
+        let mut sources = Sources {
+            env_cli: var(CLI_ENV),
+            path: std::env::var_os("PATH"),
+            program_folder: std::env::current_exe()
+                .ok()
+                .and_then(|program| program.parent().map(Path::to_path_buf)),
+            ..Sources::default()
+        };
+        if cfg!(target_os = "macos") {
+            sources
+                .app_folders
+                .push(("Applications", PathBuf::from("/Applications")));
+            if let Some(home) = var("HOME") {
+                sources
+                    .app_folders
+                    .push(("user Applications", Path::new(&home).join("Applications")));
+            }
+        } else if cfg!(windows) {
+            for (label, name) in [
+                ("Program Files", "ProgramFiles"),
+                ("Program Files", "ProgramW6432"),
+                ("Program Files (x86)", "ProgramFiles(x86)"),
+                ("per-user install folder", "LOCALAPPDATA"),
+            ] {
+                if let Some(base) = var(name) {
+                    sources.windows_bases.push((label, PathBuf::from(base)));
+                }
+            }
+            sources.registry = true;
+        }
+        sources
+    }
+}
+
+/// Searches this system for the SolidCraft CLI: [`CLI_ENV`] first (when it names a file), then
+/// the newest found on `PATH`, beside this program, or in the places this system installs
+/// SolidCraft. Every caller that needs "the SolidCraft CLI" goes through here.
+pub fn discover() -> Discovery {
+    discover_in(&Sources::system(), &|cli| {
+        version_of(cli)
+            .ok()
+            .flatten()
+            .and_then(|line| parse_version(&line))
+    })
+}
+
+/// [`discover`] over the given sources, ranking candidates by the version `version` reports.
+pub(crate) fn discover_in(
+    sources: &Sources,
+    version: &impl Fn(&Path) -> Option<[u64; 3]>,
+) -> Discovery {
+    let mut places = Vec::new();
+    let named = sources
+        .env_cli
+        .as_ref()
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    match &named {
+        None => places.push(Place {
+            label: CLI_ENV,
+            outcome: "unset",
+            path: None,
+        }),
+        Some(path) if path.is_file() => places.push(Place {
+            label: CLI_ENV,
+            outcome: "found",
+            path: Some(path.clone()),
+        }),
+        Some(path) => places.push(Place {
+            label: CLI_ENV,
+            outcome: "set_but_missing",
+            path: Some(path.clone()),
+        }),
+    }
+    if let Some(path) = named.filter(|path| path.is_file()) {
+        places[0].outcome = "used";
+        return Discovery {
+            cli: Some(path),
+            places,
+        };
+    }
+    let exe = format!("{CLI_NAME}{}", std::env::consts::EXE_SUFFIX);
+    // (label, file) in search order; labels may repeat and are merged below.
+    let mut candidates: Vec<(&'static str, PathBuf)> = Vec::new();
+    let mut labels: Vec<&'static str> = vec!["PATH"];
+    if let Some(path) = &sources.path {
+        candidates.extend(
+            std::env::split_paths(path)
+                .map(|dir| ("PATH", dir.join(&exe)))
+                .filter(|(_, file)| file.is_file()),
+        );
+    }
+    labels.push("beside Dutchman");
+    if let Some(folder) = &sources.program_folder {
+        let file = folder.join(&exe);
+        if file.is_file() {
+            candidates.push(("beside Dutchman", file));
+        }
+    }
+    for (label, base) in &sources.windows_bases {
+        if !labels.contains(label) {
+            labels.push(label);
+        }
+        for folder in [
+            base.join("SolidCraft"),
+            base.join("Programs").join("SolidCraft"),
+        ] {
+            let file = folder.join(format!("{CLI_NAME}.exe"));
+            if file.is_file() {
+                candidates.push((label, file));
+            }
+        }
+    }
+    for (label, folder) in &sources.app_folders {
+        if !labels.contains(label) {
+            labels.push(label);
+        }
+        if let Some(file) = in_app_bundles(std::slice::from_ref(folder)) {
+            candidates.push((label, file));
+        }
+    }
+    if sources.registry {
+        labels.push("Windows registry");
+        if let Some(file) = registered() {
+            candidates.push(("Windows registry", file));
+        }
+    }
+    let mut seen = Vec::new();
+    candidates.retain(|(_, file)| {
+        let key = std::fs::canonicalize(file).unwrap_or_else(|_| file.clone());
+        !seen.contains(&key) && {
+            seen.push(key);
+            true
+        }
+    });
+    let chosen = newest_cli(candidates.iter().map(|(_, file)| file.clone()), version);
+    for label in labels {
+        let here = candidates.iter().find(|(l, _)| *l == label);
+        let used = here.is_some_and(|(_, file)| Some(file) == chosen.as_ref());
+        places.push(Place {
+            label,
+            outcome: if used {
+                "used"
+            } else if here.is_some() {
+                "found"
+            } else {
+                "not_found"
+            },
+            path: here.map(|(_, file)| file.clone()),
+        });
+    }
+    Discovery {
+        cli: chosen,
+        places,
+    }
+}
+
+/// How the SolidCraft CLI search went, for the reports: `outcome` is `found` (the CLI answered
+/// with its version), `found_no_answer` (a CLI was found but did not report a version in time),
+/// `not_found`, or `turned_off` / `chosen` when no search was made; `places` lists each place
+/// tried with its outcome. A `path` appears on a place only when `with_paths` is set, so the
+/// anonymous report carries generic labels only.
+pub fn search_report(verification: &Verification, with_paths: bool) -> Value {
+    let (found, places, outcome) = match verification {
+        Verification::Off => (None, Vec::new(), "turned_off"),
+        Verification::With(path) => (Some(path.clone()), Vec::new(), "chosen"),
+        Verification::Auto => {
+            let discovery = discover();
+            let outcome = if discovery.cli.is_none() {
+                "not_found"
+            } else {
+                "found"
+            };
+            (discovery.cli, discovery.places, outcome)
+        }
+    };
+    let outcome = match (&found, outcome) {
+        (Some(cli), "found" | "chosen") if version_of(cli).ok().flatten().is_none() => {
+            "found_no_answer"
+        }
+        _ => outcome,
+    };
+    let places: Vec<Value> = places
+        .iter()
+        .map(|place| {
+            let mut entry = serde_json::json!({"place": place.label, "outcome": place.outcome});
+            if let (true, Some(path)) = (with_paths, &place.path) {
+                entry["path"] = serde_json::json!(path.display().to_string());
+            }
+            entry
+        })
+        .collect();
+    let mut report = serde_json::json!({"outcome": outcome, "places": places});
+    if let (true, Some(cli)) = (with_paths, &found) {
+        report["cli"] = serde_json::json!(cli.display().to_string());
+    }
+    report
 }
 
 /// The SolidCraft CLI in the same folder as `file`, if there is one.
@@ -359,39 +583,6 @@ fn parse_version(line: &str) -> Option<[u64; 3]> {
         parts.next()??,
         parts.next().flatten().unwrap_or(0),
     ])
-}
-
-/// The CLI inside an installed SolidCraft app, where this system installs apps.
-fn installed() -> Option<PathBuf> {
-    if cfg!(target_os = "macos") {
-        let mut folders = vec![PathBuf::from("/Applications")];
-        if let Some(home) = std::env::var_os("HOME") {
-            folders.push(Path::new(&home).join("Applications"));
-        }
-        in_app_bundles(&folders)
-    } else if cfg!(windows) {
-        let candidates = ["ProgramFiles", "ProgramW6432", "LOCALAPPDATA"]
-            .into_iter()
-            .filter_map(std::env::var_os)
-            .flat_map(|base| {
-                let base = PathBuf::from(base);
-                [
-                    base.join("SolidCraft"),
-                    base.join("Programs").join("SolidCraft"),
-                ]
-            })
-            .map(|folder| folder.join(format!("{CLI_NAME}.exe")))
-            .filter(|cli| cli.is_file())
-            .chain(registered());
-        newest_cli(candidates, &|cli| {
-            version_of(cli)
-                .ok()
-                .flatten()
-                .and_then(|line| parse_version(&line))
-        })
-    } else {
-        None
-    }
 }
 
 /// Where the SolidCraft installer records its install folder: key, value name. `InstallDir`
@@ -720,16 +911,6 @@ fn newest_cli(
     version: &impl Fn(&Path) -> Option<[u64; 3]>,
 ) -> Option<PathBuf> {
     candidates.into_iter().max_by_key(|cli| version(cli))
-}
-
-fn on_path() -> Vec<PathBuf> {
-    let Some(path) = std::env::var_os("PATH") else {
-        return Vec::new();
-    };
-    std::env::split_paths(&path)
-        .map(|dir| dir.join(format!("{CLI_NAME}{}", std::env::consts::EXE_SUFFIX)))
-        .filter(|candidate| candidate.is_file())
-        .collect()
 }
 
 /// Compares `history` (the design as written) with `original` (the same design with the
@@ -1426,6 +1607,141 @@ fn parse(value: &Value) -> Result<Eval, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn touch(folder: &Path, name: &str) -> PathBuf {
+        std::fs::create_dir_all(folder).unwrap();
+        let file = folder.join(name);
+        std::fs::write(&file, "x").unwrap();
+        file
+    }
+
+    fn outcomes(found: &Discovery) -> Vec<(&'static str, &'static str)> {
+        found.places.iter().map(|p| (p.label, p.outcome)).collect()
+    }
+
+    #[test]
+    fn the_environment_variable_wins_over_every_other_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let named = touch(&dir.path().join("named"), "tool");
+        let on_path = touch(
+            &dir.path().join("bin"),
+            &format!("{CLI_NAME}{}", std::env::consts::EXE_SUFFIX),
+        );
+        let sources = Sources {
+            env_cli: Some(named.clone().into_os_string()),
+            path: Some(dir.path().join("bin").into_os_string()),
+            ..Sources::default()
+        };
+        let found = discover_in(&sources, &|cli| (cli == on_path).then_some([9, 9, 9]));
+        assert_eq!(found.cli, Some(named));
+        assert_eq!(outcomes(&found), vec![(CLI_ENV, "used")]);
+    }
+
+    #[test]
+    fn a_missing_environment_file_falls_through_to_the_other_places() {
+        let dir = tempfile::tempdir().unwrap();
+        let on_path = touch(
+            &dir.path().join("bin"),
+            &format!("{CLI_NAME}{}", std::env::consts::EXE_SUFFIX),
+        );
+        let sources = Sources {
+            env_cli: Some(dir.path().join("gone").into_os_string()),
+            path: Some(dir.path().join("bin").into_os_string()),
+            ..Sources::default()
+        };
+        let found = discover_in(&sources, &|_| None);
+        assert_eq!(found.cli, Some(on_path));
+        assert_eq!(found.places[0].outcome, "set_but_missing");
+        assert_eq!(
+            found.places[1],
+            Place {
+                label: "PATH",
+                outcome: "used",
+                path: found.cli.clone()
+            }
+        );
+    }
+
+    #[test]
+    fn install_folders_are_searched_and_the_newest_release_wins() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = touch(&dir.path().join("pf/SolidCraft"), "solidcraft-cli.exe");
+        let new = touch(
+            &dir.path().join("local/Programs/SolidCraft"),
+            "solidcraft-cli.exe",
+        );
+        let sources = Sources {
+            windows_bases: vec![
+                ("Program Files", dir.path().join("pf")),
+                ("per-user install folder", dir.path().join("local")),
+            ],
+            ..Sources::default()
+        };
+        let found = discover_in(&sources, &|cli| {
+            Some(if cli == new { [0, 30, 1] } else { [0, 26, 0] })
+        });
+        assert_eq!(found.cli, Some(new));
+        assert_eq!(
+            outcomes(&found),
+            vec![
+                (CLI_ENV, "unset"),
+                ("PATH", "not_found"),
+                ("beside Dutchman", "not_found"),
+                ("Program Files", "found"),
+                ("per-user install folder", "used"),
+            ]
+        );
+        // Only Program Files holds one: it is chosen.
+        let found = discover_in(
+            &Sources {
+                windows_bases: vec![("Program Files", dir.path().join("pf"))],
+                ..Sources::default()
+            },
+            &|_| None,
+        );
+        assert_eq!(found.cli, Some(old));
+    }
+
+    #[test]
+    fn nothing_found_lists_every_place_tried() {
+        let dir = tempfile::tempdir().unwrap();
+        let sources = Sources {
+            path: Some(dir.path().as_os_str().to_owned()),
+            windows_bases: vec![("Program Files", dir.path().join("pf"))],
+            app_folders: vec![("Applications", dir.path().join("apps"))],
+            ..Sources::default()
+        };
+        let found = discover_in(&sources, &|_| None);
+        assert_eq!(found.cli, None);
+        assert_eq!(
+            outcomes(&found),
+            vec![
+                (CLI_ENV, "unset"),
+                ("PATH", "not_found"),
+                ("beside Dutchman", "not_found"),
+                ("Program Files", "not_found"),
+                ("Applications", "not_found"),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_desktop_and_command_line_search_through_the_same_function() {
+        assert_eq!(find_cli(&Verification::Auto).ok(), discover().cli);
+    }
+
+    #[test]
+    fn the_search_report_carries_paths_only_when_asked() {
+        let local = search_report(&Verification::Auto, true);
+        let anonymous = search_report(&Verification::Auto, false);
+        assert!(anonymous["places"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|p| p.get("path").is_none()));
+        assert!(anonymous.get("cli").is_none());
+        assert_eq!(local["places"][0]["place"], CLI_ENV);
+    }
 
     const REG_INSTALL: &str = "\r\nHKEY_LOCAL_MACHINE\\Software\\SolidCraft\r\n    InstallDir    REG_SZ    C:\\Apps\\Solid Craft\\\r\n\r\n";
 

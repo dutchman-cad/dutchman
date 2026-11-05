@@ -52,6 +52,29 @@ Available memory is labelled as memory and hidden when unknown. Automatic SolidC
 selection compares the versions found on PATH, beside Dutchman and in installed applications, choosing
 the newest; `SOLIDCRAFT_CLI` remains an explicit override.
 
+### How Dutchman finds SolidCraft
+
+Dutchman checks histories with `solidcraft-cli`, the command-line tool that comes with
+SolidCraft. The desktop app, the command line and the server all search for it the same way,
+in this order:
+
+1. `SOLIDCRAFT_CLI`, an environment variable you can set to the full path of a
+   `solidcraft-cli` (`solidcraft-cli.exe` on Windows). When it names an existing file, that
+   file is used and nothing else is searched.
+2. `PATH`, then the folder `dutchman` runs from. If several are found, the newest release is
+   used.
+3. The folders SolidCraft installs into: on Windows `Program Files`, `Program Files (x86)`
+   and your per-user programs folder (`%LOCALAPPDATA%`), then the install folder the
+   installer recorded in the registry; on macOS `SolidCraft*.app` in `/Applications` and
+   `~/Applications`.
+
+A file you chose with **Choose solidcraft-cli…** in the SolidCraft version window is used
+instead, until you press **Find automatically**; one that no longer answers as SolidCraft is
+ignored. When nothing is found, that window lists the places that were searched. Opening it
+searches again, so a SolidCraft installed (or slow to start) after Dutchman opened is picked
+up without restarting. To set the variable on Windows, search for "environment variables" in
+the Start menu, add `SOLIDCRAFT_CLI` as a user variable, and restart Dutchman.
+
 Dutchman Convert (`dutchman-gui`) converts without a terminal. [How to use it](../README.md#how-to-use-it) shows it step by step.
 
 ## Converting
