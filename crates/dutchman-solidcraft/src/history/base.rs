@@ -38,8 +38,9 @@ pub(super) fn holds_none(definition: &Value) -> bool {
 /// Maps a base feature whose operation is `definition`.
 pub(super) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Result<Value, String> {
     let bodies = definition.get("bodies").unwrap_or(&Value::Null);
-    if bodies.get("kind").and_then(Value::as_str) != Some("resolved") {
-        return Err("its bodies are not resolved".to_owned());
+    let found = bodies.get("kind").and_then(Value::as_str);
+    if found != Some("resolved") {
+        return Err(super::unsupported_selection("body", found));
     }
     let ids: Vec<&str> = bodies
         .pointer("/value/bodies")

@@ -20,7 +20,7 @@ pub(super) fn pick(ctx: &Context, selection: Option<&Value>, normal: V3) -> Resu
     let ids = match selection.get("kind").and_then(Value::as_str) {
         Some("faces") => selection.get("value"),
         Some("resolved") => selection.pointer("/value/faces"),
-        _ => return Err("its face selection is not resolved to model faces".to_owned()),
+        other => return Err(super::unsupported_selection("face", other)),
     }
     .and_then(Value::as_array)
     .ok_or("its face selection is malformed")?;

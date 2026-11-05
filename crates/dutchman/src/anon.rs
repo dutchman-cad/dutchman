@@ -19,6 +19,8 @@ pub const CADMPEG_VERSION: &str = env!("DUTCHMAN_CADMPEG_VERSION");
 
 /// How many files' ids one cause lists.
 const MAX_IDS: usize = 20;
+/// The most distinct timeline positions listed for one blocked-feature cause.
+const MAX_POSITIONS: usize = 50;
 
 /// How many of the slowest files the report lists.
 const SLOWEST: usize = 20;
@@ -423,6 +425,8 @@ fn stages(files: &[File]) -> Value {
 #[derive(Default)]
 struct Cause {
     fields: Map<String, Value>,
+    /// Timeline positions: (ordinal, variant) -> files showing it.
+    positions: BTreeMap<(Option<u64>, String), u64>,
     files: BTreeSet<String>,
     formats: BTreeMap<String, u64>,
     occurrences: u64,
@@ -438,6 +442,17 @@ impl Cause {
 
     fn json(self) -> Value {
         let mut out = self.fields;
+        if !self.positions.is_empty() {
+            let features: Vec<Value> = self
+                .positions
+                .iter()
+                .take(MAX_POSITIONS)
+                .map(|((ordinal, variant), count)| {
+                    json!({"ordinal": ordinal, "variant": variant, "count": count})
+                })
+                .collect();
+            out.insert("features".to_owned(), json!(features));
+        }
         out.insert("files".to_owned(), json!(self.files.len()));
         out.insert("occurrences".to_owned(), json!(self.occurrences));
         out.insert("formats".to_owned(), json!(self.formats));
@@ -557,10 +572,30 @@ fn blocked(files: &[File], scrub: &Scrubber) -> Value {
                 cause.fields.insert("reason".to_owned(), json!(reason));
                 cause.fields.insert("stage".to_owned(), json!("map"));
             }
+            if let Some(variant) = feature.get("variant").and_then(Value::as_str) {
+                let ordinal = feature.get("ordinal").and_then(Value::as_u64);
+                *cause
+                    .positions
+                    .entry((ordinal, variant_text(variant)))
+                    .or_insert(0) += 1;
+            }
             cause.add(file);
         }
     }
     ranked(causes)
+}
+
+/// A variant string re-checked against the fixed words it is made of, so a name could
+/// never pass through it.
+fn variant_text(variant: &str) -> String {
+    let ok = variant
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == ' ' || c == ',');
+    if ok {
+        variant.to_owned()
+    } else {
+        "other".to_owned()
+    }
 }
 
 /// Why histories were written unchecked, or not written, by status and reason.
@@ -1163,6 +1198,47 @@ mod tests {
         // What is left still says what happened.
         assert!(text.contains("files in the project have this name; used"));
         assert!(text.contains("is not mapped yet"));
+    }
+
+    #[test]
+    fn blocked_features_list_their_timeline_position_and_variant() {
+        let root = Path::new("/home/someone/CAD");
+        let feature = |ordinal: u64, variant: &str| {
+            json!({"name": "Secret Boss", "kind": "extrude", "status": "blocked",
+                   "reason": "extrude is not mapped yet", "ordinal": ordinal,
+                   "variant": variant})
+        };
+        let result = |name: &str, features: Vec<Value>| {
+            json!({"ok": true, "input": {"path": root.join(name), "format": "fusion_archive"},
+                   "mode": "import", "verification": {"status": "flattened", "reason": "x"},
+                   "losses": [], "history": {"features": features}})
+        };
+        let batch = json!({"results": [
+            result("a.f3d", vec![feature(7, "extrude, to a plane"),
+                                 feature(2, "extrude, blind, start from a face")]),
+            result("b.f3d", vec![feature(2, "extrude, blind, start from a face")]),
+        ], "skipped": 0});
+        let salt = Salt::random().unwrap();
+        let (anon, _) = report(
+            &batch,
+            &[root.to_path_buf()],
+            &root.join("out"),
+            &salt,
+            &Run::default(),
+        );
+        let blocked = &anon["blocked_features"];
+        assert_eq!(blocked.as_array().unwrap().len(), 1);
+        assert_eq!(blocked[0]["files"], 2);
+        assert_eq!(
+            blocked[0]["features"],
+            json!([
+                {"ordinal": 2, "variant": "extrude, blind, start from a face", "count": 2},
+                {"ordinal": 7, "variant": "extrude, to a plane", "count": 1},
+            ])
+        );
+        let mut text = String::new();
+        all_text(&anon, &mut text);
+        assert!(!text.contains("Secret Boss"));
     }
 
     #[test]

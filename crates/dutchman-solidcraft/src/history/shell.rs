@@ -12,7 +12,7 @@ pub(super) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
     let points = match selection.get("kind").and_then(Value::as_str) {
         Some("historical") => face_profile::interior_points(feature,
             selection.get("value").unwrap_or(&Value::Null), ctx)?,
-        Some("native" | "unresolved") => return Err("its shell input faces are not resolved yet".to_owned()),
+        found @ Some("native" | "unresolved") => return Err(super::unsupported_selection("face", found)),
         Some("historical_partial") => return Err("some shell input faces are not resolved yet".to_owned()),
         _ => return Err("shell requires faces from its own input topology; final-body faces are not supported yet".to_owned()),
     };

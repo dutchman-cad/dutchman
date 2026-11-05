@@ -170,8 +170,8 @@ fn group(
     let (inputs, points) = match selection.get("kind").and_then(Value::as_str) {
         Some("historical") => historical(feature, selection, ctx, angle_chamfer)?,
         Some("generated") => generated(selection, ctx)?,
-        Some("native" | "unresolved") => {
-            return Err("its edges are a selection cadmpeg does not resolve to edges yet".to_owned())
+        found @ Some("native" | "unresolved") => {
+            return Err(super::unsupported_selection("edge", found))
         }
         Some("historical_partial") => {
             return Err("some of its edges are not resolved in its input topology".to_owned())

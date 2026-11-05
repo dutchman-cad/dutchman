@@ -17,10 +17,8 @@ pub(super) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
             selection.get("value").unwrap_or(&Value::Null),
             ctx,
         )?,
-        Some("native" | "unresolved") => {
-            return Err(
-                "its faces are a selection cadmpeg does not resolve to faces yet".to_owned(),
-            )
+        found @ Some("native" | "unresolved") => {
+            return Err(super::unsupported_selection("face", found))
         }
         Some("historical_partial") => {
             return Err("some of its faces are not resolved in its input topology".to_owned())

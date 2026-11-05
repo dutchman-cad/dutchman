@@ -14,7 +14,7 @@ fn members<'a>(selection: &'a Value, kind: &str) -> Result<&'a [Value], String> 
     let values = match selection.get("kind").and_then(Value::as_str) {
         Some(found) if found == kind => selection.get("value"),
         Some("resolved") => selection.get("value").and_then(|v| v.get(kind)),
-        _ => return Err(format!("its {kind} are not resolved")),
+        found => return Err(super::unsupported_selection("body", found)),
     };
     values
         .and_then(Value::as_array)

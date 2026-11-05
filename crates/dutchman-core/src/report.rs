@@ -294,6 +294,10 @@ pub struct FeatureOutcome {
     pub status: FeatureStatus,
     /// Why it did not map, or was left out.
     pub reason: Option<String>,
+    /// Its ordinal in the design's timeline, as the source model numbers it.
+    pub ordinal: Option<u64>,
+    /// A short description of its form (`extrude, to a plane`), without names or sizes.
+    pub variant: Option<String>,
 }
 
 /// Whether a source feature mapped.

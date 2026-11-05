@@ -627,6 +627,8 @@ fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
                     FeatureStatus::Blocked => "blocked",
                 },
                 "reason": feature.reason,
+                "ordinal": feature.ordinal,
+                "variant": feature.variant,
             })
         })
         .collect();
@@ -1333,6 +1335,8 @@ mod tests {
             kind: kind.to_owned(),
             status,
             reason: None,
+            ordinal: None,
+            variant: None,
         }
     }
 

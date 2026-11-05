@@ -7312,7 +7312,7 @@ fn face_selections_that_cannot_be_placed_stop_the_history() {
     for (selection, reason) in [
         (
             json!({"kind": "native", "value": "synthetic top face"}),
-            "not resolved to model faces",
+            "a native face reference is not supported yet",
         ),
         (
             json!({"kind": "faces", "value": []}),
@@ -8264,7 +8264,7 @@ fn unsupported_modify_options_explain_what_stops_history() {
         json!({"definition": "combine", "operands": {
         "target": {"kind": "native", "value": "Body1"},
         "tools": {"kind": "native", "value": "Body2"}}, "op": "cut"}),
-        "bodies are not resolved",
+        "a native body reference is not supported yet",
     ));
     for (definition, reason) in cases {
         let (_, report) = convert(
@@ -8711,7 +8711,7 @@ fn blends_refuse_missing_foreign_or_ambiguous_input_geometry() {
             m["features"][2]["definition"]["groups"][0]["edges"] =
                 json!({"kind": "native", "value": "feature-property:93"})
         },
-        "a selection cadmpeg does not resolve to edges yet",
+        "a native edge reference is not supported yet",
     );
     check(
         cli,

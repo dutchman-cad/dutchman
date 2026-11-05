@@ -187,7 +187,7 @@ the parts with the most that matters:
 losses: 182 in 14 components
   the design: 1 Degraded, 3 Info
   pin.ipt: 1 Dropped
-  base.ipt: history flattened (feature "Shell1": its shell input faces are not resolved yet); 2 Degraded, 9 Info
+  base.ipt: history flattened (feature "Shell1": a native face reference is not supported yet: cadmpeg does not resolve it to a model face); 2 Degraded, 9 Info
   …
 ```
 
