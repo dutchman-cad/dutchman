@@ -10201,7 +10201,7 @@ fn a_native_face_deletion_is_refused_for_its_selection() {
         &SolidCraftWriter::new().verification(Verification::Off),
     );
     assert!(
-        history_line(&report).contains("cadmpeg does not resolve to faces"),
+        history_line(&report).contains("a native face reference is not supported yet"),
         "{}",
         history_line(&report)
     );
