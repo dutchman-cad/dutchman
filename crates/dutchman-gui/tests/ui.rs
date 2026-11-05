@@ -3467,7 +3467,10 @@ fn solidcraft_window_screenshots() {
         let texts: &[&str] = if found {
             &["SolidCraft 0.30 is installed."]
         } else {
-            &["SolidCraft not found.", "Looked in:\n• SOLIDCRAFT_CLI: not set"]
+            &[
+                "SolidCraft not found.",
+                "Looked in:\n• SOLIDCRAFT_CLI: not set",
+            ]
         };
         for text in texts {
             let rect = h.get_by_label_contains(text).rect();
