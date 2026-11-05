@@ -138,6 +138,10 @@ jobs:
           # Save the build even when a test fails, so the next run does not start cold.
           cache-on-failure: true
       - run: cargo test --workspace --locked
+      # The desktop app's test seams (fixed checker text, previews, isolated folders) sit behind
+      # its test-support feature, which the workspace run above does not turn on; run those
+      # tests too, on every platform.
+      - run: cargo test --locked -p dutchman-gui --features test-support
       # A build without FreeCAD says it leaves FreeCAD files out. This checks feature gating, not
       # the platform, and on another OS it would rebuild every crate a second time.
       - if: matrix.os == 'ubuntu-latest'
