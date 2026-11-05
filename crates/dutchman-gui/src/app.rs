@@ -2555,8 +2555,9 @@ fn row_ui(
             .truncate(),
         )
         .on_hover_text(output);
-        ui.label(RichText::new(&view.outcome).color(p.ink));
-        for loss in history_info(row.report.as_ref()) {
+        let (outcome, history) = outcome_and_history(&view.outcome, row.report.as_ref());
+        ui.label(RichText::new(outcome).color(p.ink));
+        for loss in history {
             ui.label(RichText::new(loss).color(p.tide));
         }
         if let Some(summary) = &view.assembly {
@@ -2913,6 +2914,25 @@ fn side_by_side<R>(ui: &mut egui::Ui, wide: bool, body: impl FnOnce(&mut egui::U
     } else {
         body(ui)
     }
+}
+
+/// The outcome line and the history notes under it, saying each thing once: a design
+/// without history names why in the outcome line, not again in a note under it.
+fn outcome_and_history<'a>(outcome: &str, report: Option<&'a Value>) -> (String, Vec<&'a str>) {
+    let mut notes = history_info(report);
+    let Some(rest) = outcome.strip_prefix("Geometry without history") else {
+        return (outcome.to_owned(), notes);
+    };
+    let reason = notes
+        .iter()
+        .position(|note| note.starts_with("flattened: "))
+        .map(|at| notes.remove(at)["flattened: ".len()..].to_owned());
+    notes.retain(|note| !note.starts_with("flattened: "));
+    let outcome = match (rest.strip_prefix('.'), reason) {
+        (Some(after), Some(reason)) => format!("Geometry without history: {reason}.{after}"),
+        _ => outcome.to_owned(),
+    };
+    (outcome, notes)
 }
 
 fn history_info(report: Option<&Value>) -> Vec<&str> {
@@ -3809,6 +3829,33 @@ mod tests {
             });
         harness.run_steps(8);
         assert!(harness.query_by_label(message).is_some());
+    }
+
+    #[test]
+    fn a_design_without_history_says_why_once() {
+        let report = json!({"ok": true, "losses": [
+            {"level": "Info", "subject": "history", "message": "flattened: the design carries no feature history"},
+            {"level": "Info", "subject": "history", "message": "sketches kept as geometry"}]});
+        let (outcome, notes) = outcome_and_history("Geometry without history.", Some(&report));
+        assert_eq!(
+            outcome,
+            "Geometry without history: the design carries no feature history."
+        );
+        assert_eq!(notes, ["sketches kept as geometry"]);
+        // A reason already in the outcome line is not repeated under it.
+        let (outcome, notes) = outcome_and_history(
+            "Geometry without history (flattened: fillet is not mapped yet).",
+            Some(&report),
+        );
+        assert_eq!(
+            outcome,
+            "Geometry without history (flattened: fillet is not mapped yet)."
+        );
+        assert_eq!(notes, ["sketches kept as geometry"]);
+        // Editable history keeps its notes as they are.
+        let (outcome, notes) = outcome_and_history("Editable history; unverified.", Some(&report));
+        assert_eq!(outcome, "Editable history; unverified.");
+        assert_eq!(notes.len(), 2);
     }
 
     #[test]

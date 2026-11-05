@@ -2373,7 +2373,10 @@ fn run_log_buttons_share_the_batch_log_and_review_names_it() {
     assert_eq!(harness.query_all_by_label("Copy log to…").count(), 2);
     assert_eq!(
         harness
-            .query_all_by_label(&dutchman_gui::platform::display_path(&log))
+            .query_all_by_label(&format!(
+                "Run log: {}",
+                dutchman_gui::platform::display_path(&log)
+            ))
             .count(),
         2
     );

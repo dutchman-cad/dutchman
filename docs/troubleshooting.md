@@ -153,7 +153,7 @@ The MCP `convert` and `convert_all` tools accept `diagnostics` (an explicit path
 
 The desktop app always keeps a diagnostic log of each run (no names or contents from your
 file) in the default folder, which **Open diagnostics folder** opens.
-Each result card offers **Show this run's log** and **Copy log to…** beside the log's path,
+Each result card offers **Show this run's log** and **Copy log to…** under its "Run log:" line,
 available when the run ends.
 Show selects the exact file on Windows and macOS, or opens its folder on Linux. Copy opens
 a save dialog with the same filename and copies the log to the location you choose.

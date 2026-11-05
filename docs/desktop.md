@@ -182,7 +182,8 @@ The window's title and top row show its version beside **Dutchman Convert**, for
 form. `dutchman-gui --version` and `dutchman-gui --help` print and exit without opening a
 window (on Windows, read the version with `dutchman --version`).
 
-Each result card shows its run's log path, **Show this run's log** and **Copy log to…**, available when
+Each result card shows its run's log path as a small "Run log:" line (hover it for the whole path),
+then **Show this run's log** and **Copy log to…**, available when
 the run ends. Show selects that file on Windows and macOS, or opens its folder on Linux.
 Copy lets you save it elsewhere,
 using the same filename by default. Every card in a batch uses the same log; retries keep

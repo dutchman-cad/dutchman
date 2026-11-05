@@ -153,7 +153,18 @@ pub fn save_log(source: PathBuf) {
 
 /// Shared by result and report cards: always acts on their own run's log.
 pub fn log_controls(ui: &mut eframe::egui::Ui, path: &Path, ready: bool) -> Result<(), String> {
-    ui.label(display_path(path));
+    // Named as the run log, so the path doesn't read as stray text; long paths are cut and
+    // shown whole on hover.
+    let shown = display_path(path);
+    ui.add(
+        eframe::egui::Label::new(
+            eframe::egui::RichText::new(format!("Run log: {shown}"))
+                .small()
+                .weak(),
+        )
+        .truncate(),
+    )
+    .on_hover_text(&shown);
     // The first row is immutable. A batch can show hundreds of cards without rereading it
     // on every frame (a start row may list thousands of members).
     let key = eframe::egui::Id::new(("diagnostic version", path));
