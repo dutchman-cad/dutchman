@@ -218,6 +218,13 @@ as holes (even-odd nesting), as Fusion does: two concentric circles are a ring, 
 selection is written as whole boundaries (outer loop and its holes). Loops that touch or cross
 keep the previous selection.
 
+A selection that takes several separate regions of a sketch can arrive as one loop that crosses
+itself (four openings around two crossing ribs given as one loop that follows both diagonals).
+That is not mapped yet, and the report says its profile is several selected regions merged into
+one self-crossing loop, to tell it from a profile whose loop is crossed by other curves of the
+sketch ("a profile crossed by its own sketch's curves is not mapped yet"). The self-crossing
+test covers lines, arcs and circles; a loop with other curve types gets the second message.
+
 Patterns can repeat earlier features or named bodies in one or two linear directions,
 around an axis, or at fixed spacing along curves of an earlier planar sketch. Explicit
 linear offsets and circular angles map when their intervals are equal; two linear composite

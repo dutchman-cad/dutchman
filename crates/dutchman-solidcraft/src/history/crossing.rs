@@ -614,6 +614,254 @@ fn self_crossing(ring: &[P2]) -> bool {
     false
 }
 
+/// A line or arc of a source loop, for the exact self-crossing test.
+#[derive(Clone, Copy)]
+enum Piece {
+    Line(P2, P2),
+    /// Centre, radius, start angle, sweep (a full turn for a circle).
+    Arc(P2, f64, f64, f64),
+}
+
+impl Piece {
+    fn of(entity: &Value) -> Option<Piece> {
+        let geometry = entity.get("geometry")?;
+        match geometry.get("kind")?.as_str()? {
+            "line" => Some(Piece::Line(
+                super::sketch::p2(geometry.get("start"))?,
+                super::sketch::p2(geometry.get("end"))?,
+            )),
+            "arc" => {
+                let start = number(geometry.get("start_angle"))?;
+                let end = number(geometry.get("end_angle"))?;
+                Some(Piece::Arc(
+                    super::sketch::p2(geometry.get("center"))?,
+                    number(geometry.get("radius"))?,
+                    start,
+                    (end - start).rem_euclid(std::f64::consts::TAU),
+                ))
+            }
+            "circle" => Some(Piece::Arc(
+                super::sketch::p2(geometry.get("center"))?,
+                number(geometry.get("radius"))?,
+                0.0,
+                std::f64::consts::TAU,
+            )),
+            _ => None,
+        }
+    }
+
+    fn ends(self) -> [P2; 2] {
+        match self {
+            Piece::Line(a, b) => [a, b],
+            Piece::Arc(c, r, start, sweep) => [
+                [c[0] + r * start.cos(), c[1] + r * start.sin()],
+                [
+                    c[0] + r * (start + sweep).cos(),
+                    c[1] + r * (start + sweep).sin(),
+                ],
+            ],
+        }
+    }
+
+    /// Whether a point already known to lie on the curve's circle is within the arc.
+    fn holds_angle_of(self, p: P2, tol: f64) -> bool {
+        match self {
+            Piece::Line(..) => true,
+            Piece::Arc(c, r, start, sweep) => {
+                if sweep >= std::f64::consts::TAU - 1e-12 {
+                    return true;
+                }
+                let angle = (p[1] - c[1]).atan2(p[0] - c[0]);
+                let offset = (angle - start).rem_euclid(std::f64::consts::TAU);
+                let slack = tol / r.abs().max(tol);
+                offset <= sweep + slack || offset >= std::f64::consts::TAU - slack
+            }
+        }
+    }
+
+    /// Whether a point on the curve's line is within the segment.
+    fn holds_along(self, p: P2, tol: f64) -> bool {
+        match self {
+            Piece::Line(a, b) => {
+                let u = subtract(b, a);
+                let length = u[0].hypot(u[1]);
+                if length <= tol {
+                    return false;
+                }
+                let t = ((p[0] - a[0]) * u[0] + (p[1] - a[1]) * u[1]) / length;
+                (-tol..=length + tol).contains(&t)
+            }
+            arc => arc.holds_angle_of(p, tol),
+        }
+    }
+}
+
+/// Points where two pieces meet, to within `tol`. Overlapping lines or arcs give the ends
+/// of the shared stretch.
+fn meetings(a: Piece, b: Piece, tol: f64) -> Vec<P2> {
+    let mut out = Vec::new();
+    match (a, b) {
+        (Piece::Line(p, q), Piece::Line(r, s)) => {
+            let u = subtract(q, p);
+            let v = subtract(s, r);
+            let offset = subtract(r, p);
+            let denominator = determinant(u, v);
+            let (lu, lv) = (u[0].hypot(u[1]), v[0].hypot(v[1]));
+            if lu <= tol || lv <= tol {
+                return out;
+            }
+            if denominator.abs() <= 1e-12 * lu * lv {
+                // Parallel: they meet only when collinear.
+                if determinant(offset, u).abs() / lu <= tol {
+                    for point in [p, q, r, s] {
+                        if a.holds_along(point, tol) && b.holds_along(point, tol) {
+                            out.push(point);
+                        }
+                    }
+                }
+                return out;
+            }
+            let t = determinant(offset, v) / denominator;
+            let point = along(p, q, t);
+            if a.holds_along(point, tol) && b.holds_along(point, tol) {
+                out.push(point);
+            }
+        }
+        (line @ Piece::Line(p, q), Piece::Arc(c, r, ..))
+        | (Piece::Arc(c, r, ..), line @ Piece::Line(p, q)) => {
+            let arc = if matches!(a, Piece::Arc(..)) { a } else { b };
+            let u = subtract(q, p);
+            let length = u[0].hypot(u[1]);
+            if length <= tol {
+                return out;
+            }
+            let unit = [u[0] / length, u[1] / length];
+            let to = subtract(p, c);
+            let half = to[0] * unit[0] + to[1] * unit[1];
+            let rest = to[0] * to[0] + to[1] * to[1] - r * r;
+            let discriminant = half * half - rest;
+            // A tangent line has a discriminant near zero; its root is repeated.
+            let reach = r.abs() * tol;
+            if discriminant < -(2.0 * reach.max(tol * tol)) {
+                return out;
+            }
+            let root = discriminant.max(0.0).sqrt();
+            let roots = if root <= tol {
+                vec![-half]
+            } else {
+                vec![-half - root, -half + root]
+            };
+            for t in roots {
+                let point = [p[0] + unit[0] * t, p[1] + unit[1] * t];
+                if line.holds_along(point, tol) && arc.holds_angle_of(point, tol) {
+                    out.push(point);
+                }
+            }
+        }
+        (Piece::Arc(c1, r1, ..), Piece::Arc(c2, r2, ..)) => {
+            let d = subtract(c2, c1);
+            let distance = d[0].hypot(d[1]);
+            if distance <= tol {
+                if (r1 - r2).abs() <= tol {
+                    for point in a.ends().into_iter().chain(b.ends()) {
+                        if a.holds_angle_of(point, tol) && b.holds_angle_of(point, tol) {
+                            out.push(point);
+                        }
+                    }
+                }
+                return out;
+            }
+            if distance > r1.abs() + r2.abs() + tol || distance < (r1.abs() - r2.abs()).abs() - tol
+            {
+                return out;
+            }
+            let x = (distance * distance + r1 * r1 - r2 * r2) / (2.0 * distance);
+            let height = (r1 * r1 - x * x).max(0.0).sqrt();
+            let base = [c1[0] + d[0] * x / distance, c1[1] + d[1] * x / distance];
+            let side = [-d[1] / distance * height, d[0] / distance * height];
+            let candidates = if height <= tol {
+                vec![base]
+            } else {
+                vec![
+                    [base[0] + side[0], base[1] + side[1]],
+                    [base[0] - side[0], base[1] - side[1]],
+                ]
+            };
+            for point in candidates {
+                if a.holds_angle_of(point, tol) && b.holds_angle_of(point, tol) {
+                    out.push(point);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Whether a source loop made of lines and arcs crosses itself: two of its curves, other than
+/// a curve and its own retrace, meet at a point that is not the endpoint they share where the
+/// loop passes from one to the other. This is how several selected regions arrive when the
+/// decoder merges them into one loop. A loop with any other kind of curve gives `false`.
+pub(super) fn merged_regions(members: &[Value], entities: &[&Value]) -> bool {
+    let mut pieces = Vec::with_capacity(members.len());
+    for member in members {
+        let Some(id) = member.get("entity").and_then(Value::as_str) else {
+            return false;
+        };
+        let Some(entity) = entities
+            .iter()
+            .find(|entity| entity.get("id").and_then(Value::as_str) == Some(id))
+        else {
+            return false;
+        };
+        let Some(piece) = Piece::of(entity) else {
+            return false;
+        };
+        pieces.push((id, piece));
+    }
+    let mut low = [f64::MAX; 2];
+    let mut high = [f64::MIN; 2];
+    for (_, piece) in &pieces {
+        let (centre, reach) = match *piece {
+            Piece::Line(..) => ([0.0; 2], 0.0),
+            Piece::Arc(c, r, ..) => (c, r.abs()),
+        };
+        let points: Vec<P2> = match *piece {
+            Piece::Line(a, b) => vec![a, b],
+            Piece::Arc(..) => vec![
+                [centre[0] - reach, centre[1] - reach],
+                [centre[0] + reach, centre[1] + reach],
+            ],
+        };
+        for [x, y] in points {
+            low = [low[0].min(x), low[1].min(y)];
+            high = [high[0].max(x), high[1].max(y)];
+        }
+    }
+    let tol = ((high[0] - low[0]).hypot(high[1] - low[1]) * 1e-9).max(1e-12);
+    let count = pieces.len();
+    for i in 0..count {
+        for j in i + 1..count {
+            let (Some(&(id_a, a)), Some(&(id_b, b))) = (pieces.get(i), pieces.get(j)) else {
+                return false;
+            };
+            if id_a == id_b {
+                continue;
+            }
+            let adjacent = j == i + 1 || (i == 0 && j + 1 == count);
+            let near = |p: P2, q: P2| super::sketch::distance(p, q) <= tol.max(1e-9);
+            for point in meetings(a, b, tol.max(1e-9)) {
+                let shared = adjacent
+                    && a.ends().iter().any(|e| near(*e, point))
+                    && b.ends().iter().any(|e| near(*e, point));
+                if !shared {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Split straight sketch curves at their intersections, then walk the left side of
 /// every directed edge. Each positive-area walk bounds an atomic region. The returned
 /// ids still name the original curves: SolidCraft matches their pieces on recompute.
@@ -964,6 +1212,52 @@ mod tests {
 
     fn member(id: &str) -> Value {
         json!({"entity": id, "reversed": false})
+    }
+
+    fn pieces_loop(ids: &[&str]) -> Vec<Value> {
+        ids.iter().map(|id| member(id)).collect()
+    }
+
+    #[test]
+    fn a_bow_tie_loop_is_several_regions_merged_and_a_square_is_not() {
+        let bow = [
+            line("a", [0.0, 0.0], [4.0, 4.0]),
+            line("b", [4.0, 4.0], [4.0, 0.0]),
+            line("c", [4.0, 0.0], [0.0, 4.0]),
+            line("d", [0.0, 4.0], [0.0, 0.0]),
+        ];
+        let bow: Vec<&Value> = bow.iter().collect();
+        assert!(merged_regions(&pieces_loop(&["a", "b", "c", "d"]), &bow));
+
+        let square = [
+            line("a", [0.0, 0.0], [4.0, 0.0]),
+            line("b", [4.0, 0.0], [4.0, 4.0]),
+            line("c", [4.0, 4.0], [0.0, 4.0]),
+            line("d", [0.0, 4.0], [0.0, 0.0]),
+            line("cross", [-1.0, 2.0], [5.0, 2.0]),
+        ];
+        let square: Vec<&Value> = square.iter().collect();
+        // A separate line across a square is not the loop crossing itself.
+        assert!(!merged_regions(
+            &pieces_loop(&["a", "b", "c", "d"]),
+            &square
+        ));
+    }
+
+    #[test]
+    fn arcs_that_cross_a_line_of_their_own_loop_are_found() {
+        let arc = json!({"id": "arc", "geometry": {"kind": "arc",
+            "center": {"u": 0.0, "v": 0.0}, "radius": 2.0,
+            "start_angle": 0.0, "end_angle": std::f64::consts::PI}});
+        let chord = line("chord", [-1.0, 1.0], [1.0, 1.0]);
+        let edge = line("edge", [-2.0, 0.0], [2.0, 0.0]);
+        let all = [arc, chord, edge];
+        let all: Vec<&Value> = all.iter().collect();
+        assert!(merged_regions(
+            &pieces_loop(&["arc", "edge", "chord"]),
+            &all
+        ));
+        assert!(!merged_regions(&pieces_loop(&["arc", "edge"]), &all));
     }
 
     #[test]

@@ -425,8 +425,18 @@ fn split_loop(
         })
         .collect();
     let rings = super::crossing::split(members, &entities)
-        .ok_or("a profile crossed by its own sketch's curves is not mapped yet")?;
+        .ok_or_else(|| crossed_message(members, &entities))?;
     mapped.boundaries(rings)
+}
+
+/// Why a crossed profile is refused: its own loop crosses itself, or other curves cross it.
+fn crossed_message(members: &[Value], entities: &[&Value]) -> String {
+    if super::crossing::merged_regions(members, entities) {
+        "its profile is several selected regions merged into one self-crossing loop; this is not mapped yet"
+    } else {
+        "a profile crossed by its own sketch's curves is not mapped yet"
+    }
+    .to_owned()
 }
 
 /// Profiles whose outer loops are these curve loops.
@@ -534,10 +544,13 @@ fn regions(
                 let index = region.get("outer").unwrap_or(&Value::Null);
                 if needs_split(ctx, sketch, index, &outer) {
                     if !holes.is_empty() {
-                        return Err(
-                            "a profile crossed by its own sketch's curves is not mapped yet"
-                                .to_owned(),
-                        );
+                        return Err(source_members(ctx, sketch, index).map_or_else(
+                            |_| {
+                                "a profile crossed by its own sketch's curves is not mapped yet"
+                                    .to_owned()
+                            },
+                            |members| crossed_message(members, &sketch_entities(ctx, sketch)),
+                        ));
                     }
                     trimmed = true;
                     outers.extend(split_loop(ctx, sketch, index, mapped)?);
