@@ -23,9 +23,7 @@ name: Release builds
 # a cache another run could have written.
 #   - a release-candidate tag `v*-rc.*` (the plan job first fails if the tag's X.Y.Z differs from
 #     Cargo.toml's version; the dry-run tags `v0.0.0-rc.dryrun*` skip that check);
-#   - a run started by hand on any branch (`gh workflow run release-build.yml --ref <branch>`), and
-#     a call from release.yml (only its explicit `build_if_missing` run, which may name only a
-#     release tag);
+#   - a run started by hand on any branch (`gh workflow run release-build.yml --ref <branch>`);
 #   - a pull request that changes the packaging (the paths in the `plan` job; for Cargo.toml,
 #     anything but the version lines), or carries the `release-build` label (the label starts
 #     the run when it is added). Other pull requests, and pushes to main, get the debug build and
@@ -36,12 +34,6 @@ on:
   push:
     tags: ["v*-rc.*"]
   workflow_dispatch:
-  workflow_call:
-    inputs:
-      ref:
-        description: "The release tag to build, refs/tags/v... (empty: the ref of the caller)"
-        type: string
-        default: ""
   pull_request:
     types: [opened, synchronize, reopened, labeled]
 
@@ -69,20 +61,9 @@ jobs:
     outputs:
       full: ${{ steps.plan.outputs.full }}
     steps:
-      # A caller may only name a release tag; the build never checks out another ref.
-      - name: Check the requested ref
-        if: inputs.ref != ''
-        env:
-          REF: ${{ inputs.ref }}
-        run: |
-          case "$REF" in
-            refs/tags/v[0-9]*) echo "Building $REF." ;;
-            *) echo "::error::Only a release tag (refs/tags/v...) can be built here, not $REF."; exit 1 ;;
-          esac
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          ref: ${{ inputs.ref }}
       # The candidate carries the final version: tag vX.Y.Z-rc.N must be the Cargo.toml version.
       - name: Check the candidate tag against Cargo.toml
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
@@ -183,8 +164,6 @@ jobs:
             pkg-config python3 libx11-dev libxi-dev libxcursor-dev libxrandr-dev \
             libxkbcommon-dev libwayland-dev libgl1-mesa-dev
       - uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.ref }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -269,8 +248,6 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.ref }}
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -299,8 +276,6 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.ref }}
       - uses: actions/download-artifact@v8
         with:
           pattern: macos-archive-*
@@ -338,8 +313,6 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.ref }}
       - uses: actions/download-artifact@v8
         with:
           pattern: dutchman-*-unknown-linux-gnu.tar.gz

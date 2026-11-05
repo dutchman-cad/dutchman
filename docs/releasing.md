@@ -87,9 +87,9 @@ In short: bump pull request, notes pull request, `vX.Y.Z-rc.1`, fixes and `rc.2`
 the chosen candidate's commit, draft in about five minutes, publish, fold the CHANGELOG.
 
 If a release cannot be drafted because its candidate files are gone (they expire after 30
-days) or the candidate run cannot be used, tag a new candidate on the commit. As a last resort,
-`gh workflow run release.yml -f tag=vX.Y.Z -f build_if_missing=true` builds the release in that
-run instead; nothing does this by itself.
+days) or the candidate run cannot be used, tag a new candidate on the commit, wait for it to
+pass, then run `gh workflow run release.yml -f tag=vX.Y.Z`. The release workflow never builds:
+a release always ships a candidate's tested files.
 
 ### Release candidates
 
