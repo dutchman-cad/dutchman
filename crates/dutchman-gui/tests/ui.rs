@@ -3409,6 +3409,7 @@ fn fit_screenshots() {
     }
 }
 
+#[cfg(feature = "test-support")]
 #[test]
 #[ignore = "renders the SolidCraft version window with a GPU; set DUTCHMAN_GUI_SCREENSHOTS"]
 fn solidcraft_window_screenshots() {
