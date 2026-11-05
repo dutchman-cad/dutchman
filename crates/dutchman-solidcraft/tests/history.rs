@@ -3426,10 +3426,13 @@ fn unsupported_hole_forms_have_specific_reasons() {
             );
             assert!(history_line(&report)
                 .contains("SolidCraft holes take a drill point only on a plain drilled hole"));
-            // Later SolidCraft keeps the entry form and its drill point.
+            // SolidCraft 0.22.1 and later keep the entry form and its drill point. Name the
+            // version: the default target follows the installed SolidCraft, which can be older.
             let (_, report) = convert(
                 &model,
-                &SolidCraftWriter::new().verification(Verification::Off),
+                &SolidCraftWriter::new()
+                    .verification(Verification::Off)
+                    .target_version(Some("0.22.1".parse().unwrap())),
             );
             assert!(
                 !history_line(&report).contains("drill point"),
