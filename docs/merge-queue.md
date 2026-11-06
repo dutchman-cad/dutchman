@@ -56,7 +56,7 @@ gh api repos/dutchman-cad/dutchman/rulesets -X POST --input ruleset.json
         "min_entries_to_merge": 1,
         "max_entries_to_merge": 5,
         "min_entries_to_merge_wait_minutes": 5,
-        "check_response_timeout_minutes": 120
+        "check_response_timeout_minutes": 180
       }
     },
     {
