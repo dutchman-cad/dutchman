@@ -616,6 +616,11 @@ fn blocked(files: &[File], scrub: &Scrubber) -> Value {
                 cause.fields.insert("kind".to_owned(), json!(kind));
                 cause.fields.insert("reason".to_owned(), json!(reason));
                 cause.fields.insert("stage".to_owned(), json!("map"));
+                for key in ["source", "category", "upstream"] {
+                    if let Some(value) = feature.get(key) {
+                        cause.fields.insert(key.to_owned(), value.clone());
+                    }
+                }
             }
             if let Some(variant) = feature.get("variant").and_then(Value::as_str) {
                 let ordinal = feature.get("ordinal").and_then(Value::as_u64);

@@ -91,6 +91,15 @@ A `.sc` design is a ZIP archive. `document.json` holds the design (its features,
 parameters) and `blobs/*.step` the imported shapes. Any ZIP tool opens it, which shows what
 a design holds without opening SolidCraft.
 
+## "SolidCraft refused feature ..."
+
+The history stopped because SolidCraft itself would not rebuild that feature; it is not a
+Dutchman mapping limit. The rest of the model is kept as the imported shape. The report's
+`history.features[]` entry carries `source: "solidcraft"` and a `category`. For
+`fillet-overflows-neighbouring-face` (the blend is larger than the neighbouring faces) the
+`upstream` link is https://github.com/tangency-labs/solidcraft/issues/4782. Shrinking that fillet
+in the source usually avoids it.
+
 ## Send the file privately
 
 If a file opens in the app that made it but Dutchman can't convert it, it's a bug in Dutchman,
