@@ -298,6 +298,8 @@ pub struct FeatureOutcome {
     pub ordinal: Option<u64>,
     /// A short description of its form (`extrude, to a plane`), without names or sizes.
     pub variant: Option<String>,
+    /// It mapped, but its profile region was not checked against the source.
+    pub profile_unverified: bool,
 }
 
 /// Whether a source feature mapped.
@@ -354,6 +356,23 @@ impl Report {
             severity: Severity::Dropped,
             subject: "appearance".to_owned(),
             code: Some(cause.code().to_owned()),
+            detail: detail.into(),
+            stage: Stage::Map,
+        });
+    }
+
+    /// Records a loss in Dutchman's own mapping under a stable `code`.
+    pub fn push_coded(
+        &mut self,
+        severity: Severity,
+        subject: impl Into<String>,
+        code: &str,
+        detail: impl Into<String>,
+    ) {
+        self.losses.push(Loss {
+            severity,
+            subject: subject.into(),
+            code: Some(code.to_owned()),
             detail: detail.into(),
             stage: Stage::Map,
         });

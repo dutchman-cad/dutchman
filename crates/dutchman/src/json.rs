@@ -617,7 +617,7 @@ fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
         .features
         .iter()
         .map(|feature| {
-            json!({
+            let mut row = json!({
                 "name": feature.name,
                 "kind": feature.kind,
                 "status": match feature.status {
@@ -629,7 +629,11 @@ fn outcome_fields(outcome: &Outcome) -> Map<String, Value> {
                 "reason": feature.reason,
                 "ordinal": feature.ordinal,
                 "variant": feature.variant,
-            })
+            });
+            if let (true, Some(fields)) = (feature.profile_unverified, row.as_object_mut()) {
+                fields.insert("profile_unverified".to_owned(), json!(true));
+            }
+            row
         })
         .collect();
     let counted = |f: &&dutchman_core::FeatureOutcome| f.status != FeatureStatus::LeftOut;
@@ -1342,6 +1346,7 @@ mod tests {
             reason: None,
             ordinal: None,
             variant: None,
+            profile_unverified: false,
         }
     }
 
