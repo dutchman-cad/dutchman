@@ -36,6 +36,11 @@ on:
   workflow_dispatch:
   pull_request:
     types: [opened, synchronize, reopened, labeled]
+  # A merge queue group is judged like a pull request: the full builds run only when it changes
+  # the packaging (compared with the group's base commit). The release-build label cannot be read
+  # in the queue; a pull request that carries it has already run the full builds.
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read
@@ -54,7 +59,7 @@ env:
   DUTCHMAN_RELEASE_BUILD: "1"
 
 jobs:
-  # Whether this run builds. Always true except for a pull request, which builds when it carries
+  # Whether this run builds. Always true except for a pull request or merge group, which builds when it carries
   # the `release-build` label or changes a packaging path.
   plan:
     runs-on: ubuntu-latest
@@ -88,12 +93,12 @@ jobs:
       - id: plan
         env:
           EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           LABELLED: ${{ contains(github.event.pull_request.labels.*.name, 'release-build') }}
         run: |
-          if [ "$EVENT" != pull_request ]; then
+          if [ "$EVENT" != pull_request ] && [ "$EVENT" != merge_group ]; then
             echo "full=true" >> "$GITHUB_OUTPUT"
-            echo "Not a pull request: full release builds."
+            echo "Not a pull request or merge group: full release builds."
             exit 0
           fi
           if [ "$LABELLED" = true ]; then

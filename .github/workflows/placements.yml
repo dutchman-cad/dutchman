@@ -25,6 +25,10 @@ on:
       - "corpus/placements/**"
       - "scripts/placements.py"
       - ".github/workflows/placements.yml"
+  # A merge queue group has no path filter: the changes job below skips the build and the
+  # checks unless this group touches the same paths, judged against the group's base commit.
+  merge_group:
+    types: [checks_requested]
   workflow_dispatch:
 
 permissions:
@@ -42,6 +46,7 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
+      run: ${{ steps.diff.outputs.run }}
       voron: ${{ steps.diff.outputs.voron }}
     steps:
       - uses: actions/checkout@v7
@@ -50,11 +55,22 @@ jobs:
       - id: diff
         env:
           EVENT: ${{ github.event_name }}
-          BASE: ${{ github.event.pull_request.base.sha }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
         run: |
-          # The large assembly: by hand always; on a pull request when the lockfile, the
-          # converter's core or its golden changed.
-          if [ "$EVENT" != pull_request ] || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+          echo "run=true" >> "$GITHUB_OUTPUT"
+          # A merge queue group runs the checks only for the paths that start them on a pull
+          # request (the workflow's path filter does not apply to the queue).
+          if [ "$EVENT" = merge_group ] && git cat-file -e "$BASE^{commit}" 2>/dev/null \
+            && ! git diff --name-only "$BASE" HEAD \
+            | grep -qE '^(crates/|Cargo\.(toml|lock)$|corpus/placements/|scripts/placements\.py$|\.github/workflows/placements\.yml$)'; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "voron=false" >> "$GITHUB_OUTPUT"
+            echo "No placement-relevant change in this merge group: skipped."
+            exit 0
+          fi
+          # The large assembly: by hand always; on a pull request or merge group when the
+          # lockfile, the converter's core or its golden changed.
+          if { [ "$EVENT" != pull_request ] && [ "$EVENT" != merge_group ]; } || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
             echo "voron=true" >> "$GITHUB_OUTPUT"
           elif git diff --name-only "$BASE" HEAD \
             | grep -qE '^(Cargo\.lock$|crates/dutchman-core/|corpus/placements/voron\.json$|scripts/placements\.py$|\.github/workflows/placements\.yml$)'; then
@@ -64,6 +80,8 @@ jobs:
           fi
 
   build:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -73,7 +91,7 @@ jobs:
         with:
           shared-key: placements-release
           cache-on-failure: true
-          # Only main writes the shared cache; pull requests restore it.
+          # Only main writes the shared cache; pull requests and merge queue groups restore it.
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build Dutchman
         run: >

@@ -10,6 +10,10 @@ on:
     paths: [Dockerfile, .dockerignore, .github/workflows/docker.yml]
   pull_request:
     paths: [Dockerfile, .dockerignore, .github/workflows/docker.yml]
+  # A merge queue group has no path filter: the changes job skips the build unless this group
+  # touches the same files, judged against the group's base commit.
+  merge_group:
+    types: [checks_requested]
   schedule:
     - cron: "30 6 * * *"
   workflow_dispatch:
@@ -23,7 +27,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.diff.outputs.run }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.merge_group.base_sha }}
+        run: |
+          if [ "$EVENT" = merge_group ] && git cat-file -e "$BASE^{commit}" 2>/dev/null \
+            && ! git diff --name-only "$BASE" HEAD \
+            | grep -qE '^(Dockerfile$|\.dockerignore$|\.github/workflows/docker\.yml$)'; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "No Docker change in this merge group: skipped."
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
   docker:
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -39,7 +67,8 @@ jobs:
           build-args: |
             CARGO_BUILD_JOBS=2
           cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # A merge queue group reads the layer cache and never writes it.
+          cache-to: ${{ github.event_name == 'merge_group' && '' || 'type=gha,mode=max' }}
       - name: Convert a fixture in the image
         run: |
           fixtures="$PWD/crates/dutchman-core/tests/fixtures"

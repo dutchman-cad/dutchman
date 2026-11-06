@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # The merge queue (docs/merge-queue.md) tests each group on a temporary branch: judged like a
+  # pull request, against the commit the group is based on.
+  merge_group:
+    types: [checks_requested]
   # Started by hand, and by the SolidCraft window workflow for the pull request it opens (pull
   # requests opened with the default token do not start workflows). Judged like a pull request.
   workflow_dispatch:
@@ -23,7 +27,7 @@ env:
 
 # Rust build caches (Swatinem/rust-cache): every job names a shared-key per platform and profile,
 # so a pull request restores the cache main saved for the same job. Only pushes to main (and
-# runs started by hand on main) save, so pull requests never evict each other's or main's cache.
+# runs started by hand on main) save, so pull requests and merge queue groups never evict each other's or main's cache.
 
 jobs:
   # Whether the change touches Rust code, which the macOS tests (macOS runners are scarce) wait on;
@@ -42,7 +46,7 @@ jobs:
           fetch-depth: 0
       - id: diff
         env:
-          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
         run: |
           if [ "${{ github.event_name }}" = workflow_dispatch ]; then
             BASE=$(git merge-base origin/main HEAD)
