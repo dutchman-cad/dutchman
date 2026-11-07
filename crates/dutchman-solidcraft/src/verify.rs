@@ -1216,6 +1216,11 @@ pub(crate) fn evaluate_json(
                     format!("{} timed out after {} s", cli.display(), timeout.as_secs())
                 }));
             }
+            Ok(None) if check_must_stop() => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(CHECK_STOPPED_FOR_MEMORY.to_owned());
+            }
             Ok(None) => std::thread::sleep(POLL),
             Err(err) => {
                 return Err(blocked_failure(cli)
@@ -1558,6 +1563,53 @@ pub(crate) fn spawn(
     }
 }
 
+/// Free memory below which a SolidCraft check stops and the design is kept unverified. Above
+/// the floor where a conversion itself stops, so a built design is never lost to its check.
+const CHECK_MEMORY_FLOOR: u64 = 3 << 29;
+
+/// Why a check stopped for memory.
+const CHECK_STOPPED_FOR_MEMORY: &str =
+    "History check stopped: the computer was running low on memory";
+
+/// Set once a check stops for memory: the checks after it would only run out again.
+static CHECKS_STOPPED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether checks watch memory at all: on unless memory checks are turned off for the run.
+static CHECKS_WATCH_MEMORY: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Turns the memory watch on running checks on or off, for this run.
+pub fn watch_check_memory(on: bool) {
+    CHECKS_WATCH_MEMORY.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether this much free memory is too little for a check to carry on.
+fn below_check_floor(available: Option<u64>) -> bool {
+    available.is_some_and(|free| free < CHECK_MEMORY_FLOOR)
+}
+
+/// Whether a running check should stop for memory, measuring it now.
+fn check_must_stop() -> bool {
+    use std::sync::atomic::Ordering;
+    #[cfg(debug_assertions)]
+    {
+        if std::env::var_os("DUTCHMAN_TEST_CHECK_LOW_MEMORY").is_some() {
+            return CHECKS_WATCH_MEMORY.load(Ordering::Relaxed);
+        }
+        // A test's made-up free memory is for the decisions before a check, not during one.
+        if std::env::var_os("DUTCHMAN_TEST_MEMORY").is_some() {
+            return false;
+        }
+    }
+    if !CHECKS_WATCH_MEMORY.load(Ordering::Relaxed) {
+        return false;
+    }
+    if below_check_floor(dutchman_core::available_memory()) {
+        CHECKS_STOPPED.store(true, Ordering::Relaxed);
+    }
+    CHECKS_STOPPED.load(Ordering::Relaxed)
+}
+
 /// Waits for `child` until `deadline`, killing it then.
 fn wait(
     child: &mut std::process::Child,
@@ -1573,6 +1625,11 @@ fn wait(
                 return Err(
                     blocked_failure(cli).unwrap_or_else(|| format!("{} timed out", cli.display()))
                 );
+            }
+            Ok(None) if check_must_stop() => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(CHECK_STOPPED_FOR_MEMORY.to_owned());
             }
             Ok(None) => std::thread::sleep(POLL),
             Err(err) => {
@@ -2351,6 +2408,14 @@ mod cli_tests {
             run(&script, DEFAULT_TIMEOUT),
             Outcome::Unverified(_)
         ));
+    }
+
+    #[test]
+    fn a_check_stops_above_the_floor_where_a_conversion_stops() {
+        assert!(below_check_floor(Some(CHECK_MEMORY_FLOOR - 1)));
+        assert!(!below_check_floor(Some(CHECK_MEMORY_FLOOR)));
+        assert!(!below_check_floor(None));
+        const { assert!(CHECK_MEMORY_FLOOR > 1 << 30) };
     }
 
     #[test]
