@@ -26,7 +26,7 @@ dutchman-solidcraft.workspace = true
 eframe = { version = "0.33", features = ["persistence"] }
 egui_extras = { version = "0.33", default-features = false, features = ["svg"] }
 pollster = "0.4"
-ron = "0.11"
+ron = "0.12"
 serde = { version = "1", features = ["derive"] }
 rfd = "0.15"
 serde_json.workspace = true
@@ -38,7 +38,7 @@ roxmltree.workspace = true
 ureq = { version = "2.12", default-features = false, features = ["tls"] }
 
 [dev-dependencies]
-ron = "0.11"
+ron = "0.12"
 egui_kittest = { version = "0.33", features = ["eframe", "wgpu"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 
