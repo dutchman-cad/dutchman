@@ -3,9 +3,12 @@
 ## What maps
 
 A part that holds an imported solid becomes a base-body Import feature at its place in the
-timeline. Later features keep editable history when they map. Stored geometry has no recipe
-to lose: the report says, at Info level, “This part holds an imported solid; there is no
-feature history to bring over”. A part made only of stored geometry is geometry without
+timeline. When cadmpeg supplies a Base Feature's body as it stood at that step,
+Dutchman uses that earlier shape, so later moves, blends, joins and cuts keep their
+editable features when they map. If that earlier shape is unavailable, a later move
+or blend still stops history conversion. Stored geometry has no recipe to lose: the
+report says, at Info level, “This part holds an imported solid; there is no feature
+history to bring over”. A part made only of stored geometry is geometry without
 history, with no flattened-history warning.
 
 - When every feature in a design's history maps onto SolidCraft, the SolidCraft design keeps

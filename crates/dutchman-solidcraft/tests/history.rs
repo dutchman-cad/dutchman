@@ -11338,6 +11338,65 @@ fn face_move(motion: Value) -> Model {
 }
 
 #[test]
+fn a_base_snapshot_keeps_the_later_face_move() {
+    for snapshot in [true, false] {
+        let mut model = face_move(json!({"kind": "offset", "distance": 2.5}));
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let body = wire["model"]["bodies"][0]["id"].clone();
+        let features = wire["model"]["features"].as_array_mut().unwrap();
+        features.retain(|f| f["ordinal"] != 0);
+        let base = features.iter_mut().find(|f| f["ordinal"] == 1).unwrap();
+        base["name"] = json!("Base Feature 1");
+        base["definition"] = json!({"definition": "base_feature", "bodies": {
+            "kind": "resolved", "value": {"bodies": [body], "native": "synthetic base"}}});
+        let producer = base["id"].clone();
+        let moved = features.iter_mut().find(|f| f["ordinal"] == 2).unwrap();
+        moved["name"] = json!("Move 1");
+        moved["outputs"] = json!([body]);
+        if snapshot {
+            let example = cadmpeg_ir::examples::unit_cube_with_history_body().unwrap();
+            let mut nest = serde_json::to_value(&example.model.history_bodies[0]).unwrap();
+            nest["produced_by"] = producer;
+            wire["model"]["history_bodies"] = json!([nest]);
+        }
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        if snapshot {
+            assert!(
+                document["features"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|f| f["type"] == "offset_face"),
+                "{}",
+                history_line(&report)
+            );
+            let base = report
+                .outcome()
+                .unwrap()
+                .features
+                .iter()
+                .find(|f| f.name.as_deref() == Some("Base Feature 1"))
+                .unwrap();
+            assert!(!base.final_body);
+            assert!(!base.reapplied);
+            assert!(document["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|f| f.get("_history_bodies").is_none()));
+        } else {
+            assert!(history_line(&report).contains(
+                "its body is stored only as the design ends, and the later feature \"Move 1\" changes it"),
+                "{}", history_line(&report));
+        }
+    }
+}
+
+#[test]
 fn a_face_moved_along_its_normal_becomes_an_offset_face_at_a_point_inside_it() {
     let model = face_move(json!({"kind": "offset", "distance": 2.5}));
     let (document, report) = convert(

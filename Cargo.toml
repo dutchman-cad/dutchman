@@ -21,14 +21,14 @@ dutchman-freecad = { path = "crates/dutchman-freecad", version = "0.2.1", defaul
 clap = { version = "4.5", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 dutchman-pilot = { git = "https://github.com/dutchman-cad/pilot", rev = "a91cadeeaadf22b343e936c38f9dd4fc007dcfc3" }
 aho-corasick = "1.1"
-# cadmpeg at one tested commit of its main branch, the same for every cadmpeg crate. Move it
-# after a batch of cadmpeg merges (docs/releasing.md); the nightly build takes cadmpeg's main.
-cadmpeg-codec-f3d = { git = "https://github.com/cadmpeg/cadmpeg", rev = "651fe819fd5670ba69910911be1d29d022456a1a" }
-cadmpeg-core = { git = "https://github.com/cadmpeg/cadmpeg", rev = "651fe819fd5670ba69910911be1d29d022456a1a" }
-cadmpeg-ir = { git = "https://github.com/cadmpeg/cadmpeg", rev = "651fe819fd5670ba69910911be1d29d022456a1a" }
+# cadmpeg history-body support, rebased onto the tested main pin, shared by every crate.
+# The nightly build takes cadmpeg's main.
+cadmpeg-codec-f3d = { git = "https://github.com/raykholo/cadmpeg", rev = "17cd771142584243776f6d4fedbfb9ed081158ba" }
+cadmpeg-core = { git = "https://github.com/raykholo/cadmpeg", rev = "17cd771142584243776f6d4fedbfb9ed081158ba" }
+cadmpeg-ir = { git = "https://github.com/raykholo/cadmpeg", rev = "17cd771142584243776f6d4fedbfb9ed081158ba" }
 # Each crate turns on the cadmpeg codecs it needs: dutchman-core per input format (its
 # `formats` feature for all of them), dutchman-solidcraft the STEP writer.
-cadmpeg-registry = { git = "https://github.com/cadmpeg/cadmpeg", rev = "651fe819fd5670ba69910911be1d29d022456a1a", default-features = false }
+cadmpeg-registry = { git = "https://github.com/raykholo/cadmpeg", rev = "17cd771142584243776f6d4fedbfb9ed081158ba", default-features = false }
 getrandom = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

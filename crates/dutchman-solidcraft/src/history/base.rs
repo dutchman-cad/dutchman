@@ -2,11 +2,8 @@
 //! them (modelled directly, or imported), as SolidCraft Import features at their place in the
 //! timeline, so the features after them keep their history.
 //!
-//! The bodies are the design's as it ends, so a base body a later feature changes is imported
-//! changed already. A later join, cut or intersection re-applies to it without changing the
-//! shape: those features are kept but marked as re-applied, not rebuilt, and the base feature as
-//! holding the final body. Any other later change (a move, a blend, a deleted face) would apply
-//! twice, so such a base feature is refused, naming the feature that changes its body.
+//! Earlier body nests, when supplied, let later changes rebuild from the base step.
+//! Otherwise final bodies can only be followed by operations that safely re-apply.
 
 use std::collections::BTreeSet;
 
@@ -24,6 +21,8 @@ pub(crate) const STORED_SOLID: &str =
 
 /// Where a mapped base feature keeps the source bodies it imports, until they are restated.
 const BODIES: &str = "_bodies";
+/// History-body ids in the same order as BODIES.
+const HISTORY_BODIES: &str = "_history_bodies";
 /// Where it keeps their STEP text, until the text is stored in the container.
 const STEP: &str = "_step";
 
@@ -52,6 +51,9 @@ pub(super) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         .unwrap_or_default();
     let later = later_changes(feature, &ids, ctx);
     if let Some(twice) = later.iter().find(|row| !reapplies(row)) {
+        if let Some(history) = history_bodies(feature, &ids, ctx) {
+            return import_from(feature, &ids, Some(&history), ctx);
+        }
         return Err(format!(
             "its body is stored only as the design ends, and the later feature \"{}\" \
              changes it",
@@ -129,7 +131,60 @@ pub(super) fn stored(
     Ok(mapped)
 }
 
+/// Match only nests produced by this feature, refusing ambiguous or incomplete pairs.
+fn history_bodies(feature: &Value, ids: &[&str], ctx: &Context) -> Option<Vec<String>> {
+    let producer = feature.get("id")?.as_str()?;
+    let candidates: Vec<_> = ctx
+        .source?
+        .ir
+        .model
+        .history_bodies
+        .iter()
+        .filter(|body| {
+            body.produced_by
+                .as_ref()
+                .is_some_and(|id| id.as_str() == producer)
+        })
+        .collect();
+    let key = |id: &str| id.rsplit_once('#').map(|(_, key)| key.to_owned());
+    let mut used = BTreeSet::new();
+    ids.iter()
+        .map(|id| {
+            let matching: Vec<_> = candidates
+                .iter()
+                .filter(|body| {
+                    (ids.len() == 1 && candidates.len() == 1)
+                        || key(id).is_some_and(|key| {
+                            body.topology
+                                .body
+                                .id
+                                .as_str()
+                                .rsplit_once('#')
+                                .and_then(|(_, tail)| tail.split_once('-'))
+                                .is_some_and(|(_, source)| source == key)
+                        })
+                })
+                .collect();
+            if matching.len() != 1 {
+                return None;
+            }
+            let body = matching.first()?;
+            used.insert(body.id.as_str())
+                .then(|| body.id.as_str().to_owned())
+        })
+        .collect()
+}
+
 fn import(feature: &Value, ids: &[&str], ctx: &mut Context) -> Result<Value, String> {
+    import_from(feature, ids, None, ctx)
+}
+
+fn import_from(
+    feature: &Value,
+    ids: &[&str],
+    history: Option<&[String]>,
+    ctx: &mut Context,
+) -> Result<Value, String> {
     if ids.is_empty() {
         return Err("it holds no bodies".to_owned());
     }
@@ -141,11 +196,48 @@ fn import(feature: &Value, ids: &[&str], ctx: &mut Context) -> Result<Value, Str
     // Validate the emitted sequence before committing body names to later selections
     // or colours. A colour correspondence gap must not discard usable history.
     let model = ctx.source.ok_or("its source geometry is not available")?;
-    let part = dutchman_core::with_bodies(model, ids, name.clone())
-        .map_err(|why| format!("base feature \"{name}\": {why}"))?;
+    let part = match history {
+        Some(history) => dutchman_core::with_history_bodies(
+            model,
+            &ids.iter()
+                .copied()
+                .zip(history.iter().map(String::as_str))
+                .collect::<Vec<_>>(),
+            name.clone(),
+        ),
+        None => dutchman_core::with_bodies(model, ids, name.clone()),
+    }
+    .map_err(|why| format!("base feature \"{name}\": {why}"))?;
     let text = step::restate(&part, &mut Report::default())
         .map_err(|err| format!("base feature \"{name}\": {err}"))?;
-    let names = super::faces::import_names(ctx, ids, Some(&text));
+    let names = if history.is_some() {
+        // Name the actual emitted regions. Final faces have no proven correspondence
+        // with these earlier faces, so do not register final-region appearance targets.
+        let wire = serde_json::to_value(&part.ir.model).map_err(|err| err.to_string())?;
+        let mut earlier = Context::new(&wire);
+        earlier.source = Some(&part);
+        earlier.named_bodies.clone_from(&ctx.named_bodies);
+        let nest_ids: Vec<_> = part
+            .ir
+            .model
+            .bodies
+            .iter()
+            .map(|body| body.id.as_str())
+            .collect();
+        let names = super::faces::import_names(&mut earlier, &nest_ids, Some(&text));
+        for (nest, name) in earlier.named_bodies.iter().skip(ctx.named_bodies.len()) {
+            if let Some(index) = nest_ids.iter().position(|id| *id == nest) {
+                if let Some(final_id) = ids.get(index) {
+                    ctx.named_bodies
+                        .push(((*final_id).to_owned(), name.clone()));
+                }
+            }
+        }
+        ctx.default_bodies.extend(earlier.default_bodies);
+        names
+    } else {
+        super::faces::import_names(ctx, ids, Some(&text))
+    };
     let mut mapped = json!({
         "id": id,
         "name": name,
@@ -156,6 +248,9 @@ fn import(feature: &Value, ids: &[&str], ctx: &mut Context) -> Result<Value, Str
         BODIES: ids,
         STEP: text,
     });
+    if let (Some(history), Some(fields)) = (history, mapped.as_object_mut()) {
+        fields.insert(HISTORY_BODIES.to_owned(), json!(history));
+    }
     if let (false, Some(fields)) = (names.is_empty(), mapped.as_object_mut()) {
         fields.insert("body_names".to_owned(), json!(names));
     }
@@ -184,8 +279,22 @@ pub(crate) fn restate(history: &mut History, model: &Model) -> Result<(), String
             .and_then(Value::as_str)
             .unwrap_or("Base Feature")
             .to_owned();
-        let part = dutchman_core::with_bodies(model, &ids, title.clone())
-            .map_err(|why| format!("base feature \"{title}\": {why}"))?;
+        let part = if let Some(history) = fields.get(HISTORY_BODIES).and_then(Value::as_array) {
+            let pairs: Vec<_> = ids
+                .iter()
+                .copied()
+                .zip(history.iter().filter_map(Value::as_str))
+                .collect();
+            if pairs.len() != ids.len() {
+                return Err(format!(
+                    "base feature \"{title}\": its history bodies are not available"
+                ));
+            }
+            dutchman_core::with_history_bodies(model, &pairs, title.clone())
+        } else {
+            dutchman_core::with_bodies(model, &ids, title.clone())
+        }
+        .map_err(|why| format!("base feature \"{title}\": {why}"))?;
         let text = step::restate(&part, &mut Report::default())
             .map_err(|err| format!("base feature \"{title}\": {err}"))?;
         if fields
@@ -216,6 +325,9 @@ pub(crate) fn whole(history: &History, model: &Model) -> bool {
         match feature.get("type").and_then(Value::as_str) {
             Some("sketch") => {}
             Some("import") => {
+                if feature.get(HISTORY_BODIES).is_some() {
+                    return false;
+                }
                 let Some(bodies) = feature.get(BODIES).and_then(Value::as_array) else {
                     return false;
                 };
@@ -244,6 +356,7 @@ pub(crate) fn store(
             continue;
         };
         fields.remove(BODIES);
+        fields.remove(HISTORY_BODIES);
         if let Some(Value::String(text)) = fields.remove(STEP) {
             let blob = container.add_step(text.as_bytes())?;
             fields.insert("step_blob".to_owned(), Value::String(blob));
@@ -277,6 +390,117 @@ mod tests {
             "its body is stored only as the design ends, and the later feature \"Move 1\" changes it"
         );
         assert!(ctx.reapplied.is_empty());
+    }
+
+    fn snapshot_source() -> Model {
+        let mut ir = cadmpeg_ir::examples::unit_cube_with_history_body().unwrap();
+        ir.model.history_bodies[0].produced_by =
+            Some(serde_json::from_value(json!("test:base:feature#1")).unwrap());
+        // Distinguish the nest from final geometry in the actual STEP output.
+        let mut wire = serde_json::to_value(&ir).unwrap();
+        for point in wire["model"]["points"].as_array_mut().unwrap() {
+            point["position"]["x"] = json!(point["position"]["x"].as_f64().unwrap() + 100.0);
+        }
+        ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        Model {
+            ir,
+            fidelity: None,
+            name: "Box".to_owned(),
+            source_file: None,
+            assembly: None,
+            source_step: None,
+        }
+    }
+
+    #[test]
+    fn base_snapshot_rebuilds_before_later_changes_and_survives_restatement() {
+        let source = snapshot_source();
+        let body = source.ir.model.bodies[0].id.as_str();
+        let feature = json!({"id": "test:base:feature#1", "name": "Base Feature 1", "ordinal": 0});
+        let definition = json!({"bodies": {"kind": "resolved", "value": {"bodies": [body]}}});
+        let wire = json!({"features": [feature,
+            {"id": "join", "kind": "extrude", "ordinal": 1, "outputs": [body],
+                "definition": {"definition": "extrude", "op": "join"}},
+            {"id": "move", "name": "Move 1", "kind": "move_body", "ordinal": 2,
+                "outputs": [body], "definition": {"definition": "move_body"}}]});
+        let mut ctx = Context::new(&wire);
+        ctx.source = Some(&source);
+        let mapped = map(&feature, &definition, &mut ctx).unwrap();
+        assert_eq!(mapped["type"], "import");
+        assert_eq!(
+            mapped["body_names"],
+            json!([source.ir.model.bodies[0].name.as_deref().unwrap()])
+        );
+        assert!(!ctx.final_body);
+        assert!(ctx.reapplied.is_empty(), "joins must rebuild too");
+        let expected = mapped[STEP].clone();
+        let final_part =
+            dutchman_core::with_bodies(&source, &[body], "Base Feature 1".to_owned()).unwrap();
+        let final_step = step::restate(&final_part, &mut Report::default()).unwrap();
+        assert_ne!(expected.as_str().unwrap(), final_step);
+        let mut history = History {
+            features: vec![mapped],
+            ..History::default()
+        };
+        assert!(!whole(&history, &source));
+        history.features[0].as_object_mut().unwrap().remove(STEP);
+        restate(&mut history, &source).unwrap();
+        assert_eq!(history.features[0][STEP], expected);
+        let mut container = Container::new(b"synthetic final STEP").unwrap();
+        store(&mut history.features, &mut container).unwrap();
+        assert!(history.features[0].get(HISTORY_BODIES).is_none());
+        assert!(history.features[0].get("step_blob").is_some());
+    }
+
+    #[test]
+    fn base_snapshots_match_keys_instead_of_arena_order() {
+        let mut source = snapshot_source();
+        let mut second = source.ir.model.history_bodies[0].clone();
+        source.ir.model.history_bodies[0].topology.body.id =
+            serde_json::from_value(json!("f3d:history-body:body#h0001-12")).unwrap();
+        second.id = serde_json::from_value(json!("f3d:history-body:nest#h0001-21")).unwrap();
+        second.topology.body.id =
+            serde_json::from_value(json!("f3d:history-body:body#h0001-21")).unwrap();
+        let first_id = source.ir.model.history_bodies[0].id.as_str().to_owned();
+        let second_id = second.id.as_str().to_owned();
+        source.ir.model.history_bodies.push(second);
+        let wire = json!({});
+        let mut ctx = Context::new(&wire);
+        ctx.source = Some(&source);
+        let feature = json!({"id": "test:base:feature#1"});
+        assert_eq!(
+            history_bodies(&feature, &["f3d:model:body#21", "f3d:model:body#12"], &ctx),
+            Some(vec![second_id, first_id])
+        );
+        assert!(
+            history_bodies(&feature, &["f3d:model:body#12", "f3d:model:body#99"], &ctx).is_none()
+        );
+        assert!(
+            history_bodies(&feature, &["f3d:model:body#12", "f3d:model:body#12"], &ctx).is_none()
+        );
+    }
+
+    #[test]
+    fn base_snapshot_requires_every_body_and_the_right_producer() {
+        let mut source = snapshot_source();
+        // Give the first body a matching source key; only the second nest is absent.
+        let nest = &mut source.ir.model.history_bodies[0].topology;
+        let old_id = nest.body.id.as_str().to_owned();
+        let text = serde_json::to_string(nest)
+            .unwrap()
+            .replace(&old_id, "f3d:history-body:body#h0001-0");
+        *nest = serde_json::from_str(&text).unwrap();
+        let body = source.ir.model.bodies[0].id.as_str();
+        let feature = json!({"id": "test:base:feature#1", "ordinal": 0});
+        let wire = json!({"features": [feature, {"name": "Move 1", "kind": "move_body",
+            "ordinal": 1, "outputs": [body]}]});
+        let mut ctx = Context::new(&wire);
+        ctx.source = Some(&source);
+        let definition =
+            json!({"bodies": {"kind": "resolved", "value": {"bodies": [body, "body#missing"]}}});
+        assert_eq!(map(&feature, &definition, &mut ctx).unwrap_err(),
+            "its body is stored only as the design ends, and the later feature \"Move 1\" changes it");
+        assert!(history_bodies(&json!({"id": "other"}), &[body], &ctx).is_none());
     }
 
     #[test]
