@@ -177,6 +177,9 @@ jobs:
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
+      # Two compile jobs at a time keep the build within the ARM runner's memory; with one per
+      # core it is shut down while compiling the desktop app and web crates.
+      CARGO_BUILD_JOBS: "2"
     steps:
       - name: Free disk space
         run: |
@@ -205,6 +208,9 @@ jobs:
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
+      # Two compile jobs at a time keep the build within the ARM runner's memory; with one per
+      # core it is shut down while compiling the desktop app and web crates.
+      CARGO_BUILD_JOBS: "2"
     steps:
       - name: Retry only after a runner shutdown
         env:
