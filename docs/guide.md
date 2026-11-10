@@ -254,7 +254,8 @@ Clamped sketch splines with nonuniform spacing or repeated interior knots conver
 of exact spline pieces, up to 200 pieces, instead of leaving out the sketch. Periodic
 splines are clamped first. Uniform splines stay one spline. Endpoints are shared, and
 profiles and sweep paths select the whole chain. Constraints that cannot apply to a chain
-are left out with an Info message; the solved geometry remains exact.
+are left out with an Info message; the solved geometry remains exact. A loft through such a
+chain is not mapped yet (more edges in a section would change the lofted surface).
 
 ## Open the result in SolidCraft
 

@@ -269,7 +269,8 @@ Weighted periodic splines with unequal weights are not supported yet because Sol
 control splines have no weights. Clamped splines with nonuniform spacing or repeated interior knots become chains of exact
 Bézier spline pieces, up to 200 pieces, sharing their endpoints. Uniform splines stay one
 spline. Profiles and sweep paths select the entire chain; constraints that cannot apply to
-a chain are left out with an Info message.
+a chain are left out with an Info message. A loft whose section or guide rail uses such a
+chain is not mapped yet: more edges in a section would make a different lofted surface.
 Selected multi-piece elliptical arcs, unbounded conics, other weighted splines,
 and text without solved outlines still prevent history replay.
 Additional coordinate, intersection, tangency, curvature, symmetry, and repeated-dimension
