@@ -4460,6 +4460,27 @@ mod tests {
     }
 
     #[test]
+    fn a_native_selection_of_the_same_sketch_does_not_stop_the_instance_check() {
+        let model = repeated_sketch_part([100.0, 10.0], selected_layout_profile());
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["features"].as_array_mut().unwrap().push(json!({
+            "id": "synthetic:model:feature#native", "ordinal": 2, "suppressed": false,
+            "product_definition": "f3d:model:component#block",
+            "definition": {"definition": "extrude", "profile": {"kind": "sketch_selection",
+                "value": {"sketch": "synthetic:model:sketch#layout", "selections": ["native"]}},
+                "direction": {"kind": "profile_normal"}, "start": {"kind": "profile_plane"},
+                "extent": {"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": 1.0}}},
+                "op": "join"}
+        }));
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        };
+        let part = slice_repeated_sketch(&model);
+        assert!(feature_ids(&part).contains(&"synthetic:model:feature#sketch".to_owned()));
+    }
+
+    #[test]
     fn a_component_without_its_sketch_keeps_no_history_of_it() {
         let assembly = local_assembly(&with_history(false)).unwrap().unwrap();
         assert!(assembly.parts[0].ir.model.sketches.is_empty());

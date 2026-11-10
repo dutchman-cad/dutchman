@@ -152,6 +152,9 @@ fn selections(
                             out.insert(id.as_str()?.to_owned());
                         }
                     }
+                    // A native selection names no curves to test; the other features'
+                    // profiles still have to fit, and the history stops at it anyway.
+                    "sketch_selection" => {}
                     _ => return None,
                 }
                 return Some(());
