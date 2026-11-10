@@ -402,6 +402,55 @@ pub fn with_bodies(model: &Model, bodies: &[&str], name: String) -> Result<Model
     assembly::geometry_only(model, &document, bodies, name)
 }
 
+/// A standalone model of history-body nests, paired with their final body ids for names.
+/// No final topology, native fidelity, or appearance targets are copied into this model.
+pub fn with_history_bodies(
+    model: &Model,
+    bodies: &[(&str, &str)],
+    name: String,
+) -> Result<Model, String> {
+    let mut ir = cadmpeg_ir::CadIr::empty();
+    for (final_id, history_id) in bodies {
+        let history = model
+            .ir
+            .model
+            .history_bodies
+            .iter()
+            .find(|body| body.id.as_str() == *history_id)
+            .ok_or_else(|| format!("history body \"{history_id}\" is not available"))?;
+        let mut nest = history.topology.to_model();
+        if let Some(body) = nest.bodies.first_mut() {
+            body.name = model
+                .ir
+                .model
+                .bodies
+                .iter()
+                .find(|body| body.id.as_str() == *final_id)
+                .and_then(|body| body.name.clone());
+        }
+        ir.model.bodies.extend(nest.bodies);
+        ir.model.regions.extend(nest.regions);
+        ir.model.shells.extend(nest.shells);
+        ir.model.faces.extend(nest.faces);
+        ir.model.loops.extend(nest.loops);
+        ir.model.coedges.extend(nest.coedges);
+        ir.model.edges.extend(nest.edges);
+        ir.model.vertices.extend(nest.vertices);
+        ir.model.surfaces.extend(nest.surfaces);
+        ir.model.curves.extend(nest.curves);
+        ir.model.pcurves.extend(nest.pcurves);
+        ir.model.points.extend(nest.points);
+    }
+    Ok(Model {
+        ir,
+        fidelity: None,
+        name,
+        source_file: model.source_file.clone(),
+        assembly: None,
+        source_step: None,
+    })
+}
+
 /// Reads a design from its contents alone, without the file system: for a sandboxed
 /// importer (such as a SolidCraft plugin) that is handed a file's bytes and nothing else.
 /// `name` is the file's name; only its stem and extension are used. Parts an assembly keeps in
