@@ -306,7 +306,8 @@ try again. Dutchman checks whether the quarantine attribute has the user-approve
 Never remove or change the quarantine attribute.
 
 - `verification.status` `verified`: SolidCraft replayed the history and it matches the
-  original in area and volume within the measuring mesh tolerances. `unverified`: written
+  original in body position, box, area, and volume within the measuring mesh tolerances
+  (area and volume alone when a box is unavailable). `unverified`: written
   without that check (the reason says why, usually no `solidcraft-cli` was found); mention
   that the history has not been checked. `partial`: an editable prefix and resolved
   sketches are hidden beside the visible imported shape; the reason says whether retained
