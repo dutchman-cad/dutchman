@@ -100,7 +100,7 @@ def inventory(files):
                 changed = True
         if not changed:
             break
-    for arms, name in re.findall(r'((?:Self :: \w+\s*\|?\s*)+) => (?:\w+ :: )?(V\d+_\d+_\d+)', all_text):
+    for arms, name in re.findall(r'(Self :: \w+(?:\s*\|\s*Self :: \w+)*)\s*=> (?:\w+ :: )?(V\d+_\d+_\d+)', all_text):
         value = tuple(map(int, NAMED.fullmatch(name).groups()))
         for arm in re.findall(r'Self :: (\w+)', arms):
             symbols[arm] = value
