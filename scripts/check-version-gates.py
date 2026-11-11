@@ -115,8 +115,10 @@ def inventory(files):
                 text = ' '.join(t for t, _ in statement)
                 code = ' '.join(t if not (t.startswith(('"', 'r"', 'r#'))) else '""' for t, _ in statement)
                 values = [tuple(map(int, m.groups())) for m in NAMED.finditer(code)]
-                values += [tuple(int(n or 0) for n in m.groups()) for m in STRING.finditer(text)]
+                # A bare "x.y" string or [x, y] array is a version only in a statement that talks
+                # about versions; otherwise it is a numeric default such as a "0.44" k-factor.
                 if re.search(r'(?i)version|solidcraft|\btarget\b|\bSelf\b|\bV\d+_', text):
+                    values += [tuple(int(n or 0) for n in m.groups()) for m in STRING.finditer(text)]
                     values += [tuple(int(n or 0) for n in m.groups()) for m in ARRAY.finditer(code)]
                 values += [symbols[t] for t, _ in statement if t in symbols]
                 if values:

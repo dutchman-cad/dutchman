@@ -86,6 +86,11 @@ let text = r#"SolidCraftVersion::V0_22_1 { //"#;
         # Raw strings must not be scanned for embedded Rust names.
         self.assertEqual(gates.inventory({FILE: source}), [])
 
+    def test_numeric_string_defaults_are_not_gates(self):
+        source = 'let row = json!({"name": name, "k_factor": "0.44", "ratio": "0.5", "scale": "1.0"});\n'
+        self.assertEqual(gates.inventory({FILE: source}), [])
+        self.assertFalse(self.audit_diff('', source))
+
     def test_production_cfg_is_scanned(self):
         for cfg in ('not(test)', 'any(test, unix)'):
             self.assertTrue(self.audit_diff('', f'#[cfg({cfg})] fn feature() {{ {OLD} }}'))

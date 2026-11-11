@@ -5,7 +5,6 @@ crates/dutchman-solidcraft/src/history/hole.rs | 0.22.1 | if crate :: VersionGat
 crates/dutchman-solidcraft/src/history/hole.rs | 0.22.1 | let recess_tip = crate :: VersionGate :: EntryRecessTip . supported ( ctx . target_version )
 crates/dutchman-solidcraft/src/history/pattern.rs | 0.25.1 | if ! crate :: VersionGate :: MirrorChain . supported ( ctx . target_version )
 crates/dutchman-solidcraft/src/history/primitive.rs | 0.24.1 | if ! crate :: VersionGate :: ConePrimitive . supported ( ctx . target_version )
-crates/dutchman-solidcraft/src/history/sheet.rs | 0.44.0 | "name" : name , "thickness" : format ! ( "{thickness} mm" ) , "bend_radius" : "Thickness" , "k_factor" : "0.44" , "relief_width" : "Thickness" , "relief_depth" : "Thickness * 0.5" , "corner_relief" : "Thickness * 4.0" , "corner_relief_shape" : "notch" , "hem_gap" : "0.01 mm" , "gap" : "Thickness" ,
 crates/dutchman-solidcraft/src/lib.rs | 0.18.2 | OLDEST_SOLIDCRAFT
 crates/dutchman-solidcraft/src/lib.rs | 0.18.2 | WINDOW_OLDEST
 crates/dutchman-solidcraft/src/lib.rs | 0.30.0 | NEWEST_SOLIDCRAFT
