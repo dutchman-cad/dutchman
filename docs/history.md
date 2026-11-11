@@ -55,9 +55,13 @@ history, with no flattened-history warning.
 ## How a history is checked
 
 A converted history is checked by replaying it in `solidcraft-cli` and comparing the bodies
-and each body's position, box, area, and volume with the original, within the measuring
-mesh tolerances. Bodies are paired by nearest box centre, with volume breaking ties. When
-SolidCraft gives no box for a pair, only area and volume are compared. The result is in the
+and each body's position, box, area, and volume with the original. Position and box checks
+allow the larger of 0.01 mm and 0.02% of the larger box diagonal, for the centre distance and
+each minimum/maximum coordinate. The size term is four times the measuring mesh chord
+allowance, with margin above the measured 0.0022 mm difference on a 38 mm curved body.
+Volume and area keep their measuring mesh tolerances. Bodies are paired by nearest box
+centre, with volume breaking ties. When SolidCraft gives no box for a pair, only area and
+volume are compared. The result is in the
 `history:` line of the report and in `verification.status` in `--json`:
 
 | Status | Meaning |

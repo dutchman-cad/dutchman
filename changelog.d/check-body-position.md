@@ -1,3 +1,4 @@
 ### History
 
-- A rebuilt history whose body sits in a different place or is turned the other way than the original is no longer reported as verified.
+- Rebuilt histories with large body position or box differences are no longer reported as verified.
+- Curved histories can verify despite small box measurement differences. Position and box checks allow the larger of 0.01 mm and 0.02% of the larger box diagonal.

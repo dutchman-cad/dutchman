@@ -26,6 +26,14 @@ const MESH_CHORD: f64 = 5e-5;
 /// The closest, in millimetres, SolidCraft's measuring mesh keeps to a body's faces.
 const MESH_CHORD_FLOOR: f64 = 1e-4;
 
+/// Position and box allowance: (minimum millimetres, share of the larger diagonal).
+/// Separate evaluations of exact versus imported surfaces differed by at most 0.0022 mm
+/// on a 38 mm helix (5.7e-5 of its size); flat bodies agreed to about 1e-14 mm.
+/// Four mesh chord sags and a 0.01 mm floor leave margin above that measured noise,
+/// while the smallest measured real placement error was 4 mm. The size term is a
+/// conservative allowance for other scales, not a measured scaling law.
+const POSITION_BOX_ALLOWANCE: (f64, f64) = (0.01, 4.0 * MESH_CHORD);
+
 /// The relative difference in area at which a replay no longer matches the original. A mesh
 /// misses a curved face's area by about a third of its chord over the face's radius, and
 /// SolidCraft keeps that chord within 3e-4 of the smallest radius: well inside this.
@@ -1261,10 +1269,8 @@ fn match_bodies(replayed: &[Measured], expected: &[Measured]) -> Outcome {
             got.size,
             want.size,
         ) {
-            // A tessellated bound can miss an extremum by the chord sag. Use the
-            // larger diagonal: 5e-5 is 0.005% of size, well under 1%, with the same
-            // 0.0001 mm floor as SolidCraft's measuring mesh.
-            let allowed = (MESH_CHORD * sa.max(sb)).max(MESH_CHORD_FLOOR);
+            let (minimum, share) = POSITION_BOX_ALLOWANCE;
+            let allowed = (share * sa.max(sb)).max(minimum);
             let shift = center_distance(&at, &to);
             if !within(shift, allowed) {
                 return Outcome::Differs(format!(
@@ -2276,8 +2282,8 @@ mod tests {
 
     #[test]
     fn a_body_shifted_with_the_same_volume_and_area_differs() {
-        let original = boxed([0.0; 3], [10.0, 20.0, 30.0]);
-        let shifted = boxed([0.0, 6.0, 0.0], [10.0, 26.0, 30.0]);
+        let original = boxed([0.0; 3], [10.0; 3]);
+        let shifted = boxed([0.0, 6.0, 0.0], [10.0, 16.0, 10.0]);
         assert_eq!(
             match_bodies(&[shifted], &[original]),
             Outcome::Differs("a body sits 6.000 mm from the original's position".to_owned())
@@ -2295,20 +2301,53 @@ mod tests {
     }
 
     #[test]
-    fn boxes_match_within_the_measuring_chord_and_floor() {
+    fn boxes_match_within_the_position_allowance_and_floor() {
         for size in [0.01, 30.0] {
             let original = boxed([-size; 3], [size; 3]);
-            let allowed = (MESH_CHORD * original.size.unwrap()).max(MESH_CHORD_FLOOR);
+            let (minimum, share) = POSITION_BOX_ALLOWANCE;
+            let allowed = (share * original.size.unwrap()).max(minimum);
             let noise = allowed * 0.25;
             let noisy = boxed([-size + noise; 3], [size + noise; 3]);
             assert_eq!(
                 match_bodies(&[noisy], std::slice::from_ref(&original)),
                 Outcome::Matches
             );
-            // The centre is unchanged; a bound just beyond the chord still differs.
-            let enlarged = boxed([-size - allowed * 1.01; 3], [size + allowed * 1.01; 3]);
+            // The centre is unchanged; a bound beyond the allowance still differs.
+            let enlarged = boxed([-size - allowed * 1.1; 3], [size + allowed * 1.1; 3]);
             assert!(matches!(match_bodies(&[enlarged], &[original]),
                 Outcome::Differs(why) if why.contains("box differs")));
+        }
+    }
+
+    #[test]
+    fn measured_noise_matches_but_real_position_and_box_errors_differ() {
+        for (size, difference, matches) in [
+            (40.0, 4.0, false),
+            (38.0, 0.0022, true),
+            (400.0, 0.05, true),
+            (400.0, 1.0, false),
+        ] {
+            // These side lengths give a diagonal of exactly `size`.
+            let [x, y, z] = [size * 2.0 / 3.0, size * 2.0 / 3.0, size / 3.0];
+            let original = boxed([0.0; 3], [x, y, z]);
+            let shifted = boxed([difference, 0.0, 0.0], [x + difference, y, z]);
+            // Change the bounds without moving the centre, to exercise both checks.
+            let enlarged = boxed([-difference, 0.0, 0.0], [x + difference, y, z]);
+            for (replayed, reason) in [(shifted, "position"), (enlarged, "box")] {
+                let outcome = match_bodies(&[replayed], std::slice::from_ref(&original));
+                if matches {
+                    assert_eq!(
+                        outcome,
+                        Outcome::Matches,
+                        "size {size}, difference {difference}"
+                    );
+                } else {
+                    assert!(
+                        matches!(outcome, Outcome::Differs(why) if why.contains(reason)),
+                        "size {size}, difference {difference}"
+                    );
+                }
+            }
         }
     }
 
