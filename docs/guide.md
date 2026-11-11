@@ -276,8 +276,8 @@ solidcraft-cli eval cube.sc
 ```
 
 Check that `body_count` is what you expect, that no `timeline` entry has an `error` or a
-meshing warning, and compare each body's `area_mm2` and `volume_mm3` with the original design
-within the measuring mesh tolerances. A face-count difference alone does not establish a
+meshing warning, and compare each body's box position, box bounds, `area_mm2`, and
+`volume_mm3` with the original design within the measuring mesh tolerances. A face-count difference alone does not establish a
 defect. An AI agent can do the same through SolidCraft's MCP server: open the design with
 `solidcraft-cli mcp --in cube.sc` and call its `measure` tool.
 
