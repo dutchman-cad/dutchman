@@ -149,6 +149,7 @@ fn answer(method: &str, params: &Value) -> Result<Value, (i64, String)> {
             };
             let (report, schema) = match name {
                 "convert" => (convert(arguments), crate::json::CONVERT),
+                "onshape_fetch" => (onshape_fetch(arguments), crate::onshape::SCHEMA),
                 "inspect" => (inspect(arguments), crate::json::INSPECT),
                 "read_report" => (read_report(arguments), crate::json::CONVERT),
                 "formats" => (
@@ -275,6 +276,45 @@ fn search_property() -> Value {
     })
 }
 
+fn onshape_fetch(args: &Map<String, Value>) -> Result<Value, String> {
+    let parsed = (|| -> Result<crate::onshape::FetchOptions, String> {
+        only(args, &["document_url", "out", "version", "max_calls"])
+            .map_err(|_| "Use only document_url, out, version, and max_calls".to_owned())?;
+        let document_url = args
+            .get("document_url")
+            .and_then(Value::as_str)
+            .ok_or("document_url is required and must be a string")?;
+        let text = |name: &str| -> Result<Option<String>, String> {
+            match args.get(name) {
+                None => Ok(None),
+                Some(Value::String(value)) => Ok(Some(value.clone())),
+                _ => Err(format!("{name} must be a string")),
+            }
+        };
+        let max_calls = match args.get("max_calls") {
+            None => 50,
+            Some(value) => value
+                .as_u64()
+                .and_then(|v| u32::try_from(v).ok())
+                .ok_or("max_calls must be a whole number from 0 to 4294967295")?,
+        };
+        Ok(crate::onshape::FetchOptions {
+            document_url: document_url.into(),
+            out: text("out")?.map(std::path::PathBuf::from),
+            version: text("version")?,
+            max_calls,
+            json: true,
+        })
+    })();
+    Ok(match parsed {
+        Ok(options) => crate::onshape::run(&options),
+        Err(_) => crate::json::onshape_fetch(&Err(crate::onshape::Error::new(
+            crate::onshape::ErrorKind::Url,
+            "Use document_url (string), optional out and version (strings), and max_calls (whole number from 0 to 4294967295). No other arguments are accepted.",
+        ))),
+    })
+}
+
 fn tools() -> Value {
     let input = json!({
         "type": "string",
@@ -362,6 +402,22 @@ fn tools() -> Value {
             "inputSchema": {"type": "object", "properties": doctor_properties, "required": ["input", "out"], "additionalProperties": false}},
         {"name": "compare_step", "title": "Compare matching STEP", "description": "Compare stored geometry with a STEP export under resource limits. Anonymous body numbers and measurements only; advisory, worst first. Nothing is sent.",
             "inputSchema": {"type": "object", "properties": compare_properties, "required": ["input"], "additionalProperties": false}},
+        {
+            "name": "onshape_fetch", "title": "Fetch your Onshape document",
+            "description": "Fetch your own Onshape document with local API keys into a private offline bundle. Uses Onshape's API and your call allowance. Never sends data to Dutchman. Returns dutchman.onshape-fetch/1.",
+            "inputSchema": {"type": "object", "properties": {
+                "document_url": {"type": "string"}, "out": {"type": "string", "description": "Bundle file path. An existing file is replaced only after a successful fetch."},
+                "version": {"type": "string", "description": "Immutable Onshape version ID overriding the URL."},
+                "max_calls": {"type": "integer", "minimum": 0, "maximum": 4294967295u64, "default": 50}
+            }, "required": ["document_url"], "additionalProperties": false},
+            "outputSchema": {"type": "object", "properties": {
+                "schema": {"const": "dutchman.onshape-fetch/1"}, "ok": {"type": "boolean"},
+                "calls": {"type": "integer", "minimum": 0}, "cache_hits": {"type": "integer", "minimum": 0},
+                "output": {"type": "string"}, "microversion": {"type": "string"},
+                "error": {"type": "object", "properties": {"code": {"type": "string"}, "message": {"type": "string"}}, "required": ["code", "message"]}
+            }, "required": ["schema", "ok", "calls"]},
+            "annotations": {"readOnlyHint": false, "destructiveHint": true, "openWorldHint": true}
+        },
         {
             "name": "convert",
             "title": "Convert a CAD file",

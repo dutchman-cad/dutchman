@@ -1,0 +1,13 @@
+{
+  "rootAssembly": {
+    "documentId":"111111111111111111111111","elementId":"555555555555555555555555","documentMicroversion":"333333333333333333333333",
+    "instances":[
+      {"id":"one","type":"Part","documentId":"999999999999999999999999","elementId":"666666666666666666666666","documentMicroversion":"777777777777777777777777","partId":"partA"},
+      {"id":"two","type":"Part","documentId":"999999999999999999999999","elementId":"666666666666666666666666","documentMicroversion":"777777777777777777777777","partId":"partB"}
+    ],
+    "occurrences":[{"path":["one"],"transform":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]},{"path":["two"],"transform":[1,0,0,0.02,0,1,0,0,0,0,1,0,0,0,0,1]}],
+    "features":[{"id":"hinge","featureType":"mate","featureData":{"mateType":"REVOLUTE"}}]
+  },
+  "subAssemblies":[],
+  "parts":[{"documentId":"999999999999999999999999","elementId":"666666666666666666666666","documentMicroversion":"777777777777777777777777","partId":"partA"},{"documentId":"999999999999999999999999","elementId":"666666666666666666666666","documentMicroversion":"777777777777777777777777","partId":"partB"}]
+}

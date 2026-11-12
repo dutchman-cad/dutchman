@@ -869,3 +869,28 @@ undecoded mesh container or an unresolved source alone cannot supply a count, so
 existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
+
+## Onshape fetch
+
+For the user's own Onshape document, `onshape_fetch` or
+`dutchman onshape fetch URL --out FILE --max-calls 50 --json` saves raw API responses
+in a private `.onshape-bundle`; it does not convert CAD. Inputs are `document_url`,
+optional `out`, `version` (immutable version ID), and `max_calls`. Read
+`dutchman.onshape-fetch/1`: `ok`, `calls`, `output`, `microversion`, `cache_hits`,
+and failure `error.code`/`message`. The tool has input and output schemas.
+Keys must already be in the local environment (`ONSHAPE_ACCESS_KEY` and
+`ONSHAPE_SECRET_KEY`) or the mode-600 `~/.config/dutchman/onshape.json`; never ask
+for them in chat or pass them as tool arguments. Fetch only the user's own documents.
+Requests go directly to Onshape; nothing is sent to Dutchman. Keep bundles and caches
+private. Version cache hits cost no calls; cached workspace URLs require two head checks.
+402 means the yearly allowance is exhausted; 429 honors Retry-After with bounded
+retries. Budget failures stop before the next request and retain cached responses.
+Part Studios include their raw features, input topology, optional variables/configuration,
+and final STEP; assemblies include same-document Part Studios. Version URLs use version
+paths. Workspace URLs pin supported reads to a microversion, fetch STEP/variables through
+workspace paths, and check the head at the end. One change triggers a refetch; a second
+returns `onshape/changed`: “the document changed while fetching; try again, or use a
+version link”. Do not retry indefinitely or raise the budget automatically. Both attempts,
+export polling/downloads, and head checks share `max_calls`. Successful manifests contain
+`consistent: true` and `file_sources` with a path kind and microversion for each file.
+See `docs/onshape.md` for the exact consistency, cache, and reference behavior.

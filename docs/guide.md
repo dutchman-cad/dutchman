@@ -649,3 +649,18 @@ undecoded mesh container or an unresolved source alone cannot supply a count, so
 existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
+
+## Fetch your own Onshape document
+
+`dutchman onshape fetch <document-url> --out snapshot.onshape-bundle --max-calls 50`
+uses local `ONSHAPE_ACCESS_KEY`/`ONSHAPE_SECRET_KEY` credentials and prints the HTTP
+attempt count. `--version VERSION_ID` selects an immutable version; `--json` prints
+`dutchman.onshape-fetch/1`. This fetcher saves API responses without converting CAD.
+Part Studios include features, needed input topology, variables/configuration, and
+final STEP; assemblies include their same-document Part Studios. Version links use
+version paths throughout. Workspace links pin supported reads to a microversion,
+use workspace paths for STEP/variables, and recheck the head before writing. A
+change triggers one refetch; a second change stops with “the document changed while
+fetching; try again, or use a version link”. Successful manifests record per-file
+path kinds/microversions and `consistent: true`. See [Onshape](onshape.md#fetching-a-document) for keys,
+limits, caching, and privacy.

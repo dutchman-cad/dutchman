@@ -37,7 +37,18 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+enum OnshapeCommand {
+    /// Save raw API responses in an offline .onshape-bundle.
+    Fetch(dutchman::onshape::FetchOptions),
+}
+
+#[derive(Subcommand)]
 enum Command {
+    /// Fetch a private snapshot of your own Onshape document.
+    Onshape {
+        #[command(subcommand)]
+        command: OnshapeCommand,
+    },
     /// Review a local problem report, including a file that converted with a wrong result.
     Report {
         /// Folder holding prepared.json, or a fresh folder for a summary-only report.
@@ -384,6 +395,40 @@ fn main() -> ExitCode {
     let quiet = cli.quiet;
     let yes = cli.yes;
     match cli.command {
+        Command::Onshape {
+            command: OnshapeCommand::Fetch(options),
+        } => {
+            let report = dutchman::onshape::run(&options);
+            if options.json {
+                println!("{report}");
+            } else {
+                let calls = report.get("calls").and_then(Value::as_u64).unwrap_or(0);
+                if report.get("ok").and_then(Value::as_bool) == Some(true) {
+                    println!(
+                        "Saved {} ({calls} API calls)",
+                        report
+                            .get("output")
+                            .and_then(Value::as_str)
+                            .unwrap_or("Onshape bundle")
+                    );
+                } else {
+                    eprintln!(
+                        "{} ({calls} API calls)",
+                        report
+                            .pointer("/error/message")
+                            .and_then(Value::as_str)
+                            .unwrap_or(
+                                "Onshape fetch could not finish; check the document and retry."
+                            )
+                    );
+                }
+            }
+            if report.get("ok").and_then(Value::as_bool) == Some(true) {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
+        }
         Command::Report {
             folder,
             report_id,
