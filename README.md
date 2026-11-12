@@ -94,7 +94,7 @@ Early development: **Reads** says whether a format's geometry can be read, and e
 | Format | Files | Reads | Level | Converts |
 |---|---|---|---|---|
 | Fusion archive | `.f3d` | Reads geometry | L5 | Geometry; feature history when every feature maps; components and mapped joints |
-| Fusion multi-document archive | `.f3z` | Reads geometry | L5 | As a Fusion archive, with referenced designs merged in by cadmpeg; a design stuck for 20 minutes is left out and named, and the rest converts |
+| Fusion multi-document archive | `.f3z` | Reads geometry | L5 | As a Fusion archive, with referenced designs merged in by cadmpeg |
 | Inventor part | `.ipt` | Reads geometry | L3 | Geometry; feature history when every feature maps |
 | Inventor assembly | `.iam` | Reads geometry | L3 | Placed parts and sub-assemblies, read from their files in the project |
 | SolidWorks part | `.sldprt` | Reads geometry | L3 | Geometry; feature history waits on cadmpeg binding sketches and extrude profiles |
@@ -116,6 +116,8 @@ Output is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro
 <!-- /formats -->
 
 Designs open in SolidCraft 0.18.2 to 0.40; 0.40 is the newest known target.
+
+A design Dutchman can't finish reading is stopped after 20 minutes with no progress (60 in all); in a Fusion `.f3z` archive it's left out and named, and the rest converts. Set `DUTCHMAN_DESIGN_TIME_LIMIT` to more minutes to give a large design longer.
 
 [Formats](docs/formats.md) has the details for each program, and [Feature history](docs/history.md) what maps onto SolidCraft.
 
