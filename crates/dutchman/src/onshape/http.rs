@@ -214,6 +214,7 @@ impl<C: HttpClient> Session<'_, C> {
         Error {
             kind,
             message,
+            detail: None,
             calls: self.calls,
         }
     }
