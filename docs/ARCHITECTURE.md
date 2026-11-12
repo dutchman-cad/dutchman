@@ -551,3 +551,7 @@ Debug builds accept `DUTCHMAN_TEST_SLOW_PART=<design name>` to hold one named pa
 preparation for six seconds, long enough for a real five-second heartbeat. Release builds
 do not read it. The running-step GUI screenshot case uses injected snapshots at 0 s,
 61 s, 120 s and 121 s through the normal card renderer in both themes.
+
+`dutchman-plugin` is the WebAssembly component front end. Its single ABI adapter streams
+host file capabilities into `dutchman_core::source`, then uses the normal SolidCraft writer.
+See [plugin architecture, contract and WASI constraints](plugin.md).

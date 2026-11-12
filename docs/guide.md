@@ -642,3 +642,9 @@ undecoded mesh container or an unresolved source alone cannot supply a count, so
 existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
+
+## SolidCraft plugin component
+
+The [plugin front end](plugin.md) converts files through the same core and SolidCraft writer,
+with host-drawn conversion options and a structured loss report. It requires the host's
+streaming importer interface; see that page for build and integration status.

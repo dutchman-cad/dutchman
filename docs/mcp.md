@@ -893,3 +893,7 @@ undecoded mesh container or an unresolved source alone cannot supply a count, so
 existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
+
+The [SolidCraft plugin component](plugin.md) is a separate streaming importer front end.
+It does not add or change MCP tools. Its future evaluator will use the host's existing
+command surface through `run`, subject to host permissions.

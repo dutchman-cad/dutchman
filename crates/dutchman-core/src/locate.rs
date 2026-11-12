@@ -59,7 +59,9 @@ impl PartSearch {
 /// folders given, each with the part and assembly files under it by name, listed once when first
 /// needed.
 #[derive(Default)]
-pub(crate) struct Finder {
+pub(crate) struct Finder<'a> {
+    /// Capability-based file lookup supplied by a sandboxed front end.
+    source: Option<&'a SourceResolver<'a>>,
     pub(crate) part_positions: crate::PartPositions,
     pub(crate) threads: usize,
     given: Option<PathBuf>,
@@ -111,6 +113,8 @@ pub(crate) struct Found {
 /// Why no file was found for a stored path.
 #[derive(Debug, PartialEq)]
 pub(crate) struct NotFound {
+    /// Capability readers search only the granted input folder.
+    input_folder: bool,
     /// The project folder searched.
     pub root: PathBuf,
     /// How many folders the project's Inventor project file named were searched too.
@@ -123,6 +127,9 @@ pub(crate) struct NotFound {
 
 impl std::fmt::Display for NotFound {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.input_folder {
+            return write!(f, "not found in the input folder; keep the referenced part there with its expected name and relative path");
+        }
         write!(
             f,
             "not found at its stored path or in the project folder {}",
@@ -145,11 +152,32 @@ impl std::fmt::Display for NotFound {
     }
 }
 
-impl Finder {
+pub(crate) type SourceResolver<'a> = dyn Fn(&str, &Path) -> Option<PathBuf> + 'a;
+
+impl<'a> Finder<'a> {
+    #[cfg(feature = "source-reader")]
+    pub(crate) fn source(resolve: &'a SourceResolver<'a>) -> Self {
+        Self {
+            source: Some(resolve),
+            threads: 1,
+            ..Self::default()
+        }
+    }
+
+    fn source_file(&self, stored: &str, folder: &Path) -> Result<Found, NotFound> {
+        self.source
+            .and_then(|resolve| resolve(stored, folder))
+            .map(|path| Found {
+                path,
+                ambiguous: None,
+            })
+            .ok_or_else(|| self.not_found(folder))
+    }
+
     /// A finder searching as `search` says; without a project folder, under the nearest
     /// folder above the first assembly that holds an `.ipj`, else [`DEFAULT_LEVELS`] folders
     /// above it.
-    pub(crate) fn new(search: &PartSearch) -> Finder {
+    pub(crate) fn new(search: &PartSearch) -> Self {
         Finder {
             threads: search.threads,
             part_positions: search.part_positions,
@@ -165,6 +193,9 @@ impl Finder {
 
     /// The file `stored` names, for an assembly in `folder`.
     pub(crate) fn locate(&self, stored: &str, folder: &Path) -> Result<Found, NotFound> {
+        if self.source.is_some() {
+            return self.source_file(stored, folder);
+        }
         let folder = absolute(folder);
         let project = self.project.get_or_init(|| self.project(&folder));
         let root = &project.root;
@@ -207,6 +238,20 @@ impl Finder {
 
     /// FreeCAD links prefer the copy beside the assembly before relocated stored paths.
     pub(crate) fn sibling_first(&self, stored: &str, folder: &Path) -> Result<Found, NotFound> {
+        if self.source.is_some() {
+            // Keep the filesystem finder's sibling-first rule for capability readers.
+            // A resolver may search ancestors too; only a result in this folder gets
+            // priority over the complete stored path.
+            let (_, components) = split(stored);
+            if let Some(name) = components.last() {
+                if let Ok(found) = self.source_file(name, folder) {
+                    if found.path.parent() == Some(folder) {
+                        return Ok(found);
+                    }
+                }
+            }
+            return self.source_file(stored, folder);
+        }
         let (_, components) = split(stored);
         if let Some(file) = components.last() {
             if let Some(path) = resolve(&absolute(folder), &[*file]) {
@@ -222,6 +267,7 @@ impl Finder {
     fn not_found(&self, root: &Path) -> NotFound {
         let named = self.project.get().map_or(&[][..], |p| p.named.as_slice());
         NotFound {
+            input_folder: self.source.is_some(),
             root: root.to_path_buf(),
             named: named
                 .iter()
@@ -1163,5 +1209,27 @@ pub(crate) mod tests {
         assert_eq!(split("../x/./b.ipt"), (false, vec!["..", "x", "b.ipt"]));
         assert_eq!(split("b.ipt"), (false, vec!["b.ipt"]));
         assert_eq!(split(""), (false, vec![]));
+    }
+}
+
+#[cfg(all(test, feature = "source-reader"))]
+#[allow(clippy::unwrap_used)]
+mod source_tests {
+    use super::*;
+    #[test]
+    fn capability_lookup_preserves_sibling_first_precedence() {
+        let resolve = |stored: &str, folder: &Path| Some(folder.join(stored));
+        let finder = Finder::source(&resolve);
+        assert_eq!(
+            finder.locate("parts/Pin.ipt", Path::new("")).unwrap().path,
+            PathBuf::from("parts/Pin.ipt")
+        );
+        assert_eq!(
+            finder
+                .sibling_first("parts/Pin.ipt", Path::new(""))
+                .unwrap()
+                .path,
+            PathBuf::from("Pin.ipt")
+        );
     }
 }

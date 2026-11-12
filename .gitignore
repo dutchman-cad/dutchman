@@ -1,2 +1,5 @@
 target/
 __pycache__/
+# The component's target-specific size settings are part of the source tree.
+!.cargo/
+!.cargo/config.toml
