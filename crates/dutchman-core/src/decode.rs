@@ -69,6 +69,12 @@ pub(crate) fn decode_with_progress(
 ) -> Result<Model, Error> {
     let codec_id = format.codec_id().ok_or(Error::NotSupportedYet { format })?;
     catch_unwind(AssertUnwindSafe(|| {
+        #[cfg(feature = "onshape")]
+        if format == Format::OnshapeBundle {
+            let mut model = crate::onshape::read(path, bytes, report, progress)?;
+            with_fallback(&mut model.ir, report, &policy(), bytes.len() as u64)?;
+            return Ok(model);
+        }
         decode_unguarded(
             format,
             codec_id,

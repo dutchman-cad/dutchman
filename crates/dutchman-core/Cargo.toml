@@ -17,12 +17,14 @@ roxmltree.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 thiserror.workspace = true
+zip = { workspace = true, optional = true }
 
 [features]
 # Every input format but FreeCAD. A build may name only the formats it reads (as a
 # sandboxed importer does), so it links only those cadmpeg codecs.
 default = ["formats"]
-formats = ["fusion", "inventor", "solidworks", "catia", "creo", "nx", "rhino", "step", "iges", "sat", "pvz"]
+formats = ["fusion", "inventor", "solidworks", "catia", "creo", "nx", "rhino", "step", "iges", "sat", "pvz", "onshape"]
+onshape = ["step", "dep:zip"]
 fusion = ["cadmpeg-registry/f3d"]
 inventor = ["cadmpeg-registry/inventor"]
 solidworks = ["cadmpeg-registry/sldprt"]
