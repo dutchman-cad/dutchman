@@ -71,3 +71,129 @@ metadata, 32 MiB per JSON member, 256 MiB total expanded data, and 10,000 rows p
 input collection or topology arena. These are admission limits, not memory/time
 estimates. Bodydetails indices may be a JSON array of rollback integers (or
 `"i.json"` names), or an object with that array under `indices`.
+
+## Fetching a document
+
+`dutchman onshape fetch <document-url> [--out FILE] [--version VERSION_ID]`
+uses your own Onshape API keys to fetch an offline `.onshape-bundle`. The MCP
+`onshape_fetch` tool takes `document_url`, optional `out`, `version`, and `max_calls`.
+This fetcher saves raw API responses; it does not decode or convert CAD geometry.
+
+Use a URL of the form `https://cad.onshape.com/documents/<document>/w/<workspace>/e/<element>`
+or `/v/<version>` instead of `/w/<workspace>`. IDs have 24 hexadecimal characters.
+`--version` takes an immutable Onshape version ID and overrides the URL's workspace
+or version. Query parameters and fragments are not supported yet; one default
+configuration is fetched. The default output is `<element-id>.onshape-bundle` in
+the current folder. An existing output is replaced only after a successful fetch.
+
+### Keys
+
+Create your own API keys with read access in Onshape's developer portal. Set both
+`ONSHAPE_ACCESS_KEY` and `ONSHAPE_SECRET_KEY` in your local environment. Do not paste
+keys into chat, URLs, command arguments, shell history, logs, or issue reports.
+Dutchman signs each request with Onshape's HMAC-SHA256 API-key scheme.
+
+Alternatively, on Unix create `~/.config/dutchman/onshape.json` locally:
+
+```json
+{"access_key":"YOUR_ACCESS_KEY","secret_key":"YOUR_SECRET_KEY"}
+```
+
+Set its permissions with `chmod 600 ~/.config/dutchman/onshape.json`. Dutchman
+refuses other modes, symlinks, and oversized files. Both environment variables,
+when set, take precedence over the file; setting only one is an error. On Windows,
+use environment variables because Unix mode 600 cannot be verified.
+
+### What is retained
+
+The ZIP contains `manifest.json` and raw response bytes without rewriting the JSON:
+
+- A Part Studio has `partstudios/<element>/features.json`, including sketches,
+  parameters, expressions, and queries; `bodydetails/<index>.json` at each feature
+  index needing non-sketch topology queries; and `bodydetails/index.json`, an array
+  of those indices. Suppressed features and sketch-region-only queries do not
+  request bodydetails. Optional `configuration.json` and `variables.json` are
+  included when their endpoints return data. Final `export.step` is fetched through
+  an asynchronous AP242 STEP export, grouped into one file, in metres with the
+  source orientation. The export does not store a blob in the source document,
+  email anyone, or trigger a browser download.
+- An assembly has `assemblies/<element>/definition.json` and `features.json`, with
+  instances, occurrences, transforms, mates, and connectors as returned by Onshape.
+  Referenced elements in the same document are fetched too, including Part Studios.
+  References to other documents appear in manifest `external` entries with
+  `documentId`, `elementId`, and `microversionId`; those documents are not fetched.
+
+No separate sketch, Parasolid, mass-property, FeatureScript, translation-status, or
+account metadata files are included. Dutchman follows references within the document
+and refuses references to a different microversion of that document. It fetches at
+most 1,000 elements and 10,000 files. Responses are limited to 64 MiB; the complete
+bundle's uncompressed payload and provisional workspace cache each have a 512 MiB cap.
+
+### Consistency
+
+A version URL uses `/v/<version>` for every API endpoint with a workspace/version/
+microversion parameter. Dutchman also resolves and records the version's microversion.
+Versions are immutable, so no final head check is needed.
+
+For a workspace URL, Dutchman reads the current microversion at the start. Endpoints
+that support microversions use `/m/<microversion>`; STEP export and variables use
+`/w/<workspace>`, as required by Onshape's API. After fetching everything, Dutchman
+reads the workspace microversion again. If it changed, it discards that attempt's
+workspace-only responses and refetches once from the newly observed microversion.
+If the second attempt also changes, it stops without replacing the output:
+
+> the document changed while fetching; try again, or use a version link
+
+The call budget covers both attempts and every consistency check. A fetch that
+cannot afford its final check writes no bundle. Workspace-only responses become
+reusable cache entries only after a successful final head check.
+
+Successful manifests contain `consistent: true` and `file_sources`, a map from
+archive file path to `{ "path_kind": "m|v|w", "microversion": "..." }`. Every
+entry reflects the same document microversion. Generated indices and the manifest
+inherit the pinned content path kind. A STEP file records the path kind of the
+export request that created it.
+
+Onshape's document-name metadata endpoint has no version parameter. Only the name
+is retained; account and owner metadata are discarded. Translation polling and file
+download endpoints use opaque job/file IDs rather than `/w/`, `/v/`, or `/m/`;
+their exported file inherits the consistency of the initiating export request.
+All endpoints use API v17.
+
+### Calls and cache
+
+`--max-calls` defaults to 50 and counts every HTTP attempt, including metadata,
+consistency checks, export creation, polling, download, retries, and a refetch.
+Dutchman stops **before** attempt 51 and prints the count on success or failure.
+This conservative local budget differs from Onshape's yearly billing, which may
+exclude unsuccessful requests. `--max-calls 0` permits cache reads only. `--json`
+returns the same `dutchman.onshape-fetch/1` report as MCP.
+
+Responses are cached privately under `${XDG_CACHE_HOME:-~/.cache}/dutchman/onshape`,
+scoped by a digest of the access key, document ID, microversion, and complete request
+path/query. Export cache keys also include the export options. No key is written
+there. Re-fetching an immutable version can cost zero calls. A fully cached
+workspace fetch costs two head checks, even when its microversion has not changed.
+Unverified workspace-only responses are discarded when an attempt changes or fails;
+immutable responses remain cached. Optional 404s become absence markers for that
+microversion. Immutable-version exports can resume a pending job after interruption.
+Keep the cache private; removing it spends calls again.
+
+STEP exports are polled at increasing intervals (one second, doubling to at most
+30 seconds), with at most 20 polls per capture. HTTP 402 reports an exhausted yearly
+allowance. HTTP 429 waits according to `Retry-After` (seconds or an HTTP date) with
+at most three retries. A requested wait over ten minutes returns an actionable
+error without retrying early. Every retry consumes the budget. Redirects are refused
+and never forward API keys to another host. Authentication, transport, export, size,
+privacy, consistency, and write failures have typed `onshape/*` report codes and
+include no server error bodies.
+
+### Privacy
+
+Fetch only documents you own. This command does not search, scrape, or enumerate
+public documents. Its requests go directly to `cad.onshape.com`; nothing is sent to
+Dutchman or uploaded to us. Keys are used in memory for signing and are never
+printed, logged, or added to a bundle. Known credential/account fields and responses
+echoing either key are refused. Raw document metadata containing owners or account
+information is not cached or bundled. Bundles and caches contain private design
+names, identifiers, and geometry; review them before sharing.

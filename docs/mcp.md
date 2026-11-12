@@ -883,3 +883,21 @@ format, such as `1 min 1 s` or `2 min`. Desktop folder runs keep the longest-run
 its stage and step visible below the completed count, with the number of other active files. See
 [progress during conversion](command-line.md#progress-during-conversion). MCP final reports
 are unchanged; running names are excluded from anonymous diagnostic logs.
+
+## Fetch an Onshape snapshot
+
+`onshape_fetch` accepts `document_url` (required), `out` (optional file path),
+`version` (optional immutable Onshape version ID), and `max_calls` (optional HTTP
+attempt budget, default 50). It advertises input and output JSON schemas and returns
+`dutchman.onshape-fetch/1` in text and structured content, with `isError` on failure.
+Keys come only from the server's local environment or private config file; never
+include them in tool arguments. This tool uses Onshape's network API and your own
+allowance and writes a private bundle/cache. Nothing is sent to Dutchman.
+
+Part Studios include features, input topology, optional variables/configuration,
+and final STEP; same-document assembly references are fetched too. Version URLs
+use version paths. Workspace URLs use microversion paths where supported and
+workspace paths for STEP/variables, followed by a final head check. One change
+triggers a refetch; a second returns `onshape/changed`. Successful bundle manifests
+record `consistent: true` and per-file path kinds/microversions. All attempts share
+the tool's call budget. See [Onshape](onshape.md#fetching-a-document) for cache and privacy details.

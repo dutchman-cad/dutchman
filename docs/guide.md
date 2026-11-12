@@ -627,3 +627,18 @@ format, such as `1 min 1 s` or `2 min`. Desktop folder runs keep the longest-run
 its stage and step visible below the completed count, with the number of other active files. See
 [progress during conversion](command-line.md#progress-during-conversion). MCP final reports
 are unchanged; running names are excluded from anonymous diagnostic logs.
+
+## Fetch your own Onshape document
+
+`dutchman onshape fetch <document-url> --out snapshot.onshape-bundle --max-calls 50`
+uses local `ONSHAPE_ACCESS_KEY`/`ONSHAPE_SECRET_KEY` credentials and prints the HTTP
+attempt count. `--version VERSION_ID` selects an immutable version; `--json` prints
+`dutchman.onshape-fetch/1`. This fetcher saves API responses without converting CAD.
+Part Studios include features, needed input topology, variables/configuration, and
+final STEP; assemblies include their same-document Part Studios. Version links use
+version paths throughout. Workspace links pin supported reads to a microversion,
+use workspace paths for STEP/variables, and recheck the head before writing. A
+change triggers one refetch; a second change stops with “the document changed while
+fetching; try again, or use a version link”. Successful manifests record per-file
+path kinds/microversions and `consistent: true`. See [Onshape](onshape.md#fetching-a-document) for keys,
+limits, caching, and privacy.

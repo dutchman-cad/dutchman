@@ -1,0 +1,9 @@
+ISO-10303-21;
+HEADER;
+FILE_DESCRIPTION(('Synthetic transport fixture'),'2;1');
+FILE_NAME('synthetic.step','2026-11-11T12:00:00',(),(),'Synthetic','Synthetic','');
+FILE_SCHEMA(('AUTOMOTIVE_DESIGN'));
+ENDSEC;
+DATA;
+ENDSEC;
+END-ISO-10303-21;

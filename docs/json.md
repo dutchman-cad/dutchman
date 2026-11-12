@@ -1272,3 +1272,34 @@ These fixed categories reach both `dutchman.report-anon/1` loss counts and
 contain no binding or target ids or names. See [the anonymous report](report-anon.md#appearance-loss-causes).
 Ordinary conversion losses keep `subject`, `message`, `stage` and `upstream` as before;
 Dutchman's appearance codes have `stage: "map"` and `upstream: null`.
+
+## Onshape fetch (`dutchman.onshape-fetch/1`)
+
+CLI `onshape fetch --json` and MCP `onshape_fetch` share this report builder.
+All reports contain `schema`, `ok`, and `calls` (the number of HTTP attempts,
+including retries and failures). Success adds `output` (local bundle path),
+`microversion`, and `cache_hits` (raw response and absence-marker hits, excluding
+cached document names and version resolutions). Failure adds `error: {code, message}` with a
+stable `onshape/` code: `url`, `auth`, `budget`, `yearly-limit`, `throttle`,
+`transport`, `response`, `io`, `limit`, `privacy`, `not-supported`, `export`, or
+`changed`. `changed` reports “the document changed while fetching; try again, or
+use a version link” after the workspace changes during both allowed captures.
+No supplied URL, key, authorization header, or remote error body is echoed.
+
+The ZIP's manifest uses separate schema `dutchman.onshape-bundle/1` and records
+`fetched_at` (RFC 3339), `fetcher`, `api_version` (`v17`), `document` (`id`, `name`,
+`workspace_or_version`, `wvid`, `microversion`), `elements` (`id`, `name`, `type`,
+`files`), `external`, and `calls`. `files` maps roles to archive paths, including
+`definition` and `features` for assemblies. `external` lists `documentId`,
+`elementId`, and `microversionId` for other-document references. Raw API responses
+are retained verbatim. Part Studio roles are `features`, `bodydetails` (the rollback
+index file), optional `configuration` and `variables`, and `step`.
+
+Successful manifests also contain `consistent: true` and `file_sources`, mapping each
+archive path (including generated indices and manifest) to `path_kind` (`m`, `v`, or
+`w`) and `microversion`. Every file reflects the manifest's document microversion.
+Version content reads use `v`; workspace reads use `m` where supported and `w` for
+STEP/variables. Exported STEP records its initiating request's path kind, since
+poll/download endpoints identify jobs/files directly. Generated files inherit the
+content pin. No bundle is written after two changing workspace captures or an
+unfinished final check. See [Onshape](onshape.md#fetching-a-document) for consistency and cache rules.

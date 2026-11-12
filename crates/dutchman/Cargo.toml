@@ -27,6 +27,8 @@ freecad = ["dutchman-core/freecad"]
 
 [dependencies]
 base64 = "0.22"
+httpdate = "1"
+ring = "0.17"
 url = "2"
 flate2 = "1"
 ureq = { version = "2.12", default-features = false, features = ["tls"] }
