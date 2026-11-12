@@ -8,6 +8,17 @@ native profile selection can't be resolved, Dutchman tries the selected curves a
 sketch, and keeps the feature only when SolidCraft's body check confirms it; the loss
 `history/profile-region-inferred` says so. Otherwise the feature stays blocked with its reason.
 
+## Offline Onshape inputs
+
+`inspect`, `convert` and `convert_all` accept `.onshape-bundle` files in builds with
+the `onshape` input feature (included in release builds). Use the ordinary local
+input/output paths; these tools do not fetch documents or need credentials. One
+Part Studio converts with CADIR history and the existing writer/verification.
+Missing or unsupported feature selections produce named losses and preserve the
+bundle's STEP geometry. See [Onshape](onshape.md) for the supported subset.
+An explicitly inconsistent bundle is refused with a request to fetch it again or
+use a version link. Legacy v1 bundles without consistency metadata remain readable.
+
 ## Read an existing result
 
 `read_report` takes `input`, the absolute path of a `.sc` design or its adjacent

@@ -1,5 +1,17 @@
 # Machine-readable reports
 
+Onshape bundles add the format identifier `onshape_bundle` and extension
+`onshape-bundle` to the existing format fields and listings. Existing report
+schemas and fields are unchanged. Reader losses use
+`onshape/history.not-supported` for a feature that stops history and
+`onshape/sketch.constraint-not-supported` for a dropped relation whose solved
+curves remain. Both are Degraded losses at stage `map`. The existing `history`
+rows and `verification` describe CADIR mapping and comparison with the bundle's
+STEP export; see [Onshape](onshape.md).
+The optional bundle manifest field `consistent` is input metadata, not a new
+report field. `false` produces an ordinary decode failure explaining how to fetch
+a consistent snapshot; older v1 bundles lacking the field remain accepted.
+
 ## Saved desktop and watch reports
 
 The desktop app saves each converted file's full `dutchman.convert/1` report as
