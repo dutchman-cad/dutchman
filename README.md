@@ -94,7 +94,7 @@ Early development: **Reads** says whether a format's geometry can be read, and e
 | Format | Files | Reads | Level | Converts |
 |---|---|---|---|---|
 | Fusion archive | `.f3d` | Reads geometry | L5 | Geometry; feature history when every feature maps; components and mapped joints |
-| Fusion multi-document archive | `.f3z` | Reads geometry | L5 | As a Fusion archive, with referenced designs merged in by cadmpeg |
+| Fusion multi-document archive | `.f3z` | Reads geometry | L5 | As a Fusion archive, with referenced designs merged in by cadmpeg; a design stuck for 20 minutes is left out and named, and the rest converts |
 | Inventor part | `.ipt` | Reads geometry | L3 | Geometry; feature history when every feature maps |
 | Inventor assembly | `.iam` | Reads geometry | L3 | Placed parts and sub-assemblies, read from their files in the project |
 | SolidWorks part | `.sldprt` | Reads geometry | L3 | Geometry; feature history waits on cadmpeg binding sketches and extrude profiles |
