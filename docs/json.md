@@ -1260,3 +1260,10 @@ These fixed categories reach both `dutchman.report-anon/1` loss counts and
 contain no binding or target ids or names. See [the anonymous report](report-anon.md#appearance-loss-causes).
 Ordinary conversion losses keep `subject`, `message`, `stage` and `upstream` as before;
 Dutchman's appearance codes have `stage: "map"` and `upstream: null`.
+
+## `dutchman.plugin.loss/1`
+
+The plugin returns a structured projection of the core report for native host presentation:
+stage counts, coded losses, per-feature mapping results, assembly completeness, and verification.
+See [the plugin schema](plugin.md#loss-report-schema-dutchmanpluginloss1) for the complete contract.
+CLI and MCP `dutchman.convert/1` reports are unchanged.

@@ -212,3 +212,5 @@ For other clients:
 ## Licence
 
 Dutchman is pure Rust, licensed under the [Apache License, Version 2.0](LICENSE). Native files are read by [cadmpeg](https://github.com/cadmpeg/cadmpeg); Dutchman maps them onto [SolidCraft](https://github.com/tangency-labs/solidcraft).
+
+[SolidCraft plugin component](docs/plugin.md): a streaming importer front end with native host forms and structured conversion losses (host importer integration in progress).

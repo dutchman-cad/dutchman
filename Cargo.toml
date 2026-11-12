@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/dutchman-dxf", "crates/dutchman-launcher", "crates/dutchman", "crates/dutchman-core", "crates/dutchman-gui", "crates/dutchman-freecad", "crates/dutchman-solidcraft", "crates/dutchman-web", "crates/dutchman-serve"]
+members = ["crates/dutchman-plugin-measure", "crates/dutchman-plugin", "crates/dutchman-dxf", "crates/dutchman-launcher", "crates/dutchman", "crates/dutchman-core", "crates/dutchman-gui", "crates/dutchman-freecad", "crates/dutchman-solidcraft", "crates/dutchman-web", "crates/dutchman-serve"]
 
 [workspace.package]
 version = "0.2.8"

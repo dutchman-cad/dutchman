@@ -620,3 +620,9 @@ format, such as `1 min 1 s` or `2 min`. Desktop folder runs keep the longest-run
 its stage and step visible below the completed count, with the number of other active files. See
 [progress during conversion](command-line.md#progress-during-conversion). MCP final reports
 are unchanged; running names are excluded from anonymous diagnostic logs.
+
+## SolidCraft plugin component
+
+The [plugin front end](plugin.md) converts files through the same core and SolidCraft writer,
+with host-drawn conversion options and a structured loss report. It requires the host's
+streaming importer interface; see that page for build and integration status.

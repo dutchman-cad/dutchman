@@ -872,3 +872,7 @@ format, such as `1 min 1 s` or `2 min`. Desktop folder runs keep the longest-run
 its stage and step visible below the completed count, with the number of other active files. See
 [progress during conversion](command-line.md#progress-during-conversion). MCP final reports
 are unchanged; running names are excluded from anonymous diagnostic logs.
+
+The [SolidCraft plugin component](plugin.md) is a separate streaming importer front end.
+It does not add or change MCP tools. Its future evaluator will use the host's existing
+command surface through `run`, subject to host permissions.
