@@ -152,7 +152,8 @@ fn two_part_revolute_assembly_bundle_is_exact_and_version_cache_uses_no_calls() 
     for (_, path, _) in mock.sent.iter().skip(2) {
         assert!(path.contains(&format!("/v/{VID}/")));
     }
-    let mut zip = zip::ZipArchive::new(std::fs::File::open(&report.output).unwrap()).unwrap();
+    let mut zip =
+        zip::ZipArchive::new(std::io::Cursor::new(std::fs::read(&report.output).unwrap())).unwrap();
     let mut names: Vec<_> = zip
         .file_names()
         .map(|name| name.unwrap().into_owned())
@@ -279,14 +280,17 @@ fn partstudio_mock(mid: &str, marker: &str) -> Mock {
     mock.replies.extend(partstudio_replies(mid, marker));
     mock
 }
-fn zip_value(zip: &mut zip::ZipArchive<std::fs::File>, name: &str) -> Value {
+fn zip_value(zip: &mut zip::ZipArchive<std::io::Cursor<Vec<u8>>>, name: &str) -> Value {
     let mut bytes = Vec::new();
     zip.by_name(name).unwrap().read_to_end(&mut bytes).unwrap();
     serde_json::from_slice(&bytes).unwrap()
 }
-fn open_bundle(dir: &tempfile::TempDir) -> zip::ZipArchive<std::fs::File> {
-    zip::ZipArchive::new(std::fs::File::open(dir.path().join("test.onshape-bundle")).unwrap())
-        .unwrap()
+// Read into memory: an open file can't be replaced on Windows, and the cache tests fetch again over the same bundle.
+fn open_bundle(dir: &tempfile::TempDir) -> zip::ZipArchive<std::io::Cursor<Vec<u8>>> {
+    zip::ZipArchive::new(std::io::Cursor::new(
+        std::fs::read(dir.path().join("test.onshape-bundle")).unwrap(),
+    ))
+    .unwrap()
 }
 fn workspace_source() -> DocumentUrl {
     let mut src = source(PS);
@@ -303,7 +307,7 @@ fn workspace_run(mock: &mut Mock, dir: &tempfile::TempDir, budget: u32) -> Resul
         budget,
     )
 }
-fn assert_sources(zip: &mut zip::ZipArchive<std::fs::File>, mid: &str, kind: &str) -> Value {
+fn assert_sources(zip: &mut zip::ZipArchive<std::io::Cursor<Vec<u8>>>, mid: &str, kind: &str) -> Value {
     let manifest = zip_value(zip, "manifest.json");
     assert_eq!(manifest["consistent"], true);
     assert_eq!(manifest["document"]["microversion"], mid);
@@ -782,7 +786,8 @@ fn archive_preserves_response_whitespace_verbatim() {
     mock.replies.get_mut(3).unwrap().body = definition.to_vec();
     mock.replies.get_mut(4).unwrap().body = features.to_vec();
     let report = run(&mut mock, &dir, AS, 50).unwrap();
-    let mut zip = zip::ZipArchive::new(std::fs::File::open(report.output).unwrap()).unwrap();
+    let mut zip =
+        zip::ZipArchive::new(std::io::Cursor::new(std::fs::read(report.output).unwrap())).unwrap();
     for (name, expected) in [
         ("definition.json", definition.as_slice()),
         ("features.json", features.as_slice()),

@@ -57,6 +57,8 @@ impl ErrorKind {
 pub struct Error {
     pub kind: ErrorKind,
     pub message: &'static str,
+    /// The system's own reason, when there is one (an I/O error's text; std's io errors carry no paths).
+    pub detail: Option<String>,
     pub calls: u32,
 }
 impl Error {
@@ -64,18 +66,27 @@ impl Error {
         Self {
             kind,
             message,
+            detail: None,
             calls: 0,
         }
     }
 }
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} ({} API calls)", self.message, self.calls)
+        match &self.detail {
+            Some(detail) => write!(f, "{} ({detail}; {} API calls)", self.message, self.calls),
+            None => write!(f, "{} ({} API calls)", self.message, self.calls),
+        }
     }
 }
 impl std::error::Error for Error {}
-fn io_error(_: impl std::fmt::Display) -> Error {
-    Error::new(ErrorKind::Io, "Could not read or write the private Onshape cache or bundle; check permissions and free disk space, then retry.")
+fn io_error(cause: impl std::fmt::Display) -> Error {
+    let mut error = Error::new(
+        ErrorKind::Io,
+        "Could not read or write the private Onshape cache or bundle; check permissions and free disk space, then retry.",
+    );
+    error.detail = Some(cause.to_string());
+    error
 }
 fn response_error() -> Error {
     Error::new(
