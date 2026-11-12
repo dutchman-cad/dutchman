@@ -163,7 +163,10 @@ WASI audit:
   handwritten unsafe code. Core, writer and the rest of the workspace keep their lints.
 - External assembly resolution currently relies on `std::fs`: the new default-on
   `source-reader` core feature adds a caller-owned reader/resolver seam in `source.rs`
-  and `locate.rs`. Existing filesystem callers and filtering defaults remain unchanged.
+  and `locate.rs`. The reader receives the per-file byte cap and must refuse larger files
+  before producing their bytes; the plugin checks host size metadata before reading parts.
+  The seam accepts a `PartPositions` choice; the plugin passes `Smart` and uses one worker.
+  Existing filesystem callers and filtering defaults remain unchanged.
 - Core scoped workers and progress heartbeat threads need WASI serialization / guards;
   `eval-seam` is handling `parallel.rs` and `progress.rs`. The plugin requests one worker
   and does not construct a progress observer. Those files are not changed here.

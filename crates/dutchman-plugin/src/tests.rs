@@ -13,7 +13,7 @@ fn native_options_and_structured_report() {
         convert(
             "cube.f3d",
             serde_json::from_str::<Options>(params).unwrap(),
-            &|_| Ok(CUBE.into()),
+            &|_, _| Ok(CUBE.into()),
             &|_, _| None,
         )
         .unwrap()
@@ -62,6 +62,12 @@ fn member_lookup_stays_relative_and_handles_stored_windows_names() {
 fn rejects_non_cad_inputs_and_bad_names() {
     assert!(crate::validate_name(".cube.f3d").is_ok());
     for name in ["../cube.f3d", "part.step", "", ".", "..", "part\0.f3d"] {
-        assert!(convert(name, Options::default(), &|_| Ok(CUBE.into()), &|_, _| None).is_err());
+        assert!(convert(
+            name,
+            Options::default(),
+            &|_, _| Ok(CUBE.into()),
+            &|_, _| None
+        )
+        .is_err());
     }
 }
