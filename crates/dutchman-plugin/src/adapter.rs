@@ -104,24 +104,31 @@ mod guest {
             let budget = Cell::new(0u64);
             let main_bytes = RefCell::new(Some(read("", main.size, &budget)?));
             let files = Cell::new(1usize);
-            let reader = |path: &Path| {
+            let reader = |path: &Path, limit: u64| {
                 if path == Path::new(&main.name) {
                     return main_bytes
                         .borrow_mut()
                         .take()
                         .ok_or_else(|| core_error("Main file requested more than once"));
                 }
-                let path = path.to_string_lossy();
-                let size = input::size(&path)
+                let host_path = path.to_string_lossy();
+                let size = input::size(&host_path)
                     .map_err(core_error)?
                     .ok_or_else(|| core_error("Part not found in the input folder"))?;
+                if size > limit {
+                    return Err(dutchman_core::Error::TooLarge {
+                        path: path.into(),
+                        bytes: size,
+                        limit,
+                    });
+                }
                 files.set(files.get() + 1);
                 if files.get() > 4096 {
                     return Err(core_error(
                         "More than 4096 input files; convert a smaller assembly",
                     ));
                 }
-                read(&path, size, &budget).map_err(core_error)
+                read(&host_path, size, &budget).map_err(core_error)
             };
             let resolve = |stored: &str, folder: &Path| {
                 let requested = crate::resolve(stored, folder, &|path| {

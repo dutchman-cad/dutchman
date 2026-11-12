@@ -95,7 +95,7 @@ pub fn resolve(stored: &str, folder: &Path, exists: &dyn Fn(&Path) -> bool) -> O
 pub fn convert(
     name: &str,
     options: Options,
-    reader: &dyn Fn(&Path) -> Result<Vec<u8>, Error>,
+    reader: &dutchman_core::source::SourceReader<'_>,
     resolve: &dyn Fn(&str, &Path) -> Option<PathBuf>,
 ) -> Result<(Vec<u8>, String), Error> {
     validate_name(name).map_err(Error::Decode)?;
@@ -119,6 +119,7 @@ pub fn convert(
         format,
         path,
         options.include_hidden_bodies,
+        dutchman_core::PartPositions::Smart,
         reader,
         resolve,
         &mut report,

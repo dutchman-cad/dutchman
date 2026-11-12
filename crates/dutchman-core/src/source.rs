@@ -4,15 +4,22 @@ use std::path::Path;
 #[cfg(feature = "source-reader")]
 use std::path::PathBuf;
 
+/// A caller-owned file reader that refuses inputs above the supplied byte cap.
+#[cfg(feature = "source-reader")]
+pub type SourceReader<'a> = dyn Fn(&Path, u64) -> Result<Vec<u8>, Error> + 'a;
+
 /// Read through caller-owned capabilities, retaining the normal assembly and placement pipeline.
 /// `resolve` maps stored part paths to host-relative names; it must never grant ambient access.
-/// The reader and resolver run serially. Every returned file is subject to the normal size cap.
+/// The reader and resolver run serially. The reader receives the byte cap and must refuse
+/// larger files before producing their bytes (returning [`Error::TooLarge`]). Returned bytes
+/// are checked against the cap too.
 #[cfg(feature = "source-reader")]
 pub fn read(
     format: Format,
     name: &Path,
     include_hidden: bool,
-    reader: &dyn Fn(&Path) -> Result<Vec<u8>, Error>,
+    part_positions: crate::PartPositions,
+    reader: &SourceReader<'_>,
     resolve: &dyn Fn(&str, &Path) -> Option<PathBuf>,
     report: &mut Report,
 ) -> Result<Model, Error> {
@@ -25,7 +32,7 @@ pub fn read(
             if !format.can_convert() {
                 return Err(Error::NotSupportedYet { format });
             }
-            let bytes = reader(path)?;
+            let bytes = reader(path, crate::MAX_INPUT_BYTES)?;
             if bytes.len() as u64 > crate::MAX_INPUT_BYTES {
                 return Err(Error::TooLarge {
                     path: path.into(),
@@ -39,8 +46,8 @@ pub fn read(
         &finder,
         &mut Vec::new(),
     )?;
-    crate::local_components(&mut model, 1, crate::PartPositions::Smart, report);
-    report.note_part_positions(crate::PartPositions::Smart);
+    crate::local_components(&mut model, 1, part_positions, report);
+    report.note_part_positions(part_positions);
     Ok(model)
 }
 
