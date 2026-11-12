@@ -265,8 +265,10 @@ The limit line always ends in a full stop. The name and limit (2 min for SolidCr
 
 FreeCAD's `--freecad-timeout` defaults to 300 s for its headless run. A native document
 conversion stops without writing an output document; a macro-only check keeps the macro
-unverified. Reading one design has a limit of its own: a design that is still being read after
-20 minutes counts as stuck and is stopped. In a Fusion `.f3z` archive the stuck design is left
+unverified. Reading one design has a limit of its own: a design that makes no progress for
+20 minutes (no step finishing, no other design starting, memory not moving), or that runs 60
+minutes in all, counts as stuck and is stopped. `DUTCHMAN_DESIGN_TIME_LIMIT` sets the 20 in
+minutes (the 60 follows at three times it; `0` turns the limit off). In a Fusion `.f3z` archive the stuck design is left
 out and the archive converted again without it, so the other designs still convert; the report
 names the design that was left out (at most three per archive). A stuck single-design file
 fails with a message naming it. Mapping and writing have no independent wall-clock limit.

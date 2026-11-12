@@ -589,8 +589,7 @@ fn a_stuck_design_stops_at_the_design_limit_and_is_named() {
     // Left out and tried again without it; with the root gone the archive cannot convert, so
     // the failure names the design that was stuck.
     assert!(text.contains("ZebraWidget.f3d"), "{text}");
-    assert!(
-        text.contains("left out") || text.contains("limit for one design"),
-        "{text}"
-    );
+    assert!(text.contains("left out"), "{text}");
+    assert!(text.contains("limit for one design"), "{text}");
+    assert!(text.contains("DUTCHMAN_DESIGN_TIME_LIMIT"), "{text}");
 }

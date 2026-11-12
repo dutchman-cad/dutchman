@@ -212,6 +212,20 @@ fn minutes(limit: Option<Duration>) -> String {
     }
 }
 
+/// A design may run this many times the limit in all, progress or not: a decoder caught in a
+/// runaway allocation keeps moving its memory and would otherwise never count as stuck.
+const CEILING_TIMES: u32 = 3;
+
+/// What a stuck design ran past, as a phrase: "20 minutes with no progress, or 60 minutes in
+/// all".
+fn limit_phrase(limit: Option<Duration>) -> String {
+    format!(
+        "{} with no progress, or {} in all",
+        minutes(limit),
+        minutes(limit.map(|limit| limit.saturating_mul(CEILING_TIMES)))
+    )
+}
+
 /// How many stuck designs one archive may lose before the conversion gives up.
 const MAX_LEFT_OUT: usize = 3;
 
@@ -575,8 +589,13 @@ pub(crate) fn without_entry(input: &Path, name: &str, out: &Path) -> zip::result
 
 /// Says in `report` which stuck designs were left out of `input`: as losses when the rest
 /// converted, in the error otherwise. Names are quoted so anonymous reports take them out.
-fn mark_left_out(report: &mut Value, input: &Path, left_out: &[String], limits: &Limits) {
-    let minutes = minutes(limits.design);
+pub(crate) fn mark_left_out(
+    report: &mut Value,
+    input: &Path,
+    left_out: &[String],
+    limits: &Limits,
+) {
+    let ran = limit_phrase(limits.design);
     let quoted = |names: &[String]| {
         names
             .iter()
@@ -609,8 +628,8 @@ fn mark_left_out(report: &mut Value, input: &Path, left_out: &[String], limits: 
                     "code": null,
                     "subject": design,
                     "message": format!(
-                        "\"{design}\" was left out: {minutes} reading it with no progress, \
-                         Dutchman's limit for one design. The rest of the archive converted \
+                        "\"{design}\" was left out: reading it ran past {ran}, Dutchman's \
+                         limit for one design. The rest of the archive converted \
                          without it{users}. To give it longer, set {DESIGN_LIMIT_ENV} to more \
                          minutes (0 for no limit) and convert again"
                     ),
@@ -635,7 +654,9 @@ fn mark_left_out(report: &mut Value, input: &Path, left_out: &[String], limits: 
         .and_then(|error| error.get_mut("message"))
     {
         let text = format!(
-            "{} (Dutchman had already left out {}, {minutes} with no progress)",
+            "{} (Dutchman had already left out {}: each ran past {ran}, Dutchman's limit for \
+             one design; to give it longer, set {DESIGN_LIMIT_ENV} to more minutes (0 for no \
+             limit) and convert again)",
             message.as_str().unwrap_or(""),
             quoted(left_out)
         );
@@ -809,19 +830,19 @@ fn convert_once(
                 )),
             },
             Stopped::Stuck(design) => {
-                let minutes = minutes(limits.design);
+                let ran = limit_phrase(limits.design);
                 let raise = format!(
                     "; to give it longer, set {DESIGN_LIMIT_ENV} to more minutes (0 for no \
                      limit) and convert again"
                 );
                 fail(match design {
                     Some(design) => format!(
-                        "stopped reading the design \"{design}\": {minutes} with no \
-                         progress, Dutchman's limit for one design{raise}"
+                        "stopped reading the design \"{design}\": it ran past {ran}, Dutchman's \
+                         limit for one design{raise}"
                     ),
                     None => format!(
-                        "stopped: {minutes} with no progress while at the {} stage, \
-                         Dutchman's limit for one design{raise}",
+                        "stopped: a design ran past {ran} while at the {} stage, Dutchman's \
+                         limit for one design{raise}",
                         at.id()
                     ),
                 })
@@ -857,6 +878,8 @@ struct Reading {
     stage: Stage,
     design: Option<String>,
     since: Instant,
+    /// When this design (or this stage, before any design) began; progress does not move it.
+    began: Instant,
     /// The memory the child held when the clock last restarted.
     held: Option<u64>,
 }
@@ -867,6 +890,7 @@ impl Reading {
             stage: Stage::Input,
             design: None,
             since: Instant::now(),
+            began: Instant::now(),
             held: None,
         }
     }
@@ -892,18 +916,23 @@ impl Reading {
         if stage != self.stage {
             self.stage = stage;
             self.since = Instant::now();
+            self.began = self.since;
         }
     }
 
     fn design(&mut self, design: Option<String>) {
         self.design = design;
         self.since = Instant::now();
+        self.began = self.since;
     }
 
-    /// The design read past `limit` with no progress (`Some(None)` when none is named).
+    /// The design read past `limit` with no progress, or past [`CEILING_TIMES`] the limit in
+    /// all (`Some(None)` when none is named).
     fn stuck(&self, limit: Duration) -> Option<Option<String>> {
-        (matches!(self.stage, Stage::Decode | Stage::Project) && self.since.elapsed() > limit)
-            .then(|| self.design.clone())
+        let reading = matches!(self.stage, Stage::Decode | Stage::Project);
+        let over = self.since.elapsed() > limit
+            || self.began.elapsed() > limit.saturating_mul(CEILING_TIMES);
+        (reading && over).then(|| self.design.clone())
     }
 }
 
@@ -1454,7 +1483,10 @@ mod left_out_tests {
             message.starts_with("\"Gear Box.f3d\" was left out"),
             "{message}"
         );
-        assert!(message.contains("20 minutes reading it"), "{message}");
+        assert!(
+            message.contains("ran past 20 minutes with no progress, or 60 minutes in all"),
+            "{message}"
+        );
         assert_eq!(minutes(Some(Duration::from_secs(30))), "1 minute");
         assert_eq!(ok["loss_groups"][0]["count"], 1);
         let mut failed = serde_json::json!({"ok": false, "error": {"message": "no root"}});
@@ -1519,5 +1551,30 @@ mod left_out_tests {
         assert_eq!(reading.stuck(Duration::from_secs(60)), None);
         reading.stage(Stage::Write);
         assert_eq!(reading.stuck(none), None);
+    }
+
+    #[test]
+    fn a_design_that_keeps_moving_memory_still_stops_at_three_times_the_limit() {
+        let limit = Duration::from_millis(40);
+        let mut reading = Reading::new();
+        reading.stage(Stage::Decode);
+        reading.design(Some("Runaway.f3d".into()));
+        let began = Instant::now();
+        let mut bytes = 1u64 << 30;
+        // Memory grows past the progress mark every few ms, as a runaway allocation would.
+        let stopped = loop {
+            bytes += PROGRESS_BYTES;
+            reading.memory(bytes);
+            if let Some(design) = reading.stuck(limit) {
+                break (design, began.elapsed());
+            }
+            assert!(began.elapsed() < Duration::from_secs(5), "never stopped");
+            std::thread::sleep(Duration::from_millis(5));
+        };
+        assert_eq!(stopped.0.as_deref(), Some("Runaway.f3d"));
+        assert!(stopped.1 >= limit * 3, "{:?}", stopped.1);
+        // A new design starts its own allowance.
+        reading.design(Some("Next.f3d".into()));
+        assert_eq!(reading.stuck(limit), None);
     }
 }
