@@ -307,7 +307,11 @@ fn workspace_run(mock: &mut Mock, dir: &tempfile::TempDir, budget: u32) -> Resul
         budget,
     )
 }
-fn assert_sources(zip: &mut zip::ZipArchive<std::io::Cursor<Vec<u8>>>, mid: &str, kind: &str) -> Value {
+fn assert_sources(
+    zip: &mut zip::ZipArchive<std::io::Cursor<Vec<u8>>>,
+    mid: &str,
+    kind: &str,
+) -> Value {
     let manifest = zip_value(zip, "manifest.json");
     assert_eq!(manifest["consistent"], true);
     assert_eq!(manifest["document"]["microversion"], mid);
