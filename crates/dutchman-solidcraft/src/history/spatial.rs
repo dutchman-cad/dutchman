@@ -23,6 +23,7 @@ const ARC_STEP: f64 = 2.0;
 const MAX_FIT: usize = 64;
 
 /// A mapped 3D sketch, as later features refer to it.
+#[derive(Clone)]
 pub(crate) struct Mapped {
     /// The SolidCraft sketch feature's id.
     pub(crate) feature: u64,

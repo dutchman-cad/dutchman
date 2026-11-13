@@ -74,6 +74,11 @@ are placed hidden`, counts the latter across repeated and nested placements. Bot
 the same bounded hidden-occurrence paths; a Degraded note reports paths left shown
 past the 4096-path limit.
 
+A trimmed profile region, including a revolve's, is selected by a point inside its boundary. When a
+native profile selection can't be resolved, Dutchman tries the selected curves and then the whole
+sketch, and keeps the feature only when SolidCraft's body check confirms it; the loss
+`history/profile-region-inferred` says so. Otherwise the feature stays blocked with its reason.
+
 ## Conversion choices and memory
 
 Use `threads: 0` (default) for automatic assembly part concurrency, or

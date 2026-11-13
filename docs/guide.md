@@ -382,6 +382,11 @@ This page used to hold everything. Each part now has its own page:
 
 [Feature history and the SolidCraft check](history.md)
 
+A trimmed profile region, including a revolve's, is selected by a point inside its boundary. When a
+native profile selection can't be resolved, Dutchman tries the selected curves and then the whole
+sketch, and keeps the feature only when SolidCraft's body check confirms it; the loss
+`history/profile-region-inferred` says so. Otherwise the feature stays blocked with its reason.
+
 Constant-radius fillets and equal-setback chamfers whose proven input edges span several
 bodies become one SolidCraft blend per body, with numbered names from the same source
 feature. The report keeps one `mapped` feature outcome for that source feature.

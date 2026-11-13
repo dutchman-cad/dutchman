@@ -143,15 +143,21 @@ still need additional decoding in cadmpeg.
 Reference sketches are mapped from the sketch, feature and parameter data alone, built once per
 conversion: on the Voron V1.8 that takes the peak from 11.0 GB to 8.7 GB, with the same output.
 
-## Regions of crossing circles
+## Trimmed and unresolved profile regions
 
-Two crossing circles bound several regions with the same curves, so naming the curves can't tell
-them apart. A profile region that uses part of a circle is selected by a point inside it, taken
-from its stored boundary: its uses' parameters must close into one ring. If they don't, or if the
-readings that close disagree on the shape, the region stays selected by its curves, and SolidCraft
-refuses what stays ambiguous. Boundaries sharing a circle or arc resolve their parameter
-reading together: an asymmetric neighboring region can distinguish the two semicircles of a
-diameter. Boundaries using unrelated curves cannot settle that ambiguity.
+Trimmed regions select a point strictly inside their stored boundary, for revolves and other
+profile consumers. Parameter intervals and traversal directions distinguish regions that share
+whole curves, including the two halves of a circle split by a diameter. Boundaries must close
+unambiguously; a missing interior point blocks the feature with a named reason. Angular carriers
+whose stored chart differs from the solved sketch still require consistent directed closure.
+
+When a native profile selection cannot resolve to a region, Dutchman tries its selected neutral
+curve identities, when available, and then its carrier sketch. Each candidate runs the normal
+feature mapping and is kept only when the existing source body comparison confirms its replay.
+At the last body-building feature, the complete rebuilt shape must match the original. Earlier
+features need usable stored source bodies at that same state. Unknown or failed checks block the
+feature. Every accepted inference adds `history/profile-region-inferred`; the original geometry
+remains available as before.
 
 ## Assembly placements
 

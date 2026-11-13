@@ -565,11 +565,14 @@ fn prepare_history(
     progress: Option<&dutchman_core::Progress<'_>>,
 ) -> Result<PreparedHistory, Error> {
     let mut part_report = Report::default();
-    let mut mapping = history::map_with_sketches(
+    let mut mapping = history::map_with_profile_check(
         part,
         &mut part_report,
         writer.resolved_version(),
         writer.sketches,
+        &mut |prefix, stored, final_state| {
+            writer.profile_check(part, prefix, step, stored, final_state, progress)
+        },
     );
     if let Ok(history) = &mut mapping.result {
         if let Err(why) = history::base::restate(history, part) {
