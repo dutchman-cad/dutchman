@@ -290,10 +290,12 @@ collection for reproduction and diagnostic issue drafts too. Doctor's `report.js
 no versions block; add command outputs separately. An investigation's `summary.md` has a
 version header instead; preserve it when quoting, without editing the generated summary.
 
-Want to go further? The next step is Tier 1, chasing it down with a minimal synthetic reproduction. Follow the
-[optional contribution ladder](../../docs/testing-your-library.md#want-to-go-further)
-through reproduction, local cadmpeg diagnosis, a cadmpeg fix, and a Dutchman pull request
-when needed. Ask before starting every step, wait for the answer, and stop on request.
+After the report, show the four tiers of the
+[contribution ladder](../../docs/testing-your-library.md#want-to-go-further) together (chase it
+down with a synthetic reproduction, find the cause in cadmpeg, fix it in cadmpeg, finish it
+with a Dutchman pull request) and ask once: "How far do you want me to go? (stop here / Tier 1 / Tier 2 / Tier 3 / all the way)". Then do every tier up to the answer without
+asking again; stop early only if a tier fails or needs something from the person (a small
+design rebuilt by hand, or their GitHub login for a pull request).
 Only synthetic files, anonymous reports, and code may be shared after review and permission.
 
 When conversion hangs or gets killed, enable a live diagnostic log **before** retrying:
@@ -643,9 +645,10 @@ Use this when a conversion fails and the original file must stay private.
    licence such as CC0 as proposed attachments. Include the design only if it reproduces
    and the user is free to share it. Never attach the original file or local-key.json.
    Do not post, attach or upload anything yourself.
-7. End with: "Want to go further? The next step is Tier 2, finding the cause by diagnosing the synthetic file in cadmpeg
-   locally." Use the [optional ladder](../../docs/testing-your-library.md#want-to-go-further),
-   asking before every step and stopping on request.
+7. End by showing the remaining tiers of the
+   [contribution ladder](../../docs/testing-your-library.md#want-to-go-further) and asking once:
+   "How far do you want me to go? (stop here / Tier 2 / Tier 3 / all the way)". Then do every tier up to the answer without asking again; stop early only if a tier
+   fails or needs something from the person.
 
 The [minimum-reproduction guide](../../docs/minimum-reproduction.md) has a worked
 synthetic example and a prompt usable with any chat assistant or MCP client.
@@ -776,8 +779,8 @@ the summary or bundle reviewed in the consent screen; the log stays local.
 When the person wants to know what went wrong, start with `dutchman investigate ORIGINAL`
 and follow the procedure in the installed `AGENTS.md`: read the `summary.md` it writes,
 explain it, collect versions for any issue draft, ask whether to send it, then run it again
-with `--yes` or `--no-send`. End with the optional ladder pointer in Reporting a problem;
-ask before starting each further step. The rest of this section is for when they agree.
+with `--yes` or `--no-send`. Then show the four tiers in Reporting a problem and ask once how far to go.
+The rest of this section is for when they agree.
 
 The desktop **Ask your AI about this file** button copies a short prompt naming the original
 file, the converted design, the saved `<stem>.report.json` (`<stem>.failed.json` when the

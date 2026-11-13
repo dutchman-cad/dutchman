@@ -67,8 +67,8 @@ such as CC0. Never send the original file. Never send local-key.json. The
 [paste-ready prompt](testing-your-library.md#let-your-own-ai-make-a-minimum-reproduction)
 coaches this procedure without posting or uploading anything for you.
 
-Want to go further? The next step is Tier 2, finding the cause by [local diagnosis of the synthetic file in cadmpeg](testing-your-library.md#want-to-go-further).
-Every step is optional; an agent asks before starting each one and stops on request.
+Want to go further? The next tiers are [finding the cause in cadmpeg, fixing it, and finishing it in Dutchman](testing-your-library.md#want-to-go-further);
+an agent asks once how far to go, then does every tier up to that answer.
 
 ## Worked example: 88 use-curve range findings
 

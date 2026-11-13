@@ -5,8 +5,8 @@ Dutchman converts native CAD files into SolidCraft designs (`.sc`) on this machi
 ## When a conversion went wrong: one procedure
 
 If the person asks why a file didn't convert, or converted with something missing or wrong
-(the app's **Ask your AI about this file** prompt says so), follow this procedure. Ask
-before each optional contribution step, wait for the answer, and stop whenever they say so:
+(the app's **Ask your AI about this file** prompt says so), follow this procedure. For the optional
+contribution tiers, ask once how far to go (step 5) and then continue without asking again:
 
 1. Run `"$D" investigate "ORIGINAL FILE"` (how to set `D` is below). It reads the report the
    app saved beside the file, or converts once into a private folder when there is none. It
@@ -31,11 +31,12 @@ before each optional contribution step, wait for the answer, and stop whenever t
    command outputs and source program/version collected above. `summary.md` has a version
    header instead of a JSON block: preserve that header when quoting it. Never paste a
    saved conversion report with its private names and paths into an issue.
-5. End the report step with: "Want to go further? The next step is Tier 1, chasing it down
-   with a minimal synthetic reproduction." Point to
-   [Want to go further?](docs/testing-your-library.md#want-to-go-further) for the four
-   optional tiers: chase it down, find the cause in cadmpeg, fix it in cadmpeg, and finish it
-   with a Dutchman pull request. Ask before each tier and stop on request. Own design files stay local; only synthetic files,
+5. After the report, show the four optional tiers from
+   [Want to go further?](docs/testing-your-library.md#want-to-go-further) together: chase it
+   down with a synthetic reproduction, find the cause in cadmpeg, fix it in cadmpeg, and finish
+   it with a Dutchman pull request. Ask once: "How far do you want me to go? (stop here / Tier 1 / Tier 2 / Tier 3 / all the way)".
+   Then do every tier up to the answer without asking again; stop early only if a tier fails or
+   needs something from the person (a small design rebuilt by hand, or their GitHub login). Own design files stay local; only synthetic files,
    anonymous reports, and code are shared after review and permission.
 
 Never overwrite the original, the converted design or the saved report, and never send or

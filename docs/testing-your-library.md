@@ -189,16 +189,27 @@ the issue when a Dutchman release fixes it. To help with a fix yourself, follow 
   [minimum-reproduction procedure](minimum-reproduction.md) to compare its failure stage
   and finding codes. Keep a body copied from the original local while investigating.
 
-Want to go further? The next step is Tier 1, chasing it down with a [minimal synthetic reproduction](#want-to-go-further).
+Want to go further? See [the four tiers](#want-to-go-further) and say how far to go.
 
 ## Want to go further?
 
 After the report come four optional tiers, from chasing the problem down to the full pull
-requests. Every one is optional, including reporting. An agent asks before starting **each** tier,
-waits for your answer, and stops whenever you say so. Agreeing to report does not agree to
-making a reproduction, cloning a repository, diagnosing or writing a fix. Review anything
-that will be shared and agree to that separately. Your own design files never leave your
-machine; only synthetic files, anonymous reports, and code are shared in this flow.
+requests:
+
+1. **Chase it down:** a minimal synthetic reproduction of the failure.
+2. **Find the cause:** the decode step that fails, found in cadmpeg with that synthetic file.
+3. **Fix it:** a cadmpeg pull request.
+4. **Finish it:** a Dutchman pull request, when the fix needs Dutchman too.
+
+**Your own design files never leave your machine.** Only synthetic files, anonymous reports,
+and code are shared, at every tier.
+
+An agent shows the four tiers together, once, and asks one question: "How far do you want me
+to go? (stop here / Tier 1 / Tier 2 / Tier 3 / all the way)". It then does every tier up to
+your answer without asking again. It stops early only when a tier fails, or needs something
+only you can give: rebuilding the small design by hand in your CAD program (Tier 1), or your
+GitHub login to open a pull request (Tiers 3 and 4). Pull requests go out under your own
+account.
 
 ### Report
 
@@ -217,7 +228,7 @@ Your own files, keys, salts, logs, and journals stay on your machine.
 
 ### Tier 1: Chase it down (a minimal synthetic reproduction)
 
-Ask before starting. Follow [Make a minimum reproduction](minimum-reproduction.md):
+Follow [Make a minimum reproduction](minimum-reproduction.md):
 
 ```sh
 dutchman repro part.f3d --out original-reproduction
@@ -241,7 +252,7 @@ still private.
 
 ### Tier 2: Find the cause (diagnose in cadmpeg locally)
 
-Ask before cloning or building. Use only the synthetic file from Tier 1. Read cadmpeg's
+Use only the synthetic file from Tier 1. Read cadmpeg's
 [CLI guide](https://github.com/cadmpeg/cadmpeg/blob/main/crates/cadmpeg/README.md),
 [CONTRIBUTING.md](https://github.com/cadmpeg/cadmpeg/blob/main/CONTRIBUTING.md), and
 [LEGAL.md](https://github.com/cadmpeg/cadmpeg/blob/main/LEGAL.md). With Rust installed:
@@ -271,7 +282,7 @@ reports, and code, not dumps or logs made from private files.
 
 ### Tier 3: Fix it (a cadmpeg pull request)
 
-Ask before starting a fix. Work on a branch in your fork, using only synthetic tests and
+Work on a branch in your fork, using only synthetic tests and
 public information allowed by cadmpeg's contribution and legal rules. Use its corpus
 donation pipeline for any CAD fixture, as its CONTRIBUTING.md requires, and record how it
 was made. Never use vendor SDKs, decompiled binaries, confidential material, or private
@@ -306,7 +317,7 @@ and code, with no private geometry, dimensions, names, or paths.
 
 ### Tier 4: Finish it (a Dutchman pull request, when needed)
 
-Ask before starting. A mapping or message fix belongs in Dutchman; native decoding belongs
+A mapping or message fix belongs in Dutchman; native decoding belongs
 in cadmpeg. Follow [CONTRIBUTING.md](../CONTRIBUTING.md) and [AGENTS.md](../AGENTS.md).
 Branch from `main` in your fork and, from the Dutchman repository root, run the documented
 checks CI runs:
@@ -354,8 +365,8 @@ the choices, the part roles and the sizes. Offer only an anonymous summary from 
 never a bundle containing their geometry. Call report_submit only after I say yes to that report,
 that summary choice and the public-test box. Never send anything else, anywhere. For a GitHub issue,
 draft it for me to review and post, with those versions and anonymous facts only.
-End with: "Want to go further? The next step is Tier 1, chasing it down with a minimal synthetic reproduction."
-Follow this guide's "Want to go further?" ladder: ask before each optional tier and stop when I say so.
+End by showing the four tiers from this guide's "Want to go further?" and asking once:
+"How far do you want me to go? (stop here / Tier 1 / Tier 2 / Tier 3 / all the way)". Then do every tier up to my answer without asking again, and stop early only if a tier fails or needs something from me (such as my GitHub login or a small design rebuilt by hand).
 ```
 
 ## Let your own Claude do the legwork
@@ -394,9 +405,9 @@ If exact builds are unknown, give the program, desktop or web, and years the fil
    each draft for anything that looks like a file name, path, part or company name, and
    remove it.
 5. Save the drafts as Markdown files in <RESULTS FOLDER>/issues/ and list them for me. I will
-   read them and post the ones I choose. End with: "Want to go further? The next step is a
-   minimal synthetic reproduction." Follow this guide's "Want to go further?" ladder:
-   ask before each optional tier, wait for my answer, and stop whenever I say so.
+   read them and post the ones I choose. End by showing the four tiers from this guide's
+   "Want to go further?" and asking once: "How far do you want me to go? (stop here / Tier 1 / Tier 2 / Tier 3 / all the way)";
+   then do every tier up to my answer without asking again, and stop early only if a tier fails or needs something from me (such as my GitHub login or a small design rebuilt by hand).
 ```
 
 ## Let your own AI make a minimum reproduction
@@ -442,9 +453,8 @@ If exact builds are unknown, give the program, desktop or web, and years the fil
 6. Tell me to attach anonymous.json and the small rebuilt file only if it reproduces
    and I am free to share it, with its STEP export and a public licence such as CC0.
    Never the original file. Never local-key.json. Upload nothing.
-7. End with: "Want to go further? The next step is Tier 2, finding the cause by diagnosing the synthetic file in cadmpeg
-   locally." Follow this guide's "Want to go further?" ladder: ask before each optional
-   step, wait for my answer, and stop whenever I say so.
+7. End by showing the remaining tiers from this guide's "Want to go further?" and asking once:
+   "How far do you want me to go? (stop here / Tier 2 / Tier 3 / all the way)"; then do every tier up to my answer without asking again, and stop early only if a tier fails or needs something from me (such as my GitHub login or a small design rebuilt by hand).
 ```
 
 ## Questions

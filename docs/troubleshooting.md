@@ -20,7 +20,8 @@ names, paths, or a way to identify files. Keep the original design private. You 
 small rebuilt reproduction only if it reproduces and you are free to share it. See
 [Report what you found](testing-your-library.md#5-report-what-you-found) for the three
 required versions and [Want to go further?](testing-your-library.md#want-to-go-further)
-for optional steps using only a synthetic reproduction; an agent asks before each step.
+for the four optional tiers, which use only a synthetic reproduction; an agent asks once how
+far to go.
 
 On Linux, run `dutchman-gui` from a terminal and confirm that your X11 or Wayland desktop
 session has working OpenGL and graphics drivers. Include the terminal diagnostics when
@@ -276,9 +277,9 @@ With dutchman-mcp configured locally, paste this prompt and substitute your loca
 > use make_report to prepare the local ZIP. Tell me where to review it locally. Do not read
 > local-key.json, the original file, the rebuilt file or the ZIP into the conversation.
 > Do not upload anything or open a submission link; I will review and choose what to send.
-> End with: "Want to go further? The next step is local cadmpeg diagnosis of the synthetic
-> file." Follow the optional ladder in Testing Dutchman on your library; ask before each
-> step, wait for my answer, and stop whenever I say so.
+> End by showing the remaining tiers from "Want to go further?" in Testing Dutchman on your
+> library and asking once: "How far do you want me to go? (stop here / Tier 2 / Tier 3 / all the way)";
+> then do every tier up to my answer without asking again, and stop early only if a tier fails or needs something from me (such as my GitHub login or a small design rebuilt by hand).
 
 The assistant sees categories, counts and signatures. The report ZIP itself contains the
 small file's geometry. A broad matching error category alone does not prove the same
