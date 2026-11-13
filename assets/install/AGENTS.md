@@ -5,8 +5,8 @@ Dutchman converts native CAD files into SolidCraft designs (`.sc`) on this machi
 ## When a conversion went wrong: one procedure
 
 If the person asks why a file didn't convert, or converted with something missing or wrong
-(the app's **Ask your AI about this file** prompt says so), do this and nothing more unless
-they ask:
+(the app's **Ask your AI about this file** prompt says so), follow this procedure. Ask
+before each optional contribution step, wait for the answer, and stop whenever they say so:
 
 1. Run `"$D" investigate "ORIGINAL FILE"` (how to set `D` is below). It reads the report the
    app saved beside the file, or converts once into a private folder when there is none. It
@@ -15,11 +15,28 @@ they ask:
    this first run.
 2. Read `summary.md` and explain it plainly: what converted, which features were not rebuilt
    and why, which replays may be wrong, and what a newer build would change, if it lists any.
-3. Ask the person one question: may Dutchman send that summary to the Dutchman team? It holds
+   Run `dutchman --version` using the executable path in `D`, and
+   `solidcraft-cli --version` if installed, using its full path or `SOLIDCRAFT_CLI`
+   when needed. Record "none" only if no SolidCraft was installed. State the source program and version from metadata already reported by
+   Dutchman; ask the person once if missing. If exact builds are unknown, give the program,
+   desktop or web, and the years the files are from. Keep these facts for an issue draft;
+   do not edit the generated summary that Dutchman checks and sends.
+3. Ask the person: may Dutchman send that summary to the Dutchman team? It holds
    no file, part or feature names, no paths and no sizes from the design; show it to them if
    they want to see it.
 4. Run the same command again with `--yes` if they said yes, or `--no-send` if they said no.
    The second run reuses the summary. A yes prints a receipt id; give it to them.
+   If they want a GitHub issue instead, draft it for their review and posting using only
+   anonymous facts. Copy the report's `versions` block verbatim when provided, plus the
+   command outputs and source program/version collected above. `summary.md` has a version
+   header instead of a JSON block: preserve that header when quoting it. Never paste a
+   saved conversion report with its private names and paths into an issue.
+5. End the report step with: "Want to go further? The next step is Tier 1, chasing it down
+   with a minimal synthetic reproduction." Point to
+   [Want to go further?](docs/testing-your-library.md#want-to-go-further) for the four
+   optional tiers: chase it down, find the cause in cadmpeg, fix it in cadmpeg, and finish it
+   with a Dutchman pull request. Ask before each tier and stop on request. Own design files stay local; only synthetic files,
+   anonymous reports, and code are shared after review and permission.
 
 Never overwrite the original, the converted design or the saved report, and never send or
 upload anything else. Everything else `investigate` writes (the convert report, the

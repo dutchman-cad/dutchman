@@ -274,10 +274,27 @@ what was expected and what happened, and an anonymous report for that one file:
 `convert_all` with only that file in `inputs` and a `report_anon` path (or `dutchman
 convert-all --out-dir converted --report-anon report-anon.json /abs/part.f3d`). The user
 reads that report before pasting it; ordinary JSON, logs, the journal, the key, and the salt
-stay private. Do not attach designs publicly; a user who wants to share a reproducer can
-offer it privately in the issue. The issue goes on Dutchman even when the report says
+stay private. The issue goes on Dutchman even when the report says
 `upstream: cadmpeg` or `upstream: solidcraft`. Draft the issue for the user to post; don't
-post it yourself.
+post it yourself. Own design files never leave the user's machine in this flow; only a
+synthetic reproduction rebuilt from scratch can be proposed for public sharing.
+
+Before drafting any issue, run `dutchman --version` and `solidcraft-cli --version` if
+installed, using its full path or `SOLIDCRAFT_CLI` when needed. Record "none" only when no
+SolidCraft was installed. Copy the anonymous report's `versions` block verbatim, keeping
+nulls unchanged, and include the command outputs separately. State the source program and
+version from metadata already reported by Dutchman; ask the user once if missing. If exact
+builds are unknown, give the program, desktop or web, and the years the files are from,
+for example "Fusion desktop, unknown builds, files from 2020 to 2025". Use this version
+collection for reproduction and diagnostic issue drafts too. Doctor's `report.json` has
+no versions block; add command outputs separately. An investigation's `summary.md` has a
+version header instead; preserve it when quoting, without editing the generated summary.
+
+Want to go further? The next step is Tier 1, chasing it down with a minimal synthetic reproduction. Follow the
+[optional contribution ladder](../../docs/testing-your-library.md#want-to-go-further)
+through reproduction, local cadmpeg diagnosis, a cadmpeg fix, and a Dutchman pull request
+when needed. Ask before starting every step, wait for the answer, and stop on request.
+Only synthetic files, anonymous reports, and code may be shared after review and permission.
 
 When conversion hangs or gets killed, enable a live diagnostic log **before** retrying:
 MCP `convert`/`convert_all` accept `diagnostics: "/abs/run.jsonl"`, or
@@ -616,13 +633,19 @@ Use this when a conversion fails and the original file must stay private.
    A copied body is for local investigation; rebuild with simple, freely shareable
    dimensions before proposing a shareable file.
 5. Once the small rebuilt design reproduces, draft an issue for the user to review and
-   post on Dutchman's issues. Use only anonymous.json for the title and technical facts:
-   versions, format, stage, category, finding codes/counts, kinds and anonymous narrowing
-   path. Remove source names, paths, entity ids and geometry/parameter values. If rebuilding
-   has not reproduced, draft an anonymous-facts-only issue and state that limit.
-6. List only anonymous.json and the small rebuilt file as proposed attachments, with the
-   file included only if it reproduces and the user is free to share it. Never attach the
-   original file or local-key.json. Do not post, attach or upload anything yourself.
+   post on Dutchman's issues. Collect the versions as described in Reporting a problem:
+   run the version commands, copy anonymous.json's versions block verbatim, and state the
+   source program/version, asking once if missing. Use only anonymous.json for the other
+   technical facts: format, stage, category, finding codes/counts, kinds and anonymous
+   narrowing path. Remove source names, paths, entity ids and geometry/parameter values.
+   If rebuilding has not reproduced, draft an anonymous-facts-only issue and state that limit.
+6. List anonymous.json and the synthetic rebuilt file with its STEP export and a public
+   licence such as CC0 as proposed attachments. Include the design only if it reproduces
+   and the user is free to share it. Never attach the original file or local-key.json.
+   Do not post, attach or upload anything yourself.
+7. End with: "Want to go further? The next step is Tier 2, finding the cause by diagnosing the synthetic file in cadmpeg
+   locally." Use the [optional ladder](../../docs/testing-your-library.md#want-to-go-further),
+   asking before every step and stopping on request.
 
 The [minimum-reproduction guide](../../docs/minimum-reproduction.md) has a worked
 synthetic example and a prompt usable with any chat assistant or MCP client.
@@ -752,8 +775,9 @@ the summary or bundle reviewed in the consent screen; the log stays local.
 
 When the person wants to know what went wrong, start with `dutchman investigate ORIGINAL`
 and follow the procedure in the installed `AGENTS.md`: read the `summary.md` it writes,
-explain it, ask the one question whether to send it, then run it again with `--yes` or
-`--no-send`. The rest of this section is for going further when they ask.
+explain it, collect versions for any issue draft, ask whether to send it, then run it again
+with `--yes` or `--no-send`. End with the optional ladder pointer in Reporting a problem;
+ask before starting each further step. The rest of this section is for when they agree.
 
 The desktop **Ask your AI about this file** button copies a short prompt naming the original
 file, the converted design, the saved `<stem>.report.json` (`<stem>.failed.json` when the
