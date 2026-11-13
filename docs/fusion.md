@@ -5,7 +5,7 @@ cadmpeg's most complete native reader. This page says what Dutchman makes of wha
 gives and which upstream gaps remain. Improvements land in cadmpeg and reach Dutchman when the
 pin is bumped.
 
-State at the cadmpeg commit pinned in `Cargo.toml` (`6c775550`, cadmpeg 0.6.11).
+State at the cadmpeg commit pinned in `Cargo.toml` (`651fe819`, cadmpeg 0.6.11).
 More thread and hole forms, healed Delete Face operations, shell wall selections, loft
 sections and rails, circular pipes, and pattern placements decode for history mapping.
 More extrude profiles and face ends, fillet edge selections, body moves, and component
