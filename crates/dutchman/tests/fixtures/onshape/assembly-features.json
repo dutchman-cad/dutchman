@@ -1,0 +1,5 @@
+{
+  "sourceMicroversion":"333333333333333333333333",
+  "features":[{"btType":"BTMMate-64","featureId":"hinge","name":"Hinge","mateType":"REVOLUTE","mateConnectorQueryList":{"btType":"BTMParameterQueryWithOccurrenceList-67","queries":[],"occurrences":[]}}],
+  "featureStates":{}, "isComplete":true
+}

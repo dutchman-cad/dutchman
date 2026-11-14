@@ -742,6 +742,24 @@ const COEFFICIENTS: &[Coefficients] = &[
         memory_band: 1.0,
         time_band: None,
     },
+    // Onshape bundles: provisional, from STEP's row (a bundle's heavy part is its STEP export; the feature JSON is
+    // small). Replace with measured values once real Onshape documents are converted.
+    Coefficients {
+        format: Format::OnshapeBundle,
+        model: CostModel::Legacy(LegacyCost {
+            base_bytes: 100_000_000,
+            bytes_per_byte: 20.0,
+            base_seconds: 1.0,
+            seconds_per_mib: 1.0,
+            history_factor: 2.0,
+            history_seconds_factor: 2.0,
+            startup: None,
+            check_share: 1.1,
+        }),
+        band: 1.0,
+        memory_band: 1.0,
+        time_band: None,
+    },
     Coefficients {
         format: Format::Iges,
         model: CostModel::Legacy(LegacyCost {

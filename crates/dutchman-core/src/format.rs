@@ -18,6 +18,7 @@ pub enum Format {
     Rhino,
     Acis,
     Step,
+    OnshapeBundle,
     Iges,
     /// A shared part suffix whose contents do not identify Creo or NX.
     UnclassifiedPart,
@@ -25,7 +26,7 @@ pub enum Format {
 
 impl Format {
     /// Every recognised format.
-    pub const ALL: [Format; 16] = [
+    pub const ALL: [Format; 17] = [
         Self::FusionArchive,
         Self::FusionMultiDocument,
         Self::InventorPart,
@@ -40,6 +41,7 @@ impl Format {
         Self::Rhino,
         Self::Acis,
         Self::Step,
+        Self::OnshapeBundle,
         Self::Iges,
         Self::UnclassifiedPart,
     ];
@@ -85,6 +87,12 @@ impl Format {
             Self::Rhino => ("rhino", "3dm", "Rhino (.3dm)", "Rhino"),
             Self::Acis => ("acis", "sat", "ACIS (.sat, .sab, .smt, .smb)", "ACIS"),
             Self::Step => ("step", "step", "STEP (.step, .stp)", "STEP"),
+            Self::OnshapeBundle => (
+                "onshape_bundle",
+                "onshape-bundle",
+                "Onshape bundle (.onshape-bundle)",
+                "Onshape",
+            ),
             Self::Iges => ("iges", "iges", "IGES (.igs, .iges)", "IGES"),
             Self::UnclassifiedPart => (
                 "unclassified_part",
@@ -120,6 +128,7 @@ impl Format {
             Self::Rhino => &["3dm"],
             Self::Acis => &["sat", "sab", "smt", "smb"],
             Self::Step => &["step", "stp"],
+            Self::OnshapeBundle => &["onshape-bundle"],
             Self::Iges => &["igs", "iges"],
         }
     }
@@ -146,12 +155,16 @@ impl Format {
             Self::Rhino => Some("rhino"),
             Self::Acis => Some("sat"),
             Self::Step => Some("step"),
+            Self::OnshapeBundle => Some("onshape-bundle"),
             Self::Iges => Some("iges"),
         }
     }
 
     /// Codec available in this build.
     pub fn codec_id(self) -> Option<&'static str> {
+        if self == Self::OnshapeBundle && !cfg!(feature = "onshape") {
+            return None;
+        }
         if self == Self::FreeCadDocument && !cfg!(feature = "freecad") {
             return None;
         }

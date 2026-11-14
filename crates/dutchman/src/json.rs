@@ -1003,6 +1003,18 @@ pub fn choice_values(preset: crate::choices::Preset, choices: crate::choices::Ch
     json!({"preset": preset.name(), "history": choices.history, "sketches": choices.sketches, "joints": choices.joints})
 }
 
+/// Shared CLI/MCP result for an Onshape fetch. Never contains the supplied URL or credentials.
+pub fn onshape_fetch(result: &crate::onshape::Result<crate::onshape::FetchReport>) -> Value {
+    match result {
+        Ok(report) => {
+            json!({"schema": crate::onshape::SCHEMA, "ok": true, "output": report.output.display().to_string(),
+            "microversion": report.microversion, "calls": report.calls, "cache_hits": report.cache_hits})
+        }
+        Err(error) => json!({"schema": crate::onshape::SCHEMA, "ok": false,
+            "calls": error.calls, "error": {"code": error.kind.code(), "message": error.message}}),
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::indexing_slicing)]
 mod tests {

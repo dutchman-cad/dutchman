@@ -19,6 +19,15 @@ native format itself; it drives cadmpeg's codecs and maps cadmpeg's neutral mode
 (`cadmpeg_ir::CadIr`), onto a target. Format work lands in cadmpeg, so every cadmpeg
 consumer benefits and Dutchman stays small.
 
+The offline Onshape REST bundle reader is an explicit exception to that native
+codec rule. `dutchman-core::onshape` validates bundle v1 and translates the public
+JSON construction records into `cadmpeg-ir` history and feature input topology.
+The embedded STEP export is decoded by the existing guarded cadmpeg route; it
+supplies final source geometry and verification, never historical selections.
+`dutchman-solidcraft` receives the same neutral model and knows nothing about the
+bundle. The `onshape` core feature includes the STEP codec and ZIP reader; it is
+part of the default `formats` set. See [Onshape](onshape.md).
+
 ## Crates
 
 | Crate | Role | Depends on |

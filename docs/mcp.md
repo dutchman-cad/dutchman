@@ -8,6 +8,17 @@ native profile selection can't be resolved, Dutchman tries the selected curves a
 sketch, and keeps the feature only when SolidCraft's body check confirms it; the loss
 `history/profile-region-inferred` says so. Otherwise the feature stays blocked with its reason.
 
+## Offline Onshape inputs
+
+`inspect`, `convert` and `convert_all` accept `.onshape-bundle` files in builds with
+the `onshape` input feature (included in release builds). Use the ordinary local
+input/output paths; these tools do not fetch documents or need credentials. One
+Part Studio converts with CADIR history and the existing writer/verification.
+Missing or unsupported feature selections produce named losses and preserve the
+bundle's STEP geometry. See [Onshape](onshape.md) for the supported subset.
+An explicitly inconsistent bundle is refused with a request to fetch it again or
+use a version link. Legacy v1 bundles without consistency metadata remain readable.
+
 ## Read an existing result
 
 `read_report` takes `input`, the absolute path of a `.sc` design or its adjacent
@@ -893,3 +904,21 @@ undecoded mesh container or an unresolved source alone cannot supply a count, so
 existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
+
+## Fetch an Onshape snapshot
+
+`onshape_fetch` accepts `document_url` (required), `out` (optional file path),
+`version` (optional immutable Onshape version ID), and `max_calls` (optional HTTP
+attempt budget, default 50). It advertises input and output JSON schemas and returns
+`dutchman.onshape-fetch/1` in text and structured content, with `isError` on failure.
+Keys come only from the server's local environment or private config file; never
+include them in tool arguments. This tool uses Onshape's network API and your own
+allowance and writes a private bundle/cache. Nothing is sent to Dutchman.
+
+Part Studios include features, input topology, optional variables/configuration,
+and final STEP; same-document assembly references are fetched too. Version URLs
+use version paths. Workspace URLs use microversion paths where supported and
+workspace paths for STEP/variables, followed by a final head check. One change
+triggers a refetch; a second returns `onshape/changed`. Successful bundle manifests
+record `consistent: true` and per-file path kinds/microversions. All attempts share
+the tool's call budget. See [Onshape](onshape.md#fetching-a-document) for cache and privacy details.

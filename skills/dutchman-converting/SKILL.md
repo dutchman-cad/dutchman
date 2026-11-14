@@ -1,12 +1,23 @@
 ---
 name: dutchman-converting
-description: Use when someone wants a CAD file (Fusion, Inventor, SolidWorks, FreeCAD, CATIA, Creo View, Rhino, ACIS or STEP) turned into a SolidCraft design (.sc) with Dutchman, through the dutchman-mcp tools or the dutchman command. Covers inspecting first, reader status and refusals (including IGES, Creo and NX), converting one file or a folder, checking the result in SolidCraft, explaining losses in plain words, and making private minimum reproductions of failures.
+description: Use when someone wants a CAD file (Fusion, Inventor, SolidWorks, FreeCAD, CATIA, Creo View, Rhino, ACIS, STEP or offline Onshape bundle) turned into a SolidCraft design (.sc) with Dutchman, through the dutchman-mcp tools or the dutchman command. Covers inspecting first, reader status and refusals (including IGES, Creo and NX), converting one file or a folder, checking the result in SolidCraft, explaining losses in plain words, and making private minimum reproductions of failures.
 ---
 
 # Converting CAD files with Dutchman
 
 Features whose source records that they changed no geometry are reported as `left_out`
 with reason "changes no geometry in the source"; later features can keep editable history.
+
+Onshape `.onshape-bundle` inputs convert offline through the same inspect/convert
+tools and commands. They must contain one Part Studio, its feature responses,
+bodydetails at needed rollback indices, and its final STEP export. Do not request
+credentials or upload a design. Explain `onshape/history.not-supported` as a named
+history gap with final STEP geometry preserved, and
+`onshape/sketch.constraint-not-supported` as a dropped relation with solved curves
+kept. The ordinary history/verification report still applies. See `docs/onshape.md`.
+If a bundle is marked `consistent: false`, explain that its snapshots differ and
+ask the owner to fetch again or use a version link. Older v1 bundles without this
+metadata are still supported; do not require a fetch solely because it is absent.
 
 On Windows, the per-user MSI installs `dutchman`, `dutchman-mcp`, and `dutchman-gui` under
 `%LOCALAPPDATA%\Programs\Dutchman` and adds that folder to the user PATH. Start a new
@@ -172,7 +183,7 @@ workers, reduced for dense parts or a large retained preparation queue.
 Call `formats` for the installed build's formats, status `words` and `converts`.
 Its `level` adds cadmpeg's published headline (`L0`–`L9`), or `null` when none is
 published; reader status still determines whether conversion can be attempted.
-Fusion, Inventor, SolidWorks parts, FreeCAD, CATIA, Creo View, Rhino, ACIS and STEP
+Fusion, Inventor, SolidWorks parts, FreeCAD, CATIA, Creo View, Rhino, ACIS, STEP and offline Onshape bundles
 can convert geometry. Creo and NX parts are identified by contents
 (they share `.prt`) and currently open without geometry, so conversion is refused. SolidWorks
 assemblies are recognised without a reader. `input.words` appears on
@@ -858,3 +869,28 @@ undecoded mesh container or an unresolved source alone cannot supply a count, so
 existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
+
+## Onshape fetch
+
+For the user's own Onshape document, `onshape_fetch` or
+`dutchman onshape fetch URL --out FILE --max-calls 50 --json` saves raw API responses
+in a private `.onshape-bundle`; it does not convert CAD. Inputs are `document_url`,
+optional `out`, `version` (immutable version ID), and `max_calls`. Read
+`dutchman.onshape-fetch/1`: `ok`, `calls`, `output`, `microversion`, `cache_hits`,
+and failure `error.code`/`message`. The tool has input and output schemas.
+Keys must already be in the local environment (`ONSHAPE_ACCESS_KEY` and
+`ONSHAPE_SECRET_KEY`) or the mode-600 `~/.config/dutchman/onshape.json`; never ask
+for them in chat or pass them as tool arguments. Fetch only the user's own documents.
+Requests go directly to Onshape; nothing is sent to Dutchman. Keep bundles and caches
+private. Version cache hits cost no calls; cached workspace URLs require two head checks.
+402 means the yearly allowance is exhausted; 429 honors Retry-After with bounded
+retries. Budget failures stop before the next request and retain cached responses.
+Part Studios include their raw features, input topology, optional variables/configuration,
+and final STEP; assemblies include same-document Part Studios. Version URLs use version
+paths. Workspace URLs pin supported reads to a microversion, fetch STEP/variables through
+workspace paths, and check the head at the end. One change triggers a refetch; a second
+returns `onshape/changed`: “the document changed while fetching; try again, or use a
+version link”. Do not retry indefinitely or raise the budget automatically. Both attempts,
+export polling/downloads, and head checks share `max_calls`. Successful manifests contain
+`consistent: true` and `file_sources` with a path kind and microversion for each file.
+See `docs/onshape.md` for the exact consistency, cache, and reference behavior.
