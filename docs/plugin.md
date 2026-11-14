@@ -243,40 +243,31 @@ the largest individual process and should not be confused with that total.
 
 ## Measurements
 
-Linux builder, Rust 1.98.0, `wasm32-wasip2`, size flags above. The cold build used a
-fresh Cargo target, no compiler cache, and one Cargo job. These are observed values,
-not estimates for an uncapped build.
+Linux builder, Rust 1.98.0, `wasm32-unknown-unknown`, size flags above, Wasmtime 50.0.1.
+One-run observations on a shared builder.
 
 | Measurement | Result |
 |---|---|
-| Component | 39,449,156 bytes (37.62 MiB) |
-| Cold release build | 31m 23.58s |
-| Build scope peak | 12 GiB; the scope's 12 GiB cap was reached |
-| Largest build process RSS | 11,368,060 KiB (10.84 GiB) |
-| Wasmtime 50.0.1 first compilation | 31.703s |
-| Wasmtime first-compilation peak process RSS | 2,034,016 KiB (1.94 GiB) |
+| Component (`dutchman.wasm`) | 38,567,054 bytes (36.78 MiB) |
+| Release build through buildq, shared compiler cache | 11m 0s |
+| Wasmtime first compilation | 7.4 s |
+| Harness process peak RSS after first compilation | 3,584,892 KiB (3.42 GiB) |
 
 The packaged component's SHA-256 is
-`5f9842de3c769a1840818b0c2c206f12c799c07c52f384cfecad06867f82cb60`.
-The exact requested release command also built successfully; the cold measurement
-adds `--jobs 1` and disables the shared compiler wrapper so compiler children remain
-in the measured scope. GNU time's RSS and the scope peak measure different things:
-RSS is the largest individual process; the scope includes concurrent processes and
-charged file cache. The successful build reached its cap, so this does not establish
-an unconstrained peak below 12 GiB.
-
+`599ba31810436f1d88bf8e16c3d50c1c4502da48c632b1edb5a8dad660cc0e9c`.
+The earlier cold `wasm32-wasip2` measurement took 31 minutes with up to 10.8 GiB in one
+compiler process; `dutchman-plugin-measure` repeats a cold build for this target.
 The Wasmtime values come from the optimized native harness, with a fresh Engine and
 no compiled-code cache, fuel enabled, a 16 MiB Wasm stack and an 18 MiB async-stack
-budget. Compilation is outside the guest linear-memory limit; its RSS must be
-budgeted separately by the host. These are one-run observations on a shared builder.
+budget. The RSS figure is the whole test process, which also runs the native pipeline.
 
-Targeted validation passed: seven plugin unit tests, plugin Clippy with warnings
-denied (including the optional host harness), and the Wasmtime component test. All
-18 successfully converted public fixtures matched the CLI pipeline's unpacked
-document and exact STEP payloads, including all three SolidWorks assemblies and the
-FreeCAD assembly with sibling parts. Six remaining public fixtures were refused by
-both pipelines. Verification status and reason matched the CLI, and the harness
-also checked malformed options, truncated and oversized inputs, and a multi-chunk
-stream. Workspace and GUI reruns were canceled at the owner's request; CI owns
-those checks. Browser execution and the official host importer integration remain
+Targeted validation passed: seven plugin unit tests, Clippy with warnings denied for
+the plugin, core and writer (with the optional host harness) and for the plugin on
+`wasm32-unknown-unknown`, and the Wasmtime component test. All 18 successfully converted
+public fixtures matched the CLI pipeline's unpacked document and exact STEP payloads,
+including all three SolidWorks assemblies and the FreeCAD assembly with sibling parts.
+Six remaining public fixtures were refused by both pipelines. Verification status and
+reason matched the CLI, every loss report fit SolidCraft's shape, and the harness also
+checked malformed options, an unknown entry, truncated and oversized inputs, and a
+multi-chunk stream. The public fixtures include no `.f3z`. Browser execution remains
 unvalidated.
