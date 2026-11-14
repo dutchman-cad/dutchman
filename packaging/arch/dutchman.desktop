@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Dutchman Convert
+GenericName=CAD file converter
+Comment=Convert CAD designs to editable SolidCraft designs
+Exec=dutchman-gui %F
+Icon=dutchman
+Terminal=false
+Categories=Graphics;Engineering;
+StartupWMClass=dutchman

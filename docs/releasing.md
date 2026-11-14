@@ -72,6 +72,14 @@ Each release is built once, as its final release candidate. A candidate is a tag
    a draft never reaches the registry. To republish a release's image, run it on demand with
    that tag (`gh workflow run release-image.yml -f tag=vX.Y.Z`). Candidate runs and packaging
    pull requests build both image architectures without logging in or pushing.
+   The same run then builds the Arch Linux package: the `arch-package` job turns the draft's
+   x86_64 archive into `dutchman-bin-X.Y.Z-x86_64.pkg.tar.zst` with `makepkg` in an
+   `archlinux:latest` container (as a non-root user) and attaches it and its `.sha256` to the
+   draft. After the release is published, point `packaging/arch/` at it in a documentation-only
+   pull request: `packaging/arch/update.sh X.Y.Z` sets `pkgver` and the checksums in `PKGBUILD`
+   and rewrites `.SRCINFO`; commit the three files. Publishing to the AUR (`dutchman-bin`) needs
+   the maintainer's AUR account: copy `PKGBUILD`, `.SRCINFO`, `dutchman.desktop` and
+   `dutchman.svg` into the AUR repository and push.
 6. crates.io: releases ship as GitHub release archives only, until the core API settles. The
    crates.io `dutchman` crate stays the 0.0.1 placeholder. When crates are published, the
    order matters: `dutchman` depends on `dutchman-core` and `dutchman-solidcraft`, so those go

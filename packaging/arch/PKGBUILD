@@ -1,0 +1,38 @@
+# Maintainer: the Dutchman project <https://github.com/dutchman-cad/dutchman>
+# Repackages the release archive; nothing is compiled. After a release, run
+# packaging/arch/update.sh <version> to set pkgver and the checksums (see docs/releasing.md).
+pkgname=dutchman-bin
+pkgver=0.2.9
+pkgrel=1
+pkgdesc='Converts CAD designs from other programs into editable SolidCraft designs (prebuilt release)'
+arch=('x86_64' 'aarch64')
+url='https://github.com/dutchman-cad/dutchman'
+license=('Apache-2.0')
+depends=('glibc' 'gcc-libs' 'fontconfig' 'libxkbcommon' 'libx11' 'libxcursor' 'libxi' 'libxrandr'
+         'wayland' 'vulkan-icd-loader' 'mesa' 'hicolor-icon-theme')
+optdepends=('vulkan-driver: GPU drawing in the desktop app')
+provides=('dutchman')
+conflicts=('dutchman')
+options=('!strip' '!debug')
+source=('dutchman.desktop'
+        'dutchman.svg')
+source_x86_64=("dutchman-$pkgver-x86_64-unknown-linux-gnu.tar.gz::$url/releases/download/v$pkgver/dutchman-$pkgver-x86_64-unknown-linux-gnu.tar.gz")
+source_aarch64=("dutchman-$pkgver-aarch64-unknown-linux-gnu.tar.gz::$url/releases/download/v$pkgver/dutchman-$pkgver-aarch64-unknown-linux-gnu.tar.gz")
+sha256sums=('121c498826b49ed0d5df9038589e74a9d7d0bcf8b36ba2d4743dbd9c555a9cfb'
+            '904c8d8ef916b46fd136eca1054a970318d63a3376b069d2571835245af36420')
+sha256sums_x86_64=('56f34583c3a966067e816bf25fff559b77add5f56a1bf25a0d8bd0e2d7dd1b2f')
+sha256sums_aarch64=('7a66f2214f9bc069af5d6d2a17e4ab206ae6c789eb747a1305e5c63a46793bc5')
+
+package() {
+  local dir="$srcdir/dutchman-$pkgver-$CARCH-unknown-linux-gnu"
+  local program
+  for program in dutchman dutchman-mcp dutchman-gui dutchman-web; do
+    install -Dm755 "$dir/$program" "$pkgdir/usr/bin/$program"
+  done
+  install -Dm644 "$srcdir/dutchman.desktop" "$pkgdir/usr/share/applications/dutchman.desktop"
+  install -Dm644 "$srcdir/dutchman.svg" "$pkgdir/usr/share/icons/hicolor/scalable/apps/dutchman.svg"
+  install -Dm644 "$dir/LICENSE" "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 "$dir/NOTICE" "$pkgdir/usr/share/licenses/$pkgname/NOTICE"
+  install -Dm644 "$dir"/licences/*.txt -t "$pkgdir/usr/share/licenses/$pkgname/licences"
+  install -Dm644 "$dir/README.md" "$pkgdir/usr/share/doc/$pkgname/README.md"
+}
