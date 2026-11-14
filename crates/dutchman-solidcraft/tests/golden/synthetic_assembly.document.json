@@ -1,0 +1,265 @@
+{
+  "components": [
+    {
+      "id": 1,
+      "name": "synthetic assembly.sldasm",
+      "parent": 0
+    },
+    {
+      "id": 2,
+      "name": "Cube-1",
+      "parent": 1
+    },
+    {
+      "id": 4,
+      "name": "Group A",
+      "parent": 1
+    },
+    {
+      "id": 5,
+      "name": "Group B",
+      "parent": 4
+    },
+    {
+      "id": 6,
+      "name": "Box-1",
+      "parent": 5
+    }
+  ],
+  "features": [
+    {
+      "component": 2,
+      "file": "synthetic_assembly.easm",
+      "id": 3,
+      "name": "body0",
+      "step": "",
+      "step_blob": "blobs/<sha256-0>.step",
+      "suppressed": false,
+      "type": "import"
+    },
+    {
+      "component": 6,
+      "file": "synthetic_assembly.easm",
+      "id": 7,
+      "name": "body1",
+      "step": "",
+      "step_blob": "blobs/<sha256-1>.step",
+      "suppressed": false,
+      "type": "import"
+    }
+  ],
+  "format": "solidcraft/23",
+  "name": "synthetic_assembly",
+  "next_id": 14,
+  "occurrences": [
+    {
+      "component": 6,
+      "grounded": false,
+      "id": 8,
+      "name": "Box-1",
+      "parent": 5,
+      "transform": [
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          -1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          -0.0,
+          1.0,
+          0.0
+        ],
+        [
+          50.00000074505806,
+          19.999999552965164,
+          9.999999776482582,
+          1.0
+        ]
+      ]
+    },
+    {
+      "component": 5,
+      "grounded": false,
+      "id": 9,
+      "name": "Group B",
+      "parent": 4,
+      "transform": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    },
+    {
+      "component": 2,
+      "grounded": false,
+      "id": 10,
+      "name": "Cube-2",
+      "parent": 4,
+      "transform": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          29.999999329447746,
+          0.0,
+          1.0
+        ]
+      ]
+    },
+    {
+      "component": 2,
+      "grounded": false,
+      "id": 11,
+      "name": "Cube-1",
+      "parent": 1,
+      "transform": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    },
+    {
+      "component": 4,
+      "grounded": false,
+      "id": 12,
+      "name": "Group A",
+      "parent": 1,
+      "transform": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    },
+    {
+      "component": 1,
+      "grounded": false,
+      "id": 13,
+      "name": "synthetic assembly.sldasm:1",
+      "parent": 0,
+      "transform": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    }
+  ],
+  "params": [],
+  "units": "mm",
+  "visibility": {
+    "hidden_occurrences": [
+      [
+        13,
+        12,
+        10
+      ]
+    ]
+  }
+}

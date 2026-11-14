@@ -429,7 +429,9 @@ jobs:
           fi
           version=$(scripts/solidcraft-window.sh --fetch "$SOLIDCRAFT_VERSION" "$SOLIDCRAFT_SHA256")
           echo "SOLIDCRAFT_VERSION=$version" >> "$GITHUB_ENV"
-      # Part fixtures hold a 10 mm cube; the assembly places two of those cubes.
+      # Part fixtures hold a 10 mm cube; the sldasm places two of those cubes; the easm
+      # places three (two bodies, one repeated); the SolidWorks-written easm holds eight
+      # bodies in all, hidden ones included.
       - name: Check converted geometry in SolidCraft
         run: |
           cube=1000:6:0,0,0:10,10,10
@@ -439,6 +441,10 @@ jobs:
             "$fixtures/synthetic_cube.ipt=$cube" \
             "$fixtures/solidworks_cube.sldprt=$cube" \
             "$fixtures/placed_cubes.sldasm=2000:12:0,0,0:30,10,10"
+          # TODO(edrawings): re-enable once the cadmpeg pin ships the edrawings codec
+          #   "$fixtures/synthetic_cube.eprt=$cube"
+          #   "$fixtures/synthetic_assembly.easm=3000:18:0,0,0:50,40,15"
+          #   "$fixtures/synthetic_sw_assembly.easm=9000:48:0,0,0:110.0000013,39.9999991,80.0000001"
       - name: Replay histories in SolidCraft
         run: |
           export SOLIDCRAFT_CLI="$PWD/solidcraft-${SOLIDCRAFT_VERSION}-linux-x86_64/bin/solidcraft-cli"

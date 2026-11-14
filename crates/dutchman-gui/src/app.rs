@@ -1721,7 +1721,7 @@ impl App {
                     ui.add_space(theme::SPACE_4);
                     ui.label(RichText::new("Drop design files, folders or ZIPs here").heading());
                     ui.label(
-                        RichText::new("Fusion, Inventor, SolidWorks, FreeCAD, CATIA, Creo, NX, Creo View, Rhino, ACIS, STEP and IGES")
+                        RichText::new("Fusion, Inventor, SolidWorks, FreeCAD, CATIA, Creo, NX, Creo View, eDrawings, Rhino, ACIS, STEP and IGES")
                         .small()
                         .color(p.tide),
                     );

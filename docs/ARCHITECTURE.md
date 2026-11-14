@@ -127,7 +127,7 @@ explicitly for a plugin. Native advisory snapshot rendering remains native-only.
   moves; the nightly build takes cadmpeg's `main` instead.
 - `cadmpeg-registry` with `default-features = false`; each crate turns on the codecs it
   needs. `dutchman-core` has a feature per input format (`fusion`, `inventor`, `solidworks`,
-  `catia`, `creo`, `nx`, `rhino`, `step`, `iges`, `sat`, `pvz`), all of them in its default
+  `catia`, `creo`, `nx`, `rhino`, `step`, `iges`, `sat`, `pvz`, `edrawings`), all of them in its default
   `formats` feature, which `dutchman`, `dutchman-gui` and `dutchman-web` turn on; its
   `freecad` feature controls whether FreeCAD inputs are accepted. `dutchman-solidcraft` turns
   on the `step` codec for the STEP its Imports keep. A build that reads only some formats (the

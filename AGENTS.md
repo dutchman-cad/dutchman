@@ -13,7 +13,7 @@ everyone; this file is the short version, plus what an AI working in the reposit
 - [docs/json.md](docs/json.md): the JSON reports. Field names are stable within a schema
   version.
 - The format pages: [docs/fusion.md](docs/fusion.md), [docs/inventor.md](docs/inventor.md),
-  [docs/sldprt.md](docs/sldprt.md).
+  [docs/sldprt.md](docs/sldprt.md), [docs/edrawings.md](docs/edrawings.md).
 
 ## Layout
 

@@ -297,7 +297,7 @@ be carried through STEP. Compare the named part with the source design when revi
 `formats` lists all recognised formats, their status `words`,
 and what Dutchman converts. Inputs without geometry support or a codec in this build
 return a failure describing the reader's current capability. Creo and NX `.prt` inputs
-are distinguished by contents. CATIA, Creo View, Rhino, ACIS and STEP use the geometry
+are distinguished by contents. CATIA, Creo View, eDrawings, Rhino, ACIS and STEP use the geometry
 path. Each conversion report's `input` also carries `words`, `program` and `extension`.
 Status words are `reads geometry`, `opens, no geometry yet`, `recognised, not read yet`,
 or `open it in SolidCraft directly` for IGES (`.igs`, `.iges`). IGES is recognised and

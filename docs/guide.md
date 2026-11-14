@@ -131,6 +131,10 @@ the assembly or give `--project DIR` and `--search DIR`. Missing or unreadable o
 are reported and left out; unavailable referenced configurations use the saved active
 configuration with a Degraded loss. See [SolidWorks assemblies](sldprt.md#assemblies-sldasm).
 
+eDrawings parts (`.eprt`) and assemblies (`.easm`) convert as flat-faceted solids, with
+no feature history. An `.easm` holds all its parts, so it needs no other files. See
+[eDrawings](edrawings.md).
+
 Before a history is built, Dutchman checks each extrude's profile region against the
 source. When the design's only geometry-building feature is a blind one-sided extrude whose
 end face survives in the stored model, the area of the region the extrude sweeps must match

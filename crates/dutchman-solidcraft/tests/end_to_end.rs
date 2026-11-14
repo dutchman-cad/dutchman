@@ -1,7 +1,8 @@
 //! A native file converted end to end, checked against SolidCraft's design container layout
 //! and a golden copy of the design document.
 //!
-//! Set `UPDATE_GOLDEN=1` to rewrite the golden file after an intended change.
+//! Set `UPDATE_GOLDEN=1` to rewrite the golden file after an intended change, for example
+//! `UPDATE_GOLDEN=1 cargo test -p dutchman-solidcraft --test end_to_end`.
 
 // Test helpers outside `#[test]` functions are not covered by clippy.toml's test allowances.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
@@ -37,23 +38,101 @@ fn entry(archive: &mut ZipArchive<Cursor<Vec<u8>>>, name: &str) -> (Vec<u8>, Com
 
 #[test]
 fn fusion_unit_cube_becomes_a_solidcraft_import() {
-    converts_to_an_import("generated_unit_cube.f3d");
+    converts_to_an_import("generated_unit_cube.f3d", "generated_unit_cube");
 }
 
 #[test]
 fn inventor_unit_cube_becomes_a_solidcraft_import() {
-    converts_to_an_import("synthetic_cube.ipt");
+    converts_to_an_import("synthetic_cube.ipt", "synthetic_cube");
 }
 
 #[test]
 fn solidworks_unit_cube_becomes_a_solidcraft_import() {
-    converts_to_an_import("solidworks_cube.sldprt");
+    converts_to_an_import("solidworks_cube.sldprt", "solidworks_cube");
+}
+
+#[test]
+#[ignore = "TODO(edrawings): re-enable once the cadmpeg pin ships the edrawings codec"]
+fn edrawings_cube_becomes_a_solidcraft_import() {
+    // The golden has its own name: `synthetic_cube.document.json` is the Inventor cube's.
+    converts_to_an_import("synthetic_cube.eprt", "synthetic_cube_eprt");
+}
+
+/// An eDrawings assembly carries every part in its one file, so it converts through the
+/// components Dutchman reads from a single file, not through part files beside it.
+#[test]
+#[ignore = "TODO(edrawings): re-enable once the cadmpeg pin ships the edrawings codec"]
+fn edrawings_assembly_becomes_solidcraft_components() {
+    converts_an_edrawings_assembly("synthetic_assembly", 3);
+}
+
+/// The same for an assembly in the dialect SolidWorks writes directly: nested groups, a part
+/// of two bodies, a re-used body set and hidden parts.
+#[test]
+#[ignore = "TODO(edrawings): re-enable once the cadmpeg pin ships the edrawings codec"]
+fn solidworks_written_edrawings_assembly_becomes_solidcraft_components() {
+    converts_an_edrawings_assembly("synthetic_sw_assembly", 3);
+}
+
+fn converts_an_edrawings_assembly(stem: &str, min_occurrences: usize) {
+    let dir = std::env::temp_dir().join(format!("dutchman-e2e-asm-{stem}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let output = dir.join(format!("{stem}.solidcraft"));
+    let report = convert(
+        &fixture(&format!("{stem}.easm")),
+        &output,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    )
+    .unwrap();
+    for loss in report.losses() {
+        println!("{loss}");
+    }
+
+    let mut archive = ZipArchive::new(Cursor::new(std::fs::read(&output).unwrap())).unwrap();
+    let names: Vec<String> = (0..archive.len())
+        .map(|index| {
+            archive
+                .by_index(index)
+                .unwrap()
+                .name()
+                .unwrap()
+                .into_owned()
+        })
+        .collect();
+    assert!(
+        names.iter().any(|name| name == "container.json"),
+        "{names:?}"
+    );
+    let (document, _) = entry(&mut archive, "document.json");
+    let document: Value = serde_json::from_slice(&document).unwrap();
+    assert!(
+        document["occurrences"].as_array().unwrap().len() >= min_occurrences,
+        "the leaf instances and their groups are placed"
+    );
+
+    // Payload names depend on cadmpeg's STEP writer, not on the document.
+    let mut pretty = serde_json::to_string_pretty(&document).unwrap()
+        + "
+";
+    for (index, blob) in names.iter().filter(|n| n.starts_with("blobs/")).enumerate() {
+        pretty = pretty.replace(blob.as_str(), &format!("blobs/<sha256-{index}>.step"));
+    }
+    let golden = golden(&format!("{stem}.document.json"));
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        std::fs::write(&golden, &pretty).unwrap();
+    }
+    let expected = std::fs::read_to_string(&golden).unwrap();
+    assert_eq!(
+        pretty,
+        expected,
+        "document.json differs from {}",
+        golden.display()
+    );
 }
 
 /// Converts fixture `file`, which has no history, and checks the result is SolidCraft's
 /// import container with a document matching `tests/golden/<stem>.document.json`.
-fn converts_to_an_import(file: &str) {
-    let stem = file.rsplit_once('.').map_or(file, |(stem, _)| stem);
+fn converts_to_an_import(file: &str, stem: &str) {
     let dir = std::env::temp_dir().join(format!("dutchman-e2e-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let output = dir.join(format!("{stem}.solidcraft"));
@@ -140,6 +219,8 @@ fn solidcraft_shows_every_face_of_each_cube() {
         "generated_unit_cube.f3d",
         "synthetic_cube.ipt",
         "solidworks_cube.sldprt",
+        // TODO(edrawings): re-enable once the cadmpeg pin ships the edrawings codec
+        // "synthetic_cube.eprt",
     ] {
         let report = convert(
             &fixture(file),

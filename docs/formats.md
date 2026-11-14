@@ -19,6 +19,8 @@ The desktop app's **Formats** list shows the same.
 | Creo part | `.prt`, `.prt.N` | Opens, no geometry yet | L1 | Not yet |
 | NX part | `.prt` | Opens, no geometry yet | L1 | Not yet |
 | Creo View | `.pvz` | Reads geometry | L3 | Geometry through STEP; solids and surfaces SolidCraft can import |
+| eDrawings part | `.eprt` | Reads geometry | L2 | Flat-faceted solids rebuilt from the display mesh; no exact curved surfaces, no feature history |
+| eDrawings assembly | `.easm` | Reads geometry | L2 | Flat-faceted solids rebuilt from the display mesh, with part placements and names from the one file; no exact curved surfaces, no feature history |
 | Rhino | `.3dm` | Reads geometry | L2 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | ACIS | `.sat`, `.sab`, `.smt`, `.smb` | Reads geometry | L3 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | STEP | `.step`, `.stp` | Reads geometry | L8 | Geometry through STEP; solids and surfaces SolidCraft can import |
@@ -55,6 +57,6 @@ Got a file that converts wrong? Send it, with its STEP export, to Dutchy in a Di
 ## Per program
 
 What converts today, and what still stands in the way upstream:
-[Fusion](fusion.md), [Inventor](inventor.md), [SolidWorks](sldprt.md), and
-[FreeCAD](freecad.md). [cadmpeg](https://github.com/cadmpeg/cadmpeg) reads the native files,
+[Fusion](fusion.md), [Inventor](inventor.md), [SolidWorks](sldprt.md),
+[FreeCAD](freecad.md), and [eDrawings](edrawings.md). [cadmpeg](https://github.com/cadmpeg/cadmpeg) reads the native files,
 so a format improves in Dutchman when it improves there.

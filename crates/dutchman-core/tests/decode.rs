@@ -90,6 +90,69 @@ fn decodes_an_inventor_unit_cube() {
 }
 
 #[test]
+#[ignore = "TODO(edrawings): re-enable once the cadmpeg pin ships the edrawings codec"]
+fn decodes_an_edrawings_cube() {
+    let mut report = Report::default();
+    let model = read(
+        Format::EdrawingsPart,
+        &fixture("synthetic_cube.eprt"),
+        &mut report,
+    )
+    .unwrap();
+
+    assert_eq!(model.name, "synthetic_cube");
+    assert_eq!(model.source_file.as_deref(), Some("synthetic_cube.eprt"));
+    assert_eq!(model.ir.model.bodies.len(), 1);
+    assert_eq!(model.ir.model.faces.len(), 6);
+    assert!(
+        model.ir.model.features.is_empty(),
+        "eDrawings files carry no history"
+    );
+}
+
+#[test]
+#[ignore = "TODO(edrawings): re-enable once the cadmpeg pin ships the edrawings codec"]
+fn decodes_an_edrawings_assembly_from_its_one_file() {
+    // Both formats share one codec; the extension tells them apart.
+    assert_eq!(Format::EdrawingsPart.codec_id(), Some("edrawings"));
+    assert_eq!(Format::EdrawingsAssembly.codec_id(), Some("edrawings"));
+    // Its parts are inside the file, not beside it.
+    assert!(!Format::EdrawingsAssembly.is_assembly());
+
+    let mut report = Report::default();
+    let model = read(
+        Format::EdrawingsAssembly,
+        &fixture("synthetic_assembly.easm"),
+        &mut report,
+    )
+    .unwrap();
+
+    assert_eq!(model.name, "synthetic_assembly");
+    assert_eq!(model.ir.model.bodies.len(), 2);
+    let assembly = model.assembly.as_ref().unwrap();
+    assert!(!assembly.placements.is_empty());
+    assert!(assembly.left_out.is_empty(), "{:?}", assembly.left_out);
+}
+
+#[test]
+#[ignore = "TODO(edrawings): re-enable once the cadmpeg pin ships the edrawings codec"]
+fn decodes_a_solidworks_written_edrawings_assembly() {
+    let mut report = Report::default();
+    let model = read(
+        Format::EdrawingsAssembly,
+        &fixture("synthetic_sw_assembly.easm"),
+        &mut report,
+    )
+    .unwrap();
+
+    assert_eq!(model.name, "synthetic_sw_assembly");
+    assert_eq!(model.ir.model.bodies.len(), 3);
+    let assembly = model.assembly.as_ref().unwrap();
+    assert!(!assembly.placements.is_empty());
+    assert!(assembly.left_out.is_empty(), "{:?}", assembly.left_out);
+}
+
+#[test]
 fn decodes_a_solidworks_unit_cube() {
     let mut report = Report::default();
     let model = read(
@@ -207,6 +270,8 @@ fn recognises_all_format_extensions_and_shared_part_contents() {
         ("nx.prt", b"SPLMSSTR", Format::NxPart),
         ("nx.prt.3", b"SPLMSSTR", Format::NxPart),
         ("x.pvz", b"PK\x03\x04", Format::CreoView),
+        ("x.eprt", b"PK", Format::EdrawingsPart),
+        ("x.easm", b"PK", Format::EdrawingsAssembly),
         ("x.3dm", b"3D Geometry File Format       80", Format::Rhino),
         ("x.sat", b"700 0 0 0\n", Format::Acis),
         ("x.sab", b"ACIS BinaryFile", Format::Acis),

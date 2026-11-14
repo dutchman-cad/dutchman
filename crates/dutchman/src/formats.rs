@@ -33,6 +33,12 @@ pub fn converts(format: Format) -> &'static str {
         Format::SolidWorksPart => {
             "geometry; feature history waits on cadmpeg binding sketches and extrude profiles"
         }
+        Format::EdrawingsPart => {
+            "flat-faceted solids rebuilt from the display mesh; no exact curved surfaces, no feature history"
+        }
+        Format::EdrawingsAssembly => {
+            "flat-faceted solids rebuilt from the display mesh, with part placements and names from the one file; no exact curved surfaces, no feature history"
+        }
         _ => "geometry through STEP; solids and surfaces SolidCraft can import",
     }
 }

@@ -15,6 +15,8 @@ pub enum Format {
     CreoPart,
     NxPart,
     CreoView,
+    EdrawingsPart,
+    EdrawingsAssembly,
     Rhino,
     Acis,
     Step,
@@ -25,7 +27,7 @@ pub enum Format {
 
 impl Format {
     /// Every recognised format.
-    pub const ALL: [Format; 16] = [
+    pub const ALL: [Format; 18] = [
         Self::FusionArchive,
         Self::FusionMultiDocument,
         Self::InventorPart,
@@ -37,6 +39,8 @@ impl Format {
         Self::CreoPart,
         Self::NxPart,
         Self::CreoView,
+        Self::EdrawingsPart,
+        Self::EdrawingsAssembly,
         Self::Rhino,
         Self::Acis,
         Self::Step,
@@ -82,6 +86,18 @@ impl Format {
             Self::CreoPart => ("creo_part", "prt", "Creo part (.prt, .prt.N)", "Creo"),
             Self::NxPart => ("nx_part", "prt", "NX part (.prt)", "NX"),
             Self::CreoView => ("creo_view", "pvz", "Creo View (.pvz)", "Creo View"),
+            Self::EdrawingsPart => (
+                "edrawings_part",
+                "eprt",
+                "eDrawings part (.eprt)",
+                "eDrawings",
+            ),
+            Self::EdrawingsAssembly => (
+                "edrawings_assembly",
+                "easm",
+                "eDrawings assembly (.easm)",
+                "eDrawings",
+            ),
             Self::Rhino => ("rhino", "3dm", "Rhino (.3dm)", "Rhino"),
             Self::Acis => ("acis", "sat", "ACIS (.sat, .sab, .smt, .smb)", "ACIS"),
             Self::Step => ("step", "step", "STEP (.step, .stp)", "STEP"),
@@ -117,6 +133,8 @@ impl Format {
             Self::CreoPart => &["prt", "prt.N"],
             Self::NxPart | Self::UnclassifiedPart => &["prt"],
             Self::CreoView => &["pvz"],
+            Self::EdrawingsPart => &["eprt"],
+            Self::EdrawingsAssembly => &["easm"],
             Self::Rhino => &["3dm"],
             Self::Acis => &["sat", "sab", "smt", "smb"],
             Self::Step => &["step", "stp"],
@@ -143,6 +161,7 @@ impl Format {
             Self::CreoPart => Some("creo"),
             Self::NxPart => Some("nx"),
             Self::CreoView => Some("pvz"),
+            Self::EdrawingsPart | Self::EdrawingsAssembly => Some("edrawings"),
             Self::Rhino => Some("rhino"),
             Self::Acis => Some("sat"),
             Self::Step => Some("step"),
@@ -230,12 +249,14 @@ impl Format {
         Some((part, ext))
     }
 
-    /// Whether the geometry lives in separate part files.
+    /// Whether the geometry lives in separate part files. An eDrawings assembly does not:
+    /// it carries every part in its one file, so it converts like a single-file design.
     pub fn is_assembly(self) -> bool {
         matches!(self, Self::InventorAssembly | Self::SolidWorksAssembly)
     }
 
-    /// Format named by a registry codec.
+    /// Format named by a registry codec. A codec shared by several formats (Inventor, SolidWorks,
+    /// eDrawings) gives the first of them in `ALL`: the caller tells them apart by extension.
     pub fn from_codec_id(id: &str) -> Option<Self> {
         Self::ALL
             .into_iter()
