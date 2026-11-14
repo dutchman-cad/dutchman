@@ -348,6 +348,9 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 Some("info" | "degraded" | "dropped")
             ));
             assert!(item["subject"].as_str().ok_or("subject")?.len() <= 256);
+            let title = item["title"].as_str().ok_or("title")?;
+            assert!(!title.trim().is_empty() && title.chars().count() <= 120);
+            assert!(item["code"].as_str().ok_or("code")?.chars().count() <= 128);
             let message = item["message"].as_str().ok_or("message")?;
             assert!(!message.trim().is_empty() && message.len() <= 1024);
         }

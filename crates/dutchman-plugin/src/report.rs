@@ -47,9 +47,14 @@ pub(crate) fn host(report: &Report) -> Value {
         .iter()
         .take(MAX_ITEMS)
         .map(|loss| {
+            let code = loss.code.as_deref().unwrap_or_default();
+            // A cadmpeg loss's subject is its code: say it once, under the code.
+            let subject = if loss.subject == code { "" } else { loss.subject.as_str() };
             json!({
                 "severity": match loss.severity { Severity::Info=>"info", Severity::Degraded=>"degraded", Severity::Dropped=>"dropped" },
-                "subject": clip(&loss.subject, 256),
+                "title": clip(&loss.title(), 120),
+                "code": clip(code, 128),
+                "subject": clip(subject, 256),
                 // The host refuses a blank message.
                 "message": clip(
                     [loss.detail.as_str(), loss.code.as_deref().unwrap_or_default(), loss.subject.as_str()]

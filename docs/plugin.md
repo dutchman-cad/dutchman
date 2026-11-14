@@ -12,8 +12,10 @@ SolidCraft's `crates/craft-plugin/wit/plugin.wit`. No host checkout is needed to
 test this component.
 
 The manifest supplies native host forms: Keep editable history (true), Up axis
-(`as_is`, default, or `stand_up`), Include hidden bodies (false). The boolean and string
-enum schemas use the #2829 command contract field shapes and reject unknown fields.
+(As in the file, `as_is`, the default, or Stand up (Y-up to Z-up), `stand_up`), Include
+hidden bodies (false). The up axis lists its options as `oneOf` entries of `const` and
+`title`, so the host's dropdown shows the titles and sends the value. The schemas use the
+#2829 command contract field shapes and reject unknown fields.
 Defaults retain the CLI's history, visibility and source-coordinate behavior. Include
 hidden bodies bypasses Dutchman's source visibility filter, which can expose intermediate
 FreeCAD shapes and consumed Fusion bodies. Stand up adds a +90° X rotation (+Y to +Z)
@@ -189,7 +191,7 @@ The return value is UTF-8 JSON under 1 MiB, in the shape SolidCraft shows to the
 | Field | Shape and meaning |
 |---|---|
 | `summary` | One line, at most 240 bytes, such as `Editable history: 12 of 14 features mapped; 3 losses` |
-| `items` | At most 4096 rows, one per Dutchman loss: `severity` (`info`, `degraded`, `dropped`), `subject` (at most 256 bytes), `message` (at most 1024 bytes) |
+| `items` | At most 4096 rows, one per Dutchman loss: `severity` (`info`, `degraded`, `dropped`), `title` (the kind of loss in plain words, shared by every loss of that kind, such as "Parts of the file kept as-is" or "Sketches carried over with changes"; at most 120 bytes), `code` (the stable cadmpeg or Dutchman code, or empty; at most 128 bytes), `subject` (empty when it would only repeat the code; at most 256 bytes), `message` (at most 1024 bytes). SolidCraft shows one line per title with its count and keeps codes and messages under Details. |
 | `details` | The full `dutchman.plugin.loss/1` report below. When the whole result would reach 1 MiB, its `losses` array is left out (the items carry them). |
 
 ### `details`: `dutchman.plugin.loss/1`
