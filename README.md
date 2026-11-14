@@ -15,6 +15,7 @@ See it first: [converted designs in your browser](https://dutchman-cad.github.io
 - **Mac:** [download the app](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-macos-universal.dmg), or `brew install --cask dutchman-cad/tap/dutchman-convert`.
 - **Windows:** [download the 64-bit installer](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-x86_64-pc-windows-msvc.msi) and open **Dutchman Convert** from Start (no administrator rights needed). A [portable ZIP](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-x86_64-pc-windows-msvc.zip) is also available; or `scoop bucket add dutchman-cad https://github.com/dutchman-cad/scoop-bucket` then `scoop install dutchman-cad/dutchman`.
 - **Linux:** download for [x86_64](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-x86_64-unknown-linux-gnu.tar.gz) or [ARM64](https://github.com/dutchman-cad/dutchman/releases/latest/download/dutchman-aarch64-unknown-linux-gnu.tar.gz), extract it, and open `dutchman-gui`; or `brew install dutchman-cad/tap/dutchman`.
+- **Arch Linux:** download `dutchman-bin-<version>-x86_64.pkg.tar.zst` from the [latest release](https://github.com/dutchman-cad/dutchman/releases/latest) and run `sudo pacman -U dutchman-bin-<version>-x86_64.pkg.tar.zst`. Once the package is on the AUR: `yay -S dutchman-bin`.
 
 The Windows installer is unsigned. If SmartScreen says **Windows protected your PC**, click
 **More info**, then **Run anyway**. See [Windows first run](docs/install.md#windows-first-run).

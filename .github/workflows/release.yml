@@ -208,3 +208,50 @@ jobs:
           files=(dist/*)
           gh release create "$tag" --draft --verify-tag --title "Dutchman $VERSION" -F notes.md "${files[@]}"
           echo "Draft release for $tag created $(since) after the run started." | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # The pacman package, built from the draft release's own Linux x86_64 archive (nothing is
+  # compiled) and attached to the draft. packaging/arch is pointed at this version first, with
+  # the checksums of the files just uploaded, so the package is built exactly as a user's
+  # makepkg would build it.
+  arch-package:
+    needs: [find, draft-release]
+    if: needs.find.outputs.dry != 'true'
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.find.outputs.version }}
+      TAG: ${{ needs.find.outputs.tag }}
+    steps:
+      - name: Install the build tools
+        run: pacman -Syu --noconfirm --needed base-devel git github-cli
+      - uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ needs.find.outputs.tag }}
+      - name: Build the package
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          mkdir -p /tmp/release /tmp/pkg
+          gh release download "$TAG" -R "$GITHUB_REPOSITORY" -D /tmp/release \
+            -p "dutchman-$VERSION-*-unknown-linux-gnu.tar.gz*"
+          packaging/arch/update.sh "$VERSION" /tmp/release
+          cp packaging/arch/PKGBUILD packaging/arch/dutchman.desktop packaging/arch/dutchman.svg /tmp/pkg/
+          # makepkg uses the archive beside the PKGBUILD instead of downloading it.
+          cp "/tmp/release/dutchman-$VERSION-x86_64-unknown-linux-gnu.tar.gz" /tmp/pkg/
+          useradd --create-home builder
+          chown -R builder /tmp/pkg
+          su builder -c 'cd /tmp/pkg && makepkg --noconfirm --nodeps -f'
+          # --nodeps only skips installing the run-time libraries; check the package itself.
+          pkg=$(ls /tmp/pkg/dutchman-bin-"$VERSION"-1-x86_64.pkg.tar.zst)
+          pacman -Qpi "$pkg"
+          pacman -Qpl "$pkg" | grep -E '/usr/bin/dutchman-gui$|/usr/share/applications/dutchman.desktop$|/usr/share/licenses/dutchman-bin/LICENSE$'
+          mkdir -p dist
+          out="dist/dutchman-bin-$VERSION-x86_64.pkg.tar.zst"
+          cp "$pkg" "$out"
+          (cd dist && sha256sum "$(basename "$out")" > "$(basename "$out").sha256")
+      - name: Attach it to the draft release
+        run: gh release upload "$TAG" -R "$GITHUB_REPOSITORY" dist/dutchman-bin-*.pkg.tar.zst dist/dutchman-bin-*.pkg.tar.zst.sha256
