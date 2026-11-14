@@ -1679,6 +1679,7 @@ fn unchanged_geometry(feature: &Value) -> bool {
             | "spatial_sketch"
             | "tree_node"
             | "insert_component"
+            | "component_transfer"
             | "assembly_joint"
             | "reference_image"
             | "cosmetic_thread"
@@ -1789,10 +1790,12 @@ fn map_feature(
     }
 }
 
-/// Assembly timeline rows build no part geometry; occurrences and joints carry them.
+/// Assembly timeline rows build no part geometry; occurrences and joints carry them. A
+/// component transfer copies an occurrence or moves it to another owner: the occurrence
+/// tree places the result, whether or not cadmpeg resolves which occurrence it was.
 fn is_assembly_feature(feature: &Value) -> bool {
     match operation(feature).get("definition").and_then(Value::as_str) {
-        Some("insert_component" | "assembly_joint") => true,
+        Some("insert_component" | "component_transfer" | "assembly_joint") => true,
         // cadmpeg retains unresolved As-built joints as native operations with a stable
         // source tag. Display names may be edited and must never identify an operation.
         Some("native") => matches!(
@@ -2268,6 +2271,7 @@ mod tests {
             "binder",
             "tree_node",
             "insert_component",
+            "component_transfer",
             "assembly_joint",
             "reference_image",
             "cosmetic_thread",
@@ -2352,6 +2356,36 @@ mod tests {
             json!({"definition": "assembly_joint", "joint": "f3d:model:joint#1"}),
         );
         let model = with(cube(), json!([datum(1, 0), insert, joint]), json!([]));
+        let mapping = map(
+            &model,
+            &mut Report::default(),
+            crate::SolidCraftVersion::default(),
+        );
+        assert_eq!(
+            mapping.result.unwrap_err(),
+            "no feature in the history builds geometry"
+        );
+        let statuses: Vec<FeatureStatus> = mapping.features.iter().map(|f| f.status).collect();
+        assert_eq!(statuses, [FeatureStatus::NotNeeded; 3]);
+    }
+
+    #[test]
+    fn component_copies_and_moves_in_the_timeline_are_not_needed() {
+        let copy = feature(
+            2,
+            1,
+            "CopyPaste 1",
+            json!({"definition": "component_transfer", "mode": "copy",
+                "occurrence": "f3d:model:occurrence#1"}),
+        );
+        // An unresolved source still builds no part geometry.
+        let moved = feature(
+            3,
+            2,
+            "CutPaste 1",
+            json!({"definition": "component_transfer", "mode": "reparent"}),
+        );
+        let model = with(cube(), json!([datum(1, 0), copy, moved]), json!([]));
         let mapping = map(
             &model,
             &mut Report::default(),

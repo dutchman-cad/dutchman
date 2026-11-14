@@ -49,7 +49,9 @@ Dutchman does not reconstruct mesh geometry from native records.
 ## Parts and history
 
 As-built joints build no geometry and do not stop the part's feature history. Typed
-assembly-joint timeline rows also need no part feature. Unresolved connector context and
+assembly-joint timeline rows also need no part feature, and neither do rows that copy a
+component or move it into another component (Copy/Paste and Cut/Paste of components): the
+placed occurrences carry them. Unresolved connector context and
 assumed motion bindings are reported separately.
 
 Bodies a Combine used up as a tool, or that a Remove step took out of the design, are left out when cadmpeg marks them hidden and no component owns them; an Info `bodies` note gives the count. A body an active Remove deletes is left out too, even when cadmpeg lists it as shown, as long as cadmpeg resolves which body the Remove names; an Info note on the Remove gives the count. Bodies you hid yourself stay available, and a part with both shown and hidden bodies is shown whole, with an Info note.
