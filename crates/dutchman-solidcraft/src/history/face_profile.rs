@@ -973,7 +973,9 @@ fn not_found(face: &Boundary, nearest: Option<(f64, &ReplayedFace, &[ReplayedEdg
 
 /// Whether `named`, the edges SolidCraft names for a face, are exactly the face's edges: each
 /// lies along one of them, and together they run its whole length. SolidCraft may split a
-/// circle in two, and measures a curved edge from its mesh, a little short.
+/// circle in two, and measures a curved edge from its mesh: a short arc can come back as a
+/// single chord. So a line is covered by length, and an arc or circle by the turn its pieces
+/// span about its centre.
 fn bounds(face: &Boundary, named: &[&ReplayedEdge]) -> bool {
     let mut covered = vec![0.0; face.edges.len()];
     for rebuilt in named {
@@ -982,57 +984,116 @@ fn bounds(face: &Boundary, named: &[&ReplayedEdge]) -> bool {
             .iter()
             .enumerate()
             .filter(|(_, edge)| lies_on(edge, rebuilt));
-        let (Some((k, _)), None) = (along.next(), along.next()) else {
+        let (Some((k, edge)), None) = (along.next(), along.next()) else {
             return false;
         };
+        let part = match edge {
+            Edge::Line { .. } => rebuilt.length,
+            _ => piece_turn(edge, rebuilt).unwrap_or(0.0),
+        };
         if let Some(total) = covered.get_mut(k) {
-            *total += rebuilt.length;
+            *total += part;
         }
     }
-    face.edges.iter().zip(&covered).all(|(edge, total)| {
-        let slack = if matches!(edge, Edge::Line { .. }) {
-            1e-4
-        } else {
-            2e-2
-        };
-        (total - edge.length()).abs() <= slack * edge.length().max(1.0)
-    })
+    face.edges
+        .iter()
+        .zip(&covered)
+        .all(|(edge, total)| match edge {
+            Edge::Line { .. } => (total - edge.length()).abs() <= 1e-4 * edge.length().max(1.0),
+            Edge::Arc { .. } => (total - edge_sweep(edge).abs()).abs() <= TURN_SLACK,
+            Edge::Circle { .. } => (total - TAU).abs() <= TURN_SLACK,
+        })
 }
 
-/// Whether SolidCraft's edge, by its ends and midpoint, lies along the sampled `edge`.
+/// How far apart, in radians, the turn a curved edge's rebuilt pieces span may be from its own.
+const TURN_SLACK: f64 = 2e-3;
+
+/// The centre, radius and axis of a curved edge.
+fn carrier(edge: &Edge) -> Option<(V3, f64, V3)> {
+    match edge {
+        Edge::Line { .. } => None,
+        Edge::Arc {
+            center,
+            radius,
+            axis,
+            ..
+        }
+        | Edge::Circle {
+            center,
+            radius,
+            axis,
+            ..
+        } => Some((*center, *radius, *axis)),
+    }
+}
+
+/// The turn, about a curved edge's centre, that one rebuilt piece of it spans: from its start
+/// through its midpoint to its end. A piece that closes on itself spans a whole turn.
+fn piece_turn(edge: &Edge, rebuilt: &ReplayedEdge) -> Option<f64> {
+    let (center, _, axis) = carrier(edge)?;
+    let first = signed_angle(sub(rebuilt.start, center), sub(rebuilt.mid, center), axis);
+    let second = signed_angle(sub(rebuilt.mid, center), sub(rebuilt.end, center), axis);
+    Some(first.abs() + second.abs())
+}
+
+/// Whether SolidCraft's edge, by its ends and midpoint, lies along the sampled `edge`. A curved
+/// edge's piece has its ends on the circle, within the edge's own turn; its midpoint may sit
+/// inside the circle by as much as a chord spanning the piece's turn would, and its length
+/// lies between that chord's and the arc's.
 fn lies_on(edge: &Edge, rebuilt: &ReplayedEdge) -> bool {
-    [rebuilt.start, rebuilt.mid, rebuilt.end]
-        .into_iter()
-        .all(|p| match edge {
-            Edge::Line { start, end } => {
-                let along = sub(*end, *start);
-                let t = dot(sub(p, *start), along) / dot(along, along);
-                (-1e-6..=1.0 + 1e-6).contains(&t)
-                    && norm(sub(p, add(*start, scale(along, t)))) <= 1e-4
-            }
-            Edge::Circle { center, radius, .. } => {
-                (norm(sub(p, *center)) - radius).abs() <= 1e-3 * radius.max(1.0)
-            }
-            Edge::Arc {
-                start,
-                center,
-                radius,
-                axis,
-                ..
-            } => {
-                let turn = edge_sweep(edge);
-                let at = signed_angle(sub(*start, *center), sub(p, *center), *axis);
-                // Within the arc's own turn, give or take the ends.
-                let from_start = if turn >= 0.0 { at } else { -at };
-                let from_start = if from_start < -1e-3 {
-                    from_start + TAU
-                } else {
-                    from_start
-                };
-                (norm(sub(p, *center)) - radius).abs() <= 1e-3 * radius.max(1.0)
-                    && from_start <= turn.abs() + 1e-3
-            }
-        })
+    match edge {
+        Edge::Line { start, end } => {
+            [rebuilt.start, rebuilt.mid, rebuilt.end]
+                .into_iter()
+                .all(|p| {
+                    let along = sub(*end, *start);
+                    let t = dot(sub(p, *start), along) / dot(along, along);
+                    (-1e-6..=1.0 + 1e-6).contains(&t)
+                        && norm(sub(p, add(*start, scale(along, t)))) <= 1e-4
+                })
+        }
+        Edge::Arc { .. } | Edge::Circle { .. } => {
+            let Some((center, radius, axis)) = carrier(edge) else {
+                return false;
+            };
+            let Some(turn) = piece_turn(edge, rebuilt) else {
+                return false;
+            };
+            let tolerance = 1e-3 * radius.max(1.0);
+            let on = |p: V3| (norm(sub(p, center)) - radius).abs() <= tolerance;
+            let half = (turn / 2.0).min(std::f64::consts::FRAC_PI_2);
+            let inner = radius * half.cos() - tolerance;
+            let from_center = norm(sub(rebuilt.mid, center));
+            let chord = 2.0 * radius * half.sin();
+            let planar = dot(sub(rebuilt.mid, center), axis).abs() <= tolerance
+                && dot(sub(rebuilt.start, center), axis).abs() <= tolerance;
+            on(rebuilt.start)
+                && on(rebuilt.end)
+                && planar
+                && (inner..=radius + tolerance).contains(&from_center)
+                && (chord - tolerance..=radius * turn + tolerance).contains(&rebuilt.length)
+                && [rebuilt.start, rebuilt.mid, rebuilt.end]
+                    .into_iter()
+                    .all(|p| within_turn(edge, center, axis, p))
+        }
+    }
+}
+
+/// Whether `p` lies, about `center`, within the turn of `edge`: anywhere for a circle, within
+/// the arc's own turn (give or take its ends) for an arc.
+fn within_turn(edge: &Edge, center: V3, axis: V3, p: V3) -> bool {
+    let Edge::Arc { start, .. } = edge else {
+        return true;
+    };
+    let turn = edge_sweep(edge);
+    let at = signed_angle(sub(*start, center), sub(p, center), axis);
+    let from_start = if turn >= 0.0 { at } else { -at };
+    let from_start = if from_start < -1e-3 {
+        from_start + TAU
+    } else {
+        from_start
+    };
+    from_start <= turn.abs() + 1e-3
 }
 
 fn sub(a: V3, b: V3) -> V3 {
@@ -1111,6 +1172,78 @@ mod tests {
             );
             assert!((top.length() - std::f64::consts::PI * 10.0).abs() < 1e-6);
         }
+    }
+
+    fn rebuilt(start: (f64, f64), mid: (f64, f64), end: (f64, f64)) -> ReplayedEdge {
+        let at = |p: (f64, f64)| [p.0, p.1, 0.0];
+        let length = norm(sub(at(mid), at(start))) + norm(sub(at(end), at(mid)));
+        ReplayedEdge {
+            start: at(start),
+            end: at(end),
+            mid: at(mid),
+            length,
+            name: "f".to_owned(),
+        }
+    }
+
+    /// A unit quarter disc: an arc from (1, 0) to (0, 1) about the origin, closed by two lines.
+    fn quarter_disc() -> Boundary {
+        let half = std::f64::consts::FRAC_1_SQRT_2;
+        let arc = edge(&row((1.0, 0.0), (half, half), (0.0, 1.0), (-1.0, 1.0))).unwrap();
+        let line = |a: (f64, f64), b: (f64, f64)| {
+            edge(&row(
+                a,
+                ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0),
+                b,
+                (b.0 - a.0, b.1 - a.1),
+            ))
+            .unwrap()
+        };
+        Boundary {
+            edges: vec![
+                arc,
+                line((0.0, 1.0), (0.0, 0.0)),
+                line((0.0, 0.0), (1.0, 0.0)),
+            ],
+            area: std::f64::consts::FRAC_PI_4,
+        }
+    }
+
+    #[test]
+    fn a_short_arc_meshed_as_one_chord_still_bounds_its_face() {
+        let face = quarter_disc();
+        let sides = [
+            rebuilt((0.0, 1.0), (0.0, 0.5), (0.0, 0.0)),
+            rebuilt((0.0, 0.0), (0.5, 0.0), (1.0, 0.0)),
+        ];
+        // One chord, as SolidCraft reports a small rounded corner.
+        let chord = rebuilt((1.0, 0.0), (0.5, 0.5), (0.0, 1.0));
+        let named: Vec<&ReplayedEdge> = sides.iter().chain([&chord]).collect();
+        assert!(bounds(&face, &named));
+        // Two chords meeting on the arc.
+        let half = std::f64::consts::FRAC_1_SQRT_2;
+        let first = rebuilt((1.0, 0.0), ((1.0 + half) / 2.0, half / 2.0), (half, half));
+        let second = rebuilt((half, half), (half / 2.0, (1.0 + half) / 2.0), (0.0, 1.0));
+        let named: Vec<&ReplayedEdge> = sides.iter().chain([&first, &second]).collect();
+        assert!(bounds(&face, &named));
+    }
+
+    #[test]
+    fn a_chord_that_leaves_the_arc_or_stops_short_does_not_bound_it() {
+        let face = quarter_disc();
+        let sides = [
+            rebuilt((0.0, 1.0), (0.0, 0.5), (0.0, 0.0)),
+            rebuilt((0.0, 0.0), (0.5, 0.0), (1.0, 0.0)),
+        ];
+        // Its midpoint lies outside the circle: another curve.
+        let bulging = rebuilt((1.0, 0.0), (0.9, 0.9), (0.0, 1.0));
+        let named: Vec<&ReplayedEdge> = sides.iter().chain([&bulging]).collect();
+        assert!(!bounds(&face, &named));
+        // It covers only part of the arc's turn.
+        let half = std::f64::consts::FRAC_1_SQRT_2;
+        let short = rebuilt((1.0, 0.0), ((1.0 + half) / 2.0, half / 2.0), (half, half));
+        let named: Vec<&ReplayedEdge> = sides.iter().chain([&short]).collect();
+        assert!(!bounds(&face, &named));
     }
 
     #[test]

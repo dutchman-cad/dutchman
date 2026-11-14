@@ -109,7 +109,9 @@ circular arcs and full circles in one plane, chains them into closed loops (a lo
 is a hole) and writes a sketch of them on that plane, ahead of the extrude, taking every
 profile. The extrude runs along the face's outward normal, which only the body knows: after
 SolidCraft has replayed the history before the extrude, Dutchman finds the face among the
-rebuilt faces (same plane, same area, every boundary edge on it and named for it) and mirrors the
+rebuilt faces (same plane, same area, every boundary edge on it and named for it; SolidCraft reports
+a curved edge from its mesh, so an arc counts as found when the pieces it reports, a single chord
+for a small rounded corner, span the arc's whole turn about its centre) and mirrors the
 sketch if it was written on the inner side; fillets and chamfers after a mirrored sketch are then
 proven on a fresh replay that has the extrude on its outward side. A face it cannot find exactly once, an edge that is
 not a line or circular arc, a boundary that does not close or is not flat, an input topology
