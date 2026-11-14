@@ -5,7 +5,7 @@ cadmpeg's most complete native reader. This page says what Dutchman makes of wha
 gives and which upstream gaps remain. Improvements land in cadmpeg and reach Dutchman when the
 pin is bumped.
 
-State at the cadmpeg commit pinned in `Cargo.toml` (`027016d0`, after cadmpeg 0.6.12).
+State at the cadmpeg commit pinned in `Cargo.toml` (`b95a0abd`, after cadmpeg 0.6.12).
 More thread and hole forms, healed Delete Face operations, shell wall selections, loft
 sections and rails, circular pipes, and pattern placements decode for history mapping.
 More extrude profiles and face ends, fillet edge selections, body moves, and component
@@ -20,6 +20,13 @@ An unreadable sketch point no longer discards otherwise readable design history.
 component occurrence frames and inserted-component placements resolve, and construction-plane
 mirrors read their selected work plane. Known simple and clearance hole forms no longer
 report an assumed diameter; tapped holes still report how their stored bore is interpreted.
+
+Bodies now follow the component that stored them, and component placements read from saved
+local occurrence paths, so more designs open as placed parts with their own history. A local
+occurrence whose placement no stored path proves stays unplaced and is reported.
+The reader also retains Combine operations, partial Sweeps, path patterns, face-group edits,
+spheres, Emboss, and mesh conversions in neutral history. Features that still need an operand
+or form Dutchman does not map stay blocked, with the final shape preserved.
 
 The reader also retains more box, Pipe, unequal-wall Shell, and UnStitch definitions in
 neutral history. These still need the operands and feature forms Dutchman supports;

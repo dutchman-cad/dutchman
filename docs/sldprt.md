@@ -6,12 +6,13 @@ decoding land in cadmpeg and reach Dutchman when the pin is bumped. This page sa
 Dutchman makes of what that codec gives, and which upstream gaps keep SolidWorks history from
 replaying. It drives what is asked of cadmpeg next.
 
-State at the cadmpeg commit pinned in `Cargo.toml` (`027016d0`, after cadmpeg 0.6.12).
+State at the cadmpeg commit pinned in `Cargo.toml` (`b95a0abd`, after cadmpeg 0.6.12).
 `dutchman formats` reports the reader's current reader status alongside what Dutchman converts.
 
 Compact extrusion continuation records now supply their join or cut operation when their
-owning feature and class resolve. Unresolved profiles and sketch bindings remain the history
-blockers described below.
+owning feature and class resolve. An extrusion whose start is not the sketch plane stays
+unresolved and reported. Unresolved profiles and sketch bindings remain the history blockers
+described below.
 
 ## Parts (`.sldprt`)
 
