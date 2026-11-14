@@ -176,7 +176,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates curl git build-essential \
-            pkg-config python3 squashfs-tools zsync libx11-dev libxi-dev libxcursor-dev libxrandr-dev \
+            pkg-config python3 squashfs-tools zsync file libx11-dev libxi-dev libxcursor-dev libxrandr-dev \
             libxkbcommon-dev libwayland-dev libgl1-mesa-dev
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable

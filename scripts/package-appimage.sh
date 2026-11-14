@@ -14,7 +14,7 @@
 #
 # appimagetool and its runtime are downloaded from their official releases, pinned by version and
 # SHA-256, into $APPIMAGE_TOOLS (default target/appimage-tools). Needs squashfs-tools and
-# zsyncmake (the zsync package). The programs are run once to check them, unless this machine
+# zsyncmake (the zsync package) and file. The programs are run once to check them, unless this machine
 # cannot run the target's (SKIP_RUN=1).
 set -euo pipefail
 
@@ -40,6 +40,7 @@ case "$target" in
   *) echo "No AppImage for $target" >&2; exit 2 ;;
 esac
 command -v zsyncmake > /dev/null || { echo "zsyncmake (the zsync package) is needed" >&2; exit 1; }
+command -v file > /dev/null || { echo "file (the file package) is needed by appimagetool" >&2; exit 1; }
 
 tools=$(mkdir -p "${APPIMAGE_TOOLS:-target/appimage-tools}" && cd "${APPIMAGE_TOOLS:-target/appimage-tools}" && pwd)
 fetch() { # <url> <file> <sha256>
