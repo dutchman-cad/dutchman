@@ -3,7 +3,9 @@
 //! inside the AppImage's read-only mount is touched, and the old file stays until the rename.
 #[cfg(any(target_os = "linux", test))]
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(any(target_os = "linux", test))]
+use std::path::PathBuf;
 use std::process::Stdio;
 
 use super::{Install, Spec};
