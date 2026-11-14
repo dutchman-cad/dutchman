@@ -544,7 +544,7 @@ impl SolidCraftWriter {
                     Some(dutchman_core::progress_words::blend_limit()),
                 )
             });
-            let started = std::time::Instant::now();
+            let started = dutchman_core::time::Instant::now();
             let replayed = verify::replay_edges(cli.as_ref(), remaining, &design, after, faces);
             remaining = remaining.saturating_sub(started.elapsed());
             replayed
@@ -622,7 +622,7 @@ impl SolidCraftWriter {
             }
         }
         let cli = self.selected_evaluator(&self.verification);
-        let started = std::time::Instant::now();
+        let started = dutchman_core::time::Instant::now();
         let _checking = progress.map(|p| {
             p.step(
                 dutchman_core::StepKind::CheckingPrefix,

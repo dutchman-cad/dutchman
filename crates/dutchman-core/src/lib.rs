@@ -22,6 +22,7 @@ mod progress;
 pub mod progress_words;
 mod refusal;
 pub mod source;
+pub mod time;
 pub use part_positions::{PartPositionCounts, PartPositions, PlacementAssumption};
 pub use refusal::{
     classify as classify_refusal, clean as clean_refusal, Refusal,

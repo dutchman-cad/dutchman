@@ -1,10 +1,11 @@
 //! Stage and scoped running-step progress. No work is done per geometry entity.
 
+use crate::time::Instant;
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(not(target_family = "wasm"))]
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::Stage;
 
