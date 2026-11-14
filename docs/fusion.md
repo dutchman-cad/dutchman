@@ -5,12 +5,25 @@ cadmpeg's most complete native reader. This page says what Dutchman makes of wha
 gives and which upstream gaps remain. Improvements land in cadmpeg and reach Dutchman when the
 pin is bumped.
 
-State at the cadmpeg commit pinned in `Cargo.toml` (`9d7592c6`, cadmpeg 0.6.12).
+State at the cadmpeg commit pinned in `Cargo.toml` (`027016d0`, after cadmpeg 0.6.12).
 More thread and hole forms, healed Delete Face operations, shell wall selections, loft
 sections and rails, circular pipes, and pattern placements decode for history mapping.
 More extrude profiles and face ends, fillet edge selections, body moves, and component
 placements resolve. Mapping still depends on the resolved operands each feature needs.
 Sketch names follow their timeline sketch features.
+
+Revolve profiles and axes now follow their stored curve and region selections, including
+resolved unions of subdivided regions. Unresolved stored selections remain native and
+reported; a known sketch carrier can still map when Dutchman's source body check confirms
+the inferred region.
+An unreadable sketch point no longer discards otherwise readable design history. More
+component occurrence frames and inserted-component placements resolve, and construction-plane
+mirrors read their selected work plane. Known simple and clearance hole forms no longer
+report an assumed diameter; tapped holes still report how their stored bore is interpreted.
+
+The reader also retains more box, Pipe, unequal-wall Shell, and UnStitch definitions in
+neutral history. These still need the operands and feature forms Dutchman supports;
+UnStitch and uncertain box placements remain blockers, with the final shape preserved.
 
 Historical body centres use bounded samples along curved edges as well as vertices and
 proven circular extrema. cadmpeg identifies incomplete edge or topology evidence separately;
@@ -35,7 +48,9 @@ Dutchman does not reconstruct mesh geometry from native records.
 
 ## Parts and history
 
-As-built joints build no geometry and do not stop the part's feature history.
+As-built joints build no geometry and do not stop the part's feature history. Typed
+assembly-joint timeline rows also need no part feature. Unresolved connector context and
+assumed motion bindings are reported separately.
 
 Bodies a Combine used up as a tool, or that a Remove step took out of the design, are left out when cadmpeg marks them hidden and no component owns them; an Info `bodies` note gives the count. A body an active Remove deletes is left out too, even when cadmpeg lists it as shown, as long as cadmpeg resolves which body the Remove names; an Info note on the Remove gives the count. Bodies you hid yourself stay available, and a part with both shown and hidden bodies is shown whole, with an Info note.
 
