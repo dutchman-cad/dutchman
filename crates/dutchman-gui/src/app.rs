@@ -1565,14 +1565,6 @@ impl App {
     fn title_controls(&mut self, ui: &mut egui::Ui, narrow: bool) {
         ui.hyperlink_to("Report a problem", crate::REPORT_PROBLEM_URL);
         ui.add_space(theme::SPACE_2);
-        if ui
-            .button("Connect Onshape")
-            .on_hover_text("Save your Onshape API keys, or open a Part Studio from its link")
-            .clicked()
-        {
-            self.onshape.toggle(ui.ctx());
-        }
-        ui.add_space(theme::SPACE_2);
         let current = ui.ctx().options(|o| o.theme_preference);
         let themes = [
             (ThemePreference::Dark, "Night"),
@@ -1850,7 +1842,7 @@ impl App {
                 );
             }
             ui.add_space(theme::SPACE_2);
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 ui.add_enabled_ui(
                     !self.running() && !self.updater.blocks_conversions(),
                     |ui| {
@@ -1869,6 +1861,13 @@ impl App {
                         }
                     },
                 );
+                if ui
+                    .button("Connect Onshape")
+                    .on_hover_text("Save your Onshape API keys, or open a Part Studio from its link")
+                    .clicked()
+                {
+                    self.onshape.toggle(ui.ctx());
+                }
             });
         });
     }
