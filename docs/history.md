@@ -370,3 +370,8 @@ in a sandbox with no `solidcraft-cli`) keeps a whole unchecked history the same 
 hidden **Editable history (unverified)** component beside the visible original, with
 `mode: partial_history` and verification `unverified`. In an assembly each part with a mapped
 history is written that way, inside the part's own component.
+
+A trimmed profile region, including a revolve's, is selected by a point inside its boundary. When a
+native profile selection can't be resolved, Dutchman tries the selected curves and then the whole
+sketch, and keeps the feature only when SolidCraft's body check confirms it; the loss
+`history/profile-region-inferred` says so. Otherwise the feature stays blocked with its reason.

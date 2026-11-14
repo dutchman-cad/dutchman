@@ -554,6 +554,46 @@ impl SolidCraftWriter {
         }
     }
 
+    /// Admit an inferred profile with the same comparison used for unconfirmed whole-sketch
+    /// profiles. Unknown measurements never confirm an inference. At the final body-building
+    /// feature, compare the complete replay with the source as well.
+    fn profile_check(
+        &self,
+        model: &Model,
+        prefix: &history::History,
+        step: &str,
+        stored: Option<&[verify::StoredBody]>,
+        final_state: bool,
+        progress: Option<&dutchman_core::Progress<'_>>,
+    ) -> bool {
+        if self.memory_refusal().is_some() {
+            return false;
+        }
+        let Ok(cli) = self.selected_evaluator(&self.verification) else {
+            return false;
+        };
+        let Ok(design) = self.history_design(model, prefix, step, Live::History) else {
+            return false;
+        };
+        if final_state {
+            return matches!(
+                self.check(model, prefix, step, &design, progress),
+                Ok(verify::Outcome::Matches)
+            );
+        }
+        let Some(stored) = stored.filter(|stored| !stored.is_empty()) else {
+            return false;
+        };
+        let (outcome, bodies) = verify::replay(cli.as_ref(), self.timeout, &design);
+        matches!(outcome, verify::Outcome::Matches)
+            && bodies.as_deref().is_some_and(|bodies| {
+                bodies
+                    .iter()
+                    .all(|body| body.center.is_some() && body.size.is_some())
+                    && verify::bodies_differ(Some(stored), Some(bodies)).is_none()
+            })
+    }
+
     /// Keeps the largest replayable prefix we can identify from SolidCraft's first error.
     /// A shape mismatch alone cannot identify a bad operation: retain the mapped timeline
     /// for correction, hidden beside the original, and say it differs.
@@ -1187,11 +1227,14 @@ impl Writer for SolidCraftWriter {
             )
         } else {
             let mut history_report = Report::default();
-            let mut mapping = history::map_with_sketches(
+            let mut mapping = history::map_with_profile_check(
                 model,
                 &mut history_report,
                 self.resolved_version(),
                 self.sketches,
+                &mut |prefix, stored, final_state| {
+                    self.profile_check(model, prefix, &step, stored, final_state, progress)
+                },
             );
             if let Ok(history) = &mut mapping.result {
                 if let Err(why) = history::base::restate(history, model) {

@@ -243,7 +243,13 @@ curves) or of selected curves, one-sided, symmetric or two-sided, blind or throu
 offset, or a resolved parallel planar face on an earlier named body. A face of the
 feature's own input topology (a face of an earlier history state) is rebuilt as its plane and
 an interior point from that state's boundary samples; a face that is not parallel to the
-sketch is refused. Curves that bound a selected trimmed sketch region stay solid (not
+sketch is refused. Trimmed regions name interior points computed from directed trim intervals, including for
+revolves; unresolved or ambiguous boundaries are blockers. Otherwise unresolved native sketch
+selections try at most two candidates through the normal feature mapper, selected neutral curves
+and the whole carrier. A writer callback admits each only after the existing source body check,
+or the complete shape comparison at the final body-building feature, confirms its replay;
+planning has no callback and keeps the blocker. Every admitted candidate has a named loss.
+Curves that bound a selected trimmed sketch region stay solid (not
 construction), so SolidCraft splits the sketch there and sweeps that region, not the merged
 area around it. Complete-loop extrudes whose regions those curves subdivide use an editable
 copy with unused splitters as construction; the original sketch's geometry, constraints, and

@@ -24,6 +24,7 @@ pub(crate) type P2 = [f64; 2];
 pub(crate) type V3 = [f64; 3];
 
 /// A mapped sketch, as later features refer to it.
+#[derive(Clone)]
 pub(crate) struct Mapped {
     /// The SolidCraft sketch feature's id.
     pub(crate) feature: u64,

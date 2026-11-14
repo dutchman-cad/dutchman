@@ -4210,9 +4210,9 @@ fn shared_circle_regions() -> Model {
     let profile = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
     "regions": [
         {"region": "trimmed", "outer_boundary": [boundary(1, [0.0, pi / 2.0]),
-            boundary(3, [0.0, 1.0]), boundary(2, [0.5, 1.0])]},
+            {"entity": "f3d:model:sketch-entity#3", "parameter_range": [0.0, 1.0], "reversed": true}, boundary(2, [0.5, 1.0])]},
         {"region": "trimmed", "outer_boundary": [boundary(1, [pi, 2.0 * pi]),
-            boundary(2, [0.0, 1.0])]}
+            {"entity": "f3d:model:sketch-entity#2", "parameter_range": [0.0, 1.0], "reversed": true}]}
     ]}});
     let mut model = cube_with_history(2.0, profile, None);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
@@ -4260,6 +4260,70 @@ fn solidcraft_replays_regions_resolved_by_a_shared_circle() {
         (got.iter().sum::<f64>() - want).abs() / want < 1e-3,
         "{got:?} vs {want}"
     );
+}
+
+/// Two half-discs on the same circle and a strict interval of a longer diameter.
+/// Opposite directed boundaries must select opposite interiors despite identical curve sets.
+fn trimmed_half_disc_revolve(upper: bool, angle: f64) -> Model {
+    let mut model = ring_history(json!({"kind": "one_sided",
+        "termination": {"kind": "angle", "angle": angle}}));
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    m["sketch_entities"] = json!([circle(1, [0.0, 0.0], 4.0), line(2, [-8.0, 0.0], [8.0, 0.0])]);
+    m["sketches"][0]["profiles"] = json!([[{"entity": "f3d:model:sketch-entity#1"}]]);
+    let pi = std::f64::consts::PI;
+    let regions = [
+        json!({"region": "trimmed", "outer_boundary": [
+            {"entity": "f3d:model:sketch-entity#2", "parameter_range": [0.25, 0.75]},
+            {"entity": "f3d:model:sketch-entity#1", "parameter_range": [0.0, pi]}]}),
+        json!({"region": "trimmed", "outer_boundary": [
+            {"entity": "f3d:model:sketch-entity#2", "parameter_range": [0.25, 0.75], "reversed": true},
+            {"entity": "f3d:model:sketch-entity#1", "parameter_range": [pi, 2.0 * pi]}]}),
+    ];
+    let construction = &mut m["features"][1]["definition"]["construction"];
+    construction["profile"] = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
+        "regions": [regions[usize::from(!upper)].clone()]}});
+    construction["axis"]["direction"] = json!({"x": 1.0, "y": 0.0, "z": 0.0});
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn directed_trimmed_revolves_select_the_interior_of_each_half_disc() {
+    for upper in [true, false] {
+        for angle in [std::f64::consts::TAU, std::f64::consts::FRAC_PI_2] {
+            let (document, report) = convert(
+                &trimmed_half_disc_revolve(upper, angle),
+                &SolidCraftWriter::new().verification(Verification::Off),
+            );
+            assert!(
+                history_line(&report).starts_with("2 of 2 features rebuilt"),
+                "{report:?}"
+            );
+            let selection = &document["features"][1]["profiles"];
+            assert_eq!(selection["type"], "points");
+            let p = &selection["points"][0];
+            let (x, y) = (p[0].as_f64().unwrap(), p[1].as_f64().unwrap());
+            assert!(
+                x.hypot(y) < 4.0 && if upper { y > 0.0 } else { y < 0.0 },
+                "{selection}"
+            );
+        }
+    }
+}
+
+#[test]
+fn solidcraft_replays_a_directed_trimmed_half_disc_revolve() {
+    let Some(cli) = solidcraft() else { return };
+    for upper in [true, false] {
+        for angle in [std::f64::consts::TAU, std::f64::consts::FRAC_PI_2] {
+            let got = volumes(&cli, &written(&trimmed_half_disc_revolve(upper, angle)).0);
+            let want =
+                4.0 / 3.0 * std::f64::consts::PI * 4.0_f64.powi(3) * angle / std::f64::consts::TAU;
+            assert_eq!(got.len(), 1);
+            assert!((got[0] - want).abs() / want < 1e-3, "{got:?} vs {want}");
+        }
+    }
 }
 
 fn circle(key: u32, center: [f64; 2], radius: f64) -> Value {
@@ -4658,7 +4722,14 @@ fn native_selections_resolve_one_even_odd_region() {
             &SolidCraftWriter::new().verification(Verification::Off),
         );
         assert_reference_sketches(&document, 1);
-        assert!(history_line(&report).contains("a profile cadmpeg does not resolve"));
+        assert_eq!(
+            report.outcome().unwrap().features[1].status,
+            dutchman_core::FeatureStatus::Blocked
+        );
+        assert!(!report
+            .losses()
+            .iter()
+            .any(|loss| loss.code.as_deref() == Some("history/profile-region-inferred")));
     }
 }
 
@@ -4804,7 +4875,7 @@ fn solidcraft_replays_a_panel_region_with_twenty_circular_holes() {
 /// sketch of one profile the selection can only be that profile; multiple loops must
 /// identify one material region by even-odd nesting, otherwise the history is refused.
 #[test]
-fn an_inventor_shaped_extrude_maps_only_when_its_sketch_has_one_profile() {
+fn an_inventor_shaped_extrude_needs_confirmation_for_several_profiles() {
     let inventor_profile = json!({"kind": "sketch_selection",
         "value": {"sketch": SKETCH, "selections": ["inventor:native:profile-selection#1"]}});
     let extent = json!({"kind": "symmetric",
@@ -4830,8 +4901,8 @@ fn an_inventor_shaped_extrude_maps_only_when_its_sketch_has_one_profile() {
     assert_reference_sketches(&document, 1);
     assert_eq!(
         history_line(&report),
-        "flattened: feature \"Block\": a profile cadmpeg does not resolve, in a sketch of 2 \
-         profiles, is not mapped yet"
+        "flattened: feature \"Block\": its inferred profile region could not be confirmed by \
+         the source body check"
     );
     let outcome = report.outcome().unwrap();
     let statuses: Vec<_> = outcome
@@ -12391,6 +12462,7 @@ fn an_extrude_with_no_end_cap_in_the_model_is_kept_but_its_profile_is_unproven()
 struct RecordedEvaluator {
     calls: std::sync::Mutex<Vec<String>>,
     different_history: bool,
+    reject_curve_candidate: bool,
     warning: bool,
 }
 
@@ -12403,12 +12475,23 @@ impl dutchman_solidcraft::SolidCraftEvaluator for RecordedEvaluator {
     ) -> Result<Value, String> {
         assert!(!timeout.is_zero());
         let mut archive = ZipArchive::new(Cursor::new(design)).unwrap();
-        assert!(archive.by_name("document.json").is_ok());
+        let document: Value =
+            serde_json::from_reader(archive.by_name("document.json").unwrap()).unwrap();
+        let rejected = self.reject_curve_candidate
+            && document["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|feature| {
+                    feature.get("suppressed").and_then(Value::as_bool) != Some(true)
+                        && feature.pointer("/profiles/type").and_then(Value::as_str)
+                            == Some("curves")
+                });
         self.calls.lock().unwrap().push(label.to_owned());
         Ok(json!({
             "bodies": [{"volume_mm3": if label == "history" && self.different_history {900.0} else {1000.0},
                 "area_mm2": 600.0, "bbox": {"min": [0, 0, 0], "max": [10, 10, 10]}}],
-            "timeline": [{"name": "Original geometry", "error": null,
+            "timeline": [{"name": "Original geometry", "error": if rejected { json!("Synthetic candidate refusal") } else { Value::Null },
                 "warning": if self.warning { "1 face(s) could not be meshed" } else { "" }}],
             "total": {"faces": 6}
         }))
@@ -12485,4 +12568,140 @@ fn a_host_evaluator_carries_prefix_measurements_and_final_geometry_warnings() {
         .losses()
         .iter()
         .any(|loss| loss.detail.contains("could not be meshed")));
+}
+
+/// A closed square carrier with no stored profiles and an opaque source selection.
+fn unresolved_square_selection(selected: &[u32]) -> Model {
+    let ids: Vec<String> = selected
+        .iter()
+        .map(|id| format!("f3d:model:sketch-entity#{id}"))
+        .collect();
+    let profile = json!({"kind": "sketch_selection", "value": {"sketch": SKETCH,
+        "selections": if ids.is_empty() {vec!["synthetic:native:selection#one".to_owned()]} else {ids}}});
+    let mut model = cube_with_history(10.0, profile, None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["sketches"][0]["profiles"] = json!([]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn an_inferred_native_profile_is_kept_only_when_the_body_check_confirms_it() {
+    for selected in [&[][..], &[1, 2, 3, 4][..]] {
+        let host = std::sync::Arc::new(RecordedEvaluator::default());
+        let writer = SolidCraftWriter::new().evaluator(host.clone());
+        let (document, report) = convert(&unresolved_square_selection(selected), &writer);
+        let outcome = report.outcome().unwrap();
+        assert_eq!(outcome.mode, Mode::History);
+        assert_eq!(outcome.check, Check::Verified);
+        assert_eq!(
+            outcome.features[1].status,
+            dutchman_core::FeatureStatus::Mapped
+        );
+        assert_eq!(
+            document["features"][1]["profiles"]["type"],
+            if selected.is_empty() { "all" } else { "curves" }
+        );
+        assert_eq!(
+            report
+                .losses()
+                .iter()
+                .filter(
+                    |loss| loss.code.as_deref() == Some("history/profile-region-inferred")
+                        && loss.detail.contains("check confirmed it")
+                )
+                .count(),
+            1
+        );
+    }
+}
+
+#[test]
+fn an_inferred_native_profile_is_refused_without_a_matching_body_check() {
+    for writer in [
+        SolidCraftWriter::new().verification(Verification::Off),
+        SolidCraftWriter::new().evaluator(std::sync::Arc::new(RecordedEvaluator {
+            different_history: true,
+            ..RecordedEvaluator::default()
+        })),
+    ] {
+        let (document, report) = convert(&unresolved_square_selection(&[1, 2, 3, 4]), &writer);
+        assert_reference_sketches(&document, 1);
+        assert_eq!(
+            report.outcome().unwrap().features[1].status,
+            dutchman_core::FeatureStatus::Blocked
+        );
+        assert!(report.outcome().unwrap().features[1]
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("could not be confirmed"));
+        assert!(!report
+            .losses()
+            .iter()
+            .any(|loss| loss.code.as_deref() == Some("history/profile-region-inferred")));
+    }
+}
+
+#[test]
+fn an_open_selected_curve_candidate_can_fall_back_to_a_confirmed_carrier() {
+    let host = std::sync::Arc::new(RecordedEvaluator {
+        reject_curve_candidate: true,
+        ..RecordedEvaluator::default()
+    });
+    let (document, report) = convert(
+        &unresolved_square_selection(&[1, 2, 3]),
+        &SolidCraftWriter::new().evaluator(host.clone()),
+    );
+    assert_eq!(report.outcome().unwrap().check, Check::Verified);
+    assert_eq!(document["features"][1]["profiles"]["type"], "all");
+    assert_eq!(
+        host.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| call.as_str() == "history")
+            .count(),
+        3
+    );
+}
+
+#[test]
+fn an_inferred_partial_profile_needs_known_bodies_at_its_own_source_state() {
+    for (center, mapped) in [
+        (Some("cube:5,5,5"), true),
+        (Some("cube:50,50,50"), false),
+        (None, false),
+    ] {
+        let mut model = unresolved_square_selection(&[]);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        if let Some(center) = center {
+            wire["model"]["features"][1]["source_properties"] =
+                json!({"body_centers": center, "body_centers_exact": "cube"});
+        }
+        wire["model"]["features"].as_array_mut().unwrap().push(json!({
+            "id": "synthetic:cube:feature#later", "ordinal": 2, "name": "Later", "suppressed": false,
+            "definition": {"definition": "native", "kind": "Reference blocker"}}));
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (_, report) = convert(
+            &model,
+            &SolidCraftWriter::new().evaluator(std::sync::Arc::new(RecordedEvaluator::default())),
+        );
+        assert_eq!(
+            report.outcome().unwrap().features[1].status,
+            if mapped {
+                dutchman_core::FeatureStatus::Mapped
+            } else {
+                dutchman_core::FeatureStatus::Blocked
+            },
+            "{report:?}"
+        );
+        assert_eq!(
+            report
+                .losses()
+                .iter()
+                .any(|loss| loss.code.as_deref() == Some("history/profile-region-inferred")),
+            mapped
+        );
+    }
 }

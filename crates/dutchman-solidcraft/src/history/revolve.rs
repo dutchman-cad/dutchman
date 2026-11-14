@@ -59,7 +59,14 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         if surface {
             return Err("one-sided partial surface revolves are not mapped yet (their sweep side is not proven)".to_owned());
         }
-        angle *= sweep_sign(&placed, sketch, &sketch_id, &profiles, ctx)?;
+        angle *= sweep_sign(
+            &placed,
+            sketch,
+            &sketch_id,
+            &profiles,
+            construction.get("profile"),
+            ctx,
+        )?;
         bound = ctx.owned_parameter(feature, "AlongAngle", angle.abs());
     }
     if surface && TAU - angle <= FULL_TURN {
@@ -115,6 +122,7 @@ fn sweep_sign(
     sketch: &Mapped,
     sketch_id: &str,
     profiles: &Value,
+    reference: Option<&Value>,
     ctx: &Context,
 ) -> Result<f64, String> {
     let missing = "its one-sided revolve sweep side is not proven (selected profile curves must lie on one side of the oriented axis)";
@@ -140,6 +148,17 @@ fn sweep_sign(
             ],
         )
     };
+    if profiles.get("type").and_then(Value::as_str) == Some("points") {
+        let (low, high) =
+            super::profile::trimmed_bounds(reference, ctx, sketch, at).ok_or(missing)?;
+        return if low >= -IN_PLANE && high > IN_PLANE {
+            Ok(1.0)
+        } else if high <= IN_PLANE && low < -IN_PLANE {
+            Ok(-1.0)
+        } else {
+            Err(missing.to_owned())
+        };
+    }
     let all = profiles.get("type").and_then(Value::as_str) == Some("all");
     let mut selected = BTreeSet::new();
     selected_curves(profiles, &mut selected);

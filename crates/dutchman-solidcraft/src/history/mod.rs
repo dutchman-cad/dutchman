@@ -22,6 +22,7 @@ mod faces;
 mod helix;
 mod helpers;
 mod hole;
+mod infer;
 mod loft;
 mod modify;
 mod move_face;
@@ -573,6 +574,7 @@ impl FromIterator<String> for BodyNames {
 type RowIndex<'a> = OnceCell<HashMap<&'a str, &'a Value>>;
 
 /// The model and what has been mapped so far.
+#[derive(Clone)]
 struct Context<'a> {
     /// Source for guarded STEP restatement of stored feature bodies.
     source: Option<&'a Model>,
@@ -817,6 +819,24 @@ pub(crate) fn map_with_sketches(
     target_version: crate::SolidCraftVersion,
     keep_sketches: bool,
 ) -> Mapping {
+    map_with_profile_check(
+        model,
+        report,
+        target_version,
+        keep_sketches,
+        &mut |_, _, _| false,
+    )
+}
+
+/// Mapping with a host check for otherwise unresolved sketch-selection candidates.
+/// Planning has no check and retains the original profile refusal.
+pub(crate) fn map_with_profile_check(
+    model: &Model,
+    report: &mut Report,
+    target_version: crate::SolidCraftVersion,
+    keep_sketches: bool,
+    check: &mut infer::Check<'_>,
+) -> Mapping {
     let mut features_out = Vec::new();
     let mut references = History::default();
     let result = map_into(
@@ -826,6 +846,7 @@ pub(crate) fn map_with_sketches(
         &mut references,
         target_version,
         keep_sketches,
+        check,
     );
     let mut mapping = Mapping {
         result,
@@ -937,6 +958,7 @@ fn map_into(
     references: &mut History,
     target_version: crate::SolidCraftVersion,
     keep_sketches: bool,
+    check: &mut infer::Check<'_>,
 ) -> Result<History, String> {
     let document =
         serde_json::to_value(&model.ir).map_err(|err| format!("cannot read the model: {err}"))?;
@@ -968,7 +990,17 @@ fn map_into(
 
     let mut history = History::default();
     let mut blocked: Option<String> = None;
-    for feature in features {
+    let last_builder = features.iter().rposition(|feature| {
+        let kind = kind(feature);
+        feature.get("suppressed").and_then(Value::as_bool) != Some(true)
+            && !unchanged_geometry(feature)
+            && !(kind == "sketch"
+                || kind.starts_with("datum")
+                || matches!(kind.as_str(), "tree_node" | "reference_image")
+                || is_assembly_feature(feature)
+                || helpers::is_helper(feature))
+    });
+    for (position, feature) in features.into_iter().enumerate() {
         let outcome = |status, reason: Option<String>| FeatureOutcome {
             name: name(feature).map(str::to_owned),
             kind: kind(feature),
@@ -1030,7 +1062,18 @@ fn map_into(
         let builds = ctx.builds;
         let before = history.features.len();
         let blends = ctx.blends.len();
-        match map_feature(feature, &mut ctx, report, &mut history.features) {
+        let inferred = infer::map(
+            feature,
+            &mut ctx,
+            report,
+            &mut history,
+            &params,
+            last_builder == Some(position),
+            check,
+        );
+        let mapped = inferred
+            .unwrap_or_else(|| map_feature(feature, &mut ctx, report, &mut history.features));
+        match mapped {
             Ok(Mapped::Nothing) => {
                 history.mapped += 1;
                 history.not_needed += 1;

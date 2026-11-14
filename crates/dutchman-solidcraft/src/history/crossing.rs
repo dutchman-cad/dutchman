@@ -637,38 +637,6 @@ const READINGS: [fn(f64) -> f64; 4] = [
     |t| std::f64::consts::PI + t,
 ];
 
-/// Whether a region uses part of a whole circle. Several regions of two crossing closed curves
-/// have the same curves, so naming the curves can't tell them apart.
-pub(super) fn trims_a_closed_curve(uses: &[Value], entities: &[&Value]) -> bool {
-    uses.iter().any(|use_| {
-        let entity = use_
-            .get("entity")
-            .and_then(Value::as_str)
-            .and_then(|id| entity_named(entities, id));
-        let is_circle = entity
-            .and_then(|e| e.pointer("/geometry/kind"))
-            .and_then(Value::as_str)
-            == Some("circle");
-        let span = range(use_).map(|(from, to)| (to - from).abs());
-        is_circle
-            && span.is_some_and(|span| {
-                span < std::f64::consts::TAU - 1e-6
-                    && !complete_circle(uses, use_.get("entity").and_then(Value::as_str))
-            })
-    })
-}
-
-/// Whether the uses of one circle together cover all of it.
-fn complete_circle(uses: &[Value], entity: Option<&str>) -> bool {
-    let total: f64 = uses
-        .iter()
-        .filter(|use_| use_.get("entity").and_then(Value::as_str) == entity)
-        .filter_map(range)
-        .map(|(from, to)| (to - from).abs())
-        .sum();
-    (total - std::f64::consts::TAU).abs() < 1e-6
-}
-
 fn entity_named<'a>(entities: &[&'a Value], id: &str) -> Option<&'a Value> {
     entities
         .iter()
@@ -678,7 +646,8 @@ fn entity_named<'a>(entities: &[&'a Value], id: &str) -> Option<&'a Value> {
 
 fn range(use_: &Value) -> Option<(f64, f64)> {
     let range = use_.get("parameter_range")?.as_array()?;
-    Some((range.first()?.as_f64()?, range.get(1)?.as_f64()?))
+    let (from, to) = (number(range.first())?, number(range.get(1))?);
+    (range.len() == 2 && from != to).then_some((from, to))
 }
 
 /// Points along one boundary use, under one reading of its parameter.
@@ -694,7 +663,7 @@ fn use_samples(use_: &Value, entities: &[&Value], reading: fn(f64) -> f64) -> Op
             let end = super::sketch::p2(geometry.get("end"))?;
             let length = super::sketch::distance(start, end);
             let slack = RING_CLOSES / length;
-            if length <= 0.0 || from < -slack || to > 1.0 + slack {
+            if length <= 0.0 || from.min(to) < -slack || from.max(to) > 1.0 + slack {
                 return None;
             }
             Some(vec![along(start, end, from), along(start, end, to)])
@@ -702,6 +671,9 @@ fn use_samples(use_: &Value, entities: &[&Value], reading: fn(f64) -> f64) -> Op
         "arc" | "circle" => {
             let center = super::sketch::p2(geometry.get("center"))?;
             let radius = number(geometry.get("radius"))?;
+            if radius <= 0.0 || (to - from).abs() > std::f64::consts::TAU {
+                return None;
+            }
             let count = ((to - from).abs() / std::f64::consts::TAU * CIRCLE_SAMPLES as f64)
                 .ceil()
                 .max(2.0) as usize;
@@ -727,32 +699,21 @@ fn ring_under(uses: &[Value], entities: &[&Value], reading: fn(f64) -> f64) -> O
     if uses.is_empty() || uses.len() > MAX_LINES {
         return None;
     }
-    let mut pieces: Vec<Vec<P2>> = uses
-        .iter()
-        .map(|use_| use_samples(use_, entities, reading))
-        .collect::<Option<_>>()?;
-    // The first use's direction is settled by what it must meet next.
-    if let [first, second, ..] = pieces.as_mut_slice() {
-        let (start, end) = (*first.first()?, *first.last()?);
-        let (a, b) = (*second.first()?, *second.last()?);
-        let reach = |p: P2| super::sketch::distance(p, a).min(super::sketch::distance(p, b));
-        if reach(start) < reach(end) {
-            first.reverse();
-        }
-    }
     let mut out: Vec<P2> = Vec::new();
-    for mut piece in pieces {
+    for use_ in uses {
+        let mut piece = use_samples(use_, entities, reading)?;
+        if use_.get("reversed").and_then(Value::as_bool) == Some(true) {
+            piece.reverse();
+        }
         if let Some(&last) = out.last() {
-            if super::sketch::distance(last, *piece.last()?)
-                < super::sketch::distance(last, *piece.first()?)
-            {
-                piece.reverse();
-            }
             if super::sketch::distance(last, *piece.first()?) > RING_CLOSES {
                 return None;
             }
         }
         out.extend(piece);
+        if out.len() > MAX_POINTS {
+            return None;
+        }
     }
     let (&first, &last) = (out.first()?, out.last()?);
     if super::sketch::distance(first, last) > RING_CLOSES {
@@ -777,15 +738,15 @@ fn area_and_centre(ring: &[P2]) -> (f64, P2) {
     ((area / 2.0).abs(), [x / (3.0 * area), y / (3.0 * area)])
 }
 
-/// The ring of a region's boundary uses. Every reading that closes must give the same shape;
-/// readings that close on different shapes can't be told apart, so there is no ring.
+/// The ring of a region's directed boundary uses. Prefer their solved sketch chart;
+/// otherwise require every directed reading that closes to describe the same shape.
 pub(super) fn trimmed_ring(uses: &[Value], entities: &[&Value]) -> Option<Vec<P2>> {
     trimmed_rings(&[uses], entities)?.pop()
 }
 
-/// Resolve parameter readings together only for rings sharing a curved carrier. A diameter
-/// alone cannot distinguish the two halves of a circle, but another closed boundary using
-/// that same circle can settle its reading. Unrelated carriers supply no such evidence.
+/// Resolve legacy angular charts together only for rings sharing a curved carrier.
+/// Directed intervals in the solved sketch chart already distinguish the two half-discs;
+/// unrelated carriers cannot settle a legacy chart whose surviving readings disagree.
 pub(super) fn trimmed_rings(uses: &[&[Value]], entities: &[&Value]) -> Option<Vec<Vec<P2>>> {
     if uses.is_empty()
         || uses.len() > MAX_LINES
@@ -838,6 +799,17 @@ pub(super) fn trimmed_rings(uses: &[&[Value]], entities: &[&Value]) -> Option<Ve
 }
 
 fn rings_under_readings(uses: &[&[Value]], entities: &[&Value]) -> Option<Vec<Vec<P2>>> {
+    // A directed interval in the solved sketch's chart is authoritative. Mirroring a
+    // diameter and semicircle also closes, but selects the opposite half-disc.
+    if let Some(rings) = uses
+        .iter()
+        .map(|uses| ring_under(uses, entities, |t| t))
+        .collect::<Option<Vec<_>>>()
+    {
+        return Some(rings);
+    }
+    // Older carriers can use a different angular chart. Retain them only when directed
+    // closure settles that reading and every surviving reading describes the same region.
     let mut found: Option<Vec<Vec<P2>>> = None;
     for reading in READINGS {
         let Some(rings) = uses
@@ -853,6 +825,19 @@ fn rings_under_readings(uses: &[&[Value]], entities: &[&Value]) -> Option<Vec<Ve
                 let (b, d) = area_and_centre(ring);
                 if (a - b).abs() > 1e-3 * a.max(b).max(1e-9)
                     || super::sketch::distance(c, d) > RING_CLOSES * 10.0
+                    || [
+                        (known.as_slice(), ring.as_slice()),
+                        (ring.as_slice(), known.as_slice()),
+                    ]
+                    .iter()
+                    .any(|(a, b)| {
+                        a.iter().any(|p| {
+                            edges(b)
+                                .map(|(x, y)| distance_to_edge(*p, x, y))
+                                .fold(f64::INFINITY, f64::min)
+                                > RING_CLOSES
+                        })
+                    })
                 {
                     return None;
                 }
@@ -864,6 +849,61 @@ fn rings_under_readings(uses: &[&[Value]], entities: &[&Value]) -> Option<Vec<Ve
     found
 }
 
+/// A conservative distance from the sampled boundary to its exact curves. Circular
+/// chords deviate by at most r(1 - cos(step / 2)); closure can move an endpoint by RING_CLOSES.
+pub(super) fn boundary_error(entities: &[&Value]) -> Option<f64> {
+    let mut error: f64 = 0.0;
+    for entity in entities {
+        let geometry = entity.get("geometry")?;
+        let count = match geometry.get("kind")?.as_str()? {
+            "circle" => CIRCLE_SAMPLES,
+            "arc" => ARC_SAMPLES.min(CIRCLE_SAMPLES),
+            _ => continue,
+        };
+        let radius = number(geometry.get("radius"))?;
+        error = error.max(radius * (1.0 - (std::f64::consts::PI / count as f64).cos()));
+    }
+    Some(error + RING_CLOSES)
+}
+
+/// Exact bounds of a linear coordinate over a directed trimmed boundary in the solved
+/// sketch chart. Include each arc's extrema only when they fall in its selected interval.
+pub(super) fn trimmed_bounds(
+    uses: &[Value],
+    entities: &[&Value],
+    at: impl Fn(P2) -> f64,
+) -> Option<(f64, f64)> {
+    ring_under(uses, entities, |t| t)?;
+    let mut low = f64::INFINITY;
+    let mut high = f64::NEG_INFINITY;
+    for use_ in uses {
+        let samples = use_samples(use_, entities, |t| t)?;
+        for point in samples {
+            let value = at(point);
+            low = low.min(value);
+            high = high.max(value);
+        }
+        let geometry = entity_named(entities, use_.get("entity")?.as_str()?)?.get("geometry")?;
+        if matches!(geometry.get("kind")?.as_str()?, "circle" | "arc") {
+            let center = super::sketch::p2(geometry.get("center"))?;
+            let radius = number(geometry.get("radius"))?;
+            let base = at(center);
+            let x = at([center[0] + radius, center[1]]) - base;
+            let y = at([center[0], center[1] + radius]) - base;
+            let angle = y.atan2(x);
+            let (from, to) = range(use_)?;
+            for theta in [angle, angle + std::f64::consts::PI] {
+                if (theta - from.min(to)).rem_euclid(std::f64::consts::TAU) <= (to - from).abs() {
+                    let value = base + x * theta.cos() + y * theta.sin();
+                    low = low.min(value);
+                    high = high.max(value);
+                }
+            }
+        }
+    }
+    (low.is_finite() && high.is_finite()).then_some((low, high))
+}
+
 /// The ring of a whole source loop, for the regions selected beside a trimmed one.
 pub(super) fn loop_ring(members: &[Value], entities: &[&Value]) -> Option<Vec<P2>> {
     polygon(members, entities)
@@ -871,7 +911,7 @@ pub(super) fn loop_ring(members: &[Value], entities: &[&Value]) -> Option<Vec<P2
 
 /// A point inside `ring`, outside each of `others`, as far from all their edges as the scan
 /// finds. `None` when no such point stands clear of them.
-pub(super) fn interior_point(ring: &[P2], others: &[&[P2]]) -> Option<P2> {
+pub(super) fn interior_point(ring: &[P2], others: &[&[P2]], minimum: f64) -> Option<P2> {
     const ROWS: usize = 96;
     let low = ring.iter().map(|p| p[1]).fold(f64::INFINITY, f64::min);
     let high = ring.iter().map(|p| p[1]).fold(f64::NEG_INFINITY, f64::max);
@@ -898,7 +938,7 @@ pub(super) fn interior_point(ring: &[P2], others: &[&[P2]]) -> Option<P2> {
                     continue;
                 }
                 let room = clearance(p);
-                if room >= CLEARANCE && best.is_none_or(|(known, _)| room > known) {
+                if room > minimum.max(CLEARANCE) && best.is_none_or(|(known, _)| room > known) {
                     best = Some((room, p));
                 }
             }
@@ -1945,7 +1985,7 @@ mod tests {
             {"entity": "t1", "parameter_range": [0.0, 1.0]},
             {"entity": "t2", "parameter_range": [0.0, 1.0]},
             {"entity": "t3", "parameter_range": [0.0, 1.0]},
-            {"entity": "b", "parameter_range": [0.3, 0.7]}]});
+            {"entity": "b", "parameter_range": [0.3, 0.7], "reversed": true}]});
         let features = [
             extrude(json!([{"region": "loops", "outer": 0}])),
             extrude(json!([trimmed])),
@@ -1974,7 +2014,7 @@ mod tests {
             json!([{"entity": "t1", "parameter_range": [0.0, 1.0]},
                    {"entity": "t2", "parameter_range": [0.0, 1.0]},
                    {"entity": "t3", "parameter_range": [0.0, 1.0]},
-                   {"entity": "b", "parameter_range": piece}])
+                   {"entity": "b", "parameter_range": piece, "reversed": true}])
         };
         // 30% to 70% of the square's 10 mm side closes the 4 mm tab.
         let ring = trimmed_ring(tab([0.3, 0.7]).as_array().unwrap(), &refs).unwrap();
