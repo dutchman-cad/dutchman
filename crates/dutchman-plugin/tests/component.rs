@@ -46,6 +46,9 @@ fn failed(reason: impl ToString) -> PluginError {
     })
 }
 impl types::Host for Host {}
+/// How the plugin words a check this harness's evaluate refused.
+const NO_HOST_EVALUATION: &str =
+    "Host evaluation: PluginError::PermissionDenied(\"evaluate: the test host has no SolidCraft\")";
 // No SolidCraft here: every check is unverified, as the CLI's output this is compared with.
 impl evaluate::Host for Host {
     fn stage(&mut self, _bytes: Vec<u8>) -> Result<(), PluginError> {
@@ -375,10 +378,25 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let details = &report["details"];
         assert_eq!(details["schema"], "dutchman.plugin.loss/1");
         let native_report = loss_report::json(&cli_report);
+        // The harness's evaluate refuses every check where the CLI had verification off: the
+        // same unchecked status, and the CLI's reason within the plugin's, which names the host's
+        // refusal where the CLI says verification is off (and may say which check it was).
+        let guest = &details["outcome"]["verification"];
+        let native = &native_report["outcome"]["verification"];
         assert_eq!(
-            details["outcome"]["verification"], native_report["outcome"]["verification"],
-            "{fixture}: verification must retain the CLI's unchecked status and reason"
+            guest["status"], native["status"],
+            "{fixture}: verification must retain the CLI's unchecked status"
         );
+        let message = |value: &serde_json::Value| value["message"].as_str().map(str::to_owned);
+        let guest_message =
+            message(guest).map(|text| text.replace(NO_HOST_EVALUATION, "verification turned off"));
+        match (guest_message, message(native)) {
+            (Some(guest), Some(native)) => assert!(
+                guest.contains(&native),
+                "{fixture}: verification must retain the CLI's reason: {guest} / {native}"
+            ),
+            (guest, native) => assert_eq!(guest, native, "{fixture}: verification reason"),
+        }
         assert_eq!(
             contents(&store.data().output),
             contents(&expected),
