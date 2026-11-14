@@ -1,15 +1,21 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
-//! Run with `DUTCHMAN_PLUGIN_COMPONENT=/absolute/path/dutchman_plugin.wasm
-//! cargo test --release -p dutchman-plugin --features host-tests --test component -- --nocapture`.
-//! The component is required: this test never silently skips conversion.
+//! Run with `DUTCHMAN_PLUGIN_COMPONENT=/absolute/path/dutchman.wasm cargo test --release
+//! -p dutchman-plugin --features host-tests --test component -- --nocapture`; a relative path
+//! names a file in the workspace.
+//! The component is required: this test never silently skips conversion. The linker holds
+//! only the `craft:plugin` imports, as in SolidCraft: no WASI, so a component that needs any
+//! fails to instantiate.
 #[path = "../src/adapter.rs"]
 mod adapter;
 #[path = "../src/limits.rs"]
 #[allow(dead_code)]
 mod limits;
 #[path = "../src/report.rs"]
+#[allow(dead_code)]
 mod loss_report;
-use adapter::host::{add_to_linker, import_design, input, output, types, ImporterPlugin};
+use adapter::host::{
+    add_to_linker, clock, control, design, import_file, log, source, types, ImporterPlugin,
+};
 use dutchman_core::{Format, PartSearch, Report, Writer};
 use dutchman_solidcraft::{SolidCraftVersion, SolidCraftWriter, Verification};
 use std::{
@@ -17,52 +23,62 @@ use std::{
     path::{Path, PathBuf},
     time::Instant,
 };
+use types::{FieldFailure, PluginError};
 use wasmtime::{
-    component::{Component, Linker, ResourceTable},
+    component::{Component, Linker},
     Config, Engine, Store, StoreLimits, StoreLimitsBuilder,
 };
-use wasmtime_wasi::{WasiCtx, WasiCtxBuilder, WasiCtxView, WasiView};
-
-struct EpochClock;
-impl wasmtime_wasi::clocks::HostWallClock for EpochClock {
-    fn resolution(&self) -> std::time::Duration {
-        std::time::Duration::from_secs(1)
-    }
-    fn now(&self) -> std::time::Duration {
-        std::time::Duration::ZERO
-    }
-}
 
 struct Host {
     root: PathBuf,
     main: Vec<u8>,
     output: Vec<u8>,
-    table: ResourceTable,
-    wasi: WasiCtx,
     limits: StoreLimits,
     read: usize,
     calls: usize,
+    progress: Vec<f32>,
 }
-impl WasiView for Host {
-    fn ctx(&mut self) -> WasiCtxView<'_> {
-        WasiCtxView {
-            ctx: &mut self.wasi,
-            table: &mut self.table,
-        }
-    }
+fn failed(reason: impl ToString) -> PluginError {
+    PluginError::CommandFailed(types::CommandFailure {
+        command: "source.read".into(),
+        reason: reason.to_string(),
+    })
 }
 impl types::Host for Host {}
-impl input::Host for Host {
-    fn resolve(&mut self, path: String) -> Result<Option<String>, types::PluginError> {
+impl log::Host for Host {
+    fn log(&mut self, level: log::Level, message: String) {
+        eprintln!("plugin {level:?}: {message}");
+    }
+}
+impl control::Host for Host {
+    fn progress(&mut self, fraction: f32, _message: String) {
+        assert!((0.0..=1.0).contains(&fraction));
+        self.progress.push(fraction);
+    }
+    fn cancelled(&mut self) -> bool {
+        false
+    }
+}
+impl clock::Host for Host {
+    // Without the clock permission the host answers 0.
+    fn now(&mut self) -> u64 {
+        0
+    }
+}
+impl source::Host for Host {
+    fn resolve(&mut self, path: String) -> Result<Option<String>, PluginError> {
+        if path.is_empty() {
+            return Ok(Some(path));
+        }
         if !safe(&path) {
-            return Err(types::PluginError::Denied("Input folder only".into()));
+            return Err(PluginError::PermissionDenied("Input folder only".into()));
         }
         let mut folder = self.root.clone();
         let mut names = Vec::new();
         for name in path.split('/') {
             let wanted = name.to_lowercase();
             let mut names_here = std::fs::read_dir(&folder)
-                .map_err(|e| types::PluginError::Failed(e.to_string()))?
+                .map_err(failed)?
                 .filter_map(Result::ok)
                 .filter_map(|entry| entry.file_name().into_string().ok())
                 .collect::<Vec<_>>();
@@ -86,12 +102,12 @@ impl input::Host for Host {
         }
         Ok(folder.is_file().then(|| names.join("/")))
     }
-    fn size(&mut self, path: String) -> Result<Option<u64>, types::PluginError> {
+    fn size(&mut self, path: String) -> Result<Option<u64>, PluginError> {
         if path.is_empty() {
             return Ok(Some(self.main.len() as u64));
         }
         if !safe(&path) {
-            return Err(types::PluginError::Denied("Input folder only".into()));
+            return Err(PluginError::PermissionDenied("Input folder only".into()));
         }
         Ok(self
             .root
@@ -101,19 +117,18 @@ impl input::Host for Host {
             .filter(|m| m.is_file())
             .map(|m| m.len()))
     }
-    fn read(&mut self, path: String, offset: u64, len: u32) -> Result<Vec<u8>, types::PluginError> {
+    fn read(&mut self, path: String, offset: u64, len: u32) -> Result<Vec<u8>, PluginError> {
         assert!(len as usize <= limits::CHUNK_BYTES);
         let member;
         let bytes = if path.is_empty() {
             &self.main
         } else {
             assert!(safe(&path));
-            member = std::fs::read(self.root.join(path))
-                .map_err(|e| types::PluginError::Failed(e.to_string()))?;
+            member = std::fs::read(self.root.join(path)).map_err(failed)?;
             &member
         };
         let start =
-            usize::try_from(offset).map_err(|e| types::PluginError::Limit(e.to_string()))?;
+            usize::try_from(offset).map_err(|e| PluginError::LimitExceeded(e.to_string()))?;
         let end = start.saturating_add(len as usize).min(bytes.len());
         let chunk = bytes.get(start..end).unwrap_or_default().to_vec();
         self.calls += 1;
@@ -122,8 +137,8 @@ impl input::Host for Host {
         Ok(chunk)
     }
 }
-impl output::Host for Host {
-    fn write(&mut self, bytes: Vec<u8>) -> Result<(), types::PluginError> {
+impl design::Host for Host {
+    fn write(&mut self, bytes: Vec<u8>) -> Result<(), PluginError> {
         assert!(bytes.len() <= limits::CHUNK_BYTES);
         assert!(self.output.len() + bytes.len() <= limits::MAX_OUTPUT_BYTES);
         self.output.extend(bytes);
@@ -141,14 +156,12 @@ fn host(root: &Path, main: Vec<u8>) -> Host {
         root: root.into(),
         main,
         output: Vec::new(),
-        table: ResourceTable::new(),
-        // Closed WASI: no preopens, env, stdio, network, or inherited arguments.
-        wasi: WasiCtxBuilder::new().wall_clock(EpochClock).build(),
         limits: StoreLimitsBuilder::new()
             .memory_size(1024 * 1024 * 1024)
             .build(),
         read: 0,
         calls: 0,
+        progress: Vec::new(),
     }
 }
 fn contents(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
@@ -175,7 +188,11 @@ fn component_matches_cli_pipeline_on_public_fixtures(
 
 fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let path = std::env::var("DUTCHMAN_PLUGIN_COMPONENT")
-        .map_err(|_| "Set DUTCHMAN_PLUGIN_COMPONENT to the release wasm32-wasip2 component")?;
+        .map_err(|_| "Set DUTCHMAN_PLUGIN_COMPONENT to the wasm32-unknown-unknown component")?;
+    // A relative path names a file in the workspace.
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(path);
     let mut config = Config::new();
     config
         .wasm_component_model(true)
@@ -203,36 +220,38 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     }
     eprintln!(
         "component_bytes={} first_compile_seconds={:.3}",
-        std::fs::metadata(path)?.len(),
+        std::fs::metadata(&path)?.len(),
         compile_elapsed.as_secs_f64()
     );
     let mut linker = Linker::new(&engine);
-    wasmtime_wasi::p2::add_to_linker_sync(&mut linker)?;
     add_to_linker(&mut linker)?;
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../dutchman-core/tests/fixtures");
     // Guest-side checks remain strict even when a caller bypasses a host form.
-    for (params, size, expected) in [
-        (r#"{"extra":true}"#, 0, "invalid"),
-        ("{}", 5, "failed"),
-        ("{}", (1u64 << 30) + 1, "limit"),
+    for (entry, params, size, expected) in [
+        ("convert", r#"{"extra":true}"#, 0, "invalid options"),
+        ("other", "{}", 0, "invalid entry"),
+        ("convert", "{}", 5, "invalid file"),
+        ("convert", "{}", (1u64 << 30) + 1, "limit"),
     ] {
         let mut store = Store::new(&engine, host(&root, Vec::new()));
         store.limiter(|host| &mut host.limits);
         store.set_fuel(1_000_000)?;
         let instance = ImporterPlugin::instantiate(&mut store, &component, &linker)?;
-        let result = import_design(
+        let result = import_file(
             &instance,
             &mut store,
-            &input::FileInfo {
+            entry,
+            &source::FileInfo {
                 name: "cube.f3d".into(),
                 size,
             },
             params,
         )?;
         let actual = match result {
-            Err(types::PluginError::Invalid(_)) => "invalid",
-            Err(types::PluginError::Limit(_)) => "limit",
-            Err(types::PluginError::Failed(_)) => "failed",
+            Err(PluginError::InvalidInput(FieldFailure { field, .. })) => {
+                format!("invalid {field}")
+            }
+            Err(PluginError::LimitExceeded(_)) => "limit".into(),
             other => return Err(format!("Expected {expected}, got {other:?}").into()),
         };
         assert_eq!(actual, expected);
@@ -245,16 +264,20 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     store.limiter(|host| &mut host.limits);
     store.set_fuel(50_000_000_000)?;
     let instance = ImporterPlugin::instantiate(&mut store, &component, &linker)?;
-    let result = import_design(
+    let result = import_file(
         &instance,
         &mut store,
-        &input::FileInfo {
+        "convert",
+        &source::FileInfo {
             name: "stream.f3d".into(),
             size: stream_len as u64,
         },
         "{}",
     )?;
-    assert!(matches!(result, Err(types::PluginError::Failed(_))));
+    assert!(matches!(
+        result,
+        Err(PluginError::InvalidInput(FieldFailure { ref field, .. })) if field == "file"
+    ));
     assert_eq!(store.data().calls, 3);
     assert_eq!(store.data().read, stream_len);
     assert!(store.data().output.is_empty());
@@ -272,10 +295,11 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         store.limiter(|host| &mut host.limits);
         store.set_fuel(50_000_000_000)?;
         let instance = ImporterPlugin::instantiate(&mut store, &component, &linker)?;
-        let result = import_design(
+        let result = import_file(
             &instance,
             &mut store,
-            &input::FileInfo {
+            "convert",
+            &source::FileInfo {
                 name: name.into(),
                 size: bytes.len() as u64,
             },
@@ -312,11 +336,31 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 return Err(format!("{fixture}: native={native:?}, guest={guest:?}").into())
             }
         };
+        assert!(report.len() < 1 << 20);
         let report: serde_json::Value = serde_json::from_str(&report)?;
-        assert_eq!(report["schema"], "dutchman.plugin.loss/1");
+        let summary = report["summary"].as_str().unwrap_or_default();
+        assert!(!summary.is_empty() && summary.len() <= 240);
+        let items = report["items"].as_array().ok_or("items")?;
+        assert!(items.len() <= 4096);
+        for item in items {
+            assert!(matches!(
+                item["severity"].as_str(),
+                Some("info" | "degraded" | "dropped")
+            ));
+            assert!(item["subject"].as_str().ok_or("subject")?.len() <= 256);
+            let message = item["message"].as_str().ok_or("message")?;
+            assert!(!message.trim().is_empty() && message.len() <= 1024);
+        }
+        assert!(report
+            .as_object()
+            .ok_or("report")?
+            .keys()
+            .all(|key| matches!(key.as_str(), "summary" | "items" | "details")));
+        let details = &report["details"];
+        assert_eq!(details["schema"], "dutchman.plugin.loss/1");
         let native_report = loss_report::json(&cli_report);
         assert_eq!(
-            report["outcome"]["verification"], native_report["outcome"]["verification"],
+            details["outcome"]["verification"], native_report["outcome"]["verification"],
             "{fixture}: verification must retain the CLI's unchecked status and reason"
         );
         assert_eq!(
@@ -325,8 +369,9 @@ fn run_fixtures() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             "{fixture}: document and STEP bodies must match the CLI writer"
         );
         assert!(store.data().calls > 0);
+        assert_eq!(store.data().progress.last(), Some(&1.0));
         eprintln!(
-            "{fixture}: matched CLI document and body payloads ({} streamed reads)",
+            "{fixture}: matched CLI document and body payloads ({} streamed reads): {summary}",
             store.data().calls
         );
     }

@@ -20,9 +20,12 @@ fn native_options_and_structured_report() {
     };
     let (design, report) = run("{}");
     let report: Value = serde_json::from_str(&report).unwrap();
-    assert_eq!(report["schema"], "dutchman.plugin.loss/1");
-    assert_eq!(report["stages"].as_array().unwrap().len(), 6);
-    assert!(report["outcome"]["verification"]["status"] != "verified");
+    assert!(report["summary"].as_str().unwrap().len() <= 240);
+    assert!(report["items"].is_array());
+    let details = &report["details"];
+    assert_eq!(details["schema"], "dutchman.plugin.loss/1");
+    assert_eq!(details["stages"].as_array().unwrap().len(), 6);
+    assert!(details["outcome"]["verification"]["status"] != "verified");
     let (stood, _) = run(r#"{"up_axis":"stand_up"}"#);
     let original = document(&design);
     let stood = document(&stood);

@@ -646,5 +646,5 @@ losses for meshes it could not decode.
 ## SolidCraft plugin component
 
 The [plugin front end](plugin.md) converts files through the same core and SolidCraft writer,
-with host-drawn conversion options and a structured loss report. It requires the host's
-streaming importer interface; see that page for build and integration status.
+with host-drawn conversion options and a structured loss report. It implements SolidCraft's
+`craft:plugin` importer interface; see that page for build and integration status.

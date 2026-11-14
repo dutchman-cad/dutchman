@@ -148,12 +148,22 @@ pub fn convert(
             "Converted design exceeds 256 MiB; convert fewer parts at once".into(),
         ));
     }
-    let report =
-        serde_json::to_string(&report::json(&report)).map_err(|e| Error::Encode(e.to_string()))?;
-    if report.len() > MAX_REPORT_BYTES {
+    let mut host_report = report::host(&report);
+    let mut text = serde_json::to_string(&host_report).map_err(|e| Error::Encode(e.to_string()))?;
+    if text.len() > MAX_REPORT_BYTES {
+        // The items already carry each loss; keep the rest of the details.
+        if let Some(details) = host_report
+            .get_mut("details")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            details.remove("losses");
+        }
+        text = serde_json::to_string(&host_report).map_err(|e| Error::Encode(e.to_string()))?;
+    }
+    if text.len() > MAX_REPORT_BYTES {
         return Err(Error::Encode(
-            "Conversion report exceeds 64 KiB; convert fewer parts at once".into(),
+            "Conversion report exceeds 1 MiB; convert fewer parts at once".into(),
         ));
     }
-    Ok((design, report))
+    Ok((design, text))
 }

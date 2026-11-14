@@ -21,7 +21,7 @@ zip.workspace = true
 wit-bindgen = "0.57.1"
 
 [features]
-host-tests = ["dep:wasmtime", "dep:wasmtime-wasi"]
+host-tests = ["dep:wasmtime"]
 
 [[test]]
 name = "component"
@@ -29,7 +29,6 @@ required-features = ["host-tests"]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 wasmtime = { version = "50", optional = true, default-features = false, features = ["anyhow", "component-model", "cranelift", "runtime", "std", "parallel-compilation"] }
-wasmtime-wasi = { version = "50", optional = true, default-features = false, features = ["p2"] }
 
 # wit-bindgen's canonical ABI exports require generated unsafe functions. Only the
 # export macro in adapter.rs may allow this lint; handwritten code still denies it.

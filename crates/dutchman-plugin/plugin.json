@@ -1,99 +1,65 @@
 {
   "id": "dutchman",
   "name": "Dutchman",
-  "version": "0.2.8",
-  "description": "Convert native CAD files into editable SolidCraft designs",
-  "api": "1.0",
-  "kind": "importer",
-  "world": "importer-plugin",
-  "component": "dutchman_plugin.wasm",
-  "permissions": {
-    "files": [
+  "version": "0.2.9",
+  "description": "Convert Fusion, Inventor, SolidWorks and FreeCAD designs into editable SolidCraft designs",
+  "capabilities": [
+    "formats@0.1"
+  ],
+  "runtime": {
+    "module": "dutchman.wasm",
+    "commands": [],
+    "entries": [
       {
-        "folder": "input",
-        "access": "read"
-      }
-    ]
-  },
-  "entries": [
-    {
-      "name": "convert",
-      "label": "Convert CAD design",
-      "effect": "edit",
-      "input": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "editable_history": {
-            "type": "boolean",
-            "title": "Keep editable history",
-            "default": true,
-            "description": "Keep mapped body-building features beside the visible original geometry. Reference sketches are retained in either mode."
-          },
-          "up_axis": {
-            "type": "string",
-            "title": "Up axis",
-            "enum": [
-              "as_is",
-              "stand_up"
-            ],
-            "default": "as_is",
-            "description": "As is keeps source coordinates. Stand up changes source Y-up to Z-up."
-          },
-          "include_hidden_bodies": {
-            "type": "boolean",
-            "title": "Include hidden bodies",
-            "default": false,
-            "description": "Also include hidden intermediate or consumed shapes that normal conversion leaves out."
+        "name": "convert",
+        "kind": "importer",
+        "extensions": [
+          "f3d",
+          "f3z",
+          "ipt",
+          "iam",
+          "sldprt",
+          "sldasm",
+          "fcstd"
+        ],
+        "input_schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "editable_history": {
+              "type": "boolean",
+              "title": "Keep editable history",
+              "default": true,
+              "description": "Keep mapped body-building features beside the visible original geometry. Reference sketches are retained in either mode."
+            },
+            "up_axis": {
+              "type": "string",
+              "title": "Up axis",
+              "enum": [
+                "as_is",
+                "stand_up"
+              ],
+              "default": "as_is",
+              "description": "As is keeps source coordinates. Stand up changes source Y-up to Z-up."
+            },
+            "include_hidden_bodies": {
+              "type": "boolean",
+              "title": "Include hidden bodies",
+              "default": false,
+              "description": "Also include hidden intermediate or consumed shapes that normal conversion leaves out."
+            }
           }
         }
-      },
-      "example": {}
+      }
+    ],
+    "limits": {
+      "fuel": 100000000000,
+      "memory_mib": 1024,
+      "deadline_ms": 300000,
+      "stack_kib": 16384
+    },
+    "permissions": {
+      "input_folder": true
     }
-  ],
-  "formats": [
-    {
-      "extension": "f3d",
-      "label": "Fusion"
-    },
-    {
-      "extension": "f3z",
-      "label": "Fusion"
-    },
-    {
-      "extension": "ipt",
-      "label": "Inventor"
-    },
-    {
-      "extension": "iam",
-      "label": "Inventor"
-    },
-    {
-      "extension": "sldprt",
-      "label": "SolidWorks"
-    },
-    {
-      "extension": "sldasm",
-      "label": "SolidWorks"
-    },
-    {
-      "extension": "fcstd",
-      "label": "FreeCAD"
-    }
-  ],
-  "surfaces": [
-    {
-      "kind": "open-source",
-      "label": "Dutchman"
-    },
-    {
-      "kind": "import-menu",
-      "label": "Dutchman"
-    }
-  ],
-  "limits": {
-    "memory_mib": 1024,
-    "stack_kib": 16384,
-    "component_mib": 64
   }
 }

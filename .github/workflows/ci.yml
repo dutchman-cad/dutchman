@@ -149,12 +149,14 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-wasip2
+          targets: wasm32-wasip2,wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: wasm32-wasip2
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo check --locked --target wasm32-wasip2 -p dutchman-core -p dutchman-solidcraft --no-default-features
+      # The SolidCraft plugin component: wasm32-unknown-unknown, no WASI (docs/plugin.md).
+      - run: cargo check --locked --target wasm32-unknown-unknown -p dutchman-plugin
 
   test:
     needs: changes

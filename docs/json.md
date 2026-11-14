@@ -1290,7 +1290,8 @@ Dutchman's appearance codes have `stage: "map"` and `upstream: null`.
 
 ## `dutchman.plugin.loss/1`
 
-The plugin returns a structured projection of the core report for native host presentation:
-stage counts, coded losses, per-feature mapping results, assembly completeness, and verification.
-See [the plugin schema](plugin.md#loss-report-schema-dutchmanpluginloss1) for the complete contract.
+The plugin returns SolidCraft's loss report (a summary line and one item per loss) with a
+structured projection of the core report under `details`: stage counts, coded losses,
+per-feature mapping results, assembly completeness, and verification.
+See [the plugin's loss report](plugin.md#loss-report) for the complete contract.
 CLI and MCP `dutchman.convert/1` reports are unchanged.

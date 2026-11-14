@@ -23,12 +23,14 @@ dutchman-pilot = { git = "https://github.com/dutchman-cad/pilot", rev = "a91cade
 aho-corasick = "1.1"
 # cadmpeg at one tested commit of its main branch, the same for every cadmpeg crate. Move it
 # after a batch of cadmpeg merges (docs/releasing.md); the nightly build takes cadmpeg's main.
-cadmpeg-codec-f3d = { git = "https://github.com/cadmpeg/cadmpeg", rev = "027016d0651d73e45bdcbdf099965ee897813f47" }
-cadmpeg-core = { git = "https://github.com/cadmpeg/cadmpeg", rev = "027016d0651d73e45bdcbdf099965ee897813f47" }
-cadmpeg-ir = { git = "https://github.com/cadmpeg/cadmpeg", rev = "027016d0651d73e45bdcbdf099965ee897813f47" }
+# For now: main's pin (027016d0) plus cadmpeg/cadmpeg#1283, which keeps Fusion decoding
+# from reading a clock on wasm32-unknown-unknown; back to cadmpeg's repository once it merges.
+cadmpeg-codec-f3d = { git = "https://github.com/raykholo/cadmpeg", rev = "261208a83f34896a43016c185eedeb77dc5827b0" }
+cadmpeg-core = { git = "https://github.com/raykholo/cadmpeg", rev = "261208a83f34896a43016c185eedeb77dc5827b0" }
+cadmpeg-ir = { git = "https://github.com/raykholo/cadmpeg", rev = "261208a83f34896a43016c185eedeb77dc5827b0" }
 # Each crate turns on the cadmpeg codecs it needs: dutchman-core per input format (its
 # `formats` feature for all of them), dutchman-solidcraft the STEP writer.
-cadmpeg-registry = { git = "https://github.com/cadmpeg/cadmpeg", rev = "027016d0651d73e45bdcbdf099965ee897813f47", default-features = false }
+cadmpeg-registry = { git = "https://github.com/raykholo/cadmpeg", rev = "261208a83f34896a43016c185eedeb77dc5827b0", default-features = false }
 getrandom = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

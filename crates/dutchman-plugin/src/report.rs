@@ -37,3 +37,69 @@ pub(crate) fn json(report: &Report) -> Value {
         "completeness":report.completeness().map(|c| json!({"placed":c.placed,"placed_empty":c.placed_empty,"left_out":c.left_out.iter().map(|l| json!({"file":l.file,"message":l.reason,"stage":l.stage.id(),"count":l.count})).collect::<Vec<_>>()})),
         "joints":report.joints()})
 }
+
+/// The loss report SolidCraft shows: a one-line summary, one item per loss, and the full
+/// `dutchman.plugin.loss/1` report under `details`.
+pub(crate) fn host(report: &Report) -> Value {
+    const MAX_ITEMS: usize = 4096;
+    let items: Vec<_> = report
+        .losses()
+        .iter()
+        .take(MAX_ITEMS)
+        .map(|loss| {
+            json!({
+                "severity": match loss.severity { Severity::Info=>"info", Severity::Degraded=>"degraded", Severity::Dropped=>"dropped" },
+                "subject": clip(&loss.subject, 256),
+                // The host refuses a blank message.
+                "message": clip(
+                    [loss.detail.as_str(), loss.code.as_deref().unwrap_or_default(), loss.subject.as_str()]
+                        .into_iter()
+                        .find(|text| !text.trim().is_empty())
+                        .unwrap_or("No further detail"),
+                    1024,
+                ),
+            })
+        })
+        .collect();
+    json!({"summary": clip(&summary(report), 240), "items": items, "details": json(report)})
+}
+
+fn summary(report: &Report) -> String {
+    let losses = report.losses().len();
+    let losses = match losses {
+        0 => String::new(),
+        1 => "; 1 loss".to_owned(),
+        n => format!("; {n} losses"),
+    };
+    let Some(outcome) = report.outcome() else {
+        return format!("Converted{losses}");
+    };
+    let needing = outcome
+        .features
+        .iter()
+        .filter(|f| f.status != FeatureStatus::NotNeeded)
+        .count();
+    let mapped = outcome
+        .features
+        .iter()
+        .filter(|f| f.status == FeatureStatus::Mapped)
+        .count();
+    match outcome.mode {
+        Mode::History => {
+            format!("Editable history: {mapped} of {needing} features mapped{losses}")
+        }
+        Mode::PartialHistory => format!(
+            "Partial editable history: {mapped} of {needing} features mapped, original shape visible{losses}"
+        ),
+        Mode::Import => format!("Geometry without editable history{losses}"),
+    }
+}
+
+/// At most `max` bytes, cut at a character boundary.
+fn clip(text: &str, max: usize) -> String {
+    let mut end = text.len().min(max);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text.get(..end).unwrap_or_default().to_owned()
+}
