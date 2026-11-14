@@ -180,10 +180,11 @@ impl Loss {
                 .iter()
                 .any(|word| code.contains(word))
         });
+        // Records kept unread are kept as they were, whatever their severity says about it.
         let title = match self.severity {
             Severity::Dropped => format!("{noun} left out"),
+            _ if kept => format!("{noun} kept as-is"),
             Severity::Degraded => format!("{noun} carried over with changes"),
-            Severity::Info if kept => format!("{noun} kept as-is"),
             Severity::Info => format!("Notes about {noun}"),
         };
         let mut chars = title.chars();
@@ -765,6 +766,7 @@ mod tests {
         report.push_appearance(AppearanceLoss::Wire, "a wire body");
         let titles: Vec<String> = [
             coded(Severity::Info, "f3d/source.unindexed-records-retained"),
+            coded(Severity::Degraded, "f3d/source.unindexed-records-retained"),
             coded(Severity::Info, "f3d/source.manifest-metadata-unresolved"),
             coded(
                 Severity::Degraded,
@@ -779,6 +781,7 @@ mod tests {
         assert_eq!(
             titles,
             [
+                "Parts of the file kept as-is",
                 "Parts of the file kept as-is",
                 "Notes about parts of the file",
                 "Sketches carried over with changes",
