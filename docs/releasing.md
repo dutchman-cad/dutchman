@@ -200,7 +200,8 @@ leak check on a real library before merging it. The pin pull request must pass t
 after looking at the converted picture (see `corpus/placements/README.md`). A fix merged on cadmpeg's `main` after the
 pinned commit reaches users through the nightly channel: the `nightly` pre-release, rebuilt
 each day from Dutchman's `main` against cadmpeg's `main` (`scripts/use-cadmpeg-main.sh`, see
-`.github/workflows/nightly.yml`). The stable release after the pin moves carries it.
+`.github/workflows/nightly.yml`). Each build publishes the pre-release anew, so its date on the
+releases page is the build's. The stable release after the pin moves carries it.
 
 Nightly and release macOS builds use the same release profile, target triples, packages, and
 default features. The nightly keeps its own Rust cache per target (`macos-release-<target>`);
