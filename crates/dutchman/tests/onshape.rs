@@ -1226,3 +1226,16 @@ mod store {
         file.forget().unwrap();
     }
 }
+
+#[test]
+fn pasted_keys_lose_surrounding_spaces_quotes_and_line_breaks() {
+    let keys = Credentials::new(" AbC123\n".to_owned(), "\"s3cr3t/+=\"\r\n".to_owned());
+    assert!(keys.is_ok());
+    let inner = Credentials::new("Ab C123".to_owned(), "secret".to_owned());
+    let message = inner.err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(message.contains("access key"), "{message}");
+    assert!(
+        !message.contains("Ab C123"),
+        "the key must never appear: {message}"
+    );
+}

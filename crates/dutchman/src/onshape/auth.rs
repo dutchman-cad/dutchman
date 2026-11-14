@@ -16,15 +16,24 @@ impl std::fmt::Debug for Credentials {
 }
 
 impl Credentials {
+    /// Pasted keys often carry a stray space, newline or pair of quotes around them: those are
+    /// removed first. A key that still has a character it can't contain is refused with which key
+    /// and what kind of character, never with the key itself.
     pub fn new(access: String, secret: String) -> Result<Self> {
-        if access.is_empty()
-            || secret.is_empty()
-            || access.len() > 4096
-            || secret.len() > 4096
-            || !access.bytes().all(|b| b.is_ascii_alphanumeric())
-            || !secret.bytes().all(|b| b.is_ascii_graphic())
-        {
-            return Err(Error::new(ErrorKind::Auth, "Set both Onshape API keys to their complete values; keys are never included in diagnostics."));
+        let access = clean_key(&access);
+        let secret = clean_key(&secret);
+        let refuse = |what: &'static str| Err(Error::new(ErrorKind::Auth, what));
+        if access.is_empty() || secret.is_empty() {
+            return refuse("Set both Onshape API keys; one of them is empty. Keys are never included in diagnostics.");
+        }
+        if access.len() > 4096 || secret.len() > 4096 {
+            return refuse("An Onshape API key is longer than any real key; check that only the key was pasted.");
+        }
+        if !access.bytes().all(|b| b.is_ascii_alphanumeric()) {
+            return refuse("The Onshape access key contains a character other than letters and digits; check for a space, quote or line break inside it.");
+        }
+        if !secret.bytes().all(|b| b.is_ascii_graphic()) {
+            return refuse("The Onshape secret key contains a space, tab or line break inside it; paste it again on one line.");
         }
         Ok(Self { access, secret })
     }
@@ -135,4 +144,14 @@ impl Credentials {
             )
         )
     }
+}
+
+/// A pasted key without surrounding whitespace and one pair of matching quotes around it.
+fn clean_key(key: &str) -> String {
+    let key = key.trim();
+    let unquoted = ['"', '\'']
+        .iter()
+        .find_map(|q| key.strip_prefix(*q).and_then(|k| k.strip_suffix(*q)))
+        .unwrap_or(key);
+    unquoted.trim().to_owned()
 }
