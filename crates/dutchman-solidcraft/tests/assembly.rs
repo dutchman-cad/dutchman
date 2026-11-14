@@ -499,6 +499,40 @@ fn an_assembly_that_places_no_parts_is_written_as_an_empty_design() {
 }
 
 #[test]
+fn an_assembly_whose_placed_parts_are_empty_writes_its_own_bodies_as_one_part() {
+    let mut model = placed_twice();
+    if let Some(assembly) = &mut model.assembly {
+        for part in &mut assembly.parts {
+            part.ir.model.bodies.clear();
+            part.ir.model.faces.clear();
+        }
+    }
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    assert_eq!(writer.convertible(&model), Ok(()));
+    let mut planned = Report::default();
+    writer.plan(&model, &mut planned);
+    let (bytes, report) = written(&model);
+    for report in [&planned, &report] {
+        let notes: Vec<_> = report
+            .losses()
+            .iter()
+            .filter(|loss| {
+                loss.detail
+                    .starts_with("the assembly's placed parts hold no geometry")
+            })
+            .collect();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].severity, dutchman_core::Severity::Degraded);
+    }
+    let flat = Model {
+        assembly: None,
+        ..model.clone()
+    };
+    let (flat_bytes, _) = written(&flat);
+    assert_eq!(document(&bytes), document(&flat_bytes));
+}
+
+#[test]
 fn an_assembly_becomes_components_and_occurrences() {
     let (bytes, report) = written(&placed_twice());
     let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
