@@ -11632,6 +11632,65 @@ fn solidcraft_extrudes_a_historical_face_along_its_outward_normal() {
     }
 }
 
+/// `face_extrude`, then a chamfer of an edge of the extruded block's end face: the one along X
+/// at Y = 0, which no face of the cube can merge with.
+fn face_extrude_then_chamfer(up: bool) -> Model {
+    let model = face_extrude(up, |_| {});
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let z = if up { 15.0 } else { -5.0 };
+    let state = "test:face:feature-input#4";
+    wire["model"]["feature_input_topologies"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "id": state, "input_of": "f3d:model:feature#4",
+            "edges": ["corner"], "faces": ["front", "end"],
+            "edge_geometry": [{
+                "edge": "corner", "interior": {"x": 5.0, "y": 0.0, "z": z},
+                "tangent": {"x": 1.0, "y": 0.0, "z": 0.0},
+                "start": {"x": 0.0, "y": 0.0, "z": z}, "end": {"x": 10.0, "y": 0.0, "z": z},
+                "faces": ["front", "end"],
+            }],
+        }));
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "id": "f3d:model:feature#4", "ordinal": 3, "name": "Corner chamfer",
+            "suppressed": false, "dependencies": ["f3d:model:feature#3"],
+            "outputs": ["synthetic:cube:body#0"],
+            "definition": {"definition": "chamfer", "groups": [{
+                "edges": {"kind": "historical", "value": {
+                    "state": state, "edges": ["corner"], "native": "synthetic input edge",
+                }},
+                "spec": {"kind": "distance", "distance": 1.0},
+            }]},
+        }));
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..model
+    }
+}
+
+#[test]
+fn a_blend_after_a_historical_face_extrude_sees_the_extrude_on_its_outward_side() {
+    let Some(cli) = solidcraft() else { return };
+    // Out of the top and out of the bottom: one of the two face sketches has to be turned to
+    // the outward side, and the chamfer's edge exists only once it is.
+    for up in [true, false] {
+        let (bytes, report) = written_with(&face_extrude_then_chamfer(up), &replaying(&cli));
+        assert!(
+            history_line(&report).starts_with("4 of 4 features rebuilt"),
+            "{up}: {}",
+            history_line(&report)
+        );
+        let volume = volumes(&cli, &bytes);
+        assert_eq!(volume.len(), 1);
+        // The cube and the block, less the 1 mm chamfer along the block's 10 mm edge.
+        assert!((volume[0] - 1495.0).abs() < 1e-3, "{up}: {volume:?}");
+    }
+}
+
 #[test]
 fn sketch_entity_distances_keep_expressions_driving_geometry() {
     for operands in [

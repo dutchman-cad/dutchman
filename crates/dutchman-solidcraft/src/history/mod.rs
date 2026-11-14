@@ -1571,6 +1571,22 @@ pub(crate) fn prove_blends(
                             fields.insert(key.to_owned(), value.clone());
                         }
                     }
+                    if index.saturating_add(1) < blends.len() {
+                        // The extrude now runs the other way, so later proofs need a replay
+                        // of the history as it will be written, not the one before the flip.
+                        let remaining: Vec<u64> = after
+                            .iter()
+                            .skip(index.saturating_add(1))
+                            .flatten()
+                            .copied()
+                            .collect();
+                        let faces = blends
+                            .iter()
+                            .skip(index.saturating_add(1))
+                            .any(|p| p.face.is_some());
+                        replayed = replay(history, &remaining, faces);
+                        step = 0;
+                    }
                 }
             }
             Err(reason) => {
