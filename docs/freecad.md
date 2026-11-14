@@ -6,6 +6,10 @@ three-part assembly) come out at FreeCAD's volume. Before 0.1.5 FreeCAD document
 in the nightly builds only: cadmpeg 0.6.3 stored some faces as replicas of curves, kept each
 feature's intermediate shape as a body of its own and could turn revolved faces inwards.
 
+Faces with internal or external edge uses retain those edges as shell wire geometry.
+Their actual boundary edges still determine shell closure; native face associations that
+cannot be carried are reported.
+
 When a feature blocks SolidCraft history conversion, earlier editable features and resolved
 sketches are kept in a hidden **Editable history (partial)** component. The original final
 shape remains visible as an Import after the kept history. Show the hidden component to
