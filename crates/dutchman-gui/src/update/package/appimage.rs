@@ -1,6 +1,7 @@
 //! Updating a Linux AppImage in place: the new file is downloaded and checked like the other
 //! release packages (windows.rs), written beside the running one and renamed over it. Nothing
 //! inside the AppImage's read-only mount is touched, and the old file stays until the rename.
+#[cfg(any(target_os = "linux", test))]
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -10,10 +11,11 @@ use crate::update::{version, RELEASES};
 
 /// Starts the new file once this process has exited (the window closes when the restart is
 /// reported); `$0` is the AppImage's path.
-const WAIT_THEN_START: &str =
-    r#"while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec "$0""#;
+const WAIT_THEN_START: &str = r#"while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; exec "$0""#;
 
-/// The AppImage this process runs from, when `APPIMAGE` names an existing file.
+/// The AppImage this process runs from, when `APPIMAGE` names an existing file (only Linux
+/// runs AppImages, so only Linux asks).
+#[cfg(any(target_os = "linux", test))]
 pub(super) fn detect(env: Option<&OsStr>) -> Install {
     match env.map(PathBuf::from) {
         Some(path) if path.is_absolute() && path.is_file() => Install::AppImage(path),
@@ -29,11 +31,17 @@ pub(super) fn asset_name(tag: &str, arch: &str) -> Result<String, String> {
             "There is no AppImage for {arch}. Open the release page."
         ));
     }
-    Ok(format!("dutchman-{}-{arch}.AppImage", tag.trim_start_matches('v')))
+    Ok(format!(
+        "dutchman-{}-{arch}.AppImage",
+        tag.trim_start_matches('v')
+    ))
 }
 
 pub(super) fn asset_url(tag: &str, arch: &str) -> Result<String, String> {
-    Ok(format!("{RELEASES}/download/{tag}/{}", asset_name(tag, arch)?))
+    Ok(format!(
+        "{RELEASES}/download/{tag}/{}",
+        asset_name(tag, arch)?
+    ))
 }
 
 /// Writes the verified download beside `target`, makes it executable and renames it over
@@ -119,7 +127,10 @@ mod tests {
         assert_eq!(detect(Some(file.as_os_str())), Install::Direct);
         std::fs::write(&file, b"old").unwrap();
         assert_eq!(detect(Some(file.as_os_str())), Install::AppImage(file));
-        assert_eq!(detect(Some(OsStr::new("relative.AppImage"))), Install::Direct);
+        assert_eq!(
+            detect(Some(OsStr::new("relative.AppImage"))),
+            Install::Direct
+        );
     }
 
     #[test]
