@@ -14,7 +14,8 @@ mod limits;
 #[allow(dead_code)]
 mod loss_report;
 use adapter::host::{
-    add_to_linker, clock, control, design, import_file, log, source, types, ImporterPlugin,
+    add_to_linker, clock, control, design, evaluate, import_file, log, source, types,
+    ImporterPlugin,
 };
 use dutchman_core::{Format, PartSearch, Report, Writer};
 use dutchman_solidcraft::{SolidCraftVersion, SolidCraftWriter, Verification};
@@ -45,6 +46,18 @@ fn failed(reason: impl ToString) -> PluginError {
     })
 }
 impl types::Host for Host {}
+// No SolidCraft here: every check is unverified, as the CLI's output this is compared with.
+impl evaluate::Host for Host {
+    fn stage(&mut self, _bytes: Vec<u8>) -> Result<(), PluginError> {
+        Ok(())
+    }
+    fn run(&mut self, _command: String, _args: String) -> Result<String, PluginError> {
+        Err(PluginError::PermissionDenied(
+            "evaluate: the test host has no SolidCraft".into(),
+        ))
+    }
+    fn reset(&mut self) {}
+}
 impl log::Host for Host {
     fn log(&mut self, level: log::Level, message: String) {
         eprintln!("plugin {level:?}: {message}");

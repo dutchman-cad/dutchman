@@ -4,6 +4,7 @@
   "version": "0.2.9",
   "description": "Convert Fusion, Inventor, SolidWorks and FreeCAD designs into editable SolidCraft designs",
   "capabilities": [
+    "evaluate@0.1",
     "formats@0.1"
   ],
   "runtime": {

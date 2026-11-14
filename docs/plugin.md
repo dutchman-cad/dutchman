@@ -121,46 +121,31 @@ materializes each input file and the writer builds the whole ZIP in memory; stre
 bounds host-call size, not total conversion memory. The host must independently enforce
 its budgets, cancellation and fresh-instance behavior after traps.
 
-## Verification seam and sandbox constraints
+## Verification in the host
 
-The writer uses one worker, an explicit newest-known target version, verification off,
-and `hide_unverified_history(true)`. It records the normal `Check::Unverified` reason and
-keeps editable history hidden beside the visible original. It never labels an unchecked
-history verified. Missing blend-prefix replay remains the writer's normal history blocker.
+The plugin checks its history in SolidCraft itself, through the host's `evaluate` import
+(capability `evaluate@0.1`, SolidCraft's importer PR follow-up). `HostEvaluator` in
+`crates/dutchman-plugin/src/evaluator.rs` implements #580's `SolidCraftEvaluator` over it:
+for each check `adapter.rs` stages the design (`evaluate.stage`, 1 MiB at a time), runs the
+writer's commands one at a time (`evaluate.run`: `inspect.measure`, `document.inspect`,
+`timeline.roll_to`, `model.edges`, `model.faces`), and discards it (`evaluate.reset`). The
+host opens each staged design in a private session apart from every open design and every
+file, and enforces the import's deadline and cancellation; the plugin needs no clock, file
+or network permission for it.
 
-`TODO(eval-seam)` in the plugin conversion function is the integration point for
-`SolidCraftEvaluator`. The parallel worktree currently declares two methods:
-`evaluate(design, timeout, label) -> Result<Value, String>` and
-`run(design, commands, timeout, label) -> Result<Vec<Value>, String>`. A stateless,
-`Debug + Send + Sync` `HostEvaluator` in `crates/dutchman-plugin/src/evaluator.rs`
-implements both method bodies over an isolated session's permission-filtered
-`run(command, args)`. Its exact PR #580 trait implementation is behind the explicit
-TODO gate until the trait lands. Unit tests exercise the method bodies now.
+The writer uses one worker and an explicit newest-known target version, with the evaluator
+and `hide_unverified_history(true)`. A history that matches the original geometry is
+written as the visible model; one the host can't check (an older SolidCraft without
+`evaluate`, a refused command, a reply over 1 MiB) records the normal `Check::Unverified`
+reason and stays hidden beside the visible original, as before. It never labels an
+unchecked history verified. A command that fails in the host is an answer
+(`{"error": ...}`) the writer compares like the CLI's; only a transport failure is `Err`.
+Parsing, tolerances and source-coordinate comparisons stay in the writer, and stand-up
+is applied after the checks.
 
-`evaluate` must evaluate an isolated archive and return the complete raw eval JSON,
-combining `inspect.measure` body volumes, areas and bounds with `document.inspect`
-timeline errors and warnings. `run` must start from that archive in an isolated context,
-execute ordered `timeline.roll_to`, `document.inspect`, `model.edges` and `model.faces`
-commands in the same context, and return every raw result, including command failures.
-An evaluated refusal stays `{"evaluation_failed":"reason"}`; transport failure, timeout
-or no answer is `Err`. Leave parsing, tolerances and source-coordinate comparisons in
-the writer. Select the host's target release separately; the trait does not discover it.
-
-The tested dispatcher translates the writer's `command`/`params` envelopes into host
-`run(command, args)` calls, preserves ordered raw results and command failures, combines
-measurements and timeline diagnostics, and caps commands/results. It forwards the archive,
-whole-call timeout and diagnostic label to `IsolatedHost::with_design`; the host must
-enforce the deadline without granting a guest clock. The module is currently compiled
-for tests only. After #580 lands, compile it for the guest, implement `IsolatedHost` in
-`adapter.rs`, remove the false cfg from the exact trait impl, and attach it through
-`SolidCraftWriter::evaluator(Arc::new(HostEvaluator(host)))`.
-
-The host must settle how `run` stages an archive without a filesystem write grant or a
-single oversized JSON/base64 call, how an isolated evaluation context is addressed and
-released, and how its deadline/output cap are enforced. Calling commands on the user's
-active design is not a valid evaluator implementation. No subprocess, filesystem
-preopen, temporary path or second tolerance policy belongs in the plugin. The current
-contract deliberately does not import `run` before that implementation exists.
+The wasmtime harness has no SolidCraft, so its `evaluate.run` refuses every command and
+every check there is unverified, which keeps it comparable with the CLI run without
+verification.
 
 Sandbox audit:
 

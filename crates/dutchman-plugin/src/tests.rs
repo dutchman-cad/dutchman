@@ -15,6 +15,7 @@ fn native_options_and_structured_report() {
             serde_json::from_str::<Options>(params).unwrap(),
             &|_, _| Ok(CUBE.into()),
             &|_, _| None,
+            None,
         )
         .unwrap()
     };
@@ -69,7 +70,8 @@ fn rejects_non_cad_inputs_and_bad_names() {
             name,
             Options::default(),
             &|_, _| Ok(CUBE.into()),
-            &|_, _| None
+            &|_, _| None,
+            None
         )
         .is_err());
     }

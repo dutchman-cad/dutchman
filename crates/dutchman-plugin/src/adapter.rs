@@ -6,12 +6,13 @@ pub mod host {
         path: "wit/craft-plugin.wit",
         world: "importer-plugin",
     });
-    pub use craft::plugin::{clock, control, design, log, source, types};
+    pub use craft::plugin::{clock, control, design, evaluate, log, source, types};
 
     pub fn add_to_linker<T>(linker: &mut wasmtime::component::Linker<T>) -> wasmtime::Result<()>
     where
         T: source::Host
             + design::Host
+            + evaluate::Host
             + log::Host
             + control::Host
             + clock::Host
@@ -42,32 +43,49 @@ mod guest {
     });
 
     use craft::plugin::types::{FieldFailure, PluginError};
-    use craft::plugin::{control, design, source};
+    use craft::plugin::{control, design, evaluate, source};
     use std::cell::{Cell, RefCell};
     use std::path::Path;
 
     /// The manifest's only importer entry.
     const ENTRY: &str = "convert";
 
-    // TODO(eval-seam, PR #580): the importer world has no command import yet. When the host
-    // supplies isolated archive sessions, bind its reviewed run import here and enable this
-    // bridge ONLY inside IsolatedHost::with_design. It must never target the active design.
-    #[cfg(any())]
-    struct ScopedHostRun;
-    #[cfg(any())]
-    impl crate::evaluator::Session for ScopedHostRun {
+    /// SolidCraft's `evaluate` import: each design is staged and opened in a private host
+    /// session, apart from every open design and every file, and discarded after its commands.
+    #[derive(Debug)]
+    struct HostSessions;
+    struct Staged;
+    impl crate::evaluator::Session for Staged {
         fn run(
             &mut self,
             command: &str,
             args: &serde_json::Value,
         ) -> Result<serde_json::Value, String> {
             let args = serde_json::to_string(args).map_err(|e| e.to_string())?;
-            let raw = craft::plugin::commands::run(command, &args)
-                .map_err(|e| format!("Host evaluation transport: {e:?}"))?;
-            if raw.len() > 64 << 20 {
-                return Err("Host evaluation result exceeds 64 MiB".into());
-            }
+            let raw =
+                evaluate::run(command, &args).map_err(|e| format!("Host evaluation: {e:?}"))?;
             serde_json::from_str(&raw).map_err(|e| format!("Host evaluation JSON: {e}"))
+        }
+    }
+    impl crate::evaluator::IsolatedHost for HostSessions {
+        fn with_design(
+            &self,
+            design: &[u8],
+            _timeout: std::time::Duration,
+            _label: &str,
+            execute: &mut crate::evaluator::Execute<'_>,
+        ) -> Result<Vec<serde_json::Value>, String> {
+            if control::cancelled() {
+                return Err("Cancelled".into());
+            }
+            // Staging after a run starts a new design; reset also drops the last one.
+            evaluate::reset();
+            for chunk in design.chunks(crate::CHUNK_BYTES) {
+                evaluate::stage(chunk).map_err(|e| format!("Host evaluation: {e:?}"))?;
+            }
+            let result = execute(&mut Staged);
+            evaluate::reset();
+            result
         }
     }
 
@@ -159,7 +177,8 @@ mod guest {
                     path == Path::new(&canonical)
                 })
             };
-            let converted = crate::convert(&file.name, options, &reader, &resolve);
+            let evaluator = std::sync::Arc::new(crate::evaluator::HostEvaluator(HostSessions));
+            let converted = crate::convert(&file.name, options, &reader, &resolve, Some(evaluator));
             let (design, report) = converted.map_err(|e| match host_error.take() {
                 Some(host) => host,
                 None => error(e),

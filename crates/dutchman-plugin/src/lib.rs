@@ -1,14 +1,14 @@
 //! The same CADIR and SolidCraft writer pipeline as the CLI, with host-owned file access.
 #[cfg(target_arch = "wasm32")]
 mod adapter;
-// TODO(eval-seam): also compile outside tests once the host session binding lands.
-#[cfg(test)]
+// The guest's evaluator over the host's `evaluate` import, and its tests.
+#[cfg(any(test, target_arch = "wasm32"))]
 mod evaluator;
 mod report;
 mod stand_up;
 
 use dutchman_core::{Error, Format, Report, Writer};
-use dutchman_solidcraft::{SolidCraftVersion, SolidCraftWriter, Verification};
+use dutchman_solidcraft::{SolidCraftEvaluator, SolidCraftVersion, SolidCraftWriter, Verification};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
@@ -97,6 +97,7 @@ pub fn convert(
     options: Options,
     reader: &dutchman_core::source::SourceReader<'_>,
     resolve: &dyn Fn(&str, &Path) -> Option<PathBuf>,
+    evaluator: Option<std::sync::Arc<dyn SolidCraftEvaluator>>,
 ) -> Result<(Vec<u8>, String), Error> {
     validate_name(name).map_err(Error::Decode)?;
     let path = Path::new(name);
@@ -125,21 +126,19 @@ pub fn convert(
         &mut report,
     )?;
     let mut design = Vec::new();
-    // TODO(eval-seam): wire evaluator::HostEvaluator through adapter's isolated host session.
-    // Implement evaluate(design, timeout, label) and run(design, commands, timeout,
-    // label) in an isolated host evaluation context. Preserve ordered raw command
-    // results (timeline.roll_to, document.inspect, model.edges, model.faces).
-    // Select the host's target version separately; the trait does not discover it.
-    // Feed raw evaluation JSON into the writer's existing source-frame comparisons
-    // before applying stand-up below. Archive handoff through run needs host agreement.
-    // No shell, process, temporary path or independent verification policy belongs here.
-    SolidCraftWriter::new()
+    // With the host's evaluator, the history is checked in SolidCraft itself, in a private
+    // session apart from every open design, before stand-up below; without one it stays
+    // unverified and hidden, as before. The trait doesn't discover the host's release.
+    let writer = SolidCraftWriter::new()
         .threads(1)
         .target_version(Some(SolidCraftVersion::default()))
-        .verification(Verification::Off)
         .hide_unverified_history(true)
-        .import_only(!options.editable_history)
-        .write(&model, &mut design, &mut report)?;
+        .import_only(!options.editable_history);
+    let writer = match evaluator {
+        Some(evaluator) => writer.evaluator(evaluator).verification(Verification::Auto),
+        None => writer.verification(Verification::Off),
+    };
+    writer.write(&model, &mut design, &mut report)?;
     if matches!(options.up_axis, UpAxis::StandUp) {
         design = stand_up::apply(&design)?;
     }

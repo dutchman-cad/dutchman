@@ -1,5 +1,5 @@
-//! PR #580 evaluator, ready for the host's isolated-archive run binding.
-//! No clock is needed in the guest: the host session enforces the whole-call deadline.
+//! PR #580's evaluator over SolidCraft's `evaluate` import: each check opens its design in a
+//! private host session. No clock is needed in the guest: the host enforces the import's deadline.
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -115,11 +115,6 @@ impl<H: IsolatedHost> HostEvaluator<H> {
     }
 }
 
-// TODO(eval-seam, PR #580): remove this false cfg once the trait lands, implement
-// IsolatedHost in adapter.rs using the reviewed archive/session binding and its
-// host run() import, then pass Arc::new(HostEvaluator(host)) to writer.evaluator().
-// Do not enable verification until the host guarantees isolated, bounded sessions.
-#[cfg(any())]
 impl<H: IsolatedHost> dutchman_solidcraft::SolidCraftEvaluator for HostEvaluator<H> {
     fn evaluate(&self, design: &[u8], timeout: Duration, label: &str) -> Result<Value, String> {
         HostEvaluator::evaluate(self, design, timeout, label)
