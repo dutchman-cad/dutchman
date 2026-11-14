@@ -9340,6 +9340,33 @@ fn booleans_map_target_tools_operation_and_retention() {
 }
 
 #[test]
+fn a_boolean_whose_operands_keep_a_native_member_per_body_maps_those_bodies() {
+    let mut model = combined_spheres("cut", false);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let boolean = wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|f| f["name"] == "Boolean")
+        .unwrap();
+    boolean["definition"]["operands"] = json!({
+        "target": {"kind": "resolved_set", "value": {"members": [
+            {"body": "synthetic:cube:body#0", "native": "body:1"}]}},
+        "tools": {"kind": "resolved_set", "value": {"members": [
+            {"body": "synthetic:tool:body#0", "native": "body:2"}]}}});
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let combine = &document["features"][2];
+    assert_eq!(combine["type"], "combine", "{}", history_line(&report));
+    assert_eq!(combine["target"], document["features"][0]["body_names"][0]);
+    assert_eq!(combine["tools"], json!(["Tool"]));
+    assert_eq!(combine["operation"], "cut");
+}
+
+#[test]
 fn a_boolean_referencing_a_removed_tool_reports_a_history_blocker() {
     let mut model = combined_spheres("cut", false);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
