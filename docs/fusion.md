@@ -193,6 +193,16 @@ features need usable stored source bodies at that same state. Unknown or failed 
 feature. Every accepted inference adds `history/profile-region-inferred`; the original geometry
 remains available as before.
 
+## Coordinate orientation
+
+Fusion 360 models in a right-handed coordinate system that defaults to Y-up in older versions
+(Autodesk made Z-up default for new installations around 2019). SolidCraft uses Z-up.
+
+By default, Dutchman preserves the source coordinates unchanged (`--no-stand-up`).
+For models created with Y-up orientation, `--stand-up` rotates the model +90° about +X
+(mapping source +Y to SolidCraft +Z and +Z to -Y). The rotation applies to imported geometry,
+assemblies, and rebuilt history.
+
 ## Assembly placements
 
 **Part positions** defaults to **Smart**. For each occurrence, Smart prefers a displayed

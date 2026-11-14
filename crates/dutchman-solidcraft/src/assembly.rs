@@ -584,7 +584,7 @@ fn prepare_history(
         if history.stop.is_some() {
             None
         } else {
-            let written = writer.history_design(part, history, step, Live::History)?;
+            let written = writer.history_design(part, history, step, Live::History, false)?;
             Some(writer.check(part, history, step, &written, progress)?)
         }
     } else {
@@ -608,7 +608,7 @@ fn prepare_history(
     crate::report_sketches(&mapping.features, &mut part_report);
     if let Ok(history) = &mapping.result {
         if history.stop.is_some() {
-            let original = writer.history_design(part, history, step, Live::Original)?;
+            let original = writer.history_design(part, history, step, Live::Original, false)?;
             writer.check_import(part, &original, &mut part_report, progress);
         }
     }
@@ -854,7 +854,7 @@ impl Builder<'_> {
                     .get(index)
                     .unwrap_or(&placement.transform)
             };
-            let transform = match rigid(transform) {
+            let mut transform = match rigid(transform) {
                 Ok((rotation, false)) => rotation,
                 result => {
                     let kind = result.err().unwrap_or("unresolved reflected placement");
@@ -866,6 +866,9 @@ impl Builder<'_> {
                     continue;
                 }
             };
+            if parent == 0 && self.writer.should_stand_up() {
+                transform = compose(&dutchman_core::placement::STAND_UP_Y_TO_Z, &transform);
+            }
             let Some(Some((component, name))) = components.get(placement.part).cloned() else {
                 occurrences.push(None);
                 continue;
