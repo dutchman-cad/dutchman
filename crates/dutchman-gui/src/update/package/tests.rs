@@ -191,6 +191,10 @@ fn update_actions_follow_install_kind() {
         (Install::Direct, Action::Download),
         (msi.clone(), Action::Msi),
         (Install::Zip("portable".into()), Action::Zip),
+        (
+            Install::AppImage("Dutchman.AppImage".into()),
+            Action::AppImage,
+        ),
         (Install::Scoop("shims".into()), Action::Scoop),
         (Install::Cask("brew".into()), Action::Homebrew),
         (Install::Formula("brew".into()), Action::Homebrew),

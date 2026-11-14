@@ -115,6 +115,20 @@ a release always ships a candidate's tested files.
 | Run by hand (`gh workflow run release-build.yml --ref <branch>`) | Full build |
 | Nightly | Its own daily build of `main`, unchanged |
 
+On Linux each build job also runs `scripts/package-appimage.sh`, which makes
+`dutchman-X.Y.Z-<arch>.AppImage` (`<arch>` is `x86_64` or `aarch64`) and its `.zsync`, each with a
+`.sha256`, from the built programs, and runs it once (`--run dutchman --version`, a link named
+`dutchman`, an MCP ping). The AppDir holds the four programs, `packaging/linux/AppRun` (the
+desktop app by default; `--run <program>`, a link's name, or `DUTCHMAN_APPIMAGE_RUN` picks a
+command line program), and the desktop entry and icon in `packaging/arch/`, shared with the Arch
+package. `appimagetool` (1.9.1) and the type 2 runtime (20251108) are downloaded from their
+official releases and checked against SHA-256 values pinned in the script; to move to a newer
+tool, change the version and both checksums for each architecture together. The AppImage embeds
+`gh-releases-zsync|dutchman-cad|dutchman|latest|dutchman-*-<arch>.AppImage.zsync`, so the
+`.zsync` must stay attached to every release. `release.yml` requires the four AppImage files
+(and their checksums) and adds version-less copies like the other assets. A change under
+`packaging/linux/` starts the full build on a pull request.
+
 For just the Linux x86_64 tarball and its checksum, dispatch with `targets: linux-x86_64`: `gh workflow run release-build.yml --ref <branch> -f targets=linux-x86_64`.
 
 A full build makes each platform's archive
@@ -137,7 +151,7 @@ tests. Rust caches are kept per target and profile for those checks and saved on
 The `plan` job in `release-build.yml` starts the builds for a pull request that:
    - changes `.github/workflows/`, `Cargo.toml` other than its version lines (it holds the
      profiles), `Dockerfile`,
-     `docker/`, `compose.yaml`, `scripts/*msi*`, `scripts/package*`, `scripts/macos-dmg.sh`,
+     `docker/`, `compose.yaml`, `packaging/linux/`, `scripts/*msi*`, `scripts/package*`, `scripts/macos-dmg.sh`,
      `scripts/archive-readme.py`, `scripts/downloads.py`, `assets/install/`, `assets/dmg/`,
      `assets/windows/`, `skills/`, the app icon and `examples/ico.rs`, or
      `crates/dutchman-gui/src/update.rs` and `update/`;
