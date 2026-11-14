@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use super::{Install, Spec};
 use crate::update::{version, RELEASES};
 
-/// Largest download accepted; release ZIPs are about 170 MB.
+/// Largest download accepted; release ZIPs and AppImages are about 170 MB.
 const MAX_PACKAGE: u64 = 512 * 1024 * 1024;
 /// Largest total unpacked from an update ZIP. The three release programs alone unpack to
 /// about 575 MB, so this is separate from, and larger than, the download limit.
@@ -112,12 +112,12 @@ fn prepare_in(
     logs: &Path,
     fetch: &impl Fn(&str, u64, &mut dyn Write) -> Result<(), String>,
 ) -> Result<Option<Verified>, String> {
-    let extension = match install {
-        Install::Msi(_) => "msi",
-        Install::Zip(_) => "zip",
-        _ => return Err("This copy does not use a Windows release package.".into()),
+    let url = match install {
+        Install::Msi(_) => asset_url(tag, "msi")?,
+        Install::Zip(_) => asset_url(tag, "zip")?,
+        Install::AppImage(_) => super::appimage::asset_url(tag, std::env::consts::ARCH)?,
+        _ => return Err("This copy does not use a release package.".into()),
     };
-    let url = asset_url(tag, extension)?;
     let name = url
         .rsplit('/')
         .next()
@@ -163,7 +163,10 @@ fn prepare_in(
     if actual != expected {
         return Err("The update checksum does not match. The download was deleted; your installed copy is unchanged. Open the release page to retry.".into());
     }
-    if let Install::Zip(installed) = install {
+    if let Install::AppImage(target) = install {
+        super::appimage::replace(&path, target)?;
+        Ok(None)
+    } else if let Install::Zip(installed) = install {
         let stem = name
             .strip_suffix(".zip")
             .ok_or("The update is not a ZIP package.")?;

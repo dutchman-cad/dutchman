@@ -239,3 +239,26 @@ fn windows_portable_swap_while_gui_is_running() {
         assert!(!installed.join(format!("{name}.old")).exists());
     }
 }
+
+#[test]
+fn a_verified_appimage_replaces_the_running_file_and_a_bad_checksum_does_not() {
+    if super::super::appimage::asset_name("v1.2.3", std::env::consts::ARCH).is_err() {
+        return; // No AppImage exists for this processor.
+    }
+    let root = tempfile::tempdir().unwrap();
+    let logs = root.path().join("logs");
+    let target = root.path().join("Dutchman.AppImage");
+    std::fs::write(&target, b"old appimage").unwrap();
+    let kind = Install::AppImage(target.clone());
+    let bytes = b"new appimage".to_vec();
+    let error = prepare_in(&kind, "v1.2.3", &logs, &fetcher(&bytes, false))
+        .err()
+        .unwrap();
+    assert!(error.contains("checksum does not match"));
+    assert_eq!(std::fs::read(&target).unwrap(), b"old appimage");
+    assert_eq!(std::fs::read_dir(&logs).unwrap().count(), 0);
+    assert!(prepare_in(&kind, "v1.2.3", &logs, &fetcher(&bytes, true))
+        .unwrap()
+        .is_none());
+    assert_eq!(std::fs::read(&target).unwrap(), bytes);
+}

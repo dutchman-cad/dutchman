@@ -496,14 +496,17 @@ impl Updater {
     /// Do not start a conversion while an MSI download is preparing to close the app.
     pub fn blocks_conversions(&self) -> bool {
         (self.install.action() == Action::Msi && self.job.holds_release())
-            || (self.install.action() == Action::Zip
+            || (matches!(self.install.action(), Action::Zip | Action::AppImage)
                 && matches!(
                     self.job.snapshot().phase,
                     Phase::Restarting | Phase::Restarted
                 ))
     }
     pub fn windows_package(&self) -> bool {
-        matches!(self.install.action(), Action::Msi | Action::Zip)
+        matches!(
+            self.install.action(),
+            Action::Msi | Action::Zip | Action::AppImage
+        )
     }
     pub fn stopping_for_install(&self) -> bool {
         self.install.action() == Action::Msi
@@ -800,7 +803,10 @@ impl Updater {
         }
     }
     fn package_ui(&mut self, ui: &mut egui::Ui, release: &Release, can_restart: bool) {
-        if matches!(self.install.action(), Action::Msi | Action::Zip) {
+        if matches!(
+            self.install.action(),
+            Action::Msi | Action::Zip | Action::AppImage
+        ) {
             self.windows_ui(ui, release, can_restart);
             return;
         }
@@ -917,6 +923,8 @@ impl Updater {
             Phase::Idle => {
                 if self.install.action() == Action::Msi {
                     ui.label("Download and verify the installer, then close Dutchman, install, and open it again.");
+                } else if self.install.action() == Action::AppImage {
+                    ui.label("Download and verify the new AppImage, replace this file, then restart when you are ready.");
                 } else {
                     ui.label("Download and verify the ZIP, replace the programs, then restart when you are ready.");
                 }
@@ -932,7 +940,7 @@ impl Updater {
             Phase::Running | Phase::Restarting => {
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label("Preparing the Windows update…");
+                    ui.label("Preparing the update…");
                 });
             }
             Phase::Ready => {

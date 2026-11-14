@@ -150,7 +150,9 @@ chmod +x dutchman-VERSION-x86_64.AppImage
 That starts the desktop app. A launcher that manages AppImages, such as Gear Lever, adds it to
 the application menu and can put it on your `PATH`; it also finds new releases, because each
 AppImage carries update information (a `.zsync` file is attached to every release for
-AppImageUpdate and similar tools).
+AppImageUpdate and similar tools). The app's own **Update now** also replaces the AppImage
+file after checking its SHA-256; if its folder is not writable, it says so and you download the
+new file instead.
 
 The same file holds `dutchman`, `dutchman-mcp`, and `dutchman-web`. Choose one by name, with
 `--run`, or with an environment variable:
