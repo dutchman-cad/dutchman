@@ -154,6 +154,84 @@ impl Loss {
     }
 }
 
+impl Loss {
+    /// What kind of loss this is, in plain words, the same for every loss of its kind: a heading
+    /// a front end can group losses under ("Parts of the file kept as-is"), with each loss's code
+    /// and detail kept for whoever reports it. It names the part of the design the loss is about,
+    /// from its code's area (`f3d/sketch.…` is about sketches) or else its subject's first word,
+    /// and what happened to it, from its severity.
+    pub fn title(&self) -> String {
+        let area = match self.code.as_deref() {
+            Some(code) => code
+                .split_once('/')
+                .map_or(code, |(_, rest)| rest)
+                .split('.')
+                .next()
+                .unwrap_or_default(),
+            None => self
+                .subject
+                .split(|c: char| !(c.is_ascii_alphanumeric() || c == '-'))
+                .next()
+                .unwrap_or_default(),
+        };
+        let noun = area_noun(&area.to_ascii_lowercase(), self.stage);
+        let kept = self.code.as_deref().is_some_and(|code| {
+            ["retained", "kept", "native", "preserved", "opaque"]
+                .iter()
+                .any(|word| code.contains(word))
+        });
+        // Records kept unread are kept as they were, whatever their severity says about it.
+        let title = match self.severity {
+            Severity::Dropped => format!("{noun} left out"),
+            _ if kept => format!("{noun} kept as-is"),
+            Severity::Degraded => format!("{noun} carried over with changes"),
+            Severity::Info => format!("Notes about {noun}"),
+        };
+        let mut chars = title.chars();
+        chars.next().map_or_else(String::new, |first| {
+            first.to_uppercase().chain(chars).collect()
+        })
+    }
+}
+
+/// The part of a design a loss code's area (or a loss subject's first word) is about, as a plain
+/// noun phrase.
+fn area_noun(area: &str, stage: Stage) -> &'static str {
+    match area {
+        "feature" | "features" | "history" => "features",
+        "sketch" | "sketches" | "section" | "curve-expression" => "sketches",
+        "geometry" | "carrier" | "curve" | "pcurve" | "curve-on-surface" | "exact" | "brep"
+        | "tspline" | "cage" | "morph" | "surface" | "shape" => "shapes",
+        "topology" | "body" | "bodies" | "body-reference" | "body-recipe" | "edge" | "vertex"
+        | "polyedge" | "entity" | "element-map" | "face" => "bodies, faces and edges",
+        "assembly" | "occurrence" | "product" | "placement" | "part" | "parts" | "component"
+        | "scope" | "graph" => "assembly structure",
+        "xref" | "reference" => "links to other files",
+        "joint" | "joints" => "joints",
+        "parameter" | "parameters" | "config" | "configuration" | "expression" => {
+            "parameters and configurations"
+        }
+        "pmi" | "annotation" | "dimension" | "drawing" | "drawings" | "detail" | "hatch" => {
+            "annotations and drawings"
+        }
+        "appearance" | "material" | "presentation" | "scene" | "layer" | "viewport" | "colour"
+        | "color" => "appearances",
+        "metadata" | "attributes" | "attribute" | "property-set" | "global" | "object"
+        | "asset" | "header" => "properties",
+        "tessellation" | "mesh" => "display meshes",
+        "work-plane" | "plane" | "datum" => "construction planes and axes",
+        "source" | "container" | "structure" | "parse" | "decode" | "directory" | "framing"
+        | "native" | "legacy" | "card" | "validation" => "parts of the file",
+        "design" => "design details",
+        "writer" | "export" | "target" => "details of the converted design",
+        _ => match stage {
+            Stage::Input | Stage::Decode => "parts of the file",
+            Stage::Project | Stage::Map => "design details",
+            Stage::Write | Stage::SolidCraft => "details of the converted design",
+        },
+    }
+}
+
 impl fmt::Display for Loss {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let label = match self.severity {
@@ -671,6 +749,48 @@ mod tests {
         ] {
             assert_eq!(read_stage(code), Stage::Project, "{code}");
         }
+    }
+
+    #[test]
+    fn a_loss_has_a_plain_title_shared_by_its_kind() {
+        let mut report = Report::default();
+        let coded = |severity, code: &str| Loss {
+            severity,
+            subject: code.to_owned(),
+            code: Some(code.to_owned()),
+            detail: "detail".to_owned(),
+            stage: Stage::Project,
+        };
+        report.push(Severity::Degraded, "feature \"Chamfer1\"", "not mapped yet");
+        report.push(Severity::Dropped, "body \"Body2\"", "no geometry");
+        report.push_appearance(AppearanceLoss::Wire, "a wire body");
+        let titles: Vec<String> = [
+            coded(Severity::Info, "f3d/source.unindexed-records-retained"),
+            coded(Severity::Degraded, "f3d/source.unindexed-records-retained"),
+            coded(Severity::Info, "f3d/source.manifest-metadata-unresolved"),
+            coded(
+                Severity::Degraded,
+                "f3d/sketch.name-composed-from-feature-ordinal",
+            ),
+            coded(Severity::Dropped, "sldprt/unheard-of.thing"),
+        ]
+        .iter()
+        .chain(report.losses())
+        .map(Loss::title)
+        .collect();
+        assert_eq!(
+            titles,
+            [
+                "Parts of the file kept as-is",
+                "Parts of the file kept as-is",
+                "Notes about parts of the file",
+                "Sketches carried over with changes",
+                "Design details left out",
+                "Features carried over with changes",
+                "Bodies, faces and edges left out",
+                "Appearances left out",
+            ]
+        );
     }
 
     #[test]

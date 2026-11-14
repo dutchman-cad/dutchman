@@ -1,0 +1,6 @@
+# Keep desktop/CLI release settings unchanged. Apply size settings to the component
+# and all its target dependencies, including cadmpeg's codecs.
+# These rustflags apply to every `cargo build --target wasm32-unknown-unknown` in the
+# workspace, not only dutchman-plugin.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "opt-level=z", "-C", "lto=fat", "-C", "embed-bitcode=yes", "-C", "codegen-units=1", "-C", "strip=symbols"]

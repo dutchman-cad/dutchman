@@ -52,3 +52,7 @@ Copy-Item -Recurse dutchman\skills\dutchman-converting $HOME\.claude\skills\
 
 When a tool, an argument, a report field or a message these files describe changes, update
 them in the same pull request.
+
+The [SolidCraft component front end](../docs/plugin.md) uses a host-drawn options form and
+returns SolidCraft's loss report with `dutchman.plugin.loss/1` details; the conversion skill's CLI/MCP workflow is unchanged.
+Plugin authoring and evaluator integration details are documented on that page.

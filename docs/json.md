@@ -1287,3 +1287,11 @@ These fixed categories reach both `dutchman.report-anon/1` loss counts and
 contain no binding or target ids or names. See [the anonymous report](report-anon.md#appearance-loss-causes).
 Ordinary conversion losses keep `subject`, `message`, `stage` and `upstream` as before;
 Dutchman's appearance codes have `stage: "map"` and `upstream: null`.
+
+## `dutchman.plugin.loss/1`
+
+The plugin returns SolidCraft's loss report (a summary line and one item per loss) with a
+structured projection of the core report under `details`: stage counts, coded losses,
+per-feature mapping results, assembly completeness, and verification.
+See [the plugin's loss report](plugin.md#loss-report) for the complete contract.
+CLI and MCP `dutchman.convert/1` reports are unchanged.

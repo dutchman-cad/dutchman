@@ -4,10 +4,11 @@
 //! against what the model holds.
 
 use crate::SolidCraftEvaluator;
+use dutchman_core::time::Instant;
 use std::path::{Path, PathBuf};
 #[cfg(not(target_family = "wasm"))]
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::Value;
 

@@ -1,0 +1,45 @@
+[package]
+name = "dutchman-plugin"
+description = "Dutchman streaming CAD importer component for SolidCraft"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+dutchman-core = { workspace = true, features = ["source-reader", "fusion", "inventor", "solidworks", "freecad"] }
+dutchman-solidcraft.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+zip.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wit-bindgen = "0.57.1"
+
+[features]
+host-tests = ["dep:wasmtime"]
+
+[[test]]
+name = "component"
+required-features = ["host-tests"]
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+wasmtime = { version = "50", optional = true, default-features = false, features = ["anyhow", "component-model", "cranelift", "runtime", "std", "parallel-compilation"] }
+
+# wit-bindgen's canonical ABI exports require generated unsafe functions. Only the
+# export macro in adapter.rs may allow this lint; handwritten code still denies it.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+indexing_slicing = "deny"

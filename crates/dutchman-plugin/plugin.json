@@ -1,0 +1,72 @@
+{
+  "id": "dutchman",
+  "name": "Dutchman",
+  "version": "0.2.9",
+  "description": "Convert Fusion, Inventor, SolidWorks and FreeCAD designs into editable SolidCraft designs",
+  "capabilities": [
+    "evaluate@0.1",
+    "formats@0.1"
+  ],
+  "runtime": {
+    "module": "dutchman.wasm",
+    "commands": [],
+    "entries": [
+      {
+        "name": "convert",
+        "kind": "importer",
+        "extensions": [
+          "f3d",
+          "f3z",
+          "ipt",
+          "iam",
+          "sldprt",
+          "sldasm",
+          "fcstd"
+        ],
+        "input_schema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "editable_history": {
+              "type": "boolean",
+              "title": "Keep editable history",
+              "default": true,
+              "description": "Keep mapped body-building features beside the visible original geometry. Reference sketches are retained in either mode."
+            },
+            "up_axis": {
+              "type": "string",
+              "title": "Up axis",
+              "oneOf": [
+                {
+                  "const": "as_is",
+                  "title": "As in the file"
+                },
+                {
+                  "const": "stand_up",
+                  "title": "Stand up (Y-up to Z-up)"
+                }
+              ],
+              "default": "as_is",
+              "description": "As is keeps source coordinates. Stand up changes source Y-up to Z-up."
+            },
+            "include_hidden_bodies": {
+              "type": "boolean",
+              "title": "Include hidden bodies",
+              "default": false,
+              "description": "Also include hidden intermediate or consumed shapes that normal conversion leaves out."
+            }
+          }
+        }
+      }
+    ],
+    "limits": {
+      "fuel": 100000000000,
+      "memory_mib": 1024,
+      "deadline_ms": 300000,
+      "stack_kib": 16384
+    },
+    "permissions": {
+      "input_folder": true
+    }
+  }
+}

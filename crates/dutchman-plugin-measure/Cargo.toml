@@ -1,0 +1,16 @@
+[package]
+name = "dutchman-plugin-measure"
+description = "Internal launcher for a capped, uncached Dutchman component build measurement"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+autobins = false
+
+[[bin]]
+name = "measure-dutchman-component"
+path = "src/main.rs"
+
+[lints]
+workspace = true
