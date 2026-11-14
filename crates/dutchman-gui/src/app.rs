@@ -1863,7 +1863,9 @@ impl App {
                 );
                 if ui
                     .button("Connect Onshape")
-                    .on_hover_text("Save your Onshape API keys, or open a Part Studio from its link")
+                    .on_hover_text(
+                        "Save your Onshape API keys, or open a Part Studio from its link",
+                    )
                     .clicked()
                 {
                     self.onshape.toggle(ui.ctx());
