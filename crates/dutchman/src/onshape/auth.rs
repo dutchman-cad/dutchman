@@ -1,4 +1,4 @@
-//! API-key HMAC signing. Credentials deliberately have no Debug or Serialize implementation.
+//! API-key HMAC signing. Credentials print as "hidden" and have no Serialize implementation.
 use base64::{engine::general_purpose::STANDARD, Engine};
 use std::path::Path;
 
@@ -7,6 +7,12 @@ use super::{Error, ErrorKind, Result};
 pub struct Credentials {
     access: String,
     secret: String,
+}
+
+impl std::fmt::Debug for Credentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Credentials(hidden)")
+    }
 }
 
 impl Credentials {
@@ -23,16 +29,9 @@ impl Credentials {
         Ok(Self { access, secret })
     }
 
-    pub fn load(config: &Path) -> Result<Self> {
-        match (std::env::var("ONSHAPE_ACCESS_KEY"), std::env::var("ONSHAPE_SECRET_KEY")) {
-            (Ok(a), Ok(s)) => Self::new(a, s),
-            (Err(std::env::VarError::NotPresent), Err(std::env::VarError::NotPresent)) => Self::from_file(config),
-            _ => Err(Error::new(ErrorKind::Auth, "Set ONSHAPE_ACCESS_KEY and ONSHAPE_SECRET_KEY together, or remove both to use the private config file.")),
-        }
-    }
-
     pub fn from_file(path: &Path) -> Result<Self> {
-        let meta = std::fs::symlink_metadata(path).map_err(|_| Error::new(ErrorKind::Auth, "Set ONSHAPE_ACCESS_KEY and ONSHAPE_SECRET_KEY, or create ~/.config/dutchman/onshape.json with mode 600."))?;
+        let meta = std::fs::symlink_metadata(path)
+            .map_err(|_| Error::new(ErrorKind::Auth, super::store::NOT_CONNECTED))?;
         if !meta.is_file() || meta.len() > 16 * 1024 {
             return Err(Error::new(
                 ErrorKind::Auth,
@@ -54,11 +53,27 @@ impl Credentials {
         #[cfg(unix)]
         {
             let bytes = super::read_bounded(path, 16 * 1024)?;
-            let value: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| Error::new(ErrorKind::Auth, "Write a JSON object with access_key and secret_key in the private Onshape config file."))?;
-            let a = value.get("access_key").and_then(serde_json::Value::as_str);
-            let s = value.get("secret_key").and_then(serde_json::Value::as_str);
-            Self::new(a.unwrap_or_default().into(), s.unwrap_or_default().into())
+            Self::from_json(&bytes)
         }
+    }
+
+    /// Reads `{"access_key": ..., "secret_key": ...}`, the form kept in the credential store
+    /// and in the private file.
+    pub fn from_json(bytes: &[u8]) -> Result<Self> {
+        let value: serde_json::Value = serde_json::from_slice(bytes).map_err(|_| {
+            Error::new(
+                ErrorKind::Auth,
+                "The saved Onshape keys could not be read; run `dutchman onshape login` again.",
+            )
+        })?;
+        let a = value.get("access_key").and_then(serde_json::Value::as_str);
+        let s = value.get("secret_key").and_then(serde_json::Value::as_str);
+        Self::new(a.unwrap_or_default().into(), s.unwrap_or_default().into())
+    }
+
+    /// The form [`Self::from_json`] reads. It holds the keys: write it only to a private place.
+    pub fn to_json(&self) -> String {
+        serde_json::json!({"access_key": self.access, "secret_key": self.secret}).to_string()
     }
 
     pub(super) fn scope(&self) -> String {

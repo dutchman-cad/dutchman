@@ -108,6 +108,7 @@ pub struct App {
     diagnosis: Option<crate::diagnose::Wizard>,
     inputs: Vec<PathBuf>,
     doctor: Option<crate::doctor::Page>,
+    onshape: crate::onshape::Panel,
     project_summary: String,
     has_inventor: bool,
     custom: bool,
@@ -399,6 +400,7 @@ impl App {
             updater: crate::update::Updater::new(stored.as_ref().and_then(|v| v.get("update"))),
             inputs: Vec::new(),
             doctor: None,
+            onshape: crate::onshape::Panel::new(),
             project_summary: String::new(),
             has_inventor: false,
             custom,
@@ -542,6 +544,21 @@ impl App {
             if !self.inputs.contains(&path) {
                 self.inputs.push(path);
             }
+        }
+    }
+
+    /// Converts a Part Studio just fetched from Onshape, writing the design where the other
+    /// conversions go, or in a "Dutchman Onshape" folder at home when none is chosen.
+    fn convert_onshape_bundle(&mut self, bundle: PathBuf, ctx: &egui::Context) {
+        if self.out_dir.is_none() {
+            let home = std::env::var_os("HOME")
+                .or_else(|| std::env::var_os("USERPROFILE"))
+                .map(PathBuf::from);
+            self.out_dir = home.map(|home| home.join("Dutchman Onshape"));
+        }
+        self.add_inputs([bundle]);
+        if !self.running() {
+            self.start(ctx);
         }
     }
 
@@ -1410,6 +1427,9 @@ impl App {
         self.private_send_window(ctx);
         self.updater.report_ids = self.consent.ids.clone();
         self.solidcraft_window(ctx);
+        if let Some(bundle) = self.onshape.window(ctx, self.header_bottom) {
+            self.convert_onshape_bundle(bundle, ctx);
+        }
         let can_restart =
             !self.running() && (!self.updater.windows_package() || self.diagnosis.is_none());
         self.updater.windows(ctx, can_restart, self.header_bottom);
@@ -1544,6 +1564,14 @@ impl App {
 
     fn title_controls(&mut self, ui: &mut egui::Ui, narrow: bool) {
         ui.hyperlink_to("Report a problem", crate::REPORT_PROBLEM_URL);
+        ui.add_space(theme::SPACE_2);
+        if ui
+            .button("Connect Onshape")
+            .on_hover_text("Save your Onshape API keys, or open a Part Studio from its link")
+            .clicked()
+        {
+            self.onshape.toggle(ui.ctx());
+        }
         ui.add_space(theme::SPACE_2);
         let current = ui.ctx().options(|o| o.theme_preference);
         let themes = [

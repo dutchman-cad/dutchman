@@ -38,6 +38,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum OnshapeCommand {
+    /// Connect your Onshape account: asks for your API keys, tests them and saves them.
+    Login,
+    /// Forget the saved Onshape API keys.
+    Logout,
+    /// Show whether Onshape is connected, and as whom. Never shows keys.
+    Status,
     /// Save raw API responses in an offline .onshape-bundle.
     Fetch(dutchman::onshape::FetchOptions),
 }
@@ -396,6 +402,15 @@ fn main() -> ExitCode {
     let yes = cli.yes;
     match cli.command {
         Command::Onshape {
+            command: OnshapeCommand::Login,
+        } => onshape_login(),
+        Command::Onshape {
+            command: OnshapeCommand::Logout,
+        } => onshape_logout(),
+        Command::Onshape {
+            command: OnshapeCommand::Status,
+        } => onshape_status(),
+        Command::Onshape {
             command: OnshapeCommand::Fetch(options),
         } => {
             let report = dutchman::onshape::run(&options);
@@ -412,15 +427,15 @@ fn main() -> ExitCode {
                             .unwrap_or("Onshape bundle")
                     );
                 } else {
-                    eprintln!(
-                        "{} ({calls} API calls)",
-                        report
-                            .pointer("/error/message")
-                            .and_then(Value::as_str)
-                            .unwrap_or(
-                                "Onshape fetch could not finish; check the document and retry."
-                            )
-                    );
+                    let message = report
+                        .pointer("/error/message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("Onshape fetch could not finish; check the document and retry.");
+                    if calls == 0 {
+                        eprintln!("{message}");
+                    } else {
+                        eprintln!("{message} ({calls} API calls)");
+                    }
                 }
             }
             if report.get("ok").and_then(Value::as_bool) == Some(true) {
@@ -1621,6 +1636,97 @@ fn print_losses(losses: &[Value], verbose: bool) {
     }
     if cut {
         eprintln!("dutchman: ({})", json::CUT_NOTE);
+    }
+}
+
+/// The error's own words, with the system's reason when it has one. Never the keys.
+fn onshape_reason(error: &dutchman::onshape::Error) -> String {
+    match &error.detail {
+        Some(detail) => format!("{} ({detail})", error.message),
+        None => error.message.to_owned(),
+    }
+}
+
+fn onshape_login() -> ExitCode {
+    use std::io::{BufRead, Write};
+    let mut err = std::io::stderr();
+    let _ = writeln!(
+        err,
+        "Create API keys in Onshape: My account > Developer > API keys (read access is enough)."
+    );
+    let _ = write!(err, "Access key: ");
+    let _ = err.flush();
+    let mut access = String::new();
+    if std::io::stdin().lock().read_line(&mut access).is_err() {
+        eprintln!("Could not read the access key.");
+        return ExitCode::FAILURE;
+    }
+    let Ok(secret) = rpassword::prompt_password("Secret key (not shown): ") else {
+        eprintln!("Could not read the secret key.");
+        return ExitCode::FAILURE;
+    };
+    let store = dutchman::onshape::Store::system();
+    match dutchman::onshape::login(
+        &store,
+        &mut dutchman::onshape::NetworkClient::default(),
+        access.trim().to_owned(),
+        secret.trim().to_owned(),
+    ) {
+        Ok((user, source)) => {
+            println!("Connected as {user}. Keys saved in {}.", source.label());
+            if store.environment_overrides() {
+                println!("ONSHAPE_ACCESS_KEY and ONSHAPE_SECRET_KEY are set and take precedence over saved keys.");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("{} Nothing was saved.", onshape_reason(&error));
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn onshape_logout() -> ExitCode {
+    let store = dutchman::onshape::Store::system();
+    match store.forget() {
+        Ok(()) => {
+            println!("Saved Onshape keys removed.");
+            if store.environment_overrides() {
+                println!("ONSHAPE_ACCESS_KEY and ONSHAPE_SECRET_KEY are still set in your environment; remove them to disconnect fully.");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("{}", onshape_reason(&error));
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn onshape_status() -> ExitCode {
+    use dutchman::onshape::Connection;
+    let store = dutchman::onshape::Store::system();
+    match dutchman::onshape::status(&store, &mut dutchman::onshape::NetworkClient::default()) {
+        Ok(Connection::Connected { user, source }) => {
+            println!("Connected as {user} (keys from {}).", source.label());
+            ExitCode::SUCCESS
+        }
+        Ok(Connection::NotConnected) => {
+            println!("Not connected. Run `dutchman onshape login`.");
+            ExitCode::FAILURE
+        }
+        Ok(Connection::Unchecked { source, error }) => {
+            println!(
+                "Keys are saved in {}, but Onshape could not confirm them: {}",
+                source.label(),
+                onshape_reason(&error)
+            );
+            ExitCode::FAILURE
+        }
+        Err(error) => {
+            eprintln!("{}", onshape_reason(&error));
+            ExitCode::FAILURE
+        }
     }
 }
 

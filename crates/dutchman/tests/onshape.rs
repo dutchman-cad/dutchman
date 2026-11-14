@@ -975,3 +975,254 @@ fn step_export_cannot_download_from_a_different_document() {
         .iter()
         .all(|(_, p, _)| !p.contains("/externaldata/")));
 }
+
+mod store {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    /// A credential store that lives in memory and can be made to fail.
+    #[derive(Clone, Default)]
+    struct Fake {
+        kept: Rc<RefCell<Option<String>>>,
+        broken: bool,
+    }
+    impl Fake {
+        fn holding(access: &str, secret: &str) -> Self {
+            let keys = Credentials::new(access.into(), secret.into()).unwrap();
+            Self {
+                kept: Rc::new(RefCell::new(Some(keys.to_json()))),
+                broken: false,
+            }
+        }
+        fn has(&self) -> bool {
+            self.kept.borrow().is_some()
+        }
+    }
+    impl Backend for Fake {
+        fn load(&self) -> Result<Option<Credentials>> {
+            if self.broken {
+                return Err(Credentials::new(String::new(), String::new()).unwrap_err());
+            }
+            match &*self.kept.borrow() {
+                Some(text) => Credentials::from_json(text.as_bytes()).map(Some),
+                None => Ok(None),
+            }
+        }
+        fn save(&self, credentials: &Credentials) -> Result<()> {
+            if self.broken {
+                return Err(Credentials::new(String::new(), String::new()).unwrap_err());
+            }
+            *self.kept.borrow_mut() = Some(credentials.to_json());
+            Ok(())
+        }
+        fn forget(&self) -> Result<()> {
+            *self.kept.borrow_mut() = None;
+            Ok(())
+        }
+    }
+
+    fn env(pairs: &[(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> + 'static {
+        let pairs: Vec<_> = pairs.to_vec();
+        move |name| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| (*value).to_owned())
+        }
+    }
+    fn who(credentials: &Credentials) -> String {
+        credentials
+            .authorization("get", "/p", "", "d", "n")
+            .split(':')
+            .next()
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    #[test]
+    fn environment_beats_the_credential_store_beats_the_file() {
+        let system = Fake::holding("storeACCESS1234", "storeSECRET1234");
+        let file = Fake::holding("fileACCESS12345", "fileSECRET12345");
+        let both = [
+            ("ONSHAPE_ACCESS_KEY", "envACCESS123456"),
+            ("ONSHAPE_SECRET_KEY", "envSECRET123456"),
+        ];
+        let store = Store::new(
+            env(&both),
+            Some(Box::new(system.clone())),
+            Some(Box::new(file.clone())),
+        );
+        let (found, source) = store.find().unwrap().unwrap();
+        assert_eq!(source, Source::Environment);
+        assert_eq!(who(&found), "On envACCESS123456");
+
+        let store = Store::new(
+            env(&[]),
+            Some(Box::new(system.clone())),
+            Some(Box::new(file.clone())),
+        );
+        let (found, source) = store.find().unwrap().unwrap();
+        assert_eq!(source, Source::SystemStore);
+        assert_eq!(who(&found), "On storeACCESS1234");
+
+        system.forget().unwrap();
+        let store = Store::new(env(&[]), Some(Box::new(system)), Some(Box::new(file)));
+        let (found, source) = store.find().unwrap().unwrap();
+        assert_eq!(source, Source::PrivateFile);
+        assert_eq!(who(&found), "On fileACCESS12345");
+    }
+
+    #[test]
+    fn an_unreachable_credential_store_falls_back_to_the_file() {
+        let system = Fake {
+            broken: true,
+            ..Fake::default()
+        };
+        let file = Fake::default();
+        let store = Store::new(
+            env(&[]),
+            Some(Box::new(system)),
+            Some(Box::new(file.clone())),
+        );
+        let source = store.save(&credentials()).unwrap();
+        assert_eq!(source, Source::PrivateFile);
+        assert!(file.has());
+        assert_eq!(store.find().unwrap().unwrap().1, Source::PrivateFile);
+    }
+
+    #[test]
+    fn saving_in_the_credential_store_removes_an_older_file_copy() {
+        let system = Fake::default();
+        let file = Fake::holding("fileACCESS12345", "fileSECRET12345");
+        let store = Store::new(
+            env(&[]),
+            Some(Box::new(system.clone())),
+            Some(Box::new(file.clone())),
+        );
+        assert_eq!(store.save(&credentials()).unwrap(), Source::SystemStore);
+        assert!(system.has());
+        assert!(!file.has());
+    }
+
+    #[test]
+    fn logout_removes_the_keys_everywhere_and_leaves_nothing_connected() {
+        let system = Fake::holding("storeACCESS1234", "storeSECRET1234");
+        let file = Fake::holding("fileACCESS12345", "fileSECRET12345");
+        let store = Store::new(
+            env(&[]),
+            Some(Box::new(system.clone())),
+            Some(Box::new(file.clone())),
+        );
+        store.forget().unwrap();
+        assert!(!system.has() && !file.has());
+        assert!(store.find().unwrap().is_none());
+        // Forgetting again is not an error.
+        store.forget().unwrap();
+    }
+
+    #[test]
+    fn one_environment_variable_alone_is_refused() {
+        let store = Store::new(env(&[("ONSHAPE_ACCESS_KEY", ACCESS)]), None, None);
+        let error = store.find().unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Auth);
+        assert!(error.message.contains("together"));
+    }
+
+    #[test]
+    fn unconfigured_says_how_to_connect() {
+        let store = Store::new(
+            env(&[]),
+            Some(Box::new(Fake::default())),
+            Some(Box::new(Fake::default())),
+        );
+        let error = store.load().unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Auth);
+        let text = error.to_string();
+        assert!(text.contains("dutchman onshape login"), "{text}");
+        assert!(text.contains("Connect Onshape"), "{text}");
+        assert!(matches!(
+            status(&store, &mut Mock::default()).unwrap(),
+            Connection::NotConnected
+        ));
+    }
+
+    #[test]
+    fn login_tests_the_keys_before_saving_and_never_prints_them() {
+        let system = Fake::default();
+        let store = Store::new(env(&[]), Some(Box::new(system.clone())), None);
+        let mut rejected = Mock::default();
+        rejected.replies.push_back(response(401, json!({})));
+        let error = login(&store, &mut rejected, ACCESS.into(), SECRET.into()).unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Auth);
+        assert!(!system.has());
+        let shown = format!("{error} {error:?}");
+        assert!(!shown.contains(SECRET) && !shown.contains(ACCESS));
+
+        let mut accepted = Mock::default();
+        accepted
+            .replies
+            .push_back(response(200, json!({"name": "Ada Lovelace"})));
+        let (user, source) = login(&store, &mut accepted, ACCESS.into(), SECRET.into()).unwrap();
+        assert_eq!(
+            (user.as_str(), source),
+            ("Ada Lovelace", Source::SystemStore)
+        );
+        assert!(system.has());
+        assert_eq!(accepted.sent[0].1, "/api/v17/users/sessioninfo");
+
+        let mut again = Mock::default();
+        again
+            .replies
+            .push_back(response(200, json!({"name": "Ada Lovelace"})));
+        match status(&store, &mut again).unwrap() {
+            Connection::Connected { user, source } => {
+                assert_eq!(
+                    (user.as_str(), source),
+                    ("Ada Lovelace", Source::SystemStore)
+                );
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn no_key_appears_in_debug_or_display_output() {
+        let keys = credentials();
+        let store = Store::new(
+            env(&[]),
+            Some(Box::new(Fake::holding(ACCESS, SECRET))),
+            None,
+        );
+        let shown = format!(
+            "{keys:?} {store:?} {:?} {}",
+            Source::SystemStore,
+            Source::SystemStore.label()
+        );
+        assert!(
+            !shown.contains(SECRET) && !shown.contains(ACCESS),
+            "{shown}"
+        );
+        let bad = Credentials::new(ACCESS.into(), String::new()).unwrap_err();
+        let shown = format!("{bad} {bad:?}");
+        assert!(!shown.contains(ACCESS), "{shown}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_private_file_is_created_owner_only_and_removed_on_forget() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config/dutchman/onshape.json");
+        let file = FileBackend { path: path.clone() };
+        assert!(file.load().unwrap().is_none());
+        file.save(&credentials()).unwrap();
+        let mode = |p: &std::path::Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(path.parent().unwrap()), 0o700);
+        assert!(file.load().unwrap().is_some());
+        file.forget().unwrap();
+        assert!(!path.exists());
+        file.forget().unwrap();
+    }
+}

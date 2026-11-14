@@ -653,7 +653,7 @@ losses for meshes it could not decode.
 ## Fetch your own Onshape document
 
 `dutchman onshape fetch <document-url> --out snapshot.onshape-bundle --max-calls 50`
-uses local `ONSHAPE_ACCESS_KEY`/`ONSHAPE_SECRET_KEY` credentials and prints the HTTP
+uses the keys saved by `dutchman onshape login` (or Connect Onshape in the app), or `ONSHAPE_ACCESS_KEY`/`ONSHAPE_SECRET_KEY` for scripts, and prints the HTTP
 attempt count. `--version VERSION_ID` selects an immutable version; `--json` prints
 `dutchman.onshape-fetch/1`. This fetcher saves API responses without converting CAD.
 Part Studios include features, needed input topology, variables/configuration, and

@@ -2,6 +2,7 @@
 mod auth;
 mod export;
 mod http;
+mod store;
 
 pub use auth::Credentials;
 use http::Session;
@@ -11,6 +12,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+pub use store::{Backend, FileBackend, Source, Store, SystemBackend, NOT_CONNECTED};
 
 pub const SCHEMA: &str = "dutchman.onshape-fetch/1";
 const MAX_RESPONSE: u64 = 64 * 1024 * 1024;
@@ -174,8 +176,7 @@ pub fn run(options: &FetchOptions) -> Value {
     let result = (|| {
         let parsed = DocumentUrl::parse(&options.document_url, options.version.as_deref())?;
         let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).ok_or_else(|| Error::new(ErrorKind::Io, "Set HOME or USERPROFILE so Dutchman can find its private Onshape config and cache."))?;
-        let config = home.join(".config/dutchman/onshape.json");
-        let credentials = Credentials::load(&config)?;
+        let credentials = Store::system().load()?;
         let cache = std::env::var_os("XDG_CACHE_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".cache"))
@@ -194,6 +195,83 @@ pub fn run(options: &FetchOptions) -> Value {
         )
     })();
     crate::json::onshape_fetch(&result)
+}
+
+/// The name of the account the keys belong to, from one cheap authenticated call. Nothing
+/// else about the account is read or kept.
+pub fn session_user<C: HttpClient>(client: &mut C, credentials: &Credentials) -> Result<String> {
+    let mut session = Session {
+        client,
+        credentials,
+        calls: 0,
+        max_calls: 1,
+    };
+    let response = session
+        .request("GET", &format!("{API}/users/sessioninfo"), "", b"")
+        .map_err(|mut error| {
+            if error.kind == ErrorKind::Auth {
+                error.message = "Onshape did not accept these keys; copy both in full from Onshape's developer portal, with read access, and retry.";
+            }
+            error
+        })?;
+    if !(200..300).contains(&response.status) {
+        return Err(Error::new(
+            ErrorKind::Response,
+            "Onshape could not check the keys right now; retry in a moment.",
+        ));
+    }
+    let value: Value = serde_json::from_slice(&response.body).map_err(|_| response_error())?;
+    Ok(value
+        .get("name")
+        .and_then(Value::as_str)
+        .map(|name| {
+            name.chars()
+                .filter(|c| !c.is_control())
+                .take(100)
+                .collect::<String>()
+        })
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| "your Onshape account".into()))
+}
+
+/// What `status` found.
+#[derive(Debug)]
+pub enum Connection {
+    NotConnected,
+    Connected {
+        user: String,
+        source: Source,
+    },
+    /// Keys are saved, but Onshape could not confirm them now.
+    Unchecked {
+        source: Source,
+        error: Error,
+    },
+}
+
+/// Looks for saved keys and, when there are some, asks Onshape who they belong to.
+pub fn status<C: HttpClient>(store: &Store, client: &mut C) -> Result<Connection> {
+    let Some((credentials, source)) = store.find()? else {
+        return Ok(Connection::NotConnected);
+    };
+    Ok(match session_user(client, &credentials) {
+        Ok(user) => Connection::Connected { user, source },
+        Err(error) => Connection::Unchecked { source, error },
+    })
+}
+
+/// Checks the keys with Onshape, and only then saves them. Returns the account name and where
+/// they were saved. Wrong keys are never stored.
+pub fn login<C: HttpClient>(
+    store: &Store,
+    client: &mut C,
+    access: String,
+    secret: String,
+) -> Result<(String, Source)> {
+    let credentials = Credentials::new(access, secret)?;
+    let user = session_user(client, &credentials)?;
+    let source = store.save(&credentials)?;
+    Ok((user, source))
 }
 
 pub struct FetchReport {

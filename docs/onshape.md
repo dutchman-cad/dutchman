@@ -75,7 +75,7 @@ estimates. Bodydetails indices may be a JSON array of rollback integers (or
 ## Fetching a document
 
 `dutchman onshape fetch <document-url> [--out FILE] [--version VERSION_ID]`
-uses your own Onshape API keys to fetch an offline `.onshape-bundle`. The MCP
+uses the Onshape API keys you saved (see below) to fetch an offline `.onshape-bundle`. The MCP
 `onshape_fetch` tool takes `document_url`, optional `out`, `version`, and `max_calls`.
 This fetcher saves raw API responses; it does not decode or convert CAD geometry.
 
@@ -86,23 +86,36 @@ or version. Query parameters and fragments are not supported yet; one default
 configuration is fetched. The default output is `<element-id>.onshape-bundle` in
 the current folder. An existing output is replaced only after a successful fetch.
 
-### Keys
+### Connect your Onshape account
 
-Create your own API keys with read access in Onshape's developer portal. Set both
-`ONSHAPE_ACCESS_KEY` and `ONSHAPE_SECRET_KEY` in your local environment. Do not paste
-keys into chat, URLs, command arguments, shell history, logs, or issue reports.
-Dutchman signs each request with Onshape's HMAC-SHA256 API-key scheme.
+In the Dutchman app, choose **Connect Onshape**. Create API keys in Onshape under
+My account > Developer > API keys (read access is enough), paste the access key and
+the secret key (the secret is masked), and choose **Test connection**, then **Save**.
+**Disconnect** forgets them. Below the keys, paste a link to one of your Part Studios
+and choose **Open from Onshape** to fetch it and convert it to a `.sc` in one step.
 
-Alternatively, on Unix create `~/.config/dutchman/onshape.json` locally:
+From the command line:
 
-```json
-{"access_key":"YOUR_ACCESS_KEY","secret_key":"YOUR_SECRET_KEY"}
+```sh
+dutchman onshape login     # asks for both keys (the secret is not shown), tests them, saves them
+dutchman onshape status    # connected as <your name>, or not connected; never shows keys
+dutchman onshape logout    # forgets the saved keys
 ```
 
-Set its permissions with `chmod 600 ~/.config/dutchman/onshape.json`. Dutchman
-refuses other modes, symlinks, and oversized files. Both environment variables,
-when set, take precedence over the file; setting only one is an error. On Windows,
-use environment variables because Unix mode 600 cannot be verified.
+Keys are kept in your system's credential store: Windows Credential Manager, the macOS
+Keychain, or the Linux Secret Service (GNOME Keyring, KWallet). Where there is none, such as a
+headless Linux machine, Dutchman keeps them in a private file it creates itself
+(`~/.config/dutchman/onshape.json`, readable only by you). You never create or protect
+that file. `fetch` and the MCP `onshape_fetch` tool use whatever you saved. Without saved
+keys they say to run `dutchman onshape login` or use Connect Onshape.
+
+For scripts and CI, set both `ONSHAPE_ACCESS_KEY` and `ONSHAPE_SECRET_KEY`. They take
+precedence over saved keys; setting only one is an error. The lookup order is environment
+variables, then the credential store, then the private file.
+
+Do not paste keys into chat, URLs, command arguments, shell history, logs, or issue
+reports. Dutchman signs each request with Onshape's HMAC-SHA256 API-key scheme, and never
+prints, logs, caches or bundles the keys.
 
 ### What is retained
 

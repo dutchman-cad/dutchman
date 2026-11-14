@@ -4,6 +4,7 @@
 
 pub mod app;
 mod doctor;
+mod onshape;
 pub mod platform;
 pub mod report_consent;
 pub mod report_policy;
