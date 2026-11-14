@@ -1239,3 +1239,9 @@ fn pasted_keys_lose_surrounding_spaces_quotes_and_line_breaks() {
         "the key must never appear: {message}"
     );
 }
+
+#[test]
+fn a_current_access_key_with_its_on_prefix_is_accepted_and_signs() {
+    let keys = Credentials::new("on_AbC123xyz".to_owned(), "s3cr3t/+=".to_owned());
+    assert!(keys.is_ok(), "{:?}", keys.err().map(|e| e.to_string()));
+}

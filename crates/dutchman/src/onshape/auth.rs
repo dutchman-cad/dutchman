@@ -29,8 +29,10 @@ impl Credentials {
         if access.len() > 4096 || secret.len() > 4096 {
             return refuse("An Onshape API key is longer than any real key; check that only the key was pasted.");
         }
-        if !access.bytes().all(|b| b.is_ascii_alphanumeric()) {
-            return refuse("The Onshape access key contains a character other than letters and digits; check for a space, quote or line break inside it.");
+        // Current access keys carry a prefix such as `on_`: any printable character but a space is
+        // allowed, as for the secret.
+        if !access.bytes().all(|b| b.is_ascii_graphic()) {
+            return refuse("The Onshape access key contains a space, tab or line break inside it; paste it again on one line.");
         }
         if !secret.bytes().all(|b| b.is_ascii_graphic()) {
             return refuse("The Onshape secret key contains a space, tab or line break inside it; paste it again on one line.");
