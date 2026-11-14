@@ -110,7 +110,8 @@ is a hole) and writes a sketch of them on that plane, ahead of the extrude, taki
 profile. The extrude runs along the face's outward normal, which only the body knows: after
 SolidCraft has replayed the history before the extrude, Dutchman finds the face among the
 rebuilt faces (same plane, same area, every boundary edge on it and named for it) and mirrors the
-sketch if it was written on the inner side. A face it cannot find exactly once, an edge that is
+sketch if it was written on the inner side; fillets and chamfers after a mirrored sketch are then
+proven on a fresh replay that has the extrude on its outward side. A face it cannot find exactly once, an edge that is
 not a line or circular arc, a boundary that does not close or is not flat, an input topology
 without edge geometry for the face, a direction of its own, and ends to or from an object
 leave the extrude unmapped with the reason. Faces that share an edge are refused. Without a
