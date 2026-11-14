@@ -641,7 +641,8 @@ keeps each distinct location once. Replay differences still flatten the history 
 why; body-seeded composite mirrors and unresolved planes remain unsupported.
 
 Body mirror patterns and join/cut/intersect body combines (optionally keeping the tool
-bodies) can keep editable history; their bodies must be named by earlier mapped features.
+bodies) can keep editable history; their bodies must be named by earlier mapped features,
+whether cadmpeg lists them alone or keeps a native reference for each one.
 Shells and drafts are refused, since their faces are known only on the final body, where
 the feature has already removed or tilted them; they wait on input face geometry.
 Replacing a source shape with its mirror is not supported yet: SolidCraft's mirror keeps

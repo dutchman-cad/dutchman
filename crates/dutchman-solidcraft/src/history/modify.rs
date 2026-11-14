@@ -9,22 +9,30 @@ use serde_json::{json, Value};
 use super::sketch::{cross, dot, unit, v3};
 use super::{name, Context};
 
-/// Only resolved operands have identities in the model's arenas.
-fn members<'a>(selection: &'a Value, kind: &str) -> Result<&'a [Value], String> {
-    let values = match selection.get("kind").and_then(Value::as_str) {
-        Some(found) if found == kind => selection.get("value"),
-        Some("resolved") => selection.get("value").and_then(|v| v.get(kind)),
+/// Only resolved operands have identities in the model's arenas: plain body lists, resolved
+/// bodies with one native expression, and resolved rows that each keep their native member.
+fn members(selection: &Value) -> Result<Vec<&Value>, String> {
+    let value = selection.get("value");
+    let rows = match selection.get("kind").and_then(Value::as_str) {
+        Some("bodies") => value
+            .and_then(Value::as_array)
+            .map(|rows| rows.iter().collect()),
+        Some("resolved") => value
+            .and_then(|v| v.get("bodies"))
+            .and_then(Value::as_array)
+            .map(|rows| rows.iter().collect()),
+        Some("resolved_set") => value
+            .and_then(|v| v.get("members"))
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.iter().map(|row| row.get("body")).collect()),
         found => return Err(super::unsupported_selection("body", found)),
     };
-    values
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .ok_or_else(|| format!("its {kind} are not resolved"))
+    rows.ok_or_else(|| "its bodies are not resolved".to_owned())
 }
 
 pub(super) fn body_names(selection: &Value, ctx: &Context) -> Result<Vec<String>, String> {
     let mut names = Vec::new();
-    for value in members(selection, "bodies")? {
+    for value in members(selection)? {
         let id = value.as_str().ok_or("its body reference is malformed")?;
         let (_, name) = ctx
             .named_bodies
