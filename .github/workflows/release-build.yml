@@ -7,6 +7,9 @@ name: Release builds
 # installed, upgraded (to a newer and to the same version), refused a downgrade, installed as a
 # standard user and uninstalled on Windows, and the release-mode updater tests run there.
 #
+# On Linux each build also makes an AppImage, dutchman-<version>-<arch>.AppImage, that starts the
+# desktop app and holds the command line programs, with the .zsync that delta updates read.
+#
 # A release candidate is a tag `vX.Y.Z-rc.N` on the commit that may become the release. Pushing
 # it runs this workflow, and that is the only build the release gets: pushing the release tag
 # `vX.Y.Z` on the same commit makes release.yml download these files, check them and draft the
@@ -122,7 +125,7 @@ jobs:
           # image are built from) and every workflow. Cargo.toml is checked below.
           packaging='^(\.github/workflows/|Dockerfile$|docker/|compose\.yaml$'
           packaging+='|scripts/[^/]*msi[^/]*$|scripts/package[^/]*$|scripts/macos-dmg\.sh$|scripts/archive-readme\.py$|scripts/downloads\.py$'
-          packaging+='|assets/(install|dmg|windows)/|skills/'
+          packaging+='|packaging/linux/|assets/(install|dmg|windows)/|skills/'
           packaging+='|crates/dutchman-gui/assets/(Dutchman\.icns|dutchman-app-icon\.svg)$|crates/dutchman-gui/examples/ico\.rs$'
           packaging+='|crates/dutchman-gui/src/(update\.rs|update/))'
           # A Markdown text change under assets/install/ or skills/ (the installed agent guide, the skill) is copied
@@ -173,7 +176,7 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates curl git build-essential \
-            pkg-config python3 libx11-dev libxi-dev libxcursor-dev libxrandr-dev \
+            pkg-config python3 squashfs-tools zsync libx11-dev libxi-dev libxcursor-dev libxrandr-dev \
             libxkbcommon-dev libwayland-dev libgl1-mesa-dev
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -194,6 +197,12 @@ jobs:
             | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "dutchman"))')
           archive=$(scripts/package-archive.sh ${{ matrix.target }} "dutchman-${version}-${{ matrix.target }}" "v$version")
           echo "ARCHIVE=$archive" >> "$GITHUB_ENV"
+      - name: Package the AppImage
+        if: runner.os == 'Linux'
+        run: |
+          version=$(cargo metadata --format-version 1 --no-deps \
+            | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "dutchman"))')
+          scripts/package-appimage.sh ${{ matrix.target }} "$version"
       - uses: actions/setup-dotnet@v6
         if: runner.os == 'Windows'
         with:
@@ -247,6 +256,10 @@ jobs:
             dist/${{ env.ARCHIVE }}.sha256
             dist/*.msi
             dist/*.msi.sha256
+            dist/*.AppImage
+            dist/*.AppImage.sha256
+            dist/*.AppImage.zsync
+            dist/*.AppImage.zsync.sha256
           retention-days: 30
 
   # Each Mac target gets an Apple silicon runner; Intel stays cross-compiled.

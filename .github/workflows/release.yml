@@ -152,6 +152,10 @@ jobs:
           expected=(
             "dutchman-$VERSION-x86_64-unknown-linux-gnu.tar.gz"
             "dutchman-$VERSION-aarch64-unknown-linux-gnu.tar.gz"
+            "dutchman-$VERSION-x86_64.AppImage"
+            "dutchman-$VERSION-x86_64.AppImage.zsync"
+            "dutchman-$VERSION-aarch64.AppImage"
+            "dutchman-$VERSION-aarch64.AppImage.zsync"
             "dutchman-$VERSION-x86_64-pc-windows-msvc.zip"
             "dutchman-$VERSION-x86_64-pc-windows-msvc.msi"
             "dutchman-$VERSION-aarch64-apple-darwin.tar.gz"
