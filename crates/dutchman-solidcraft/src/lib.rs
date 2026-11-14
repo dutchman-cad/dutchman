@@ -287,11 +287,8 @@ impl SolidCraftWriter {
     /// with, when it has no geometry SolidCraft can import (for an assembly, when none of its
     /// parts has). Plans the STEP restatement without writing anything.
     pub fn convertible(&self, model: &Model) -> Result<(), String> {
-        fn any_part(assembly: &dutchman_core::Assembly) -> bool {
-            assembly.parts.iter().any(|part| match &part.assembly {
-                Some(sub) => any_part(sub),
-                None => step::restatable(part).is_ok(),
-            })
+        if let Some(flat) = flattened_assembly(model) {
+            return self.convertible(&flat);
         }
         match &model.assembly {
             Some(assembly) if any_part(assembly) || assembly.placements.is_empty() => Ok(()),
@@ -311,6 +308,10 @@ impl SolidCraftWriter {
     /// What writing `model` would do, without restating its geometry, writing anything or
     /// replaying geometry in SolidCraft: the history's mapping, as `dutchman inspect` shows it.
     pub fn plan(&self, model: &Model, report: &mut Report) -> Outcome {
+        if let Some(flat) = flattened_assembly(model) {
+            report.push(Severity::Degraded, GEOMETRY, FLATTENED_ASSEMBLY);
+            return self.plan(&flat, report);
+        }
         if empty_assembly(model) {
             return empty_outcome();
         }
@@ -992,6 +993,34 @@ fn parameters_only(model: &Model) -> bool {
         && matches!(step::restatable(model), Err(Error::NoGeometry(_)))
 }
 
+/// Whether any part `assembly` places, at any depth, has geometry SolidCraft can import.
+fn any_part(assembly: &dutchman_core::Assembly) -> bool {
+    assembly.parts.iter().any(|part| match &part.assembly {
+        Some(sub) => any_part(sub),
+        None => step::restatable(part).is_ok(),
+    })
+}
+
+/// What the report says when an assembly is written as one part by [`flattened_assembly`].
+const FLATTENED_ASSEMBLY: &str = "the assembly's placed parts hold no geometry SolidCraft can \
+    import, so the design's own bodies are written as one part without component placements";
+
+/// `model` without its assembly, when the assembly places parts but none of them has geometry
+/// SolidCraft can import while the design's own bodies do: those bodies are then written as
+/// one part instead of failing the conversion.
+fn flattened_assembly(model: &Model) -> Option<Model> {
+    let assembly = model.assembly.as_ref()?;
+    if assembly.placements.is_empty() || model.ir.model.bodies.is_empty() || any_part(assembly) {
+        return None;
+    }
+    // Restating reads only the design's own geometry, never its assembly.
+    step::restatable(model).ok()?;
+    Some(Model {
+        assembly: None,
+        ..model.clone()
+    })
+}
+
 /// Whether `model` is an assembly that places no parts, written as an empty design.
 fn empty_assembly(model: &Model) -> bool {
     model
@@ -1157,6 +1186,10 @@ impl Writer for SolidCraftWriter {
         #[cfg(all(debug_assertions, not(target_family = "wasm")))]
         if model.assembly.is_none() {
             slow_part(&model.name);
+        }
+        if let Some(flat) = flattened_assembly(model) {
+            report.push(Severity::Degraded, GEOMETRY, FLATTENED_ASSEMBLY);
+            return self.write_with_progress(&flat, out, report, progress);
         }
         report.set_threads(self.threads, 1);
         if empty_assembly(model) {
