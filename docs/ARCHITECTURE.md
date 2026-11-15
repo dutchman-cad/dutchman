@@ -301,7 +301,8 @@ metric thread label (`M6x1`, the pitch from the designation, the source, or the 
 series), and the thread's hand, class, and length are reported as Degraded, not mapped;
 entry recesses combined with drill points, exit treatments, taper, and modeled threads are not mapped;
 patterns of earlier features or named bodies, linear in one or
-two directions, circular over a partial span or all the way round, or at fixed spacing along
+two directions (a symmetric direction, with instances on both sides of the original, becomes a
+centred SolidCraft direction), circular over a partial span or all the way round, or at fixed spacing along
 planar sketch curves; regular explicit offsets and angles, and pairs of linear composite
 stages; ordered chains of feature-pattern stages containing mirrors (target SolidCraft
 0.25 patch 1 or newer), each repeating the previous instance set (at most 32 stages), with at most
