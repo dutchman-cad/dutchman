@@ -464,6 +464,42 @@ pub(super) fn operation(op: Option<&Value>) -> Result<&'static str, String> {
     }
 }
 
+/// The name of the one body a new-body extrude makes when the final model leaves it out
+/// and cadmpeg lists it in the extrude's result state, so a later feature can select it.
+fn generated_body_name(feature: &Value, ctx: &mut Context) -> Option<Vec<String>> {
+    let id = feature.get("id").and_then(Value::as_str)?;
+    let states: Vec<&Value> = ctx
+        .model
+        .get("feature_result_topologies")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter(|state| state.get("output_of").and_then(Value::as_str) == Some(id))
+        .collect();
+    let [state] = states.as_slice() else {
+        return None;
+    };
+    let bodies: Vec<&str> = state
+        .get("members")
+        .and_then(Value::as_array)?
+        .iter()
+        .filter(|member| member.get("kind").and_then(Value::as_str) == Some("body"))
+        .filter_map(|member| member.get("id").and_then(Value::as_str))
+        .collect();
+    let [local] = bodies.as_slice() else {
+        return None;
+    };
+    let taken = |name: &str| {
+        ctx.named_bodies.iter().any(|(_, known)| known == name)
+            || ctx.generated_bodies.iter().any(|(_, known)| known == name)
+    };
+    let name = (1..)
+        .map(|next| format!("Body {next}"))
+        .find(|candidate| !taken(candidate))?;
+    ctx.generated_bodies
+        .push(((id.to_owned(), (*local).to_owned()), name.clone()));
+    Some(vec![name])
+}
+
 /// The names of the bodies a new-body extrude makes. A body the source leaves unnamed gets
 /// "Body N", the first number not yet taken, so later features can still target it.
 ///
@@ -477,10 +513,11 @@ pub(super) fn body_names(
     if operation != "new_body" {
         return None;
     }
-    let outputs = feature.get("outputs").and_then(Value::as_array)?;
-    if outputs.is_empty() {
-        return None;
+    let outputs = feature.get("outputs").and_then(Value::as_array);
+    if outputs.is_none_or(Vec::is_empty) {
+        return generated_body_name(feature, ctx);
     }
+    let outputs = outputs?;
     let rows: Vec<&Value> = outputs
         .iter()
         .map(|id| ctx.row("bodies", id.as_str()?))

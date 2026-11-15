@@ -620,6 +620,9 @@ struct Context<'a> {
     pattern_replay_required: bool,
     /// The source bodies the history makes under their own names: (CADIR body id, name).
     named_bodies: Vec<(String, String)>,
+    /// Bodies an earlier feature makes that the final model leaves out, under their names:
+    /// ((CADIR producing feature id, feature-local body id), name).
+    generated_bodies: Vec<((String, String), String)>,
     default_bodies: BTreeMap<String, String>,
     /// Region of each explicitly named imported shape.
     imported_regions: BTreeMap<String, String>,
@@ -682,6 +685,7 @@ impl<'a> Context<'a> {
             pattern_features: BTreeMap::new(),
             pattern_replay_required: false,
             named_bodies: Vec::new(),
+            generated_bodies: Vec::new(),
             default_bodies: BTreeMap::new(),
             imported_regions: BTreeMap::new(),
             unwritten_bodies: BTreeSet::new(),
@@ -1906,6 +1910,7 @@ fn map_feature(
         Some("draft") => Err("draft waits on input face geometry".to_owned()),
         Some("combine") => modify::combine(feature, definition, ctx).map(Mapped::Feature),
         Some("split_body") => modify::split(feature, definition, ctx).map(Mapped::Feature),
+        Some("delete_body") => modify::remove(feature, definition, ctx).map(Mapped::Feature),
         Some("mirror_shape") => Err(
             "replacing a source shape with its mirror is not supported yet; SolidCraft mirrors keep the original body".to_owned(),
         ),
@@ -2475,6 +2480,53 @@ mod tests {
         .result
         .unwrap_err();
         assert_eq!(err, "no feature in the history builds geometry");
+    }
+
+    #[test]
+    fn a_body_the_final_model_omits_is_named_mirrored_and_removed() {
+        let model = json!({"features": [], "feature_result_topologies": [
+            {"id": "r", "output_of": "f:extrude", "members": [{"kind": "body", "id": "1"}]}]});
+        let mut ctx = Context::new(&model);
+        let extrude = json!({"id": "f:extrude", "name": "Extrude 1"});
+        assert_eq!(
+            extrude::body_names(&extrude, &mut ctx, "new_body"),
+            Some(vec!["Body 1".to_owned()])
+        );
+        let generated = json!({"kind": "generated", "value": {
+            "bodies": [{"feature": "f:extrude", "local_id": "1"}], "native": "n"}});
+        let mut features = Vec::new();
+        let mirror = json!({"id": "f:mirror", "ordinal": 3, "name": "Mirror 1",
+            "definition": {"kind": "operation", "value": {"kind": "pattern", "value": {
+                "seeds": [{"kind": "bodies", "value": generated}],
+                "pattern": {"kind": "mirror", "plane_origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+                    "plane_normal": {"x": 1.0, "y": 0.0, "z": 0.0}}}}}});
+        let Ok(Mapped::Feature(mapped)) =
+            map_feature(&mirror, &mut ctx, &mut Report::default(), &mut features)
+        else {
+            panic!("the mirror maps");
+        };
+        assert_eq!(mapped["bodies"], json!(["Body 1"]));
+        let remove = json!({"id": "f:remove", "ordinal": 4, "name": "Remove 1",
+            "definition": {"kind": "operation", "value": {"kind": "delete_body", "value": {
+                "bodies": generated, "mode": "delete_selected"}}}});
+        let Ok(Mapped::Feature(mapped)) =
+            map_feature(&remove, &mut ctx, &mut Report::default(), &mut features)
+        else {
+            panic!("the removal maps");
+        };
+        assert_eq!(mapped["type"], "remove");
+        assert_eq!(mapped["bodies"], json!(["Body 1"]));
+        assert_eq!(
+            map_feature(&remove, &mut ctx, &mut Report::default(), &mut features).err(),
+            Some("it selects a body made by an earlier feature that did not name it".to_owned())
+        );
+        let keep = json!({"id": "f:keep", "ordinal": 5, "name": "Keep 1",
+            "definition": {"kind": "operation", "value": {"kind": "delete_body", "value": {
+                "bodies": generated, "mode": "keep_selected"}}}});
+        assert_eq!(
+            map_feature(&keep, &mut ctx, &mut Report::default(), &mut features).err(),
+            Some("removing every body except the selected ones is not supported yet".to_owned())
+        );
     }
 
     #[test]

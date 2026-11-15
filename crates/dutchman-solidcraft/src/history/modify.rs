@@ -1,8 +1,8 @@
-//! Body mirror, boolean and split operations.
+//! Body mirror, boolean, split and removal operations.
 //!
-//! Both act on whole bodies named by earlier mapped features, never on faces of the final
-//! body, which a later feature may already have removed or moved. Native and generated body
-//! selections are refused.
+//! They act on whole bodies named by earlier mapped features, never on faces of the final
+//! body, which a later feature may already have removed or moved. A generated body selection
+//! names a body by the feature that made it; native selections are refused.
 
 use serde_json::{json, Value};
 
@@ -31,6 +31,9 @@ fn members(selection: &Value) -> Result<Vec<&Value>, String> {
 }
 
 pub(super) fn body_names(selection: &Value, ctx: &Context) -> Result<Vec<String>, String> {
+    if selection.get("kind").and_then(Value::as_str) == Some("generated") {
+        return generated_names(selection, ctx);
+    }
     let mut names = Vec::new();
     for value in members(selection)? {
         let id = value.as_str().ok_or("its body reference is malformed")?;
@@ -52,6 +55,57 @@ pub(super) fn body_names(selection: &Value, ctx: &Context) -> Result<Vec<String>
         return Err("it selects no bodies".to_owned());
     }
     Ok(names)
+}
+
+/// Bodies an earlier feature makes, named when that feature was mapped.
+fn generated_names(selection: &Value, ctx: &Context) -> Result<Vec<String>, String> {
+    let refs = selection
+        .pointer("/value/bodies")
+        .and_then(Value::as_array)
+        .filter(|refs| !refs.is_empty())
+        .ok_or("its generated body selection is malformed")?;
+    let mut names: Vec<String> = Vec::new();
+    for body in refs {
+        let (Some(feature), Some(local)) = (
+            body.get("feature").and_then(Value::as_str),
+            body.get("local_id").and_then(Value::as_str),
+        ) else {
+            return Err("its generated body reference is malformed".to_owned());
+        };
+        let (_, name) = ctx
+            .generated_bodies
+            .iter()
+            .find(|((known, id), _)| known == feature && id == local)
+            .ok_or("it selects a body made by an earlier feature that did not name it")?;
+        if names.contains(name) {
+            return Err("it selects one body twice".to_owned());
+        }
+        names.push(name.clone());
+    }
+    Ok(names)
+}
+
+/// A removal of selected bodies from the model.
+pub(super) fn remove(
+    source: &Value,
+    definition: &Value,
+    ctx: &mut Context,
+) -> Result<Value, String> {
+    match definition.get("mode").and_then(Value::as_str) {
+        Some("delete_selected") => {}
+        Some("keep_selected") => {
+            return Err(
+                "removing every body except the selected ones is not supported yet".to_owned(),
+            )
+        }
+        _ => return Err("its removal mode is not resolved".to_owned()),
+    }
+    let bodies = body_names(definition.get("bodies").unwrap_or(&Value::Null), ctx)?;
+    let out = feature(source, ctx, "remove", json!({"bodies": bodies}));
+    ctx.named_bodies.retain(|(_, name)| !bodies.contains(name));
+    ctx.generated_bodies
+        .retain(|(_, name)| !bodies.contains(name));
+    Ok(out)
 }
 
 fn feature(source: &Value, ctx: &mut Context, kind: &str, fields: Value) -> Value {
