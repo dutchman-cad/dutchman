@@ -12252,11 +12252,6 @@ fn multibody_blends_keep_unsupported_dimensions_refused() {
             json!({"kind": "unresolved"}),
             "other than constant-radius",
         ),
-        (
-            "chamfer",
-            json!({"kind": "two_distances", "first": 1.0, "second": 2.0}),
-            "input reference face ordering",
-        ),
     ] {
         let (_, report) = convert(
             &multibody_blend(kind, dimension),
@@ -12593,7 +12588,7 @@ fn blends_refuse_missing_foreign_or_ambiguous_input_geometry() {
 }
 
 #[test]
-fn blends_refuse_unsupported_dimensions_and_unordered_reference_faces() {
+fn blends_refuse_unsupported_dimensions() {
     for (kind, dimension, reason) in [
         (
             "fillet",
@@ -12606,22 +12601,287 @@ fn blends_refuse_unsupported_dimensions_and_unordered_reference_faces() {
             json!({"kind": "asymmetric", "offset_one": 1.0, "offset_two": 2.0}),
             "other than constant-radius",
         ),
-        (
-            "chamfer",
-            json!({"kind": "two_distances", "first": 1.0, "second": 2.0}),
-            "input reference face ordering",
-        ),
-        (
-            "chamfer",
-            json!({"kind": "distance_angle", "distance": 1.0, "angle": 0.6}),
-            "input reference face ordering",
-        ),
     ] {
         let (_, report) = convert(
             &input_blend(kind, dimension, false),
             &SolidCraftWriter::new().verification(Verification::Off),
         );
         assert!(history_line(&report).contains(reason), "{report:?}");
+    }
+}
+
+/// A prism face: its name, outward normal, a point on it, and its ring of (edge, forward) uses.
+type PrismFace = (String, [f64; 3], [f64; 3], Vec<(String, bool)>);
+
+/// `base` with its source body replaced by the prism of the polygon `ring` (counter-clockwise
+/// on the local UV plane) from W = `z0` to `z1`: planar faces, straight edges, each edge used
+/// once each way. `place` turns local (U, V, W) into model coordinates and must be a rotation.
+fn with_prism_body(
+    base: Model,
+    ring: &[[f64; 2]],
+    z0: f64,
+    z1: f64,
+    place: fn([f64; 3]) -> [f64; 3],
+) -> Model {
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let shell = wire["geometry"]["shells"][0]["id"].clone();
+    let n = ring.len();
+    let id = |kind: &str, key: String| json!(format!("synthetic:prism:{kind}#{key}"));
+    let corner = |i: usize, top: bool| {
+        let [x, y] = ring[i % n];
+        [x, y, if top { z1 } else { z0 }]
+    };
+    let vertex = |i: usize, top: bool| {
+        id(
+            "vertex",
+            format!("{}{}", i % n, if top { "t" } else { "b" }),
+        )
+    };
+    let p3 = |p: [f64; 3]| {
+        let p = place(p);
+        json!({"x": p[0], "y": p[1], "z": p[2]})
+    };
+    let (mut points, mut vertices, mut curves, mut edges) = (vec![], vec![], vec![], vec![]);
+    for i in 0..n {
+        for top in [false, true] {
+            let key = format!("{i}{}", if top { "t" } else { "b" });
+            points.push(json!({"id": id("point", key.clone()), "position": p3(corner(i, top))}));
+            vertices.push(json!({"id": vertex(i, top), "point": id("point", key)}));
+        }
+    }
+    // Bottom edge `b<i>` and top edge `t<i>` run from corner i to i + 1, side edge `v<i>` up.
+    let mut edge = |key: String, from: (usize, bool), to: (usize, bool)| {
+        let (a, b) = (corner(from.0, from.1), corner(to.0, to.1));
+        let d = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let length = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+        curves.push(
+            json!({"id": id("curve", key.clone()), "geometry": {"kind": "solved", "value": {
+            "kind": "line", "origin": p3(a), "direction": p3(d.map(|c| c / length))}}}),
+        );
+        edges.push(json!({"id": id("edge", key.clone()),
+            "carrier": {"curve": id("curve", key), "param_range": [0.0, length]},
+            "ends": {"start": vertex(from.0, from.1), "end": vertex(to.0, to.1)}}));
+    };
+    for i in 0..n {
+        edge(format!("b{i}"), (i, false), (i + 1, false));
+        edge(format!("t{i}"), (i, true), (i + 1, true));
+        edge(format!("v{i}"), (i, false), (i, true));
+    }
+    // Each face's ring runs counter-clockwise about its outward normal.
+    let mut faces: Vec<PrismFace> = vec![
+        (
+            "bottom".to_owned(),
+            [0.0, 0.0, -1.0],
+            corner(0, false),
+            (0..n).rev().map(|i| (format!("b{i}"), false)).collect(),
+        ),
+        (
+            "top".to_owned(),
+            [0.0, 0.0, 1.0],
+            corner(0, true),
+            (0..n).map(|i| (format!("t{i}"), true)).collect(),
+        ),
+    ];
+    for i in 0..n {
+        let (a, b) = (ring[i], ring[(i + 1) % n]);
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let length = (dx * dx + dy * dy).sqrt();
+        faces.push((
+            format!("side{i}"),
+            [dy / length, -dx / length, 0.0],
+            corner(i, false),
+            vec![
+                (format!("b{i}"), true),
+                (format!("v{}", (i + 1) % n), true),
+                (format!("t{i}"), false),
+                (format!("v{i}"), false),
+            ],
+        ));
+    }
+    let (mut surfaces, mut loops, mut coedges, mut face_rows) = (vec![], vec![], vec![], vec![]);
+    let mut uses: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+    for (name, normal, origin, ring) in &faces {
+        let u_axis = if normal[2].abs() > 0.5 {
+            [1.0, 0.0, 0.0]
+        } else {
+            [0.0, 0.0, 1.0]
+        };
+        surfaces.push(
+            json!({"id": id("surface", name.clone()), "geometry": {"kind": "solved", "value": {
+            "kind": "plane", "origin": p3(*origin), "normal": p3(*normal), "u_axis": p3(u_axis)}}}),
+        );
+        let ids: Vec<String> = (0..ring.len())
+            .map(|k| format!("synthetic:prism:coedge#{name}{k}"))
+            .collect();
+        for ((edge, forward), coedge) in ring.iter().zip(&ids) {
+            uses.entry(edge.clone()).or_default().push(coedge.clone());
+            coedges.push(json!({"id": coedge, "owner_loop": id("loop", name.clone()), "edge": id("edge", edge.clone()),
+                "radial_next": coedge, "sense": if *forward { "forward" } else { "reversed" }, "pcurves": []}));
+        }
+        loops.push(
+            json!({"id": id("loop", name.clone()), "face": id("face", name.clone()),
+            "boundary": {"kind": "ring", "coedges": ids, "vertex_uses": []}}),
+        );
+        face_rows.push(json!({"id": id("face", name.clone()), "shell": shell, "surface": id("surface", name.clone()),
+            "sense": "forward", "loops": {"kind": "unspecified", "loops": [id("loop", name.clone())]}}));
+    }
+    for coedge in &mut coedges {
+        let edge = coedge["edge"]
+            .as_str()
+            .unwrap()
+            .trim_start_matches("synthetic:prism:edge#")
+            .to_owned();
+        let pair = &uses[&edge];
+        assert_eq!(pair.len(), 2);
+        let own = coedge["id"].as_str().unwrap().to_owned();
+        coedge["radial_next"] = json!(pair.iter().find(|other| **other != own).unwrap());
+    }
+    let geometry = &mut wire["geometry"];
+    for (arena, rows) in [
+        ("points", points),
+        ("vertices", vertices),
+        ("curves", curves),
+        ("edges", edges),
+        ("surfaces", surfaces),
+        ("loops", loops),
+        ("coedges", coedges),
+        ("faces", face_rows),
+    ] {
+        geometry[arena] = Value::from(rows);
+    }
+    let mut ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    ir.finalize();
+    Model { ir, ..base }
+}
+
+/// The example cube with the chamfer `spec` on its top front edge, from (0, 0, 10) to
+/// (10, 0, 10) between the front face (Y = 0) and the top face (Z = 10), selected by its own
+/// input geometry. With `cut`, the source body shows the chamfer: the setbacks `(on_top,
+/// on_front)` taken off the top and the front face. Without, it stays the uncut cube.
+fn chamfered_cube(spec: Value, cut: Option<(f64, f64)>) -> Model {
+    let base = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let group = json!({"spec": spec, "edges": {"kind": "historical", "value": {
+        "state": "f3d:model:feature-input-topology#1", "edges": ["top-front"],
+        "native": "synthetic input edge"}}});
+    wire["model"]["features"].as_array_mut().unwrap().push(json!({"id": "f3d:model:feature#3", "ordinal": 2, "name": "Edge treatment", "suppressed": false, "dependencies": ["f3d:model:feature#2"], "outputs": ["synthetic:cube:body#0"], "definition": {"kind": "operation", "value": {"kind": "chamfer", "value": {"groups": [group], "flip_direction": false}}}, "source_properties": {}, "source_content": []}));
+    let sample = json!({"edge": "top-front", "interior": {"x": 5.0, "y": 0.0, "z": 10.0},
+        "tangent": {"x": 1.0, "y": 0.0, "z": 0.0},
+        "start": {"x": 0.0, "y": 0.0, "z": 10.0}, "end": {"x": 10.0, "y": 0.0, "z": 10.0},
+        "faces": ["front", "top"]});
+    wire["model"]["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#3", "edges": ["top-front"], "faces": ["front", "top"], "edge_geometry": [sample], "bodies": [], "vertices": []}]);
+    let model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    };
+    let Some((on_top, on_front)) = cut else {
+        return model;
+    };
+    // The cross-section on the side face (X = 0), counter-clockwise in (Y, Z), run along X.
+    let ring = [
+        [0.0, 0.0],
+        [10.0, 0.0],
+        [10.0, 10.0],
+        [on_top, 10.0],
+        [0.0, 10.0 - on_front],
+    ];
+    with_prism_body(model, &ring, 0.0, 10.0, |[u, v, w]| [w, u, v])
+}
+
+/// Unequal chamfers, with the setbacks `(on_top, on_front)` each one cuts when its distance
+/// runs along the front face, and when it runs along the top face.
+fn asymmetric_chamfers() -> Vec<(Value, (f64, f64))> {
+    let tan30 = std::f64::consts::FRAC_PI_6.tan();
+    let angle =
+        json!({"kind": "distance_angle", "distance": 1.0, "angle": std::f64::consts::FRAC_PI_6});
+    let distances = json!({"kind": "two_distances", "first": 1.0, "second": 3.0});
+    vec![
+        (angle.clone(), (tan30, 1.0)),
+        (angle, (1.0, tan30)),
+        (distances.clone(), (3.0, 1.0)),
+        (distances, (1.0, 3.0)),
+    ]
+}
+
+/// SolidCraft cuts an unequal chamfer on the face the source body shows it on: the history
+/// rebuilds and verifies, and the corner taken off sits where the source has it, which the
+/// centre of mass tells apart from the same chamfer the other way round.
+#[test]
+fn solidcraft_cuts_unequal_chamfers_on_the_faces_the_source_shows() {
+    let Some(cli) = solidcraft() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    for (spec, (on_top, on_front)) in asymmetric_chamfers() {
+        let model = chamfered_cube(spec.clone(), Some((on_top, on_front)));
+        let writer = SolidCraftWriter::new()
+            .verification(Verification::With(cli.clone()))
+            .replay(Verification::With(cli.clone()));
+        let (bytes, report) = written_with(&model, &writer);
+        assert_eq!(
+            history_line(&report),
+            "3 of 3 features rebuilt; verified against the original in SolidCraft",
+            "{spec} cut ({on_top}, {on_front})"
+        );
+        let path = dir.path().join("chamfered.sc");
+        std::fs::write(&path, bytes).unwrap();
+        let (document, _) = convert(&model, &writer);
+        let chamfer = &document["features"][2];
+        assert_eq!(chamfer["type"], "chamfer");
+        assert_eq!(chamfer["distance"], "1 mm");
+        if spec["kind"] == "two_distances" {
+            assert_eq!(chamfer["distance2"], "3 mm");
+            assert!(chamfer.get("angle").is_none());
+        } else {
+            let degrees: f64 = chamfer["angle"]
+                .as_str()
+                .unwrap()
+                .trim_end_matches(" deg")
+                .parse()
+                .unwrap();
+            assert!((degrees - 30.0).abs() < 1e-9, "{chamfer}");
+            assert!(chamfer.get("distance2").is_none());
+        }
+        let body = blend_measurement(&cli, &path, &dir.path().join("chamfered.json"));
+        let cut = on_top * on_front / 2.0 * 10.0;
+        let volume = 1000.0 - cut;
+        assert!(
+            (body["volume_mm3"].as_f64().unwrap() - volume).abs() < 1e-6,
+            "{body}"
+        );
+        let center = [
+            5.0,
+            (5000.0 - cut * on_top / 3.0) / volume,
+            (5000.0 - cut * (10.0 - on_front / 3.0)) / volume,
+        ];
+        for (axis, wanted) in center.iter().enumerate() {
+            let found = body["center_of_mass"][axis].as_f64().unwrap();
+            assert!(
+                (found - wanted).abs() < 1e-6,
+                "{spec} cut ({on_top}, {on_front}): {body}"
+            );
+        }
+    }
+}
+
+/// Which face takes an unequal chamfer's distance is proven from the source body and from
+/// SolidCraft's own cut; without either, the chamfer is refused, saying which is missing.
+#[cfg(unix)]
+#[test]
+fn unequal_chamfers_need_their_face_on_the_source_body_and_in_solidcraft() {
+    // Every replay answers with the uncut cube, the chamfer's own included.
+    let cli = fake_cli(&[("unit cube", prism_edges(&SQUARE, 0.0, 10.0))], 0);
+    for (spec, cut) in asymmetric_chamfers() {
+        let (_, report) = convert(&chamfered_cube(spec.clone(), None), &replaying(&cli.path));
+        let line = history_line(&report);
+        assert!(
+            line.contains("which face takes the distance"),
+            "{spec}: {line}"
+        );
+        let (_, report) = convert(
+            &chamfered_cube(spec.clone(), Some(cut)),
+            &replaying(&cli.path),
+        );
+        let line = history_line(&report);
+        assert!(line.contains("either way round"), "{spec}: {line}");
     }
 }
 

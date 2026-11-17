@@ -171,6 +171,7 @@ pub(super) fn map(
         subject: String::new(),
         edges: Vec::new(),
         angle_chamfer: false,
+        unequal: None,
         face: Some(proof),
         extra: None,
         trimmed: false,
@@ -425,6 +426,7 @@ impl EntryFace {
             extra: None,
             trimmed: false,
             path: false,
+            unequal: None,
         }
     }
 }

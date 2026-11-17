@@ -1761,10 +1761,53 @@ fn split_blend(
     Ok(())
 }
 
+/// Settles which face an unequal chamfer's features (`at` and the `added` per-body ones after
+/// it) take first, on SolidCraft's own cut: as written when the replay after them has edges
+/// where `cuts` put them, else with `flip`. `Ok(true)` when they had to be flipped.
+fn orient_unequal(
+    history: &mut History,
+    at: usize,
+    added: usize,
+    cuts: &[blend::Cut],
+    replay: &mut impl FnMut(&History, &[u64], bool) -> Replayed,
+) -> Result<bool, String> {
+    let id = history
+        .features
+        .get(at.saturating_add(added))
+        .and_then(|feature| feature.get("id"))
+        .and_then(Value::as_u64)
+        .ok_or("the mapped chamfer is missing")?;
+    let mut failed = None;
+    for flip in [false, true] {
+        if flip {
+            for feature in history
+                .features
+                .iter_mut()
+                .skip(at)
+                .take(added.saturating_add(1))
+            {
+                if let Some(fields) = feature.as_object_mut() {
+                    fields.insert("flip".to_owned(), Value::Bool(true));
+                }
+            }
+        }
+        match replay(history, &[id], false)?.first() {
+            Some(Ok(after)) if blend::cut_as(cuts, &after.bodies) => return Ok(flip),
+            Some(Err(why)) => failed = Some(why.clone()),
+            _ => {}
+        }
+    }
+    Err(match failed {
+        Some(why) => format!("SolidCraft cannot cut it either way round: {why}"),
+        None => "SolidCraft cuts it on other faces than the source either way round".to_owned(),
+    })
+}
+
 /// What proving a pending feature settled.
 enum Proven {
-    /// The blend is proven and emitted, with this many additional per-body operations.
-    Bodies(usize),
+    /// The blend is proven and emitted, with `added` additional per-body operations; `flipped`
+    /// when an unequal chamfer had to take SolidCraft's other face first.
+    Bodies { added: usize, flipped: bool },
     /// A sweep path bound to the unique earlier body carrying all its edges.
     Path,
     /// A face profile's sketch rewritten on the other side of its plane, if it had to be.
@@ -1826,8 +1869,8 @@ pub(crate) fn prove_blends(
                 let at = bodies.get(step);
                 step = step.saturating_add(1);
                 match at {
-                    Some(Ok(replay)) => match &pending.face {
-                        None => blend::prove(pending, &replay.bodies).and_then(|selections| {
+                    Some(Ok(before)) => match &pending.face {
+                        None => blend::prove(pending, &before.bodies).and_then(|selections| {
                             if pending.path {
                                 let [selection] = selections.as_slice() else {
                                     return Err("its input edge path crosses several rebuilt bodies, which is not supported yet".to_owned());
@@ -1840,16 +1883,23 @@ pub(crate) fn prove_blends(
                                 fields.insert("path_edges".to_owned(), json!(selection.points));
                                 return Ok(Proven::Path);
                             }
+                            let cuts = pending
+                                .unequal
+                                .as_ref()
+                                .map(|unequal| blend::cuts(unequal, &pending.edges, &before.bodies))
+                                .transpose()?;
                             let added = selections.len().saturating_sub(1);
-                            split_blend(
-                                history,
-                                pending.feature.saturating_add(inserted),
-                                pending.outcome,
-                                selections,
-                            )?;
-                            Ok(Proven::Bodies(added))
+                            let at = pending.feature.saturating_add(inserted);
+                            split_blend(history, at, pending.outcome, selections)?;
+                            let flipped = match cuts {
+                                Some(cuts) => {
+                                    orient_unequal(history, at, added, &cuts, &mut replay)?
+                                }
+                                None => false,
+                            };
+                            Ok(Proven::Bodies { added, flipped })
                         }),
-                        Some(face) => face_profile::prove(face, replay).and_then(|mirrored| {
+                        Some(face) => face_profile::prove(face, before).and_then(|mirrored| {
                             if let Some(direction) = face.entry_direction(mirrored)? {
                                 Ok(Proven::Hole(direction))
                             } else if mirrored {
@@ -1897,7 +1947,10 @@ pub(crate) fn prove_blends(
                             if let Some(outcome) = mapping.features.get_mut(pending.outcome) {
                                 outcome.inferred = Some(inferred);
                             }
-                            Proven::Bodies(added)
+                            Proven::Bodies {
+                                added,
+                                flipped: false,
+                            }
                         })
                     }
                     Some(Err(why)) => Err(format!("{reason}; {why}")),
@@ -1907,15 +1960,15 @@ pub(crate) fn prove_blends(
             proven => proven,
         };
         match proven {
-            Ok(proven @ (Proven::Bodies(_) | Proven::Path)) => {
-                let (added, path) = match proven {
-                    Proven::Bodies(added) => (added, false),
+            Ok(proven @ (Proven::Bodies { .. } | Proven::Path)) => {
+                let (added, redo) = match proven {
+                    Proven::Bodies { added, flipped } => (added, flipped),
                     _ => (0, true),
                 };
                 inserted = inserted.saturating_add(added);
-                if (added > 0 || path) && index.saturating_add(1) < blends.len() {
+                if (added > 0 || redo) && index.saturating_add(1) < blends.len() {
                     // Later blends must see all per-body operations, including earlier
-                    // radius groups. Their original last IDs remain rollback markers.
+                    // radius groups, as written. Their original last IDs remain rollback markers.
                     let remaining: Vec<u64> = after
                         .iter()
                         .skip(index.saturating_add(1))

@@ -23,6 +23,12 @@
 //! - That edge must have the input edge's ends, in either order, and its length: the chord of
 //!   a line, `radius × angle` of an arc. A straight rebuilt edge then lies along the input
 //!   tangent; a curved one is not checked for a tangent SolidCraft does not report.
+//!
+//! A chamfer with unequal setbacks also needs the face its distance runs along. The source
+//! does not say which; [`cuts`] takes the order that puts the chamfer's face on a planar face of
+//! the source's final body, on straight edges only. SolidCraft takes the face facing up most
+//! first unless the chamfer is flipped, so the history then replays the chamfer and keeps
+//! whichever way puts its edges there ([`cut_as`]).
 
 use dutchman_core::{Report, Severity};
 use serde_json::{json, Map, Value};
@@ -50,6 +56,15 @@ const INPUT_LENGTH: &str = "its input edge midpoint cannot be proven to select e
 const INPUT_KIND: &str = "its input edge midpoint cannot be proven to select exactly one rebuilt edge yet: the rebuilt edge through it is not the same kind of curve";
 const INPUT_TANGENT: &str = "its input edge midpoint cannot be proven to select exactly one rebuilt edge yet: the rebuilt edge through it does not run along its tangent";
 const INPUT_SOURCE: &str = "its input edge midpoint cannot be proven to select exactly one rebuilt edge yet: its own source geometry is inconsistent";
+const DIMENSION: &str = "its blend dimension is not a positive finite length";
+/// How far, in millimetres, an unequal chamfer's edges may be from a source face's plane or from
+/// SolidCraft's edges.
+const PLANE: f64 = 1e-5;
+/// Most faces of the source's final body an unequal chamfer is looked for on.
+const PLANES: usize = 100_000;
+const SIDES: &str = "the two faces of its input edge cannot be told apart on SolidCraft's replay before it, so which face takes the distance cannot be proven yet";
+const UNSHOWN: &str = "the source's final body has no chamfer face where either face order puts it, so which face takes the distance cannot be proven yet";
+const BOTH: &str = "the source's final body has a chamfer face both ways round, so which face takes the distance cannot be proven yet";
 
 type Segment = (V3, V3);
 
@@ -65,6 +80,8 @@ pub(crate) struct Pending {
     pub(super) edges: Vec<Input>,
     /// A 45-degree chamfer, written as an equal-distance one.
     pub(super) angle_chamfer: bool,
+    /// A chamfer with unequal setbacks, whose faces wait for [`cuts`] and SolidCraft's cut.
+    pub(super) unequal: Option<Unequal>,
     /// For an extrude of a face of the model as it was earlier, instead of a blend: the face
     /// to find ([`super::face_profile`]); `edges` is then empty.
     pub(super) face: Option<super::face_profile::Proof>,
@@ -81,6 +98,31 @@ impl Pending {
         self.edges.iter().any(|edge| near(edge.ends.0, edge.ends.1))
             || (self.path && self.edges.iter().any(|edge| !edge.straight))
     }
+}
+
+/// A chamfer's setbacks when they differ: `distance` along the face it is measured on, and the
+/// other face's own distance or the angle from the first face.
+#[derive(Clone, Debug)]
+pub(crate) struct Unequal {
+    distance: f64,
+    second: Second,
+    /// The source's final planar faces, each as its unit normal and its offset along it.
+    planes: Vec<(V3, f64)>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Second {
+    Distance(f64),
+    /// In radians, strictly between 0 and a right angle.
+    Angle(f64),
+}
+
+/// Where an unequal chamfer meets the two faces of one edge: lines along the edge through
+/// these points, on the face that takes the distance first.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Cut {
+    along: V3,
+    points: [V3; 2],
 }
 
 /// One selected input edge, from its feature input topology.
@@ -228,7 +270,10 @@ fn group(
                 return Err("fillets other than constant-radius are not supported yet".to_owned());
             }
         }
-    } else {
+    }
+    let mut unequal = None;
+    if kind != "fillet" {
+        let mut second_setback = None;
         let spec = group
             .get("spec")
             .ok_or("its chamfer dimensions are not given")?;
@@ -243,16 +288,36 @@ fn group(
             {
                 spec.get("distance")
             }
-            Some("two_distances" | "distance_angle") => {
-                return Err("asymmetric chamfers need an input reference face ordering, which is not supported yet".to_owned());
+            Some("two_distances") => {
+                out.insert("distance2".to_owned(), json!(length(spec.get("second"))?));
+                let second = number(spec.get("second")).ok_or(DIMENSION)?;
+                second_setback = Some(Second::Distance(second));
+                spec.get("first")
+            }
+            Some("distance_angle") => {
+                let angle = number(spec.get("angle"))
+                    .filter(|a| *a > 0.0 && *a < std::f64::consts::FRAC_PI_2)
+                    .ok_or("its chamfer angle is not between 0 and 90 degrees")?;
+                // Whole degrees stay whole: the radian value carries rounding noise.
+                let degrees = (angle.to_degrees() * 1e9).round() / 1e9;
+                out.insert("angle".to_owned(), json!(format!("{degrees} deg")));
+                second_setback = Some(Second::Angle(angle));
+                spec.get("distance")
             }
             _ => return Err("its chamfer dimensions are not resolved".to_owned()),
         };
         out.insert("distance".to_owned(), json!(length(distance)?));
+        if let Some(second) = second_setback {
+            unequal = Some(Unequal {
+                distance: number(distance).ok_or(DIMENSION)?,
+                second,
+                planes: source_planes(ctx)?,
+            });
+        }
     }
     let selection = group.get("edges").ok_or("its input edges are not given")?;
-    let angle_chamfer =
-        group.pointer("/spec/kind").and_then(Value::as_str) == Some("distance_angle");
+    let angle_chamfer = unequal.is_none()
+        && group.pointer("/spec/kind").and_then(Value::as_str) == Some("distance_angle");
     let (inputs, points) = match selection.get("kind").and_then(Value::as_str) {
         Some("historical") => historical(feature, selection, ctx, angle_chamfer)?,
         Some("generated") => generated(selection, ctx)?,
@@ -267,6 +332,9 @@ fn group(
         }
         _ => return Err("blends require edges from their own feature input topology; edges of the final body are not supported yet".to_owned()),
     };
+    if unequal.is_some() && inputs.iter().any(|input| !input.straight) {
+        return Err("unequal chamfers on curved input edges are not supported yet".to_owned());
+    }
     out.insert("edges".to_owned(), json!(points));
     let id = ctx.id();
     out.insert("id".to_owned(), json!(id));
@@ -282,6 +350,7 @@ fn group(
         subject: String::new(),
         edges: inputs,
         angle_chamfer,
+        unequal,
         face: None,
         extra: None,
         trimmed,
@@ -633,8 +702,8 @@ pub(crate) struct Selection {
 }
 
 /// Match open edges against the rebuilt history and closed circles within their source body.
-/// Only constant circular fillets and equal-setback chamfers reach this proof: applying
-/// their identical parameters independently to disjoint bodies is equivalent.
+/// Applying a blend's parameters independently to disjoint bodies is equivalent: an unequal
+/// chamfer's face order is settled per edge ([`cuts`]).
 pub(crate) fn prove(pending: &Pending, bodies: &ReplayedBodies) -> Result<Vec<Selection>, String> {
     let mut chosen: Vec<(usize, usize)> = Vec::new();
     let mut picks = Vec::new();
@@ -1153,6 +1222,157 @@ fn closest(point: V3, edge: &ReplayedEdge) -> (f64, V3) {
     }
 }
 
+/// Which face of each input edge an unequal chamfer takes its distance on. Of the two faces on
+/// either side of the edge, as SolidCraft rebuilt them before the chamfer, exactly one order must
+/// put the chamfer's face on a planar face of the source's final body.
+pub(crate) fn cuts(
+    unequal: &Unequal,
+    inputs: &[Input],
+    bodies: &ReplayedBodies,
+) -> Result<Vec<Cut>, String> {
+    let through = |input: &Input, edge: &ReplayedEdge| {
+        straight(edge) && on_segment(input.point, (edge.start, edge.end))
+    };
+    inputs
+        .iter()
+        .map(|input| {
+            let (edge, edges) = bodies
+                .iter()
+                .find_map(|(_, edges)| {
+                    let edge = edges.iter().find(|edge| through(input, edge))?;
+                    Some((edge, edges.as_slice()))
+                })
+                .ok_or(INPUT)?;
+            let [a, b] = sides(edge, edges).ok_or(SIDES)?;
+            let orders: Vec<Cut> = [(a, b), (b, a)]
+                .into_iter()
+                .filter_map(|(first, second)| {
+                    unequal.cut(input.point, input.tangent, first, second)
+                })
+                .filter(|cut| {
+                    unequal
+                        .planes
+                        .iter()
+                        .any(|&(normal, offset)| cut.on_plane(normal, offset))
+                })
+                .collect();
+            match orders.as_slice() {
+                [cut] => Ok(*cut),
+                [] => Err(UNSHOWN.to_owned()),
+                _ => Err(BOTH.to_owned()),
+            }
+        })
+        .collect()
+}
+
+/// Whether SolidCraft's bodies after an unequal chamfer have straight edges along each of its
+/// `cuts`.
+pub(crate) fn cut_as(cuts: &[Cut], bodies: &ReplayedBodies) -> bool {
+    let edges = || bodies.iter().flat_map(|(_, edges)| edges);
+    cuts.iter().all(|cut| {
+        cut.points.iter().all(|&point| {
+            edges().any(|edge| {
+                let off = sub(point, edge.start);
+                let off = sub(off, scale(cut.along, dot(off, cut.along)));
+                straight(edge)
+                    && parallel(sub(edge.end, edge.start), cut.along)
+                    && dot(off, off).sqrt() <= PLANE
+            })
+        })
+    })
+}
+
+/// The directions, square to a straight `edge`, in which its two faces run away from it: those
+/// of the other edges at each of its ends. Both ends must give the same two.
+fn sides(edge: &ReplayedEdge, edges: &[ReplayedEdge]) -> Option<[V3; 2]> {
+    let along = unit(sub(edge.end, edge.start))?;
+    let at = |vertex: V3| -> Option<[V3; 2]> {
+        let mut directions: Vec<V3> = Vec::new();
+        for other in edges {
+            if same((other.start, other.end), (edge.start, edge.end))
+                || !(near(vertex, other.start) || near(vertex, other.end))
+            {
+                continue;
+            }
+            let away = sub(other.mid, vertex);
+            let across = unit(sub(away, scale(along, dot(away, along))))?;
+            if !directions
+                .iter()
+                .any(|seen| dot(*seen, across) >= 1.0 - ANGLE)
+            {
+                directions.push(across);
+            }
+        }
+        match directions.as_slice() {
+            [a, b] if dot(*a, *b) > ANGLE - 1.0 => Some([*a, *b]),
+            _ => None,
+        }
+    };
+    let [a, b] = at(edge.start)?;
+    let [c, d] = at(edge.end)?;
+    let agree = |x: V3, y: V3| dot(x, y) >= 1.0 - ANGLE;
+    ((agree(a, c) && agree(b, d)) || (agree(a, d) && agree(b, c))).then_some([a, b])
+}
+
+impl Unequal {
+    /// Where the chamfer meets the faces running `first` and `second` from the edge through
+    /// `point` along `along`, with its distance on the first; `None` when they never meet.
+    fn cut(&self, point: V3, along: V3, first: V3, second: V3) -> Option<Cut> {
+        let on_first = add(point, scale(first, self.distance));
+        let on_second = match self.second {
+            Second::Distance(distance) => add(point, scale(second, distance)),
+            Second::Angle(angle) => {
+                // From the first face toward the edge, turned by the angle toward the second.
+                let toward = unit(sub(second, scale(first, dot(second, first))))?;
+                let run = add(scale(first, -angle.cos()), scale(toward, angle.sin()));
+                let reach = -self.distance * dot(cross(first, second), along)
+                    / dot(cross(run, second), along);
+                let at = add(on_first, scale(run, reach));
+                if !(reach.is_finite() && reach > 0.0 && dot(sub(at, point), second) > 0.0) {
+                    return None;
+                }
+                at
+            }
+        };
+        Some(Cut {
+            along,
+            points: [on_first, on_second],
+        })
+    }
+}
+
+impl Cut {
+    fn on_plane(&self, normal: V3, offset: f64) -> bool {
+        dot(normal, self.along).abs() <= ANGLE
+            && self
+                .points
+                .iter()
+                .all(|point| (dot(normal, *point) - offset).abs() <= PLANE)
+    }
+}
+
+/// The planes of the source's final planar faces, each as its unit normal and its offset along it.
+fn source_planes(ctx: &Context) -> Result<Vec<(V3, f64)>, String> {
+    let faces = ctx.arena("faces");
+    if faces.len() > PLANES {
+        return Err(format!(
+            "the source's final body has more than {PLANES} faces to find an unequal chamfer on"
+        ));
+    }
+    Ok(faces
+        .iter()
+        .filter_map(|face| {
+            let surface = ctx.row("surfaces", face.get("surface")?.as_str()?)?;
+            let geometry = surface.pointer("/geometry/value")?;
+            if geometry.get("kind").and_then(Value::as_str) != Some("plane") {
+                return None;
+            }
+            let normal = v3(geometry.get("normal")).and_then(unit)?;
+            Some((normal, dot(normal, v3(geometry.get("origin"))?)))
+        })
+        .collect())
+}
+
 /// How far `point` is from the nearest rebuilt edge: the segment of a straight one; for a curved
 /// one the nearest of its ends and midpoint, which SolidCraft reports and the curve passes through.
 fn nearest(point: V3, bodies: &ReplayedBodies) -> Option<f64> {
@@ -1257,7 +1477,7 @@ fn length(value: Option<&Value>) -> Result<String, String> {
     number(value)
         .filter(|v| *v > 0.0)
         .map(|v| format!("{v} mm"))
-        .ok_or_else(|| "its blend dimension is not a positive finite length".to_owned())
+        .ok_or_else(|| DIMENSION.to_owned())
 }
 
 fn near(a: V3, b: V3) -> bool {
@@ -1316,6 +1536,7 @@ mod tests {
             subject: "Treatment".to_owned(),
             edges,
             angle_chamfer: false,
+            unequal: None,
             face: None,
             extra: None,
             trimmed: false,
@@ -2036,5 +2257,106 @@ mod tests {
         );
         let error = select(&flange("symmetric"), json!([edge("plate", "corner", 18)])).unwrap_err();
         assert!(error.contains("both sides of its sketch"), "{error}");
+    }
+
+    /// The 12 edges of the cube from the origin to (10, 10, 10).
+    fn cube() -> super::ReplayedBodies {
+        let corner = |i: usize| [0, 1, 2].map(|axis| if (i >> axis) & 1 == 1 { 10.0 } else { 0.0 });
+        let mut edges = Vec::new();
+        for i in 0..8 {
+            for axis in 0..3 {
+                if (i >> axis) & 1 == 0 {
+                    let (start, end) = (corner(i), corner(i | (1 << axis)));
+                    edges.push(crate::verify::ReplayedEdge {
+                        start,
+                        end,
+                        mid: [0, 1, 2].map(|k| (start[k] + end[k]) / 2.0),
+                        length: 10.0,
+                        name: String::new(),
+                        index: None,
+                        circle: None,
+                    });
+                }
+            }
+        }
+        vec![("B".to_owned(), edges)]
+    }
+
+    /// The plane through two points along X, as a unit normal and its offset.
+    fn plane(a: [f64; 3], b: [f64; 3]) -> ([f64; 3], f64) {
+        let (dy, dz) = (b[1] - a[1], b[2] - a[2]);
+        let length = (dy * dy + dz * dz).sqrt();
+        let normal = [0.0, dz / length, -dy / length];
+        (normal, normal[1] * a[1] + normal[2] * a[2])
+    }
+
+    #[test]
+    fn unequal_chamfers_take_the_face_order_the_source_body_shows() {
+        // The cube's top front edge, between the top (Z = 10) and the front face (Y = 0).
+        let input = super::Input {
+            point: [5.0, 0.0, 10.0],
+            ends: ([0.0, 0.0, 10.0], [10.0, 0.0, 10.0]),
+            tangent: [1.0, 0.0, 0.0],
+            length: 10.0,
+            straight: true,
+            circle: None,
+        };
+        let tan30 = std::f64::consts::FRAC_PI_6.tan();
+        // 1 mm on the top and 3 mm on the front face, or the other way round.
+        let top_first = plane([5.0, 1.0, 10.0], [5.0, 0.0, 7.0]);
+        let front_first = plane([5.0, 0.0, 9.0], [5.0, 3.0, 10.0]);
+        let unequal = |second, planes: Vec<([f64; 3], f64)>| super::Unequal {
+            distance: 1.0,
+            second,
+            planes,
+        };
+        let cuts =
+            |unequal: &super::Unequal| super::cuts(unequal, std::slice::from_ref(&input), &cube());
+        let two = super::Second::Distance(3.0);
+        let [cut] = cuts(&unequal(two, vec![top_first])).unwrap()[..] else {
+            panic!("one cut");
+        };
+        assert!(super::near(cut.points[0], [5.0, 1.0, 10.0]), "{cut:?}");
+        assert!(super::near(cut.points[1], [5.0, 0.0, 7.0]), "{cut:?}");
+        let [cut] = cuts(&unequal(two, vec![front_first])).unwrap()[..] else {
+            panic!("one cut");
+        };
+        assert!(super::near(cut.points[0], [5.0, 0.0, 9.0]), "{cut:?}");
+        // 1 mm on the front face, 30 degrees from it: tan 30° on the top.
+        let angle = super::Second::Angle(std::f64::consts::FRAC_PI_6);
+        let tilted = plane([5.0, 0.0, 9.0], [5.0, tan30, 10.0]);
+        let [cut] = cuts(&unequal(angle, vec![tilted])).unwrap()[..] else {
+            panic!("one cut");
+        };
+        assert!(super::near(cut.points[1], [5.0, tan30, 10.0]), "{cut:?}");
+        // The cut is found on a body with edges along it, and not on the uncut cube.
+        let mut cut_body = cube();
+        for point in cut.points {
+            cut_body[0].1.push(crate::verify::ReplayedEdge {
+                start: point,
+                end: [10.0, point[1], point[2]],
+                mid: [7.5, point[1], point[2]],
+                length: 5.0,
+                name: String::new(),
+                index: None,
+                circle: None,
+            });
+        }
+        assert!(super::cut_as(&[cut], &cut_body));
+        assert!(!super::cut_as(&[cut], &cube()));
+        let error = |planes| cuts(&unequal(two, planes)).unwrap_err();
+        assert!(error(vec![]).contains("no chamfer face"));
+        assert!(error(vec![top_first, front_first]).contains("both ways round"));
+        // Without the top face's edge at one end, the faces cannot be told apart there.
+        let mut open = cube();
+        open[0].1.retain(|edge| {
+            !(super::near(edge.start, [0.0, 0.0, 10.0]) && super::near(edge.end, [0.0, 10.0, 10.0]))
+        });
+        let error = super::cuts(
+            &unequal(two, vec![top_first]),
+            std::slice::from_ref(&input),
+            &open,
+        );
+        assert!(error.unwrap_err().contains("cannot be told apart"));
     }
 }
