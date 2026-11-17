@@ -39,7 +39,7 @@ continue to apply. A present consistency flag must be a JSON boolean.
 | Planar sketch | CADIR sketch and solved curves | Built-in Top, Front and Right planes, forward end caps of resolved blind extrusions whose source sketch supplies the frame, and planar model faces parallel to a built-in plane. Faces at other orientations and non-planar faces are not supported yet. |
 | Lines, circular arcs, circles, points | Exact sketch entities | Text, images, projected references without solved curves, and other curves are not supported yet. |
 | Simple spline | Polynomial planar CADIR NURBS | Non-periodic, non-rational curves with complete knots and control points, stored whole or as a segment over the whole knot range; the writer retains its own knot and degree limits. A trimmed spline segment is not supported yet. |
-| Constraints | Horizontal, vertical, fixed, parallel, perpendicular, tangent, equal, concentric, coincident loci, explicit origin coincidence (an origin query, or the sketcher's pick of the origin point) and midpoint | Unsupported relations are dropped with `onshape/sketch.constraint-not-supported`; solved geometry remains. |
+| Constraints | Horizontal, vertical, fixed, parallel, perpendicular, tangent, equal, concentric, coincident loci, coincidence with the Origin point and midpoint | A point coincident with the Origin is tied to the SolidCraft sketch origin. A midpoint between two points becomes a midpoint on a construction line joining them. Other relations, and external references other than the Origin, are dropped with `onshape/sketch.constraint-not-supported`; solved geometry remains. |
 | Dimensions | Length, distance between loci, radius, diameter, angle and CADIR parameters | Literal units, evaluated quantities and bounded arithmetic using earlier Part Studio variables are accepted. Diameter dimensions use `length`. Driven dimensions and expressions needing FeatureScript evaluation are reported. |
 | Solid extrude | Blind, through all, up to a parallel planar face; NEW/ADD/REMOVE/INTERSECT | Whole resolved sketch or explicit sketch-region boundaries, positive or reversed normal, symmetric blind distance split equally about the sketch plane. Multiple-body Boolean scopes, second direction, draft, offset starts, thin/surface bodies, and other bounds are not supported yet. |
 | Solid revolve | Full or one-direction angle about a resolved straight input edge, or about a construction line of the profile's sketch, which stays the revolve's axis in SolidCraft | Other bounds and body types are not supported yet. One-direction geometry still passes the writer's side proof. |
@@ -108,10 +108,12 @@ failed proof or differing replay is reported and preserves the final geometry.
 
 Synthetic offline coverage includes the generic deterministic plane and region
 query shapes returned by the REST API. Feature-library parameter drift and rollback
-semantics still require validation on owner-created data. Opaque external constraint
-IDs without an origin query, other than the sketcher's pick of the origin point, are reported as unresolved references; they are never guessed to
-be the origin. Midpoint relations retain their source point loci through a
-construction carrier.
+semantics still require validation on owner-created data. An external constraint
+reference counts as the Origin only when it names the Origin point (by query or by its
+default deterministic ID) and the source solve holds the constrained point where the
+Origin projects onto the sketch plane; any other external ID is reported as an unresolved
+reference, never guessed to be the origin. Midpoint relations retain their source point
+loci, line ends or arc ends, through a construction carrier.
 
 The reader has defensive limits: 4,096 ZIP members, 16 MiB directory/ZIP64
 metadata, 32 MiB per JSON member, 256 MiB total expanded data, and 10,000 rows per

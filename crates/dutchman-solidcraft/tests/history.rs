@@ -8797,6 +8797,11 @@ fn additional_sketch_relations_keep_their_intent_and_cube_volume() {
             "fix",
         ),
         (
+            json!({"kind": "point_coordinate_values", "point": sketch_locus("start", 1),
+            "values": [0.0, 0.0]}),
+            "coincident",
+        ),
+        (
             json!({"kind": "at_intersection", "point": sketch_locus("end", 1),
             "first": id(1), "second": id(2)}),
             "point_on_curve",
@@ -8890,6 +8895,10 @@ fn additional_sketch_relations_keep_their_intent_and_cube_volume() {
             .as_array()
             .unwrap();
         assert_eq!(constraints[0]["type"], expected, "{definition}");
+        if expected == "coincident" {
+            // A point held at the sketch origin ties to SolidCraft's origin point.
+            assert_eq!(constraints[0]["q"], 0, "{definition}: {constraints:?}");
+        }
         if definition["parameter"] == parameter || definition["distance_parameter"] == parameter {
             assert!(
                 constraints.iter().any(|c| c["param"] == "side"),

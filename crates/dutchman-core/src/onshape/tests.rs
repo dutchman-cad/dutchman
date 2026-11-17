@@ -833,6 +833,79 @@ fn compressed_hole_locations_keep_only_the_selected_sketch_point() {
 }
 
 #[test]
+fn the_origin_named_by_its_deterministic_id_holds_a_point_at_the_sketch_origin() {
+    let constrain = |x: f64| {
+        changed(|response| {
+            response["features"][0]["entities"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"btType":"BTMSketchPoint-158","entityId":"zero","x":x}));
+            response["features"][0]["constraints"] = json!([{"constraintType":"COINCIDENT","entityId":"origin-relation","parameters":[
+                {"parameterId":"localFirst","value":"zero"},{"parameterId":"externalSecond","queries":[{"queryString":"","deterministicIds":["IB"]}]}]}]);
+        })
+    };
+    let (wire, report) = read(&constrain(0.0));
+    let held = wire["sketch_constraints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["definition"]["kind"] == "point_coordinate_values")
+        .unwrap_or_else(|| panic!("{:?}", report.losses()));
+    assert_eq!(held["definition"]["values"], json!([0.0, 0.0]));
+    assert!(!report
+        .losses()
+        .iter()
+        .any(|l| l.code.as_deref() == Some("onshape/sketch.constraint-not-supported")));
+    // A point the source solve left elsewhere is not tied to the origin.
+    let (wire, report) = read(&constrain(0.002));
+    assert!(!wire["sketch_constraints"]
+        .as_array()
+        .is_some_and(|rows| rows
+            .iter()
+            .any(|c| c["definition"]["kind"] == "point_coordinate_values")));
+    assert!(report.losses().iter().any(|l| l.code.as_deref()
+        == Some("onshape/sketch.constraint-not-supported")
+        && l.detail.contains("not at the origin")));
+}
+
+#[test]
+fn a_midpoint_between_arc_ends_keeps_its_carrier() {
+    let bytes = changed(|response| {
+        response["features"][0]["entities"].as_array_mut().unwrap().extend([
+            json!({"btType":"BTMSketchCurveSegment-155","entityId":"bow","startPointId":"bow.start","endPointId":"bow.end",
+                "startParam":0.0,"endParam":std::f64::consts::PI,
+                "geometry":{"btType":"BTCurveGeometryCircle-115","radius":0.003,"xDir":1.0}}),
+            json!({"btType":"BTMSketchPoint-158","entityId":"middle"}),
+        ]);
+        response["features"][0]["constraints"] = json!([
+            {"constraintType":"MIDPOINT","entityId":"middle-relation","parameters":[
+                {"parameterId":"localMidpoint","value":"middle"},{"parameterId":"localEntity1","value":"bow.start"},{"parameterId":"localEntity2","value":"bow.end"}]}
+        ]);
+    });
+    let (wire, report) = read(&bytes);
+    let rows = wire["sketch_constraints"].as_array().unwrap();
+    assert!(
+        rows.iter().any(|c| c["definition"]["kind"] == "midpoint"),
+        "{:?}",
+        report.losses()
+    );
+    let carrier = wire["sketch_entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"].as_str().unwrap().contains("midpoint"))
+        .unwrap();
+    let start = &carrier["geometry"]["start"];
+    let end = &carrier["geometry"]["end"];
+    assert!(
+        (start["u"].as_f64().unwrap() - 3.0).abs() < 1e-9,
+        "{carrier}"
+    );
+    assert!((end["u"].as_f64().unwrap() + 3.0).abs() < 1e-9, "{carrier}");
+    assert!(start["v"].as_f64().unwrap().abs() < 1e-9 && end["v"].as_f64().unwrap().abs() < 1e-9);
+}
+
+#[test]
 fn an_opaque_external_id_is_not_assumed_to_be_the_origin() {
     let bytes = changed(|response| {
         response["features"][0]["entities"]

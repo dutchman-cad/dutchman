@@ -351,7 +351,7 @@ pub(super) fn map(
         let parameter_count = model.parameters.len();
         let entity_count = model.sketch_entities.len();
         let constraint_count = model.sketch_constraints.len();
-        let result = constraint_row(constraint, native, &sketch_id, &loci, model)
+        let result = constraint_row(constraint, native, &sketch_id, &plane, &loci, model)
             .and_then(|row| push(&mut model.sketch_constraints, row));
         if let Err(reason) = result {
             model.parameters.truncate(parameter_count);
@@ -380,29 +380,94 @@ fn locus_position(locus: &Value, model: &Model) -> Mapping<Value> {
         .sketch_entities
         .iter()
         .find(|e| e.id().as_str() == entity_id)
-        .ok_or("the midpoint source entity is missing")?;
+        .ok_or("the sketch point's entity is missing")?;
     let entity =
-        serde_json::to_value(entity).map_err(|_| "the midpoint source entity is unreadable")?;
+        serde_json::to_value(entity).map_err(|_| "the sketch point's entity is unreadable")?;
     let geometry = entity
         .get("geometry")
-        .ok_or("the midpoint source geometry is missing")?;
-    let key = match text(locus, "kind")? {
+        .ok_or("the sketch point's geometry is missing")?;
+    let kind = text(locus, "kind")?;
+    if text(geometry, "kind")? == "arc" && matches!(kind, "start" | "end") {
+        // Arc loci already name the counterclockwise end the reader wrote.
+        let angle = number(
+            geometry,
+            if kind == "start" {
+                "start_angle"
+            } else {
+                "end_angle"
+            },
+        )?;
+        let center = geometry.get("center").ok_or("the arc center is missing")?;
+        let radius = number(geometry, "radius")?;
+        return Ok(point(
+            number(center, "u")? + radius * angle.cos(),
+            number(center, "v")? + radius * angle.sin(),
+        ));
+    }
+    let key = match kind {
         "entity" if text(geometry, "kind")? == "point" => "position",
         "start" if text(geometry, "kind")? == "line" => "start",
         "end" if text(geometry, "kind")? == "line" => "end",
         "center" => "center",
-        _ => return Err("this midpoint point locus is not supported yet".into()),
+        _ => return Err("this sketch point locus is not supported yet".into()),
     };
     geometry
         .get(key)
         .cloned()
-        .ok_or("the midpoint source point is missing".into())
+        .ok_or("the sketch point's position is missing".into())
+}
+
+/// Onshape's deterministic id for the default Origin point.
+const ORIGIN_ID: &str = "IB";
+
+/// Whether an external constraint reference names the part studio's origin point.
+fn names_origin(query: &Value) -> bool {
+    let source = query
+        .get("queryString")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let by_id = source.is_empty()
+        && query
+            .get("deterministicIds")
+            .and_then(Value::as_array)
+            .is_some_and(|ids| ids.len() == 1 && ids.iter().all(|id| id == ORIGIN_ID));
+    by_id
+        || matches!(
+            source.trim_end_matches(';'),
+            "qOrigin(EntityType.VERTEX)" | "query=qOrigin(EntityType.VERTEX)"
+        )
+        || (query.get("featureId").and_then(Value::as_str) == Some("Origin")
+            && query.get("btType").and_then(Value::as_str)
+                == Some("BTMIndividualCreatedByQuery-137"))
+}
+
+/// The model origin in the sketch's own coordinates (millimetres): where it projects onto
+/// the sketch plane.
+fn projected_origin(plane: &Value) -> Mapping<[f64; 2]> {
+    let origin = topology::vector(
+        plane.get("origin").ok_or("the sketch frame is missing")?,
+        1.0,
+    )?;
+    let normal = topology::unit(topology::vector(
+        plane.get("normal").ok_or("the sketch frame is missing")?,
+        1.0,
+    )?)?;
+    let u = topology::unit(topology::vector(
+        plane.get("u_axis").ok_or("the sketch frame is missing")?,
+        1.0,
+    )?)?;
+    let v = topology::cross(normal, u);
+    let dot = |a: [f64; 3], b: [f64; 3]| a.iter().zip(b).map(|(a, b)| a * b).sum::<f64>();
+    // Subtracting from zero keeps a negative zero out of the written values.
+    Ok([0.0 - dot(origin, u), 0.0 - dot(origin, v)])
 }
 
 fn constraint_row(
     constraint: &Value,
     native: &str,
     sketch_id: &str,
+    plane: &Value,
     loci: &BTreeMap<String, Value>,
     model: &mut Model,
 ) -> Mapping<Value> {
@@ -441,30 +506,18 @@ fn constraint_row(
             let [query] = queries(constraint, "externalSecond")? else {
                 return Err("multiple external constraint references are not supported yet".into());
             };
-            let source = query
-                .get("queryString")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .trim();
-            // The sketcher stores a pick of the origin point as the default geometry's
-            // deterministic id, with no query text.
-            let origin_pick = source.is_empty()
-                && query
-                    .get("deterministicIds")
-                    .and_then(Value::as_array)
-                    .is_some_and(|ids| ids.len() == 1 && ids.first() == Some(&json!(ORIGIN_ID)));
-            if !origin_pick
-                && !matches!(
-                    source.trim_end_matches(';'),
-                    "qOrigin(EntityType.VERTEX)" | "query=qOrigin(EntityType.VERTEX)"
-                )
-                && !(query.get("featureId").and_then(Value::as_str) == Some("Origin")
-                    && query.get("btType").and_then(Value::as_str)
-                        == Some("BTMIndividualCreatedByQuery-137"))
-            {
+            if !names_origin(query) {
                 return Err("the external coincident reference does not identify the sketch origin; this constraint is not supported yet".into());
             }
-            json!({"kind":"point_coordinate_values", "point":locus("localFirst")?,"values":[0.0,0.0]})
+            let point = locus("localFirst")?;
+            let [u, v] = projected_origin(plane)?;
+            // The source solve already holds the point there; a point elsewhere means the
+            // reference is not the origin this frame describes.
+            let at = locus_position(&point, model)?;
+            if (number(&at, "u")? - u).abs() > 1e-6 || (number(&at, "v")? - v).abs() > 1e-6 {
+                return Err("the point coincident with the origin is not at the origin in the solved sketch; this constraint is not supported yet".into());
+            }
+            json!({"kind":"point_coordinate_values", "point":point,"values":[u, v]})
         }
         "COINCIDENT" => {
             json!({"kind": "coincident_loci", "loci": [locus("localFirst")?, locus("localSecond")?]})
