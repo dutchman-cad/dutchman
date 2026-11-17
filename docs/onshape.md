@@ -195,8 +195,8 @@ The ZIP contains `manifest.json` and raw response bytes without rewriting the JS
 - A Part Studio has `partstudios/<element>/features.json`, including sketches,
   parameters, expressions, and queries; `bodydetails/<index>.json` at each feature
   index needing non-sketch topology queries; and `bodydetails/index.json`, an array
-  of those indices. When more than one feature makes a new part, the states before
-  and after each of those features are kept too; the state after the last feature is
+  of those indices. The states before and after each extrude or revolve that makes
+  a new part are kept too; the state after the last feature is
   stored as the index equal to the feature count. Suppressed features and
   sketch-region-only queries do not request bodydetails. Optional `configuration.json` and `variables.json` are
   included when their endpoints return data. A Part Studio containing only sketches

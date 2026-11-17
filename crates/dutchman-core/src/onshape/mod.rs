@@ -313,9 +313,10 @@ pub(super) fn read(
     let single_body = (creators.len() == 1 && model.ir.geometry.bodies.len() == 1)
         .then(|| model.ir.geometry.bodies.first().map(|body| body.id.clone()))
         .flatten();
-    let part_bodies = if creators.len() > 1 {
+    let parts = model.ir.geometry.bodies.len();
+    let part_bodies = if single_body.is_none() && parts > 1 && !creators.is_empty() {
         let bound = part_bodies(&creators, &inputs, &model);
-        if bound.len() < creators.len() {
+        if bound.len() < parts {
             report.push_coded(
                 Severity::Degraded,
                 "part names",
@@ -323,8 +324,8 @@ pub(super) fn read(
                 format!(
                     "{} of {} parts could not be matched by name to the feature that made \
                      them; SolidCraft names those parts, and their colours are left out",
-                    creators.len() - bound.len(),
-                    creators.len()
+                    parts.saturating_sub(bound.len()),
+                    parts
                 ),
             );
         }

@@ -635,14 +635,11 @@ fn capture<C: HttpClient>(
                         wanted.insert(i);
                     }
                 }
-                // With several parts, the parts present before and after each part-making
-                // feature tell the reader which part, by its name, that feature made.
-                let creators = part_creators(list);
-                if creators.len() > 1 {
-                    for i in creators {
-                        wanted.insert(i);
-                        wanted.insert(i.saturating_add(1));
-                    }
+                // The parts present before and after each part-making feature tell the
+                // reader which part, by its name, that feature made.
+                for i in part_creators(list) {
+                    wanted.insert(i);
+                    wanted.insert(i.saturating_add(1));
                 }
                 let mut indices = Vec::new();
                 for i in wanted {
