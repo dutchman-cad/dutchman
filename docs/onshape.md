@@ -109,7 +109,7 @@ failed proof or differing replay is reported and preserves the final geometry.
 Synthetic offline coverage includes the generic deterministic plane and region
 query shapes returned by the REST API. Feature-library parameter drift and rollback
 semantics still require validation on owner-created data. Opaque external constraint
-IDs without an origin query are reported as unresolved references; they are never guessed to
+IDs without an origin query, other than the sketcher's pick of the origin point, are reported as unresolved references; they are never guessed to
 be the origin. Midpoint relations retain their source point loci through a
 construction carrier.
 
