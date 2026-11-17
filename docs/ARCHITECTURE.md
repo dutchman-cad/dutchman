@@ -331,8 +331,12 @@ length but no tangent, so an input edge must be a line or a circular arc; its mi
 lie on exactly one rebuilt edge across every body, and that edge must have the same ends (in
 either order) and length; a straight one must lie along the input tangent. Arcs SolidCraft
 splits into pieces, closed edges and other curves are refused. Equal two-distance chamfers also map; distance-and-angle chamfers map at
-45 degrees on perpendicular faces. Unequal distances and other angles lack a source
-reference-face ordering and are refused specifically. Variable fillets lack a proven
+45 degrees on perpendicular faces. Unequal distances and other angles map on straight edges
+when the source's final body still has the chamfer's face: the face order that puts it there
+is taken, and SolidCraft's chamfer is flipped when its own first face (the one facing up
+most) would put it elsewhere. A chamfer face the final body lost, an edge whose faces SolidCraft
+cannot tell apart, and SolidCraft cutting it elsewhere either way round are refused, saying
+which. Variable fillets lack a proven
 chain direction. Final-body edge selections never stand in for input geometry.
 
 Selected straight profile loops that cross or retrace their own curves are split at
