@@ -862,6 +862,11 @@ fn two_part_studio(x: f64) -> Model {
     .unwrap();
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     let body = wire["geometry"]["bodies"][0]["id"].clone();
+    // As in a Part Studio's export, the part's name is on its product, not its body.
+    wire["geometry"]["bodies"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("name");
     wire["model"]["product_definitions"] = json!([
         {"id": "synthetic:test:component#first", "kind": "part", "label": "Part 1", "bodies": [body], "bom_properties": {}, "sketches": []},
         {"id": "synthetic:test:component#second", "kind": "part", "label": "Part 2", "bodies": [], "bom_properties": {}, "sketches": []},
@@ -887,6 +892,7 @@ fn part_studio_parts_are_one_design_but_moved_parts_stay_placed() {
     assert!(model.ir.model.occurrences.is_empty());
     assert_eq!(model.ir.model.product_definitions.len(), 2);
     assert!(crate::local_assembly(&model).unwrap().is_none());
+    assert_eq!(model.ir.geometry.bodies[0].name.as_deref(), Some("Part 1"));
 
     let mut moved = two_part_studio(30.0);
     part_studio_bodies(&mut moved);

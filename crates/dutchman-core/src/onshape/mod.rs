@@ -155,6 +155,32 @@ fn part_studio_bodies(model: &mut Model) {
         return;
     }
     model.ir.model.occurrences.clear();
+    // The STEP export names each part on its product. A body that is its product's only
+    // body and has no name of its own takes the part's name, which the written body keeps.
+    let names: std::collections::BTreeMap<String, String> = model
+        .ir
+        .model
+        .product_definitions
+        .iter()
+        .filter_map(|definition| {
+            let [body] = definition.bodies.as_slice() else {
+                return None;
+            };
+            let name = definition
+                .label
+                .as_ref()
+                .or(definition.source_name.as_ref())
+                .filter(|name| !name.trim().is_empty())?;
+            Some((body.as_str().to_owned(), name.clone()))
+        })
+        .collect();
+    for body in &mut model.ir.geometry.bodies {
+        if body.name.as_ref().is_none_or(|name| name.trim().is_empty()) {
+            if let Some(name) = names.get(body.id.as_str()) {
+                body.name = Some(name.clone());
+            }
+        }
+    }
 }
 
 /// The final STEP body each part-making feature made, by the part's name. A feature binds a
