@@ -160,6 +160,30 @@ impl SolidCraftWriter {
         }
     }
 
+    /// A design of sketches alone has no source bodies to compare with. Replaying it shows
+    /// whether SolidCraft rebuilds every sketch: it must run without a feature error and,
+    /// like its source, build no body.
+    fn check_sketches(&self, design: &[u8]) -> Check {
+        const NO_BODIES: &str = "the design contains sketches and no source bodies to compare";
+        let cli = match self.selected_evaluator(&self.verification) {
+            Ok(cli) => cli,
+            Err(why) => return Check::NotApplicable(format!("{NO_BODIES}; not replayed: {why}")),
+        };
+        if let Some(why) = self.memory_refusal() {
+            return Check::NotApplicable(format!("{NO_BODIES}; not replayed: {why}"));
+        }
+        match verify::replay(cli.as_ref(), self.timeout, design) {
+            (verify::Outcome::Matches, Some(bodies)) if bodies.is_empty() => Check::Verified,
+            (verify::Outcome::Matches, _) => Check::Differs(
+                "SolidCraft built a body from a design whose source has only sketches".to_owned(),
+            ),
+            (verify::Outcome::Differs(why), _) => {
+                Check::Differs(format!("SolidCraft cannot replay the sketches: {why}"))
+            }
+            (verify::Outcome::Unverified(why), _) => Check::Unverified(why),
+        }
+    }
+
     /// Maximum simultaneous assembly part preparations (0: automatic, 1: serial).
     /// Available memory and the number of parts may reduce this limit.
     pub fn threads(mut self, threads: usize) -> Self {
@@ -1283,9 +1307,7 @@ impl Writer for SolidCraftWriter {
             let bytes = self.history_design_report(model, &history, "", Live::Whole, report)?;
             report.set_outcome(Outcome {
                 mode: Mode::History,
-                check: Check::NotApplicable(
-                    "the design contains sketches and no source bodies to compare".to_owned(),
-                ),
+                check: self.check_sketches(&bytes),
                 features: mapping.features,
             });
             return out

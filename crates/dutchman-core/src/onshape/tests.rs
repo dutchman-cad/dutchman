@@ -992,4 +992,59 @@ fn a_part_binds_to_the_feature_that_made_it_by_its_unique_name() {
     // A feature making two parts binds neither.
     let two: [(usize, &[(&str, &str)]); 2] = [(0, &[]), (1, &[("b", "Part B"), ("c", "Part C")])];
     assert!(bound_parts(&two, &[0]).is_empty());
+
+#[test]
+fn a_spline_segment_maps_only_over_its_whole_knot_domain() {
+    for (end, whole) in [(2.0, true), (1.5, false)] {
+        let bytes = changed(|response| {
+            response["features"][0]["entities"].as_array_mut().unwrap().push(json!({
+                "btType":"BTMSketchCurveSegment-155","entityId":"wave","startPointId":"wave.start","endPointId":"wave.end",
+                "startParam":0.0,"endParam":end,
+                "geometry":{"btType":"BTCurveGeometrySpline-118","isPeriodic":false,"isRational":false,"dimension":2,"degree":3,
+                    "controlPointCount":4,"controlPoints":[0.0,0.03,0.005,0.035,0.01,0.03,0.015,0.035],
+                    "knots":[0.0,0.0,0.0,0.0,2.0,2.0,2.0,2.0]}}));
+        });
+        let (wire, report) = read(&bytes);
+        if whole {
+            assert_eq!(kinds(&wire), ["sketch", "extrude"], "{:?}", report.losses());
+            assert!(wire["sketch_entities"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["geometry"]["kind"] == "nurbs"));
+        } else {
+            assert_eq!(kinds(&wire)[0], "native");
+            assert!(report.losses().iter().any(|l| l
+                .detail
+                .contains("trimmed sketch splines are not supported yet")));
+        }
+    }
+}
+
+#[test]
+fn a_sketcher_pick_of_the_origin_point_is_a_coincidence_with_the_origin() {
+    let bytes = changed(|response| {
+        response["features"][0]["entities"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"btType":"BTMSketchPoint-158","entityId":"zero","x":0.0,"y":0.0}));
+        response["features"][0]["constraints"] = json!([{"constraintType":"COINCIDENT","entityId":"origin-pick","parameters":[
+            {"parameterId":"localFirst","value":"zero"},
+            {"parameterId":"externalSecond","queries":[{"btType":"BTMIndividualQuery-138","queryString":"","deterministicIds":["IB"]}]}]}]);
+    });
+    let (wire, report) = read(&bytes);
+    assert_eq!(kinds(&wire), ["sketch", "extrude"]);
+    assert!(
+        report
+            .losses()
+            .iter()
+            .all(|l| l.code.as_deref() != Some("onshape/sketch.constraint-not-supported")),
+        "{:?}",
+        report.losses()
+    );
+    assert!(wire["sketch_constraints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|c| c["definition"]["kind"] == "point_coordinate_values"));
 }

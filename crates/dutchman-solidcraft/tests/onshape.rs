@@ -229,7 +229,7 @@ fn sketch_only_history_writes_without_an_import_or_step_blob() {
         .model
         .features
         .retain(|feature| feature.ordinal == 0);
-    let writer = SolidCraftWriter::new();
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
     writer.convertible(&model).unwrap();
     let mut bytes = Vec::new();
     writer.write(&model, &mut bytes, &mut report).unwrap();
@@ -243,5 +243,54 @@ fn sketch_only_history_writes_without_an_import_or_step_blob() {
     let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
     for i in 0..zip.len() {
         assert!(!zip.by_index(i).unwrap().name().unwrap().ends_with(".step"));
+    }
+}
+
+/// A sketch-only design has no source bodies: a replay must run without a feature error and
+/// build no body, and one that builds a body or fails says so.
+#[test]
+fn sketch_only_designs_are_checked_by_a_clean_replay_without_bodies() {
+    for (eval, expected) in [
+        (json!({"bodies": [], "timeline": []}), "verified"),
+        (
+            json!({"bodies": [{"volume_mm3": 1.0}], "timeline": []}),
+            "differs",
+        ),
+        (
+            json!({"bodies": [], "timeline": [{"name": "Sketch", "error": "unsolved"}]}),
+            "differs",
+        ),
+    ] {
+        #[derive(Debug)]
+        struct Fixed(Value);
+        impl SolidCraftEvaluator for Fixed {
+            fn evaluate(&self, _: &[u8], _: Duration, _: &str) -> Result<Value, String> {
+                Ok(self.0.clone())
+            }
+            fn run(
+                &self,
+                _: &[u8],
+                _: &[Value],
+                _: Duration,
+                _: &str,
+            ) -> Result<Vec<Value>, String> {
+                Err("not used".to_owned())
+            }
+        }
+        let (mut model, mut report) = model("plate-fillet");
+        model.source_step = None;
+        model.ir.geometry = Default::default();
+        model
+            .ir
+            .model
+            .features
+            .retain(|feature| feature.ordinal == 0);
+        let writer = SolidCraftWriter::new().evaluator(Arc::new(Fixed(eval)));
+        writer.write(&model, &mut Vec::new(), &mut report).unwrap();
+        let check = &report.outcome().unwrap().check;
+        match expected {
+            "verified" => assert_eq!(check, &Check::Verified),
+            _ => assert!(matches!(check, Check::Differs(_)), "{check:?}"),
+        }
     }
 }

@@ -10,6 +10,9 @@ use super::{
 };
 use crate::{Report, Severity};
 
+/// Onshape's deterministic id for the origin point of every Part Studio.
+const ORIGIN_ID: &str = "IB";
+
 /// Built-in planes have a fixed source frame. A sketch on a model face takes the
 /// frame Onshape gives that face in the rollback state before the sketch.
 fn frame(feature: &Value, model: &Model, face: &dyn Fn(&str) -> Mapping<Value>) -> Mapping<Value> {
@@ -225,8 +228,25 @@ fn geometry(entity: &Value) -> Mapping<Value> {
             )
         }
         "BTCurveGeometrySpline-118" | "BTCurveGeometryControlPointSpline-2197" => {
-            if entity.get("btType").and_then(Value::as_str) != Some("BTMSketchCurve-4") {
-                return Err("trimmed sketch splines are not supported yet".into());
+            let knots = rows(geometry, "knots")?;
+            match entity.get("btType").and_then(Value::as_str) {
+                Some("BTMSketchCurve-4") => {}
+                // Onshape stores a drawn spline as a segment over its curve. Only a segment
+                // spanning the whole knot domain is the spline itself; a trimmed one is not.
+                Some("BTMSketchCurveSegment-155") => {
+                    let first = knots.first().and_then(Value::as_f64);
+                    let last = knots.last().and_then(Value::as_f64);
+                    let (Some(first), Some(last)) = (first, last) else {
+                        return Err("spline knots are missing".into());
+                    };
+                    let tolerance = 1e-9 * (last - first).abs().max(1.0);
+                    if (coordinate(entity, "startParam")? - first).abs() > tolerance
+                        || (coordinate(entity, "endParam")? - last).abs() > tolerance
+                    {
+                        return Err("trimmed sketch splines are not supported yet".into());
+                    }
+                }
+                _ => return Err("trimmed sketch splines are not supported yet".into()),
             }
             if geometry.get("isRational").and_then(Value::as_bool) == Some(true)
                 || geometry.get("isPeriodic").and_then(Value::as_bool) == Some(true)
@@ -251,7 +271,7 @@ fn geometry(entity: &Value) -> Mapping<Value> {
                 ));
             }
             Ok(
-                json!({"kind": "nurbs", "curve": {"degree": geometry.get("degree"), "knots": rows(geometry, "knots")?,
+                json!({"kind": "nurbs", "curve": {"degree": geometry.get("degree"), "knots": knots,
                 "poles": {"kind": "polynomial", "points": points}, "periodic": false}}),
             )
         }
@@ -426,12 +446,21 @@ fn constraint_row(
                 .and_then(Value::as_str)
                 .unwrap_or("")
                 .trim();
-            if !matches!(
-                source.trim_end_matches(';'),
-                "qOrigin(EntityType.VERTEX)" | "query=qOrigin(EntityType.VERTEX)"
-            ) && !(query.get("featureId").and_then(Value::as_str) == Some("Origin")
-                && query.get("btType").and_then(Value::as_str)
-                    == Some("BTMIndividualCreatedByQuery-137"))
+            // The sketcher stores a pick of the origin point as the default geometry's
+            // deterministic id, with no query text.
+            let origin_pick = source.is_empty()
+                && query
+                    .get("deterministicIds")
+                    .and_then(Value::as_array)
+                    .is_some_and(|ids| ids.len() == 1 && ids.first() == Some(&json!(ORIGIN_ID)));
+            if !origin_pick
+                && !matches!(
+                    source.trim_end_matches(';'),
+                    "qOrigin(EntityType.VERTEX)" | "query=qOrigin(EntityType.VERTEX)"
+                )
+                && !(query.get("featureId").and_then(Value::as_str) == Some("Origin")
+                    && query.get("btType").and_then(Value::as_str)
+                        == Some("BTMIndividualCreatedByQuery-137"))
             {
                 return Err("the external coincident reference does not identify the sketch origin; this constraint is not supported yet".into());
             }

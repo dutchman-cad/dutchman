@@ -38,8 +38,8 @@ continue to apply. A present consistency flag must be a JSON boolean.
 |---|---|---|
 | Planar sketch | CADIR sketch and solved curves | Built-in Top, Front and Right planes, forward end caps of resolved blind extrusions whose source sketch supplies the frame, and planar model faces parallel to a built-in plane. Faces at other orientations and non-planar faces are not supported yet. |
 | Lines, circular arcs, circles, points | Exact sketch entities | Text, images, projected references without solved curves, and other curves are not supported yet. |
-| Simple spline | Polynomial planar CADIR NURBS | Non-periodic, non-rational curves with complete knots and control points; the writer retains its own knot and degree limits. |
-| Constraints | Horizontal, vertical, fixed, parallel, perpendicular, tangent, equal, concentric, coincident loci, explicit origin coincidence and midpoint | Unsupported relations are dropped with `onshape/sketch.constraint-not-supported`; solved geometry remains. |
+| Simple spline | Polynomial planar CADIR NURBS | Non-periodic, non-rational curves with complete knots and control points, stored whole or as a segment over the whole knot range; the writer retains its own knot and degree limits. A trimmed spline segment is not supported yet. |
+| Constraints | Horizontal, vertical, fixed, parallel, perpendicular, tangent, equal, concentric, coincident loci, explicit origin coincidence (an origin query, or the sketcher's pick of the origin point) and midpoint | Unsupported relations are dropped with `onshape/sketch.constraint-not-supported`; solved geometry remains. |
 | Dimensions | Length, distance between loci, radius, diameter, angle and CADIR parameters | Literal units, evaluated quantities and bounded arithmetic using earlier Part Studio variables are accepted. Diameter dimensions use `length`. Driven dimensions and expressions needing FeatureScript evaluation are reported. |
 | Solid extrude | Blind, through all, up to a parallel planar face; NEW/ADD/REMOVE/INTERSECT | Whole resolved sketch or explicit sketch-region boundaries, positive or reversed normal, symmetric blind distance split equally about the sketch plane. Multiple-body Boolean scopes, second direction, draft, offset starts, thin/surface bodies, and other bounds are not supported yet. |
 | Solid revolve | Full or one-direction angle about a resolved straight input edge, or about a construction line of the profile's sketch, which stays the revolve's axis in SolidCraft | Other bounds and body types are not supported yet. One-direction geometry still passes the writer's side proof. |
@@ -96,7 +96,9 @@ stop body-building history rather than guessing a selection.
 For a Part Studio with bodies, the STEP export supplies the exact final source
 bodies and the fallback shape. It does not supply construction history or historical
 selections. Sketch-only conversion writes editable sketches without an imported
-body or a STEP comparison. The same
+body or a STEP comparison. With a SolidCraft CLI, the sketches are replayed instead:
+`verified` means every sketch rebuilt without an error and, like the source, no body
+was built; `differs` names the sketch that failed or says a body appeared. The same
 SolidCraft writer and [history checks](history.md#how-a-history-is-checked) used
 for the other formats replay the CADIR history, pair bodies by position and box,
 and compare boxes, area and volume against `export.step`. Existing tolerances and

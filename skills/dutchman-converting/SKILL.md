@@ -22,7 +22,8 @@ kept. Compressed REST queries can resolve built-in plane frames and explicit ske
 region boundaries. Do not treat a deterministic region ID as a whole-sketch pick;
 explain a refused boundary using its specific loss. The ordinary history/verification
 report still applies. See `docs/onshape.md`.
-Sketch-only Part Studios can omit STEP and convert to sketches alone. The reader also
+Sketch-only Part Studios can omit STEP and convert to sketches alone; with SolidCraft they are
+verified by replaying the sketches (no body expected). The reader also
 accepts resolved extrusion-cap sketches, complete tangent edge chains, hole `locations`
 with counterbore/countersink entries, construction-line revolve axes, midpoint relations,
 assigned variables and symmetric blind extrudes. Variable expressions use earlier

@@ -1355,6 +1355,8 @@ unfinished final check. See [Onshape](onshape.md#fetching-a-document) for consis
 
 Onshape assigned-variable features count as `not_needed`: their named parameters
 remain editable without adding a solid feature. Sketch-only bundles have no STEP
-reference to compare. Unresolved tangent chains and unsupported variable expressions
+reference to compare: with a SolidCraft CLI their `verification.status` is `verified` when every
+sketch replays without an error and no body is built, and `differs` otherwise (`reason` says
+why); without one it is `not_applicable`. Unresolved tangent chains and unsupported variable expressions
 use `onshape/history.not-supported`; unresolved external origin references use
 `onshape/sketch.constraint-not-supported`. Report fields and schema versions are unchanged.

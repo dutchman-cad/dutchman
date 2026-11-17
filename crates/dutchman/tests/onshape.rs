@@ -1505,3 +1505,223 @@ fn sketch_only_fetch_skips_step_and_converts_without_a_body() {
         .iter()
         .all(|f| f["type"] == "sketch"));
 }
+
+/// A Part Studio holding one sketch of every kind a sketch-only document uses: lines, a
+/// point, a circle, an arc, a whole cubic spline (stored as a segment over its knot domain),
+/// and coincident, horizontal, vertical, length, midpoint, origin and diameter constraints.
+fn sketch_only_features() -> Value {
+    let string = |id: &str, value: &str| json!({"btType":"BTMParameterString-149","parameterId":id,"value":value});
+    let quantity = |id: &str, expression: &str| json!({"btType":"BTMParameterQuantity-147","parameterId":id,"expression":expression});
+    let constraint = |id: &str, kind: &str, parameters: Value| json!({"btType":"BTMSketchConstraint-2","entityId":id,"constraintType":kind,"parameters":parameters});
+    let line = |id: &str, p: [f64; 2], d: [f64; 2], length: f64| {
+        json!({"btType":"BTMSketchCurveSegment-155","entityId":id,"startPointId":format!("{id}.start"),"endPointId":format!("{id}.end"),
+            "centerId":"","startParam":0.0,"endParam":length,"isConstruction":false,
+            "geometry":{"btType":"BTCurveGeometryLine-117","pntX":p[0],"pntY":p[1],"dirX":d[0],"dirY":d[1]}})
+    };
+    let mut constraints = Vec::new();
+    for (i, (a, b)) in [
+        ("bottom", "right"),
+        ("right", "top"),
+        ("top", "left"),
+        ("left", "bottom"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        constraints.push(constraint(
+            &format!("corner{i}"),
+            "COINCIDENT",
+            json!([
+                string("localFirst", &format!("{a}.end")),
+                string("localSecond", &format!("{b}.start"))
+            ]),
+        ));
+    }
+    for (kind, side) in [
+        ("HORIZONTAL", "bottom"),
+        ("HORIZONTAL", "top"),
+        ("VERTICAL", "left"),
+        ("VERTICAL", "right"),
+    ] {
+        constraints.push(constraint(
+            &format!("{side}-direction"),
+            kind,
+            json!([string("localFirst", side)]),
+        ));
+    }
+    for (side, expression) in [("bottom", "20 mm"), ("left", "10 mm")] {
+        constraints.push(constraint(
+            &format!("{side}-length"),
+            "LENGTH",
+            json!([string("localFirst", side), {"btType":"BTMParameterEnum-145","parameterId":"direction","value":"MINIMUM"},
+                quantity("length", expression), {"btType":"BTMParameterEnum-145","parameterId":"alignment","value":"ALIGNED"}]),
+        ));
+    }
+    constraints.push(constraint(
+        "centre-middle",
+        "MIDPOINT",
+        json!([
+            string("localMidpoint", "centre"),
+            string("localEntity1", "bottom.start"),
+            string("localEntity2", "top.start")
+        ]),
+    ));
+    constraints.push(constraint(
+        "centre-origin",
+        "COINCIDENT",
+        json!([string("localFirst", "centre"), {"btType":"BTMParameterQueryList-148","parameterId":"externalSecond",
+            "queries":[{"btType":"BTMIndividualQuery-138","queryString":"","deterministicIds":["IB"]}]}]),
+    ));
+    constraints.push(constraint(
+        "hole-size",
+        "DIAMETER",
+        json!([string("localFirst", "hole"), quantity("length", "6 mm")]),
+    ));
+    json!({"btType":"BTMSketch-151","featureType":"newSketch","featureId":"outline","name":"Outline","suppressed":false,
+        "parameters":[{"btType":"BTMParameterQueryList-148","parameterId":"sketchPlane","queries":[{"btType":"BTMIndividualQuery-138",
+            "deterministicIds":["plane-pick"],"queryString":"query=qCompressed(1.0,\"%B5$QueryM4Sa$entityTypeBa$EntityTypeS4$FACESb$historyTypeS8$CREATIONSb$operationIdB2$IdA1S3.7$TopplaneOpS9$queryTypeS5$DUMMY\",id);"}]}],
+        "entities":[
+            line("bottom", [-0.01, -0.005], [1.0, 0.0], 0.02),
+            line("right", [0.01, -0.005], [0.0, 1.0], 0.01),
+            line("top", [0.01, 0.005], [-1.0, 0.0], 0.02),
+            line("left", [-0.01, 0.005], [0.0, -1.0], 0.01),
+            {"btType":"BTMSketchPoint-158","entityId":"centre","x":0.0,"y":0.0},
+            {"btType":"BTMSketchCurve-4","entityId":"hole","centerId":"hole.center",
+                "geometry":{"btType":"BTCurveGeometryCircle-115","xCenter":0.02,"yCenter":0.0,"radius":0.003,"xDir":1.0,"yDir":0.0,"clockwise":false}},
+            {"btType":"BTMSketchCurveSegment-155","entityId":"bend","startPointId":"bend.start","endPointId":"bend.end","centerId":"bend.center",
+                "startParam":0.0,"endParam":std::f64::consts::FRAC_PI_2,
+                "geometry":{"btType":"BTCurveGeometryCircle-115","xCenter":-0.02,"yCenter":0.0,"radius":0.004,"xDir":1.0,"yDir":0.0,"clockwise":false}},
+            {"btType":"BTMSketchCurveSegment-155","entityId":"wave","startPointId":"wave.start","endPointId":"wave.end","centerId":"",
+                "startParam":0.0,"endParam":1.0,
+                "geometry":{"btType":"BTCurveGeometrySpline-118","isPeriodic":false,"isRational":false,"dimension":2,"degree":3,"controlPointCount":4,
+                    "controlPoints":[-0.01,-0.02, -0.004,-0.012, 0.004,-0.018, 0.01,-0.01],
+                    "knots":[0.0,0.0,0.0,0.0,1.0,1.0,1.0,1.0]}}
+        ],
+        "constraints":constraints})
+}
+
+#[test]
+fn a_sketch_only_part_studio_fetches_without_step_and_keeps_every_sketch_kind() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut mock = prepare(PS, "PARTSTUDIO");
+    mock.replies.extend([
+        response(
+            200,
+            json!({"sourceMicroversion":MID,"features":[sketch_only_features()]}),
+        ),
+        // The plane pick asks for the rollback state; a sketch builds no body there.
+        response(200, json!({"microversionId":MID,"bodies":[]})),
+        response(404, json!({})),
+        response(200, json!([])),
+    ]);
+    let fetched = run(&mut mock, &dir, PS, 50).unwrap();
+    assert_eq!(fetched.calls, 7);
+    assert!(mock.replies.is_empty());
+    assert!(mock
+        .sent
+        .iter()
+        .all(|(method, path, _)| method == "GET" && !path.contains("/export/")));
+    let bundle = dir.path().join("test.onshape-bundle");
+    let mut archive = open_bundle(&dir);
+    let manifest = zip_value(&mut archive, "manifest.json");
+    assert!(manifest["elements"][0]["files"].get("step").is_none());
+    assert!(archive.file_names().all(|name| !name.ends_with(".step")));
+
+    let mut report = dutchman_core::Report::default();
+    let model =
+        dutchman_core::read(dutchman_core::Format::OnshapeBundle, &bundle, &mut report).unwrap();
+    let onshape_losses: Vec<_> = report
+        .losses()
+        .iter()
+        .filter(|loss| {
+            loss.code
+                .as_deref()
+                .is_some_and(|code| code.starts_with("onshape/"))
+        })
+        .collect();
+    assert!(onshape_losses.is_empty(), "{onshape_losses:?}");
+    assert!(model.source_step.is_none());
+    let wire = serde_json::to_value(&model.ir.model).unwrap();
+    let mut kinds: Vec<_> = wire["sketch_entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["geometry"]["kind"].as_str().unwrap().to_owned())
+        .collect();
+    kinds.sort();
+    // Four sides, the midpoint's construction carrier, and one of each other kind.
+    assert_eq!(
+        kinds,
+        ["arc", "circle", "line", "line", "line", "line", "line", "nurbs", "point"]
+    );
+    let nurbs = wire["sketch_entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["geometry"]["kind"] == "nurbs")
+        .unwrap();
+    assert_eq!(nurbs["geometry"]["curve"]["degree"], 3);
+    assert_eq!(
+        nurbs["geometry"]["curve"]["poles"]["points"][3],
+        json!({"u": 10.0, "v": -10.0})
+    );
+    let constraints: Vec<_> = wire["sketch_constraints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["definition"]["kind"].as_str().unwrap().to_owned())
+        .collect();
+    for kind in [
+        "coincident_loci",
+        "horizontal",
+        "vertical",
+        "distance",
+        "midpoint",
+        "point_coordinate_values",
+        "diameter",
+    ] {
+        assert!(
+            constraints.iter().any(|c| c == kind),
+            "{kind}: {constraints:?}"
+        );
+    }
+
+    use dutchman_core::{Check, Writer};
+    use dutchman_solidcraft::{SolidCraftWriter, Verification};
+    let mut output = Vec::new();
+    SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .write(&model, &mut output, &mut report)
+        .unwrap();
+    let outcome = report.outcome().unwrap();
+    assert!(
+        matches!(outcome.check, Check::NotApplicable(_)),
+        "{:?}",
+        outcome.check
+    );
+    assert!(outcome
+        .features
+        .iter()
+        .all(|f| f.status == dutchman_core::FeatureStatus::Mapped));
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(output)).unwrap();
+    let doc = zip_value(&mut zip, "document.json");
+    let written = doc["features"].as_array().unwrap();
+    assert_eq!(written.len(), 1, "{doc}");
+    assert_eq!(written[0]["type"], "sketch");
+    assert!(zip.file_names().all(|name| !name.ends_with(".step")));
+
+    // With a SolidCraft CLI, the sketches replay without an error and build no body.
+    if let Some(cli) = std::env::var_os(dutchman_solidcraft::CLI_ENV) {
+        let mut report = dutchman_core::Report::default();
+        SolidCraftWriter::new()
+            .verification(Verification::With(cli.into()))
+            .write(&model, &mut Vec::new(), &mut report)
+            .unwrap();
+        assert_eq!(
+            report.outcome().unwrap().check,
+            Check::Verified,
+            "{:?}",
+            report.losses()
+        );
+    }
+}
