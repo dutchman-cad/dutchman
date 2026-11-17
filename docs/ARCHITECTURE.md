@@ -255,7 +255,8 @@ planning has no callback and keeps the blocker. Every admitted candidate has a n
 Curves that bound a selected trimmed sketch region stay solid (not
 construction), so SolidCraft splits the sketch there and sweeps that region, not the merged
 area around it. Complete-loop extrudes whose regions those curves subdivide use an editable
-copy with unused splitters as construction; the original sketch's geometry, constraints, and
+copy with unused splitters as construction: any solid curve the extrude does not use that
+touches, enters or crosses one of its selected loops, a curve it cannot follow included; the original sketch's geometry, constraints, and
 parameters are preserved. Boundary matching remains exact and unique. Trimmed boundary rings
 sharing a curved carrier resolve their parameter reading together, retaining the refusal when
 the surviving readings disagree. One-sided extrudes may

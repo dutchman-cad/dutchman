@@ -99,9 +99,11 @@ layout lines through hole centres without splitting the circular holes during re
 another active consumer needs the whole sketch or a different selection form, those lines
 stay solid.
 
-When a complete-loop extrusion needs a region those solid lines subdivide, it uses an
-editable profile copy of the sketch. The copy retains its points, curves, constraints, and
-parameter expressions, with unused splitters as construction geometry. Trimmed selections
+When a complete-loop extrusion needs a region that solid curves it does not use subdivide
+(those lines, or a notch drawn from the loop's edge that another feature's region keeps
+solid), it uses an editable profile copy of the sketch. The copy retains its points, curves,
+constraints, and parameter expressions, with every unused curve that touches, enters or
+crosses a selected loop as construction geometry. Trimmed selections
 continue to use the shared sketch. Each selected boundary must still match exactly one
 SolidCraft region; unavailable or ambiguous boundaries remain history blockers.
 

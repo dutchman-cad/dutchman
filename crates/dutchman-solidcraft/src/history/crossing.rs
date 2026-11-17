@@ -311,6 +311,71 @@ pub(super) fn stray_curves(
     strays.difference(&named).cloned().collect()
 }
 
+/// The curves among `ids` that touch, enter or cross a loop `feature` selects whole from the
+/// sketch. Solid, such a curve divides the region and SolidCraft finds no profile with the
+/// source's boundary. A curve or selected loop that cannot be followed counts as dividing.
+pub(super) fn dividing(
+    sketch: &Value,
+    entities: &[&Value],
+    feature: &Value,
+    ids: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let Some(id) = sketch.get("id").and_then(Value::as_str) else {
+        return ids.clone();
+    };
+    let mut used = BTreeSet::new();
+    if ids.len() > MAX_LINES
+        || region_uses(
+            super::operation(feature),
+            id,
+            &[id],
+            sketch,
+            entities,
+            &mut used,
+            0,
+        ) != Some(true)
+    {
+        return ids.clone();
+    }
+    let selected: Vec<&[Value]> = loops(sketch)
+        .into_iter()
+        .filter(|members| {
+            members.iter().all(|member| {
+                member
+                    .get("entity")
+                    .and_then(Value::as_str)
+                    .is_some_and(|entity| used.contains(entity))
+            })
+        })
+        .collect();
+    let Some(polygons) = selected
+        .iter()
+        .map(|members| polygon(members, entities))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return ids.clone();
+    };
+    ids.iter()
+        .filter(|id| {
+            entity_named(entities, id)
+                .and_then(samples)
+                .is_none_or(|points| polygons.iter().any(|polygon| meets(&points, polygon)))
+        })
+        .cloned()
+        .collect()
+}
+
+/// Whether a curve, as points along it, lies on or inside the polygon or crosses its edges.
+fn meets(points: &[P2], polygon: &[P2]) -> bool {
+    let tolerance = tolerance(polygon);
+    points
+        .iter()
+        .any(|&p| inside(p, polygon) || on_boundary(p, polygon, tolerance))
+        || points.iter().zip(points.iter().skip(1)).any(|(&c, &d)| {
+            edges(polygon).any(|(a, b)| !matches!(intersection(a, b, c, d), Ok(None)))
+        })
+}
+
 /// Adds to `found` each of `ids` that a string inside `value` names.
 fn named_in(value: &Value, ids: &BTreeSet<String>, found: &mut BTreeSet<String>, depth: usize) {
     if depth > MAX_SELECTION_DEPTH {
