@@ -627,17 +627,35 @@ fn capture<C: HttpClient>(
                         "The Onshape Part Studio has too many features; fetch a smaller element.",
                     ));
                 }
-                let mut indices = Vec::new();
+                let mut wanted = BTreeSet::new();
                 for (i, feature) in list.iter().enumerate() {
-                    if feature.get("suppressed").and_then(Value::as_bool) == Some(true)
-                        || !needs_topology(feature, 0)?
+                    if feature.get("suppressed").and_then(Value::as_bool) != Some(true)
+                        && needs_topology(feature, 0)?
                     {
-                        continue;
+                        wanted.insert(i);
                     }
+                }
+                // With several parts, the parts present before and after each part-making
+                // feature tell the reader which part, by its name, that feature made.
+                let creators = part_creators(list);
+                if creators.len() > 1 {
+                    for i in creators {
+                        wanted.insert(i);
+                        wanted.insert(i.saturating_add(1));
+                    }
+                }
+                let mut indices = Vec::new();
+                for i in wanted {
                     let file = format!("{prefix}/bodydetails/{i}.json");
+                    // Past the last feature is the final state, which -1 asks for.
+                    let bar = if i >= list.len() {
+                        "-1".to_owned()
+                    } else {
+                        i.to_string()
+                    };
                     fetcher.raw(
                         &format!("{base}/bodydetails"),
-                        &format!("rollbackBarIndex={i}&includeGeometricData=true"),
+                        &format!("rollbackBarIndex={bar}&includeGeometricData=true"),
                         file,
                         false,
                     )?;
@@ -769,6 +787,31 @@ fn sketch_only(features: &[Value]) -> bool {
                     Some("newSketch" | "assignVariable")
                 )
         })
+}
+
+/// The ordinals of the unsuppressed features that make new parts.
+fn part_creators(features: &[Value]) -> Vec<usize> {
+    features
+        .iter()
+        .enumerate()
+        .filter(|(_, feature)| {
+            feature.get("suppressed").and_then(Value::as_bool) != Some(true)
+                && matches!(
+                    feature.get("featureType").and_then(Value::as_str),
+                    Some("extrude" | "revolve")
+                )
+                && feature
+                    .get("parameters")
+                    .and_then(Value::as_array)
+                    .is_some_and(|parameters| {
+                        parameters.iter().any(|p| {
+                            p.get("parameterId").and_then(Value::as_str) == Some("operationType")
+                                && p.get("value").and_then(Value::as_str) == Some("NEW")
+                        })
+                    })
+        })
+        .map(|(i, _)| i)
+        .collect()
 }
 
 fn needs_topology(value: &Value, depth: usize) -> Result<bool> {

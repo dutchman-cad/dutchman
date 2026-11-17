@@ -19,7 +19,12 @@ supported yet; fetch one Part Studio instead.
 A Part Studio with several parts converts as one design holding every part as a
 body, with one shared history, as in Onshape. Its STEP export lists each part as a
 product of its own; when every part sits once in the Part Studio's own frame, those
-products are not written as an assembly.
+products are not written as an assembly. Each part keeps its name and colour when
+the bundle proves which feature made it: exactly one named part appears across that
+feature, and exactly one body in the STEP export has that name. Otherwise SolidCraft
+names the part, its colour is left out, and the conversion says how many parts were
+not matched. Bundles fetched before this check lack the states it needs; fetch them
+again.
 
 Amended v1 manifests may record each file's request path kind (`m`, `v`, or `w`)
 and microversion, with a bundle-level `consistent` flag. A bundle marked
@@ -190,8 +195,10 @@ The ZIP contains `manifest.json` and raw response bytes without rewriting the JS
 - A Part Studio has `partstudios/<element>/features.json`, including sketches,
   parameters, expressions, and queries; `bodydetails/<index>.json` at each feature
   index needing non-sketch topology queries; and `bodydetails/index.json`, an array
-  of those indices. Suppressed features and sketch-region-only queries do not
-  request bodydetails. Optional `configuration.json` and `variables.json` are
+  of those indices. When more than one feature makes a new part, the states before
+  and after each of those features are kept too; the state after the last feature is
+  stored as the index equal to the feature count. Suppressed features and
+  sketch-region-only queries do not request bodydetails. Optional `configuration.json` and `variables.json` are
   included when their endpoints return data. A Part Studio containing only sketches
   and assigned variables skips the export request and has no `export.step`. For
   other Part Studios, final `export.step` is fetched through

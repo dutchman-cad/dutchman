@@ -100,6 +100,39 @@ impl<'a> Inputs<'a> {
         }
         load(self.bundle, self.prefix, ordinal, self.mid, feature)
     }
+
+    /// The solid parts at a rollback state, by part id, with each part's name.
+    pub fn parts(&self, ordinal: usize) -> Mapping<BTreeMap<String, Option<String>>> {
+        if !self.indices.contains(&ordinal) {
+            return Err(format!(
+                "bodydetails for rollback index {ordinal} is missing"
+            ));
+        }
+        let response = self
+            .bundle
+            .json(&format!("{}/bodydetails/{ordinal}.json", self.prefix))
+            .map_err(|_| {
+                format!("bodydetails for rollback index {ordinal} is missing or unreadable")
+            })?;
+        super::microversion(&response, "microversionId", self.mid)?;
+        let mut parts = BTreeMap::new();
+        for body in rows(&response, "bodies")? {
+            if body.get("type").and_then(Value::as_str) != Some("SOLID")
+                || body.get("consumedByComposite").and_then(Value::as_bool) == Some(true)
+            {
+                continue;
+            }
+            let name = body
+                .pointer("/properties/name")
+                .and_then(Value::as_str)
+                .filter(|name| !name.trim().is_empty())
+                .map(str::to_owned);
+            if parts.insert(text(body, "id")?.to_owned(), name).is_some() {
+                return Err("bodydetails repeats a body id".into());
+            }
+        }
+        Ok(parts)
+    }
 }
 
 fn load(

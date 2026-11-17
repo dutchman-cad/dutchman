@@ -893,3 +893,97 @@ fn part_studio_parts_are_one_design_but_moved_parts_stay_placed() {
     assert_eq!(moved.ir.model.occurrences.len(), 2);
     assert!(crate::local_assembly(&moved).unwrap().is_some());
 }
+
+/// The revolve fixture's bundle with `states` as its bodydetails, each a list of
+/// (part id, part name).
+fn with_parts(states: &[(usize, &[(&str, &str)])]) -> Vec<u8> {
+    let fixture: &[u8] = include_bytes!("../../tests/fixtures/onshape-revolve.onshape-bundle");
+    let mut archive = zip::ZipArchive::new(Cursor::new(fixture)).unwrap();
+    let mut output = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default();
+    for i in 0..archive.len() {
+        let mut member = archive.by_index(i).unwrap();
+        let name = member.name().unwrap().into_owned();
+        if name.contains("/bodydetails/") {
+            continue;
+        }
+        let mut bytes = Vec::new();
+        member.read_to_end(&mut bytes).unwrap();
+        output.start_file(name.as_str(), options).unwrap();
+        output.write_all(&bytes).unwrap();
+    }
+    for (ordinal, parts) in states {
+        let bodies: Vec<Value> = parts
+            .iter()
+            .map(|(id, name)| json!({"id": id, "type": "SOLID", "properties": {"name": name}}))
+            .collect();
+        output
+            .start_file(
+                format!("partstudios/studio/bodydetails/{ordinal}.json"),
+                options,
+            )
+            .unwrap();
+        output
+            .write_all(
+                json!({"bodies": bodies, "microversionId": {"theId": "synthetic-microversion"}})
+                    .to_string()
+                    .as_bytes(),
+            )
+            .unwrap();
+    }
+    let indices: Vec<usize> = states.iter().map(|(ordinal, _)| *ordinal).collect();
+    output
+        .start_file("partstudios/studio/bodydetails/index.json", options)
+        .unwrap();
+    output
+        .write_all(json!(indices).to_string().as_bytes())
+        .unwrap();
+    output.finish().unwrap().into_inner()
+}
+
+fn bound_parts(states: &[(usize, &[(&str, &str)])], creators: &[usize]) -> Vec<usize> {
+    let mut report = Report::default();
+    let mut model = crate::read_bytes(
+        Format::OnshapeBundle,
+        std::path::Path::new("synthetic.onshape-bundle"),
+        include_bytes!("../../tests/fixtures/onshape-revolve.onshape-bundle"),
+        &mut report,
+    )
+    .unwrap();
+    model.ir.geometry.bodies[0].name = Some("Part B".to_owned());
+    let bytes = with_parts(states);
+    let bundle = archive::Bundle::open(&bytes).unwrap();
+    let inputs =
+        topology::Inputs::new(&bundle, "partstudios/studio", "synthetic-microversion").unwrap();
+    let bound = part_bodies(creators, &inputs, &model);
+    assert!(bound
+        .values()
+        .all(|body| *body == model.ir.geometry.bodies[0].id));
+    bound.into_keys().collect()
+}
+
+#[test]
+fn a_part_binds_to_the_feature_that_made_it_by_its_unique_name() {
+    // The first feature makes a part the STEP export does not hold; the second makes the
+    // STEP body's part.
+    let states: [(usize, &[(&str, &str)]); 4] = [
+        (0, &[]),
+        (1, &[("a", "Part A")]),
+        (2, &[("a", "Part A")]),
+        (3, &[("a", "Part A"), ("b", "Part B")]),
+    ];
+    assert_eq!(bound_parts(&states, &[0, 2]), [2]);
+    // Without the state after a feature, its part is not guessed.
+    assert!(bound_parts(&states[..3], &[0, 2]).is_empty());
+    // Two features claiming the one body of that name bind neither.
+    let claimed: [(usize, &[(&str, &str)]); 4] = [
+        (0, &[]),
+        (1, &[("b", "Part B")]),
+        (2, &[]),
+        (3, &[("c", "Part B")]),
+    ];
+    assert!(bound_parts(&claimed, &[0, 2]).is_empty());
+    // A feature making two parts binds neither.
+    let two: [(usize, &[(&str, &str)]); 2] = [(0, &[]), (1, &[("b", "Part B"), ("c", "Part C")])];
+    assert!(bound_parts(&two, &[0]).is_empty());
+}

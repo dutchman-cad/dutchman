@@ -471,6 +471,62 @@ fn version_partstudio_uses_version_paths_and_writes_complete_bundle_verbatim() {
     assert!(cached.sent.is_empty());
 }
 #[test]
+fn several_new_parts_fetch_the_states_around_each_part_making_feature() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut replies = partstudio_replies(MID, "1");
+    let mut features: Value =
+        serde_json::from_str(include_str!("fixtures/onshape/partstudio.json")).unwrap();
+    let list = features["features"].as_array_mut().unwrap();
+    let extrude = list
+        .iter_mut()
+        .find(|f| f["featureType"] == "extrude")
+        .unwrap();
+    extrude["parameters"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"btType":"BTMParameterEnum-145","parameterId":"operationType","value":"NEW"}));
+    let mut second = extrude.clone();
+    second["featureId"] = json!("second-extrude");
+    list.push(second);
+    replies[2] = response(200, features);
+    for _ in 0..3 {
+        replies.insert(
+            3,
+            response(
+                200,
+                serde_json::from_str(include_str!("fixtures/onshape/bodydetails.json")).unwrap(),
+            ),
+        );
+    }
+    let mut mock = Mock::default();
+    mock.replies
+        .push_back(response(200, json!({"microversion":MID})));
+    mock.replies.extend(replies);
+    run(&mut mock, &dir, PS, 50).unwrap();
+    let bars: Vec<_> = mock
+        .sent
+        .iter()
+        .filter(|(_, p, _)| p.ends_with("/bodydetails"))
+        .map(|(_, _, q)| q.clone())
+        .collect();
+    assert_eq!(
+        bars,
+        [1, 2, 3]
+            .map(|i| format!("rollbackBarIndex={i}&includeGeometricData=true"))
+            .into_iter()
+            .chain(["rollbackBarIndex=-1&includeGeometricData=true".to_owned()])
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        zip_value(
+            &mut open_bundle(&dir),
+            &format!("partstudios/{PS}/bodydetails/index.json")
+        ),
+        json!([1, 2, 3, 4])
+    );
+}
+
+#[test]
 fn workspace_partstudio_no_change_is_consistent_and_mixes_only_supported_paths() {
     let dir = tempfile::tempdir().unwrap();
     let mut mock = partstudio_mock(MID, "1");

@@ -157,6 +157,53 @@ fn part_studio_bodies(model: &mut Model) {
     model.ir.model.occurrences.clear();
 }
 
+/// The final STEP body each part-making feature made, by the part's name. A feature binds a
+/// body only when exactly one named part appears between its rollback states and exactly
+/// one STEP body, claimed by no other feature, carries that name. Anything else is left
+/// unbound rather than guessed.
+fn part_bodies(
+    creators: &[usize],
+    inputs: &topology::Inputs<'_>,
+    model: &Model,
+) -> std::collections::BTreeMap<usize, cadmpeg_ir::ids::BodyId> {
+    let mut named: std::collections::BTreeMap<&str, Vec<&cadmpeg_ir::ids::BodyId>> =
+        std::collections::BTreeMap::new();
+    for body in &model.ir.geometry.bodies {
+        if let Some(name) = body.name.as_deref() {
+            named.entry(name).or_default().push(&body.id);
+        }
+    }
+    let mut claims: std::collections::BTreeMap<usize, &cadmpeg_ir::ids::BodyId> =
+        std::collections::BTreeMap::new();
+    for &ordinal in creators {
+        let (Ok(before), Ok(after)) = (
+            inputs.parts(ordinal),
+            inputs.parts(ordinal.saturating_add(1)),
+        ) else {
+            continue;
+        };
+        let made: Vec<&Option<String>> = after
+            .iter()
+            .filter(|(id, _)| !before.contains_key(*id))
+            .map(|(_, name)| name)
+            .collect();
+        let [Some(name)] = made.as_slice() else {
+            continue;
+        };
+        if after.values().filter(|n| n.as_ref() == Some(name)).count() != 1 {
+            continue;
+        }
+        if let Some([body]) = named.get(name.as_str()).map(Vec::as_slice) {
+            claims.insert(ordinal, body);
+        }
+    }
+    claims
+        .iter()
+        .filter(|(_, body)| claims.values().filter(|b| b == body).count() == 1)
+        .map(|(ordinal, body)| (*ordinal, (*body).clone()))
+        .collect()
+}
+
 pub(super) fn read(
     path: &std::path::Path,
     bytes: &[u8],
@@ -250,9 +297,10 @@ pub(super) fn read(
     // One body creator followed by modifying operations has an unambiguous final
     // body identity. This binds writer body names, including through-all cuts.
     // Several creators cannot be paired with final STEP bodies by list order.
-    let creators = features
+    let creators: Vec<usize> = features
         .iter()
-        .filter(|feature| {
+        .enumerate()
+        .filter(|(_, feature)| {
             matches!(
                 feature.get("featureType").and_then(Value::as_str),
                 Some("extrude" | "revolve")
@@ -260,10 +308,30 @@ pub(super) fn read(
                 && feature.get("suppressed").and_then(Value::as_bool) != Some(true)
                 && feature.get("parentSuppressed").and_then(Value::as_bool) != Some(true)
         })
-        .count();
-    let single_body = (creators == 1 && model.ir.geometry.bodies.len() == 1)
+        .map(|(ordinal, _)| ordinal)
+        .collect();
+    let single_body = (creators.len() == 1 && model.ir.geometry.bodies.len() == 1)
         .then(|| model.ir.geometry.bodies.first().map(|body| body.id.clone()))
         .flatten();
+    let part_bodies = if creators.len() > 1 {
+        let bound = part_bodies(&creators, &inputs, &model);
+        if bound.len() < creators.len() {
+            report.push_coded(
+                Severity::Degraded,
+                "part names",
+                "onshape/history.part-not-matched",
+                format!(
+                    "{} of {} parts could not be matched by name to the feature that made \
+                     them; SolidCraft names those parts, and their colours are left out",
+                    creators.len() - bound.len(),
+                    creators.len()
+                ),
+            );
+        }
+        bound
+    } else {
+        std::collections::BTreeMap::new()
+    };
     let mut seen = std::collections::BTreeSet::new();
     let mut previous = None;
     for (ordinal, feature) in features.iter().enumerate() {
@@ -332,6 +400,7 @@ pub(super) fn read(
         let dependencies: Vec<_> = previous.iter().cloned().collect();
         let outputs: Vec<_> = single_body
             .iter()
+            .chain(part_bodies.get(&ordinal))
             .filter(|_| {
                 definition
                     .pointer("/value/value/op")
