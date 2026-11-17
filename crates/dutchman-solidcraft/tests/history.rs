@@ -4294,6 +4294,81 @@ fn solidcraft_replays_whole_and_trimmed_regions_of_the_same_source_sketch() {
     assert!((got[0] - want).abs() / want < 1e-3, "{got:?} vs {want}");
 }
 
+/// One consumer takes the square with its circular hole; a later cut takes a notch drawn from
+/// the square's top edge, three lines no profile loop holds.
+fn whole_and_notch_history() -> Model {
+    let profile = json!({"kind": "sketch_regions", "value": {"sketch": SKETCH,
+        "regions": [{"kind": "loops", "outer": 0, "holes": [1]}]}});
+    let mut model = cube_with_history(2.0, profile, None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    m["sketch_entities"].as_array_mut().unwrap().extend([
+        line(5, [3.0, 10.0], [3.0, 8.0]),
+        line(7, [3.0, 8.0], [5.0, 8.0]),
+        line(8, [5.0, 8.0], [5.0, 10.0]),
+        circle(6, [7.0, 5.0], 1.0),
+    ]);
+    m["sketches"][0]["profiles"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!([
+            {"entity": "f3d:model:sketch-entity#6", "reversed": false}
+        ]));
+    let boundary = |key: u32, range: [f64; 2]| json!({"entity": format!("f3d:model:sketch-entity#{key}"), "parameter_range": range, "reversed": false});
+    let mut cut = m["features"][1].clone();
+    cut["id"] = json!("synthetic:notch:feature#cut");
+    cut["name"] = json!("Notch cut");
+    cut["ordinal"] = json!(2);
+    cut["outputs"] = json!([]);
+    cut["definition"]["value"]["value"]["op"] = json!("cut");
+    cut["definition"]["value"]["value"]["extent"]["side"]["termination"]["length"] = json!(1.0);
+    cut["definition"]["value"]["value"]["profile"]["value"] = json!({"kind": "sketch_regions", "value": {
+        "sketch": SKETCH, "regions": [{"kind": "trimmed", "outer_boundary": [
+            boundary(3, [0.5, 0.7]), boundary(5, [0.0, 1.0]),
+            boundary(7, [0.0, 1.0]), boundary(8, [0.0, 1.0])], "hole_boundaries": []}]}});
+    m["features"].as_array_mut().unwrap().push(cut);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn whole_regions_keep_their_boundaries_beside_a_notch_another_consumer_selects() {
+    let (document, report) = convert(
+        &whole_and_notch_history(),
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("3 of 3 features rebuilt"),
+        "{report:?}"
+    );
+    let features = document["features"].as_array().unwrap();
+    let sketches: Vec<_> = features.iter().filter(|f| f["type"] == "sketch").collect();
+    assert_eq!(sketches.len(), 2);
+    let construction = |sketch: &Value| {
+        sketch["sketch"]["curves"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|curve| curve["construction"] == true)
+            .count()
+    };
+    assert_eq!(construction(sketches[0]), 0);
+    assert_eq!(construction(sketches[1]), 3);
+    let extrudes: Vec<_> = features.iter().filter(|f| f["type"] == "extrude").collect();
+    assert_eq!(extrudes[0]["sketch"], sketches[1]["id"]);
+    assert_eq!(extrudes[1]["sketch"], sketches[0]["id"]);
+    assert_eq!(extrudes[0]["profiles"]["type"], "whole_boundaries");
+}
+
+#[test]
+fn solidcraft_replays_a_whole_region_beside_a_notch_of_the_same_source_sketch() {
+    let Some(cli) = solidcraft() else { return };
+    let got = volumes(&cli, &written(&whole_and_notch_history()).0);
+    assert_eq!(got.len(), 1);
+    let want = 196.0 - 2.0 * std::f64::consts::PI;
+    assert!((got[0] - want).abs() / want < 1e-3, "{got:?} vs {want}");
+}
+
 fn shared_circle_regions() -> Model {
     let boundary = |key: u32, range: [f64; 2]| json!({"entity": format!("f3d:model:sketch-entity#{key}"), "parameter_range": range, "reversed": false});
     let pi = std::f64::consts::PI;
