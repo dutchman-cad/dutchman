@@ -212,7 +212,7 @@ For other clients:
 **Contributing**
 
 - [CONTRIBUTING.md](CONTRIBUTING.md), and [AGENTS.md](AGENTS.md) for AI contributors.
-- [Architecture](docs/ARCHITECTURE.md), [Releasing](docs/releasing.md), and [Triage](docs/triage.md).
+- [Architecture](docs/ARCHITECTURE.md), [Replay plans](docs/replay-plan.md), [Releasing](docs/releasing.md), and [Triage](docs/triage.md).
 - Report a file that didn't convert on the [**A file didn't convert**](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml) form, with no design file. See [reporting versions and optional steps from report to fix](docs/testing-your-library.md#5-report-what-you-found). Questions: the [Discord](https://discord.gg/yTcseBEdeu).
 
 ## Licence

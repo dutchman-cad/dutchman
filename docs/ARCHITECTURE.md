@@ -26,6 +26,7 @@ consumer benefits and Dutchman stays small.
 | `dutchman-launcher` | Discovers installed `dutchman-<tool>` commands and dispatches them; also supplies a small front command. | std only |
 | `dutchman-core` | Format gate, input caps, the `Writer` seam, the `Report`, the `convert` pipeline. Owns the cadmpeg decode call. | `cadmpeg-ir`, `cadmpeg-core`, `cadmpeg-registry` |
 | `dutchman-solidcraft` | Implements `Writer` for `.sc`. Knows the SolidCraft design format and nothing about native formats. | `dutchman-core`, cadmpeg's STEP encoder, `zip`, `sha2`, `serde_json` |
+| `dutchman-replay` | [Replay plans](replay-plan.md), supported prefixes, bounded script data and deterministic script packages. Supplies no target runtime. | `dutchman-core`, `dutchman-solidcraft`, `serde`, `serde_json`, `sha2`, `zip` |
 | `dutchman` | The CLI (`dutchman convert <in> <out.sc>`) and the MCP server (`dutchman-mcp`), sharing one small library that sets up a conversion and builds the JSON reports both return. Front-end orchestration, printing, the MCP protocol and plain presentation data. | both of the above, `clap` |
 | `dutchman-gui` | The desktop app (eframe/egui). Plans and converts through the `dutchman` library's batch code on background threads; draws the Dutchman design system's Day and Night themes. | `dutchman`, `eframe`, `rfd` |
 

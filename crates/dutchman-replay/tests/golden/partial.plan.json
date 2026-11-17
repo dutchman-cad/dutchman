@@ -1,0 +1,156 @@
+{
+  "schema": "dutchman.replay-plan/1",
+  "generator": "dutchman 0.2.10",
+  "part": "Synthetic",
+  "units": {
+    "length": "mm",
+    "angle": "deg"
+  },
+  "source": {
+    "format": "cadir",
+    "program_version": null,
+    "sha256": null
+  },
+  "parameters": [],
+  "steps": [
+    {
+      "id": 1,
+      "kind": "sketch",
+      "name": "Profile",
+      "source": {
+        "id": null,
+        "ordinal": 0
+      },
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "points": [
+        {
+          "id": "origin",
+          "at": [
+            0.0,
+            0.0
+          ],
+          "fixed": true
+        },
+        {
+          "id": "p1",
+          "at": [
+            5.0,
+            0.0
+          ],
+          "fixed": false
+        }
+      ],
+      "curves": [
+        {
+          "id": "c1",
+          "type": "circle",
+          "c": "p1",
+          "r": 2.0,
+          "construction": false
+        }
+      ],
+      "constraints": [],
+      "extra": {}
+    },
+    {
+      "id": 2,
+      "kind": "extrude",
+      "name": "Solid",
+      "source": {
+        "id": null,
+        "ordinal": 1
+      },
+      "sketch": 1,
+      "profile": {
+        "type": "all"
+      },
+      "operation": "new_body",
+      "extent": {
+        "type": "distance",
+        "direction": "positive",
+        "distance": {
+          "value": 5.0,
+          "expr": "5 mm",
+          "param": null
+        }
+      },
+      "extra": {}
+    }
+  ],
+  "sketches": [
+    {
+      "id": 1,
+      "kind": "sketch",
+      "name": "Profile",
+      "source": {
+        "id": null,
+        "ordinal": 0
+      },
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "points": [
+        {
+          "id": "origin",
+          "at": [
+            0.0,
+            0.0
+          ],
+          "fixed": true
+        },
+        {
+          "id": "p1",
+          "at": [
+            5.0,
+            0.0
+          ],
+          "fixed": false
+        }
+      ],
+      "curves": [
+        {
+          "id": "c1",
+          "type": "circle",
+          "c": "p1",
+          "r": 2.0,
+          "construction": false
+        }
+      ],
+      "constraints": [],
+      "extra": {}
+    }
+  ],
+  "stop": {
+    "step_index": 2,
+    "feature": "Unmapped",
+    "reason": "native is not mapped yet"
+  },
+  "fallback": {
+    "step_file": "original.step"
+  },
+  "expected": null,
+  "outcomes": [
+    {
+      "name": "Profile",
+      "kind": "sketch",
+      "status": "mapped",
+      "reason": "rebuilt as reference in partial history"
+    },
+    {
+      "name": "Solid",
+      "kind": "extrude",
+      "status": "mapped",
+      "reason": "rebuilt as reference in partial history"
+    },
+    {
+      "name": "Unmapped",
+      "kind": "native",
+      "status": "blocked",
+      "reason": "native is not mapped yet"
+    }
+  ]
+}

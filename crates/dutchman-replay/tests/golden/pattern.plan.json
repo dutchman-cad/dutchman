@@ -1,0 +1,183 @@
+{
+  "schema": "dutchman.replay-plan/1",
+  "generator": "dutchman 0.2.10",
+  "part": "Synthetic",
+  "units": {
+    "length": "mm",
+    "angle": "deg"
+  },
+  "source": {
+    "format": "cadir",
+    "program_version": null,
+    "sha256": null
+  },
+  "parameters": [],
+  "steps": [
+    {
+      "id": 1,
+      "kind": "sketch",
+      "name": "Profile",
+      "source": {
+        "id": null,
+        "ordinal": 0
+      },
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "points": [
+        {
+          "id": "origin",
+          "at": [
+            0.0,
+            0.0
+          ],
+          "fixed": true
+        },
+        {
+          "id": "p1",
+          "at": [
+            5.0,
+            0.0
+          ],
+          "fixed": false
+        }
+      ],
+      "curves": [
+        {
+          "id": "c1",
+          "type": "circle",
+          "c": "p1",
+          "r": 2.0,
+          "construction": false
+        }
+      ],
+      "constraints": [],
+      "extra": {}
+    },
+    {
+      "id": 2,
+      "kind": "extrude",
+      "name": "Solid",
+      "source": {
+        "id": null,
+        "ordinal": 1
+      },
+      "sketch": 1,
+      "profile": {
+        "type": "all"
+      },
+      "operation": "new_body",
+      "extent": {
+        "type": "distance",
+        "direction": "positive",
+        "distance": {
+          "value": 5.0,
+          "expr": "5 mm",
+          "param": null
+        }
+      },
+      "extra": {}
+    },
+    {
+      "id": 3,
+      "kind": "pattern",
+      "name": "Copies",
+      "source": {
+        "id": null,
+        "ordinal": 2
+      },
+      "features": [
+        2
+      ],
+      "layout": {
+        "type": "rectangular",
+        "dir1": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "count1": {
+          "value": 3.0,
+          "expr": "3",
+          "param": null
+        },
+        "spacing1": {
+          "value": 20.0,
+          "expr": "20 mm",
+          "param": null
+        }
+      },
+      "extra": {}
+    }
+  ],
+  "sketches": [
+    {
+      "id": 1,
+      "kind": "sketch",
+      "name": "Profile",
+      "source": {
+        "id": null,
+        "ordinal": 0
+      },
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "points": [
+        {
+          "id": "origin",
+          "at": [
+            0.0,
+            0.0
+          ],
+          "fixed": true
+        },
+        {
+          "id": "p1",
+          "at": [
+            5.0,
+            0.0
+          ],
+          "fixed": false
+        }
+      ],
+      "curves": [
+        {
+          "id": "c1",
+          "type": "circle",
+          "c": "p1",
+          "r": 2.0,
+          "construction": false
+        }
+      ],
+      "constraints": [],
+      "extra": {}
+    }
+  ],
+  "stop": null,
+  "fallback": {
+    "step_file": "original.step"
+  },
+  "expected": null,
+  "outcomes": [
+    {
+      "name": "Profile",
+      "kind": "sketch",
+      "status": "mapped",
+      "reason": null
+    },
+    {
+      "name": "Solid",
+      "kind": "extrude",
+      "status": "mapped",
+      "reason": null
+    },
+    {
+      "name": "Copies",
+      "kind": "pattern",
+      "status": "mapped",
+      "reason": null
+    }
+  ]
+}

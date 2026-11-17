@@ -1491,6 +1491,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dutchman-replay"
+version = "0.2.10"
+dependencies = [
+ "cadmpeg-ir",
+ "dutchman-core",
+ "dutchman-solidcraft",
+ "serde",
+ "serde_json",
+ "sha2",
+ "zip",
+]
+
+[[package]]
 name = "dutchman-serve"
 version = "0.2.10"
 dependencies = [

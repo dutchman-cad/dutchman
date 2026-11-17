@@ -1,0 +1,363 @@
+{
+  "schema": "dutchman.replay-plan/1",
+  "generator": "dutchman 0.3.1",
+  "part": "plate",
+  "units": {
+    "length": "mm",
+    "angle": "deg"
+  },
+  "source": {
+    "format": "inventor_part",
+    "program_version": "2027.1",
+    "sha256": "9f2c41d0c6a8e5b7f1d2a3c4b5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f7a8"
+  },
+  "parameters": [
+    {
+      "name": "width",
+      "expr": "40 mm",
+      "value": 40.0,
+      "kind": "length",
+      "source": "d0"
+    },
+    {
+      "name": "d1",
+      "expr": "20 mm",
+      "value": 20.0,
+      "kind": "length",
+      "source": "d1"
+    },
+    {
+      "name": "d2",
+      "expr": "5 mm",
+      "value": 5.0,
+      "kind": "length",
+      "source": "d2"
+    }
+  ],
+  "steps": [
+    {
+      "id": 1,
+      "kind": "sketch",
+      "name": "Sketch1",
+      "source": {
+        "id": "f1",
+        "ordinal": 0
+      },
+      "plane": {
+        "type": "origin",
+        "name": "XY"
+      },
+      "points": [
+        {
+          "id": "p1",
+          "at": [
+            0.0,
+            0.0
+          ],
+          "fixed": false
+        },
+        {
+          "id": "p2",
+          "at": [
+            40.0,
+            0.0
+          ],
+          "fixed": false
+        },
+        {
+          "id": "p3",
+          "at": [
+            40.0,
+            20.0
+          ],
+          "fixed": false
+        },
+        {
+          "id": "p4",
+          "at": [
+            0.0,
+            20.0
+          ],
+          "fixed": false
+        }
+      ],
+      "curves": [
+        {
+          "id": "l1",
+          "type": "line",
+          "a": "p1",
+          "b": "p2",
+          "construction": false
+        },
+        {
+          "id": "l2",
+          "type": "line",
+          "a": "p2",
+          "b": "p3",
+          "construction": false
+        },
+        {
+          "id": "l3",
+          "type": "line",
+          "a": "p3",
+          "b": "p4",
+          "construction": false
+        },
+        {
+          "id": "l4",
+          "type": "line",
+          "a": "p4",
+          "b": "p1",
+          "construction": false
+        }
+      ],
+      "constraints": [
+        {
+          "id": "k1",
+          "type": "horizontal",
+          "line": "l1"
+        },
+        {
+          "id": "k2",
+          "type": "vertical",
+          "line": "l2"
+        },
+        {
+          "id": "k3",
+          "type": "horizontal",
+          "line": "l3"
+        },
+        {
+          "id": "k4",
+          "type": "vertical",
+          "line": "l4"
+        },
+        {
+          "id": "k5",
+          "type": "length",
+          "line": "l1",
+          "value": {
+            "value": 40.0,
+            "expr": "40 mm",
+            "param": "width"
+          }
+        },
+        {
+          "id": "k6",
+          "type": "length",
+          "line": "l2",
+          "value": {
+            "value": 20.0,
+            "expr": "20 mm",
+            "param": "d1"
+          }
+        },
+        {
+          "id": "k7",
+          "type": "coincident",
+          "p": "p1",
+          "q": "origin"
+        }
+      ],
+      "extra": {}
+    },
+    {
+      "id": 2,
+      "kind": "extrude",
+      "name": "Extrusion1",
+      "source": {
+        "id": "f2",
+        "ordinal": 1
+      },
+      "sketch": 1,
+      "profile": {
+        "type": "loops",
+        "loops": [
+          [
+            "l1",
+            "l2",
+            "l3",
+            "l4"
+          ]
+        ]
+      },
+      "operation": "new_body",
+      "extent": {
+        "type": "distance",
+        "direction": "positive",
+        "distance": {
+          "value": 5.0,
+          "expr": "5 mm",
+          "param": "d2"
+        }
+      },
+      "bodies": [
+        "Solid1"
+      ],
+      "extra": {}
+    },
+    {
+      "id": 3,
+      "kind": "sketch",
+      "name": "Sketch2",
+      "source": {
+        "id": "f3",
+        "ordinal": 2
+      },
+      "plane": {
+        "type": "frame",
+        "origin": [
+          0.0,
+          0.0,
+          5.0
+        ],
+        "x_dir": [
+          1.0,
+          0.0,
+          0.0
+        ],
+        "y_dir": [
+          0.0,
+          1.0,
+          0.0
+        ]
+      },
+      "points": [
+        {
+          "id": "p1",
+          "at": [
+            10.0,
+            10.0
+          ],
+          "fixed": false
+        }
+      ],
+      "curves": [],
+      "constraints": [],
+      "extra": {}
+    },
+    {
+      "id": 4,
+      "kind": "hole",
+      "name": "Hole1",
+      "source": {
+        "id": "f4",
+        "ordinal": 3
+      },
+      "points": [
+        "p1"
+      ],
+      "sketch": 3,
+      "extent": {
+        "type": "through_all"
+      },
+      "form": {
+        "type": "simple"
+      },
+      "diameter": {
+        "value": 6.0,
+        "expr": "6 mm",
+        "param": null
+      },
+      "direction": [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      "extra": {}
+    },
+    {
+      "id": 5,
+      "kind": "fillet",
+      "name": "Fillet1",
+      "source": {
+        "id": "f5",
+        "ordinal": 4
+      },
+      "radius": {
+        "value": 2.0,
+        "expr": "2 mm",
+        "param": null
+      },
+      "edges": [
+        {
+          "at": [
+            40.0,
+            20.0,
+            2.5
+          ],
+          "ends": [
+            [
+              40.0,
+              20.0,
+              0.0
+            ],
+            [
+              40.0,
+              20.0,
+              5.0
+            ]
+          ],
+          "length": 5.0,
+          "proof": "unique_on_solidcraft_replay"
+        }
+      ],
+      "extra": {}
+    }
+  ],
+  "sketches": [],
+  "stop": null,
+  "fallback": {
+    "step_file": "original.step"
+  },
+  "expected": {
+    "bodies": 1,
+    "volume_mm3": 3854.34,
+    "area_mm2": 2231.69,
+    "bbox_mm": [
+      [
+        0.0,
+        0.0,
+        0.0
+      ],
+      [
+        40.0,
+        20.0,
+        5.0
+      ]
+    ],
+    "by": "solidcraft 0.43.0"
+  },
+  "outcomes": [
+    {
+      "name": "Sketch1",
+      "kind": "sketch",
+      "status": "mapped",
+      "reason": null
+    },
+    {
+      "name": "Extrusion1",
+      "kind": "extrude",
+      "status": "mapped",
+      "reason": null
+    },
+    {
+      "name": "Sketch2",
+      "kind": "sketch",
+      "status": "mapped",
+      "reason": null
+    },
+    {
+      "name": "Hole1",
+      "kind": "hole",
+      "status": "mapped",
+      "reason": null
+    },
+    {
+      "name": "Fillet1",
+      "kind": "fillet",
+      "status": "mapped",
+      "reason": null
+    }
+  ]
+}
