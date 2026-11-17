@@ -350,6 +350,11 @@ fn extrude_operations_through_all_and_equal_chamfers_map() {
                 ["termination"]["kind"],
             "through_all"
         );
+        assert_eq!(
+            wire["model"]["features"][2]["source_properties"],
+            json!({"tangent_propagation": "off"})
+        );
+        assert_eq!(wire["model"]["features"][1]["source_properties"], json!({}));
     }
 }
 
@@ -795,7 +800,13 @@ fn a_resolvable_default_tangent_fillet_maps_and_missing_tangents_name_the_loss()
             "{:?}",
             report.losses()
         );
-        if !complete {
+        if complete {
+            // The resolved chain is every edge the fillet blends: nothing propagates past it.
+            assert_eq!(
+                timeline(&model)["model"]["features"][2]["source_properties"],
+                json!({"tangent_propagation": "resolved"})
+            );
+        } else {
             assert!(report.losses().iter().any(|l| l
                 .detail
                 .contains("tangent propagation needs complete input vertices")));

@@ -26,7 +26,9 @@ Sketch-only Part Studios can omit STEP and convert to sketches alone; with Solid
 verified by replaying the sketches (no body expected). The reader also
 accepts resolved extrusion-cap sketches, complete tangent edge chains, hole `locations`
 with counterbore/countersink entries, construction-line revolve axes, midpoint relations,
-assigned variables and symmetric blind extrudes. Variable expressions use earlier
+assigned variables and symmetric blind extrudes. Fillets and chamfers blend exactly the
+edges Onshape blended, which needs a SolidCraft 0.40 or newer target; an older target names
+that version in the loss. Variable expressions use earlier
 variables and bounded arithmetic with compatible units; FeatureScript evaluation and
 opaque external origin references still produce named losses.
 If a bundle is marked `consistent: false`, explain that its snapshots differ and

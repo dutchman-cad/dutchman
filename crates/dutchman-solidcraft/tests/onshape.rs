@@ -201,6 +201,46 @@ fn export_step_is_the_reference_and_body_mismatches_preserve_it() {
 }
 
 #[test]
+fn onshape_blends_blend_only_their_listed_edges() {
+    // Onshape lists every edge a fillet blends (its tangent chain resolved, or propagation
+    // off), so SolidCraft must not extend the pick along tangent edges of its own.
+    let (source, mut report) = model("plate-fillet");
+    let mut output = Vec::new();
+    SolidCraftWriter::new()
+        .target_version(Some(SolidCraftVersion::default()))
+        .write(&source, &mut output, &mut report)
+        .unwrap();
+    let doc = document(&output);
+    let fillet = doc["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["type"] == "fillet")
+        .unwrap();
+    assert_eq!(fillet["tangent_chain"], json!(false), "{fillet}");
+    // Before SolidCraft 0.40 every blend follows tangent chains: the fillet is a named loss.
+    let (source, mut report) = model("plate-fillet");
+    let mut output = Vec::new();
+    SolidCraftWriter::new()
+        .target_version(Some(SolidCraftVersion::V0_30_0))
+        .write(&source, &mut output, &mut report)
+        .unwrap();
+    assert!(!document(&output)["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["type"] == "fillet"));
+    assert!(
+        report
+            .losses()
+            .iter()
+            .any(|l| l.detail.contains("needs SolidCraft 0.40 or newer")),
+        "{:?}",
+        report.losses()
+    );
+}
+
+#[test]
 fn real_solidcraft_replays_the_synthetic_bodies_against_the_step_exports() {
     let Some(cli) = std::env::var_os(dutchman_solidcraft::CLI_ENV).map(PathBuf::from) else {
         eprintln!("Set SOLIDCRAFT_CLI to replay Onshape fixture histories");

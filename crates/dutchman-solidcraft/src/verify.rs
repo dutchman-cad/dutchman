@@ -420,6 +420,8 @@ pub enum VersionGate {
     HoleThreadDepth,
     /// A tapped hole's tolerance class (`thread_class`), first stored by SolidCraft 0.43.0.
     HoleThreadClass,
+    /// Fillets and chamfers that blend only their listed edges (`tangent_chain: false`).
+    BlendListedEdges,
 }
 
 impl VersionGate {
@@ -430,6 +432,7 @@ impl VersionGate {
             Self::SketchProfileCoil | Self::MirrorChain => SolidCraftVersion::V0_25_1,
             Self::HoleThreadDepth => SolidCraftVersion::V0_40_0,
             Self::HoleThreadClass => SolidCraftVersion::V0_43_0,
+            Self::BlendListedEdges => SolidCraftVersion::V0_40_0,
         }
     }
 
@@ -446,6 +449,7 @@ pub fn target_loses_history(target: SolidCraftVersion) -> bool {
         VersionGate::SketchProfileCoil,
         VersionGate::MirrorChain,
         VersionGate::ConePrimitive,
+        VersionGate::BlendListedEdges,
     ]
     .into_iter()
     .any(|gate| {

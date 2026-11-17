@@ -340,7 +340,10 @@ precise gate control.
 installed version. Within the supported range, `older_loses_history` requires an older
 installed release and a selected target that disables editable writer capabilities;
 otherwise it is `current`. Today those capabilities are sketch-profile coils and ordered
-mirror-pattern chains, both introduced in 0.25 patch 1. The 0.22 patch 1 entry-recess tip representation
+mirror-pattern chains, both introduced in 0.25 patch 1, and Onshape fillets and chamfers that
+blend only their listed edges, introduced in 0.40; for older targets their
+`history.features[].reason` says `blending only its listed edges needs SolidCraft 0.40 or newer
+(target 0.30)` (with the actual target). The 0.22 patch 1 entry-recess tip representation
 change preserves geometry and does not count as history loss. These fields use local
 version discovery only.
 

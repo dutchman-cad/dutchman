@@ -424,6 +424,7 @@ pub(super) fn read(
                 )
             }
         };
+        let source_properties = features::source_properties(feature, &definition);
         let dependencies: Vec<_> = previous.iter().cloned().collect();
         let outputs: Vec<_> = single_body
             .iter()
@@ -440,7 +441,7 @@ pub(super) fn read(
             })
             .cloned()
             .collect();
-        push(&mut model.ir.model.features, json!({"id": feature_id, "ordinal": ordinal, "name": name, "suppressed": suppressed, "dependencies": dependencies, "source_properties": {}, "source_content": [], "outputs": outputs, "definition": definition})).map_err(Error::Decode)?;
+        push(&mut model.ir.model.features, json!({"id": feature_id, "ordinal": ordinal, "name": name, "suppressed": suppressed, "dependencies": dependencies, "source_properties": source_properties, "source_content": [], "outputs": outputs, "definition": definition})).map_err(Error::Decode)?;
         if !suppressed {
             previous = Some(feature_id);
         }

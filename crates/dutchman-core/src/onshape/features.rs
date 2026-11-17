@@ -21,6 +21,18 @@ pub(super) fn value<'a>(feature: &'a Value, key: &str) -> Option<&'a str> {
     parameter(feature, key).ok()?.get("value")?.as_str()
 }
 
+/// Source attributes the neutral definition of `definition` does not carry. A fillet or
+/// chamfer lists every edge it blends: with Onshape's tangent propagation on, the chain is
+/// resolved from the input topology (`resolved`); with it off, only the picked edges (`off`).
+/// Either way nothing propagates past the listed edges.
+pub(super) fn source_properties(feature: &Value, definition: &Value) -> Value {
+    match definition.pointer("/value/kind").and_then(Value::as_str) {
+        Some("fillet" | "chamfer") => json!({"tangent_propagation":
+            if enabled(feature, "tangentPropagation") { "resolved" } else { "off" }}),
+        _ => json!({}),
+    }
+}
+
 fn enabled(feature: &Value, key: &str) -> bool {
     parameter(feature, key)
         .ok()

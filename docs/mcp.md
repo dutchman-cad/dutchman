@@ -27,7 +27,8 @@ the `onshape` input feature (included in release builds). Use the ordinary local
 input/output paths; these tools do not fetch documents or need credentials. One
 Part Studio converts with CADIR history and the existing writer/verification.
 Missing or unsupported feature selections produce named losses and preserve the
-bundle's STEP geometry. See [Onshape](onshape.md) for the supported subset.
+bundle's STEP geometry. Fillets and chamfers (tangent chains included) need a SolidCraft
+0.40 or newer target. See [Onshape](onshape.md) for the supported subset.
 An explicitly inconsistent bundle is refused with a request to fetch it again or
 use a version link. Legacy v1 bundles without consistency metadata remain readable.
 Default-plane frames and explicit sketch-region boundaries can be resolved from

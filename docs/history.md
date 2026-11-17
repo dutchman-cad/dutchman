@@ -170,7 +170,9 @@ history before their edges are proven. Without `solidcraft-cli`, or when the rep
 of time, blends are refused, saying why. SolidCraft reports each edge's ends, midpoint and
 length but no tangent, so an input edge must be a line or a circular arc; its midpoint must
 lie on exactly one rebuilt edge across every body, and that edge must have the same ends (in
-either order) and length; a straight one must lie along the input tangent. Arcs SolidCraft
+either order) and length; a straight one must lie along the input tangent. SolidCraft measures
+a curved edge along the polyline it draws, so a rebuilt arc's length must lie between its chord
+and the input arc's length. Arcs SolidCraft
 splits into pieces, closed edges and other curves are refused. A refusal says which part of the
 proof failed: no rebuilt edge through the midpoint (with how far the nearest rebuilt edge is, which
 tells a rebuilt body that differs from the source from a rounding gap), more than one, or one with
