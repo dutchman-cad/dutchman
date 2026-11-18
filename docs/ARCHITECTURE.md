@@ -571,7 +571,9 @@ do not read it. The running-step GUI screenshot case uses injected snapshots at 
 The `Writer::companion_files` seam returns portable companion names and bytes from
 an encoded design. `convert` validates names and existing content before publishing
 companions beside the main output, reusing identical files and refusing to overwrite a
-different design. Writers without linked outputs keep the single-file default.
+different design. Each new companion is fully staged in its destination directory, then
+published without replacing an existing file. Concurrent publishers reuse identical
+completed files. Writers without linked outputs keep the single-file default.
 The SolidCraft adapter retains companion containers under `companions/` and writes
 its native Import/component/occurrence/links representation; the core knows no
 SolidCraft container fields.

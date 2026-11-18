@@ -6,7 +6,8 @@ Select target 0.44 explicitly when the existing default is older.
 Keep the generated `derived-<sha256>.sc` companion designs beside the main result;
 edit a companion and use SolidCraft's Update Links to rebuild the host. If conversion
 finds an edited companion, choose another output folder; that companion is kept even
-when overwriting is enabled. Earlier targets
+when overwriting is enabled. Parallel conversions safely share identical companions.
+Earlier targets
 report `design/reference.frozen` and keep frozen derived bodies. Missing references,
 part subsets, configurations or transformed inserts name the reason under
 `onshape/history.not-supported`; fetch a new bundle for missing references.

@@ -6,6 +6,7 @@
 //! not be carried across. See `docs/ARCHITECTURE.md`.
 
 mod assembly;
+mod companion;
 mod decode;
 mod error;
 mod format;
@@ -728,7 +729,7 @@ fn convert_impl(
         }
     }
     for (path, data) in pending {
-        write_output(&path, &data, false)?;
+        companion::write(&path, &data)?;
     }
     write_output(output, &bytes, replace)?;
     Ok(report)

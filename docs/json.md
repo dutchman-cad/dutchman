@@ -22,7 +22,8 @@ Derived inserts add the history kind `design_reference`. A target below SolidCra
 remain as a frozen import and following supported booleans stay editable. Unresolved or
 unsupported Derived references use `onshape/history.not-supported`. Report schemas and
 fields are unchanged. Companion conflicts use the existing `encode` error code and ask
-for another output folder; edited companions are kept.
+for another output folder; edited companions are kept. Concurrent conversions reuse
+identical companions without changing report fields.
 Losses from converting a linked companion are prefixed with its Derived feature's name.
 The optional bundle manifest field `consistent` is input metadata, not a new
 report field. `false` produces an ordinary decode failure explaining how to fetch
