@@ -992,6 +992,7 @@ fn a_part_binds_to_the_feature_that_made_it_by_its_unique_name() {
     // A feature making two parts binds neither.
     let two: [(usize, &[(&str, &str)]); 2] = [(0, &[]), (1, &[("b", "Part B"), ("c", "Part C")])];
     assert!(bound_parts(&two, &[0]).is_empty());
+}
 
 #[test]
 fn a_spline_segment_maps_only_over_its_whole_knot_domain() {
