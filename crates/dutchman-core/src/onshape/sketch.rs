@@ -178,7 +178,7 @@ fn point(u: f64, v: f64) -> Value {
     json!({"u": u, "v": v})
 }
 
-fn geometry(entity: &Value) -> Mapping<Value> {
+pub(super) fn geometry(entity: &Value) -> Mapping<Value> {
     if entity.get("btType").and_then(Value::as_str) == Some("BTMSketchPoint-158") {
         return Ok(
             json!({"kind": "point", "position": point(coordinate(entity, "x")? * 1000.0, coordinate(entity, "y")? * 1000.0)}),
@@ -226,6 +226,44 @@ fn geometry(entity: &Value) -> Mapping<Value> {
             Ok(
                 json!({"kind": "arc", "center": center, "radius": radius, "start_angle": a, "end_angle": b}),
             )
+        }
+        "BTCurveGeometryEllipse-1189" => {
+            let x = coordinate(geometry, "xDir")?;
+            let y = coordinate(geometry, "yDir")?;
+            if x == 0.0 && y == 0.0 {
+                return Err("the ellipse axis has no resolved direction".into());
+            }
+            let mut curve = json!({"kind": "ellipse",
+                "center": point(coordinate(geometry, "xCenter")? * 1000.0,
+                    coordinate(geometry, "yCenter")? * 1000.0),
+                "major_angle": y.atan2(x),
+                "major_radius": number(geometry, "radius")? * 1000.0,
+                "minor_radius": number(geometry, "minorRadius")? * 1000.0});
+            if entity.get("btType").and_then(Value::as_str) != Some("BTMSketchCurve-4") {
+                if entity.get("btType").and_then(Value::as_str) != Some("BTMSketchCurveSegment-155")
+                {
+                    return Err("this elliptical sketch curve is not supported yet".into());
+                }
+                let start = coordinate(entity, "startParam")?;
+                let end = coordinate(entity, "endParam")?;
+                let (start, end) =
+                    if geometry.get("clockwise").and_then(Value::as_bool) == Some(true) {
+                        (-end, -start)
+                    } else {
+                        (start, end)
+                    };
+                if end <= start || end - start > std::f64::consts::TAU {
+                    return Err(
+                        "the elliptical arc must span a positive interval of at most one turn"
+                            .into(),
+                    );
+                }
+                curve
+                    .as_object_mut()
+                    .ok_or("ellipse is missing")?
+                    .insert("bounds".into(), json!([start, end]));
+            }
+            Ok(curve)
         }
         "BTCurveGeometrySpline-118" | "BTCurveGeometryControlPointSpline-2197" => {
             let knots = rows(geometry, "knots")?;

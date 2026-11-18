@@ -36,6 +36,7 @@ mod shell;
 mod sketch;
 mod spatial;
 mod sweep;
+mod thin;
 mod thread;
 mod wire;
 
@@ -592,6 +593,8 @@ struct Context<'a> {
     model: &'a Value,
     /// Current topology, separate from the model records on CADIR v11.
     geometry: &'a Value,
+    /// Typed v11 outputs paired by identity with model-history projections.
+    design: &'a Value,
     /// The arenas `model` holds when it is a subset of the whole; reading another is a bug,
     /// which a debug build panics on.
     reading_only: Option<&'static [&'static str]>,
@@ -659,6 +662,7 @@ impl<'a> Context<'a> {
             source: None,
             model,
             geometry: &Value::Null,
+            design: &Value::Null,
             reading_only: None,
             children: [("regions", OnceCell::new()), ("faces", OnceCell::new())]
                 .into_iter()
@@ -1056,6 +1060,7 @@ fn map_into(
     let mut ctx =
         Context::new(wire).with_geometry(document.get("geometry").unwrap_or(&Value::Null));
     ctx.source = Some(model);
+    ctx.design = document.get("design").unwrap_or(&Value::Null);
     ctx.target_version = target_version;
     ctx.params = param_names;
     let mut features: Vec<&Value> = ctx.arena("features").iter().collect();

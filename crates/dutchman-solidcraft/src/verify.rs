@@ -406,6 +406,8 @@ pub const WINDOW_OLDEST: [u64; 3] = [0, 18, 2];
 /// Writer capabilities whose output depends on the target release.
 #[derive(Clone, Copy)]
 pub enum VersionGate {
+    /// Thin walls verified against the current SolidCraft document format.
+    ThinExtrude,
     /// Explicit flat tips compensate for changed entry-recess angle handling.
     EntryRecessTip,
     /// Editable sketch-profile coils.
@@ -430,6 +432,7 @@ pub enum VersionGate {
 impl VersionGate {
     fn minimum(self) -> SolidCraftVersion {
         match self {
+            Self::ThinExtrude => SolidCraftVersion::V0_44_0,
             Self::EntryRecessTip => SolidCraftVersion::V0_22_1,
             Self::ConePrimitive => SolidCraftVersion::V0_24_1,
             Self::SketchProfileCoil | Self::MirrorChain => SolidCraftVersion::V0_25_1,
@@ -448,6 +451,11 @@ impl VersionGate {
 
 /// Whether the writer's release gates can retain less history than the newest target.
 pub fn target_loses_history(target: SolidCraftVersion) -> bool {
+    if VersionGate::ThinExtrude.supported(SolidCraftVersion::default())
+        && !VersionGate::ThinExtrude.supported(target)
+    {
+        return true;
+    }
     [
         VersionGate::EntryRecessTip,
         VersionGate::SketchProfileCoil,
@@ -3290,6 +3298,9 @@ mod version_tests {
         assert_eq!(before.minor(), after.minor());
         assert!(target_loses_history(before));
         assert!(!target_loses_history(after));
+        assert!(!VersionGate::ThinExtrude.supported(after));
+        assert!(VersionGate::ThinExtrude.supported(SolidCraftVersion::V0_44_0));
+        assert!(!target_loses_history(SolidCraftVersion::V0_44_0));
         assert!(!VersionGate::EntryRecessTip.supported("0.22.0".parse().unwrap()));
         assert!(VersionGate::EntryRecessTip.supported(SolidCraftVersion::V0_22_1));
         assert!(!VersionGate::HoleThreadDepth.supported(SolidCraftVersion::V0_30_0));

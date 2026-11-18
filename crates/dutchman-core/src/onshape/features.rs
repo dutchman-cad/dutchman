@@ -69,16 +69,18 @@ pub(super) fn quantity(parameter: &Value, angle: bool, model: &Model) -> Mapping
             )
             .map(|v| v.value);
         }
-        let mut parts = expression.split_whitespace();
-        if let (Some(Ok(value)), Some(unit), None) = (
-            parts.next().map(str::parse::<f64>),
-            parts.next(),
-            parts.next(),
-        ) {
+        // REST quantities may retain fractional literals while their `value`
+        // is the default zero. The unit suffix applies to the whole scalar
+        // expression, including a parenthesized fraction.
+        if let Some((scalar, unit)) = expression.trim().rsplit_once(char::is_whitespace) {
             if let Some(factor) = scale(unit, angle) {
-                let result = value * factor;
-                if result.is_finite() {
-                    return Ok(result);
+                if let Ok(value) =
+                    super::expression::evaluate(scalar, super::expression::Dimension::Scalar, model)
+                {
+                    let result = value.value * factor;
+                    if result.is_finite() {
+                        return Ok(result);
+                    }
                 }
             }
         }
@@ -115,20 +117,38 @@ pub(super) fn queries<'a>(feature: &'a Value, key: &str) -> Mapping<&'a [Value]>
     }
 }
 
-pub(super) fn profile(feature: &Value, key: &str, model: &Model) -> Mapping<Value> {
+pub(super) fn profile(
+    feature: &Value,
+    key: &str,
+    model: &Model,
+    inputs: &topology::Inputs<'_>,
+) -> Mapping<Value> {
+    inputs
+        .regions
+        .try_borrow()
+        .map_err(|_| "the sketch-region recovery state is already in use")?
+        .check()?;
     let query = queries(feature, key)?;
     if query.iter().all(|q| {
         super::query::resolved(q)
             .is_ok_and(|q| q.get("queryType").and_then(Value::as_str) == Some("SKETCH_ENTITY"))
     }) {
-        return sketch_entities(query, model, "VERTEX");
+        return sketch_entities(
+            query,
+            model,
+            if value(feature, "bodyType") == Some("THIN") {
+                "EDGE"
+            } else {
+                "VERTEX"
+            },
+        );
     }
     if query.iter().any(|q| {
         q.get("queryString")
             .and_then(Value::as_str)
             .is_some_and(|s| s.contains("qCompressed("))
     }) {
-        return super::regions::profile(query, model);
+        return super::regions::profile(query, model, inputs);
     }
     let [query] = query else {
         return Err("multiple profile queries are not supported yet".into());
@@ -494,6 +514,7 @@ pub(super) fn map(
     ordinal: usize,
     inputs: &topology::Inputs<'_>,
     model: &mut Model,
+    design: &mut cadmpeg_ir::document::Design,
     report: &mut Report,
 ) -> Mapping<Value> {
     if feature
@@ -563,10 +584,14 @@ pub(super) fn map(
                 .iter()
                 .filter(|p| p.owner.is_none())
                 .count();
+            let properties = evaluated.display_unit.as_ref().map_or_else(
+                || json!({"retain_without_sketches":"true"}),
+                |unit| json!({"display_unit": unit,"retain_without_sketches":"true"}),
+            );
             push(
                 &mut model.parameters,
                 json!({"id":id("parameter",text(feature,"featureId")?),"ordinal":ordinal,"name":name,
-                "expression":evaluated.expression,"value":{"kind":kind,"value":evaluated.value},"dependencies":evaluated.dependencies,"properties":{}}),
+                "expression":evaluated.expression,"value":{"kind":kind,"value":evaluated.value},"dependencies":evaluated.dependencies,"properties":properties}),
             )?;
             Ok(definition(
                 "tree_node",
@@ -574,10 +599,24 @@ pub(super) fn map(
             ))
         }
         "extrude" => {
-            if value(feature, "bodyType") != Some("SOLID") {
+            if !matches!(value(feature, "bodyType"), Some("SOLID" | "THIN")) {
                 return Err("non-solid extrudes are not supported yet".into());
             }
-            let profile = profile(feature, "entities", model)?;
+            let key = if value(feature, "bodyType") == Some("THIN")
+                && rows(feature, "parameters")?
+                    .iter()
+                    .any(|p| p.get("parameterId").and_then(Value::as_str) == Some("wallShape"))
+            {
+                "wallShape"
+            } else {
+                "entities"
+            };
+            let profile = profile(feature, key, model, inputs)?;
+            let profile = if value(feature, "bodyType") == Some("THIN") {
+                super::thin::profile(profile, model)?
+            } else {
+                profile
+            };
             if enabled(feature, "symmetric") && value(feature, "endBound") != Some("BLIND") {
                 return Err("symmetric extrudes with this bound are not supported yet".into());
             }
@@ -634,17 +673,24 @@ pub(super) fn map(
             } else {
                 json!({"kind": "profile_normal"})
             };
-            Ok(definition(
+            let definition = definition(
                 "extrude",
                 json!({"profile": {"kind": "planar", "value": profile}, "direction": direction,
                 "start": {"kind": "profile_plane"}, "extent": {"kind": if enabled(feature,"symmetric") {"symmetric"} else {"one_sided"}, "side": {"termination": termination}}, "op": operation(feature)?, "solid": true}),
-            ))
+            );
+            if value(feature, "bodyType") == Some("THIN") {
+                push(
+                    &mut design.features,
+                    super::thin::feature(feature, &definition, model)?,
+                )?;
+            }
+            Ok(definition)
         }
         "revolve" => {
             if value(feature, "bodyType") != Some("SOLID") {
                 return Err("non-solid revolves are not supported yet".into());
             }
-            let profile = profile(feature, "entities", model)?;
+            let profile = profile(feature, "entities", model, inputs)?;
             let axis_queries = queries(feature, "axis")?;
             let axis = if axis_queries.iter().any(|q| {
                 super::query::resolved(q).is_ok_and(|q| {
@@ -700,9 +746,6 @@ pub(super) fn map(
             {
                 return Err("only circular constant-radius edge fillets are supported yet".into());
             }
-            if kind == "chamfer" && value(feature, "chamferType") != Some("EQUAL_OFFSETS") {
-                return Err("only equal-distance chamfers are supported yet".into());
-            }
             let state = scoped
                 .map(Ok)
                 .unwrap_or_else(|| inputs.load(ordinal, feature))?;
@@ -720,7 +763,18 @@ pub(super) fn map(
             } else {
                 (
                     "spec",
-                    json!({"kind": "distance", "distance": length(feature, "width", model)?}),
+                    match value(feature, "chamferType") {
+                        Some("EQUAL_OFFSETS") => {
+                            json!({"kind": "distance", "distance": length(feature, "width", model)?})
+                        }
+                        Some("TWO_OFFSETS") => {
+                            json!({"kind": "two_distances", "first": length(feature, "width1", model)?, "second": length(feature, "width2", model)?})
+                        }
+                        Some("DISTANCE_ANGLE") => {
+                            json!({"kind": "distance_angle", "distance": length(feature, "width", model)?, "angle": quantity(parameter(feature, "angle")?, true, model)?})
+                        }
+                        _ => return Err("this chamfer type is not supported yet".into()),
+                    },
                 )
             };
             group
@@ -729,7 +783,7 @@ pub(super) fn map(
                 .insert(key.into(), spec);
             push(&mut model.feature_input_topologies, state.row)?;
             let operation = if kind == "chamfer" {
-                json!({"groups": [group], "flip_direction": false})
+                json!({"groups": [group], "flip_direction": enabled(feature, "oppositeDirection")})
             } else {
                 json!({"groups": [group]})
             };
@@ -784,6 +838,7 @@ fn hole(
             "entities"
         },
         model,
+        inputs,
     )?;
     if parameter(feature, "scope")
         .ok()

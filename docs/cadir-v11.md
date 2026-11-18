@@ -73,3 +73,9 @@ metadata, parameter dependencies and properties, sketch endpoint references, and
 historical vertex membership are explicit. Final bodies and their solved carriers
 come from the STEP decoder in `geometry`; the reader never rebuilds them from
 rollback selections. Parameter ordinals remain local to each owning feature.
+
+Onshape thin walls pair a typed `design.features` extrusion with the existing
+`model.features` projection by feature identity. The typed `output.body` carries
+the thin thickness and side; profile, direction, extent and Boolean semantics
+must agree with the projection before the writer uses it. This narrow bridge does
+not admit design-only histories or infer absent projection operands.

@@ -13197,3 +13197,49 @@ fn design_only_history_is_refused_instead_of_silently_mapping_nothing() {
         "{report:?}"
     );
 }
+
+#[test]
+fn a_native_symmetric_extrude_keeps_its_literal_distance() {
+    for namespace in ["f3d:", "inventor:"] {
+        let mut model = cube_with_height_parameter(1.0);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["features"][1]["definition"]["value"]["value"]["extent"]["kind"] =
+            json!("symmetric");
+        model.ir =
+            cadmpeg_ir::CadIr::from_json(&wire.to_string().replace("f3d:", namespace)).unwrap();
+        let (doc, _) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert_eq!(doc["features"][1]["extent"]["direction"], "symmetric");
+        assert_eq!(doc["features"][1]["extent"]["distance"], "10 mm");
+    }
+}
+
+#[test]
+fn native_parameters_do_not_change_a_fallback_without_mapped_sketches() {
+    for namespace in ["f3d:", "inventor:"] {
+        let mut model = cube_with_height_parameter(1.0);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["sketches"][0]["placement"] = json!({"kind":"unresolved"});
+        wire["model"]["sketch_constraints"] = json!([]);
+        model.ir =
+            cadmpeg_ir::CadIr::from_json(&wire.to_string().replace("f3d:", namespace)).unwrap();
+        let writer = SolidCraftWriter::new().verification(Verification::Off);
+        let (with_parameters, _) = written_with(&model, &writer);
+        wire["model"]["parameters"] = json!([]);
+        model.ir =
+            cadmpeg_ir::CadIr::from_json(&wire.to_string().replace("f3d:", namespace)).unwrap();
+        let (without_parameters, _) = written_with(&model, &writer);
+        assert_eq!(
+            with_parameters, without_parameters,
+            "{namespace}: fallback archive must remain byte-for-byte identical"
+        );
+        let (doc, _) = convert(&model, &writer);
+        assert!(doc["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|f| f["type"] != "sketch"));
+    }
+}

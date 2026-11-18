@@ -463,7 +463,7 @@ impl SolidCraftWriter {
         let looks = history::imported(model, step, report, false)?;
         document::import_looks(&mut doc, &looks);
         if let Some(references) = references {
-            document::keep_sketches(&mut doc, references);
+            document::keep_sketches(&mut doc, references, model);
             let kept = references.features.len();
             let left_out = model.ir.model.sketches.len().saturating_sub(kept);
             if kept > 0 || left_out > 0 {

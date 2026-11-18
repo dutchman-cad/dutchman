@@ -7,6 +7,7 @@ mod features;
 mod query;
 mod regions;
 mod sketch;
+mod thin;
 mod topology;
 
 use serde_json::{json, Value};
@@ -91,11 +92,11 @@ fn definition(kind: &str, value: Value) -> Value {
     json!({"kind": "operation", "value": {"kind": kind, "value": value}})
 }
 
-fn loss(report: &mut Report, subject: &str, reason: &str, has_step: bool) {
+fn loss(report: &mut Report, subject: &str, reason: &str, has_step: bool, code: &str) {
     report.push_coded(
         Severity::Degraded,
         subject,
-        "onshape/history.not-supported",
+        code,
         format!(
             "{reason}; kept {}",
             if has_step {
@@ -277,10 +278,10 @@ pub(super) fn read(
         ));
     }
     let prefix = format!("partstudios/{eid}");
-    let inputs = topology::Inputs::new(&bundle, &prefix, mid).map_err(Error::Decode)?;
     let response = bundle.json(&format!("{prefix}/features.json"))?;
     microversion(&response, "sourceMicroversion", mid).map_err(Error::Decode)?;
     let features = rows(&response, "features").map_err(Error::Decode)?;
+    let inputs = topology::Inputs::new(&bundle, &prefix, mid, features).map_err(Error::Decode)?;
     let step_path = format!("{prefix}/export.step");
     let mut model = if bundle.contains(&step_path) {
         let source = bundle.bytes(&step_path)?;
@@ -388,6 +389,7 @@ pub(super) fn read(
             model.ir.model.sketch_constraints.len(),
             model.ir.model.parameters.len(),
             model.ir.model.feature_input_topologies.len(),
+            model.ir.design.features.len(),
         );
         let mapped = if suppressed {
             Ok(definition(
@@ -395,17 +397,23 @@ pub(super) fn read(
                 json!({"kind": "Suppressed Onshape feature", "parameters": {}}),
             ))
         } else {
-            features::map(feature, ordinal, &inputs, &mut model.ir.model, report).and_then(
-                |definition| {
-                    // Refuse a feature locally instead of letting one inadmissible scalar
-                    // discard the entire history during the neutral-model check.
-                    serde_json::from_value::<cadmpeg_ir::features::FeatureDefinition>(
-                        definition.clone(),
-                    )
-                    .map_err(|e| format!("the resolved construction is not supported yet ({e})"))?;
-                    Ok(definition)
-                },
+            features::map(
+                feature,
+                ordinal,
+                &inputs,
+                &mut model.ir.model,
+                &mut model.ir.design,
+                report,
             )
+            .and_then(|definition| {
+                // Refuse a feature locally instead of letting one inadmissible scalar
+                // discard the entire history during the neutral-model check.
+                serde_json::from_value::<cadmpeg_ir::features::FeatureDefinition>(
+                    definition.clone(),
+                )
+                .map_err(|e| format!("the resolved construction is not supported yet ({e})"))?;
+                Ok(definition)
+            })
         };
         let definition = match mapped {
             Ok(definition) => {
@@ -425,8 +433,21 @@ pub(super) fn read(
                 model.ir.model.sketch_constraints.truncate(sizes.2);
                 model.ir.model.parameters.truncate(sizes.3);
                 model.ir.model.feature_input_topologies.truncate(sizes.4);
+                model.ir.design.features.truncate(sizes.5);
                 if !suppressed {
-                    loss(report, name, &reason, model.source_step.is_some());
+                    let region_budget_exhausted = inputs
+                        .regions
+                        .try_borrow()
+                        .is_ok_and(|recovery| recovery.exhausted());
+                    let code = if !region_budget_exhausted
+                        && feature.get("featureType").and_then(Value::as_str) == Some("extrude")
+                        && features::value(feature, "bodyType") == Some("THIN")
+                    {
+                        "onshape/extrude.thin-not-supported"
+                    } else {
+                        "onshape/history.not-supported"
+                    };
+                    loss(report, name, &reason, model.source_step.is_some(), code);
                 }
                 definition(
                     "native",
@@ -434,7 +455,17 @@ pub(super) fn read(
                 )
             }
         };
-        let source_properties = features::source_properties(feature, &definition);
+        let mut source_properties = features::source_properties(feature, &definition);
+        if definition.pointer("/value/kind").and_then(Value::as_str) == Some("extrude")
+            && definition
+                .pointer("/value/value/extent/kind")
+                .and_then(Value::as_str)
+                == Some("symmetric")
+        {
+            if let Some(properties) = source_properties.as_object_mut() {
+                properties.insert("symmetric_distance_parameter".into(), json!("total"));
+            }
+        }
         let dependencies: Vec<_> = previous.iter().cloned().collect();
         let outputs: Vec<_> = single_body
             .iter()

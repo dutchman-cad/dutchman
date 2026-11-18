@@ -22,6 +22,11 @@ consumer benefits and Dutchman stays small.
 The offline Onshape REST bundle reader is an explicit exception to that native
 codec rule. `dutchman-core::onshape` validates bundle v1 and translates the public
 JSON construction records into `cadmpeg-ir` history and feature input topology.
+Neutral properties opt in to two parameter behaviors: feature
+`source_properties.symmetric_distance_parameter = "total"` permits a symmetric
+extrude to use its owned total-span parameter; parameter
+`properties.retain_without_sketches = "true"` permits parameters beside a STEP-only
+fallback. Absent these properties, the writer preserves its existing defaults.
 The embedded STEP export is decoded by the existing guarded cadmpeg route; it
 supplies final source geometry and verification, never historical selections.
 `dutchman-solidcraft` receives the same neutral model and knows nothing about the

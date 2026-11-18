@@ -476,15 +476,8 @@ impl ConvertOptions {
     }
 
     fn prepare_writer(&self, input: &Path, memory_note: Option<String>) -> PreparedWriter {
-        let mut options = self.clone();
+        let options = self.clone();
         let solidcraft = json::solidcraft_info(self);
-        if let Some(target) = solidcraft
-            .as_ref()
-            .and_then(|value| value.get("target"))
-            .and_then(Value::as_str)
-        {
-            options.solidcraft_version = target.parse().ok();
-        }
         let memory_stop = !self.no_memory_check
             && self.preset != choices::Preset::Fast
             && self.part.is_none()
@@ -810,6 +803,25 @@ impl Inspection {
 #[cfg(test)]
 mod option_tests {
     use super::*;
+
+    #[test]
+    fn prepared_writer_keeps_the_explicit_target_and_patch() {
+        for version in ["0.25.1", "0.44.1"] {
+            let target: SolidCraftVersion = version.parse().unwrap();
+            let options = ConvertOptions {
+                solidcraft_version: Some(target),
+                no_verify: true,
+                no_memory_check: true,
+                ..Default::default()
+            };
+            let prepared = options.prepare_writer(Path::new("synthetic.onshape-bundle"), None);
+            assert_eq!(prepared.solidcraft.unwrap()["target"], target.minor());
+            let OutputWriter::SolidCraft(writer) = prepared.writer else {
+                panic!("Expected the SolidCraft writer");
+            };
+            assert_eq!(writer.resolved_version(), target);
+        }
+    }
 
     #[test]
     fn a_skipped_final_assembly_check_cannot_claim_overall_verification() {

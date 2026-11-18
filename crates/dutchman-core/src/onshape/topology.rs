@@ -169,10 +169,17 @@ pub(super) struct Inputs<'a> {
     prefix: &'a str,
     mid: &'a str,
     indices: BTreeSet<usize>,
+    features: &'a [Value],
+    pub regions: std::cell::RefCell<super::regions::Recovery>,
 }
 
 impl<'a> Inputs<'a> {
-    pub fn new(bundle: &'a Bundle, prefix: &'a str, mid: &'a str) -> Mapping<Self> {
+    pub fn new(
+        bundle: &'a Bundle,
+        prefix: &'a str,
+        mid: &'a str,
+        features: &'a [Value],
+    ) -> Mapping<Self> {
         let index = bundle
             .json(&format!("{prefix}/bodydetails/index.json"))
             .map_err(|_| "bodydetails/index.json is missing or unreadable; fetch a new bundle")?;
@@ -203,7 +210,21 @@ impl<'a> Inputs<'a> {
             prefix,
             mid,
             indices,
+            features,
+            regions: Default::default(),
         })
+    }
+
+    pub fn sketch_entity(&self, sketch: &str, entity: &str) -> Mapping<&Value> {
+        let sketch = self
+            .features
+            .iter()
+            .find(|f| f.get("featureId").and_then(Value::as_str) == Some(sketch))
+            .ok_or("the region's source sketch is missing")?;
+        rows(sketch, "entities")?
+            .iter()
+            .find(|e| e.get("entityId").and_then(Value::as_str) == Some(entity))
+            .ok_or_else(|| "the region's source sketch entity is missing".into())
     }
 
     pub fn load(&self, ordinal: usize, feature: &Value) -> Mapping<State> {

@@ -31,6 +31,17 @@ whole profile; up-to-face extrudes retain their selected planar input face. A fa
 at a slant to the sketch needs SolidCraft 0.44 or newer as the target. Older targets
 retain a named loss and the final geometry. Unresolved selections and unsupported
 expressions retain named losses.
+Ellipses and elliptical arcs keep editable geometry. Variables keep their units and
+expressions, including when conversion falls back to STEP with no usable sketch.
+Thin walls keep their curve selections, thickness and side on SolidCraft 0.44
+and newer (`--solidcraft-version 0.44.1`); older targets retain a named loss.
+Repeated ellipse carriers use solved chord endpoints and intersection records to retain distinct trimmed regions.
+Asymmetric chamfers explain the missing input reference-face ordering.
+Unproven open dividers and exhausted cumulative region-recovery budgets produce
+`onshape/history.not-supported` before writing, including with verification off.
+Simplify the sketch or split the bundle when the recovery budget is exhausted;
+the final STEP shape remains available. Native symmetric distances and parameter
+fallback defaults stay unchanged.
 See [Onshape](onshape.md) for editable features, required rollback
 responses, and the STEP fallback when a feature is not supported yet.
 Bundles marked `consistent: false` are refused; fetch again or use a version link.

@@ -26,6 +26,19 @@ kept. Compressed REST queries can resolve built-in plane frames and explicit ske
 region boundaries. Do not treat a deterministic region ID as a whole-sketch pick;
 explain a refused boundary using its specific loss. The ordinary history/verification
 report still applies. See `docs/onshape.md`.
+Ellipses and elliptical arcs retain editable curves. Variables keep units and
+expressions, and remain design parameters alongside the STEP fallback even when no
+sketch maps. Thin extrudes keep selected curves, thickness and side on SolidCraft
+0.44 and newer. Unresolved wall options retain `onshape/extrude.thin-not-supported`;
+older targets keep a named loss. Repeated ellipse trims use solved chord endpoints
+and intersection records; outside-face witnesses recover complete closed loops.
+Tied intersections remain named losses. Asymmetric chamfers need input reference-face
+ordering. Keep final geometry and explain a named loss rather than guessing a side.
+Unproven open dividers and exhausted cumulative region-recovery budgets produce
+`onshape/history.not-supported` before writing, including with verification off.
+Simplify the sketch or split the bundle when the recovery budget is exhausted;
+the final STEP shape remains available. Native symmetric distances and parameter
+fallback defaults stay unchanged.
 Sketch-only Part Studios can omit STEP and convert to sketches alone; with SolidCraft they are
 verified by replaying the sketches (no body expected). The reader also
 accepts resolved extrusion-cap sketches, complete tangent edge chains, hole `locations`
