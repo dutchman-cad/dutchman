@@ -951,6 +951,54 @@ mod tests {
     }
 
     #[test]
+    fn tangent_chain_keeps_straight_and_curved_picks_with_polyline_lengths() {
+        // A tangent chain can contain both a line and an arc left by an earlier round.
+        // SolidCraft reports the arc length as display chords, not its analytic length.
+        let h = std::f64::consts::FRAC_1_SQRT_2;
+        let arc = super::Input {
+            point: [6.0 * h, 6.0 * h, 0.0],
+            ends: ([6.0, 0.0, 0.0], [0.0, 6.0, 0.0]),
+            tangent: [-h, h, 0.0],
+            length: 3.0 * std::f64::consts::PI,
+            straight: false,
+        };
+        let line = super::Input {
+            point: [6.0, -4.0, 0.0],
+            ends: ([6.0, -8.0, 0.0], arc.ends.0),
+            tangent: [0.0, 1.0, 0.0],
+            length: 8.0,
+            straight: true,
+        };
+        let mut replayed_arc = rebuilt(&arc);
+        replayed_arc.length = 48.0 * (std::f64::consts::PI / 16.0).sin();
+        // Reversing a replayed edge must not reverse or replace the source selection.
+        std::mem::swap(&mut replayed_arc.start, &mut replayed_arc.end);
+        let bodies = vec![(
+            "Rounded body".to_owned(),
+            vec![rebuilt(&line), replayed_arc],
+        )];
+        let pending = proof(vec![arc.clone(), line.clone()]);
+        assert_eq!(
+            super::prove(&pending, &bodies).unwrap(),
+            vec![super::Selection {
+                body: "Rounded body".to_owned(),
+                points: vec![arc.point, line.point],
+            }]
+        );
+        // Every expanded chain member still needs proof, even when the initial pick fits.
+        let mut missing = bodies.clone();
+        let _ = missing[0].1.pop();
+        assert!(super::prove(&pending, &missing)
+            .unwrap_err()
+            .contains("no rebuilt edge"));
+        let mut duplicate = bodies.clone();
+        duplicate.push(("Other body".to_owned(), vec![rebuilt(&arc)]));
+        assert!(super::prove(&pending, &duplicate)
+            .unwrap_err()
+            .contains("more than one"));
+    }
+
+    #[test]
     fn unsupported_radius_laws_never_reach_body_splitting() {
         for radius in [
             json!({"kind": "variable"}),
