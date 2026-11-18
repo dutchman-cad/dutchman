@@ -423,6 +423,8 @@ pub enum VersionGate {
     /// Fillets and chamfers that blend only their listed edges (`tangent_chain: false`). Only
     /// Onshape blends need it, so it does not count towards an installed release's history notice.
     BlendListedEdges,
+    /// Extrude From and To Object on a flat face at a slant to the sketch.
+    SlantedFaceExtent,
 }
 
 impl VersionGate {
@@ -434,6 +436,7 @@ impl VersionGate {
             Self::HoleThreadDepth => SolidCraftVersion::V0_40_0,
             Self::HoleThreadClass => SolidCraftVersion::V0_43_0,
             Self::BlendListedEdges => SolidCraftVersion::V0_40_0,
+            Self::SlantedFaceExtent => SolidCraftVersion::V0_44_0,
         }
     }
 
@@ -456,7 +459,8 @@ pub fn target_loses_history(target: SolidCraftVersion) -> bool {
         !matches!(gate, VersionGate::EntryRecessTip)
             && gate.supported(SolidCraftVersion::default())
             && !gate.supported(target)
-    })
+    }) || (VersionGate::SlantedFaceExtent.supported(SolidCraftVersion::default())
+        && !VersionGate::SlantedFaceExtent.supported(target))
 }
 
 /// Installed-version status, independent of CLI discovery or network access.
@@ -506,6 +510,9 @@ impl SolidCraftVersion {
 
     /// First release that stores a tapped hole's `thread_class`.
     pub const V0_43_0: Self = Self([0, 43, 0]);
+
+    /// First release extruding from and to a flat face at a slant to the sketch.
+    pub const V0_44_0: Self = Self([0, 44, 0]);
 
     /// The minor used in presentation; patch-sensitive writer gates keep the full version.
     pub fn minor(self) -> String {

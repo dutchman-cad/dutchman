@@ -313,11 +313,17 @@ An unresolved `sketch_selection` may retain a candidate built from selected neut
 its carrier sketch only after the same source body comparison confirms it. The loss
 `history/profile-region-inferred` has level `Degraded`, names the consuming feature in `subject`,
 and says Dutchman inferred the region and the source body check confirmed it. This body check is
-separate from an extrude's end-cap area proof, which `profile_unverified` continues to describe. A failed or
-unavailable check blocks the feature with `its inferred profile region could not be confirmed by
+separate from an extrude's end-cap area proof, which `profile_unverified` continues to describe.
+A failed or unavailable check blocks the feature with `its inferred profile region could not be confirmed by
 the source body check`. Trimmed regions select interior points from their directed boundary
 intervals; an unclosed or ambiguous boundary blocks with `its trimmed profile boundary does not
 close unambiguously or has no unambiguous interior point`. These add no report fields.
+
+An extrude starting on a planar face at a slant to its sketch has no single flat
+end-cap height, so it retains `profile_unverified` and uses the existing replay check.
+Slanted face starts and ends require a target of SolidCraft 0.44 or newer; older
+targets report the release requirement in `history.features[].reason` and retain
+the final geometry. No report fields or schema versions change.
 
 Shells require removed faces from their own historical input topology, a resolved
 thickness and inward or outward direction, and one earlier named body. A shell input-face

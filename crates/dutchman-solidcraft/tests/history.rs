@@ -8695,6 +8695,154 @@ fn face_selections_that_cannot_be_placed_stop_the_history() {
 }
 
 #[test]
+fn a_face_at_an_angle_to_the_sketch_is_gated_to_solidcraft_0_44() {
+    // The front face is perpendicular to the sketch: older targets name the release that
+    // reaches slanted faces, and 0.44 still refuses a face the sweep runs along.
+    for (target, reason) in [
+        (None, "needs SolidCraft 0.44 or newer"),
+        (Some("0.44.0"), "runs along the travel"),
+    ] {
+        let mut model = face_ended_extrude(false, 0.0, false);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["model"]["features"][2]["definition"]["value"]["value"]["extent"]["side"]
+            ["termination"]["face"] =
+            json!({"kind": "faces", "value": ["synthetic:cube:face#front"]});
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let writer = SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .target_version(target.map(|t| t.parse().unwrap()));
+        let (_, report) = convert(&model, &writer);
+        assert!(
+            history_line(&report).contains(reason),
+            "{target:?}: {}",
+            history_line(&report)
+        );
+    }
+}
+
+/// A small tilted sketch above a cube; its sweep meets the horizontal top obliquely.
+fn slanted_face_extent(from: bool, historical: bool) -> Model {
+    let mut model = face_ended_extrude(from, 0.0, false);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let sketch = "test:slanted:sketch#2";
+    let mut placed = wire["model"]["sketches"][0].clone();
+    placed["id"] = json!(sketch);
+    placed["placement"]["frame"] = json!({
+        "origin": {"x": 3.0, "y": 6.0, "z": 14.0},
+        "normal": {"x": 0.0, "y": 0.6, "z": 0.8},
+        "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0}
+    });
+    let mut curves = vec![
+        line(11, [0.0, 0.0], [4.0, 0.0]),
+        line(12, [4.0, 0.0], [4.0, 4.0]),
+        line(13, [4.0, 4.0], [0.0, 4.0]),
+        line(14, [0.0, 4.0], [0.0, 0.0]),
+    ];
+    placed["profiles"] = json!([curves
+        .iter()
+        .map(|curve| { json!({"entity": curve["id"], "reversed": false}) })
+        .collect::<Vec<_>>()]);
+    for curve in &mut curves {
+        curve["sketch"] = json!(sketch);
+    }
+    wire["model"]["sketches"]
+        .as_array_mut()
+        .unwrap()
+        .push(placed);
+    wire["model"]["sketch_entities"]
+        .as_array_mut()
+        .unwrap()
+        .extend(curves);
+    let mut feature = wire["model"]["features"][0].clone();
+    feature["id"] = json!("test:slanted:feature#sketch");
+    feature["ordinal"] = json!(2);
+    feature["definition"]["value"]["value"]["sketch"]["sketch"] = json!(sketch);
+    wire["model"]["features"][2]["ordinal"] = json!(3);
+    wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .push(feature);
+    let definition = &mut wire["model"]["features"][2]["definition"]["value"]["value"];
+    definition["profile"] = json!({"kind": "planar", "value": {"kind": "sketch", "value": sketch}});
+    if !from {
+        definition["start"] = json!({"kind": "profile_plane"});
+    }
+    if historical {
+        // The same top face resolved only from input boundary samples, as Onshape supplies it.
+        let source = face_extrude(true, |_| {});
+        let source = serde_json::to_value(&source.ir).unwrap();
+        wire["model"]["feature_input_topologies"] =
+            source["model"]["feature_input_topologies"].clone();
+        let selection = json!({"kind": "historical", "value": {
+            "state": "test:face:feature-input#3", "faces": ["test:face:historical-face#target"],
+            "native": "synthetic top face"
+        }});
+        let definition = &mut wire["model"]["features"][2]["definition"]["value"]["value"];
+        if from {
+            definition["start"]["face"] = selection;
+        } else {
+            definition["extent"]["side"]["termination"]["face"] = selection;
+        }
+    }
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn slanted_face_starts_and_ends_map_only_on_supported_targets() {
+    for from in [false, true] {
+        for historical in [false, true] {
+            let model = slanted_face_extent(from, historical);
+            for target in ["0.43.0", "0.44.0", "0.44.1"] {
+                let writer = SolidCraftWriter::new()
+                    .verification(Verification::Off)
+                    .target_version(Some(target.parse().unwrap()));
+                let (document, report) = convert(&model, &writer);
+                let line = history_line(&report);
+                if target == "0.43.0" {
+                    assert!(line.contains("needs SolidCraft 0.44 or newer"), "{line}");
+                } else {
+                    assert!(line.starts_with("4 of 4 features rebuilt"), "{line}");
+                    let extent = &document["features"][3]["extent"];
+                    assert_eq!(extent[if from { "from" } else { "to" }][2], 10.0);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn solidcraft_rebuilds_a_slanted_face_end_with_the_expected_volume() {
+    let Some(cli) = solidcraft() else { return };
+    // Use the CLI's actual release: detected() intentionally caps the default output target.
+    let version = dutchman_solidcraft::solidcraft_version(&Verification::With(cli.clone()))
+        .and_then(|line| {
+            line.split_whitespace()
+                .last()?
+                .trim_start_matches('v')
+                .parse::<dutchman_solidcraft::SolidCraftVersion>()
+                .ok()
+        })
+        .expect("the configured SolidCraft CLI must report its release");
+    if !dutchman_solidcraft::VersionGate::SlantedFaceExtent.supported(version) {
+        return;
+    }
+    for historical in [false, true] {
+        let writer = SolidCraftWriter::new()
+            .verification(Verification::Off)
+            .target_version(Some("0.44.0".parse().unwrap()));
+        let (bytes, report) = written_with(&slanted_face_extent(false, historical), &writer);
+        assert!(history_line(&report).starts_with("4 of 4 features rebuilt"));
+        let mut actual = volumes(&cli, &bytes);
+        actual.sort_by(f64::total_cmp);
+        assert_eq!(actual.len(), 2, "{actual:?}");
+        // Profile area 16; mean travel (14 - 0.6 * 2 - 10) / 0.8 = 3.5.
+        assert!((actual[0] - 56.0).abs() < 1e-4, "{actual:?}");
+        assert!((actual[1] - 1000.0).abs() < 1e-4, "{actual:?}");
+    }
+}
+
+#[test]
 fn a_two_sided_extrude_can_end_at_a_face_along_the_positive_normal() {
     let mut model = face_ended_extrude(false, 0.0, false);
     let mut wire = serde_json::to_value(&model.ir).unwrap();

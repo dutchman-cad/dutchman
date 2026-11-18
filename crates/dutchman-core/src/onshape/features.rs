@@ -213,6 +213,120 @@ fn sketch_entities(queries: &[Value], model: &Model, entity_type: &str) -> Mappi
     )
 }
 
+/// Model-space points on a planar profile's curves (mm) and its sketch normal.
+/// Region profiles sample only their boundary curves; a whole-sketch profile
+/// samples every non-construction curve, a superset that can only refuse more.
+fn profile_samples(profile: &Value, model: &Model) -> Mapping<(Vec<[f64; 3]>, [f64; 3])> {
+    let value = profile.get("value").ok_or("the profile is missing")?;
+    let sketch_id = value
+        .as_str()
+        .or_else(|| value.get("sketch").and_then(Value::as_str))
+        .ok_or("the profile sketch is missing")?;
+    let mut chosen = std::collections::BTreeSet::new();
+    for region in optional_array(value, "regions") {
+        let holes = optional_array(region, "hole_boundaries")
+            .iter()
+            .flat_map(|hole| hole.as_array().map(Vec::as_slice).unwrap_or_default());
+        for boundary in optional_array(region, "outer_boundary").iter().chain(holes) {
+            chosen.insert(text(boundary, "entity")?.to_owned());
+        }
+    }
+    let sketch = model
+        .sketches
+        .iter()
+        .find(|s| s.id.as_str() == sketch_id)
+        .ok_or("the profile sketch has no resolved frame")?;
+    let sketch = serde_json::to_value(sketch).map_err(|_| "the profile sketch is unreadable")?;
+    let frame = sketch
+        .pointer("/placement/frame")
+        .ok_or("the profile frame is missing")?;
+    let at = |key: &str| -> Mapping<[f64; 3]> {
+        topology::vector(
+            frame.get(key).ok_or("the profile frame is incomplete")?,
+            1.0,
+        )
+    };
+    let origin = at("origin")?;
+    let u = topology::unit(at("u_axis")?)?;
+    let normal = topology::unit(at("normal")?)?;
+    let v = topology::cross(normal, u);
+    let ([ox, oy, oz], [ux, uy, uz], [vx, vy, vz]) = (origin, u, v);
+    let world = |[a, b]: [f64; 2]| -> [f64; 3] {
+        [
+            ox + a * ux + b * vx,
+            oy + a * uy + b * vy,
+            oz + a * uz + b * vz,
+        ]
+    };
+    let mut samples = Vec::new();
+    for entity in &model.sketch_entities {
+        let entity = serde_json::to_value(entity).map_err(|_| "a profile curve is unreadable")?;
+        let selected = if chosen.is_empty() {
+            entity.get("construction").and_then(Value::as_bool) != Some(true)
+        } else {
+            chosen.contains(text(&entity, "id")?)
+        };
+        if entity.get("sketch").and_then(Value::as_str) != Some(sketch_id) || !selected {
+            continue;
+        }
+        let geometry = entity
+            .get("geometry")
+            .ok_or("a profile curve has no geometry")?;
+        let uv = |key: &str| -> Mapping<[f64; 2]> {
+            let point = geometry
+                .get(key)
+                .ok_or("a profile curve point is missing")?;
+            Ok([number(point, "u")?, number(point, "v")?])
+        };
+        match text(geometry, "kind")? {
+            "point" => {}
+            "line" => {
+                let ([ax, ay], [bx, by]) = (uv("start")?, uv("end")?);
+                for step in 0..=4 {
+                    let t = f64::from(step) / 4.0;
+                    samples.push(world([ax + t * (bx - ax), ay + t * (by - ay)]));
+                }
+            }
+            kind @ ("circle" | "arc") => {
+                let [cx, cy] = uv("center")?;
+                let radius = number(geometry, "radius")?;
+                let (from, to) = if kind == "circle" {
+                    (0.0, std::f64::consts::TAU)
+                } else {
+                    let from = number(geometry, "start_angle")?;
+                    let to = number(geometry, "end_angle")?;
+                    (
+                        from,
+                        if to < from {
+                            to + std::f64::consts::TAU
+                        } else {
+                            to
+                        },
+                    )
+                };
+                for step in 0..=32 {
+                    let t = from + (to - from) * f64::from(step) / 32.0;
+                    samples.push(world([cx + radius * t.cos(), cy + radius * t.sin()]));
+                }
+            }
+            _ => {
+                return Err("an up-to-next extrude of a spline profile is not supported yet".into())
+            }
+        }
+    }
+    if samples.is_empty() || samples.iter().flatten().any(|n| !n.is_finite()) {
+        return Err("the up-to-next profile has no resolved curves".into());
+    }
+    Ok((samples, normal))
+}
+
+fn optional_array<'a>(row: &'a Value, key: &str) -> &'a [Value] {
+    row.get(key)
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+}
+
 fn sketch_axis(feature: &Value, model: &Model) -> Mapping<Value> {
     let profile = sketch_entities(queries(feature, "axis")?, model, "EDGE")?;
     let sketch_id = profile
@@ -387,6 +501,9 @@ pub(super) fn map(
                 return Err("non-solid extrudes are not supported yet".into());
             }
             let profile = profile(feature, "entities", model)?;
+            if enabled(feature, "symmetric") && value(feature, "endBound") != Some("BLIND") {
+                return Err("symmetric extrudes with this bound are not supported yet".into());
+            }
             let termination = match value(feature, "endBound") {
                 Some("BLIND") => {
                     json!({"kind": "blind", "length": length(feature, "depth", model)?})
@@ -401,11 +518,25 @@ pub(super) fn map(
                     push(&mut model.feature_input_topologies, state.row.clone())?;
                     json!({"kind": "to_face", "face": face})
                 }
+                Some("UP_TO_NEXT") => {
+                    // SolidCraft has no up-to-next end. Resolve the one input face
+                    // that every profile ray meets first, then end at that face.
+                    let state = scoped
+                        .map(Ok)
+                        .unwrap_or_else(|| inputs.load(ordinal, feature))?;
+                    let (samples, normal) = profile_samples(&profile, model)?;
+                    let travel = if enabled(feature, "oppositeDirection") {
+                        normal.map(|n| -n)
+                    } else {
+                        normal
+                    };
+                    let face = state.next_face(&samples, travel, operation(feature)? == "cut")?;
+                    state.require_planes(&face)?;
+                    push(&mut model.feature_input_topologies, state.row.clone())?;
+                    json!({"kind": "to_face", "face": face})
+                }
                 _ => return Err("this extrude bound is not supported yet".into()),
             };
-            if enabled(feature, "symmetric") && value(feature, "endBound") != Some("BLIND") {
-                return Err("symmetric extrudes with this bound are not supported yet".into());
-            }
             if value(feature, "endBound") == Some("BLIND") {
                 let source = parameter(feature, "depth")?;
                 if let Some(expression) = source

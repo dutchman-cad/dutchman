@@ -421,9 +421,6 @@ fn locus_position(locus: &Value, model: &Model) -> Mapping<Value> {
         .ok_or("the sketch point's position is missing".into())
 }
 
-/// Onshape's deterministic id for the default Origin point.
-const ORIGIN_ID: &str = "IB";
-
 /// Whether an external constraint reference names the part studio's origin point.
 fn names_origin(query: &Value) -> bool {
     let source = query

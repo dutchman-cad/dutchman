@@ -42,6 +42,120 @@ pub(super) fn unit(v: [f64; 3]) -> Mapping<[f64; 3]> {
     }
 }
 
+fn dot([a, b, c]: [f64; 3], [d, e, f]: [f64; 3]) -> f64 {
+    a * d + b * e + c * f
+}
+
+fn along([a, b, c]: [f64; 3], t: f64, [d, e, f]: [f64; 3]) -> [f64; 3] {
+    [a + t * d, b + t * e, c + t * f]
+}
+
+/// An input edge as model-space points (mm): a line's ends, a circle sampled
+/// through its midpoint from start to end, or all the way round when closed.
+fn polyline(edge: &Value) -> Mapping<Vec<[f64; 3]>> {
+    let curve = edge
+        .get("curve")
+        .ok_or("the input edge has no analytic curve")?;
+    let geometry = edge
+        .get("geometry")
+        .ok_or("the input edge has no geometric data")?;
+    let at = |key: &str| -> Mapping<[f64; 3]> {
+        vector(
+            geometry.get(key).ok_or("an input edge point is missing")?,
+            1000.0,
+        )
+    };
+    let (start, mid, end) = (at("startPoint")?, at("midPoint")?, at("endPoint")?);
+    match text(curve, "type")? {
+        "LINE" => Ok(vec![start, end]),
+        "CIRCLE" => {
+            let center = vector(
+                curve.get("origin").ok_or("circle center is missing")?,
+                1000.0,
+            )?;
+            let axis = unit(vector(
+                curve
+                    .get("normal")
+                    .or_else(|| curve.get("direction"))
+                    .ok_or("circle axis is missing")?,
+                1.0,
+            )?)?;
+            let offset = sub(start, center);
+            let radial = sub(offset, axis.map(|n| n * dot(offset, axis)));
+            let radius = dot(radial, radial).sqrt();
+            let x = unit(radial)?;
+            let y = cross(axis, x);
+            let angle = |p: [f64; 3]| {
+                let q = sub(p, center);
+                dot(q, y).atan2(dot(q, x)).rem_euclid(std::f64::consts::TAU)
+            };
+            let closed = dot(sub(end, start), sub(end, start)).sqrt() <= 1e-6 * radius.max(1.0);
+            let sweep = if closed {
+                std::f64::consts::TAU
+            } else {
+                let to = angle(end);
+                if angle(mid) < to {
+                    to
+                } else {
+                    to - std::f64::consts::TAU
+                }
+            };
+            Ok((0..=32)
+                .map(|step| {
+                    let t = sweep * f64::from(step) / 32.0;
+                    along(along(center, radius * t.cos(), x), radius * t.sin(), y)
+                })
+                .collect())
+        }
+        other => Err(format!("{other} input edges are not supported yet")),
+    }
+}
+
+/// Where a point in a face's plane lies: `Some(true)` inside, `Some(false)` on
+/// its boundary within `on`, `None` outside. Even-odd over every loop's segments.
+fn within(
+    point: [f64; 3],
+    origin: [f64; 3],
+    normal: [f64; 3],
+    boundary: &[Vec<[f64; 3]>],
+    on: f64,
+) -> Option<bool> {
+    let [nx, _, _] = normal;
+    let helper = if nx.abs() < 0.9 {
+        [1.0, 0.0, 0.0]
+    } else {
+        [0.0, 1.0, 0.0]
+    };
+    let x = unit(cross(normal, helper)).ok()?;
+    let y = cross(normal, x);
+    let flat = |p: [f64; 3]| {
+        let q = sub(p, origin);
+        [dot(q, x), dot(q, y)]
+    };
+    let [px, py] = flat(point);
+    let mut inside = false;
+    for points in boundary {
+        for pair in points.windows(2) {
+            let [a, b] = pair else { continue };
+            let ([ax, ay], [bx, by]) = (flat(*a), flat(*b));
+            let (dx, dy) = (bx - ax, by - ay);
+            let length = dx * dx + dy * dy;
+            let t = if length > 0.0 {
+                (((px - ax) * dx + (py - ay) * dy) / length).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            if (px - ax - t * dx).hypot(py - ay - t * dy) <= on {
+                return Some(false);
+            }
+            if (ay > py) != (by > py) && px < ax + (py - ay) * dx / dy {
+                inside = !inside;
+            }
+        }
+    }
+    inside.then_some(true)
+}
+
 pub(super) struct State {
     pub row: Value,
     faces: BTreeMap<String, Value>,
@@ -432,6 +546,149 @@ impl State {
             sample(edge)?;
         }
         Ok(())
+    }
+
+    /// The input face an up-to-next extrude ends on: the one planar face that every
+    /// profile ray meets first, with nothing else of any input body in the swept box
+    /// before it. Whether a face at a slant to the sketch can be written is the
+    /// writer's call, by target release. A cut must leave material
+    /// there; an added extrude must meet material. Anything else is refused.
+    pub fn next_face(&self, samples: &[[f64; 3]], travel: [f64; 3], cut: bool) -> Mapping<Value> {
+        const ON: f64 = 1e-4;
+        let travel = unit(travel)?;
+        let mut segments = 0usize;
+        let mut planes = Vec::new();
+        for (face_id, face) in &self.faces {
+            if face.pointer("/surface/type").and_then(Value::as_str) != Some("PLANE") {
+                continue;
+            }
+            let surface = face.get("surface").ok_or("input face surface is missing")?;
+            let origin = vector(
+                surface.get("origin").ok_or("plane origin is missing")?,
+                1000.0,
+            )?;
+            let normal = unit(vector(
+                surface.get("normal").ok_or("plane normal is missing")?,
+                1.0,
+            )?)?;
+            let across = dot(normal, travel);
+            if across.abs() < 1e-9 {
+                continue;
+            }
+            let mut boundary = Vec::new();
+            for lp in rows(face, "loops")? {
+                for coedge in rows(lp, "coedges")? {
+                    let edge = self
+                        .edges
+                        .get(text(coedge, "edgeId")?)
+                        .ok_or("face boundary edge is missing")?;
+                    let points = polyline(edge)?;
+                    segments = segments.saturating_add(points.len());
+                    boundary.push(points);
+                }
+            }
+            planes.push((face_id.as_str(), origin, normal, across, boundary));
+        }
+        if samples.len().saturating_mul(segments) > 50_000_000 {
+            return Err(
+                "an up-to-next extrude over this many input faces is not supported yet".into(),
+            );
+        }
+        // Each profile ray's nearest hit: (distance, inside rather than on the edge, face).
+        let mut first = Vec::new();
+        for p in samples {
+            let mut best: Option<(f64, bool, &str)> = None;
+            for (face_id, origin, normal, across, boundary) in &planes {
+                let t = dot(sub(*origin, *p), *normal) / across;
+                if !t.is_finite() || t <= ON {
+                    continue;
+                }
+                let hit = along(*p, t, travel);
+                let Some(inside) = within(hit, *origin, *normal, boundary, ON) else {
+                    continue;
+                };
+                let better = match best {
+                    None => true,
+                    Some((d, strict, _)) => t < d - ON || (t <= d + ON && inside && !strict),
+                };
+                if better {
+                    best = Some((t, inside, *face_id));
+                }
+            }
+            first.push(best.ok_or(
+                "an up-to-next extrude whose profile does not meet one input face everywhere is not supported yet",
+            )?);
+        }
+        let face_id = first
+            .first()
+            .map(|hit| hit.2)
+            .ok_or("the up-to-next profile is empty")?;
+        if first.iter().any(|hit| hit.2 != face_id) {
+            return Err(
+                "an up-to-next extrude that ends on several input faces is not supported yet"
+                    .into(),
+            );
+        }
+        let face = self.faces.get(face_id).ok_or("input face is missing")?;
+        let normal = unit(vector(
+            face.pointer("/surface/normal")
+                .ok_or("plane normal is missing")?,
+            1.0,
+        )?)?;
+        let outward = match face.get("orientation").and_then(Value::as_bool) {
+            Some(true) => dot(normal, travel),
+            Some(false) => -dot(normal, travel),
+            None => return Err("the up-to-next face has no resolved orientation".into()),
+        };
+        if cut != (outward > 0.0) {
+            return Err(if cut {
+                "an up-to-next cut that starts outside the material is not supported yet"
+            } else {
+                "an up-to-next extrude that starts inside the material is not supported yet"
+            }
+            .into());
+        }
+        // Nothing of any input body may lie inside the swept box short of that face.
+        const CLEAR: f64 = 1e-3;
+        let mut low = [f64::INFINITY; 3];
+        let mut high = [f64::NEG_INFINITY; 3];
+        for (p, (t, _, _)) in samples.iter().zip(&first) {
+            for point in [*p, along(*p, *t, travel)] {
+                for ((l, h), n) in low.iter_mut().zip(high.iter_mut()).zip(point) {
+                    *l = l.min(n);
+                    *h = h.max(n);
+                }
+            }
+        }
+        for (other_id, other) in &self.faces {
+            if other_id.as_str() == face_id {
+                continue;
+            }
+            let corner = |key: &str| -> Mapping<[f64; 3]> {
+                vector(
+                    other
+                        .get("box")
+                        .and_then(|b| b.get(key))
+                        .ok_or("an input face has no bounding box")?,
+                    1000.0,
+                )
+            };
+            let (min, max) = (corner("minCorner")?, corner("maxCorner")?);
+            let overlaps = min
+                .iter()
+                .zip(max)
+                .zip(low.iter().zip(high))
+                .all(|((a, b), (l, h))| *a < h - CLEAR && b > l + CLEAR);
+            if overlaps {
+                return Err("an up-to-next extrude with other input geometry in its path is not supported yet".into());
+            }
+        }
+        let mut value = json!({"state": self.row.get("id"), "native": "Onshape up-to-next face"});
+        value
+            .as_object_mut()
+            .ok_or("selection is missing")?
+            .insert("faces".into(), json!([face_id]));
+        Ok(json!({"kind": "historical", "value": value}))
     }
 
     pub fn require_planes(&self, selection: &Value) -> Mapping<()> {

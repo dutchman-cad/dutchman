@@ -131,9 +131,14 @@ pub(crate) fn map(
             extent.insert("start_offset".to_owned(), json!(mm(offset)));
         }
     }
+    let mut slanted_start = false;
     if definition.pointer("/start/kind").and_then(Value::as_str) == Some("from_face") {
         let start = definition.get("start").ok_or("its start is malformed")?;
-        let point = super::faces::pick(ctx, feature, start.get("face"), sketch.normal)?;
+        let slanted = crate::VersionGate::SlantedFaceExtent.supported(ctx.target_version);
+        let (point, tilted) =
+            super::faces::pick(ctx, feature, start.get("face"), sketch.normal, slanted)?;
+        // A slanted start has no single height: no flat-cap proof applies to its far end.
+        slanted_start = tilted;
         start_height = point
             .iter()
             .zip(sketch.origin)
@@ -197,7 +202,8 @@ pub(crate) fn map(
     {
         return Err("its through-all cut has no earlier named body; resolve its body-producing feature first".to_owned());
     }
-    let end = end_of_sweep(definition, &extent, sketch, start_height, forward);
+    let end =
+        end_of_sweep(definition, &extent, sketch, start_height, forward).filter(|_| !slanted_start);
     let body_names = body_names(feature, ctx, operation);
     if !face_profile {
         let proven = match (operation, end) {
@@ -383,7 +389,14 @@ fn side(
             .ok_or_else(|| "its blind length is malformed".to_owned()),
         Some("through_all") => Ok(Side::ThroughAll),
         Some("to_face") => Ok(Side::ToObject(
-            super::faces::pick(ctx, feature, termination.get("face"), normal)?,
+            super::faces::pick(
+                ctx,
+                feature,
+                termination.get("face"),
+                normal,
+                crate::VersionGate::SlantedFaceExtent.supported(ctx.target_version),
+            )?
+            .0,
             number(termination.get("offset")),
         )),
         Some("to_plane") => {

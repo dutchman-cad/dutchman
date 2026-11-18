@@ -254,8 +254,10 @@ profiles, of profile regions (whole loops with their holes, or regions bounded b
 curves) or of selected curves, one-sided, symmetric or two-sided, blind or through all, from the sketch plane or an
 offset, or a resolved parallel planar face on an earlier named body. A face of the
 feature's own input topology (a face of an earlier history state) is rebuilt as its plane and
-an interior point from that state's boundary samples; a face that is not parallel to the
-sketch is refused. Trimmed regions name interior points computed from directed trim intervals, including for
+an interior point from that state's boundary samples. A flat face at a slant to the sketch
+maps only when the target is SolidCraft 0.44 or newer, which starts on and ends at such a face
+(a slanted start skips the flat-cap proof); older targets refuse it, and a face along the
+travel is always refused. Trimmed regions name interior points computed from directed trim intervals, including for
 revolves; unresolved or ambiguous boundaries are blockers. Otherwise unresolved native sketch
 selections try at most two candidates through the normal feature mapper, selected neutral curves
 and the whole carrier. A writer callback admits each only after the existing source body check,

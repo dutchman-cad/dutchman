@@ -182,7 +182,9 @@ private query, identifier or geometry is copied. Regenerate with
 The Onshape tests in `src/onshape/tests.rs` and `tests/onshape.rs` also build
 synthetic variants in memory: zlib cap queries with booleans, shared-vertex tangent
 chains, diameter `length` dimensions, hole `locations` and entry forms, construction
-line axes, origin and midpoint relations, and assigned-variable symmetric extrudes.
+line axes, origin and midpoint relations, assigned-variable symmetric extrudes, and
+up-to-next bounds on axis-aligned and slanted synthetic boxes. The slanted box is
+built by raising the top vertices linearly along X; no document geometry is used.
 All identifiers, dimensions and geometry in those variants were invented for tests.
 `dutchman/tests/onshape.rs` uses a synthetic response client to capture and convert
 a sketch-only Part Studio without any STEP request or network connection.
