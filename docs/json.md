@@ -471,6 +471,12 @@ and `losses` in summary chips, an open timeline, and loss cards. Its severity la
 `Dropped` to Lost, `Degraded` to Changed, and `Info` to Note; report values do not change.
 Standard's explanation when history is left out to fit free memory stays visible in the detail.
 Raw codes and messages remain under Details. Optional local PNG previews add no report fields.
+Preview PNGs beside the design carry Dutchman ownership and source size/time metadata.
+Unmarked PNGs silently skip the preview and are never reused or changed. Cache publication
+never replaces an occupied path; stale owned PNGs can be deleted to cache fresh renders.
+Assembly loss filenames join history names only for unique matches; ambiguous losses remain
+in a separate loss section without a history claim. Unreadable source records have a specific
+loss title.
 
 Desktop result cards hide zero loss counts and show **History off** when history was disabled.
 The full verification explanation stays in **Save the full log…**; the card uses chips

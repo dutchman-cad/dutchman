@@ -223,6 +223,7 @@ container.redundant-field-repaired
 container.scan-diagnostic
 container.stream-opaque
 container.toc-scan-capped
+crate.value-not-read
 curve-expression.kind-prohibited
 curve-expression.prohibited
 curve-expression.solve-control-unresolved
@@ -1247,6 +1248,7 @@ protein.asset-rejected
 protein.catalog-undecodable
 protein.guid-ambiguous
 protein.stream-malformed
+record.unreadable
 record_not_typed
 reference.conic-prefix-unresolved
 reference.member-ambiguous

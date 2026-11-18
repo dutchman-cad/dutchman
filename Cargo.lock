@@ -1463,6 +1463,7 @@ dependencies = [
  "egui_kittest",
  "image",
  "pollster",
+ "png 0.18.1",
  "rfd",
  "ron 0.12.3",
  "roxmltree 0.21.2",

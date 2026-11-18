@@ -4335,3 +4335,52 @@ fn partial_results_omit_duplicate_reason() {
         }
     }
 }
+
+// Synthetic external assembly report: history uses stems; loss subjects use filenames.
+#[cfg(feature = "test-support")]
+#[test]
+fn assembly_losses_share_the_checked_part_and_ambiguous_stems_stay_separate() {
+    for theme in [ThemePreference::Light, ThemePreference::Dark] {
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1280.0, 1000.0))
+            .build_eframe(|cc| test_app(cc));
+        h.ctx.set_theme(theme);
+        h.state_mut().set_previews_enabled(false);
+        h.state_mut().preview_result_for_test(dutchman_gui::app::Row {
+            input: PathBuf::from("synthetic-assembly.iam"),
+            output: Some(PathBuf::from("converted/synthetic-assembly.sc")),
+            status: Status::Converted, progress: None, job: None, size: None,
+            report: Some(serde_json::json!({"ok":true,"mode":"history",
+                "history":{"rebuilt":3,"needing":3,"parts":[
+                    {"name":"Bracket","rebuilt":1,"needing":1,"status":"verified"},
+                    {"name":"Pin","rebuilt":1,"needing":1,"status":"verified"},
+                    {"name":"Pin","rebuilt":1,"needing":1,"status":"verified"}]},
+                "losses":[
+                    {"level":"Degraded","subject":"Bracket.ipt: appearance",
+                     "code":"dutchman/appearance.material-not-transferred","message":"material omitted"},
+                    {"level":"Degraded","subject":"Pin.ipt: appearance",
+                     "code":"dutchman/appearance.texture-unlocated","message":"texture omitted"}]})),
+        });
+        h.run_steps(10);
+        let heading = "✓ Bracket · 1/1 rebuilt · checked";
+        let material = "Materials weren't carried over";
+        h.get_by_label(heading);
+        h.get_by_label(material);
+        h.get_by_label("Other part loss details: Pin.ipt");
+        assert_eq!(h.query_all_by_label_contains("✓ Pin ·").count(), 2);
+        assert!(h.query_by_label_contains("no history recorded").is_none());
+        // The material loss belongs to Bracket's disclosure, not a second filename group.
+        h.get_by_label(heading).click_accesskit();
+        h.run_steps(8);
+        assert!(h.query_by_label(material).is_none());
+        h.get_by_label("Other part loss details: Pin.ipt");
+        for action in [
+            "Open in SolidCraft",
+            "Show in folder",
+            "Save the full log…",
+            "Report this file…",
+        ] {
+            assert!(h.get_by_label(action).rect().bottom() < 950.0);
+        }
+    }
+}

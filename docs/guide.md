@@ -424,6 +424,12 @@ status, a source feature timeline, and losses with plain titles. Lost / Changed 
 to Dropped / Degraded / Info in the existing reports. Detail starts open and scrolls below
 the action buttons; optional cached 3D previews arrive after conversion. A matching STEP
 export can appear beside the converted preview. No report fields or conversion defaults change.
+Preview PNGs beside the design carry Dutchman ownership and source size/time metadata.
+Unmarked PNGs silently skip the preview and are never reused or changed. Cache publication
+never replaces an occupied path; stale owned PNGs can be deleted to cache fresh renders.
+Assembly loss filenames join history names only for unique matches; ambiguous losses remain
+in a separate loss section without a history claim. Unreadable source records have a specific
+loss title.
 
 Desktop result cards hide zero loss counts and show **History off** when history was disabled.
 The full verification explanation stays in **Save the full log…**; the card uses chips

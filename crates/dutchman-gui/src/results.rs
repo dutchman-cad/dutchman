@@ -13,6 +13,11 @@ fn number(value: &Value, key: &str) -> u64 {
 /// Specific codes precede families. Codec namespaces do not change a family's meaning.
 /// Keep the words here, never derive a surface title from an internal identifier.
 const LOSS_TITLES: &[(&str, &str)] = &[
+    ("record.unreadable", "Part of the source could not be read"),
+    (
+        "crate.value-not-read",
+        "Stored attribute values could not be read",
+    ),
     (
         "feature.thread-definition-partial",
         "Thread definition is incomplete",
@@ -865,6 +870,47 @@ pub(crate) fn full_log(report: &Value) -> String {
     log
 }
 
+// Older reports provide display names for history and filenames for losses.
+// Join only one-to-one matches, accepting a filename's stem for external parts.
+// Duplicate stems stay unassigned rather than acquiring another part's status.
+fn component_parts(
+    parts: &[Value],
+    components: &[dutchman::json::Component<'_>],
+) -> Vec<Option<usize>> {
+    let mut owners: Vec<Option<usize>> = components
+        .iter()
+        .map(|component| {
+            let file = component.file.as_deref()?;
+            let basename = file.rsplit(['/', '\\']).next().unwrap_or(file);
+            let stem = basename.rsplit_once('.').map_or(basename, |(stem, _)| stem);
+            let candidates: Vec<_> = parts
+                .iter()
+                .enumerate()
+                .filter(|(_, part)| {
+                    let name = text(part, "name");
+                    name.eq_ignore_ascii_case(file) || name.eq_ignore_ascii_case(stem)
+                })
+                .map(|(index, _)| index)
+                .collect();
+            if candidates.len() == 1 {
+                candidates.first().copied()
+            } else {
+                None
+            }
+        })
+        .collect();
+    let mut counts = std::collections::BTreeMap::new();
+    for index in owners.iter().flatten() {
+        *counts.entry(*index).or_insert(0_usize) += 1;
+    }
+    for owner in &mut owners {
+        if owner.is_some_and(|index| counts.get(&index).is_some_and(|count| *count > 1)) {
+            *owner = None;
+        }
+    }
+    owners
+}
+
 pub(crate) fn details(ui: &mut egui::Ui, p: &Palette, report: &Value) {
     let parts = report.pointer("/history/parts").and_then(Value::as_array);
     let components = dutchman::json::components(report);
@@ -902,19 +948,13 @@ pub(crate) fn details(ui: &mut egui::Ui, p: &Palette, report: &Value) {
             ui.data_mut(|d| d.insert_temp(order_id, source_order));
         }
     });
+    let owners = component_parts(parts.map_or(&[], Vec::as_slice), &components);
     let mut names: Vec<(usize, String)> = parts
         .into_iter()
         .flatten()
         .enumerate()
         .map(|(index, p)| (index, text(p, "name").to_owned()))
         .collect();
-    for c in &components {
-        if let Some(name) = &c.file {
-            if !names.iter().any(|(_, n)| n == name) {
-                names.push((names.len(), name.clone()));
-            }
-        }
-    }
     if !source_order {
         names.sort_by(|(a, _), (b, _)| {
             part_order(parts.and_then(|p| p.get(*a)), parts.and_then(|p| p.get(*b)))
@@ -967,7 +1007,14 @@ pub(crate) fn details(ui: &mut egui::Ui, p: &Palette, report: &Value) {
                         ui.add(egui::Label::new(plain_reason(text(part, "reason"))).wrap());
                     }
                 }
-                for component in components.iter().filter(|c| c.file.as_ref() == Some(name)) {
+                for (_, component) in
+                    components
+                        .iter()
+                        .enumerate()
+                        .filter(|(component_index, _)| {
+                            owners.get(*component_index) == Some(&Some(*index))
+                        })
+                {
                     loss_cards(ui, p, &component.losses);
                 }
             });
@@ -983,12 +1030,21 @@ pub(crate) fn details(ui: &mut egui::Ui, p: &Palette, report: &Value) {
     {
         ui.data_mut(|d| d.insert_temp(id, !all));
     }
-    for component in components
+    for (index, component) in components
         .iter()
-        .filter(|component| component.file.is_none())
+        .enumerate()
+        .filter(|(index, _)| owners.get(*index) == Some(&None))
     {
-        ui.label(RichText::new("Design loss details").strong());
-        loss_cards(ui, p, &component.losses);
+        ui.push_id(("unassigned-losses", index), |ui| {
+            ui.label(
+                RichText::new(component.file.as_ref().map_or_else(
+                    || "Design loss details".to_owned(),
+                    |file| format!("Other part loss details: {file}"),
+                ))
+                .strong(),
+            );
+            loss_cards(ui, p, &component.losses);
+        });
     }
     timeline(ui, p, report);
 }
@@ -1046,6 +1102,11 @@ mod tests {
                 "missing title for codec loss {code}"
             );
         }
+        assert!(inventory.lines().any(|code| code == "record.unreadable"));
+        assert_eq!(
+            known_title("decode/record.unreadable"),
+            Some("Part of the source could not be read")
+        );
         assert_eq!(
             loss_title("future/new-code"),
             "Conversion data wasn't carried over"
@@ -1327,6 +1388,63 @@ mod ui_tests {
         // The disclosure retains the source part's own count and reason after sorting.
         h.get_by_label("2 of 3 features rebuilt");
         assert!(h.query_by_label("complete reason").is_none());
+    }
+
+    #[test]
+    fn external_part_filenames_join_history_without_doubling_the_group_cap() {
+        let report = json!({"history":{"parts":(1..=10).map(|n| json!({
+            "name":format!("Part {n}"),"rebuilt":1,"needing":1,"status":"verified"
+        })).collect::<Vec<_>>()}, "losses":(1..=10).map(|n| json!({
+            "subject":format!("Part {n}.ipt: appearance"),"level":"Degraded",
+            "code":"dutchman/appearance.material-not-transferred","message":"material omitted"
+        })).collect::<Vec<_>>()});
+        let parts = report["history"]["parts"].as_array().unwrap();
+        let components = dutchman::json::components(&report);
+        let owners = component_parts(parts, &components);
+        for (component, owner) in components.iter().zip(&owners) {
+            let part = &parts[owner.unwrap()];
+            assert_eq!(
+                component.file.as_ref().unwrap(),
+                &format!("{}.ipt", text(part, "name"))
+            );
+        }
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(760.0, 2000.0))
+            .build_ui(|ui| {
+                let p = *theme::palette(ui);
+                details(ui, &p, &report);
+            });
+        h.run_steps(6);
+        h.get_by_label("Materials weren't carried over");
+        h.get_by_label("✓ Part 10 · 1/1 rebuilt · checked");
+        assert!(h.query_by_label_contains("no history recorded").is_none());
+        assert!(h.query_by_label_contains("Show all").is_none());
+        assert!(h
+            .query_by_label_contains("Other part loss details")
+            .is_none());
+    }
+    #[test]
+    fn ambiguous_names_and_filenames_never_assign_another_parts_losses() {
+        for (names, files, expected) in [
+            (vec!["Pin", "Pin"], vec!["Pin.ipt"], vec![None]),
+            (vec!["Pin"], vec!["Pin.ipt", "Pin.sldprt"], vec![None, None]),
+            (vec!["Pin", "Pin.ipt"], vec!["Pin.ipt"], vec![None]),
+            (
+                vec!["Pin.ipt", "Pin.sldprt"],
+                vec!["Pin.ipt", "Pin.sldprt"],
+                vec![Some(0), Some(1)],
+            ),
+            (vec!["Pin"], vec!["folder\\Pin.ipt"], vec![Some(0)]),
+            (vec!["Pin"], vec!["folder/pin.ipt"], vec![Some(0)]),
+        ] {
+            let report = json!({"history":{"parts":names.iter().map(|name| json!({"name":name})).collect::<Vec<_>>()},
+                "losses":files.iter().map(|file| json!({"subject":format!("{file}: appearance"),"level":"Degraded","message":"colour omitted"})).collect::<Vec<_>>()});
+            let parts = report["history"]["parts"].as_array().unwrap();
+            assert_eq!(
+                component_parts(parts, &dutchman::json::components(&report)),
+                expected
+            );
+        }
     }
 
     #[test]

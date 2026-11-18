@@ -700,6 +700,12 @@ numeric estimate fields; the split is desktop presentation. History
 Info messages, including history left out by Standard, appear in its open result detail.
 The desktop uses Lost / Changed / Note for Dropped / Degraded / Info, with a feature timeline
 and optional local 3D previews; CLI and MCP report values stay unchanged.
+Preview PNGs beside the design carry Dutchman ownership and source size/time metadata.
+Unmarked PNGs silently skip the preview and are never reused or changed. Cache publication
+never replaces an occupied path; stale owned PNGs can be deleted to cache fresh renders.
+Assembly loss filenames join history names only for unique matches; ambiguous losses remain
+in a separate loss section without a history claim. Unreadable source records have a specific
+loss title.
 
 SolidCraft conversion results include `solidcraft: {target, found, known_newest, status}`: the selected
 target release, discovered CLI release (or null), newest known release, and installed-version

@@ -1,6 +1,7 @@
 //! Optional snapshots. Disk reads and the CLI stay off the UI thread.
 use eframe::egui;
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{
@@ -163,19 +164,78 @@ fn cache_path(design: &Path, original: bool) -> PathBuf {
         "preview.png"
     })
 }
-fn cached(cache: &Path, source: &Path, design: &Path) -> bool {
-    let modified = |p: &Path| std::fs::metadata(p).ok()?.modified().ok();
-    modified(cache)
-        .zip(modified(source))
-        .zip(modified(design))
-        .is_some_and(|((cache, source), design)| cache >= source && cache >= design)
+// Read ownership and pixels from the same bounded buffer, so replacing the path
+// after the ownership check can never make us display an unrelated image.
+enum Cache {
+    Missing,
+    Owned { identity: String, bytes: Vec<u8> },
+    Foreign,
 }
-fn read_image(path: &Path) -> Option<egui::ColorImage> {
-    if std::fs::metadata(path).ok()?.len() > MAX_PNG {
+const SOFTWARE: &str = concat!("Dutchman preview ", env!("CARGO_PKG_VERSION"));
+const IDENTITY: &str = "Dutchman source";
+fn source_identity(source: &Path, design: &Path) -> Option<String> {
+    let stamp = |path| {
+        let meta = std::fs::metadata(path).ok()?;
+        let modified = meta
+            .modified()
+            .ok()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?;
+        Some(format!("{}:{}", meta.len(), modified.as_nanos()))
+    };
+    Some(format!(
+        "design={};source={}",
+        stamp(design)?,
+        stamp(source)?
+    ))
+}
+fn read_bytes(path: &Path) -> Option<Vec<u8>> {
+    let file = std::fs::File::open(path).ok()?;
+    if file.metadata().ok()?.len() > MAX_PNG {
         return None;
     }
-    let mut reader = image::ImageReader::open(path)
-        .ok()?
+    let mut bytes = Vec::new();
+    file.take(MAX_PNG + 1).read_to_end(&mut bytes).ok()?;
+    (u64::try_from(bytes.len()).ok()? <= MAX_PNG).then_some(bytes)
+}
+fn cache_state(path: &Path) -> Cache {
+    match std::fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Cache::Missing,
+        Ok(meta) if meta.is_file() => (),
+        _ => return Cache::Foreign,
+    }
+    let Some(bytes) = read_bytes(path) else {
+        return Cache::Foreign;
+    };
+    let mut decoder = png::Decoder::new(Cursor::new(&bytes));
+    decoder.set_limits(png::Limits {
+        bytes: 16 * 1024 * 1024,
+    });
+    let Ok(reader) = decoder.read_info() else {
+        return Cache::Foreign;
+    };
+    let texts = &reader.info().uncompressed_latin1_text;
+    if !texts
+        .iter()
+        .any(|text| text.keyword == "Software" && text.text.starts_with("Dutchman preview "))
+    {
+        return Cache::Foreign;
+    }
+    let Some(identity) = texts
+        .iter()
+        .find(|text| text.keyword == IDENTITY)
+        .map(|text| text.text.clone())
+    else {
+        return Cache::Foreign;
+    };
+    drop(reader);
+    Cache::Owned { identity, bytes }
+}
+fn read_image(path: &Path) -> Option<egui::ColorImage> {
+    decode_image(&read_bytes(path)?)
+}
+fn decode_image(bytes: &[u8]) -> Option<egui::ColorImage> {
+    let mut reader = image::ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .ok()?;
     let mut limits = image::Limits::default();
@@ -200,10 +260,18 @@ fn snapshot(
     timeout: Duration,
 ) -> Option<egui::ColorImage> {
     let cache = cache_path(design, original);
-    if cached(&cache, source, design) {
-        if let Some(image) = read_image(&cache) {
-            return Some(image);
+    let identity = source_identity(source, design)?;
+    match cache_state(&cache) {
+        Cache::Foreign => return None,
+        Cache::Owned {
+            identity: saved,
+            bytes,
+        } if saved == identity && alive() => {
+            if let Some(image) = decode_image(&bytes) {
+                return Some(image);
+            }
         }
+        _ => (),
     }
     if !alive() || !source.is_file() {
         return None;
@@ -255,13 +323,65 @@ fn snapshot(
         return None;
     }
     let image = read_image(temp.path())?;
-    // On Windows an existing destination must be removed before the rename.
-    if cache.exists() {
-        let _ = std::fs::remove_file(&cache);
+    if source_identity(source, design)? != identity || !alive() {
+        return None;
     }
-    let _ = temp.persist(&cache);
-    Some(image)
+    save_cache(&cache, &identity, &image, alive).then_some(image)
 }
+
+fn save_cache(
+    cache: &Path,
+    identity: &str,
+    image: &egui::ColorImage,
+    alive: &impl Fn() -> bool,
+) -> bool {
+    let Some(parent) = cache.parent() else {
+        return false;
+    };
+    let Ok(mut temp) = tempfile::Builder::new().suffix(".png").tempfile_in(parent) else {
+        return false;
+    };
+    let mut encode = || -> Option<()> {
+        let mut encoder = png::Encoder::new(
+            temp.as_file_mut(),
+            u32::try_from(image.width()).ok()?,
+            u32::try_from(image.height()).ok()?,
+        );
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder
+            .add_text_chunk("Software".to_owned(), SOFTWARE.to_owned())
+            .ok()?;
+        encoder
+            .add_text_chunk(IDENTITY.to_owned(), identity.to_owned())
+            .ok()?;
+        let mut writer = encoder.write_header().ok()?;
+        let rgba: Vec<_> = image
+            .pixels
+            .iter()
+            .flat_map(|pixel| pixel.to_srgba_unmultiplied())
+            .collect();
+        writer.write_image_data(&rgba).ok()?;
+        writer.finish().ok()?;
+        Some(())
+    };
+    if encode().is_none() || !alive() {
+        return false;
+    }
+    // Check immediately before publishing, and use no-clobber persistence as
+    // well: a foreign file appearing after this check must survive too. We never
+    // unlink an occupied path, even an owned stale cache; fresh pixels still
+    // appear in this run, and deleting that owned PNG enables caching again.
+    match cache_state(cache) {
+        Cache::Foreign => false,
+        Cache::Owned { .. } => true,
+        Cache::Missing => match temp.persist_noclobber(cache) {
+            Ok(_) => true,
+            Err(_) => !matches!(cache_state(cache), Cache::Foreign),
+        },
+    }
+}
+
 fn snapshot_command(cli: &Path) -> Command {
     #[cfg(unix)]
     {
@@ -335,53 +455,211 @@ pub(crate) fn show(ui: &mut egui::Ui, images: Option<&Images>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn png(path: &Path) {
+        image::RgbaImage::from_pixel(4, 3, image::Rgba([40, 90, 120, 255]))
+            .save(path)
+            .unwrap();
+    }
     #[test]
-    fn cache_requires_current_design_and_decodable_bounded_image() {
+    fn cache_requires_ownership_current_source_and_bounded_pixels() {
+        let dir = tempfile::tempdir().unwrap();
+        let design = dir.path().join("part.sc");
+        let step = dir.path().join("part.step");
+        std::fs::write(&design, "design").unwrap();
+        std::fs::write(&step, "step").unwrap();
+        for original in [false, true] {
+            let source = if original { &step } else { &design };
+            let cache = cache_path(&design, original);
+            let raw = dir.path().join("render.png");
+            png(&raw);
+            let image = read_image(&raw).unwrap();
+            let identity = source_identity(source, &design).unwrap();
+            assert!(save_cache(&cache, &identity, &image, &|| true));
+            let Cache::Owned {
+                identity: saved, ..
+            } = cache_state(&cache)
+            else {
+                panic!("unmarked cache")
+            };
+            assert_eq!(saved, identity);
+            let image = snapshot(
+                Path::new("missing-cli"),
+                source,
+                &design,
+                original,
+                &|| true,
+                LIMIT,
+            )
+            .unwrap();
+            assert_eq!(image.size, [4, 3]);
+            let before = std::fs::read(&cache).unwrap();
+            // Freshness tracks the design for both variants, and STEP for the original.
+            std::fs::write(source, "changed source with different size").unwrap();
+            assert!(snapshot(
+                Path::new("missing-cli"),
+                source,
+                &design,
+                original,
+                &|| true,
+                LIMIT
+            )
+            .is_none());
+            assert_eq!(std::fs::read(&cache).unwrap(), before);
+            if original {
+                assert!(save_cache(
+                    &cache,
+                    &source_identity(source, &design).unwrap(),
+                    &image,
+                    &|| true
+                ));
+                // Occupied paths are never removed or overwritten, including owned stale caches.
+                assert_eq!(std::fs::read(&cache).unwrap(), before);
+            }
+        }
+        let oversized = dir.path().join("large.png");
+        image::RgbaImage::new(1921, 1).save(&oversized).unwrap();
+        assert!(read_image(&oversized).is_none());
+        std::fs::File::create(&oversized)
+            .unwrap()
+            .set_len(MAX_PNG + 1)
+            .unwrap();
+        assert!(read_image(&oversized).is_none());
+    }
+    #[test]
+    fn unowned_pngs_are_never_displayed_changed_or_deleted() {
         let dir = tempfile::tempdir().unwrap();
         let design = dir.path().join("part.sc");
         std::fs::write(&design, "design").unwrap();
-        let cache = cache_path(&design, false);
-        image::RgbaImage::from_pixel(4, 3, image::Rgba([40, 90, 120, 255]))
-            .save(&cache)
+        for original in [false, true] {
+            for newer in [false, true] {
+                let cache = cache_path(&design, original);
+                png(&cache);
+                let modified = std::time::SystemTime::now();
+                let modified = if newer {
+                    modified + Duration::from_secs(60)
+                } else {
+                    modified - Duration::from_secs(60)
+                };
+                std::fs::File::options()
+                    .write(true)
+                    .open(&cache)
+                    .unwrap()
+                    .set_times(std::fs::FileTimes::new().set_modified(modified))
+                    .unwrap();
+                let modified = std::fs::metadata(&cache).unwrap().modified().unwrap();
+                let before = std::fs::read(&cache).unwrap();
+                assert!(matches!(cache_state(&cache), Cache::Foreign));
+                // Fresh/repeated requests, render failure, timeout, and Stop all skip collisions.
+                for alive in [true, true, false] {
+                    assert!(snapshot(
+                        Path::new("missing-cli"),
+                        &design,
+                        &design,
+                        original,
+                        &|| alive,
+                        Duration::ZERO
+                    )
+                    .is_none());
+                    assert_eq!(std::fs::read(&cache).unwrap(), before);
+                    assert_eq!(
+                        std::fs::metadata(&cache).unwrap().modified().unwrap(),
+                        modified
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn collision_during_encoding_is_not_published_or_overwritten() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw = dir.path().join("render.png");
+        png(&raw);
+        let image = read_image(&raw).unwrap();
+        let before = std::fs::read(&raw).unwrap();
+        for original in [false, true] {
+            let cache = cache_path(&dir.path().join("part.sc"), original);
+            assert!(!save_cache(
+                &cache,
+                "design=1:1;source=1:1",
+                &image,
+                &|| {
+                    std::fs::copy(&raw, &cache).unwrap();
+                    true
+                }
+            ));
+            assert_eq!(std::fs::read(&cache).unwrap(), before);
+        }
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 3);
+    }
+    #[cfg(unix)]
+    fn fake_cli(dir: &Path, script: &str) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let cli = dir.join("cli");
+        std::fs::write(&cli, format!("#!/bin/sh\nroot=$(dirname \"$0\")\n{script}")).unwrap();
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o700)).unwrap();
+        cli
+    }
+    #[cfg(unix)]
+    #[test]
+    fn fresh_render_rerender_failure_and_stop_preserve_foreign_pngs() {
+        let dir = tempfile::tempdir().unwrap();
+        let design = dir.path().join("part.sc");
+        std::fs::write(&design, "design").unwrap();
+        let raw = dir.path().join("source.png");
+        png(&raw);
+        let foreign = std::fs::read(&raw).unwrap();
+        for original in [false, true] {
+            let cache = cache_path(&design, original);
+            let cli = fake_cli(dir.path(), "while [ \"$#\" -gt 0 ]; do\n if [ \"$1\" = --out ]; then shift; output=$1; fi\n shift\ndone\ncp \"$root/source.png\" \"$output\"\n");
+            assert!(snapshot(&cli, &design, &design, original, &|| true, LIMIT).is_some());
+            assert!(matches!(cache_state(&cache), Cache::Owned { .. }));
+            std::fs::write(
+                &design,
+                if original {
+                    "second changed design"
+                } else {
+                    "changed design"
+                },
+            )
             .unwrap();
-        assert!(cached(&cache, &design, &design));
-        let image = snapshot(
-            Path::new("missing-cli"),
-            &design,
-            &design,
-            false,
-            &|| true,
-            LIMIT,
-        )
-        .unwrap();
-        assert_eq!(image.size, [4, 3]);
-        let future = std::time::SystemTime::now() + Duration::from_secs(10);
-        std::fs::File::options()
-            .write(true)
-            .open(&design)
-            .unwrap()
-            .set_times(std::fs::FileTimes::new().set_modified(future))
-            .unwrap();
-        assert!(!cached(&cache, &design, &design));
-        assert!(snapshot(
-            Path::new("missing-cli"),
-            &design,
-            &design,
-            false,
-            &|| true,
-            LIMIT
-        )
-        .is_none());
-        std::fs::write(&cache, "not an image").unwrap();
-        assert!(snapshot(
-            Path::new("missing-cli"),
-            &design,
-            &design,
-            false,
-            &|| true,
-            LIMIT
-        )
-        .is_none());
+            assert!(snapshot(&cli, &design, &design, original, &|| true, LIMIT).is_some());
+            // A user replaces an owned cache with their own PNG before another request.
+            std::fs::write(&cache, &foreign).unwrap();
+            assert!(snapshot(&cli, &design, &design, original, &|| true, LIMIT).is_none());
+            let cli = fake_cli(dir.path(), "exit 1\n");
+            assert!(snapshot(&cli, &design, &design, original, &|| true, LIMIT).is_none());
+            let cli = fake_cli(dir.path(), "exec sleep 30\n");
+            assert!(snapshot(&cli, &design, &design, original, &|| false, LIMIT).is_none());
+            assert_eq!(std::fs::read(&cache).unwrap(), foreign);
+            // The user creates their PNG while a successful renderer is running.
+            std::fs::remove_file(&cache).unwrap();
+            let name = cache.file_name().unwrap().to_str().unwrap();
+            let cli = fake_cli(dir.path(), &format!("while [ \"$#\" -gt 0 ]; do\n if [ \"$1\" = --out ]; then shift; output=$1; fi\n shift\ndone\ncp \"$root/source.png\" \"$root/{name}\"\ncp \"$root/source.png\" \"$output\"\n"));
+            assert!(snapshot(&cli, &design, &design, original, &|| true, LIMIT).is_none());
+            assert_eq!(std::fs::read(&cache).unwrap(), foreign);
+            // Stop during an active render also leaves a newly created user PNG.
+            std::fs::remove_file(&cache).unwrap();
+            let started = dir.path().join("started");
+            let _ = std::fs::remove_file(&started);
+            let cli = fake_cli(dir.path(), "touch \"$root/started\"\nexec sleep 30\n");
+            assert!(snapshot(
+                &cli,
+                &design,
+                &design,
+                original,
+                &|| {
+                    if started.exists() {
+                        std::fs::write(&cache, &foreign).unwrap();
+                        false
+                    } else {
+                        true
+                    }
+                },
+                LIMIT
+            )
+            .is_none());
+            assert_eq!(std::fs::read(&cache).unwrap(), foreign);
+        }
     }
     #[cfg(unix)]
     #[test]

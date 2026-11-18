@@ -27,7 +27,9 @@ If feature history was turned off for the run, the card explains that choice in 
 Loss cards group repeated codes, with Lost first, then Changed, then Note. Their titles are
 plain descriptions; **Details** holds each raw code and message. Unrecognised codes have a
 plain fallback title and keep their full details. Assemblies group losses and checking
-summaries by part. The first ten part groups are shown; **Show all N** reveals the rest.
+summaries by part. External filenames join their history names only when the match is unique;
+ambiguous or unmatched losses stay under **Other part loss details**, without a history claim.
+The first ten part groups are shown; **Show all N** reveals the rest.
 The existing report does not always associate individual feature rows with part names;
 those rows remain in the design timeline, without guessing their part or checking status.
 The detail scrolls inside the card. **Open in SolidCraft**, **Show in folder**,
@@ -47,8 +49,11 @@ Each has a 20-second limit. Stop, a new conversion, or closing the app cancels o
 snapshots. No installed CLI, an older CLI without snapshot support, or any snapshot failure
 leaves the card usable without an image or an error. Nothing is uploaded. Images are cached
 beside the converted design as `<name>.preview.png` and `<name>.step-preview.png`, and reused
-while current with the `.sc` file (and the STEP file for the original image). Delete these
-PNG files to discard the cache.
+only with Dutchman ownership metadata matching the size and modification time of the `.sc`
+file (and the STEP file for the original image). A PNG without that marker silently skips
+that preview and is never displayed, replaced, or removed. Writes use a temporary neighbour
+and publish without replacing any occupied path, including a file created during rendering.
+Stale owned images can be rendered again for display; delete their PNGs to cache fresh images.
 
 Collapsed assembly rows show a status icon, rebuilt fraction and short stopping reason. Parts
 with the least rebuilt history appear first; fully rebuilt parts appear last. **Source order**
