@@ -1,4 +1,5 @@
-//! API-key HMAC signing. Credentials print as "hidden" and have no Serialize implementation.
+//! API-key HMAC signing and OAuth bearer authentication.
+//! Credentials print as "hidden" and have no Serialize implementation.
 use base64::{engine::general_purpose::STANDARD, Engine};
 use std::path::Path;
 
@@ -104,25 +105,6 @@ impl Credentials {
         Ok(())
     }
 
-    pub(super) fn check_json(&self, value: &serde_json::Value) -> Result<()> {
-        match value {
-            serde_json::Value::String(text) => self.check_bytes(text.as_bytes())?,
-            serde_json::Value::Array(list) => {
-                for value in list {
-                    self.check_json(value)?;
-                }
-            }
-            serde_json::Value::Object(map) => {
-                for (key, value) in map {
-                    self.check_bytes(key.as_bytes())?;
-                    self.check_json(value)?;
-                }
-            }
-            _ => {}
-        }
-        Ok(())
-    }
-
     /// Onshape's canonical string is lower-case, including the final newline.
     pub fn authorization(
         &self,
@@ -156,4 +138,169 @@ fn clean_key(key: &str) -> String {
         .find_map(|q| key.strip_prefix(*q).and_then(|k| k.strip_suffix(*q)))
         .unwrap_or(key);
     unquoted.trim().to_owned()
+}
+
+/// An OAuth token kept out of diagnostics and serialization.
+pub struct BearerToken(String);
+
+impl std::fmt::Debug for BearerToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("BearerToken(hidden)")
+    }
+}
+
+impl BearerToken {
+    pub fn new(token: String) -> Result<Self> {
+        let token = token.trim();
+        if token.is_empty()
+            || token.len() > 16 * 1024
+            || !token
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-._~+/=".contains(&b))
+        {
+            return Err(Error::new(ErrorKind::Auth,
+                "Use a nonempty Onshape bearer token of at most 16 KiB on one line; replace the token file or DUTCHMAN_ONSHAPE_BEARER_TOKEN and retry."));
+        }
+        Ok(Self(token.to_owned()))
+    }
+
+    pub fn from_file(path: &Path) -> Result<Self> {
+        let fail = || {
+            Error::new(ErrorKind::Auth,
+            "Could not read the Onshape bearer token file; use a regular UTF-8 file of at most 16 KiB, readable only by you (mode 600 on Unix), and retry.")
+        };
+        let meta = std::fs::symlink_metadata(path).map_err(|_| fail())?;
+        if !meta.is_file() || meta.len() > 16 * 1024 {
+            return Err(fail());
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if meta.permissions().mode() & 0o7777 != 0o600 {
+                return Err(fail());
+            }
+        }
+        let bytes = super::read_bounded(path, 16 * 1024).map_err(|_| fail())?;
+        let text = String::from_utf8(bytes).map_err(|_| fail())?;
+        Self::new(text)
+    }
+}
+
+/// Fetch authentication. API keys remain the default; tokens are never saved by login.
+#[derive(Debug)]
+pub enum FetchAuth {
+    ApiKeys(Credentials),
+    Bearer(BearerToken),
+}
+
+impl FetchAuth {
+    /// A token file overrides the token environment variable. Mixing a token with API keys,
+    /// including saved keys, is refused before any request is sent.
+    pub fn find(store: &super::Store, token_file: Option<&Path>) -> Result<Option<Self>> {
+        let token = match token_file {
+            Some(path) => Some(BearerToken::from_file(path)?),
+            None => (store.env)("DUTCHMAN_ONSHAPE_BEARER_TOKEN")
+                .map(BearerToken::new)
+                .transpose()?,
+        };
+        if token.is_some()
+            && ((store.env)("ONSHAPE_ACCESS_KEY").is_some()
+                || (store.env)("ONSHAPE_SECRET_KEY").is_some())
+        {
+            return Err(auth_conflict());
+        }
+        let keys = store.find()?;
+        match (token, keys) {
+            (Some(_), Some(_)) => Err(auth_conflict()),
+            (Some(token), None) => Ok(Some(Self::Bearer(token))),
+            (None, Some((keys, _))) => Ok(Some(Self::ApiKeys(keys))),
+            (None, None) => Ok(None),
+        }
+    }
+
+    pub fn is_bearer(&self) -> bool {
+        matches!(self, Self::Bearer(_))
+    }
+
+    pub(super) fn as_auth(&self) -> Auth<'_> {
+        match self {
+            Self::ApiKeys(keys) => Auth::ApiKeys(keys),
+            Self::Bearer(token) => Auth::Bearer(token),
+        }
+    }
+}
+
+fn auth_conflict() -> Error {
+    Error::new(ErrorKind::Auth,
+        "Choose either an Onshape bearer token or API keys. Remove ONSHAPE_ACCESS_KEY and ONSHAPE_SECRET_KEY and run `dutchman onshape logout` to use a token, or remove the bearer token option and environment variable to use API keys.")
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum Auth<'a> {
+    ApiKeys(&'a Credentials),
+    Bearer(&'a BearerToken),
+}
+
+impl Auth<'_> {
+    pub fn authorization(
+        self,
+        method: &str,
+        path: &str,
+        query: &str,
+        date: &str,
+        nonce: &str,
+    ) -> String {
+        match self {
+            Self::ApiKeys(keys) => keys.authorization(method, path, query, date, nonce),
+            Self::Bearer(token) => format!("Bearer {}", token.0),
+        }
+    }
+
+    pub fn denied_message(self) -> &'static str {
+        match self {
+            Self::ApiKeys(_) => "Onshape denied access; check that your API keys can read your own document.",
+            Self::Bearer(_) => "The Onshape bearer token expired or lacks access to this document. Obtain a fresh token with read access, replace the token file or DUTCHMAN_ONSHAPE_BEARER_TOKEN, and retry.",
+        }
+    }
+
+    pub fn scope(self) -> String {
+        match self {
+            Self::ApiKeys(keys) => keys.scope(),
+            Self::Bearer(token) => super::hash(format!("bearer:{}", token.0).as_bytes()),
+        }
+    }
+
+    pub fn check_bytes(self, bytes: &[u8]) -> Result<()> {
+        match self {
+            Self::ApiKeys(keys) => keys.check_bytes(bytes),
+            Self::Bearer(token) => {
+                if bytes
+                    .windows(token.0.len())
+                    .any(|w| w == token.0.as_bytes())
+                {
+                    return Err(Error::new(ErrorKind::Privacy,
+                        "Onshape returned credential material; nothing from this response was saved. Replace your bearer token and retry."));
+                }
+                Ok(())
+            }
+        }
+    }
+    pub(super) fn check_json(&self, value: &serde_json::Value) -> Result<()> {
+        match value {
+            serde_json::Value::String(text) => self.check_bytes(text.as_bytes())?,
+            serde_json::Value::Array(list) => {
+                for value in list {
+                    self.check_json(value)?;
+                }
+            }
+            serde_json::Value::Object(map) => {
+                for (key, value) in map {
+                    self.check_bytes(key.as_bytes())?;
+                    self.check_json(value)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
 }

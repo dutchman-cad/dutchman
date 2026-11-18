@@ -199,8 +199,43 @@ precedence over saved keys; setting only one is an error. The lookup order is en
 variables, then the credential store, then the private file.
 
 Do not paste keys into chat, URLs, command arguments, shell history, logs, or issue
-reports. Dutchman signs each request with Onshape's HMAC-SHA256 API-key scheme, and never
-prints, logs, caches or bundles the keys.
+reports. Dutchman signs API-key requests with Onshape's HMAC-SHA256 scheme and never
+prints, logs, caches, or bundles credentials.
+
+### OAuth bearer tokens
+
+API keys remain the default. To fetch with an OAuth token instead, supply a local file:
+
+```sh
+dutchman onshape fetch <document-url> --bearer-token-file /private/path/token --json
+```
+
+The file contains only the token, optionally followed by a newline. Keep it readable only
+by you (`chmod 600 /private/path/token` on Unix); it must be a regular UTF-8 file of at most
+16 KiB. Alternatively, provide `DUTCHMAN_ONSHAPE_BEARER_TOKEN` through your environment or
+secret manager. Never put the token value in command arguments, URLs, chat, or logs. There
+is no command option accepting a token value. A token file takes precedence over the token
+environment variable.
+
+Dutchman sends `Authorization: Bearer <token>` directly to Onshape. A token cannot be mixed
+with API keys: remove both `ONSHAPE_ACCESS_KEY` and `ONSHAPE_SECRET_KEY`, and run
+`dutchman onshape logout` to forget saved keys before using a token. Mixing them returns
+`onshape/auth` before any request. To return to API-key authentication, remove the token
+file option and token environment variable. Login, status, and logout still manage API keys;
+bearer tokens are never saved there.
+
+MCP's `onshape_fetch` accepts `bearer_token_file` (a local path) and reads the same token
+environment variable from the server process. In the desktop app, choose **Connect Onshape**
+then **Use bearer token file**, or launch the app with the token environment variable set.
+The selected file applies to desktop fetches and is read again for each fetch; **Clear token
+file** removes the selection. It is not saved across app restarts.
+
+HTTP 401 and 403 return `onshape/auth`: the token expired or lacks document access. Obtain
+a fresh token with read access, replace the file or environment variable, and retry. Token
+values are hidden in diagnostics and reports, including `--json` and MCP. Responses that
+echo a token are refused before their content is saved; response headers and error bodies
+are never included in reports or bundles. Bearer caches are separated from API-key caches
+using a hash, and redirects never forward credentials.
 
 ### What is retained
 

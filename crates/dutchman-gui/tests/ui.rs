@@ -3671,6 +3671,7 @@ mod paste_inputs {
             .is_some());
         assert!(h.query_by_label("Access key").is_none());
         assert!(h.query_by_label("Secret key").is_none());
+        assert!(h.query_by_label("Use bearer token file").is_some());
         assert!(h.query_by_label("Change keys").is_some());
         assert!(h.query_by_label("Disconnect").is_some());
         h.get_by_label("Change keys").click_accesskit();

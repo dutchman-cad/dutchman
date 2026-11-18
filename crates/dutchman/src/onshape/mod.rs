@@ -4,7 +4,8 @@ mod export;
 mod http;
 mod store;
 
-pub use auth::Credentials;
+use auth::Auth;
+pub use auth::{BearerToken, Credentials, FetchAuth};
 use http::Session;
 pub use http::{HttpClient, NetworkClient, Request, Response};
 use serde_json::{json, Value};
@@ -164,6 +165,9 @@ pub struct FetchOptions {
     /// Immutable Onshape version ID, overriding the URL's workspace/version.
     #[arg(long)]
     pub version: Option<String>,
+    /// Read an OAuth bearer token from a private file (or set DUTCHMAN_ONSHAPE_BEARER_TOKEN).
+    #[arg(long)]
+    pub bearer_token_file: Option<PathBuf>,
     /// Maximum HTTP attempts, including metadata, polling, retries and downloads.
     #[arg(long, default_value_t = 50)]
     pub max_calls: u32,
@@ -176,7 +180,8 @@ pub fn run(options: &FetchOptions) -> Value {
     let result = (|| {
         let parsed = DocumentUrl::parse(&options.document_url, options.version.as_deref())?;
         let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).ok_or_else(|| Error::new(ErrorKind::Io, "Set HOME or USERPROFILE so Dutchman can find its private Onshape config and cache."))?;
-        let credentials = Store::system().load()?;
+        let credentials = FetchAuth::find(&Store::system(), options.bearer_token_file.as_deref())?
+            .ok_or_else(|| Error::new(ErrorKind::Auth, NOT_CONNECTED))?;
         let cache = std::env::var_os("XDG_CACHE_HOME")
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".cache"))
@@ -185,7 +190,7 @@ pub fn run(options: &FetchOptions) -> Value {
             .out
             .clone()
             .unwrap_or_else(|| PathBuf::from(format!("{}.onshape-bundle", parsed.element)));
-        fetch(
+        fetch_authenticated(
             &mut NetworkClient::default(),
             &credentials,
             &parsed,
@@ -202,7 +207,7 @@ pub fn run(options: &FetchOptions) -> Value {
 pub fn session_user<C: HttpClient>(client: &mut C, credentials: &Credentials) -> Result<String> {
     let mut session = Session {
         client,
-        credentials,
+        credentials: Auth::ApiKeys(credentials),
         calls: 0,
         max_calls: 1,
     };
@@ -284,6 +289,43 @@ pub struct FetchReport {
 pub fn fetch<C: HttpClient>(
     client: &mut C,
     credentials: &Credentials,
+    source: &DocumentUrl,
+    output: &Path,
+    cache: &Path,
+    max_calls: u32,
+) -> Result<FetchReport> {
+    fetch_auth(
+        client,
+        Auth::ApiKeys(credentials),
+        source,
+        output,
+        cache,
+        max_calls,
+    )
+}
+
+/// Fetch using either API keys or an OAuth bearer token.
+pub fn fetch_authenticated<C: HttpClient>(
+    client: &mut C,
+    credentials: &FetchAuth,
+    source: &DocumentUrl,
+    output: &Path,
+    cache: &Path,
+    max_calls: u32,
+) -> Result<FetchReport> {
+    fetch_auth(
+        client,
+        credentials.as_auth(),
+        source,
+        output,
+        cache,
+        max_calls,
+    )
+}
+
+fn fetch_auth<C: HttpClient>(
+    client: &mut C,
+    credentials: Auth<'_>,
     source: &DocumentUrl,
     output: &Path,
     cache: &Path,
@@ -498,6 +540,7 @@ fn current_microversion<C: HttpClient>(
         return Err(response_error());
     }
     let value: Value = serde_json::from_slice(&response.body).map_err(|_| response_error())?;
+    session.credentials.check_json(&value)?;
     id(value
         .get("microversion")
         .and_then(Value::as_str)

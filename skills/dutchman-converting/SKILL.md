@@ -900,12 +900,21 @@ losses for meshes it could not decode.
 For the user's own Onshape document, `onshape_fetch` or
 `dutchman onshape fetch URL --out FILE --max-calls 50 --json` saves raw API responses
 in a private `.onshape-bundle`; it does not convert CAD. Inputs are `document_url`,
-optional `out`, `version` (immutable version ID), and `max_calls`. Read
+optional `out`, `version` (immutable version ID), `bearer_token_file` (local path), and `max_calls`. Read
 `dutchman.onshape-fetch/1`: `ok`, `calls`, `output`, `microversion`, `cache_hits`,
 and failure `error.code`/`message`. The tool has input and output schemas.
 Keys must already be in the local environment (`ONSHAPE_ACCESS_KEY` and
 `ONSHAPE_SECRET_KEY`) or the mode-600 `~/.config/dutchman/onshape.json`; never ask
-for them in chat or pass them as tool arguments. Fetch only the user's own documents.
+for them in chat or pass them as tool arguments. For OAuth, the user can provide a private
+UTF-8 token file (mode 600 on Unix, at most 16 KiB) through CLI `--bearer-token-file PATH`
+or MCP `bearer_token_file`, or set `DUTCHMAN_ONSHAPE_BEARER_TOKEN` in the CLI/server/app
+environment. The file takes precedence. Never ask for a token in chat or put its value in
+argv or tool arguments. Tokens cannot be mixed with API keys: remove both key environment
+variables and run `dutchman onshape logout` first. HTTP 401/403 means the token expired or
+lacks access; ask the user to obtain a fresh token with read access and replace their local
+file or environment variable. Reports and logs never echo tokens. The desktop supports
+**Use bearer token file** in Connect Onshape and the same environment variable.
+Fetch only the user's own documents.
 Requests go directly to Onshape; nothing is sent to Dutchman. Keep bundles and caches
 private. Version cache hits cost no calls; cached workspace URLs require two head checks.
 402 means the yearly allowance is exhausted; 429 honors Retry-After with bounded
