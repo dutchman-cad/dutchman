@@ -488,13 +488,10 @@ fn generated_body_name(feature: &Value, ctx: &mut Context) -> Option<Vec<String>
     let [local] = bodies.as_slice() else {
         return None;
     };
-    let taken = |name: &str| {
-        ctx.named_bodies.iter().any(|(_, known)| known == name)
-            || ctx.generated_bodies.iter().any(|(_, known)| known == name)
-    };
+    let taken = ctx.taken_body_names();
     let name = (1..)
         .map(|next| format!("Body {next}"))
-        .find(|candidate| !taken(candidate))?;
+        .find(|candidate| !taken.contains(candidate))?;
     ctx.generated_bodies
         .push(((id.to_owned(), (*local).to_owned()), name.clone()));
     Some(vec![name])
@@ -522,11 +519,7 @@ pub(super) fn body_names(
         .iter()
         .map(|id| ctx.row("bodies", id.as_str()?))
         .collect::<Option<_>>()?;
-    let mut taken: std::collections::BTreeSet<String> = ctx
-        .named_bodies
-        .iter()
-        .map(|(_, name)| name.clone())
-        .collect();
+    let mut taken = ctx.taken_body_names();
     let given: Vec<Option<String>> = rows
         .iter()
         .map(|row| {

@@ -377,11 +377,7 @@ fn placed(body: &Value, p: V3) -> Option<V3> {
 /// sequence when its shape count agrees, so an omitted region cannot shift a look.
 pub(super) fn import_names(ctx: &mut Context, ids: &[&str], step: Option<&str>) -> Vec<String> {
     let mut named = Vec::new();
-    let mut taken: std::collections::BTreeSet<_> = ctx
-        .named_bodies
-        .iter()
-        .map(|(_, name)| name.clone())
-        .collect();
+    let mut taken = ctx.taken_body_names();
     let mut regions = std::collections::BTreeMap::new();
     let mut defaults = false;
     for region in ctx.arena("regions") {
@@ -477,11 +473,7 @@ pub(super) fn import_names(ctx: &mut Context, ids: &[&str], step: Option<&str>) 
             return Vec::new();
         };
         let mut old_regions = std::mem::take(&mut regions);
-        let mut taken: std::collections::BTreeSet<_> = ctx
-            .named_bodies
-            .iter()
-            .map(|(_, name)| name.clone())
-            .collect();
+        let mut taken = ctx.taken_body_names();
         for (_, name) in &mut named {
             let mut new = base.clone();
             let mut n = 2;

@@ -46,6 +46,7 @@ pub(super) fn body_names(selection: &Value, ctx: &Context) -> Result<Vec<String>
             .named_bodies
             .iter()
             .any(|(other, n)| other != id && n == name)
+            || ctx.generated_bodies.iter().any(|(_, n)| n == name)
         {
             return Err("its body name is not unique".to_owned());
         }
@@ -77,6 +78,14 @@ fn generated_names(selection: &Value, ctx: &Context) -> Result<Vec<String>, Stri
             .iter()
             .find(|((known, id), _)| known == feature && id == local)
             .ok_or("it selects a body made by an earlier feature that did not name it")?;
+        if ctx.named_bodies.iter().any(|(_, n)| n == name)
+            || ctx
+                .generated_bodies
+                .iter()
+                .any(|((known, id), n)| (known != feature || id != local) && n == name)
+        {
+            return Err("its body name is not unique".to_owned());
+        }
         if names.contains(name) {
             return Err("it selects one body twice".to_owned());
         }
@@ -102,9 +111,7 @@ pub(super) fn remove(
     }
     let bodies = body_names(definition.get("bodies").unwrap_or(&Value::Null), ctx)?;
     let out = feature(source, ctx, "remove", json!({"bodies": bodies}));
-    ctx.named_bodies.retain(|(_, name)| !bodies.contains(name));
-    ctx.generated_bodies
-        .retain(|(_, name)| !bodies.contains(name));
+    ctx.forget_bodies(&bodies);
     Ok(out)
 }
 
@@ -179,7 +186,7 @@ pub(super) fn combine(
         json!({"target": target, "tools": tools, "operation": operation, "keep_tools": keep_tools}),
     );
     if !keep_tools {
-        ctx.named_bodies.retain(|(_, name)| !tools.contains(name));
+        ctx.forget_bodies(&tools);
     }
     Ok(out)
 }
@@ -369,13 +376,14 @@ pub(super) fn split(
         .and_then(Value::as_str)
         .filter(|name| !name.trim().is_empty() && *name != target)
         .map_or_else(|| format!("{target} (split)"), str::to_owned);
+    let taken = ctx.taken_body_names();
     let mut piece = base.clone();
     let mut n = 2;
-    while ctx.named_bodies.iter().any(|(_, known)| *known == piece) {
+    while taken.contains(&piece) {
         piece = format!("{base} ({n})");
         n += 1;
     }
-    ctx.named_bodies.retain(|(_, name)| *name != target);
+    ctx.forget_bodies(std::slice::from_ref(&target));
     if let (2, Some((kept, _)), Some((cut, _))) = (outputs.len(), kept, cut) {
         ctx.named_bodies.push((kept.clone(), target.clone()));
         ctx.named_bodies.push((cut.clone(), piece.clone()));

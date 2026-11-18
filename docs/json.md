@@ -319,8 +319,8 @@ precise gate control.
 `newer` is above the newest minor, `too_old` is below the floor, and `none_found` has no readable
 installed version. Within the supported range, `older_loses_history` requires an older
 installed release and a selected target that disables editable writer capabilities;
-otherwise it is `current`. Today those capabilities are sketch-profile coils and ordered
-mirror-pattern chains, both introduced in 0.25 patch 1. The 0.22 patch 1 entry-recess tip representation
+otherwise it is `current`. Today those capabilities are cone primitives (0.24 patch 1),
+and sketch-profile coils and ordered mirror-pattern chains (0.25 patch 1). The 0.22 patch 1 entry-recess tip representation
 change preserves geometry and does not count as history loss. These fields use local
 version discovery only.
 
