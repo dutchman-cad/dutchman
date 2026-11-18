@@ -2,8 +2,10 @@
 
 ## Read the results
 
-The RESULTS card opens its detail automatically. Chips show how many features were rebuilt,
-whether the visible final shape is rebuilt or imported, checking status, and loss counts.
+The RESULTS card shows its status and filename above the optional previews, and opens its
+detail automatically. Chips show how many features were rebuilt,
+whether the visible final shape is rebuilt or imported, checking status, and nonzero loss counts.
+When history was turned off, the first chip says **History off**.
 **Lost** means the report's `Dropped` severity (data left out), in the error colour;
 **Changed** means `Degraded`, in the warning colour; **Note** means `Info`, in the secondary
 text colour. These use the Day and Night theme colours. Counts refer to report entries;
@@ -44,6 +46,11 @@ leaves the card usable without an image or an error. Nothing is uploaded. Images
 beside the converted design as `<name>.preview.png` and `<name>.step-preview.png`, and reused
 while current with the `.sc` file (and the STEP file for the original image). Delete these
 PNG files to discard the cache.
+
+Collapsed assembly rows show a status icon, rebuilt fraction and short stopping reason. Parts
+with the least rebuilt history appear first; fully rebuilt parts appear last. **Source order**
+restores the order from the report. Loss titles name the affected data; repeated reports
+are counted as reports, and **Details** keeps the original code and message.
 
 ## Ask your AI about this file
 

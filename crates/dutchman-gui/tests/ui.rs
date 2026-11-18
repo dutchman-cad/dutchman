@@ -4246,3 +4246,43 @@ fn report_flow_case_screenshots() {
         std::fs::write(dir.join("INDEX.md"), index).unwrap();
     }
 }
+
+#[cfg(feature = "test-support")]
+#[test]
+fn results_card_shows_inline_part_status_and_restores_source_order() {
+    for theme in [ThemePreference::Light, ThemePreference::Dark] {
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1280.0, 800.0))
+            .build_eframe(|cc| test_app(cc));
+        h.ctx.set_theme(theme);
+        h.state_mut().preview_result_for_test(dutchman_gui::app::Row {
+            input: PathBuf::from("Synthetic assembly.f3z"),
+            output: Some(PathBuf::from("converted/assembly.sc")),
+            status: Status::Converted, progress: None, job: None, size: None,
+            report: Some(serde_json::json!({"ok":true, "mode":"partial_history",
+                "history":{"rebuilt":5,"needing":6,"parts":[
+                    {"name":"Part 1","rebuilt":3,"needing":3,"status":"verified"},
+                    {"name":"Part 2","rebuilt":2,"needing":3,"status":"partial",
+                     "reason":"history stopped at feature \"Chamfer 2\": edge not resolved"}]}, "losses":[]})),
+        });
+        h.run_steps(10);
+        let complete = "✓ Part 1 · 3/3 rebuilt · checked";
+        let partial = "! Part 2 · 2/3 rebuilt · stops at Chamfer 2";
+        assert!(h.get_by_label(partial).rect().top() < h.get_by_label(complete).rect().top());
+        for hidden in ["Lost: 0", "Changed: 0", "Note: 0"] {
+            assert!(h.query_by_label(hidden).is_none());
+        }
+        h.get_by_label("Source order").click_accesskit();
+        h.run_steps(6);
+        assert!(h.get_by_label(complete).rect().top() < h.get_by_label(partial).rect().top());
+        h.get_by_label("history stopped at feature \"Chamfer 2\": edge not resolved");
+        for action in [
+            "Open in SolidCraft",
+            "Show in folder",
+            "Save the full log…",
+            "Report this file…",
+        ] {
+            assert!(h.get_by_label(action).rect().bottom() < 750.0);
+        }
+    }
+}

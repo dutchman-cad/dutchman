@@ -14,22 +14,93 @@ fn number(value: &Value, key: &str) -> u64 {
 /// Keep the words here, never derive a surface title from an internal identifier.
 const LOSS_TITLES: &[(&str, &str)] = &[
     (
+        "feature.thread-definition-partial",
+        "Thread definition is incomplete",
+    ),
+    (
+        "feature.thread-live-face-unproven",
+        "Thread face couldn't be checked",
+    ),
+    (
+        "appearance.reduced-to-base-color",
+        "Textures and shaders reduced to base colours",
+    ),
+    (
+        "appearance.binding-metadata-reduced",
+        "Appearance binding properties weren't carried over",
+    ),
+    (
+        "appearance.material-not-transferred",
+        "Materials weren't carried over",
+    ),
+    (
+        "appearance.face-color-unresolved",
+        "Face colours couldn't be resolved",
+    ),
+    (
+        "appearance.face-override-unresolved",
+        "Face appearance overrides couldn't be resolved",
+    ),
+    (
+        "appearance.texture-unlocated",
+        "Texture images couldn't be located",
+    ),
+    (
+        "appearance.wire-body-transparency-omitted",
+        "Wire body transparency wasn't carried over",
+    ),
+    ("appearance.decal-", "Decals couldn't be fully carried over"),
+    (
+        "sketch.name-composed-from-feature-ordinal",
+        "Sketch names inferred from feature order",
+    ),
+    (
+        "sketch.curve-region-boundary",
+        "Sketch curves bound a profile region",
+    ),
+    (
+        "sketch.curve-unprofiled",
+        "Sketch curves outside closed profiles",
+    ),
+    (
+        "dimension.companion-untyped",
+        "Dimension reference frames couldn't be resolved",
+    ),
+    (
+        "configuration.active-row-unbound",
+        "Active configuration couldn't be resolved",
+    ),
+    (
+        "assembly.operation-table-pose-native",
+        "Assembly operation placements couldn't be resolved",
+    ),
+    (
+        "source.unindexed-records-retained",
+        "Unindexed source records retained without decoding",
+    ),
+    (
+        "design.parametric-records-omitted",
+        "Parametric design records weren't written to STEP",
+    ),
+    (
+        "attribute.source-record-not-written",
+        "Source attributes weren't written to STEP",
+    ),
+    ("appearance.wire", "Wire appearance wasn't carried over"),
+    (
         "native.source-record-omitted",
         "Internal records not needed for the shape",
     ),
     ("material.", "Materials weren't carried over"),
     (
         "appearance.face-pick-missed",
-        "Some face colours couldn't be placed",
+        "Face colours couldn't be placed",
     ),
     (
         "appearance.redundant-face",
         "Repeated face colours weren't needed",
     ),
-    (
-        "appearance.",
-        "Some appearance details weren't carried over",
-    ),
+    ("appearance.", "Appearance wasn't carried over"),
     (
         "profile-region-inferred",
         "A sketch region couldn't be checked",
@@ -49,7 +120,7 @@ const LOSS_TITLES: &[(&str, &str)] = &[
     ),
     (
         "topology.face-no-writable-bounds",
-        "Some face boundaries couldn't be carried over",
+        "Face boundaries couldn't be carried over",
     ),
     (
         "topology.region-solid-reduced-to-sheet",
@@ -60,147 +131,111 @@ const LOSS_TITLES: &[(&str, &str)] = &[
         "The shape was kept without its construction rules",
     ),
     ("step-fallback", "A matching STEP supplied the final shape"),
-    ("feature.", "Some feature details aren't supported yet"),
-    ("history.", "Some feature history couldn't be rebuilt"),
-    ("sketch.", "Some sketch details weren't carried over"),
-    ("parameter.", "Some parameter details weren't carried over"),
-    ("assembly.", "Some assembly details weren't carried over"),
-    ("scene.", "Some saved display settings weren't carried over"),
+    (
+        "feature.",
+        "Feature construction rules aren't supported yet",
+    ),
+    ("history.", "Feature history couldn't be rebuilt"),
+    ("sketch.", "Sketch entities weren't carried over"),
+    ("parameter.", "Parameter expressions weren't carried over"),
+    ("assembly.", "Assembly relationships weren't carried over"),
+    ("scene.", "Saved display settings weren't carried over"),
     ("source.", "Extra source records were reported"),
-    ("container.", "Some source records couldn't be read"),
-    ("geometry.", "Some geometry details weren't carried over"),
-    ("topology.", "Some shape connections weren't carried over"),
-    ("native.", "Some native records weren't carried over"),
-    ("metadata.", "Some document details weren't carried over"),
-    (
-        "attribute.",
-        "Some labels or properties weren't carried over",
-    ),
-    (
-        "configuration.",
-        "Some configuration details weren't carried over",
-    ),
-    ("joint.", "Some joints weren't carried over"),
-    ("annotation.", "Some annotations weren't carried over"),
-    ("arena.", "Some internal records weren't carried over"),
-    ("asset.", "Some attached assets weren't carried over"),
-    (
-        "attributes.",
-        "Some labels or properties weren't carried over",
-    ),
-    ("body.", "Some body details weren't carried over"),
+    ("container.", "Source records couldn't be read"),
+    ("geometry.", "Curves and surfaces weren't carried over"),
+    ("topology.", "Shape connections weren't carried over"),
+    ("native.", "Native records weren't carried over"),
+    ("metadata.", "Document properties weren't carried over"),
+    ("attribute.", "Labels and properties weren't carried over"),
+    ("configuration.", "Configurations weren't carried over"),
+    ("joint.", "Joints weren't carried over"),
+    ("annotation.", "Annotations weren't carried over"),
+    ("arena.", "Internal records weren't carried over"),
+    ("asset.", "Attached assets weren't carried over"),
+    ("attributes.", "Labels and properties weren't carried over"),
+    ("body.", "Body definitions weren't carried over"),
     (
         "body-recipe.",
-        "Some body construction rules weren't carried over",
+        "Body construction rules weren't carried over",
     ),
-    (
-        "body-reference.",
-        "Some body references weren't carried over",
-    ),
-    ("brep.", "Some boundary geometry wasn't carried over"),
-    ("cage.", "Some deformation controls weren't carried over"),
-    ("card.", "Some source records weren't carried over"),
+    ("body-reference.", "Body references weren't carried over"),
+    ("brep.", "Boundary geometry wasn't carried over"),
+    ("cage.", "Deformation controls weren't carried over"),
+    ("card.", "Source records weren't carried over"),
     (
         "carrier.",
-        "Some curve or surface definitions weren't carried over",
+        "Curve and surface definitions weren't carried over",
     ),
     (
         "composition.",
-        "Some nested design structure wasn't carried over",
+        "Nested design structure wasn't carried over",
     ),
-    ("config.", "Some configuration details weren't carried over"),
-    ("curve.", "Some curves weren't carried over"),
+    ("config.", "Configurations weren't carried over"),
+    ("curve.", "Curves weren't carried over"),
     (
         "curve-expression.",
-        "Some curve expressions weren't carried over",
+        "Curve expressions weren't carried over",
     ),
     (
         "curve-on-surface.",
-        "Some curves on surfaces weren't carried over",
+        "Curves on surfaces weren't carried over",
     ),
-    ("curves.", "Some curves weren't carried over"),
-    ("decode.", "Some source details weren't carried over"),
-    ("deltas.", "Some stored shape changes weren't carried over"),
-    ("depth.", "Some requested details weren't carried over"),
-    (
-        "design.",
-        "Some editable design details weren't carried over",
-    ),
-    ("detail.", "Some detail views weren't carried over"),
-    ("dimension.", "Some dimensions weren't carried over"),
-    ("directory.", "Some source records weren't carried over"),
-    ("drawing.", "Some drawing details weren't carried over"),
-    ("edge.", "Some edges weren't carried over"),
-    (
-        "element-map.",
-        "Some element references weren't carried over",
-    ),
-    ("entity.", "Some source objects weren't carried over"),
-    ("exact.", "Some exact geometry wasn't carried over"),
-    ("export.", "Some output details weren't carried over"),
-    ("expression.", "Some expressions weren't carried over"),
-    ("framing.", "Some source records weren't carried over"),
-    ("global.", "Some document settings weren't carried over"),
-    ("graph.", "Some source connections weren't carried over"),
-    ("hatch.", "Some hatch details weren't carried over"),
-    ("header.", "Some document details weren't carried over"),
-    (
-        "intersection.",
-        "Some curve intersections weren't carried over",
-    ),
-    ("layer.", "Some layers weren't carried over"),
-    ("legacy.", "Some older source records weren't carried over"),
-    ("mesh.", "Some mesh details weren't carried over"),
-    ("morph.", "Some deformations weren't carried over"),
-    ("nurbs.", "Some spline details weren't carried over"),
-    ("object.", "Some source objects weren't carried over"),
-    ("occurrence.", "Some part placements weren't carried over"),
-    ("parse.", "Some source records weren't carried over"),
-    (
-        "pcurve.",
-        "Some surface boundary curves weren't carried over",
-    ),
-    ("physics.", "Some physical properties weren't carried over"),
-    ("placement.", "Some placements weren't carried over"),
-    (
-        "pmi.",
-        "Some manufacturing annotations weren't carried over",
-    ),
-    ("polyedge.", "Some connected edges weren't carried over"),
-    (
-        "presentation.",
-        "Some display settings weren't carried over",
-    ),
-    ("prim.", "Some shape primitives weren't carried over"),
-    ("product.", "Some product structure wasn't carried over"),
-    ("property-set.", "Some properties weren't carried over"),
-    ("protein.", "Some native records weren't carried over"),
-    ("reference.", "Some references weren't carried over"),
-    ("rse.", "Some feature references weren't carried over"),
-    (
-        "scope.",
-        "Some feature body selections weren't carried over",
-    ),
-    ("section.", "Some section details weren't carried over"),
-    ("stream.", "Some source records weren't carried over"),
-    ("structure.", "Some assembly structure wasn't carried over"),
-    ("target.", "Some target details weren't carried over"),
-    (
-        "tessellation.",
-        "Some display mesh details weren't carried over",
-    ),
-    ("tspline.", "Some sculpted surfaces weren't carried over"),
-    ("ufrx.", "Some native feature details weren't carried over"),
-    ("validation.", "Some source checks weren't carried over"),
-    ("vertex.", "Some points weren't carried over"),
-    ("viewport.", "Some saved views weren't carried over"),
-    (
-        "work-plane.",
-        "Some construction planes weren't carried over",
-    ),
-    ("writer.", "Some output details weren't carried over"),
-    ("xform.", "Some transformations weren't carried over"),
-    ("xref.", "Some linked files weren't carried over"),
+    ("curves.", "Curves weren't carried over"),
+    ("decode.", "Source records weren't carried over"),
+    ("deltas.", "Stored shape changes weren't carried over"),
+    ("depth.", "Requested geometry wasn't carried over"),
+    ("design.", "Editable design records weren't carried over"),
+    ("detail.", "Detail views weren't carried over"),
+    ("dimension.", "Dimensions weren't carried over"),
+    ("directory.", "Source records weren't carried over"),
+    ("drawing.", "Drawing views weren't carried over"),
+    ("edge.", "Edges weren't carried over"),
+    ("element-map.", "Element references weren't carried over"),
+    ("entity.", "Source objects weren't carried over"),
+    ("exact.", "Exact geometry wasn't carried over"),
+    ("export.", "Output records weren't carried over"),
+    ("expression.", "Expressions weren't carried over"),
+    ("framing.", "Source records weren't carried over"),
+    ("global.", "Document settings weren't carried over"),
+    ("graph.", "Source connections weren't carried over"),
+    ("hatch.", "Hatch patterns weren't carried over"),
+    ("header.", "Document properties weren't carried over"),
+    ("intersection.", "Curve intersections weren't carried over"),
+    ("layer.", "Layers weren't carried over"),
+    ("legacy.", "Older source records weren't carried over"),
+    ("mesh.", "Display meshes weren't carried over"),
+    ("morph.", "Deformations weren't carried over"),
+    ("nurbs.", "Spline definitions weren't carried over"),
+    ("object.", "Source objects weren't carried over"),
+    ("occurrence.", "Part placements weren't carried over"),
+    ("parse.", "Source records weren't carried over"),
+    ("pcurve.", "Surface boundary curves weren't carried over"),
+    ("physics.", "Physical properties weren't carried over"),
+    ("placement.", "Placements weren't carried over"),
+    ("pmi.", "Manufacturing annotations weren't carried over"),
+    ("polyedge.", "Connected edges weren't carried over"),
+    ("presentation.", "Display settings weren't carried over"),
+    ("prim.", "Shape primitives weren't carried over"),
+    ("product.", "Product structure wasn't carried over"),
+    ("property-set.", "Properties weren't carried over"),
+    ("protein.", "Native records weren't carried over"),
+    ("reference.", "References weren't carried over"),
+    ("rse.", "Feature references weren't carried over"),
+    ("scope.", "Feature body selections weren't carried over"),
+    ("section.", "Section views weren't carried over"),
+    ("stream.", "Source records weren't carried over"),
+    ("structure.", "Assembly structure wasn't carried over"),
+    ("target.", "Selection targets weren't carried over"),
+    ("tessellation.", "Display meshes weren't carried over"),
+    ("tspline.", "Sculpted surfaces weren't carried over"),
+    ("ufrx.", "Native feature definitions weren't carried over"),
+    ("validation.", "Source checks weren't carried over"),
+    ("vertex.", "Points weren't carried over"),
+    ("viewport.", "Saved views weren't carried over"),
+    ("work-plane.", "Construction planes weren't carried over"),
+    ("writer.", "Output records weren't carried over"),
+    ("xform.", "Transformations weren't carried over"),
+    ("xref.", "Linked files weren't carried over"),
     ("missing_geometry_stream", "Geometry could not be read"),
     (
         "topology_not_transferred",
@@ -208,83 +243,68 @@ const LOSS_TITLES: &[(&str, &str)] = &[
     ),
     (
         "source_topology_invalid",
-        "Some source shape connections could not be retained",
+        "Source shape connections could not be retained",
     ),
-    (
-        "geometry_not_transferred",
-        "Some geometry was not carried over",
-    ),
+    ("geometry_not_transferred", "Geometry was not carried over"),
     (
         "geometry_agreement_sampled",
         "Shape agreement was checked at sample points",
     ),
     (
         "reference_graph_not_closed",
-        "Some shape references could not be joined",
+        "Shape references could not be joined",
     ),
     (
         "topology_gauge_substituted",
-        "Some shape connections were inferred",
+        "Shape connections were inferred",
     ),
     (
         "carrier_axis_inferred",
-        "Some curve or surface directions were inferred",
+        "Curve or surface directions were inferred",
     ),
     ("carrier_summary", "Curve and surface records were counted"),
     ("material_not_transferred", "Materials weren't carried over"),
     (
         "metadata_not_transferred",
-        "Some document details were not carried over",
+        "Document properties were not carried over",
     ),
     (
         "attributes_not_transferred",
-        "Some labels or properties were not carried over",
+        "Labels and properties were not carried over",
     ),
     (
         "feature_history_retained",
         "Native feature records were retained",
     ),
-    (
-        "assembly_components_external",
-        "Some parts need separate files",
-    ),
+    ("assembly_components_external", "Parts need separate files"),
     (
         "assembly_placements_not_transferred",
-        "Some assembly placements were not carried over",
+        "Assembly placements were not carried over",
     ),
-    (
-        "record_not_typed",
-        "Some source records are not supported yet",
-    ),
-    ("decode_diagnostic", "Some source details could not be read"),
-    (
-        "integrity_failure",
-        "Some source checks could not be completed",
-    ),
+    ("record_not_typed", "Source records are not supported yet"),
+    ("decode_diagnostic", "Source records could not be read"),
+    ("integrity_failure", "Source checks could not be completed"),
     (
         "noncanonical_source_syntax",
-        "Some source syntax was interpreted",
+        "Source syntax was interpreted",
     ),
     (
         "source_dialect_unverified",
         "This source version has not been checked yet",
     ),
-    (
-        "source_dialect_displaced",
-        "Some version details were inferred",
-    ),
+    ("source_dialect_displaced", "Source version was inferred"),
     ("mesh_vertex_precision", "Mesh point precision changed"),
     (
         "object_records_untransferred",
-        "Some source objects were not carried over",
+        "Source objects were not carried over",
     ),
     (
         "unsupported_object_family",
-        "Some object types are not supported yet",
+        "Object types are not supported yet",
     ),
     (
         "asset_not_transferred",
-        "Some attached assets were not carried over",
+        "Attached assets were not carried over",
     ),
     (
         "no_exportable_solids",
@@ -293,11 +313,11 @@ const LOSS_TITLES: &[(&str, &str)] = &[
     ("hidden_body_omitted", "Hidden bodies were left out"),
     (
         "body_transform_not_applied",
-        "Some body placements were not applied",
+        "Body placements were not applied",
     ),
     (
         "analytic_surface_normalized",
-        "Some surfaces were expressed in a standard form",
+        "Surfaces were expressed in a standard form",
     ),
     (
         "elliptical_cone_reduced",
@@ -305,58 +325,49 @@ const LOSS_TITLES: &[(&str, &str)] = &[
     ),
     (
         "curveless_edge_omitted",
-        "Some edges without curves were left out",
+        "Edges without curves were left out",
     ),
     (
         "unknown_surface_face_omitted",
-        "Some faces with unresolved surfaces were left out",
+        "Faces with unresolved surfaces were left out",
     ),
-    (
-        "pcurve_omitted",
-        "Some surface boundary curves were left out",
-    ),
+    ("pcurve_omitted", "Surface boundary curves were left out"),
     ("subd_omitted", "Subdivision surfaces were left out"),
     ("tessellation_omitted", "Display meshes were left out"),
     ("point_cloud_omitted", "Point clouds were left out"),
     ("pmi_omitted", "Manufacturing annotations were left out"),
     (
         "source_association_omitted",
-        "Some source associations were left out",
+        "Source associations were left out",
     ),
     (
         "passthrough_record_omitted",
         "Internal records not needed for the shape",
     ),
-    (
-        "procedural_reduced",
-        "Some procedural shapes were simplified",
-    ),
+    ("procedural_reduced", "Procedural shapes were simplified"),
     (
         "parametric_record_omitted",
-        "Some parametric records were left out",
+        "Parametric records were left out",
     ),
-    (
-        "appearance_reduced",
-        "Some appearance details were simplified",
-    ),
+    ("appearance_reduced", "Appearance were simplified"),
     (
         "preserved_source_unavailable",
-        "Some retained source records were unavailable",
+        "Retained source records were unavailable",
     ),
     (
         "physics_not_transferred",
-        "Some physical properties were not carried over",
+        "Physical properties were not carried over",
     ),
     (
         "process_record_omitted",
-        "Some manufacturing process records were left out",
+        "Manufacturing process records were left out",
     ),
 ];
 
 fn known_title(code: &str) -> Option<&'static str> {
     let key = code.split_once('/').map_or(code, |(_, key)| key);
     LOSS_TITLES.iter().find_map(|(pattern, title)| {
-        (if pattern.ends_with('.') {
+        (if pattern.ends_with(['.', '-']) {
             key.starts_with(pattern)
         } else {
             key == *pattern
@@ -365,7 +376,7 @@ fn known_title(code: &str) -> Option<&'static str> {
     })
 }
 fn loss_title(code: &str) -> &'static str {
-    known_title(code).unwrap_or("Some details weren't carried over")
+    known_title(code).unwrap_or("Conversion data wasn't carried over")
 }
 
 /// Dropped data is Lost; Degraded is Changed; Info is Note. Unknown levels stay visible.
@@ -398,6 +409,18 @@ fn plain_reason(reason: &str) -> &str {
         "--import-only" => "Feature history was turned off for this conversion.",
         reason => reason,
     }
+}
+fn history_off(report: &Value) -> bool {
+    text(&verification(report), "reason") == "--import-only"
+        || report
+            .get("losses")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|loss| {
+                text(loss, "subject") == "history"
+                    && text(loss, "message").contains("--import-only")
+            })
 }
 fn rebuilt(feature: &Value) -> bool {
     text(feature, "status") == "mapped" && feature.get("reapplied") != Some(&Value::Bool(true))
@@ -483,7 +506,11 @@ pub(crate) fn summary(ui: &mut egui::Ui, p: &Palette, report: &Value) {
             .get("needing")
             .and_then(Value::as_u64)
             .unwrap_or_else(|| number(history, "total"));
-        chip(ui, p, format!("{count} of {total} features rebuilt"), p.ink);
+        if history_off(report) {
+            chip(ui, p, "History off".into(), p.tide);
+        } else {
+            chip(ui, p, format!("{count} of {total} features rebuilt"), p.ink);
+        }
         let reapplied = number(history, "reapplied");
         if reapplied > 0 {
             chip(ui, p, format!("{reapplied} re-applied"), p.lantern_text);
@@ -538,7 +565,9 @@ pub(crate) fn summary(ui: &mut egui::Ui, p: &Palette, report: &Value) {
                 .flatten()
                 .filter(|loss| severity(loss) == rank)
                 .count();
-            chip(ui, p, format!("{label}: {count}"), colour(p, rank));
+            if count > 0 {
+                chip(ui, p, format!("{label}: {count}"), colour(p, rank));
+            }
         }
     });
 }
@@ -609,43 +638,132 @@ fn timeline(ui: &mut egui::Ui, p: &Palette, report: &Value) {
     }
 }
 
+fn observation_title(loss: &Value) -> &'static str {
+    let message = text(loss, "message");
+    if message.contains("thread") {
+        "Thread cosmetic data"
+    } else if message.contains("appearance") || text(loss, "subject") == "appearance" {
+        "Appearance assignments weren't carried over"
+    } else if message.starts_with("history stopped") {
+        "Feature history stopped before the final shape"
+    } else if message.contains("--import-only") {
+        "Feature history was turned off"
+    } else if message.starts_with("feature history left out:") {
+        "Feature history left out to fit available memory"
+    } else if message.contains("parts placed") {
+        "Assembly part placements"
+    } else if message.contains("sketch curve") {
+        "Sketch curves kept as construction geometry"
+    } else if message.contains("seam edges") {
+        "Surface seam edges added"
+    } else if message.contains("constraints not carried") {
+        "Sketch constraints weren't carried over"
+    } else if message.contains("feature(s) grouped") {
+        "Features grouped by operation"
+    } else if message.contains("parts rest on a stored pose") {
+        "Part placements need checking"
+    } else if message.contains("empty component") {
+        "Empty components kept without bodies"
+    } else if message.contains("sketch") && message.contains("for reference") {
+        "Sketches kept for reference"
+    } else if message.contains("grounded, inferred") {
+        "Fixed assembly parts inferred"
+    } else if message.starts_with("renamed to ") {
+        "Parameter names changed to avoid duplicates"
+    } else if message.contains("component of another design") {
+        "Joints between separate designs couldn't be rebuilt"
+    } else if message.contains("whole copy of the component") {
+        "Joints applied to repeated component copies"
+    } else if message.contains("placed by other joints") {
+        "Conflicting joints kept suppressed"
+    } else if message.contains("suppressed in the source") {
+        "Suppressed features left out"
+    } else if message.contains("helper not converted") {
+        "Unused construction helpers left out"
+    } else if message.contains("user-hidden") {
+        "Hidden source bodies kept hidden"
+    } else if message.contains("repeated component(s) written once") {
+        "Repeated components share one definition"
+    } else if message.contains("faces turned over") {
+        "Face orientations corrected"
+    } else if message.contains("edges lie off their faces") {
+        "Face and edge tolerances changed"
+    } else if message.contains("changes no geometry") {
+        "Features without shape changes left out"
+    } else if message.contains("joint(s) written as built") {
+        "Joints kept at stored part positions"
+    } else if message.contains("editable-history component placement") {
+        "Editable history placements kept hidden"
+    } else if message.starts_with("not checked:") && message.contains("timed out") {
+        "Shape check timed out"
+    } else if message.contains("original geometry") {
+        "Original geometry kept beside editable history"
+    } else if text(loss, "subject") == "history" {
+        "Feature history mapping"
+    } else if text(loss, "subject").starts_with("feature") {
+        "Feature construction rules couldn't be rebuilt"
+    } else {
+        "Conversion observations"
+    }
+}
+
+fn loss_heading(code: &str, notes: &[&Value]) -> String {
+    if code.ends_with("native.source-record-omitted") {
+        // The existing message supplies a count, without reading native file data.
+        let records = notes
+            .iter()
+            .filter_map(|n| {
+                text(n, "message")
+                    .split_whitespace()
+                    .next()?
+                    .parse::<u64>()
+                    .ok()
+            })
+            .fold(0_u64, u64::saturating_add);
+        if records > 0 {
+            let noun = if records == 1 { "record" } else { "records" };
+            return format!("{records} internal {noun} not needed for the shape");
+        }
+    }
+    let title = if code.is_empty() {
+        notes
+            .first()
+            .map_or("Conversion observations", |note| observation_title(note))
+    } else {
+        loss_title(code)
+    };
+    if notes.len() == 1 {
+        title.to_owned()
+    } else {
+        format!("{title} · {} reports", notes.len())
+    }
+}
+
 fn loss_cards(ui: &mut egui::Ui, p: &Palette, losses: &[&Value]) {
     for (rank, label) in SEVERITIES.iter().enumerate() {
-        let mut groups: std::collections::BTreeMap<&str, Vec<&Value>> = Default::default();
+        let mut groups: std::collections::BTreeMap<(&str, &str), Vec<&Value>> = Default::default();
         for loss in losses.iter().filter(|loss| severity(loss) == rank) {
-            groups.entry(text(loss, "code")).or_default().push(loss);
+            let code = text(loss, "code");
+            let title = if code.is_empty() {
+                observation_title(loss)
+            } else {
+                loss_title(code)
+            };
+            groups.entry((code, title)).or_default().push(loss);
         }
         if groups.is_empty() {
             continue;
         }
         ui.label(RichText::new(*label).strong().color(colour(p, rank)));
-        for (code, notes) in groups {
-            ui.push_id((rank, code), |ui| {
+        for ((code, group_title), notes) in groups {
+            ui.push_id((rank, code, group_title), |ui| {
                 egui::Frame::new()
                     .stroke(egui::Stroke::new(1.0_f32, p.hairline))
                     .inner_margin(8)
                     .corner_radius(4)
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        let mut title = loss_title(code).to_owned();
-                        if code.ends_with("native.source-record-omitted") {
-                            // The existing message states the source record count; this is not decoding.
-                            let records: u64 = notes
-                                .iter()
-                                .filter_map(|n| {
-                                    text(n, "message")
-                                        .split_whitespace()
-                                        .next()?
-                                        .parse::<u64>()
-                                        .ok()
-                                })
-                                .fold(0_u64, u64::saturating_add);
-                            if records > 0 {
-                                title =
-                                    format!("{records} internal records not needed for the shape");
-                            }
-                        }
-                        ui.label(RichText::new(format!("{title} · {}", notes.len())).color(p.ink));
+                        ui.label(RichText::new(loss_heading(code, &notes)).color(p.ink));
                         egui::CollapsingHeader::new("Details").show(ui, |ui| {
                             if !code.is_empty() {
                                 ui.add(egui::Label::new(RichText::new(code).monospace()).wrap());
@@ -658,6 +776,77 @@ fn loss_cards(ui: &mut egui::Ui, p: &Palette, losses: &[&Value]) {
             });
         }
     }
+}
+
+fn part_counts(part: &Value) -> (u64, u64) {
+    (
+        part.get("rebuilt")
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| number(part, "mapped")),
+        part.get("needing")
+            .and_then(Value::as_u64)
+            .unwrap_or_else(|| number(part, "total")),
+    )
+}
+
+fn part_rank(part: Option<&Value>) -> (u8, u64, u64) {
+    let Some(part) = part else { return (0, 0, 1) };
+    let (rebuilt, total) = part_counts(part);
+    if rebuilt < total {
+        (0, rebuilt, total)
+    } else if !checked(part) {
+        (1, 0, 1)
+    } else {
+        (2, 0, 1)
+    }
+}
+
+fn part_order(a: Option<&Value>, b: Option<&Value>) -> std::cmp::Ordering {
+    let (rank_a, rebuilt_a, total_a) = part_rank(a);
+    let (rank_b, rebuilt_b, total_b) = part_rank(b);
+    rank_a.cmp(&rank_b).then_with(|| {
+        (u128::from(rebuilt_a) * u128::from(total_b))
+            .cmp(&(u128::from(rebuilt_b) * u128::from(total_a)))
+    })
+}
+
+fn part_heading(name: &str, part: Option<&Value>, report: &Value) -> (String, usize) {
+    let Some(part) = part else {
+        return (format!("— {name} · no history recorded"), 0);
+    };
+    let (rebuilt, total) = part_counts(part);
+    if history_off(report) {
+        return (format!("— {name} · History off"), 3);
+    }
+    let reason = text(part, "reason");
+    let stop = reason
+        .split_once("feature \"")
+        .and_then(|(_, tail)| tail.split_once('"'))
+        .map(|(name, _)| name)
+        .or_else(|| {
+            reason
+                .strip_prefix("history stopped at ")
+                .and_then(|tail| tail.split_once(';'))
+                .map(|(name, _)| name)
+        });
+    let (icon, short, rank) = if rebuilt < total {
+        (
+            "!",
+            stop.map_or_else(
+                || "history incomplete".to_owned(),
+                |name| format!("stops at {name}"),
+            ),
+            0,
+        )
+    } else if checked(part) {
+        ("✓", "checked".to_owned(), 2)
+    } else {
+        ("!", "unchecked".to_owned(), 1)
+    };
+    (
+        format!("{icon} {name} · {rebuilt}/{total} rebuilt · {short}"),
+        rank,
+    )
 }
 
 pub(crate) fn details(ui: &mut egui::Ui, p: &Palette, report: &Value) {
@@ -695,35 +884,63 @@ pub(crate) fn details(ui: &mut egui::Ui, p: &Palette, report: &Value) {
         loss_cards(ui, p, &losses);
         return;
     }
-    ui.label(RichText::new("Parts").strong());
-    let mut names: Vec<String> = parts
+    let order_id = ui.make_persistent_id("source-part-order");
+    let mut source_order = ui.data(|d| d.get_temp::<bool>(order_id)).unwrap_or(false);
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Parts").strong());
+        if ui
+            .toggle_value(&mut source_order, RichText::new("Source order").small())
+            .changed()
+        {
+            ui.data_mut(|d| d.insert_temp(order_id, source_order));
+        }
+    });
+    let mut names: Vec<(usize, String)> = parts
         .into_iter()
         .flatten()
-        .map(|p| text(p, "name").to_owned())
+        .enumerate()
+        .map(|(index, p)| (index, text(p, "name").to_owned()))
         .collect();
     for c in &components {
         if let Some(name) = &c.file {
-            if !names.contains(name) {
-                names.push(name.clone());
+            if !names.iter().any(|(_, n)| n == name) {
+                names.push((names.len(), name.clone()));
             }
         }
     }
+    if !source_order {
+        names.sort_by(|(a, _), (b, _)| {
+            part_order(parts.and_then(|p| p.get(*a)), parts.and_then(|p| p.get(*b)))
+        });
+    }
     let id = ui.make_persistent_id("show-all-parts");
     let all = ui.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
-    for (index, name) in names
-        .iter()
-        .enumerate()
-        .take(if all { usize::MAX } else { 10 })
+    for (position, (index, name)) in
+        names
+            .iter()
+            .enumerate()
+            .take(if all { usize::MAX } else { 10 })
     {
+        let part = parts.and_then(|parts| parts.get(*index));
+        let (label, rank) = part_heading(name, part, report);
         let width = (ui.available_width() - ui.spacing().indent - 8.0).max(40.0);
         let font = egui::TextStyle::Button.resolve(ui.style());
-        let heading = ui.painter().layout(name.clone(), font, p.ink, width);
+        let heading = ui.painter().layout(
+            label,
+            font,
+            if rank == 2 {
+                p.spectre
+            } else {
+                colour(p, rank)
+            },
+            width,
+        );
         egui::CollapsingHeader::new(egui::WidgetText::Galley(heading))
             .id_salt(("part", index))
-            .default_open(index == 0)
+            .default_open(position == 0)
             .show(ui, |ui| {
                 // Part names can repeat; the source report's row identifies the part.
-                if let Some(part) = parts.and_then(|parts| parts.get(index)) {
+                if let Some(part) = part {
                     let rebuilt = part
                         .get("rebuilt")
                         .and_then(Value::as_u64)
@@ -824,12 +1041,103 @@ mod tests {
         }
         assert_eq!(
             loss_title("future/new-code"),
-            "Some details weren't carried over"
+            "Conversion data wasn't carried over"
         );
         assert_eq!(
             loss_title("f3d/material.not-transferred"),
             "Materials weren't carried over"
         );
+    }
+    #[test]
+    fn known_codes_never_use_a_generic_title() {
+        let fallback = loss_title("future/new-code");
+        for code in include_str!("../tests/support/loss-codes.txt")
+            .lines()
+            .filter(|line| !line.starts_with('#'))
+        {
+            let title = loss_title(code);
+            assert_ne!(title, fallback, "generic fallback for {code}");
+            assert!(
+                !title.contains("details"),
+                "vague title for {code}: {title}"
+            );
+        }
+        for (code, title) in LOSS_TITLES {
+            assert_ne!(*title, fallback, "generic fallback for {code}");
+            assert!(
+                !title.contains("details"),
+                "vague title for {code}: {title}"
+            );
+        }
+    }
+
+    #[test]
+    fn uncoded_observations_name_the_affected_data() {
+        for (message, expected) in [
+            (
+                "1 of 2 constraints not carried; geometry is exact",
+                "Sketch constraints weren't carried over",
+            ),
+            (
+                "kept 2 sketches for reference",
+                "Sketches kept for reference",
+            ),
+            (
+                "renamed to width_2: another parameter already has that name",
+                "Parameter names changed to avoid duplicates",
+            ),
+            (
+                "placed as an empty component: it has no bodies",
+                "Empty components kept without bodies",
+            ),
+            (
+                "1 parts rest on a stored pose that no joint confirms",
+                "Part placements need checking",
+            ),
+            (
+                "solid #1: 2 faces turned over",
+                "Face orientations corrected",
+            ),
+            (
+                "suppressed in the source; left out",
+                "Suppressed features left out",
+            ),
+            (
+                "changes no geometry in the source; left out",
+                "Features without shape changes left out",
+            ),
+        ] {
+            let note = serde_json::json!({"message": message});
+            assert_eq!(loss_heading("", &[&note]), expected);
+        }
+    }
+
+    #[test]
+    fn loss_counts_name_the_item_and_pluralize_without_counting_reports_as_faces() {
+        let one = serde_json::json!({"message":"1 source-native record was omitted"});
+        let two = serde_json::json!({"message":"2 source-native records were omitted"});
+        assert_eq!(
+            loss_heading("step/native.source-record-omitted", &[&one]),
+            "1 internal record not needed for the shape"
+        );
+        assert_eq!(
+            loss_heading("step/native.source-record-omitted", &[&two]),
+            "2 internal records not needed for the shape"
+        );
+        assert_eq!(
+            loss_heading("f3d/material.not-transferred", &[&one]),
+            "Materials weren't carried over"
+        );
+        assert_eq!(
+            loss_heading("f3d/material.not-transferred", &[&one, &two]),
+            "Materials weren't carried over · 2 reports"
+        );
+        assert_eq!(
+            loss_heading("f3d/appearance.face-color-unresolved", &[&one, &two]),
+            "Face colours couldn't be resolved · 2 reports"
+        );
+        let thread = serde_json::json!({"message":"its source does not resolve whether the thread is modeled; kept as a cosmetic annotation"});
+        assert_eq!(loss_heading("", &[&thread]), "Thread cosmetic data");
     }
 }
 
@@ -884,7 +1192,7 @@ mod ui_tests {
         let changed = h.get_by_label("Changed").rect();
         let note = h.get_by_label("Note").rect();
         assert!(lost.top() < changed.top() && changed.top() < note.top());
-        h.get_by_label("784 internal records not needed for the shape · 1");
+        h.get_by_label("784 internal records not needed for the shape");
         assert!(h.query_by_label("f3d/material.not-transferred").is_none());
         h.query_all_by_label("Details")
             .next()
@@ -945,6 +1253,66 @@ mod ui_tests {
         }
     }
     #[test]
+    fn history_off_replaces_empty_counts_and_zero_loss_chips_are_hidden() {
+        let report = json!({"mode":"import", "verification":{"status":"not_applicable", "reason":"--import-only"},
+            "history":{"rebuilt":0,"needing":0},"losses":[]});
+        let mut h = Harness::builder().build_ui(|ui| {
+            let p = *theme::palette(ui);
+            summary(ui, &p, &report);
+        });
+        h.run_steps(6);
+        h.get_by_label("History off");
+        for hidden in [
+            "0 of 0 features rebuilt",
+            "Lost: 0",
+            "Changed: 0",
+            "Note: 0",
+        ] {
+            assert!(h.query_by_label(hidden).is_none(), "{hidden}");
+        }
+    }
+
+    #[test]
+    fn parts_sort_worst_first_and_source_toggle_preserves_row_identity() {
+        let report = json!({"history":{"parts":[
+            {"name":"Complete", "rebuilt":3,"needing":3,"status":"verified","reason":"complete reason"},
+            {"name":"Partial", "rebuilt":2,"needing":3,"status":"partial","reason":"history stopped at feature \"Chamfer 2\": edge not resolved"},
+            {"name":"Blocked", "rebuilt":0,"needing":3,"status":"flattened","reason":"feature \"Sketch 1\": sketch not resolved"},
+            {"name":"Unchecked", "rebuilt":3,"needing":3,"status":"unverified"}]}});
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(760.0, 1600.0))
+            .build_ui(|ui| {
+                let p = *theme::palette(ui);
+                details(ui, &p, &report);
+            });
+        h.run_steps(6);
+        let labels = [
+            "! Blocked · 0/3 rebuilt · stops at Sketch 1",
+            "! Partial · 2/3 rebuilt · stops at Chamfer 2",
+            "! Unchecked · 3/3 rebuilt · unchecked",
+            "✓ Complete · 3/3 rebuilt · checked",
+        ];
+        let rows: Vec<_> = labels
+            .iter()
+            .map(|label| h.get_by_label(label).rect())
+            .collect();
+        assert!(rows.windows(2).all(|r| r[0].top() < r[1].top()));
+        h.get_by_label("feature \"Sketch 1\": sketch not resolved");
+        h.get_by_label(labels[1]).click_accesskit();
+        h.run_steps(6);
+        h.get_by_label("history stopped at feature \"Chamfer 2\": edge not resolved");
+        h.get_by_label("Source order").click_accesskit();
+        h.run_steps(6);
+        let complete = h.get_by_label(labels[3]).rect();
+        let partial = h.get_by_label(labels[1]).rect();
+        let blocked = h.get_by_label(labels[0]).rect();
+        assert!(complete.top() < partial.top() && partial.top() < blocked.top());
+        // The disclosure retains the source part's own count and reason after sorting.
+        h.get_by_label("2 of 3 features rebuilt");
+        assert!(h.query_by_label("complete reason").is_none());
+    }
+
+    #[test]
     fn part_groups_stop_after_ten_until_show_all() {
         let mut report = sample();
         report["history"]["parts"]=json!((1..=14).map(|n|json!({"name":format!("Part {n}"),"rebuilt":1,"needing":2,"status":"unverified"})).collect::<Vec<_>>());
@@ -955,11 +1323,13 @@ mod ui_tests {
                 details(ui, &p, &report);
             });
         h.run_steps(6);
-        h.get_by_label("Part 10");
-        assert!(h.query_by_label("Part 11").is_none());
+        h.get_by_label("! Part 10 · 1/2 rebuilt · history incomplete");
+        assert!(h
+            .query_by_label("! Part 11 · 1/2 rebuilt · history incomplete")
+            .is_none());
         h.get_by_label("Show all 14").click_accesskit();
         h.run_steps(6);
-        h.get_by_label("Part 14");
+        h.get_by_label("! Part 14 · 1/2 rebuilt · history incomplete");
     }
     #[test]
     fn assembly_ordinals_keep_part_order_and_use_only_attributable_checks() {

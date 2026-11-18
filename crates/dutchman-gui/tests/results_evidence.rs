@@ -16,13 +16,25 @@ fn test_app(cc: &eframe::CreationContext<'_>) -> App {
     App::new(cc)
 }
 
+fn assert_report_panel(h: &Harness<'_, App>, size: egui::Vec2) {
+    use egui_kittest::kittest::Queryable;
+    for label in [
+        "Anonymous report",
+        "GitHub issue",
+        dutchman_gui::report_panel::PRIVACY,
+    ] {
+        let rect = h.get_by_label(label).rect();
+        assert!(rect.bottom() < size.y - 40.0, "{label}: {rect:?}");
+    }
+}
+
 #[test]
 fn results_evidence() {
     let Some(dir) = std::env::var_os("DUTCHMAN_RESULTS_SHOTS").map(PathBuf::from) else {
         return;
     };
     let cases = PathBuf::from(std::env::var_os("DUTCHMAN_REPORT_FLOW_CASES").unwrap());
-    let reports = cases.join("1-full-FHCS (SolidCraft)");
+    let reports = cases;
     let work = tempfile::tempdir().unwrap();
     let mut measurements = String::from("case\tsize-theme\taction\tleft\ttop\tright\tbottom\n");
     dutchman_gui::set_diagnostics_folder(work.path().join("diagnostics"));
@@ -33,9 +45,9 @@ fn results_evidence() {
             "1600-day",
         ),
         (
-            egui::vec2(1600.0, 1000.0),
+            egui::vec2(1280.0, 800.0),
             ThemePreference::Dark,
-            "1600-night",
+            "1280-night",
         ),
         (
             egui::vec2(1280.0, 800.0),
@@ -43,21 +55,10 @@ fn results_evidence() {
             "1280-day",
         ),
     ] {
-        for (name, input, report) in [
-            ("full", "1-full-FHCS.f3d", "1-full-FHCS.report.json"),
-            (
-                "partial",
-                "2-partial-Shim.f3d",
-                "2-partial-Shim.report.json",
-            ),
-            (
-                "geometry",
-                "3-geometry-Keystone.f3d",
-                "3-geometry-Keystone.report.json",
-            ),
-            ("failed", "4-broken-FHCS.f3d", "4-broken-FHCS.failed.json"),
-            ("slow", "5-slow-Voron.f3z", "5-slow-Voron.report.json"),
-        ] {
+        for name in ["full", "partial", "geometry", "failed", "slow"] {
+            let extension = if name == "slow" { "f3z" } else { "f3d" };
+            let input = format!("{name}.{extension}");
+            let report = format!("{name}.json");
             let report: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(reports.join(report)).unwrap()).unwrap();
             let ok = report["ok"] == true;
@@ -66,7 +67,7 @@ fn results_evidence() {
                     .pointer("/output/path")
                     .and_then(serde_json::Value::as_str)
                     .map(PathBuf::from)
-                    .unwrap_or_else(|| reports.join(input).with_extension("sc"))
+                    .unwrap_or_else(|| reports.join(&input).with_extension("sc"))
             });
             let mut h = Harness::builder()
                 .with_size(size)
@@ -89,6 +90,7 @@ fn results_evidence() {
                 size: None,
             });
             h.run_steps(12);
+            assert_report_panel(&h, size);
             if std::env::var_os("DUTCHMAN_RESULTS_ASSERT_LAYOUT").is_some() {
                 use egui_kittest::kittest::Queryable;
                 let mut actions = vec!["Save the full log…", "Report this file…"];
@@ -252,9 +254,9 @@ fn big_assembly_evidence() {
             "1600-day",
         ),
         (
-            egui::vec2(1600.0, 1000.0),
+            egui::vec2(1280.0, 800.0),
             ThemePreference::Dark,
-            "1600-night",
+            "1280-night",
         ),
         (
             egui::vec2(1280.0, 800.0),
@@ -270,9 +272,10 @@ fn big_assembly_evidence() {
         h.state_mut().set_previews_enabled(false);
         h.state_mut().preview_result_for_test(Row {input:PathBuf::from("Synthetic assembly.f3z"),output:Some(PathBuf::from("converted/assembly.sc")),status:Status::Converted,progress:None,job:None,size:None,
             report:Some(serde_json::json!({"ok":true,"mode":"partial_history","verification":{"status":"partial"},
-                "history":{"rebuilt":160,"needing":240,"parts":(1..=80).map(|n|serde_json::json!({"name":format!("Part {n}"),"status":"unverified","rebuilt":2,"needing":3,"reason":"Chamfer: blends on closed edges aren't supported yet"})).collect::<Vec<_>>()},
+                "history":{"rebuilt":160,"needing":240,"parts":(1..=80).map(|n|serde_json::json!({"name":format!("Part {n}"),"status":"unverified","rebuilt":2,"needing":3,"reason":"feature \"Chamfer 2\": blends on closed edges aren't supported yet"})).collect::<Vec<_>>()},
                 "losses":[{"level":"Degraded","code":"history/profile-region-inferred","message":"A sketch region could not be checked"}]}))});
         h.run_steps(12);
+        assert_report_panel(&h, size);
         std::fs::create_dir_all(&dir).unwrap();
         h.render()
             .unwrap()
@@ -325,9 +328,9 @@ fn real_preview_evidence() {
                 "1600-day",
             ),
             (
-                egui::vec2(1600.0, 1000.0),
+                egui::vec2(1280.0, 800.0),
                 ThemePreference::Dark,
-                "1600-night",
+                "1280-night",
             ),
             (
                 egui::vec2(1280.0, 800.0),
@@ -361,7 +364,9 @@ fn real_preview_evidence() {
                 h.run_steps(2);
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
-            h.get_by_label(label);
+            let preview = h.get_by_label(label).rect();
+            assert!(h.get_by_label("Synthetic cube.f3d").rect().bottom() < preview.top());
+            assert_report_panel(&h, size);
             for label in ["Open in SolidCraft", "Show in folder", "Report this file…"] {
                 assert!(h.get_by_label(label).rect().bottom() < size.y - 50.0);
             }

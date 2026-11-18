@@ -2349,17 +2349,12 @@ impl App {
                         .row_logs
                         .get(&index)
                         .map(|path| (path.as_path(), log_ready));
-                    if crate::preview::show(
-                        ui,
-                        row.output
-                            .as_deref()
-                            .and_then(|output| self.previews.get(output)),
-                    ) {
-                        if let Some(output) = &row.output {
-                            action = Some(Action::Open(output.clone()));
-                        }
-                    }
-                    let chosen = row_ui(ui, &p, index, row, file, self.has_app, running, log);
+                    let images = row
+                        .output
+                        .as_deref()
+                        .and_then(|output| self.previews.get(output));
+                    let chosen =
+                        row_ui(ui, &p, index, row, file, self.has_app, running, log, images);
                     if let Some(chosen) = chosen {
                         action = Some(chosen);
                     }
@@ -2781,6 +2776,7 @@ fn row_ui(
     has_app: bool,
     running: bool,
     log: Option<(&Path, bool)>,
+    images: Option<&crate::preview::Images>,
 ) -> Option<Action> {
     let mut action = None;
     // A partial history is not a full success: it is never shown in the success colour.
@@ -2822,6 +2818,11 @@ fn row_ui(
         ui.add(egui::Label::new(RichText::new(&view.name).heading()).wrap())
             .on_hover_text(display(&row.input));
     });
+    if crate::preview::show(ui, images) {
+        if let Some(output) = output {
+            action = Some(Action::Open(output.clone()));
+        }
+    }
     let step_button = !running && row.report.is_some();
     if output.is_some() || step_button {
         // One row of buttons under it.
@@ -4039,7 +4040,7 @@ mod tests {
                 let p = *theme::palette(ui);
                 for (index, row) in rows.iter().enumerate() {
                     card(ui, &p, |ui| {
-                        row_ui(ui, &p, index, row, &row.view(), true, false, None);
+                        row_ui(ui, &p, index, row, &row.view(), true, false, None, None);
                     });
                     ui.add_space(theme::SPACE_2);
                 }
@@ -4177,7 +4178,7 @@ mod tests {
                 .build_ui(|ui| {
                     theme::install(ui.ctx());
                     let p = *theme::palette(ui);
-                    row_ui(ui, &p, 0, &row, &row.view(), true, false, None);
+                    row_ui(ui, &p, 0, &row, &row.view(), true, false, None, None);
                 });
             harness.run_steps(2);
             assert!(harness.query_by_label(&event.running_line()).is_some());

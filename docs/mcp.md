@@ -918,3 +918,8 @@ Dutchman team sees it. It's never published or used in public tests, and we dele
 The desktop DM Dutchy card always says "Paste the message, then drag the file in." and
 "Big files: Dutchy replies with an upload link." on two lines. File size still determines
 whether its folder opens; upload limits stay in the copied message or Dutchy’s reply.
+
+Desktop result cards hide zero loss counts and show **History off** when history was disabled.
+Assembly rows show rebuilt fractions and stopping reasons, ordered with incomplete parts first;
+**Source order** restores report order. Loss titles name the affected data; **Details**
+retains raw codes and messages. These presentation changes add no CLI, MCP or JSON fields.
