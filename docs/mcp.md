@@ -948,7 +948,10 @@ the tool's call budget. See [Onshape](onshape.md#fetching-a-document) for cache 
 Offline Onshape bundles can contain sketches alone without a STEP export. Resolved
 extrusion-cap sketches, tangent chains, counterbore/countersink hole locations, sketch
 construction-line revolve axes, midpoint relations, assigned variables and symmetric
-blind extrudes use the shared converter. Up-to-next ends resolve to the single planar
+blind extrudes use the shared converter. Variables become SolidCraft parameters that keep
+sketch dimensions, extrude depths and revolve angles driven; other values using them are
+written evaluated with `onshape/history.variable-evaluated`. Suppressed features do not
+produce variable-loss reports. Up-to-next ends resolve to the single planar
 input face reached by the whole profile; up-to-face ends retain their selected face.
 Extruding to or from a planar face at a slant to the sketch needs SolidCraft 0.44 or
 newer as the target; older targets retain a named loss and the final geometry.

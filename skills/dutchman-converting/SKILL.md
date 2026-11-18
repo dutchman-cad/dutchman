@@ -37,8 +37,11 @@ SolidCraft 0.44 or newer as the target. Older targets keep a named loss and the
 final geometry. Symmetric non-blind bounds remain named losses.
 Fillets and chamfers blend exactly the edges Onshape blended, which needs a SolidCraft 0.40 or newer target; an older target names
 that version in the loss. Variable expressions use earlier
-variables and bounded arithmetic with compatible units; FeatureScript evaluation and
-opaque external origin references still produce named losses.
+variables and bounded arithmetic with compatible units, and become SolidCraft parameters
+that keep sketch dimensions, extrude depths and revolve angles driven; other values using
+variables are written evaluated (`onshape/history.variable-evaluated`). Suppressed features
+do not produce variable-loss reports. FeatureScript evaluation and opaque external origin
+references still produce named losses.
 If a bundle is marked `consistent: false`, explain that its snapshots differ and
 ask the owner to fetch again or use a version link. Older v1 bundles without this
 metadata are still supported; do not require a fetch solely because it is absent.

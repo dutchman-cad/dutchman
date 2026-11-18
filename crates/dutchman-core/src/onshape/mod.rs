@@ -408,7 +408,17 @@ pub(super) fn read(
             )
         };
         let definition = match mapped {
-            Ok(definition) => definition,
+            Ok(definition) => {
+                if !suppressed
+                    && !matches!(
+                        feature.get("featureType").and_then(Value::as_str),
+                        Some("newSketch" | "assignVariable")
+                    )
+                {
+                    features::report_evaluated_variables(feature, &model.ir.model, report);
+                }
+                definition
+            }
             Err(reason) => {
                 model.ir.model.sketches.truncate(sizes.0);
                 model.ir.model.sketch_entities.truncate(sizes.1);

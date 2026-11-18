@@ -412,6 +412,83 @@ fn operation(feature: &Value) -> Mapping<&'static str> {
     }
 }
 
+/// A feature value written with Part Studio variables becomes a parameter the feature owns,
+/// so the writer can keep it driven (`source_kind` names which value it sets).
+fn owned_variable(
+    feature: &Value,
+    ordinal: usize,
+    key: &str,
+    source_kind: &str,
+    dimension: super::expression::Dimension,
+    model: &mut Model,
+) -> Mapping<()> {
+    let source = parameter(feature, key)?;
+    let Some(expression) = source
+        .get("expression")
+        .and_then(Value::as_str)
+        .filter(|e| e.contains('#'))
+    else {
+        return Ok(());
+    };
+    let evaluated = super::expression::evaluate(expression, dimension, model)?;
+    let native = text(feature, "featureId")?;
+    let kind = if dimension == super::expression::Dimension::Angle {
+        "angle"
+    } else {
+        "length"
+    };
+    push(
+        &mut model.parameters,
+        json!({"id":id("parameter",&format!("{native}/{key}")),"owner":id("feature",native),"ordinal":0,
+        "name":format!("{key}{ordinal}"),"expression":evaluated.expression,"value":{"kind":kind,"value":evaluated.value.abs()},
+        "dependencies":evaluated.dependencies,"properties":{"source_kind":source_kind}}),
+    )
+}
+
+/// Values written with Part Studio variables that no parameter keeps driven are written as
+/// their evaluated values; each one is reported so the lost link is visible.
+pub(super) fn report_evaluated_variables(feature: &Value, model: &Model, report: &mut Report) {
+    let Ok(native) = text(feature, "featureId") else {
+        return;
+    };
+    let owner = id("feature", native);
+    let name = feature
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or(native);
+    for row in rows(feature, "parameters").unwrap_or(&[]) {
+        let (Some(key), Some(true)) = (
+            row.get("parameterId").and_then(Value::as_str),
+            row.get("expression")
+                .and_then(Value::as_str)
+                .map(|e| e.contains('#')),
+        ) else {
+            continue;
+        };
+        // A depth past a non-blind bound, or an angle on a full turn, is not used at all.
+        let unused = match (key, text(feature, "featureType")) {
+            ("depth", Ok("extrude")) => value(feature, "endBound") != Some("BLIND"),
+            ("angle", Ok("revolve")) => {
+                value(feature, "revolveType") == Some("FULL") || enabled(feature, "fullRevolve")
+            }
+            _ => false,
+        };
+        let driven = unused
+            || model.parameters.iter().any(|p| {
+                p.owner.as_ref().is_some_and(|o| o.as_str() == owner)
+                    && p.id.as_str() == id("parameter", &format!("{native}/{key}"))
+            });
+        if !driven {
+            report.push_coded(
+                crate::Severity::Degraded,
+                name,
+                "onshape/history.variable-evaluated",
+                format!("{key} uses Part Studio variables; kept as its evaluated value, since driving this value from a parameter is not supported yet"),
+            );
+        }
+    }
+}
+
 pub(super) fn map(
     feature: &Value,
     ordinal: usize,
@@ -538,25 +615,19 @@ pub(super) fn map(
                 _ => return Err("this extrude bound is not supported yet".into()),
             };
             if value(feature, "endBound") == Some("BLIND") {
-                let source = parameter(feature, "depth")?;
-                if let Some(expression) = source
-                    .get("expression")
-                    .and_then(Value::as_str)
-                    .filter(|e| e.contains('#'))
-                {
-                    let evaluated = super::expression::evaluate(
-                        expression,
-                        super::expression::Dimension::Length,
-                        model,
-                    )?;
-                    let native = text(feature, "featureId")?;
-                    push(
-                        &mut model.parameters,
-                        json!({"id":id("parameter",&format!("{native}/depth")),"owner":id("feature",native),"ordinal":0,
-                        "name":format!("depth{ordinal}"),"expression":evaluated.expression,"value":{"kind":"length","value":evaluated.value},
-                        "dependencies":evaluated.dependencies,"properties":{"source_kind":"AlongDistance"}}),
-                    )?;
-                }
+                // Onshape's symmetric depth is the total distance across both sides.
+                owned_variable(
+                    feature,
+                    ordinal,
+                    "depth",
+                    if enabled(feature, "symmetric") {
+                        "TotalDistance"
+                    } else {
+                        "AlongDistance"
+                    },
+                    super::expression::Dimension::Length,
+                    model,
+                )?;
             }
             let direction = if enabled(feature, "oppositeDirection") {
                 json!({"kind": "reversed_profile_normal"})
@@ -601,6 +672,16 @@ pub(super) fn map(
                 }
                 _ => return Err("this revolve extent is not supported yet".into()),
             };
+            if angle < std::f64::consts::TAU {
+                owned_variable(
+                    feature,
+                    ordinal,
+                    "angle",
+                    "AlongAngle",
+                    super::expression::Dimension::Angle,
+                    model,
+                )?;
+            }
             let angle = if enabled(feature, "oppositeDirection") {
                 -angle
             } else {

@@ -91,12 +91,18 @@ pub(crate) fn map(
         let first = ["/extent/side", "/extent/first"]
             .iter()
             .find_map(|path| number(definition.pointer(path)?.pointer("/termination/length")));
+        // A symmetric extent holds its total distance, so only a parameter the source states
+        // as the total (`TotalDistance`) drives it; a per-side distance would halve it.
+        let symmetric = extent.get("direction").and_then(Value::as_str) == Some("symmetric");
+        let kind = if symmetric {
+            "TotalDistance"
+        } else {
+            "AlongDistance"
+        };
         if let Some(expression) =
-            first.and_then(|length| ctx.owned_parameter(feature, "AlongDistance", length))
+            first.and_then(|length| ctx.owned_parameter(feature, kind, length))
         {
-            if extent.get("direction").and_then(Value::as_str) != Some("symmetric") {
-                extent.insert("distance".to_owned(), json!(expression));
-            }
+            extent.insert("distance".to_owned(), json!(expression));
         }
     }
     let mut start_height = 0.0;

@@ -25,7 +25,8 @@ Local Onshape bundles (`.onshape-bundle`) convert through the same command:
 one Part Studio, including sketch-only bundles without STEP. Supported history includes
 resolved extrusion-cap sketches, tangent chains, construction-line revolve axes,
 counterbore/countersink holes, midpoint relations, assigned variables and symmetric
-blind extrudes. Up-to-next extrudes use the single planar input face reached by the
+blind extrudes. Variables become SolidCraft parameters that keep sketch dimensions,
+extrude depths and revolve angles driven. Up-to-next extrudes use the single planar input face reached by the
 whole profile; up-to-face extrudes retain their selected planar input face. A face
 at a slant to the sketch needs SolidCraft 0.44 or newer as the target. Older targets
 retain a named loss and the final geometry. Unresolved selections and unsupported

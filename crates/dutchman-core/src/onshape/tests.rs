@@ -767,9 +767,14 @@ fn variables_keep_dependencies_and_drive_a_symmetric_extrusion() {
         .unwrap()
         .iter()
         .find(|p| {
-            p.pointer("/properties/source_kind").and_then(Value::as_str) == Some("AlongDistance")
+            p.pointer("/properties/source_kind").and_then(Value::as_str) == Some("TotalDistance")
         })
         .unwrap();
+    assert_eq!(owned["value"]["value"], 8.0);
+    assert!(!report
+        .losses()
+        .iter()
+        .any(|l| l.code.as_deref() == Some("onshape/history.variable-evaluated")));
     assert_eq!(
         owned["dependencies"],
         json!([id("parameter", "spacing-variable")])
@@ -1200,4 +1205,179 @@ fn a_dropped_constraint_names_its_kind_even_when_an_operand_is_missing() {
             .detail
             .starts_with("HORIZONTAL sketch constraint is not supported yet:")
         && loss.detail.contains("kept the solved sketch geometry")));
+}
+
+/// `fixture` with `variables` placed before its features. Every later feature moves down by
+/// as many rollback positions, so the body details captured at those rollbacks move with it.
+fn with_variables(
+    fixture: &[u8],
+    variables: Vec<Value>,
+    mut edit: impl FnMut(&mut Value),
+) -> Vec<u8> {
+    let shift = variables.len() as u64;
+    let mut archive = zip::ZipArchive::new(Cursor::new(fixture)).unwrap();
+    let mut output = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for i in 0..archive.len() {
+        let mut member = archive.by_index(i).unwrap();
+        let mut name = member.name().unwrap().into_owned();
+        let mut bytes = Vec::new();
+        member.read_to_end(&mut bytes).unwrap();
+        if name.ends_with("features.json") {
+            let mut response: Value = serde_json::from_slice(&bytes).unwrap();
+            edit(&mut response);
+            let rows = response["features"].as_array_mut().unwrap();
+            for (at, row) in variables.iter().enumerate() {
+                rows.insert(at, row.clone());
+            }
+            bytes = serde_json::to_vec(&response).unwrap();
+        } else if name.ends_with("bodydetails/index.json") {
+            let indices: Vec<u64> = serde_json::from_slice(&bytes).unwrap();
+            let moved: Vec<u64> = indices.iter().map(|i| i + shift).collect();
+            bytes = serde_json::to_vec(&moved).unwrap();
+        } else if let Some((folder, file)) = name.rsplit_once("bodydetails/") {
+            let index: u64 = file.strip_suffix(".json").unwrap().parse().unwrap();
+            name = format!("{folder}bodydetails/{}.json", index + shift);
+        }
+        output
+            .start_file(name.as_str(), zip::write::SimpleFileOptions::default())
+            .unwrap();
+        output.write_all(&bytes).unwrap();
+    }
+    output.finish().unwrap().into_inner()
+}
+
+fn variable(feature: &str, name: &str, kind: &str, key: &str, expression: &str) -> Value {
+    json!({"featureId":feature,"featureType":"assignVariable","parameters":[
+        {"parameterId":"mode","value":"ASSIGNED"},{"parameterId":"variableType","value":kind},
+        {"parameterId":"name","value":name},{"parameterId":key,"expression":expression}]})
+}
+
+#[test]
+fn a_variable_revolve_angle_becomes_a_parameter_the_revolve_owns() {
+    let bytes = with_variables(
+        include_bytes!("../../tests/fixtures/onshape-revolve.onshape-bundle"),
+        vec![variable(
+            "turn-variable",
+            "turn",
+            "ANGLE",
+            "angleValue",
+            "180 deg",
+        )],
+        |response| {
+            let parameters = response["features"][1]["parameters"]
+                .as_array_mut()
+                .unwrap();
+            for p in parameters.iter_mut() {
+                if p["parameterId"] == "revolveType" {
+                    p["value"] = json!("ONE_DIRECTION");
+                }
+            }
+            parameters.push(json!({"parameterId":"angle","expression":"#turn / 2"}));
+        },
+    );
+    let (wire, report) = read(&bytes);
+    assert_eq!(
+        kinds(&wire),
+        ["tree_node", "sketch", "revolve"],
+        "{:?}",
+        report.losses()
+    );
+    let owned = wire["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| {
+            p.pointer("/properties/source_kind").and_then(Value::as_str) == Some("AlongAngle")
+        })
+        .unwrap();
+    assert!(
+        (owned["value"]["value"].as_f64().unwrap() - std::f64::consts::FRAC_PI_2).abs() < 1e-12
+    );
+    assert_eq!(owned["expression"], "(turn / 2)");
+    assert_eq!(
+        owned["dependencies"],
+        json!([id("parameter", "turn-variable")])
+    );
+}
+
+#[test]
+fn suppressed_features_and_variables_do_not_report_variable_loss() {
+    for suppression in ["suppressed", "parentSuppressed"] {
+        for suppress_variable in [false, true] {
+            let mut round = variable("round-variable", "round", "LENGTH", "lengthValue", "1 mm");
+            round[suppression] = json!(suppress_variable);
+            let bytes = with_variables(
+                include_bytes!("../../tests/fixtures/onshape-plate-fillet.onshape-bundle"),
+                vec![round],
+                |response| {
+                    let fillet = &mut response["features"][2];
+                    fillet[suppression] = json!(true);
+                    for p in fillet["parameters"].as_array_mut().unwrap() {
+                        if p["parameterId"] == "radius" {
+                            p["expression"] = json!("#round");
+                        }
+                    }
+                },
+            );
+            let (wire, report) = read(&bytes);
+            assert_eq!(wire["features"][0]["suppressed"], suppress_variable);
+            assert_eq!(wire["features"][3]["suppressed"], true);
+            assert_eq!(
+                wire["parameters"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|p| { p["id"] == id("parameter", "round-variable") }),
+                !suppress_variable
+            );
+            assert!(
+                !report.losses().iter().any(|loss| loss
+                    .code
+                    .as_deref()
+                    .is_some_and(|code| code.starts_with("onshape/history."))),
+                "{suppression}, suppress_variable={suppress_variable}: {:?}",
+                report.losses()
+            );
+        }
+    }
+}
+
+#[test]
+fn a_variable_value_no_parameter_drives_is_a_named_loss() {
+    let bytes = with_variables(
+        include_bytes!("../../tests/fixtures/onshape-plate-fillet.onshape-bundle"),
+        vec![variable(
+            "round-variable",
+            "round",
+            "LENGTH",
+            "lengthValue",
+            "1 mm",
+        )],
+        |response| {
+            for p in response["features"][2]["parameters"]
+                .as_array_mut()
+                .unwrap()
+            {
+                if p["parameterId"] == "radius" {
+                    p["expression"] = json!("#round");
+                }
+            }
+        },
+    );
+    let (wire, report) = read(&bytes);
+    assert_eq!(
+        kinds(&wire),
+        ["tree_node", "sketch", "extrude", "fillet"],
+        "{:?}",
+        report.losses()
+    );
+    let losses: Vec<_> = report
+        .losses()
+        .iter()
+        .filter(|l| l.code.as_deref() == Some("onshape/history.variable-evaluated"))
+        .collect();
+    assert_eq!(losses.len(), 1, "{:?}", report.losses());
+    assert!(losses[0]
+        .detail
+        .starts_with("radius uses Part Studio variables"));
 }

@@ -1,7 +1,7 @@
 //! Onshape uses the same history writer and source-geometry verifier as native files.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -16,6 +16,74 @@ fn model(name: &str) -> (Model, Report) {
     ));
     let mut report = Report::default();
     let model = dutchman_core::read(Format::OnshapeBundle, &path, &mut report).unwrap();
+    (model, report)
+}
+
+/// The plate fixture with its sketch length and extrude depth written as Part Studio
+/// variables (`#span`, and `#thick` defined from it), evaluating to the fixture's own values.
+fn variable_model() -> (Model, Report) {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../dutchman-core/tests/fixtures/onshape-plate-fillet.onshape-bundle");
+    let source = std::fs::read(path).unwrap();
+    let mut archive = zip::ZipArchive::new(Cursor::new(source)).unwrap();
+    let mut output = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for i in 0..archive.len() {
+        let mut member = archive.by_index(i).unwrap();
+        let mut name = member.name().unwrap().into_owned();
+        let mut bytes = Vec::new();
+        member.read_to_end(&mut bytes).unwrap();
+        // The two variables move every feature, and the body details captured at its
+        // rollback position, two places down.
+        if name.ends_with("bodydetails/index.json") {
+            let indices: Vec<u64> = serde_json::from_slice(&bytes).unwrap();
+            let moved: Vec<u64> = indices.iter().map(|i| i + 2).collect();
+            bytes = serde_json::to_vec(&moved).unwrap();
+        } else if let Some((folder, file)) = name.clone().rsplit_once("bodydetails/") {
+            let index: u64 = file.strip_suffix(".json").unwrap().parse().unwrap();
+            name = format!("{folder}bodydetails/{}.json", index + 2);
+        }
+        if name.ends_with("features.json") {
+            let mut response: Value = serde_json::from_slice(&bytes).unwrap();
+            let features = response["features"].as_array_mut().unwrap();
+            for row in features[0]["constraints"].as_array_mut().unwrap() {
+                for p in row["parameters"].as_array_mut().unwrap() {
+                    if p["parameterId"] == "length" {
+                        p["expression"] = json!("#span");
+                    }
+                }
+            }
+            for p in features[1]["parameters"].as_array_mut().unwrap() {
+                if p["parameterId"] == "depth" {
+                    p["expression"] = json!("#thick");
+                }
+            }
+            for (at, (feature, name, expression)) in [
+                ("span-variable", "span", "20 mm"),
+                ("thick-variable", "thick", "#span / 10"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                features.insert(at, json!({"featureId": feature, "featureType": "assignVariable", "name": format!("Variable {name}"),
+                    "parameters": [{"parameterId": "mode", "value": "ASSIGNED"}, {"parameterId": "variableType", "value": "LENGTH"},
+                    {"parameterId": "name", "value": name}, {"parameterId": "lengthValue", "expression": expression}]}));
+            }
+            bytes = serde_json::to_vec(&response).unwrap();
+        }
+        output
+            .start_file(name.as_str(), zip::write::SimpleFileOptions::default())
+            .unwrap();
+        output.write_all(&bytes).unwrap();
+    }
+    let bytes = output.finish().unwrap().into_inner();
+    let mut report = Report::default();
+    let model = dutchman_core::read_bytes(
+        Format::OnshapeBundle,
+        Path::new("variables.onshape-bundle"),
+        &bytes,
+        &mut report,
+    )
+    .unwrap();
     (model, report)
 }
 
@@ -246,8 +314,12 @@ fn real_solidcraft_replays_the_synthetic_bodies_against_the_step_exports() {
         eprintln!("Set SOLIDCRAFT_CLI to replay Onshape fixture histories");
         return;
     };
-    for name in ["plate-fillet", "revolve", "hole", "hole-forms"] {
-        let (model, mut report) = model(name);
+    for name in ["plate-fillet", "revolve", "hole", "hole-forms", "variables"] {
+        let (model, mut report) = if name == "variables" {
+            variable_model()
+        } else {
+            model(name)
+        };
         let writer = SolidCraftWriter::new().verification(Verification::With(cli.clone()));
         writer.write(&model, &mut Vec::new(), &mut report).unwrap();
         assert_eq!(
@@ -333,4 +405,63 @@ fn sketch_only_designs_are_checked_by_a_clean_replay_without_bodies() {
             _ => assert!(matches!(check, Check::Differs(_)), "{check:?}"),
         }
     }
+}
+
+#[test]
+fn part_studio_variables_drive_the_sketch_dimension_and_extrude_depth() {
+    let (model, mut report) = variable_model();
+    let host = Arc::new(Measurements {
+        step: model.source_step.clone().unwrap(),
+        calls: Mutex::default(),
+        mismatch: "",
+    });
+    let writer = SolidCraftWriter::new()
+        .evaluator(host)
+        .target_version(Some(SolidCraftVersion::default()));
+    let mut output = Vec::new();
+    writer.write(&model, &mut output, &mut report).unwrap();
+    let outcome = report.outcome().unwrap();
+    assert!(
+        outcome
+            .features
+            .iter()
+            .all(|f| matches!(f.status, FeatureStatus::Mapped | FeatureStatus::NotNeeded)),
+        "{:?}",
+        report.losses()
+    );
+    assert_eq!(outcome.check, Check::Verified, "{:?}", report.losses());
+    let doc = document(&output);
+    let params = doc["params"].as_array().unwrap();
+    let expr = |name: &str| {
+        params
+            .iter()
+            .find(|p| p["name"] == name)
+            .unwrap_or_else(|| panic!("no parameter {name}: {params:?}"))["expr"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert_eq!(expr("span"), "20 mm");
+    assert_eq!(expr("thick"), "(span / 10)");
+    // The extrude distance and the sketch length name parameters that read the variables.
+    let features = doc["features"].as_array().unwrap();
+    let extrude = features.iter().find(|f| f["type"] == "extrude").unwrap();
+    fn find<'a>(v: &'a Value, key: &str) -> Option<&'a Value> {
+        match v {
+            Value::Object(o) => o.get(key).or_else(|| o.values().find_map(|v| find(v, key))),
+            Value::Array(a) => a.iter().find_map(|v| find(v, key)),
+            _ => None,
+        }
+    }
+    let depth = find(extrude, "distance").and_then(Value::as_str).unwrap();
+    assert_eq!(expr(depth), "thick");
+    let sketch = features.iter().find(|f| f["type"] == "sketch").unwrap();
+    let driven: Vec<_> = sketch["sketch"]["constraints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c["param"].as_str())
+        .map(expr)
+        .collect();
+    assert_eq!(driven, ["span"]);
 }

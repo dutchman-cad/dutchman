@@ -1370,4 +1370,8 @@ reference to compare: with a SolidCraft CLI their `verification.status` is `veri
 sketch replays without an error and no body is built, and `differs` otherwise (`reason` says
 why); without one it is `not_applicable`. Unresolved tangent chains and unsupported variable expressions
 use `onshape/history.not-supported`; unresolved external origin references use
-`onshape/sketch.constraint-not-supported`. Report fields and schema versions are unchanged.
+`onshape/sketch.constraint-not-supported`. A feature value written with variables that
+no SolidCraft parameter can keep driven (for example a fillet radius or hole size) is
+written as its evaluated value with a Degraded `onshape/history.variable-evaluated`
+loss at stage `map` naming the value. Suppressed features, including parent-suppressed
+features, do not produce these losses. Report fields and schema versions are unchanged.
