@@ -730,6 +730,11 @@ mod tests {
             "1.5e-3 m",
             "pi * 2",
             "min(1, 2, 3)",
+            "0.0 °",
+            "30°",
+            "d1 * 2 °",
+            "d1 °",
+            "(width + 5)°",
         ] {
             assert!(readable(ok, &known), "{ok}");
         }
@@ -752,6 +757,8 @@ mod tests {
             "sqrt(1, 2)",
             "pow(2)",
             "1 mm 2 mm",
+            "°",
+            "30 ° 2",
         ] {
             assert!(!readable(bad, &known), "{bad}");
         }
@@ -860,6 +867,30 @@ mod map_tests {
             ]
         );
         assert_eq!(report.losses().len(), 2, "{:?}", report.losses());
+    }
+
+    #[test]
+    fn degree_signs_keep_their_expressions() {
+        let angle = |deg: f64| json!({"kind": "angle", "value": deg.to_radians()});
+        let parameters = json!([
+            parameter(1, "d1", "15", json!({"kind": "real", "value": 15.0}), false),
+            parameter(2, "a0", "0.0 °", angle(0.0), false),
+            parameter(3, "a30", "30°", angle(30.0), false),
+            depending(parameter(4, "a2", "d1 * 2 °", angle(30.0), false), &[1]),
+        ]);
+        let model = with(cube(), json!([]), parameters);
+        let mut report = Report::default();
+        let (params, _) = map(&model, &mut report);
+        assert_eq!(
+            params,
+            [
+                json!({"name": "d1", "expr": "15", "unit": "", "model": false}),
+                json!({"name": "a0", "expr": "0.0 °", "unit": "deg", "model": false}),
+                json!({"name": "a30", "expr": "30°", "unit": "deg", "model": false}),
+                json!({"name": "a2", "expr": "d1 * 2 °", "unit": "deg", "model": false}),
+            ]
+        );
+        assert!(report.losses().is_empty(), "{:?}", report.losses());
     }
 
     fn depending(row: Value, on: &[u32]) -> Value {
