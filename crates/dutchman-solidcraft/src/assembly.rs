@@ -79,7 +79,7 @@ fn unwritten_appearances(part: &Model, report: &mut Report) {
         let cause = match part.unplaced_appearance_cause(binding) {
             dutchman_core::AppearanceLoss::Other
                 if matches!(
-                    binding.target,
+                    binding.target.entity,
                     cadmpeg_ir::appearance::AppearanceTarget::Body(_)
                         | cadmpeg_ir::appearance::AppearanceTarget::Face(_)
                 ) =>

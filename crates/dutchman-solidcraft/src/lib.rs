@@ -336,6 +336,7 @@ impl SolidCraftWriter {
     /// What writing `model` would do, without restating its geometry, writing anything or
     /// replaying geometry in SolidCraft: the history's mapping, as `dutchman inspect` shows it.
     pub fn plan(&self, model: &Model, report: &mut Report) -> Outcome {
+        document::report_scoped_attributes(model, report);
         if let Some(flat) = flattened_assembly(model) {
             report.push(Severity::Degraded, GEOMETRY, FLATTENED_ASSEMBLY);
             return self.plan(&flat, report);
@@ -1239,6 +1240,7 @@ impl Writer for SolidCraftWriter {
         report: &mut Report,
         progress: Option<&dutchman_core::Progress<'_>>,
     ) -> Result<(), Error> {
+        document::report_scoped_attributes(model, report);
         let _preparing = progress
             .filter(|_| model.assembly.is_none())
             .map(|p| p.stage_step(dutchman_core::StepKind::Preparing, Some(&model.name)));

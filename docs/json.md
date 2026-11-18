@@ -1351,6 +1351,12 @@ contain no binding or target ids or names. See [the anonymous report](report-ano
 Ordinary conversion losses keep `subject`, `message`, `stage` and `upstream` as before;
 Dutchman's appearance codes have `stage: "map"` and `upstream: null`.
 
+Appearance bindings scoped to one placed instance or an evaluation state use
+`dutchman/appearance.other`; their message names the unsupported scope. Scoped
+source attributes are dropped with subject `attributes` and a message naming
+that scope. Neither assignment is applied to the shared component definition.
+No report fields or schema versions change.
+
 ## Onshape fetch (`dutchman.onshape-fetch/1`)
 
 CLI `onshape fetch --json` and MCP `onshape_fetch` share this report builder.

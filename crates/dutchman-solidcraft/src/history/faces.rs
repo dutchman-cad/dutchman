@@ -140,6 +140,18 @@ fn flat_face(face_normal: V3, normal: V3, slanted: bool) -> Result<bool, String>
     Ok(true)
 }
 
+/// The writer stores looks on shared component geometry, with no occurrence override.
+fn scoped_appearance_reason(binding: &Value) -> Option<&'static str> {
+    let target = binding.get("target")?;
+    if target.get("state").is_some_and(|value| !value.is_null()) {
+        Some("appearance bindings for an evaluation state are not supported yet")
+    } else if target.get("path").is_some_and(|value| !value.is_null()) {
+        Some("appearance bindings for one placed instance are not supported yet")
+    } else {
+        None
+    }
+}
+
 /// Body and face bindings override inline colours. Uniform, fully painted bodies need only
 /// one body look; mixed bodies retain point-selected face looks in definition coordinates.
 pub(crate) fn looks(ctx: &mut Context, report: &mut dutchman_core::Report) -> Vec<Value> {
@@ -147,7 +159,23 @@ pub(crate) fn looks(ctx: &mut Context, report: &mut dutchman_core::Report) -> Ve
 
     let mut bound: BTreeMap<&str, Vec<&Value>> = BTreeMap::new();
     for binding in ctx.arena("appearance_bindings") {
-        if let Some(id) = binding.pointer("/target/value").and_then(Value::as_str) {
+        if let Some(reason) = scoped_appearance_reason(binding) {
+            report.push_appearance(
+                AppearanceLoss::Other,
+                format!(
+                    "Appearance binding {} is left out: {reason}",
+                    binding
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unnamed")
+                ),
+            );
+            continue;
+        }
+        if let Some(id) = binding
+            .pointer("/target/entity/value")
+            .and_then(Value::as_str)
+        {
             bound.entry(id).or_default().push(binding);
         }
     }
@@ -249,10 +277,15 @@ pub(crate) fn looks(ctx: &mut Context, report: &mut dutchman_core::Report) -> Ve
         }
     }
     for binding in ctx.arena("appearance_bindings") {
-        let target = binding.pointer("/target/value").and_then(Value::as_str);
+        if scoped_appearance_reason(binding).is_some() {
+            continue;
+        }
+        let target = binding
+            .pointer("/target/entity/value")
+            .and_then(Value::as_str);
         if !target.is_some_and(|id| applied.contains(id)) {
             let kind = binding
-                .pointer("/target/kind")
+                .pointer("/target/entity/kind")
                 .and_then(Value::as_str)
                 .unwrap_or("unknown");
             let appearance = binding
@@ -726,6 +759,64 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
     use super::*;
+
+    use std::collections::BTreeMap;
+
+    fn binding_looks(
+        scope: Option<(&str, Value)>,
+    ) -> (BTreeMap<String, Value>, dutchman_core::Report) {
+        let mut target = json!({"entity": {"kind": "body", "value": "body"}});
+        if let Some((key, value)) = scope {
+            target[key] = value;
+        }
+        let wire = json!({
+            "bodies": [{"id": "body", "kind": "solid"}],
+            "appearances": [{"id": "red", "base_color": {"r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0}}],
+            "appearance_bindings": [{"id": "paint", "target": target, "appearance": "red"}]
+        });
+        let mut ctx = Context::testing(&wire);
+        ctx.named_bodies.push(("body".into(), "Block".into()));
+        let mut report = dutchman_core::Report::default();
+        assert!(looks(&mut ctx, &mut report).is_empty());
+        (ctx.looks, report)
+    }
+
+    #[test]
+    fn definition_appearance_uses_the_entity_inside_its_target() {
+        let (looks, report) = binding_looks(None);
+        assert_eq!(looks["Block"]["color"], json!([255, 0, 0]));
+        assert!(report.losses().is_empty());
+    }
+
+    #[test]
+    fn occurrence_appearance_is_not_written_as_a_shared_body_look() {
+        let (looks, report) = binding_looks(Some((
+            "path",
+            json!([
+                {"occurrence": {"kind": "occurrence", "value": "test:model:occurrence#one"}}
+            ]),
+        )));
+        assert!(looks.is_empty());
+        assert_eq!(report.losses().len(), 1);
+        assert!(report.losses()[0]
+            .detail
+            .ends_with("appearance bindings for one placed instance are not supported yet"));
+    }
+
+    #[test]
+    fn state_appearance_is_not_written_as_a_current_body_look() {
+        let (looks, report) = binding_looks(Some((
+            "state",
+            json!({
+                "of": {"kind": "tool", "value": "test:design:feature#earlier"}
+            }),
+        )));
+        assert!(looks.is_empty());
+        assert_eq!(report.losses().len(), 1);
+        assert!(report.losses()[0]
+            .detail
+            .ends_with("appearance bindings for an evaluation state are not supported yet"));
+    }
 
     /// A model whose feature `f` has an input topology holding one rectangular face
     /// `x0..x1` by `y0..y1` on the plane `z`, given only by its sampled boundary.

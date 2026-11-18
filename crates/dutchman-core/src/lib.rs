@@ -72,7 +72,10 @@ impl Model {
         binding: &cadmpeg_ir::appearance::AppearanceBinding,
     ) -> AppearanceLoss {
         use cadmpeg_ir::appearance::AppearanceTarget;
-        match &binding.target {
+        if binding.target.path.is_some() || binding.target.state.is_some() {
+            return AppearanceLoss::Other;
+        }
+        match &binding.target.entity {
             AppearanceTarget::Body(id) => {
                 match self.ir.geometry.bodies.iter().find(|b| b.id == *id) {
                     None => AppearanceLoss::TargetAbsent,
@@ -106,7 +109,17 @@ impl Model {
         binding: &cadmpeg_ir::appearance::AppearanceBinding,
     ) -> String {
         use cadmpeg_ir::appearance::AppearanceTarget;
-        let (kind, id, exists) = match &binding.target {
+        let scope = if binding.target.state.is_some() {
+            Some("appearance bindings for an evaluation state are not supported yet")
+        } else if binding.target.path.is_some() {
+            Some("appearance bindings for one placed instance are not supported yet")
+        } else {
+            None
+        };
+        if let Some(reason) = scope {
+            return format!("Appearance binding {} is left out: {reason}", binding.id);
+        }
+        let (kind, id, exists) = match &binding.target.entity {
             AppearanceTarget::Body(id) => (
                 "body",
                 id.as_str(),

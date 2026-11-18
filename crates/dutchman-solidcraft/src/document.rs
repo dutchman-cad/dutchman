@@ -344,6 +344,32 @@ pub(crate) fn import_feature(
     feature
 }
 
+/// Attributes have no per-occurrence or evaluation-state destination in the writer.
+pub(crate) fn report_scoped_attributes(model: &Model, report: &mut Report) {
+    for attribute in &model.ir.model.attributes {
+        let reason = if attribute.target.state.is_some() {
+            "attributes for an evaluation state are not supported yet"
+        } else if attribute.target.path.is_some() {
+            "attributes for one placed instance are not supported yet"
+        } else {
+            continue;
+        };
+        let detail = format!("Attribute {} is left out: {reason}", attribute.id);
+        if !report
+            .losses()
+            .iter()
+            .any(|loss| loss.subject == "attributes" && loss.detail == detail)
+        {
+            report.push(Severity::Dropped, "attributes", detail);
+        }
+    }
+    if let Some(assembly) = &model.assembly {
+        for part in &assembly.parts {
+            report_scoped_attributes(part, report);
+        }
+    }
+}
+
 /// Records what an import design does not carry over from the model.
 pub(crate) fn report_unmapped(model: &Model, references: Option<&History>, report: &mut Report) {
     let m = &model.ir.model;
@@ -419,7 +445,70 @@ fn source_file(model: &Model) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+
     use super::*;
+
+    fn attribute_report(scope: Option<(&str, Value)>) -> Report {
+        let mut target = json!({"entity": {"kind": "document"}});
+        if let Some((key, value)) = scope {
+            target[key] = value;
+        }
+        let mut ir = cadmpeg_ir::CadIr::empty();
+        ir.model.attributes.push(
+            serde_json::from_value(json!({
+                "id": "synthetic:test:attribute#number", "target": target,
+                "name": "Part number", "values": [{"kind": "string", "value": "A"}]
+            }))
+            .unwrap(),
+        );
+        let model = Model {
+            ir,
+            fidelity: None,
+            name: "Synthetic".into(),
+            source_file: None,
+            assembly: None,
+            source_step: None,
+        };
+        let mut report = Report::default();
+        report_scoped_attributes(&model, &mut report);
+        report_scoped_attributes(&model, &mut report);
+        report
+    }
+
+    #[test]
+    fn definition_attributes_keep_the_existing_report_behavior() {
+        assert!(attribute_report(None).losses().is_empty());
+    }
+
+    #[test]
+    fn occurrence_attributes_are_left_out_with_one_loss() {
+        let report = attribute_report(Some((
+            "path",
+            json!([
+                {"occurrence": {"kind": "occurrence", "value": "synthetic:test:occurrence#one"}}
+            ]),
+        )));
+        assert_eq!(report.losses().len(), 1);
+        assert_eq!(report.losses()[0].severity, Severity::Dropped);
+        assert!(report.losses()[0]
+            .detail
+            .ends_with("attributes for one placed instance are not supported yet"));
+    }
+
+    #[test]
+    fn state_attributes_are_left_out_with_one_loss() {
+        let report = attribute_report(Some((
+            "state",
+            json!({
+                "of": {"kind": "tool", "value": "synthetic:test:feature#earlier"}
+            }),
+        )));
+        assert_eq!(report.losses().len(), 1);
+        assert!(report.losses()[0]
+            .detail
+            .ends_with("attributes for an evaluation state are not supported yet"));
+    }
 
     #[test]
     fn component_names_are_trimmed_and_capped() {

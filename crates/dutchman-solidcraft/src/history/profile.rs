@@ -128,9 +128,10 @@ pub(super) fn profile(profile: Option<&Value>, ctx: &Context) -> Result<(String,
     Ok((sketch.to_owned(), selection))
 }
 
-/// A whole source region may span subdivisions needed by another feature's trimmed picks.
-/// Give that explicit whole-loop consumer a copy with its unused curves construction, while
-/// the shared sketch retains every trimmed boundary. Geometry, constraints, and curve ids
+/// A whole source region may span subdivisions needed by another feature's trimmed picks:
+/// lines across it, or unused curves (a notch drawn from its edge, say) that touch or enter
+/// it. Give that explicit whole-loop consumer a copy with its unused curves construction,
+/// while the shared sketch retains every trimmed boundary. Geometry, constraints, and curve ids
 /// are copied unchanged; SolidCraft still has to match the selected boundaries uniquely.
 pub(super) fn whole_region_sketch(
     feature: &Value,
@@ -153,9 +154,11 @@ pub(super) fn whole_region_sketch(
     let entities = sketch_entities(ctx, sketch);
     let demoted = super::crossing::demoted(source, &entities, std::slice::from_ref(feature));
     let mapped = ctx.sketches.get(sketch)?;
-    let crossing_ids: BTreeSet<String> = demoted
+    let dividing = super::crossing::dividing(source, &entities, feature, &demoted.stray);
+    let splitting_ids: BTreeSet<String> = demoted
         .crossing
         .iter()
+        .chain(&dividing)
         .filter_map(|entity| mapped.curve(entity))
         .flat_map(Curve::ids)
         .collect();
@@ -174,7 +177,7 @@ pub(super) fn whole_region_sketch(
             && curve
                 .get("id")
                 .and_then(Value::as_str)
-                .is_some_and(|id| crossing_ids.contains(id))
+                .is_some_and(|id| splitting_ids.contains(id))
     }) {
         return None;
     }

@@ -327,6 +327,38 @@ mod tests {
     }
 
     #[test]
+    fn scoped_display_appearances_are_reported_before_their_meshes_are_released() {
+        for (key, value, reason) in [
+            (
+                "path",
+                json!([{"occurrence": {"kind": "occurrence", "value": "synthetic:display:occurrence#one"}}]),
+                "appearance bindings for one placed instance are not supported yet",
+            ),
+            (
+                "state",
+                json!({"of": {"kind": "tool", "value": "synthetic:display:feature#earlier"}}),
+                "appearance bindings for an evaluation state are not supported yet",
+            ),
+        ] {
+            let mut source = cube();
+            let mut target = json!({"entity": {"kind": "tessellation", "value": "synthetic:display:tessellation#triangle"}});
+            target[key] = value;
+            source.ir.model.appearance_bindings.push(
+                serde_json::from_value(json!({
+                    "id": "synthetic:display:binding#scoped", "target": target,
+                    "appearance": "synthetic:display:appearance#paint", "channels": {}
+                }))
+                .unwrap(),
+            );
+            let mut report = Report::default();
+            release_solidworks_display(&mut source, &mut report);
+            assert!(source.ir.model.appearance_bindings.is_empty());
+            assert_eq!(report.losses().len(), 1);
+            assert!(report.losses()[0].detail.ends_with(reason));
+        }
+    }
+
+    #[test]
     fn display_meshes_are_released_without_changing_exact_geometry_or_history() {
         use cadmpeg_ir::math::Point3;
         use cadmpeg_ir::tessellation::{Tessellation, TessellationMesh};
@@ -367,7 +399,7 @@ mod tests {
             ),
         ] {
             source.ir.model.appearance_bindings.push(
-                serde_json::from_value(json!({"id": format!("synthetic:display:binding#{key}"), "target": target, "appearance": "synthetic:display:appearance#paint", "channels": {}}))
+                serde_json::from_value(json!({"id": format!("synthetic:display:binding#{key}"), "target": {"entity": target}, "appearance": "synthetic:display:appearance#paint", "channels": {}}))
                 .unwrap(),
             );
         }
@@ -389,7 +421,7 @@ mod tests {
         source.ir.model.tessellations.clear();
         source.ir.model.appearance_bindings.retain(|binding| {
             matches!(
-                binding.target,
+                binding.target.entity,
                 cadmpeg_ir::appearance::AppearanceTarget::Body(_)
             )
         });

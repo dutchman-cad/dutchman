@@ -5,7 +5,7 @@ cadmpeg's most complete native reader. This page says what Dutchman makes of wha
 gives and which upstream gaps remain. Improvements land in cadmpeg and reach Dutchman when the
 pin is bumped.
 
-State at the cadmpeg commit pinned in `Cargo.toml` (`9249a19b`, after cadmpeg 0.6.12).
+State at the cadmpeg commit pinned in `Cargo.toml` (`f1338aa2`, after cadmpeg 0.6.12).
 More thread and hole forms, healed Delete Face operations, shell wall selections, loft
 sections and rails, circular pipes, and pattern placements decode for history mapping.
 More extrude profiles and face ends, fillet edge selections, body moves, and component
@@ -99,9 +99,11 @@ layout lines through hole centres without splitting the circular holes during re
 another active consumer needs the whole sketch or a different selection form, those lines
 stay solid.
 
-When a complete-loop extrusion needs a region those solid lines subdivide, it uses an
-editable profile copy of the sketch. The copy retains its points, curves, constraints, and
-parameter expressions, with unused splitters as construction geometry. Trimmed selections
+When a complete-loop extrusion needs a region that solid curves it does not use subdivide
+(those lines, or a notch drawn from the loop's edge that another feature's region keeps
+solid), it uses an editable profile copy of the sketch. The copy retains its points, curves,
+constraints, and parameter expressions, with every unused curve that touches, enters or
+crosses a selected loop as construction geometry. Trimmed selections
 continue to use the shared sketch. Each selected boundary must still match exactly one
 SolidCraft region; unavailable or ambiguous boundaries remain history blockers.
 

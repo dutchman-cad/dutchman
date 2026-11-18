@@ -143,7 +143,20 @@ impl<'a> Index<'a> {
             .into_iter()
             .flatten()
         {
-            if let Some(target) = binding.pointer("/target/value").and_then(Value::as_str) {
+            // Parts are shared by every placement of their definition. Scoped
+            // assignments cannot be copied into that shared definition.
+            if ["path", "state"].iter().any(|key| {
+                binding
+                    .get("target")
+                    .and_then(|target| target.get(key))
+                    .is_some_and(|value| !value.is_null())
+            }) {
+                continue;
+            }
+            if let Some(target) = binding
+                .pointer("/target/entity/value")
+                .and_then(Value::as_str)
+            {
                 bindings.entry(target).or_default().push(binding);
             }
         }

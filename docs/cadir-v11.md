@@ -1,7 +1,7 @@
 # CADIR v11 in Dutchman
 
 Dutchman reads the wire and Rust types at cadmpeg commit
-`ff2d6b32cfc95a40605c6d0e627ec0e45d6ff933`. The field map in cadmpeg's
+`f1338aa25aecb8bdc68aa3e95a8b3c512c6a524a`. The field map in cadmpeg's
 `docs/cadir-v11.md`, section 9.2, describes the complete design vocabulary.
 The pinned implementation also retains the `features` vocabulary in `model`;
 its native readers still emit those records. `Design` is a separate namespace
@@ -21,7 +21,7 @@ placement admission, and minimum reproductions follow these mappings:
 | a feature definition's `definition` discriminator | `definition.kind`, with its operation in `definition.value` |
 | fields on a feature operation | the operation enum's `value` |
 | fields on a solved curve or surface | `geometry.value` inside the `solved` arm |
-| appearance target `id` | target `value` |
+| appearance target `id` | `target.entity.value`; the discriminator is `target.entity.kind` |
 | prototype `scope`, external document `resolution` | `kind` |
 | joint operands `arity` | `kind`, with operands in `value` |
 | datum reference `reference`, sketch binding `space`, profile region `region`, face loops `classification`, NURBS poles `form` | `kind` |
@@ -52,7 +52,7 @@ scan both homes for identities and names. Diagnostic carrier builders wrap
 solved curves and surfaces in `{"kind":"solved","value": ...}`. Minimum
 reproduction reports read solved surface categories from that payload while
 retaining the outer `procedural` category for construction-backed surfaces.
-Appearance test targets use `value`, and shell builders leave face ownership
+Appearance test targets use `target.entity.value`, and shell builders leave face ownership
 on `Face.shell` rather than listing faces in `Shell.members`.
 Synthetic view presentations state their required `properties` map explicitly.
 Face appearance evaluation receives the complete solved surface enum; analytic
@@ -79,3 +79,56 @@ Onshape thin walls pair a typed `design.features` extrusion with the existing
 the thin thickness and side; profile, direction, extent and Boolean semantics
 must agree with the projection before the writer uses it. This narrow bridge does
 not admit design-only histories or infer absent projection operands.
+
+## Changes after the original v11 port
+
+The IR diff from `ff2d6b32` to `f1338aa` covers 29 cadmpeg commits. Appearance
+bindings and source attributes now wrap their entity in `references::InstanceTarget`:
+`{"entity": <tagged target>}`, with optional `path` and `state`. An omitted path
+and state keep the old definition-level meaning, including every placement of that
+definition. Component slicing follows `target.entity.value`; body/face appearance
+mapping reads `target.entity.kind` and `target.entity.value`. Hidden-geometry
+filtering and saved-display-mesh removal inspect the typed `target.entity`.
+
+A path selects one placed instance; a state selects an evaluation's geometry.
+Dutchman currently stores colours on shared component geometry and has no
+per-occurrence appearance or attribute override. It therefore leaves scoped
+bindings out and reports whether the unsupported scope is a placed instance or
+an evaluation state. Scoped appearances never enter the reverse binding index
+used to build shared component slices. Unscoped bindings retain their previous
+colour mapping and loss classification. Source attributes have no SolidCraft
+mapping; scoped attributes now receive a specific dropped loss during planning
+and writing, without changing unscoped attribute handling.
+
+The design root gained `sketches`, `sketch_entities`, `sketch_constraints`,
+`spatial_sketches`, `spatial_sketch_entities`, and `spatial_sketch_constraints`.
+Its feature operation enum gained `place`, `place_set`, `joint`, `rigid_group`,
+`component_pattern`, `mirror_components`, and `assembly_feature`. The process root
+now has setups, operations, machining features, groups, tools, presets, machines,
+programs, parameters, toolpaths, and states. These are separate design/process
+records, not replacements for the retained model wire read by Dutchman's history
+mapper. They are not interpreted through the model's old operation wrappers.
+
+At `f1338aa`, Fusion's `decode/design_intent.rs`, Inventor's history projection,
+SolidWorks' history projection, and FreeCAD's `design.rs` still populate
+`model.features` and model sketch arenas. No native reader in this comparison
+switched to design-only history. No design-arena history reader is added here;
+the existing design-only history refusal remains in force.
+
+The JSON-read audit of core and SolidCraft found changed appearance-target reads
+in `assembly/slicing.rs` and `history/faces.rs`, both ported above. Neither crate
+reads source-attribute targets, PMI targets, presentation-layer items, physics
+targets, or drawing/annotation `ReferenceSelection` payloads through JSON. The
+new `AttributeTarget::Configuration`, `AttributeValue::Parameter`, declared
+measure state targets, and tessellation state field therefore need no new wire
+lookup there. Model sketch reads and assembly operation recognition keep their
+retained model forms; the newly added design records are not substituted by name.
+
+DXF page membership also used the removed `ReferenceSelection::local_target()`.
+FreeCAD now emits an unresolved target with a typed `NativeName` containing the
+complete source object name. DXF follows that name only when it names exactly
+one decoded drawing object. External links, model sub-elements, other codecs,
+and scoped entity references remain unresolved and reported; no geometry is
+inferred from a source name. Drawing traversal and projection offsets otherwise
+stay unchanged. Assembly joint operands still use their separate model
+`object`/`subelements` representation; those fields are not drawing references.

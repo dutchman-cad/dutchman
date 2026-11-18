@@ -428,7 +428,11 @@ Repeated stderr notes of the same kind are grouped with a count. `--verbose`, `-
 and JSON retain each individual loss. Fusion’s material warning can also appear for a
 default material: the decoded model does not establish that no source appearance was lost.
 
-A Dropped appearance binding names its body or face target. “Its target is absent from the
+Appearance or attribute bindings for one placed instance or an evaluation state are
+left out with a specific loss: Dutchman has no per-occurrence override for them.
+Definition-level appearance bindings still colour every placement of that definition.
+
+A Dropped definition-level appearance binding names its body or face target. “Its target is absent from the
 decoded model” means no decoded geometry can receive it; “its target exists in the decoded
 model but has no placed component geometry” means the target was decoded but is not placed.
 Bindings to consumed or removed Fusion geometry have a separate explanation. “Its body has

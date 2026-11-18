@@ -2070,7 +2070,7 @@ fn bound_components(mode: &str, stored: bool) -> Model {
     ]);
     let mut bindings = Vec::new();
     if mode.starts_with("body") {
-        bindings.push(json!({"id": "synthetic:test:appearance-binding#body", "target": {"kind": "body", "value": body}, "appearance": "synthetic:test:appearance#red", "channels": {}}));
+        bindings.push(json!({"id": "synthetic:test:appearance-binding#body", "target": {"entity": {"kind": "body", "value": body}}, "appearance": "synthetic:test:appearance#red", "channels": {}}));
     }
     if mode != "body" {
         for (n, face) in wire["geometry"]["faces"]
@@ -2082,7 +2082,7 @@ fn bound_components(mode: &str, stored: bool) -> Model {
             if mode == "body_face" && n != 0 {
                 continue;
             }
-            bindings.push(json!({"id": format!("synthetic:test:appearance-binding#{n}"), "target": {"kind": "face", "value": face["id"]}, "appearance": if mode.starts_with("body_") || (mode == "mixed" && n == 0) { "synthetic:test:appearance#blue" } else { "synthetic:test:appearance#red" }, "channels": {}}));
+            bindings.push(json!({"id": format!("synthetic:test:appearance-binding#{n}"), "target": {"entity": {"kind": "face", "value": face["id"]}}, "appearance": if mode.starts_with("body_") || (mode == "mixed" && n == 0) { "synthetic:test:appearance#blue" } else { "synthetic:test:appearance#red" }, "channels": {}}));
         }
     }
     wire["model"]["appearance_bindings"] = json!(bindings);
@@ -2196,7 +2196,7 @@ fn component_appearance_bindings_colour_imports_and_stored_solids() {
 fn missing_face_appearance_bindings_are_reported() {
     let mut model = bound_components("uniform", false);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    wire["model"]["appearance_bindings"].as_array_mut().unwrap().push(json!({"id": "synthetic:test:appearance-binding#missing", "target": {"kind": "face", "value": "f3d:brep/component.smb/brep:entity#missing"}, "appearance": "synthetic:test:appearance#red", "channels": {}}));
+    wire["model"]["appearance_bindings"].as_array_mut().unwrap().push(json!({"id": "synthetic:test:appearance-binding#missing", "target": {"entity": {"kind": "face", "value": "f3d:brep/component.smb/brep:entity#missing"}}, "appearance": "synthetic:test:appearance#red", "channels": {}}));
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model.assembly = dutchman_core::local_assembly(&model).unwrap();
     let (_, report) = written(&model);
@@ -3201,7 +3201,7 @@ fn an_unwritable_sibling_keeps_the_written_bodys_appearance() {
                 .unwrap()
                 .push(json!(body));
         }
-        wire["model"]["appearance_bindings"].as_array_mut().unwrap().push(json!({"id": "synthetic:test:binding#unresolved-solid", "target": {"kind":"body","value":body}, "appearance": "synthetic:test:appearance#blue", "channels": {}}));
+        wire["model"]["appearance_bindings"].as_array_mut().unwrap().push(json!({"id": "synthetic:test:binding#unresolved-solid", "target": {"entity": {"kind":"body","value":body}}, "appearance": "synthetic:test:appearance#blue", "channels": {}}));
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         model.assembly = dutchman_core::local_assembly(&model).unwrap();
         let part = &model.assembly.as_ref().unwrap().parts[0];

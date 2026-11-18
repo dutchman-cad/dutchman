@@ -358,9 +358,23 @@ pub(crate) fn release_solidworks_display(model: &mut Model, report: &mut Report)
         }
     }
     model.ir.model.tessellations = Vec::new();
+    for binding in &model.ir.model.appearance_bindings {
+        if (binding.target.path.is_some() || binding.target.state.is_some())
+            && matches!(
+                binding.target.entity,
+                cadmpeg_ir::appearance::AppearanceTarget::Tessellation(_)
+                    | cadmpeg_ir::appearance::AppearanceTarget::TriangleGroup { .. }
+            )
+        {
+            report.push_appearance(
+                model.unplaced_appearance_cause(binding),
+                model.unplaced_appearance_binding(binding),
+            );
+        }
+    }
     model.ir.model.appearance_bindings.retain(|binding| {
         !matches!(
-            binding.target,
+            binding.target.entity,
             cadmpeg_ir::appearance::AppearanceTarget::Tessellation(_)
                 | cadmpeg_ir::appearance::AppearanceTarget::TriangleGroup { .. }
         )
@@ -3894,11 +3908,93 @@ mod tests {
     }
 
     #[test]
+    fn definition_appearance_bindings_still_reach_shared_parts() {
+        let model = component_appearance(None, None);
+        let mut report = Report::default();
+        let assembly = match local(&model, 1, crate::PartPositions::LastShown, &mut report) {
+            Components::Assembly(assembly) => Some(assembly),
+            _ => None,
+        }
+        .unwrap();
+        assert_eq!(assembly.placements.len(), 2);
+        assert_eq!(assembly.parts[0].ir.model.appearance_bindings.len(), 1);
+        assert!(!report
+            .losses()
+            .iter()
+            .any(|loss| loss.subject == "appearance"));
+    }
+
+    fn component_appearance(path: Option<Value>, state: Option<Value>) -> Model {
+        let mut model = with_components(true);
+        let mut target =
+            json!({"entity": {"kind": "body", "value": model.ir.geometry.bodies[0].id}});
+        if let Some(path) = path {
+            target["path"] = path;
+        }
+        if let Some(state) = state {
+            target["state"] = state;
+        }
+        model.ir.model.appearances = serde_json::from_value(json!([{
+            "id": "synthetic:test:appearance#red",
+            "base_color": {"r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0},
+            "properties": {}, "textures": []
+        }]))
+        .unwrap();
+        model.ir.model.appearance_bindings = serde_json::from_value(json!([{
+            "id": "synthetic:test:appearance-binding#scoped", "target": target,
+            "appearance": "synthetic:test:appearance#red", "channels": {}
+        }]))
+        .unwrap();
+        model
+    }
+
+    fn scoped_component_appearance_is_left_out(model: Model, reason: &str) {
+        let mut report = Report::default();
+        let assembly = match local(&model, 1, crate::PartPositions::LastShown, &mut report) {
+            Components::Assembly(assembly) => Some(assembly),
+            _ => None,
+        }
+        .unwrap();
+        assert_eq!(assembly.placements.len(), 2);
+        assert!(assembly
+            .parts
+            .iter()
+            .all(|part| part.ir.model.appearance_bindings.is_empty()));
+        let losses: Vec<_> = report
+            .losses()
+            .iter()
+            .filter(|loss| loss.subject == "appearance")
+            .collect();
+        assert_eq!(losses.len(), 1);
+        assert_eq!(losses[0].code.as_deref(), Some("dutchman/appearance.other"));
+        assert!(losses[0].detail.ends_with(reason), "{}", losses[0].detail);
+    }
+
+    #[test]
+    fn occurrence_appearance_is_not_copied_to_both_placements() {
+        let path =
+            json!([{"occurrence": {"kind": "occurrence", "value": "f3d:model:occurrence#0"}}]);
+        scoped_component_appearance_is_left_out(
+            component_appearance(Some(path), None),
+            "appearance bindings for one placed instance are not supported yet",
+        );
+    }
+
+    #[test]
+    fn state_appearance_is_not_applied_to_current_component_geometry() {
+        let state = json!({"of": {"kind": "tool", "value": "synthetic:test:feature#earlier"}});
+        scoped_component_appearance_is_left_out(
+            component_appearance(None, Some(state)),
+            "appearance bindings for an evaluation state are not supported yet",
+        );
+    }
+
+    #[test]
     fn component_slicing_reports_an_appearance_binding_without_a_target() {
         let mut model = with_components(true);
         let mut wire = serde_json::to_value(&model.ir).unwrap();
         wire["model"]["appearances"] = json!([{"id": "synthetic:test:appearance#red", "base_color": {"r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0}, "properties": {}, "textures": []}]);
-        wire["model"]["appearance_bindings"] = json!([{"id": "synthetic:test:appearance-binding#missing", "target": {"kind": "face", "value": "synthetic:test:face#missing"}, "appearance": "synthetic:test:appearance#red", "channels": {}}]);
+        wire["model"]["appearance_bindings"] = json!([{"id": "synthetic:test:appearance-binding#missing", "target": {"entity": {"kind": "face", "value": "synthetic:test:face#missing"}}, "appearance": "synthetic:test:appearance#red", "channels": {}}]);
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let mut report = Report::default();
         assert!(matches!(
@@ -3940,7 +4036,7 @@ mod tests {
             occurrence["prototype"]["definition"] = json!("synthetic:test:component#empty");
         }
         wire["model"]["appearances"] = json!([{"id": "synthetic:test:appearance#red", "base_color": {"r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0}, "properties": {}, "textures": []}]);
-        wire["model"]["appearance_bindings"] = json!([{"id": "synthetic:test:appearance-binding#unplaced", "target": {"kind": "body", "value": body}, "appearance": "synthetic:test:appearance#red", "channels": {}}]);
+        wire["model"]["appearance_bindings"] = json!([{"id": "synthetic:test:appearance-binding#unplaced", "target": {"entity": {"kind": "body", "value": body}}, "appearance": "synthetic:test:appearance#red", "channels": {}}]);
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let mut report = Report::default();
         assert!(matches!(
@@ -4006,8 +4102,8 @@ mod tests {
             {"id": "synthetic:test:appearance#blue", "base_color": {"r": 0.0, "g": 0.0, "b": 1.0, "a": 1.0}, "properties": {}, "textures": []}
         ]));
         geometry.insert("appearance_bindings".into(), json!([
-            {"id": "synthetic:test:binding#red", "target": {"kind": "body", "value": body_a}, "appearance": "synthetic:test:appearance#red", "channels": {}},
-            {"id": "synthetic:test:binding#blue", "target": {"kind": "body", "value": body_b}, "appearance": "synthetic:test:appearance#blue", "channels": {}}
+            {"id": "synthetic:test:binding#red", "target": {"entity": {"kind": "body", "value": body_a}}, "appearance": "synthetic:test:appearance#red", "channels": {}},
+            {"id": "synthetic:test:binding#blue", "target": {"entity": {"kind": "body", "value": body_b}}, "appearance": "synthetic:test:appearance#blue", "channels": {}}
         ]));
         geometry.insert(
             "product_definitions".into(),
@@ -4060,7 +4156,7 @@ mod tests {
     fn cadir_cannot_receive_component_or_occurrence_appearance_targets_yet() {
         for kind in ["component", "occurrence"] {
             let mut wire = serde_json::to_value(&with_components(true).ir).unwrap();
-            wire["model"]["appearance_bindings"] = json!([{"id": "synthetic:test:appearance-binding#unsupported", "target": {"kind": kind, "value": "f3d:model:component#block"}, "appearance": "synthetic:test:appearance#red", "channels": {}}]);
+            wire["model"]["appearance_bindings"] = json!([{"id": "synthetic:test:appearance-binding#unsupported", "target": {"entity": {"kind": kind, "value": "f3d:model:component#block"}}, "appearance": "synthetic:test:appearance#red", "channels": {}}]);
             let error = cadmpeg_ir::CadIr::from_json(&wire.to_string())
                 .unwrap_err()
                 .to_string();
