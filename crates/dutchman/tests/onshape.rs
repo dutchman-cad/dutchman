@@ -1625,7 +1625,9 @@ fn a_sketch_only_part_studio_fetches_without_step_and_keeps_every_sketch_kind() 
     let mut archive = open_bundle(&dir);
     let manifest = zip_value(&mut archive, "manifest.json");
     assert!(manifest["elements"][0]["files"].get("step").is_none());
-    assert!(archive.file_names().all(|name| !name.ends_with(".step")));
+    assert!(archive
+        .file_names()
+        .all(|name| !name.unwrap().ends_with(".step")));
 
     let mut report = dutchman_core::Report::default();
     let model =
@@ -1708,7 +1710,9 @@ fn a_sketch_only_part_studio_fetches_without_step_and_keeps_every_sketch_kind() 
     let written = doc["features"].as_array().unwrap();
     assert_eq!(written.len(), 1, "{doc}");
     assert_eq!(written[0]["type"], "sketch");
-    assert!(zip.file_names().all(|name| !name.ends_with(".step")));
+    assert!(zip
+        .file_names()
+        .all(|name| !name.unwrap().ends_with(".step")));
 
     // With a SolidCraft CLI, the sketches replay without an error and build no body.
     if let Some(cli) = std::env::var_os(dutchman_solidcraft::CLI_ENV) {
