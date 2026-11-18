@@ -176,9 +176,10 @@ proof failed: no rebuilt edge through the midpoint (with how far the nearest reb
 tells a rebuilt body that differs from the source from a rounding gap), more than one, or one with
 other ends, another length, another kind of curve or another direction. Equal two-distance chamfers also map; distance-and-angle chamfers map at
 45 degrees on perpendicular faces. Unequal distances and other angles map on straight edges
-when the source's final body still has the chamfer's face: the face order that puts it there
-is taken, and SolidCraft's chamfer is flipped when its own first face (the one facing up
-most) would put it elsewhere. A chamfer face the final body lost, an edge whose faces SolidCraft
+when the source's final body still has the chamfer's face: the face order that puts it there,
+between that face's own boundary edges along the input edge, is taken. A selection on several
+bodies becomes one chamfer per body, and each is flipped on its own when SolidCraft's first
+face (the one facing up most) would put the cut elsewhere on that body. A chamfer face the final body lost, an edge whose faces SolidCraft
 cannot tell apart, and SolidCraft cutting it elsewhere either way round are refused, saying
 which. Variable fillets lack a proven
 chain direction. A fillet with several radius groups becomes one SolidCraft blend per group,

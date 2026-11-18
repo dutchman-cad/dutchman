@@ -10263,9 +10263,17 @@ fn blends_refuse_unsupported_dimensions() {
 /// A prism face: its name, outward normal, a point on it, and its ring of (edge, forward) uses.
 type PrismFace = (String, [f64; 3], [f64; 3], Vec<(String, bool)>);
 
-/// `base` with its source body replaced by the prism of the polygon `ring` (counter-clockwise
-/// on the local UV plane) from W = `z0` to `z1`: planar faces, straight edges, each edge used
-/// once each way. `place` turns local (U, V, W) into model coordinates and must be a rotation.
+/// The prism of the polygon `ring` (counter-clockwise on the local UV plane) from W = `z0` to
+/// `z1`. `place` turns local (U, V, W) into model coordinates and must be a rotation.
+struct Prism<'a> {
+    ring: &'a [[f64; 2]],
+    z0: f64,
+    z1: f64,
+    place: fn([f64; 3]) -> [f64; 3],
+}
+
+/// `base` with its source body replaced by one prism: planar faces, straight edges, each edge
+/// used once each way.
 fn with_prism_body(
     base: Model,
     ring: &[[f64; 2]],
@@ -10273,10 +10281,56 @@ fn with_prism_body(
     z1: f64,
     place: fn([f64; 3]) -> [f64; 3],
 ) -> Model {
+    with_prism_bodies(
+        base,
+        &[Prism {
+            ring,
+            z0,
+            z1,
+            place,
+        }],
+    )
+}
+
+/// `base` with the geometry of its bodies replaced by `prisms`, the `k`th in the `k`th region
+/// and body, each in a shell of its own.
+fn with_prism_bodies(base: Model, prisms: &[Prism]) -> Model {
     let mut wire = serde_json::to_value(&base.ir).unwrap();
-    let shell = wire["geometry"]["shells"][0]["id"].clone();
+    let template = wire["geometry"]["shells"][0].clone();
+    let mut arenas: std::collections::BTreeMap<&str, Vec<Value>> = Default::default();
+    let mut shells = Vec::new();
+    for (k, prism) in prisms.iter().enumerate() {
+        let region = &mut wire["geometry"]["regions"][k];
+        let shell = json!(format!("synthetic:prism{k}:shell#0"));
+        region["shells"] = json!([shell]);
+        let mut row = template.clone();
+        row["id"] = shell.clone();
+        row["region"] = region["id"].clone();
+        shells.push(row);
+        for (arena, rows) in prism_rows(prism, k, &shell) {
+            arenas.entry(arena).or_default().extend(rows);
+        }
+    }
+    let geometry = &mut wire["geometry"];
+    geometry["shells"] = Value::from(shells);
+    for (arena, rows) in arenas {
+        geometry[arena] = Value::from(rows);
+    }
+    let mut ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    ir.finalize();
+    Model { ir, ..base }
+}
+
+/// The geometry rows of prism `k` in `shell`, by arena.
+fn prism_rows(prism: &Prism, k: usize, shell: &Value) -> Vec<(&'static str, Vec<Value>)> {
+    let Prism {
+        ring,
+        z0,
+        z1,
+        place,
+    } = *prism;
     let n = ring.len();
-    let id = |kind: &str, key: String| json!(format!("synthetic:prism:{kind}#{key}"));
+    let id = |kind: &str, key: String| json!(format!("synthetic:prism{k}:{kind}#{key}"));
     let corner = |i: usize, top: bool| {
         let [x, y] = ring[i % n];
         [x, y, if top { z1 } else { z0 }]
@@ -10361,7 +10415,7 @@ fn with_prism_body(
             "kind": "plane", "origin": p3(*origin), "normal": p3(*normal), "u_axis": p3(u_axis)}}}),
         );
         let ids: Vec<String> = (0..ring.len())
-            .map(|k| format!("synthetic:prism:coedge#{name}{k}"))
+            .map(|use_| format!("synthetic:prism{k}:coedge#{name}{use_}"))
             .collect();
         for ((edge, forward), coedge) in ring.iter().zip(&ids) {
             uses.entry(edge.clone()).or_default().push(coedge.clone());
@@ -10379,15 +10433,14 @@ fn with_prism_body(
         let edge = coedge["edge"]
             .as_str()
             .unwrap()
-            .trim_start_matches("synthetic:prism:edge#")
+            .trim_start_matches(&format!("synthetic:prism{k}:edge#"))
             .to_owned();
         let pair = &uses[&edge];
         assert_eq!(pair.len(), 2);
         let own = coedge["id"].as_str().unwrap().to_owned();
         coedge["radial_next"] = json!(pair.iter().find(|other| **other != own).unwrap());
     }
-    let geometry = &mut wire["geometry"];
-    for (arena, rows) in [
+    vec![
         ("points", points),
         ("vertices", vertices),
         ("curves", curves),
@@ -10396,12 +10449,7 @@ fn with_prism_body(
         ("loops", loops),
         ("coedges", coedges),
         ("faces", face_rows),
-    ] {
-        geometry[arena] = Value::from(rows);
-    }
-    let mut ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
-    ir.finalize();
-    Model { ir, ..base }
+    ]
 }
 
 /// The example cube with the chamfer `spec` on its top front edge, from (0, 0, 10) to
@@ -10532,6 +10580,134 @@ fn unequal_chamfers_need_their_face_on_the_source_body_and_in_solidcraft() {
         );
         let line = history_line(&report);
         assert!(line.contains("either way round"), "{spec}: {line}");
+    }
+}
+
+/// The example cube (Z 0 to 10) and a block below it (Z -10 to 0), separate bodies from one
+/// sketch, with one chamfer of 1 mm and 3 mm on the cube's top front edge and the block's
+/// bottom front edge. The source body has the 1 mm on the top face of the cube and on the
+/// bottom face of the block, and the 3 mm on their front faces (Y = 0). SolidCraft measures
+/// from the face facing up most, so the cube's chamfer takes no flip and the block's does.
+fn chamfered_stack() -> Model {
+    let base = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&base.ir).unwrap();
+    let g = &mut wire["geometry"];
+    let mut body = g["bodies"][0].clone();
+    body["id"] = json!("synthetic:lower:body#0");
+    body["name"] = json!("Lower block");
+    let mut region = g["regions"][0].clone();
+    region["id"] = json!("synthetic:lower:region#0");
+    region["body"] = json!("synthetic:lower:body#0");
+    g["regions"].as_array_mut().unwrap().push(region);
+    g["bodies"].as_array_mut().unwrap().push(body);
+    let m = &mut wire["model"];
+    let mut lower = m["features"][1].clone();
+    lower["id"] = json!("synthetic:lower:feature#0");
+    lower["ordinal"] = json!(2);
+    lower["name"] = json!("Lower extrusion");
+    lower["outputs"] = json!(["synthetic:lower:body#0"]);
+    lower["definition"]["value"]["value"]["direction"] =
+        json!({"kind": "explicit", "vector": {"x": 0.0, "y": 0.0, "z": -1.0}});
+    m["features"].as_array_mut().unwrap().push(lower);
+    let spec = json!({"kind": "two_distances", "first": 1.0, "second": 3.0});
+    let group = json!({"spec": spec, "edges": {"kind": "historical", "value": {
+        "state": "f3d:model:feature-input-topology#1", "edges": ["top-front", "bottom-front"],
+        "native": "synthetic input edge"}}});
+    m["features"].as_array_mut().unwrap().push(json!({"id": "f3d:model:feature#3", "ordinal": 3, "name": "Edge treatment", "suppressed": false, "dependencies": ["f3d:model:feature#2", "synthetic:lower:feature#0"], "outputs": ["synthetic:cube:body#0", "synthetic:lower:body#0"], "definition": {"kind": "operation", "value": {"kind": "chamfer", "value": {"groups": [group], "flip_direction": false}}}, "source_properties": {}, "source_content": []}));
+    let sample = |edge: &str, z: f64, faces: [&str; 2]| {
+        json!({"edge": edge, "interior": {"x": 5.0, "y": 0.0, "z": z},
+            "tangent": {"x": 1.0, "y": 0.0, "z": 0.0},
+            "start": {"x": 0.0, "y": 0.0, "z": z}, "end": {"x": 10.0, "y": 0.0, "z": z},
+            "faces": faces})
+    };
+    m["feature_input_topologies"] = json!([{"id": "f3d:model:feature-input-topology#1", "input_of": "f3d:model:feature#3", "edges": ["top-front", "bottom-front"], "faces": ["front", "top", "lower-front", "bottom"], "edge_geometry": [sample("top-front", 10.0, ["front", "top"]), sample("bottom-front", -10.0, ["lower-front", "bottom"])], "bodies": [], "vertices": []}]);
+    let model = Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        ..base
+    };
+    // Cross-sections on the side face (X = 0), counter-clockwise in (Y, Z), run along X.
+    let upper = [
+        [0.0, 0.0],
+        [10.0, 0.0],
+        [10.0, 10.0],
+        [1.0, 10.0],
+        [0.0, 7.0],
+    ];
+    let below = [
+        [1.0, -10.0],
+        [10.0, -10.0],
+        [10.0, 0.0],
+        [0.0, 0.0],
+        [0.0, -7.0],
+    ];
+    let along_x = |[u, v, w]: [f64; 3]| [w, u, v];
+    with_prism_bodies(
+        model,
+        &[
+            Prism {
+                ring: &upper,
+                z0: 0.0,
+                z1: 10.0,
+                place: along_x,
+            },
+            Prism {
+                ring: &below,
+                z0: 0.0,
+                z1: 10.0,
+                place: along_x,
+            },
+        ],
+    )
+}
+
+/// One unequal chamfer on two bodies whose faces need opposite flips in SolidCraft: each body's
+/// chamfer is settled on its own, and both are cut where the source has them.
+#[test]
+fn solidcraft_flips_an_unequal_chamfer_per_body() {
+    let Some(cli) = solidcraft() else { return };
+    let writer = SolidCraftWriter::new()
+        .verification(Verification::With(cli.clone()))
+        .replay(Verification::With(cli.clone()));
+    let model = chamfered_stack();
+    let (bytes, report) = written_with(&model, &writer);
+    assert_eq!(
+        history_line(&report),
+        "4 of 4 features rebuilt; verified against the original in SolidCraft"
+    );
+    let (document, _) = convert(&model, &writer);
+    let chamfers: Vec<_> = document["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|f| f["type"] == "chamfer")
+        .map(|f| (f["body"].as_str().unwrap(), f.get("flip").cloned()))
+        .collect();
+    assert_eq!(
+        chamfers,
+        [("unit cube", None), ("Lower block", Some(json!(true)))],
+        "{document}"
+    );
+    // 1 mm × 3 mm off each 1000 mm³ body: 1 mm into the top or bottom face, 3 mm down the front.
+    let measured = evaluated(&cli, &bytes);
+    let volume = 985.0;
+    for (name, y, z) in [
+        ("unit cube", 5000.0 - 15.0 / 3.0, 5000.0 - 15.0 * 9.0),
+        ("Lower block", 5000.0 - 15.0 / 3.0, -5000.0 + 15.0 * 9.0),
+    ] {
+        let body = measured["bodies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|b| b["name"] == name)
+            .unwrap();
+        assert!(
+            (body["volume_mm3"].as_f64().unwrap() - volume).abs() < 1e-6,
+            "{body}"
+        );
+        for (axis, wanted) in [(0, 5.0), (1, y / volume), (2, z / volume)] {
+            let found = body["center_of_mass"][axis].as_f64().unwrap();
+            assert!((found - wanted).abs() < 1e-6, "{name}: {body}");
+        }
     }
 }
 
