@@ -697,7 +697,9 @@ checkboxes that leave history, sketches, or joints out. Estimates below 0.1 GB s
 formatter. The file row shows a live total, counting checking only with a usable CLI and checking on. Choices and the checking preference are remembered. Calibrated formats split reading, extra
 conversion work after decoding and extra checking in the desktop. MCP keeps the existing
 numeric estimate fields; the split is desktop presentation. History
-Info messages, including history left out by Standard, appear on its result cards.
+Info messages, including history left out by Standard, appear in its open result detail.
+The desktop uses Lost / Changed / Note for Dropped / Degraded / Info, with a feature timeline
+and optional local 3D previews; CLI and MCP report values stay unchanged.
 
 SolidCraft conversion results include `solidcraft: {target, found, known_newest, status}`: the selected
 target release, discovered CLI release (or null), newest known release, and installed-version

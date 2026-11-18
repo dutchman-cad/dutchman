@@ -111,6 +111,8 @@ struct PrivateAttachment {
 
 /// Dutchman Convert's window.
 pub struct App {
+    previews: crate::preview::Previews,
+    previews_enabled: bool,
     consent: crate::report_consent::Consent,
     /// The row whose file the DM step sends privately, and the saved bundle to send instead of
     /// the original, once "Send the whole file privately" was chosen in the review.
@@ -431,6 +433,8 @@ impl App {
             .as_ref()
             .is_some_and(|settings| restore_choices(&mut options, settings));
         App {
+            previews: Default::default(),
+            previews_enabled: !cfg!(test),
             updater: crate::update::Updater::new(stored.as_ref().and_then(|v| v.get("update"))),
             inputs: Vec::new(),
             doctor: None,
@@ -499,6 +503,15 @@ impl App {
                 .is_some_and(|storage| storage.get_string("window").is_none())
                 .then_some(FIT_FRAMES),
             page_scrolls: false,
+        }
+    }
+
+    /// Enables optional background images. UI harnesses can disable them to keep layout
+    /// checks independent of an installed snapshot renderer.
+    pub fn set_previews_enabled(&mut self, enabled: bool) {
+        self.previews_enabled = enabled;
+        if !enabled {
+            self.previews.cancel();
         }
     }
 
@@ -626,6 +639,12 @@ impl App {
         } else {
             Err(dutchman_solidcraft::NoCli::NotFound("Not found".into()))
         };
+    }
+
+    /// Supplies a snapshot program without probing an installed release, for UI tests.
+    #[cfg(feature = "test-support")]
+    pub fn set_preview_cli_for_test(&mut self, cli: PathBuf) {
+        self.checker = Ok(cli);
     }
 
     /// Supplies a synthetic result without decoding a design for UI review.
@@ -975,6 +994,7 @@ impl App {
     }
 
     fn start_checked(&mut self, ctx: &egui::Context) {
+        self.previews.cancel();
         let Some(mut pending) = self.pending.take() else {
             return;
         };
@@ -1031,6 +1051,7 @@ impl App {
                 self.report_done = None;
                 self.private_send = None;
                 self.consent.card = None;
+                self.previews.cancel();
                 self.rows.clear();
                 self.offset = 0;
                 Run::start(
@@ -1188,6 +1209,7 @@ impl App {
                 Message::Planned { problems, jobs } => {
                     self.reveal = Some(Reveal::Results);
                     self.offset = problems.len();
+                    self.previews.cancel();
                     self.rows = problems
                         .into_iter()
                         .map(|report| Row {
@@ -1382,6 +1404,7 @@ impl App {
             self.pending = None;
             if let Some(run) = &self.run {
                 run.stop();
+                self.previews.cancel();
                 self.diagnostic_stopped = true;
             }
         }
@@ -2208,6 +2231,7 @@ impl App {
                 {
                     if let Some(run) = &self.run {
                         run.stop();
+                        self.previews.cancel();
                         self.diagnostic_stopped = true;
                     }
                 }
@@ -2276,6 +2300,26 @@ impl App {
     /// The results. With `own_scroll` they fill the rest of the column and scroll inside it,
     /// and a placeholder shows until there are any.
     fn results(&mut self, ui: &mut egui::Ui, view: &present::RunView, own_scroll: bool) {
+        self.previews.poll(ui.ctx());
+        if self.previews_enabled && !self.running() && !self.diagnostic_stopped {
+            if let Ok(cli) = &self.checker {
+                for row in self
+                    .rows
+                    .iter()
+                    .filter(|row| row.status == Status::Converted)
+                {
+                    if let Some(output) = &row.output {
+                        self.previews.request(
+                            ui.ctx(),
+                            cli,
+                            output,
+                            &row.input,
+                            row.job.as_ref().and_then(|job| job.fallback.as_deref()),
+                        );
+                    }
+                }
+            }
+        }
         let p = *theme::palette(ui);
         let heading = section_label(ui, &p, "Results");
         let reveal = self.reveal.take();
@@ -2305,6 +2349,16 @@ impl App {
                         .row_logs
                         .get(&index)
                         .map(|path| (path.as_path(), log_ready));
+                    if crate::preview::show(
+                        ui,
+                        row.output
+                            .as_deref()
+                            .and_then(|output| self.previews.get(output)),
+                    ) {
+                        if let Some(output) = &row.output {
+                            action = Some(Action::Open(output.clone()));
+                        }
+                    }
                     let chosen = row_ui(ui, &p, index, row, file, self.has_app, running, log);
                     if let Some(chosen) = chosen {
                         action = Some(chosen);
@@ -2802,6 +2856,16 @@ fn row_ui(
             }
         });
     }
+    if matches!(row.status, Status::Converted | Status::Failed) && row.report.is_some() {
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("Save the full log…").clicked() {
+                action = Some(Action::Pick(Pick::SaveLog(index)));
+            }
+            if report_this_file(ui) {
+                action = Some(Action::OpenReport(index));
+            }
+        });
+    }
     if row.status == Status::Converting {
         if let Some(event) = &row.progress {
             ui.horizontal_wrapped(|ui| {
@@ -2855,9 +2919,6 @@ fn row_ui(
                 action = Some(Action::Notice(message));
             }
         }
-        if row.report.is_some() && report_this_file(ui) {
-            action = Some(Action::OpenReport(index));
-        }
         return action;
     }
     if let Some((path, ready)) = log {
@@ -2876,61 +2937,27 @@ fn row_ui(
             .truncate(),
         )
         .on_hover_text(output);
-        let (outcome, history) = outcome_and_history(&view.outcome, row.report.as_ref());
-        ui.label(RichText::new(outcome).color(p.ink));
-        for loss in history {
-            ui.label(RichText::new(loss).color(p.tide));
-        }
-        if let Some(summary) = &view.assembly {
-            let colour = if view.incomplete { p.danger } else { p.tide };
-            ui.label(RichText::new(summary).color(colour));
-            for cause in &view.assembly_causes {
-                ui.label(RichText::new(cause).small().color(p.ink));
+        if let Some(report) = &row.report {
+            crate::results::summary(ui, p, report);
+            if let Some(summary) = &view.assembly {
+                ui.label(RichText::new(summary).color(if view.incomplete {
+                    p.danger
+                } else {
+                    p.tide
+                }));
             }
-        }
-        if !view.components.is_empty() {
-            let components = &view.components;
-            egui::CollapsingHeader::new(RichText::new(&view.loss_summary).color(p.tide))
-                .id_salt(("losses", index))
+            ScrollArea::vertical()
+                .id_salt(("result-detail", index))
+                // A narrow page also needs room for the panels below this card.
+                .max_height(
+                    ui.available_height()
+                        .clamp(120.0, if is_wide(ui) { 480.0 } else { 240.0 }),
+                )
+                .auto_shrink([false, true])
                 .show(ui, |ui| {
-                    // One component: its losses. Several: each in its own section, most that
-                    // matters first.
-                    if let [only] = components.as_slice() {
-                        for loss in &only.lines {
-                            loss_line(ui, p, loss);
-                        }
-                        return;
-                    }
-                    for (n, component) in components.iter().enumerate() {
-                        let colour = match component.severity_rank {
-                            0 => p.danger,
-                            1 => p.lantern_text,
-                            _ => p.tide,
-                        };
-                        egui::CollapsingHeader::new(wrapped_heading(
-                            ui,
-                            &component.heading,
-                            colour,
-                        ))
-                        .id_salt(("component", index, n))
-                        .show(ui, |ui| {
-                            for loss in &component.lines {
-                                loss_line(ui, p, loss);
-                            }
-                        });
-                    }
+                    crate::results::details(ui, p, report);
                 });
         }
-        ui.horizontal_wrapped(|ui| {
-            if !view.components.is_empty() && ui.button("Save the full log…").clicked() {
-                action = Some(Action::Pick(Pick::SaveLog(index)));
-            }
-            // Every finished file has the way to report it, whatever the card says: Dutchman
-            // never decides for you that a result has no problem.
-            if report_this_file(ui) {
-                action = Some(Action::OpenReport(index));
-            }
-        });
     }
     action
 }
@@ -3177,13 +3204,6 @@ fn text_with_links(ui: &mut egui::Ui, text: &str, colour: egui::Color32) {
 }
 
 /// A collapsing header's title that wraps within the card instead of running past its edge.
-fn wrapped_heading(ui: &egui::Ui, text: &str, colour: egui::Color32) -> egui::WidgetText {
-    let width = (ui.available_width() - ui.spacing().indent - theme::SPACE_2).max(40.0);
-    let font = egui::TextStyle::Button.resolve(ui.style());
-    let galley = ui.painter().layout(text.to_owned(), font, colour, width);
-    egui::WidgetText::Galley(galley)
-}
-
 /// History decisions must be visible even while the full loss log is collapsed.
 /// Whether the window is wide enough for the main screen's two columns.
 fn is_wide(ui: &egui::Ui) -> bool {
@@ -3199,66 +3219,10 @@ fn side_by_side<R>(ui: &mut egui::Ui, wide: bool, body: impl FnOnce(&mut egui::U
     }
 }
 
-/// The outcome line and the history notes under it, saying each thing once: a design
-/// without history names why in the outcome line, not again in a note under it.
-fn outcome_and_history<'a>(outcome: &str, report: Option<&'a Value>) -> (String, Vec<&'a str>) {
-    let mut notes = history_info(report);
-    let Some(rest) = outcome.strip_prefix("Geometry without history") else {
-        return (outcome.to_owned(), notes);
-    };
-    let reason = notes
-        .iter()
-        .position(|note| note.starts_with("flattened: "))
-        .map(|at| notes.remove(at)["flattened: ".len()..].to_owned());
-    notes.retain(|note| !note.starts_with("flattened: "));
-    let outcome = match (rest.strip_prefix('.'), reason) {
-        (Some(after), Some(reason)) => format!("Geometry without history: {reason}.{after}"),
-        _ => outcome.to_owned(),
-    };
-    (outcome, notes)
-}
-
-fn history_info(report: Option<&Value>) -> Vec<&str> {
-    report
-        .and_then(|report| report.get("losses"))
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter(|loss| {
-            loss.get("level").and_then(Value::as_str) == Some("Info")
-                && loss.get("subject").and_then(Value::as_str) == Some("history")
-        })
-        .filter_map(|loss| loss.get("message").and_then(Value::as_str))
-        .collect()
-}
-
 /// The missing-part summary and recovery instructions.
 fn missing_ui(ui: &mut egui::Ui, p: &Palette, text: &str) {
     ui.label(RichText::new(text).color(p.danger));
     ui.label(RichText::new(present::MISSING_HELP).small().color(p.tide));
-}
-
-/// One loss: its level word, coloured, then its subject and message.
-fn loss_line(ui: &mut egui::Ui, p: &Palette, loss: &present::LossLine) {
-    let level = loss.level.as_str();
-    let colour = match level {
-        "Degraded" => p.lantern_text,
-        "Dropped" => p.danger,
-        _ => p.tide,
-    };
-    // One paragraph keeps the label within the card. egui prefers word boundaries and
-    // falls back to splitting oversized ids; break_anywhere would also split normal words.
-    let font = egui::TextStyle::Monospace.resolve(ui.style());
-    let mut job = egui::text::LayoutJob::default();
-    let format = |color| egui::TextFormat {
-        font_id: font.clone(),
-        color,
-        ..Default::default()
-    };
-    job.append(level, 0.0, format(colour));
-    job.append(&loss.text, theme::SPACE_1, format(p.ink));
-    job.wrap.max_width = ui.available_width();
-    ui.add(egui::Label::new(job).wrap());
 }
 
 fn section_label(ui: &mut egui::Ui, p: &Palette, text: &str) -> egui::Response {
@@ -4039,157 +4003,6 @@ mod tests {
         }
     }
 
-    mod loss_fixture {
-        include!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/support/losses.rs"
-        ));
-    }
-
-    #[test]
-    fn expanded_loss_labels_stay_inside_the_card() {
-        use egui_kittest::kittest::Queryable;
-        let row = Row {
-            input: PathBuf::from("synthetic.f3d"),
-            output: Some(PathBuf::from("converted/synthetic.sc")),
-            status: Status::Converted,
-            progress: None,
-            job: None,
-            size: None,
-            report: Some(loss_fixture::report()),
-        };
-        let view = row.view();
-        let lines = &view.components[0].lines;
-        assert_eq!(lines.len(), 3);
-        for width in [520.0, 1000.0] {
-            let mut installed = false;
-            let mut harness = egui_kittest::Harness::builder()
-                .with_size(egui::vec2(width, 900.0))
-                .build_state(
-                    |ctx, card_rect| {
-                        // Font definitions take effect on the following frame.
-                        if !installed {
-                            theme::install(ctx);
-                            installed = true;
-                            return;
-                        }
-                        egui::CentralPanel::default().show(ctx, |ui| {
-                            let p = *theme::palette(ui);
-                            *card_rect = card(ui, &p, |ui| {
-                                row_ui(ui, &p, 0, &row, &view, true, false, None);
-                            })
-                            .rect;
-                        });
-                    },
-                    egui::Rect::NOTHING,
-                );
-            harness.run_steps(8);
-            harness.get_by_label(&view.loss_summary).click_accesskit();
-            harness.run_steps(8);
-            let card_rect = *harness.state();
-            assert!(card_rect.left() >= 0.0 && card_rect.right() <= width);
-            for loss in lines {
-                let label = format!("{}{}", loss.level, loss.text);
-                let rect = harness.get_by_label(&label).rect();
-                assert!(
-                    rect.left() >= card_rect.left() && rect.right() <= card_rect.right(),
-                    "{width}px: loss {label} at {rect:?} exceeds card {card_rect:?}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn loss_prose_wraps_at_spaces() {
-        let mut installed = false;
-        let mut harness = egui_kittest::Harness::builder().build_ui(|ui| {
-            if !installed {
-                theme::install(ui.ctx());
-                installed = true;
-                return;
-            }
-            let p = *theme::palette(ui);
-            ui.set_width(240.0);
-            loss_line(
-                ui,
-                &p,
-                &present::LossLine {
-                    level: "Info".into(),
-                    text: "ordinary words should wrap at spaces whenever they fit on a line".into(),
-                    full_text: String::new(),
-                },
-            );
-        });
-        harness.run_steps(2);
-        // Inspect the actual rendered paragraph, including the coloured severity prefix.
-        let output = harness.output();
-        let galley = output
-            .shapes
-            .iter()
-            .find_map(|shape| match &shape.shape {
-                egui::Shape::Text(text) => Some(&text.galley),
-                _ => None,
-            })
-            .unwrap();
-        assert!(galley.rows.len() > 1);
-        for row in galley.rows.iter().take(galley.rows.len() - 1) {
-            assert!(row.glyphs.last().unwrap().chr.is_whitespace());
-        }
-    }
-
-    #[test]
-    fn history_budget_note_is_visible_with_losses_collapsed() {
-        use egui_kittest::kittest::Queryable;
-        let message = "feature history left out: this assembly needs about 8 GB with history and 4 GB are free; use the full preset to keep it";
-        let row = Row {
-            input: PathBuf::from("synthetic.f3z"),
-            output: Some(PathBuf::from("out.solidcraft")),
-            status: Status::Converted,
-            progress: None,
-            job: None,
-            size: None,
-            report: Some(json!({"ok": true, "mode": "import", "losses": [
-                {"level": "Info", "subject": "history", "message": message}
-            ]})),
-        };
-        let mut harness = egui_kittest::Harness::builder()
-            .with_size(egui::vec2(1000.0, 600.0))
-            .build_ui(|ui| {
-                theme::install(ui.ctx());
-                let p = *theme::palette(ui);
-                row_ui(ui, &p, 0, &row, &row.view(), true, false, None);
-            });
-        harness.run_steps(8);
-        assert!(harness.query_by_label(message).is_some());
-    }
-
-    #[test]
-    fn a_design_without_history_says_why_once() {
-        let report = json!({"ok": true, "losses": [
-            {"level": "Info", "subject": "history", "message": "flattened: the design carries no feature history"},
-            {"level": "Info", "subject": "history", "message": "sketches kept as geometry"}]});
-        let (outcome, notes) = outcome_and_history("Geometry without history.", Some(&report));
-        assert_eq!(
-            outcome,
-            "Geometry without history: the design carries no feature history."
-        );
-        assert_eq!(notes, ["sketches kept as geometry"]);
-        // A reason already in the outcome line is not repeated under it.
-        let (outcome, notes) = outcome_and_history(
-            "Geometry without history (flattened: fillet is not mapped yet).",
-            Some(&report),
-        );
-        assert_eq!(
-            outcome,
-            "Geometry without history (flattened: fillet is not mapped yet)."
-        );
-        assert_eq!(notes, ["sketches kept as geometry"]);
-        // Editable history keeps its notes as they are.
-        let (outcome, notes) = outcome_and_history("Editable history; unverified.", Some(&report));
-        assert_eq!(outcome, "Editable history; unverified.");
-        assert_eq!(notes.len(), 2);
-    }
-
     #[test]
     fn result_list_uses_shared_strings() {
         use egui_kittest::kittest::Queryable;
@@ -4233,16 +4046,20 @@ mod tests {
             });
         harness.run_steps(8);
         for label in [
-            "Editable history, 3 of 3 features rebuilt; verified in SolidCraft.",
-            "Geometry without history (flattened: fillet is not mapped yet).",
+            "3 of 3 features rebuilt",
+            "Checked in SolidCraft ✓",
+            "Final shape: imported",
             "Incomplete",
             "1 of 3 components placed; 1 placed empty, no joints",
             "1 part file was not found: pin.ipt",
-            "Losses: 1 Degraded",
-            "Losses: 1 Dropped",
+            "Changed: 1",
+            "Lost: 1",
             "cannot read this design: no geometry could be read",
         ] {
-            assert!(harness.query_by_label(label).is_some(), "missing {label}");
+            assert!(
+                harness.query_all_by_label(label).next().is_some(),
+                "missing {label}"
+            );
         }
         // Every finished card, clean or not, has the way to report it.
         assert_eq!(harness.query_all_by_label(REPORT_THIS_FILE).count(), 4);

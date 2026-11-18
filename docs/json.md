@@ -466,9 +466,13 @@ cadmpeg's cause and add recovery advice and a link to the
 Normal JSON reports contain file names and paths. For sharing, request `--report-anon FILE`
 (MCP `report_anon`) and review that file first; keep logs, journals, keys, and salts private.
 
-The desktop app shows Info messages with subject `history` directly on result cards,
-including Standard's explanation when history is left out to fit in free memory.
-These are existing `losses` entries; desktop estimates and preset labels add no report fields.
+The desktop RESULTS card presents existing `history.features`, `history.parts`, `verification`,
+and `losses` in summary chips, an open timeline, and loss cards. Its severity labels map
+`Dropped` to Lost, `Degraded` to Changed, and `Info` to Note; report values do not change.
+Standard's explanation when history is left out to fit free memory stays visible in the detail.
+Raw codes and messages remain under Details. Optional local PNG previews add no report fields.
+See [reading desktop results](desktop.md#read-the-results).
+Desktop estimates and preset labels also add no report fields.
 The desktop file row shows a live total, including checking only when
 checking is on and a usable CLI was found, and showing Standard's reduced history choice.
 Its separate read, conversion and check figures and remembered controls are desktop

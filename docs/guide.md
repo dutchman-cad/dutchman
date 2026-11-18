@@ -417,6 +417,14 @@ new-body feature mapped) is `blocked` before replay, with a reason asking for it
 body-producing feature to resolve first. Source storage order does not
 change replay order: the neutral ordinal controls it.
 
+### Desktop results
+
+The [desktop RESULTS card](desktop.md#read-the-results) shows rebuilt feature counts, checking
+status, a source feature timeline, and losses with plain titles. Lost / Changed / Note map
+to Dropped / Degraded / Info in the existing reports. Detail starts open and scrolls below
+the action buttons; optional cached 3D previews arrive after conversion. A matching STEP
+export can appear beside the converted preview. No report fields or conversion defaults change.
+
 ### Diagnostic logs for unfinished runs
 
 [Diagnostic logs for unfinished runs](troubleshooting.md#diagnostic-logs-for-unfinished-runs)

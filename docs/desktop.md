@@ -1,5 +1,50 @@
 # The desktop app
 
+## Read the results
+
+The RESULTS card opens its detail automatically. Chips show how many features were rebuilt,
+whether the visible final shape is rebuilt or imported, checking status, and loss counts.
+**Lost** means the report's `Dropped` severity (data left out), in the error colour;
+**Changed** means `Degraded`, in the warning colour; **Note** means `Info`, in the secondary
+text colour. These use the Day and Night theme colours. Counts refer to report entries;
+a note can describe many internal records.
+
+The **Feature timeline** lists source features in their source order. A tick means rebuilt
+and checked, an exclamation mark means rebuilt but unchecked, and a dash means not rebuilt. Each
+row gives the feature's name and a short reason; hover a shortened row for its whole reason.
+A profile whose region could not be proved stays unchecked even after replay. Re-applied
+features and helpers needing no separate feature are described separately from rebuilt ones.
+A partial history is only marked checked when its report confirms the retained prefix replay.
+An unchecked count refers to rebuilt feature rows, or to parts when the report supplies
+per-part checks. Older reports without feature rows show that the rows were not recorded.
+If feature history was turned off for the run, the card explains that choice in plain words.
+
+Loss cards group repeated codes, with Lost first, then Changed, then Note. Their titles are
+plain descriptions; **Details** holds each raw code and message. Unrecognised codes have a
+plain fallback title and keep their full details. Assemblies group losses and checking
+summaries by part. The first ten part groups are shown; **Show all N** reveals the rest.
+The existing report does not always associate individual feature rows with part names;
+those rows remain in the design timeline, without guessing their part or checking status.
+The detail scrolls inside the card. **Open in SolidCraft**, **Show in folder**,
+**Save the full log…**, and **Report this file…** stay above that detail.
+
+After a run finishes, the app asks the installed `solidcraft-cli` for an optional 480 × 320
+isometric snapshot, without the grid or axes. The card appears immediately and the image
+fills in later. Click the image to open the converted design in SolidCraft. When an
+unambiguous same-name STEP export is beside the source (or the job already names one),
+**Original (STEP)** and **Converted** appear side by side using the same isometric view.
+Each image fits its own model to the frame; this is a visual comparison, not a dimensional
+check. The CLI has no background-colour option, so its neutral background is used in both
+themes.
+
+Snapshots run one at a time, at low priority, after conversion and verification finish.
+Each has a 20-second limit. Stop, a new conversion, or closing the app cancels outstanding
+snapshots. No installed CLI, an older CLI without snapshot support, or any snapshot failure
+leaves the card usable without an image or an error. Nothing is uploaded. Images are cached
+beside the converted design as `<name>.preview.png` and `<name>.step-preview.png`, and reused
+while current with the `.sc` file (and the STEP file for the original image). Delete these
+PNG files to discard the cache.
+
 ## Ask your AI about this file
 
 Each completed conversion saves its full `dutchman.convert/1` JSON report beside the
@@ -146,27 +191,22 @@ in Advanced stays.
 Archive sizes are read in the background once; changing choices updates the figures without
 reading the archive again.
 
-When Standard leaves history out to fit in memory, its result card shows the
-history Info message even with the full loss log collapsed. The original geometry is kept.
+When Standard leaves history out to fit in memory, the open result detail shows its
+history Info explanation. The original geometry is kept.
 
-When a Fusion Base Feature holds its body as the design ends and later joins or cuts re-apply to it,
-the card counts those features apart ("43 of 235 features rebuilt, 76 kept and re-applied to the
-final body") and says "Base Feature 1 holds the body as the design ends. The features after it are
-kept but re-apply to that body, so editing them may not change the shape."
+When a Fusion Base Feature holds its body as the design ends, the timeline identifies that
+stored final body and names later features that re-apply to it. Re-applied features are
+counted separately from rebuilt ones; editing them may not change the shape.
 
-A result card ends with how many rebuilt extrudes may use the wrong sketch region, such as "2
-rebuilt extrudes may use the wrong sketch region; it couldn't be checked against the source."
-They replay, but nothing proves they swept the right region; the JSON report marks each with
-`profile_unverified`.
+A rebuilt extrude marked `profile_unverified` in the JSON report appears as unchecked in
+the timeline and summary: its replay does not prove it swept the right sketch region.
+When a partial history's bodies differ from the source at the stop point, the Changed loss
+card says **Rebuilt features differ from the original**. Its Details retain the measured
+`history/body-mismatch` explanation. The imported final shape remains visible; check the
+rebuilt features before editing them.
 
-When a partial history replays but its bodies differ from what the source stores where the
-history stops, the card says so and what to do, such as "The rebuilt features don't match the
-original where the history stops (0 bodies where it has 1). The final shape is correct; check the
-rebuilt features before editing them." In an assembly it gives how many parts. The JSON report has
-the loss `history/body-mismatch`.
-
-Expanded **Losses** lists wrap long feature ids inside their result card. Ordinary text
-wraps at spaces.
+Long feature names shorten to one line with the whole reason on hover. Raw loss codes and
+messages wrap inside each card's **Details** disclosure.
 
 A converted design opens in SolidCraft from its card: the app that `SOLIDCRAFT_APP` names, else
 `solidcraft` on `PATH` or beside Dutchman, else the system's app for `.sc` files. When an Inventor assembly's part

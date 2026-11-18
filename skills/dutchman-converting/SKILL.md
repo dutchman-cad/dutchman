@@ -598,7 +598,9 @@ the file row. Checking is counted only with a usable CLI and checking on. **Conv
 these choices** checks queued files again when the conversion fits; if it still will not
 fit, proceeding bypasses memory checks for that run only. Choices and the checking preference
 return to the main window and are remembered. Numeric MCP estimates stay unchanged. History
-Info messages, including history left out by Standard, appear on its result cards.
+Info messages, including history left out by Standard, appear in its open result detail.
+The desktop uses Lost / Changed / Note for Dropped / Degraded / Info, with a feature timeline
+and optional local 3D previews; CLI and MCP report values stay unchanged.
 
 SolidCraft conversion reports include `solidcraft.target` and `solidcraft.found` (null
 when no CLI version is available), even with verification disabled. Standard decides

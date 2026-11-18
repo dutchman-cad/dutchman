@@ -32,7 +32,9 @@ fn test_app(cc: &eframe::CreationContext<'_>) -> App {
         ))
     });
     dutchman_gui::set_diagnostics_folder(folder.clone());
-    App::new(cc)
+    let mut app = App::new(cc);
+    app.set_previews_enabled(false);
+    app
 }
 use eframe::egui::{self, ThemePreference};
 use egui_kittest::kittest::Queryable;
@@ -551,9 +553,7 @@ fn screenshots() {
                     report: Some(loss_fixture::report()),
                 });
             harness.run_steps(8);
-            harness.get_by_label_contains("Losses:").scroll_to_me();
-            harness.run_steps(8);
-            harness.get_by_label_contains("Losses:").click_accesskit();
+            harness.get_by_label("Feature timeline").scroll_to_me();
             harness.run_steps(8);
             harness.get_by_label("Save the full log…").scroll_to_me();
             harness.run_steps(8);
@@ -2974,9 +2974,7 @@ fn unchecked_regions_screenshots() {
                     report: Some(report.clone()),
                 });
             harness.run_steps(8);
-            harness
-                .get_by_label_contains("may use the wrong sketch region")
-                .scroll_to_me();
+            harness.get_by_label("5 unchecked").scroll_to_me();
             harness.run_steps(8);
             shot(
                 &mut harness,
@@ -3038,7 +3036,7 @@ fn body_mismatch_screenshots() {
                 });
             harness.run_steps(8);
             harness
-                .get_by_label_contains("don't match the original")
+                .get_by_label_contains("Rebuilt features differ from the original")
                 .scroll_to_me();
             harness.run_steps(8);
             shot(
@@ -3481,11 +3479,14 @@ fn a_very_long_result_name_wraps_instead_of_eliding() {
     h.state_mut().set_verify(false);
     h.run_steps(8);
     convert(&mut h);
-    let titles: Vec<_> = h
+    // Open result detail can scroll the title nearer the header. Identify the result's
+    // name by the action row immediately below it, independently of the page offset.
+    let actions_top = h.get_by_label("Open in SolidCraft").rect().top();
+    let title = h
         .get_all_by_label(&long)
-        .filter(|node| node.rect().top() > 300.0)
-        .collect();
-    let title = titles.last().expect("result title");
+        .filter(|node| node.rect().bottom() <= actions_top + 0.5)
+        .max_by(|a, b| a.rect().bottom().total_cmp(&b.rect().bottom()))
+        .expect("result title");
     // Wrapped onto several lines, so taller than one heading line.
     assert!(title.rect().height() > 40.0, "{:?}", title.rect());
     assert!(title.rect().right() <= 520.0);
