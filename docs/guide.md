@@ -1,5 +1,17 @@
 # Getting started
 
+Onshape Derived inserts from captured, pinned Part Studios become linked Insert Design
+components when targeting SolidCraft 0.44 or newer, with supported body booleans kept editable.
+Select target 0.44 explicitly when the existing default is older.
+Keep the generated `derived-<sha256>.sc` companion designs beside the main result;
+edit a companion and use SolidCraft's Update Links to rebuild the host. If conversion
+finds an edited companion, choose another output folder; that companion is kept even
+when overwriting is enabled. Earlier targets
+report `design/reference.frozen` and keep frozen derived bodies. Missing references,
+part subsets, configurations or transformed inserts name the reason under
+`onshape/history.not-supported`; fetch a new bundle for missing references.
+See [Onshape bundles](onshape.md) for the supported reference forms.
+
 Onshape sketch constraint losses name the source constraint kind and why it could not
 be mapped. The solved sketch geometry remains; inspect these losses even when body
 verification succeeds. Origin coincidences and midpoint construction carriers retain

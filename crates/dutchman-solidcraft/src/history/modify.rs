@@ -1,8 +1,8 @@
 //! Body mirror, boolean and split operations.
 //!
 //! Both act on whole bodies named by earlier mapped features, never on faces of the final
-//! body, which a later feature may already have removed or moved. Native and generated body
-//! selections are refused.
+//! body, which a later feature may already have removed or moved. Native body selections are refused; generated bodies need a captured
+//! earlier feature result and its unique mapped name.
 
 use serde_json::{json, Value};
 
@@ -31,6 +31,63 @@ fn members(selection: &Value) -> Result<Vec<&Value>, String> {
 }
 
 pub(super) fn body_names(selection: &Value, ctx: &Context) -> Result<Vec<String>, String> {
+    if selection.get("kind").and_then(Value::as_str) == Some("generated") {
+        let bodies = selection
+            .pointer("/value/bodies")
+            .and_then(Value::as_array)
+            .ok_or("its generated bodies are missing")?;
+        let mut names = Vec::new();
+        for body in bodies {
+            let feature = body
+                .get("feature")
+                .and_then(Value::as_str)
+                .ok_or("its body creator is missing")?;
+            let local = body
+                .get("local_id")
+                .and_then(Value::as_str)
+                .ok_or("its body result identity is missing")?;
+            let owner = ctx
+                .row("features", feature)
+                .ok_or("its body creator is missing")?;
+            let known = super::reference::body_bindings(owner)?
+                .is_some_and(|bindings| bindings.iter().any(|(id, _)| id == local));
+            let proven = ctx.source.is_some_and(|source| {
+                source
+                    .ir
+                    .model
+                    .feature_result_topologies
+                    .iter()
+                    .any(|state| {
+                        state.output_of.as_str() == feature
+                            && state.bodies().iter().any(|body| body.as_str() == local)
+                    })
+            });
+            if !known || !proven {
+                return Err("its generated body is not a captured earlier feature result".into());
+            }
+            let matches: Vec<_> = ctx
+                .named_bodies
+                .iter()
+                .filter(|(id, _)| id == local)
+                .collect();
+            let [(_, name)] = matches.as_slice() else {
+                return Err("its generated body has no unique earlier name".into());
+            };
+            if ctx
+                .named_bodies
+                .iter()
+                .any(|(id, n)| id != local && n == name)
+                || names.contains(name)
+            {
+                return Err("its generated body name is not unique".into());
+            }
+            names.push(name.clone());
+        }
+        if names.is_empty() {
+            return Err("it selects no generated bodies".into());
+        }
+        return Ok(names);
+    }
     let mut names = Vec::new();
     for value in members(selection)? {
         let id = value.as_str().ok_or("its body reference is malformed")?;

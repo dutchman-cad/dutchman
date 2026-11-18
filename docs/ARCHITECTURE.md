@@ -565,3 +565,23 @@ Debug builds accept `DUTCHMAN_TEST_SLOW_PART=<design name>` to hold one named pa
 preparation for six seconds, long enough for a real five-second heartbeat. Release builds
 do not read it. The running-step GUI screenshot case uses injected snapshots at 0 s,
 61 s, 120 s and 121 s through the normal card renderer in both themes.
+
+## Linked design outputs
+
+The `Writer::companion_files` seam returns portable companion names and bytes from
+an encoded design. `convert` validates names and existing content before publishing
+companions beside the main output, reusing identical files and refusing to overwrite a
+different design. Writers without linked outputs keep the single-file default.
+The SolidCraft adapter retains companion containers under `companions/` and writes
+its native Import/component/occurrence/links representation; the core knows no
+SolidCraft container fields.
+
+The Onshape reader keeps a captured Derived source as neutral CADIR and STEP in a
+feature's `source_properties.design_reference`, with body identity/name bindings.
+CADIR source properties are strings: this value contains versioned
+`dutchman.design-reference/1` JSON; `historical_bodies` contains a JSON body list.
+Earlier local creators use `source_properties.historical_bodies` for names of bodies
+that a later Boolean may consume. Their local identities belong to CADIR
+`feature_result_topologies`; Boolean operands use generated body selections tied to
+those producers. Intermediate bodies never enter final geometry or the host's
+verification reference. Writers consume neutral references without reading REST data.

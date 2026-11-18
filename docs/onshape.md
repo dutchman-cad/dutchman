@@ -1,7 +1,7 @@
 # Onshape bundles
 
-Dutchman reads a local `.onshape-bundle` containing one Part Studio at one pinned
-microversion. Conversion is offline. No account, API keys, network connection, or
+Dutchman reads a local `.onshape-bundle` containing a root Part Studio at one pinned
+microversion, plus any captured Derived studios at their own pinned versions. Conversion is offline. No account, API keys, network connection, or
 Onshape installation is used by this reader.
 
 ```sh
@@ -13,8 +13,8 @@ The ZIP follows `dutchman.onshape-bundle/1`: `manifest.json`,
 `bodydetails/<i>.json` responses, plus `export.step` when the Part Studio has bodies.
 Sketch-only bundles omit STEP. Features and bodydetails are raw REST responses.
 The reader accepts stored and deflated members, without
-extracting them to disk. Assemblies and bundles with multiple elements are not
-supported yet; fetch one Part Studio instead.
+extracting them to disk. Assemblies are not supported yet. A manifest with several Part Studio elements must
+name its root with `root_element`; conversion starts with that studio.
 
 A Part Studio with several parts converts as one design holding every part as a
 body, with one shared history, as in Onshape. Its STEP export lists each part as a
@@ -47,6 +47,8 @@ continue to apply. A present consistency flag must be a JSON boolean.
 | Chamfer | Equal offsets, explicit input edges and resolvable tangent chains | Unequal and angle forms are not supported yet. Tangent propagation has the same completeness requirement as fillets, and the chamfer likewise blends exactly the listed edges on SolidCraft 0.40 or newer. Replay proof still applies. |
 | Hole | Explicit sketch point `locations`; simple, counterbore and countersink entries; through, or blind to the shoulder with its drill point (118° when the feature leaves it out) or a flat 180° bottom; tapped holes from the hole table's thread standard, drilled at the tap-drill diameter | A tapped hole keeps an ISO metric thread as a cosmetic label, with its thread length in a blind hole (SolidCraft 0.40 and newer); otherwise the thread length is reported, and other thread standards keep the bore only. Reversed drilling, other hole tables and standard types, mate connectors and other ends are not supported yet. |
 | Assigned variables | SolidCraft parameters with the same names and expressions (`#len / 2` becomes `len / 2`) | Earlier variables, literal units, parentheses and `+`, `-`, `*`, `/` with compatible units; measured variables, reassignment, forward references and FeatureScript functions are not supported yet. Sketch dimensions, blind and symmetric extrude depths and one-direction revolve angles that use variables stay driven by them, so editing the parameter in SolidCraft rebuilds the part. Other values that use variables (fillet and chamfer sizes, hole sizes) are written as their evaluated values with an `onshape/history.variable-evaluated` loss naming each one. Suppressed features, including parent-suppressed features, do not produce these losses. |
+| Derived / Part Studio insert | A linked SolidCraft Insert Design of the captured studio, followed by resolved body booleans | Whole default-configuration studios at a pinned document/version/element reference, with unique body names and unchanged placement. SolidCraft 0.44 or newer keeps the link; earlier targets keep frozen derived bodies with `design/reference.frozen`. Part subsets, transformed inserts, configuration changes and unresolved references stop history with a named reason. |
+| Body Boolean after a Derived insert | Join, cut or intersect with one target, disjoint tools and optional keep-tools | Every deterministic body identity must exist at the Boolean's own rollback index and resolve uniquely to an earlier captured feature result. |
 | Other features, custom FeatureScript | Named `onshape/history.not-supported` loss | The shared partial-history path keeps the final STEP shape visible and retains the editable prefix where possible. |
 
 Face and edge queries use `deterministicIds`, looked up only in bodydetails at
@@ -100,6 +102,47 @@ schema changes do not change the reader's selections, units or history limits.
 Lengths from REST geometry are converted from metres to millimetres; angles use
 radians. The source axes, origin and scale are preserved. Unsupported constructions
 stop body-building history rather than guessing a selection.
+
+## Derived Part Studios
+
+A Derived feature can bring the whole of another Part Studio into the root studio.
+The fetcher captures structured `documentId`, `versionId` and `elementId` references,
+including references to another document, under
+`references/<document>/<version>/<element>/`. Each reference has its own manifest,
+raw responses, rollback states and final STEP, pinned to that version's microversion.
+Referenced studios also include their final parts snapshot, even after a modifying feature.
+The root manifest adds `root_element`. Existing bundles with only one studio still
+convert without this field. Fetch an older bundle again if a reference is missing.
+Repeated references share captured files; cycles and chains over eight levels are refused.
+The reader also caps the combined serialized neutral reference payloads at 256 MiB,
+so repeated inserts cannot expand their captured designs without a bound.
+Assembly references to other documents retain the existing `external` behavior.
+
+Select a SolidCraft 0.44 target (for example, CLI `--solidcraft-version 0.44.0`)
+to retain the link. This lane leaves the existing default target unchanged; a target
+below 0.44 reports `design/reference.frozen`. On 0.44 targets, file conversion writes `derived-<sha256>.sc` companion
+designs beside the result. The result uses the same Import, component placement and
+`links` representation as SolidCraft's **Insert Design**, with cached bodies for
+opening offline. Keep the companion files beside the main design when moving it.
+Edit a companion design in SolidCraft and use **Update Links** in the main design;
+the following mapped booleans rebuild against its updated bodies. The link follows the
+converted local design. A conversion reuses an
+identical companion but refuses to overwrite one you edited. Companion copies are also
+retained inside the main container under `companions/` for recovery.
+
+The supported structured reference selects the entire studio. The reader proves each
+newly introduced body by its unique name in the before/after rollback states and in
+the referenced STEP. If STEP omits its sole solid's name, a sole part in the referenced
+studio's final rollback snapshot supplies the unambiguous name. Intermediate identities
+stay in CADIR feature-result topology.
+Each Boolean depends directly on the features that produced its selected bodies.
+Explicit part queries are accepted when their resolved IDs select every solid body in
+the referenced final snapshot; a partial or opaque query remains a named loss.
+It never borrows the final host shape for an insert or Boolean operand. Unknown query
+encodings, body names that cannot be paired, part subsets, configurations and placements
+are reported through `onshape/history.not-supported`, preserving the final host STEP.
+The reference design carries its own mapped history where available. Geometry and
+history checks still compare the host result with the original host STEP coordinates.
 
 ## Checking the result
 
@@ -209,8 +252,8 @@ The ZIP contains `manifest.json` and raw response bytes without rewriting the JS
 - A Part Studio has `partstudios/<element>/features.json`, including sketches,
   parameters, expressions, and queries; `bodydetails/<index>.json` at each feature
   index needing non-sketch topology queries; and `bodydetails/index.json`, an array
-  of those indices. The states before and after each extrude or revolve that makes
-  a new part are kept too; the state after the last feature is
+  of those indices. The states before and after each extrude, revolve or Derived insert that makes
+  new parts are kept too; the state after the last feature is
   stored as the index equal to the feature count. Suppressed features and
   sketch-region-only queries do not request bodydetails. Optional `configuration.json` and `variables.json` are
   included when their endpoints return data. A Part Studio containing only sketches
@@ -226,8 +269,9 @@ The ZIP contains `manifest.json` and raw response bytes without rewriting the JS
   `documentId`, `elementId`, and `microversionId`; those documents are not fetched.
 
 No separate sketch, Parasolid, mass-property, FeatureScript, translation-status, or
-account metadata files are included. Dutchman follows references within the document
-and refuses references to a different microversion of that document. It fetches at
+account metadata files are included. Dutchman follows assembly references within the document
+and refuses assembly references to a different microversion of that document. Derived
+references are captured separately at their immutable versions, including other documents. It fetches at
 most 1,000 elements and 10,000 files. Responses are limited to 64 MiB; the complete
 bundle's uncompressed payload and provisional workspace cache each have a 512 MiB cap.
 

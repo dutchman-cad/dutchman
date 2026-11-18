@@ -1,5 +1,6 @@
 //! Fetch raw Onshape responses into a private, versioned bundle. No CAD decoding happens here.
 mod auth;
+mod derived;
 mod export;
 mod http;
 mod store;
@@ -465,7 +466,19 @@ fn fetch_inner<C: HttpClient>(
     let mut mid = id(&mid).map_err(|_| response_error())?;
     let mut hits = 0;
     for attempt in 0..2 {
-        match capture(session, source, output, &scope, &mid, &mut hits)? {
+        match capture(
+            session,
+            source,
+            output,
+            &scope,
+            &mid,
+            &mut hits,
+            &BTreeSet::from([(
+                source.document.clone(),
+                source.version.clone(),
+                source.element.clone(),
+            )]),
+        )? {
             Capture::Complete(report) => return Ok(report),
             Capture::Changed(current) => {
                 if attempt == 1 {
@@ -505,6 +518,7 @@ fn current_microversion<C: HttpClient>(
     .map_err(|_| response_error())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn capture<C: HttpClient>(
     session: &mut Session<'_, C>,
     source: &DocumentUrl,
@@ -512,6 +526,7 @@ fn capture<C: HttpClient>(
     scope: &Path,
     mid: &str,
     hits: &mut u32,
+    ancestry: &BTreeSet<(String, String, String)>,
 ) -> Result<Capture> {
     let content_kind = if source.kind == "v" { "v" } else { "m" };
     let content_id = if source.kind == "v" {
@@ -627,6 +642,7 @@ fn capture<C: HttpClient>(
                         "The Onshape Part Studio has too many features; fetch a smaller element.",
                     ));
                 }
+                derived::capture_references(&mut fetcher, list, scope, ancestry)?;
                 let mut wanted = BTreeSet::new();
                 for (i, feature) in list.iter().enumerate() {
                     if feature.get("suppressed").and_then(Value::as_bool) != Some(true)
@@ -640,6 +656,11 @@ fn capture<C: HttpClient>(
                 for i in part_creators(list) {
                     wanted.insert(i);
                     wanted.insert(i.saturating_add(1));
+                }
+                // Referenced geometry can omit STEP names. Its final parts snapshot
+                // proves the name when the referenced studio has exactly one solid.
+                if ancestry.len() > 1 {
+                    wanted.insert(list.len());
                 }
                 let mut indices = Vec::new();
                 for i in wanted {
@@ -738,7 +759,7 @@ fn capture<C: HttpClient>(
         private_write(path, bytes)?;
     }
     fetcher.record_source("manifest.json", content_kind);
-    let manifest = json!({"schema": "dutchman.onshape-bundle/1", "fetched_at": timestamp(fetcher.session.client.now()), "fetcher": format!("dutchman {}", crate::BUILD_VERSION), "api_version": "v17", "document": {"id": source.document, "name": name, "workspace_or_version": source.kind, "wvid": source.version, "microversion": mid}, "elements": elements, "external": external.into_iter().map(|(d,e,m)| json!({"documentId":d,"elementId":e,"microversionId":m})).collect::<Vec<_>>(), "calls": fetcher.session.calls, "consistent": true, "file_sources": fetcher.file_sources});
+    let manifest = json!({"schema": "dutchman.onshape-bundle/1", "fetched_at": timestamp(fetcher.session.client.now()), "fetcher": format!("dutchman {}", crate::BUILD_VERSION), "api_version": "v17", "document": {"id": source.document, "name": name, "workspace_or_version": source.kind, "wvid": source.version, "microversion": mid}, "root_element": source.element, "elements": elements, "external": external.into_iter().map(|(d,e,m)| json!({"documentId":d,"elementId":e,"microversionId":m})).collect::<Vec<_>>(), "calls": fetcher.session.calls, "consistent": true, "file_sources": fetcher.file_sources});
     privacy(&manifest)?;
     fetcher.add(
         "manifest.json".into(),
@@ -795,9 +816,12 @@ fn part_creators(features: &[Value]) -> Vec<usize> {
             feature.get("suppressed").and_then(Value::as_bool) != Some(true)
                 && matches!(
                     feature.get("featureType").and_then(Value::as_str),
-                    Some("extrude" | "revolve")
+                    Some("extrude" | "revolve" | "derived" | "importDerived")
                 )
-                && feature
+                && (matches!(
+                    feature.get("featureType").and_then(Value::as_str),
+                    Some("derived" | "importDerived")
+                ) || feature
                     .get("parameters")
                     .and_then(Value::as_array)
                     .is_some_and(|parameters| {
@@ -805,7 +829,7 @@ fn part_creators(features: &[Value]) -> Vec<usize> {
                             p.get("parameterId").and_then(Value::as_str) == Some("operationType")
                                 && p.get("value").and_then(Value::as_str) == Some("NEW")
                         })
-                    })
+                    }))
         })
         .map(|(i, _)| i)
         .collect()

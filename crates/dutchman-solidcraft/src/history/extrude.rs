@@ -496,6 +496,22 @@ pub(super) fn body_names(
     if operation != "new_body" {
         return None;
     }
+    if feature
+        .pointer("/source_properties/historical_bodies")
+        .is_some()
+    {
+        let bindings = super::reference::body_bindings(feature).ok().flatten()?;
+        if bindings.is_empty()
+            || bindings
+                .iter()
+                .any(|(_, name)| ctx.named_bodies.iter().any(|(_, taken)| taken == name))
+        {
+            return None;
+        }
+        let names = bindings.iter().map(|(_, name)| name.clone()).collect();
+        ctx.named_bodies.extend(bindings);
+        return Some(names);
+    }
     let outputs = feature.get("outputs").and_then(Value::as_array)?;
     if outputs.is_empty() {
         return None;

@@ -1033,3 +1033,198 @@ fn missing_step_does_not_bypass_body_history_validation() {
         .to_string()
         .contains("body-building features but no STEP"));
 }
+
+#[test]
+fn derived_studio_keeps_neutral_reference_and_generated_boolean_operands() {
+    let (model, report) = read(&fixture("derived")).unwrap();
+    assert_eq!(
+        kinds(&model),
+        ["sketch", "extrude", "stored_geometry", "combine"],
+        "{:?}",
+        report.losses()
+    );
+    let wire = timeline(&model);
+    let reference: Value = serde_json::from_str(
+        wire["model"]["features"][2]["source_properties"]["design_reference"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(reference["bodies"][0]["name"], "Tool");
+    assert_eq!(
+        reference["ir"]["model"]["features"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(reference["step"]
+        .as_str()
+        .unwrap()
+        .starts_with("ISO-10303-21;"));
+    assert_eq!(
+        wire["model"]["feature_result_topologies"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    let operands = &wire["model"]["features"][3]["definition"]["value"]["value"]["operands"];
+    assert_eq!(operands["target"]["kind"], "generated");
+    assert_eq!(operands["tools"]["kind"], "generated");
+    let dependencies = wire["model"]["features"][3]["dependencies"]
+        .as_array()
+        .unwrap();
+    assert!(dependencies.contains(&wire["model"]["features"][1]["id"]));
+    assert!(dependencies.contains(&wire["model"]["features"][2]["id"]));
+    assert_eq!(
+        model.ir.geometry.bodies.len(),
+        1,
+        "intermediate bodies must not enter final geometry"
+    );
+    assert!(
+        !report
+            .losses()
+            .iter()
+            .any(|loss| loss.code.as_deref() == Some("onshape/history.not-supported")),
+        "{:?}",
+        report.losses()
+    );
+}
+
+#[test]
+fn derived_resolved_parts_can_select_the_entire_referenced_studio() {
+    let bytes = changed(&fixture("derived"), |path, value| {
+        if path == "partstudios/studio/features.json" {
+            value["features"][2]["parameters"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"parameterId":"parts", "queries":[{"deterministicIds":["tool"]}]}));
+        }
+    });
+    let (model, report) = read(&bytes).unwrap();
+    assert_eq!(
+        kinds(&model),
+        ["sketch", "extrude", "stored_geometry", "combine"],
+        "{:?}",
+        report.losses()
+    );
+}
+
+#[test]
+fn derived_reference_mismatches_and_unresolved_boolean_bodies_stop_history() {
+    for failure in [
+        "missing",
+        "version",
+        "microversion",
+        "source-final-parts",
+        "configuration",
+        "placement",
+        "subset",
+        "source-query",
+        "tools",
+        "duplicate",
+        "body-name",
+        "replaced-body",
+        "custom",
+        "boolean-option",
+    ] {
+        let bytes = changed(&fixture("derived"), |path, value| {
+            if path == "partstudios/studio/features.json" {
+                match failure {
+                    "custom" => value["features"][2]["namespace"] = json!("custom"),
+                    "boolean-option" => value["features"][3]["parameters"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(json!({"parameterId":"offset","value":true})),
+                    "missing" => {
+                        value["features"][2]["parameters"][0]["value"]["elementId"] =
+                            json!("555555555555555555555555")
+                    }
+                    "version" => {
+                        value["features"][2]["parameters"][0]["value"]["versionId"] =
+                            json!("666666666666666666666666")
+                    }
+                    "configuration" => {
+                        value["features"][2]["parameters"][0]["configuration"] = json!("size=large")
+                    }
+                    "placement" => value["features"][2]["parameters"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(json!({"parameterId":"mateConnector","value":true})),
+                    "subset" => {
+                        value["features"][2]["parameters"][0]["queries"] =
+                            json!([{"deterministicIds":["another-source-part"]}])
+                    }
+                    "source-query" => {
+                        value["features"][2]["parameters"][0]["queries"] = json!([{"deterministicIds":["tool"],"queryString":"opaque source selection"}])
+                    }
+                    "tools" => {
+                        value["features"][3]["parameters"][2]["queries"][0]["deterministicIds"] =
+                            json!(["absent"])
+                    }
+                    "duplicate" => {
+                        value["features"][3]["parameters"][2]["queries"][0]["deterministicIds"] =
+                            json!(["inserted", "inserted"])
+                    }
+                    _ => {}
+                }
+            }
+            if path == "partstudios/studio/bodydetails/3.json" {
+                if failure == "body-name" {
+                    value["bodies"][1]["properties"]["name"] = json!("Unmatched");
+                }
+                if failure == "replaced-body" {
+                    value["bodies"].as_array_mut().unwrap().remove(0);
+                }
+            }
+            if failure == "microversion"
+                && path.starts_with("references/")
+                && path.ends_with("features.json")
+            {
+                value["sourceMicroversion"] = json!("other");
+            }
+            if failure == "source-final-parts"
+                && path.starts_with("references/")
+                && path.ends_with("bodydetails/index.json")
+            {
+                *value = json!([0, 1]);
+            }
+        });
+        let (model, report) = read(&bytes).unwrap();
+        assert!(kinds(&model).contains(&"native".into()), "{failure}");
+        assert!(
+            report
+                .losses()
+                .iter()
+                .any(|loss| loss.code.as_deref() == Some("onshape/history.not-supported")),
+            "{failure}: {:?}",
+            report.losses()
+        );
+        assert!(model.source_step.is_some());
+    }
+}
+
+#[test]
+fn derived_booleans_keep_operation_and_tools_choice_without_guessing_body_order() {
+    for (source, op, keep) in [
+        ("UNION", "join", false),
+        ("INTERSECTION", "intersect", true),
+        ("SUBTRACTION", "cut", true),
+    ] {
+        let bytes = changed(&fixture("derived"), |path, value| {
+            if path == "partstudios/studio/features.json" {
+                value["features"][3]["parameters"][0]["value"] = json!(source);
+                value["features"][3]["parameters"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!({"parameterId":"keepTools","value":keep}));
+            }
+        });
+        let (model, report) = read(&bytes).unwrap();
+        let wire = timeline(&model);
+        let operation = &wire["model"]["features"][3]["definition"]["value"]["value"];
+        assert_eq!(operation["op"], op, "{:?}", report.losses());
+        assert_eq!(operation["keep_tools"], keep);
+    }
+}

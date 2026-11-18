@@ -5,6 +5,18 @@ description: Use when someone wants a CAD file (Fusion, Inventor, SolidWorks, Fr
 
 # Converting CAD files with Dutchman
 
+Onshape Derived inserts from captured, pinned Part Studios become linked Insert Design
+components when targeting SolidCraft 0.44 or newer, with supported body booleans kept editable.
+Select target 0.44 explicitly when the existing default is older.
+Keep the generated `derived-<sha256>.sc` companion designs beside the main result;
+edit a companion and use SolidCraft's Update Links to rebuild the host. If conversion
+finds an edited companion, choose another output folder; that companion is kept even
+when overwriting is enabled. Earlier targets
+report `design/reference.frozen` and keep frozen derived bodies. Missing references,
+part subsets, configurations or transformed inserts name the reason under
+`onshape/history.not-supported`; fetch a new bundle for missing references.
+See [Onshape bundles](../../docs/onshape.md) for the supported reference forms.
+
 For Onshape bundles, review constraint losses even when body verification succeeds.
 Each dropped constraint names its source kind and reason; its solved geometry remains.
 Origin coincidences and midpoint carriers preserve editable sketch relations.
@@ -17,7 +29,7 @@ the report says its ordered selections and evaluation states are not mapped yet.
 See `docs/cadir-v11.md` for the pinned reader contract.
 
 Onshape `.onshape-bundle` inputs convert offline through the same inspect/convert
-tools and commands. They must contain one Part Studio, its feature responses,
+tools and commands. They must contain a root Part Studio, captured derived references when needed, its feature responses,
 bodydetails at needed rollback indices, and its final STEP export. Do not request
 credentials or upload a design. Explain `onshape/history.not-supported` as a named
 history gap with final STEP geometry preserved, and

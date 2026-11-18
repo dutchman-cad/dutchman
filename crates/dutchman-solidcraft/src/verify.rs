@@ -406,6 +406,8 @@ pub const WINDOW_OLDEST: [u64; 3] = [0, 18, 2];
 /// Writer capabilities whose output depends on the target release.
 #[derive(Clone, Copy)]
 pub enum VersionGate {
+    /// Linked Insert Design with cached bodies and a source file.
+    LinkedDesign,
     /// Explicit flat tips compensate for changed entry-recess angle handling.
     EntryRecessTip,
     /// Editable sketch-profile coils.
@@ -430,6 +432,7 @@ pub enum VersionGate {
 impl VersionGate {
     fn minimum(self) -> SolidCraftVersion {
         match self {
+            Self::LinkedDesign => SolidCraftVersion::V0_44_0,
             Self::EntryRecessTip => SolidCraftVersion::V0_22_1,
             Self::ConePrimitive => SolidCraftVersion::V0_24_1,
             Self::SketchProfileCoil | Self::MirrorChain => SolidCraftVersion::V0_25_1,
@@ -493,6 +496,9 @@ pub fn solidcraft_minor(line: &str) -> Option<String> {
 pub struct SolidCraftVersion([u64; 3]);
 
 impl SolidCraftVersion {
+    /// Current-window linked Insert Design representation, checked with 0.44.0 and 0.44.1.
+    pub const V0_44_0: Self = Self([0, 44, 0]);
+
     /// First release that applies a drill-point angle on counterbores and countersinks.
     pub const V0_22_1: Self = Self([0, 22, 1]);
 
