@@ -1652,7 +1652,10 @@ pub(crate) fn prove_blends(
     let mut replayed = if steps.is_empty() {
         Ok(Vec::new())
     } else {
-        let faces = history.blends.iter().any(|pending| pending.face.is_some());
+        let faces = history
+            .blends
+            .iter()
+            .any(|pending| pending.face.is_some() || pending.needs_faces());
         replay(history, &steps, faces)
     };
     let blends = std::mem::take(&mut history.blends);
@@ -1671,23 +1674,32 @@ pub(crate) fn prove_blends(
                 step = step.saturating_add(1);
                 match at {
                     Some(Ok(before)) => match &pending.face {
-                        None => blend::prove(pending, &before.bodies).and_then(|selections| {
-                            let cuts = pending
-                                .unequal
-                                .as_ref()
-                                .map(|unequal| blend::cuts(unequal, &pending.edges, &before.bodies))
-                                .transpose()?;
-                            let added = selections.len().saturating_sub(1);
-                            let at = pending.feature.saturating_add(inserted);
-                            split_blend(history, at, pending.outcome, selections)?;
-                            let flipped = match cuts {
-                                Some(cuts) => {
-                                    orient_unequal(history, at, added, &cuts, &mut replay)?
-                                }
-                                None => false,
-                            };
-                            Ok(Proven::Bodies { added, flipped })
-                        }),
+                        None => blend::prove(pending, &before.bodies, &before.faces).and_then(
+                            |selections| {
+                                let cuts = pending
+                                    .unequal
+                                    .as_ref()
+                                    .map(|unequal| {
+                                        blend::cuts(
+                                            unequal,
+                                            &pending.edges,
+                                            &before.bodies,
+                                            &before.faces,
+                                        )
+                                    })
+                                    .transpose()?;
+                                let added = selections.len().saturating_sub(1);
+                                let at = pending.feature.saturating_add(inserted);
+                                split_blend(history, at, pending.outcome, selections)?;
+                                let flipped = match cuts {
+                                    Some(cuts) => {
+                                        orient_unequal(history, at, added, &cuts, &mut replay)?
+                                    }
+                                    None => false,
+                                };
+                                Ok(Proven::Bodies { added, flipped })
+                            },
+                        ),
                         Some(face) => face_profile::prove(face, before).and_then(|mirrored| {
                             if mirrored {
                                 face.sketch(true)
@@ -1721,7 +1733,7 @@ pub(crate) fn prove_blends(
                     let faces = blends
                         .iter()
                         .skip(index.saturating_add(1))
-                        .any(|p| p.face.is_some());
+                        .any(|p| p.face.is_some() || p.needs_faces());
                     replayed = replay(history, &remaining, faces);
                     step = 0;
                 }
@@ -1753,7 +1765,7 @@ pub(crate) fn prove_blends(
                         let faces = blends
                             .iter()
                             .skip(index.saturating_add(1))
-                            .any(|p| p.face.is_some());
+                            .any(|p| p.face.is_some() || p.needs_faces());
                         replayed = replay(history, &remaining, faces);
                         step = 0;
                     }

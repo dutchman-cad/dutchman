@@ -327,17 +327,24 @@ suffixes, as for multiple radius groups; the report keeps one mapped source outc
 select every emitted part of the blend.
 Later blends replay the expanded history before their edges are proven. Without `solidcraft-cli`, or when the replay fails or runs out
 of time, blends are refused, saying why. SolidCraft reports each edge's ends, midpoint and
-length but no tangent, so an input edge must be a line or a circular arc; its midpoint must
-lie on exactly one rebuilt edge across every body, and that edge must have the same ends (in
-either order) and length; a straight one must lie along the input tangent. Arcs SolidCraft
-splits into pieces, closed edges and other curves are refused. Equal two-distance chamfers also map; distance-and-angle chamfers map at
-45 degrees on perpendicular faces. Unequal distances and other angles map on straight edges
-when the source's final body still has the chamfer's face: the face order that puts it there,
-between that face's own boundary edges along the input edge, is taken. A selection on several
+length but no tangent, so an input edge must be a line, a circular arc or a full circle; its
+midpoint must lie on exactly one rebuilt edge across every body, and that edge must have the
+same ends (in either order) and length; a straight one must lie along the input tangent. A full
+circle (a closed edge whose midpoint lies opposite its start) is found by its centre, axis and
+radius instead of its ends and length, wherever SolidCraft puts its seam (SolidCraft reports
+a closed edge's length only approximately), and picked a quarter turn from that seam: the
+source's midpoint may fall on SolidCraft's seam vertex, where other edges end. Arcs
+SolidCraft splits into pieces, other closed edges and other curves are refused. Equal two-distance chamfers also map; distance-and-angle chamfers map at
+45 degrees on perpendicular faces: at a full circle, a plane square to its axis and a coaxial
+cylinder of its radius, as SolidCraft's replay reports them. Unequal distances and other angles
+map on straight edges when the source's final body still has the chamfer's face: the face order
+that puts it there, between that face's own boundary edges along the input edge, is taken. On a
+full circle between such a plane and cylinder, the order is taken that puts both of the
+chamfer's edges on circles of the source's final body. A selection on several
 bodies becomes one chamfer per body, and each is flipped on its own when SolidCraft's first
 face (the one facing up most) would put the cut elsewhere on that body. A chamfer face the final body lost, an edge whose faces SolidCraft
-cannot tell apart, and SolidCraft cutting it elsewhere either way round are refused, saying
-which. Variable fillets lack a proven
+cannot tell apart (or, at a full circle, are not such a plane and cylinder), and SolidCraft
+cutting it elsewhere either way round are refused, saying which. Variable fillets lack a proven
 chain direction. Final-body edge selections never stand in for input geometry.
 
 Selected straight profile loops that cross or retrace their own curves are split at
