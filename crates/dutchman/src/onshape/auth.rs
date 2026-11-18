@@ -165,25 +165,62 @@ impl BearerToken {
     }
 
     pub fn from_file(path: &Path) -> Result<Self> {
-        let fail = || {
-            Error::new(ErrorKind::Auth,
-            "Could not read the Onshape bearer token file; use a regular UTF-8 file of at most 16 KiB, readable only by you (mode 600 on Unix), and retry.")
-        };
-        let meta = std::fs::symlink_metadata(path).map_err(|_| fail())?;
-        if !meta.is_file() || meta.len() > 16 * 1024 {
-            return Err(fail());
-        }
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            if meta.permissions().mode() & 0o7777 != 0o600 {
-                return Err(fail());
-            }
+            Self::from_open_file(Self::open_file(path)?)
         }
-        let bytes = super::read_bounded(path, 16 * 1024).map_err(|_| fail())?;
-        let text = String::from_utf8(bytes).map_err(|_| fail())?;
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            Err(Error::new(ErrorKind::Auth,
+                "Onshape bearer token files are not supported yet on this platform because privacy cannot be checked. Clear the token file selection and use DUTCHMAN_ONSHAPE_BEARER_TOKEN in the process environment, then retry."))
+        }
+    }
+
+    #[cfg(unix)]
+    fn open_file(path: &Path) -> Result<std::fs::File> {
+        use rustix::fs::{Mode, OFlags};
+        // Never follow a substituted final symlink or wait for a FIFO writer. Parent
+        // directories may move or resolve through symlinks: admission depends only on
+        // the opened object's owner, type and permissions, never pathname metadata.
+        let fd = rustix::fs::open(
+            path,
+            OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(|_| token_file_error())?;
+        Ok(std::fs::File::from(fd))
+    }
+
+    #[cfg(unix)]
+    fn from_open_file(file: std::fs::File) -> Result<Self> {
+        use std::io::Read;
+        use std::os::unix::fs::MetadataExt;
+
+        let meta = file.metadata().map_err(|_| token_file_error())?;
+        if !meta.is_file()
+            || meta.len() > 16 * 1024
+            || meta.mode() & 0o7777 != 0o600
+            || meta.uid() != rustix::process::geteuid().as_raw()
+        {
+            return Err(token_file_error());
+        }
+        let mut bytes = Vec::new();
+        file.take(16 * 1024 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| token_file_error())?;
+        if bytes.len() > 16 * 1024 {
+            return Err(token_file_error());
+        }
+        let text = String::from_utf8(bytes).map_err(|_| token_file_error())?;
         Self::new(text)
     }
+}
+
+#[cfg(unix)]
+fn token_file_error() -> Error {
+    Error::new(ErrorKind::Auth,
+        "Could not read the Onshape bearer token file; use a regular UTF-8 file of at most 16 KiB, owned by you and readable only by you (mode 600 on Unix), without a symbolic link, and retry.")
 }
 
 /// Fetch authentication. API keys remain the default; tokens are never saved by login.
@@ -302,5 +339,103 @@ impl Auth<'_> {
             _ => {}
         }
         Ok(())
+    }
+}
+
+#[cfg(all(test, unix))]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod token_file_tests {
+    use super::*;
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    fn write_private(path: &Path, text: &str) {
+        std::fs::write(path, text).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    #[test]
+    fn replacements_cannot_change_the_opened_token_or_its_metadata() {
+        #[derive(PartialEq)]
+        enum Replacement {
+            Private,
+            Shared,
+            Symlink,
+            Fifo,
+        }
+        for replacement in [
+            Replacement::Private,
+            Replacement::Shared,
+            Replacement::Symlink,
+            Replacement::Fifo,
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("token");
+            let original = dir.path().join("original");
+            write_private(&path, "synthetic-original-token");
+            let file = BearerToken::open_file(&path).unwrap();
+            // Deterministically replace the name between open and metadata/read.
+            std::fs::rename(&path, &original).unwrap();
+            match replacement {
+                Replacement::Private => write_private(&path, "synthetic-replacement-token"),
+                Replacement::Shared => {
+                    write_private(&path, "synthetic-replacement-token");
+                    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644))
+                        .unwrap();
+                }
+                Replacement::Symlink => symlink(&original, &path).unwrap(),
+                Replacement::Fifo => rustix::fs::mkfifoat(
+                    rustix::fs::CWD,
+                    &path,
+                    rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+                )
+                .unwrap(),
+            }
+            assert_eq!(
+                BearerToken::from_open_file(file).unwrap().0,
+                "synthetic-original-token"
+            );
+            if replacement == Replacement::Private {
+                assert_eq!(
+                    BearerToken::from_file(&path).unwrap().0,
+                    "synthetic-replacement-token"
+                );
+            } else {
+                // Also cover a replacement that wins the race before open. A FIFO
+                // without a writer must be refused without blocking the test process.
+                let (send, receive) = std::sync::mpsc::channel();
+                std::thread::spawn(move || send.send(BearerToken::from_file(&path)).unwrap());
+                let error = receive
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .expect("token file open/read must not block")
+                    .unwrap_err();
+                assert_eq!(error.kind, ErrorKind::Auth);
+            }
+        }
+    }
+
+    #[test]
+    fn private_path_cannot_substitute_for_a_shared_or_oversized_open_handle() {
+        for oversized in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("token");
+            write_private(
+                &path,
+                &if oversized {
+                    "x".repeat(16 * 1024 + 1)
+                } else {
+                    "synthetic-token".into()
+                },
+            );
+            if !oversized {
+                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            }
+            let file = BearerToken::open_file(&path).unwrap();
+            std::fs::rename(&path, dir.path().join("opened")).unwrap();
+            write_private(&path, "synthetic-replacement-token");
+            assert_eq!(
+                BearerToken::from_open_file(file).unwrap_err().kind,
+                ErrorKind::Auth
+            );
+        }
     }
 }

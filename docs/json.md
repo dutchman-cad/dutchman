@@ -1348,6 +1348,9 @@ No supplied URL, key, bearer token, authorization header, or remote error body i
 Authentication options add no report fields or schema version. CLI `--bearer-token-file`
 and MCP `bearer_token_file` accept only a local path; `DUTCHMAN_ONSHAPE_BEARER_TOKEN`
 is read from the process environment. A file takes precedence over that variable.
+Token files that fail ownership, privacy, type, or size checks return `onshape/auth`
+with `calls: 0`. Windows refuses token files because privacy cannot be checked yet and
+directs users to clear the file selection and use the environment variable instead.
 Mixing a token with API keys (including saved keys) returns `onshape/auth` with `calls: 0`.
 Bearer HTTP 401/403 returns `onshape/auth` and explains that the token expired or lacks
 access, with instructions to obtain and supply a fresh token with read access. Echoed

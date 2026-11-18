@@ -164,6 +164,11 @@ impl Panel {
                     self.connected = connected;
                     self.bearer = bearer;
                     self.user = None;
+                    if bearer {
+                        self.changing_keys = false;
+                        self.access.clear();
+                        self.secret.clear();
+                    }
                     if connected && self.continue_link {
                         link = Some(std::mem::take(&mut self.link));
                         self.continue_link = false;
@@ -190,6 +195,7 @@ impl Panel {
                 }
                 Message::Forgotten(Ok(())) => {
                     self.connected = false;
+                    self.changing_keys = false;
                     self.user = None;
                     self.access.clear();
                     self.secret.clear();
@@ -474,6 +480,51 @@ mod tests {
             panel.bearer_token_file.as_deref(),
             Some(std::path::Path::new("private-token-file"))
         );
+    }
+
+    #[test]
+    fn bearer_lookup_restores_link_controls_after_abandoned_key_editing() {
+        let mut panel = Panel::new(&egui::Context::default());
+        panel.preview(Some("Synthetic designer"));
+        panel.open = true;
+        panel.changing_keys = true;
+        panel.access = "synthetic-abandoned-access".into();
+        panel.secret = "synthetic-abandoned-secret".into();
+        panel
+            .sender
+            .send(Message::Stored(Ok((true, true))))
+            .unwrap();
+        assert!(panel.poll().is_none());
+        assert!(panel.open);
+        assert!(panel.connected());
+        assert!(panel.bearer);
+        assert!(!panel.changing_keys);
+        assert!(panel.access.is_empty());
+        assert!(panel.secret.is_empty());
+        assert!(panel.user.is_none());
+    }
+
+    #[test]
+    fn disconnect_abandons_key_editing_before_selecting_a_bearer_file() {
+        let mut panel = Panel::new(&egui::Context::default());
+        panel.preview(Some("Synthetic designer"));
+        panel.changing_keys = true;
+        panel.access = "synthetic-abandoned-access".into();
+        panel.secret = "synthetic-abandoned-secret".into();
+        panel.sender.send(Message::Forgotten(Ok(()))).unwrap();
+        panel.poll();
+        assert!(!panel.changing_keys);
+        assert!(panel.access.is_empty());
+        assert!(panel.secret.is_empty());
+        panel.bearer_token_file = Some(std::path::PathBuf::from("synthetic-token-file"));
+        panel
+            .sender
+            .send(Message::Stored(Ok((true, true))))
+            .unwrap();
+        panel.poll();
+        assert!(panel.connected());
+        assert!(panel.bearer);
+        assert!(!panel.changing_keys);
     }
 
     #[test]

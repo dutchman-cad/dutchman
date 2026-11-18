@@ -937,6 +937,9 @@ API keys remain the default and come from the server's local environment or save
 connection. Alternatively, use `bearer_token_file` or the server process environment's
 `DUTCHMAN_ONSHAPE_BEARER_TOKEN`; the file takes precedence. The token file contains only
 the token and must be private (mode 600 on Unix), regular, UTF-8, and at most 16 KiB.
+Unix checks ownership and permissions on the same open handle used to read the token,
+refusing symlinks and special files. On Windows, token files are refused because privacy
+cannot be checked yet; omit `bearer_token_file` and use the server environment variable.
 Never include credential values in tool arguments or chat. Remove API-key environment
 variables and saved keys (`dutchman onshape logout`) before using a token; mixed
 credentials return `onshape/auth` with zero calls. HTTP 401/403 explains that the token

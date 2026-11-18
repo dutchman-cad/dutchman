@@ -217,6 +217,15 @@ secret manager. Never put the token value in command arguments, URLs, chat, or l
 is no command option accepting a token value. A token file takes precedence over the token
 environment variable.
 
+On Unix, Dutchman opens the token file once without following a final symbolic link or
+waiting for a FIFO writer. It checks that the opened handle is a regular file owned by
+the current user, mode 600, and within the size limit, then reads at most 16 KiB through
+that handle. Replacing the pathname cannot substitute unchecked contents. Parent
+directories may resolve through symbolic links; these checks apply to the final opened
+file regardless of directory changes. On Windows, token-file authentication is not
+supported yet because file privacy cannot be checked. Clear the file selection (or omit
+`--bearer-token-file` / `bearer_token_file`) and use `DUTCHMAN_ONSHAPE_BEARER_TOKEN`.
+
 Dutchman sends `Authorization: Bearer <token>` directly to Onshape. A token cannot be mixed
 with API keys: remove both `ONSHAPE_ACCESS_KEY` and `ONSHAPE_SECRET_KEY`, and run
 `dutchman onshape logout` to forget saved keys before using a token. Mixing them returns
@@ -229,6 +238,8 @@ environment variable from the server process. In the desktop app, choose **Conne
 then **Use bearer token file**, or launch the app with the token environment variable set.
 The selected file applies to desktop fetches and is read again for each fetch; **Clear token
 file** removes the selection. It is not saved across app restarts.
+Switching from API-key editing to a bearer token clears abandoned key inputs and
+restores the document-link controls.
 
 HTTP 401 and 403 return `onshape/auth`: the token expired or lacks document access. Obtain
 a fresh token with read access, replace the file or environment variable, and retry. Token

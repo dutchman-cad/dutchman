@@ -914,6 +914,10 @@ variables and run `dutchman onshape logout` first. HTTP 401/403 means the token 
 lacks access; ask the user to obtain a fresh token with read access and replace their local
 file or environment variable. Reports and logs never echo tokens. The desktop supports
 **Use bearer token file** in Connect Onshape and the same environment variable.
+Unix token files must belong to the current user; ownership, permissions, type, and size
+are checked on the opened handle, and symlinks and special files are refused. Windows
+token files are not supported yet because privacy cannot be checked: clear the file
+selection or omit the file option and use the process environment variable instead.
 Fetch only the user's own documents.
 Requests go directly to Onshape; nothing is sent to Dutchman. Keep bundles and caches
 private. Version cache hits cost no calls; cached workspace URLs require two head checks.

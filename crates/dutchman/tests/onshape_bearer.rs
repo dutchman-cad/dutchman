@@ -1,6 +1,8 @@
 //! Synthetic credentials and subprocess checks; no external requests.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
-use dutchman::onshape::{BearerToken, Credentials, ErrorKind, FetchAuth, FileBackend, Store};
+use dutchman::onshape::{BearerToken, ErrorKind, FetchAuth, Store};
+#[cfg(unix)]
+use dutchman::onshape::{Credentials, FileBackend};
 use serde_json::{json, Value};
 use std::io::Write;
 use std::process::{Command, Stdio};
@@ -51,6 +53,9 @@ fn authentication_defaults_to_keys_and_refuses_all_mixed_sources() {
     private_file(&path, &format!("{TOKEN}\n"));
     for api in [keys.to_vec(), vec![keys[0]], vec![keys[1]]] {
         for file in [false, true] {
+            if file && !cfg!(unix) {
+                continue;
+            }
             let mut pairs = api.clone();
             if !file {
                 pairs.push(("DUTCHMAN_ONSHAPE_BEARER_TOKEN", TOKEN));
@@ -62,34 +67,37 @@ fn authentication_defaults_to_keys_and_refuses_all_mixed_sources() {
             assert!(!format!("{error:?}").contains(TOKEN));
         }
     }
-    // Saved keys conflict too, with both token sources.
-    let saved = dir.path().join("keys");
-    private_file(
-        &saved,
-        &Credentials::new(keys[0].1.into(), keys[1].1.into())
-            .unwrap()
-            .to_json(),
-    );
-    for file in [false, true] {
-        let saved_store = Store::new(
-            move |key| (!file && key == "DUTCHMAN_ONSHAPE_BEARER_TOKEN").then(|| TOKEN.into()),
-            None,
-            Some(Box::new(FileBackend {
-                path: saved.clone(),
-            })),
+    #[cfg(unix)]
+    {
+        // Saved keys conflict too, with both token sources.
+        let saved = dir.path().join("keys");
+        private_file(
+            &saved,
+            &Credentials::new(keys[0].1.into(), keys[1].1.into())
+                .unwrap()
+                .to_json(),
         );
-        let error = FetchAuth::find(&saved_store, file.then_some(path.as_path())).unwrap_err();
-        assert!(error.message.contains("Choose either"));
+        for file in [false, true] {
+            let saved_store = Store::new(
+                move |key| (!file && key == "DUTCHMAN_ONSHAPE_BEARER_TOKEN").then(|| TOKEN.into()),
+                None,
+                Some(Box::new(FileBackend {
+                    path: saved.clone(),
+                })),
+            );
+            let error = FetchAuth::find(&saved_store, file.then_some(path.as_path())).unwrap_err();
+            assert!(error.message.contains("Choose either"));
+        }
+        // The file takes precedence over the token environment variable.
+        let selected = FetchAuth::find(
+            &store(&[("DUTCHMAN_ONSHAPE_BEARER_TOKEN", "bad\ntoken")]),
+            Some(&path),
+        )
+        .unwrap()
+        .unwrap();
+        assert!(selected.is_bearer());
+        assert!(!format!("{selected:?}").contains(TOKEN));
     }
-    // The file takes precedence over the token environment variable.
-    let selected = FetchAuth::find(
-        &store(&[("DUTCHMAN_ONSHAPE_BEARER_TOKEN", "bad\ntoken")]),
-        Some(&path),
-    )
-    .unwrap()
-    .unwrap();
-    assert!(selected.is_bearer());
-    assert!(!format!("{selected:?}").contains(TOKEN));
 }
 
 #[test]
@@ -108,9 +116,9 @@ fn token_validation_and_file_errors_never_echo_credentials_or_paths() {
     let missing = BearerToken::from_file(&path).unwrap_err();
     assert!(!missing.to_string().contains("private-token-file"));
     private_file(&path, TOKEN);
-    assert!(BearerToken::from_file(&path).is_ok());
     #[cfg(unix)]
     {
+        assert!(BearerToken::from_file(&path).is_ok());
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
         assert_eq!(
@@ -124,6 +132,50 @@ fn token_validation_and_file_errors_never_echo_credentials_or_paths() {
     }
     private_file(&path, &"x".repeat(16 * 1024 + 1));
     assert!(BearerToken::from_file(&path).is_err());
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_refuses_token_files_with_private_or_shared_acls_and_allows_environment_tokens() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("synthetic-token");
+    private_file(&path, TOKEN);
+    let user = std::env::var("USERNAME").unwrap();
+    let private = Command::new("icacls")
+        .arg(&path)
+        .args(["/inheritance:r", "/grant:r", &format!("{user}:(F)")])
+        .output()
+        .unwrap();
+    assert!(private.status.success());
+    for shared in [false, true] {
+        if shared {
+            let grant = Command::new("icacls")
+                .arg(&path)
+                .args(["/grant", "*S-1-1-0:(R)"])
+                .output()
+                .unwrap();
+            assert!(grant.status.success());
+        }
+        let error = BearerToken::from_file(&path).unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Auth);
+        assert!(error.message.contains("not supported yet"));
+        assert!(error.message.contains("privacy cannot be checked"));
+        assert!(error.message.contains("DUTCHMAN_ONSHAPE_BEARER_TOKEN"));
+        assert!(!error.to_string().contains(TOKEN));
+        assert!(!error.to_string().contains("synthetic-token"));
+        assert!(
+            FetchAuth::find(&store(&[("DUTCHMAN_ONSHAPE_BEARER_TOKEN", TOKEN)]), None)
+                .unwrap()
+                .unwrap()
+                .is_bearer()
+        );
+        // A selected file fails closed, even when the environment would work.
+        assert!(FetchAuth::find(
+            &store(&[("DUTCHMAN_ONSHAPE_BEARER_TOKEN", TOKEN)]),
+            Some(&path)
+        )
+        .is_err());
+    }
 }
 
 fn command(program: &str, home: &std::path::Path) -> Command {

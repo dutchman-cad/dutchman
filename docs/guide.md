@@ -690,6 +690,9 @@ if both token sources are set. Remove API-key environment variables and saved ke
 Never pass the token value in command arguments. The desktop's **Use bearer token file**
 option and MCP's `bearer_token_file` use the same authentication. HTTP 401/403 means the
 token expired or lacks access; obtain a fresh token with read access, replace it, and retry.
+Token files are opened once on Unix, with symlinks and special files refused and ownership
+and permissions checked on that handle. On Windows, file privacy cannot be checked yet:
+clear the token file selection and use `DUTCHMAN_ONSHAPE_BEARER_TOKEN` instead.
 Credentials stay out of logs and reports, including `--json`.
 Part Studios include features, needed input topology, variables/configuration, and
 final STEP; assemblies include their same-document Part Studios. Version links use
