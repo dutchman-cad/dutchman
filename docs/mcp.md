@@ -39,6 +39,10 @@ use a version link. Legacy v1 bundles without consistency metadata remain readab
 Default-plane frames and explicit sketch-region boundaries can be resolved from
 compressed REST query records; deterministic IDs alone are insufficient. The same
 history counts and source-geometry checks apply.
+Custom FeatureScript features report `onshape/history.not-supported`, naming the feature
+and the missing complete per-feature body geometry needed to prove a frozen step.
+Bundle v1 retains only the final STEP shape, so later body-building features remain
+blocked. Use that retained shape; fetching v1 again does not provide frozen steps.
 
 ## Read an existing result
 

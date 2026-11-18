@@ -47,7 +47,23 @@ continue to apply. A present consistency flag must be a JSON boolean.
 | Chamfer | Equal offsets, explicit input edges and resolvable tangent chains | Unequal and angle forms are not supported yet. Tangent propagation has the same completeness requirement as fillets, and the chamfer likewise blends exactly the listed edges on SolidCraft 0.40 or newer. Replay proof still applies. |
 | Hole | Explicit sketch point `locations`; simple, counterbore and countersink entries; through, or blind to the shoulder with its drill point (118° when the feature leaves it out) or a flat 180° bottom; tapped holes from the hole table's thread standard, drilled at the tap-drill diameter | A tapped hole keeps an ISO metric thread as a cosmetic label, with its thread length in a blind hole (SolidCraft 0.40 and newer); otherwise the thread length is reported, and other thread standards keep the bore only. Reversed drilling, other hole tables and standard types, mate connectors and other ends are not supported yet. |
 | Assigned variables | Named length, angle and number parameters, with dependencies | Earlier variables, literal units, parentheses and `+`, `-`, `*`, `/` with compatible units; measured variables, reassignment, forward references and FeatureScript functions are not supported yet. |
-| Other features, custom FeatureScript | Named `onshape/history.not-supported` loss | The shared partial-history path keeps the final STEP shape visible and retains the editable prefix where possible. |
+| Custom FeatureScript | Named `onshape/history.not-supported` loss explaining the missing per-feature body geometry | Bundle v1 cannot prove a frozen step; history stops here, with the final STEP shape visible and the editable prefix retained where possible. |
+| Other features | Named `onshape/history.not-supported` loss | The shared partial-history path keeps the final STEP shape visible and retains the editable prefix where possible. |
+
+Custom features from a Feature Studio are identified by their non-empty `namespace`,
+even when their feature type has the same name as a built-in feature. An active custom
+feature stops history with the reason: `custom FeatureScript feature <name> is not
+supported yet: bundle format 1 lacks complete per-feature body geometry to prove a frozen
+step`. Suppressed custom features are left out without this loss. Later body-building
+features remain blocked, including features whose face or edge selections resolve.
+
+The bundle's rollback bodydetails describe selection geometry, not complete body shapes.
+There are no per-feature tessellations or STEP exports; `export.step` is the final state
+only. Even a custom feature last in the history, or one that appears to change no bodies,
+cannot be proved from these records. Fetching the same bundle format again cannot supply
+the missing shapes. Use the retained final STEP shape; frozen custom steps would require
+a capture of the complete body state at each custom feature, bound to its rollback index
+and pinned microversion, and the shared source-body comparison before history continues.
 
 Face and edge queries use `deterministicIds`, looked up only in bodydetails at
 the feature's rollback index (before that feature). The reader rejects missing or

@@ -186,5 +186,10 @@ line axes, origin and midpoint relations, assigned-variable symmetric extrudes, 
 up-to-next bounds on axis-aligned and slanted synthetic boxes. The slanted box is
 built by raising the top vertices linearly along X; no document geometry is used.
 All identifiers, dimensions and geometry in those variants were invented for tests.
+Custom-feature variants also assign a synthetic namespace to built-in feature types,
+omit a custom feature's name, or suppress it. The SolidCraft Onshape tests insert a
+synthetic custom feature before a fillet and move its existing rollback selection
+response to the fillet's new index. These in-memory bundles test the named frozen-shape
+refusal and preservation of the final STEP; they add no captured document data.
 `dutchman/tests/onshape.rs` uses a synthetic response client to capture and convert
 a sketch-only Part Studio without any STEP request or network connection.

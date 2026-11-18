@@ -17,6 +17,12 @@ rows and `verification` describe CADIR mapping and comparison with the bundle's
 STEP export; see [Onshape](onshape.md). Compressed default-plane and sketch-region
 queries use these existing rows and codes too. Unresolved source boundaries report
 a specific reason under `onshape/history.not-supported`; no report field changes.
+An active custom FeatureScript feature uses that same Degraded loss code, with the
+feature name as `subject` and a message naming the lack of complete per-feature body
+geometry in bundle format 1 to prove a frozen step. Its `history` row remains blocked,
+as do later body-building rows; the final STEP shape is preserved. No frozen-step loss
+is emitted, because v1 cannot prove a frozen shape. Suppressed custom features are left
+out without this loss. No report schema or field changes.
 The optional bundle manifest field `consistent` is input metadata, not a new
 report field. `false` produces an ordinary decode failure explaining how to fetch
 a consistent snapshot; older v1 bundles lacking the field remain accepted.
