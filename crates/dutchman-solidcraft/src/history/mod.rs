@@ -1761,9 +1761,10 @@ fn split_blend(
     Ok(())
 }
 
-/// Settles which face an unequal chamfer's features (`at` and the `added` per-body ones after
-/// it) take first, on SolidCraft's own cut: as written when the replay after them has edges
-/// where `cuts` put them, else with `flip`. `Ok(true)` when they had to be flipped.
+/// Settles which face each of an unequal chamfer's per-body features (`at` and the `added` ones
+/// after it) takes first, on SolidCraft's own cut: as written when the replay after it has
+/// edges on its body where `cuts` put them, else with `flip`. Bodies are disjoint, so each
+/// feature is settled on its own. `Ok(true)` when any had to be flipped.
 fn orient_unequal(
     history: &mut History,
     at: usize,
@@ -1771,36 +1772,53 @@ fn orient_unequal(
     cuts: &[blend::Cut],
     replay: &mut impl FnMut(&History, &[u64], bool) -> Replayed,
 ) -> Result<bool, String> {
-    let id = history
-        .features
-        .get(at.saturating_add(added))
-        .and_then(|feature| feature.get("id"))
-        .and_then(Value::as_u64)
-        .ok_or("the mapped chamfer is missing")?;
-    let mut failed = None;
-    for flip in [false, true] {
-        if flip {
-            for feature in history
-                .features
-                .iter_mut()
-                .skip(at)
-                .take(added.saturating_add(1))
-            {
-                if let Some(fields) = feature.as_object_mut() {
+    let mut flipped = false;
+    for index in at..=at.saturating_add(added) {
+        let feature = history
+            .features
+            .get(index)
+            .ok_or("the mapped chamfer is missing")?;
+        let id = feature
+            .get("id")
+            .and_then(Value::as_u64)
+            .ok_or("the mapped chamfer is missing")?;
+        let body = feature
+            .get("body")
+            .and_then(Value::as_str)
+            .ok_or("the mapped chamfer names no body")?
+            .to_owned();
+        let mut failed = None;
+        let mut settled = false;
+        for flip in [false, true] {
+            if flip {
+                if let Some(fields) = history
+                    .features
+                    .get_mut(index)
+                    .and_then(Value::as_object_mut)
+                {
                     fields.insert("flip".to_owned(), Value::Bool(true));
                 }
             }
+            match replay(history, &[id], false)?.first() {
+                Some(Ok(after)) if blend::cut_as(cuts, &body, &after.bodies) => {
+                    flipped |= flip;
+                    settled = true;
+                    break;
+                }
+                Some(Err(why)) => failed = Some(why.clone()),
+                _ => {}
+            }
         }
-        match replay(history, &[id], false)?.first() {
-            Some(Ok(after)) if blend::cut_as(cuts, &after.bodies) => return Ok(flip),
-            Some(Err(why)) => failed = Some(why.clone()),
-            _ => {}
+        if !settled {
+            return Err(match failed {
+                Some(why) => format!("SolidCraft cannot cut it either way round: {why}"),
+                None => {
+                    "SolidCraft cuts it on other faces than the source either way round".to_owned()
+                }
+            });
         }
     }
-    Err(match failed {
-        Some(why) => format!("SolidCraft cannot cut it either way round: {why}"),
-        None => "SolidCraft cuts it on other faces than the source either way round".to_owned(),
-    })
+    Ok(flipped)
 }
 
 /// What proving a pending feature settled.
@@ -3435,5 +3453,76 @@ mod tests {
             Some(1)
         );
         assert!(compared_state(&outcome(true), &feature).is_none());
+    }
+
+    /// Two per-body features of one unequal chamfer whose bodies need opposite flips: each is
+    /// settled on its own body's cut.
+    #[test]
+    fn unequal_chamfers_settle_their_flip_per_body() {
+        let mut history = History {
+            features: vec![
+                json!({"id": 5, "type": "chamfer", "body": "A"}),
+                json!({"id": 6, "type": "chamfer", "body": "B"}),
+            ],
+            ..History::default()
+        };
+        let along = [1.0, 0.0, 0.0];
+        let cuts = [
+            blend::Cut::testing(
+                "A",
+                along,
+                [[0.0, 1.0, 10.0], [0.0, 0.0, 7.0]],
+                ([0.0, 0.0, 10.0], [10.0, 0.0, 10.0]),
+            ),
+            blend::Cut::testing(
+                "B",
+                along,
+                [[20.0, 0.0, 9.0], [20.0, 3.0, 10.0]],
+                ([20.0, 0.0, 10.0], [30.0, 0.0, 10.0]),
+            ),
+        ];
+        let edge = |x0: f64, [_, y, z]: [f64; 3]| crate::verify::ReplayedEdge {
+            start: [x0, y, z],
+            end: [x0 + 10.0, y, z],
+            mid: [x0 + 5.0, y, z],
+            length: 10.0,
+            name: String::new(),
+            index: None,
+            circle: None,
+        };
+        // A is cut as the source has it unflipped, B only flipped.
+        let mut replays = 0;
+        let mut replay = |history: &History, _: &[u64], _: bool| -> Replayed {
+            replays += 1;
+            let flipped = |id: u64| {
+                history
+                    .features
+                    .iter()
+                    .any(|f| f["id"] == id && f["flip"] == true)
+            };
+            let cut = |name: &str, x0: f64, points: [[f64; 3]; 2], right: bool| {
+                let edges = if right {
+                    points.iter().map(|&p| edge(x0, p)).collect()
+                } else {
+                    Vec::new()
+                };
+                (name.to_owned(), edges)
+            };
+            let bodies = vec![
+                cut("A", 0.0, [[0.0, 1.0, 10.0], [0.0, 0.0, 7.0]], !flipped(5)),
+                cut("B", 20.0, [[20.0, 0.0, 9.0], [20.0, 3.0, 10.0]], flipped(6)),
+            ];
+            Ok(vec![Ok(crate::verify::Replay {
+                bodies,
+                faces: Vec::new(),
+            })])
+        };
+        assert_eq!(
+            orient_unequal(&mut history, 0, 1, &cuts, &mut replay),
+            Ok(true)
+        );
+        assert_eq!(replays, 3);
+        assert!(history.features[0].get("flip").is_none());
+        assert_eq!(history.features[1]["flip"], true);
     }
 }
