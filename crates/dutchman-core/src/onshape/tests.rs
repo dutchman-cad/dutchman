@@ -1122,3 +1122,82 @@ fn a_sketcher_pick_of_the_origin_point_is_a_coincidence_with_the_origin() {
         .iter()
         .any(|c| c["definition"]["kind"] == "point_coordinate_values"));
 }
+
+#[test]
+fn basic_sketch_constraint_kinds_keep_their_neutral_relations() {
+    let bytes = changed(|response| {
+        response["features"][0]["entities"]
+            .as_array_mut()
+            .unwrap()
+            .extend([
+                json!({"btType":"BTMSketchCurve-4","entityId":"round","centerId":"round.center",
+                "geometry":{"btType":"BTCurveGeometryCircle-115","radius":0.007}}),
+                json!({"btType":"BTMSketchPoint-158","entityId":"middle","x":0.010}),
+            ]);
+        response["features"][0]["constraints"] = json!([
+            {"constraintType":"HORIZONTAL","entityId":"horizontal","parameters":[
+                {"parameterId":"localFirst","value":"outline.side0"}]},
+            {"constraintType":"VERTICAL","entityId":"vertical","parameters":[
+                {"parameterId":"localFirst","value":"outline.side1"}]},
+            {"constraintType":"COINCIDENT","entityId":"corner","parameters":[
+                {"parameterId":"localFirst","value":"line0.end"},{"parameterId":"localSecond","value":"line1.start"}]},
+            {"constraintType":"LENGTH","entityId":"length","parameters":[
+                {"parameterId":"localFirst","value":"outline.side0"},{"parameterId":"length","expression":"20 mm"}]},
+            {"constraintType":"DIAMETER","entityId":"diameter","parameters":[
+                {"parameterId":"localFirst","value":"round"},{"parameterId":"length","expression":"14 mm"}]},
+            {"constraintType":"MIDPOINT","entityId":"middle-relation","parameters":[
+                {"parameterId":"localMidpoint","value":"middle"},{"parameterId":"localEntity1","value":"line0.start"},{"parameterId":"localEntity2","value":"line0.end"}]}
+        ]);
+    });
+    let (wire, report) = read(&bytes);
+    assert!(
+        !report
+            .losses()
+            .iter()
+            .any(|loss| loss.code.as_deref() == Some("onshape/sketch.constraint-not-supported")),
+        "{:?}",
+        report.losses()
+    );
+    let mut definitions: Vec<_> = wire["sketch_constraints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["definition"]["kind"].as_str().unwrap())
+        .collect();
+    definitions.sort_unstable();
+    assert_eq!(
+        definitions,
+        [
+            "coincident_loci",
+            "coincident_loci",
+            "coincident_loci",
+            "diameter",
+            "distance",
+            "horizontal",
+            "midpoint",
+            "vertical"
+        ]
+    );
+    let parameters = wire["parameters"].as_array().unwrap();
+    for value in [20.0, 14.0] {
+        assert!(parameters.iter().any(|p| p["value"]["value"] == value));
+    }
+}
+
+#[test]
+fn a_dropped_constraint_names_its_kind_even_when_an_operand_is_missing() {
+    let bytes = changed(|response| {
+        response["features"][0]["constraints"] = json!([
+            {"constraintType":"HORIZONTAL","entityId":"missing-line","parameters":[
+                {"parameterId":"localFirst","value":"absent"}]}
+        ]);
+    });
+    let (wire, report) = read(&bytes);
+    assert_eq!(kinds(&wire), ["sketch", "extrude"]);
+    assert!(report.losses().iter().any(|loss| loss.code.as_deref()
+        == Some("onshape/sketch.constraint-not-supported")
+        && loss
+            .detail
+            .starts_with("HORIZONTAL sketch constraint is not supported yet:")
+        && loss.detail.contains("kept the solved sketch geometry")));
+}

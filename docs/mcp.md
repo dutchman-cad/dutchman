@@ -1,5 +1,10 @@
 # The MCP server
 
+Onshape sketch constraint losses name the source constraint kind and why it could not
+be mapped. The solved sketch geometry remains; inspect these losses even when body
+verification succeeds. Origin coincidences and midpoint construction carriers retain
+editable relations. See [Onshape bundles](onshape.md).
+
 The desktop app also accepts pasted files, paths, Onshape links, and confirmed HTTPS
 downloads; see [pasting files and links](desktop.md#paste-files-and-links). This adds no CLI
 flags, MCP tools, or report fields.

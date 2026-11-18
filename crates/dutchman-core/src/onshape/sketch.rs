@@ -357,6 +357,10 @@ pub(super) fn map(
             model.parameters.truncate(parameter_count);
             model.sketch_entities.truncate(entity_count);
             model.sketch_constraints.truncate(constraint_count);
+            let kind = constraint
+                .get("constraintType")
+                .and_then(Value::as_str)
+                .unwrap_or("Unknown");
             report.push_coded(
                 Severity::Degraded,
                 feature
@@ -364,7 +368,7 @@ pub(super) fn map(
                     .and_then(Value::as_str)
                     .unwrap_or(native),
                 "onshape/sketch.constraint-not-supported",
-                format!("{reason}; kept the solved sketch geometry"),
+                format!("{kind} sketch constraint is not supported yet: {reason}; kept the solved sketch geometry"),
             );
         }
     }

@@ -5,6 +5,10 @@ description: Use when someone wants a CAD file (Fusion, Inventor, SolidWorks, Fr
 
 # Converting CAD files with Dutchman
 
+For Onshape bundles, review constraint losses even when body verification succeeds.
+Each dropped constraint names its source kind and reason; its solved geometry remains.
+Origin coincidences and midpoint carriers preserve editable sketch relations.
+
 Features whose source records that they changed no geometry are reported as `left_out`
 with reason "changes no geometry in the source"; later features can keep editable history.
 
