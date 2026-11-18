@@ -426,6 +426,8 @@ the action buttons; optional cached 3D previews arrive after conversion. A match
 export can appear beside the converted preview. No report fields or conversion defaults change.
 
 Desktop result cards hide zero loss counts and show **History off** when history was disabled.
+The full verification explanation stays in **Save the full log…**; the card uses chips
+and the feature timeline instead of repeating it above the timeline.
 Assembly rows show rebuilt fractions and stopping reasons, ordered with incomplete parts first;
 **Source order** restores report order. Loss titles name the affected data; **Details**
 retains raw codes and messages. These presentation changes add no CLI, MCP or JSON fields.

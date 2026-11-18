@@ -4286,3 +4286,52 @@ fn results_card_shows_inline_part_status_and_restores_source_order() {
         }
     }
 }
+
+// The card explains partial history through its chips and timeline.
+#[cfg(feature = "test-support")]
+#[test]
+fn partial_results_omit_duplicate_reason() {
+    use egui_kittest::kittest::Queryable;
+    let reason = "history stopped at feature \"Chamfer 1\"; retained features replay in SolidCraft; the full history is not verified";
+    let report = serde_json::json!({
+        "ok":true, "mode":"partial_history",
+        "verification":{"status":"partial","reason":reason},
+        "history":{"rebuilt":2,"needing":3,"features":[
+            {"name":"Sketch 1","ordinal":1,"status":"mapped"},
+            {"name":"Extrude 1","ordinal":2,"status":"mapped"},
+            {"name":"Chamfer 1","ordinal":3,"status":"blocked","reason":"Blends on closed edges aren't supported yet"}
+        ]}, "losses":[]
+    });
+    for (theme, suffix) in [
+        (ThemePreference::Light, "1280-day"),
+        (ThemePreference::Dark, "1280-night"),
+    ] {
+        let mut h = Harness::builder()
+            .with_size(egui::vec2(1280.0, 800.0))
+            .build_eframe(|cc| test_app(cc));
+        h.ctx.set_theme(theme);
+        h.state_mut().set_previews_enabled(false);
+        h.state_mut()
+            .preview_result_for_test(dutchman_gui::app::Row {
+                input: PathBuf::from("Synthetic partial.f3d"),
+                output: Some(PathBuf::from("converted/partial.sc")),
+                status: Status::Converted,
+                progress: None,
+                job: None,
+                size: None,
+                report: Some(report.clone()),
+            });
+        h.run_steps(12);
+        assert!(h.query_by_label(reason).is_none());
+        h.get_by_label("Feature timeline");
+        h.get_by_label("2 of 3 features rebuilt");
+        h.get_by_label("Chamfer 1: Blends on closed edges aren't supported yet");
+        if let Some(dir) = std::env::var_os("DUTCHMAN_RESULTS_SHOTS").map(PathBuf::from) {
+            std::fs::create_dir_all(&dir).unwrap();
+            h.render()
+                .unwrap()
+                .save(dir.join(format!("partial-{suffix}.png")))
+                .unwrap();
+        }
+    }
+}

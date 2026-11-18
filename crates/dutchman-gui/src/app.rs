@@ -1168,7 +1168,7 @@ impl App {
             }
             Pick::SaveLog(row) => {
                 if let Some(report) = self.rows.get(row).and_then(|row| row.report.as_ref()) {
-                    let text = dutchman::json::full_log(report, &dutchman::batch::line(report));
+                    let text = crate::results::full_log(report);
                     if let Err(err) = std::fs::write(&first, text) {
                         self.notice = Some(format!("Cannot save {}: {err}", display(&first)));
                     }

@@ -849,17 +849,24 @@ fn part_heading(name: &str, part: Option<&Value>, report: &Value) -> (String, us
     )
 }
 
-pub(crate) fn details(ui: &mut egui::Ui, p: &Palette, report: &Value) {
-    let parts = report.pointer("/history/parts").and_then(Value::as_array);
-    if parts.is_none_or(|parts| parts.is_empty()) {
-        if let Some(reason) = report
-            .pointer("/verification/reason")
-            .and_then(Value::as_str)
-            .filter(|reason| !reason.is_empty())
-        {
-            ui.add(egui::Label::new(plain_reason(reason)).wrap());
+/// Keep the full verification explanation in the desktop's saved log.
+pub(crate) fn full_log(report: &Value) -> String {
+    let mut log = dutchman::json::full_log(report, &dutchman::batch::line(report));
+    if let Some(reason) = report
+        .pointer("/verification/reason")
+        .and_then(Value::as_str)
+    {
+        if !reason.is_empty() && !log.contains(reason) {
+            log.push_str("\nVerification: ");
+            log.push_str(reason);
+            log.push('\n');
         }
     }
+    log
+}
+
+pub(crate) fn details(ui: &mut egui::Ui, p: &Palette, report: &Value) {
+    let parts = report.pointer("/history/parts").and_then(Value::as_array);
     let components = dutchman::json::components(report);
     if parts.is_none_or(|p| p.is_empty()) && components.iter().all(|c| c.file.is_none()) {
         for note in report
@@ -1160,6 +1167,16 @@ mod ui_tests {
             {"level":"Dropped","code":"f3d/material.not-transferred","message":"raw material reason"}]})
     }
     #[test]
+    fn saved_log_keeps_full_verification_reason() {
+        let report = sample();
+        let reason = report
+            .pointer("/verification/reason")
+            .and_then(Value::as_str)
+            .unwrap();
+        assert!(full_log(&report).contains(reason));
+    }
+
+    #[test]
     fn chips_timeline_stop_and_losses_are_open_in_source_and_severity_order() {
         let report = sample();
         let mut h = Harness::builder()
@@ -1234,7 +1251,7 @@ mod ui_tests {
         for (report, label) in [
             (
                 json!({"mode":"import", "verification":{"status":"not_applicable","reason":"--import-only"}}),
-                "Feature history was turned off for this conversion.",
+                "History off",
             ),
             (
                 json!({"history":{"rebuilt":1,"needing":1,"parts":[{"name":"Part 1","mapped":1,"total":1,"status":"unverified"}]}}),

@@ -920,6 +920,8 @@ The desktop DM Dutchy card always says "Paste the message, then drag the file in
 whether its folder opens; upload limits stay in the copied message or Dutchy’s reply.
 
 Desktop result cards hide zero loss counts and show **History off** when history was disabled.
+The full verification explanation stays in **Save the full log…**; the card uses chips
+and the feature timeline instead of repeating it above the timeline.
 Assembly rows show rebuilt fractions and stopping reasons, ordered with incomplete parts first;
 **Source order** restores report order. Loss titles name the affected data; **Details**
 retains raw codes and messages. These presentation changes add no CLI, MCP or JSON fields.

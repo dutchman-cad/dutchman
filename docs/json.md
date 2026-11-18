@@ -473,6 +473,8 @@ Standard's explanation when history is left out to fit free memory stays visible
 Raw codes and messages remain under Details. Optional local PNG previews add no report fields.
 
 Desktop result cards hide zero loss counts and show **History off** when history was disabled.
+The full verification explanation stays in **Save the full log…**; the card uses chips
+and the feature timeline instead of repeating it above the timeline.
 Assembly rows show rebuilt fractions and stopping reasons, ordered with incomplete parts first;
 **Source order** restores report order. Loss titles name the affected data; **Details**
 retains raw codes and messages. These presentation changes add no CLI, MCP or JSON fields.

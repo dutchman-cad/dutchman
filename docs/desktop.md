@@ -11,6 +11,9 @@ When history was turned off, the first chip says **History off**.
 text colour. These use the Day and Night theme colours. Counts refer to report entries;
 a note can describe many internal records.
 
+The full verification explanation remains in **Save the full log…**. The card
+uses its chips and timeline without repeating that explanation above the timeline.
+
 The **Feature timeline** lists source features in their source order. A tick means rebuilt
 and checked, an exclamation mark means rebuilt but unchecked, and a dash means not rebuilt. Each
 row gives the feature's name and a short reason; hover a shortened row for its whole reason.
