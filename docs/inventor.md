@@ -45,6 +45,36 @@ sketch maps as a start offset along the sketch normal. Tilted plane ends and nat
 generated, or historical vertex selections are not supported yet. Symmetric To Object ends
 and non-blind ends against the sketch normal on two-sided extrudes remain unsupported.
 
+On SolidCraft 0.44 and newer, the shared writer can confirm extrude body scope
+at the final body-building feature from resolved modified-body outputs and a
+matching replay against the final source geometry. Intermediate body centres
+cannot confirm scope. A consumed Combine tool without a final body row keeps
+its name only when the source retains exactly one history body whose
+`produced_by` matches its single-output producer, or a complete replay matches
+the final source geometry. Failed or unavailable checks keep the previous mapping.
+Output IDs alone do not prove identity; without proof, later selections keep the
+existing unnamed-body blocker.
+The pinned Inventor reader
+still leaves native body references unresolved; those remain blockers. Dutchman
+does not interpret the native references to infer participants.
+
+Sheet-metal attached plates with their paired bends map to SolidCraft `sheet.flange` using
+a proven point on the base sheet's actual profile edge. On SolidCraft 0.44.1, this includes
+unchanged L-shaped and notched bases with a single simple straight-sided perimeter, including
+attachments at concave edges. The plate must still be rectangular, square to the sheet, span
+its entire selected edge, share its thickness, and start at the bend end or the outer face.
+Height is measured from the outer face; bend radius comes from the paired bend. The writer
+uses the existing `sheet_flange` feature with `edges`, `height`, `angle: "90 deg"`, `radius`,
+and `position: "inside"`; no new version gate or command inputs are needed.
+
+The attachment proof refuses curved, open, crossing, disconnected, or collinear base edges,
+base profiles with holes or partial regions, and bases changed by earlier solid features.
+The report names the base-profile or selection limitation, and conversion keeps the geometry.
+Historical midpoint, tangent, and both endpoints must match the rebuilt edge; final-body
+edges and a bounding rectangle cannot establish that match. See [sheet metal](history.md#sheet-metal)
+for the remaining plate and bend limits. Synthetic CADIR tests build polygonal bases in code
+and replay L-shaped and notched examples with the released SolidCraft CLI.
+
 ## Upstream gaps, in the order they block history
 
 1. **Native features.** Most Inventor features still come from the codec in native form, so

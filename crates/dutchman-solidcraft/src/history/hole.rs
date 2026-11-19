@@ -385,7 +385,7 @@ fn thread_fits(major: f64, pitch: f64, bore: f64) -> bool {
 fn placement(
     feature: &Value,
     definition: &Value,
-    ctx: &Context,
+    ctx: &mut Context,
 ) -> Result<(V3, V3, Option<Value>), String> {
     if let Some(placements) = definition.get("placements").and_then(Value::as_array) {
         let [placement] = placements.as_slice() else {
@@ -407,12 +407,15 @@ fn placement(
                     return Ok((position, direction, None));
                 }
                 if definition.get("face").is_some_and(|face| !face.is_null()) {
-                    let face = earlier_face(feature, definition.get("face"), ctx)?;
+                    let mut face = entry_face(feature, definition.get("face"), ctx)?;
                     if dot(sub(position, face.point), face.normal).abs() > 1e-7
                         || !face.contains(position)
-                        || dot(direction, face.normal) >= 0.0
+                        || (face.entry.is_none() && dot(direction, face.normal) >= 0.0)
                     {
                         return Err("its placement does not drill into its entry face".to_owned());
+                    }
+                    if let Some(entry) = face.entry.take() {
+                        ctx.blends.push(entry.pending(direction, true));
                     }
                 }
                 Ok((position, direction, None))
@@ -427,7 +430,7 @@ fn placement(
                     let (position, direction) = round.entry(origin, axis)?;
                     return Ok((position, direction, None));
                 }
-                let face = earlier_face(feature, definition.get("face"), ctx)?;
+                let mut face = entry_face(feature, definition.get("face"), ctx)?;
                 let origin = v3(placement.get("origin")).ok_or("its axis origin is not given")?;
                 let axis = v3(placement.get("axis"))
                     .and_then(unit)
@@ -446,6 +449,9 @@ fn placement(
                 }
                 // An axis has no sign: the entry face supplies the inward direction.
                 let direction = axis.map(|c| if cos > 0.0 { -c } else { c });
+                if let Some(entry) = face.entry.take() {
+                    ctx.blends.push(entry.pending(direction, false));
+                }
                 Ok((position, direction, None))
             }
             _ => Err("a hole of this placement is not mapped yet".to_owned()),
@@ -669,7 +675,7 @@ fn round_face(
         return Ok(None);
     };
     let value = selection.get("value").unwrap_or(&Value::Null);
-    if super::face_profile::planar_face(feature, value, ctx).is_ok() {
+    if super::face_profile::planar_normal(feature, value, ctx).is_ok() {
         return Ok(None);
     }
     let (origin, axis, radius, (low, high)) =
@@ -683,7 +689,8 @@ fn round_face(
     }))
 }
 
-/// A planar face with a point inside its boundary, as in `faces.rs`. The final B-rep
+/// A planar face with a point on its plane. Terminating caps also need that point
+/// inside their boundary, as in `faces.rs`. The final B-rep
 /// alone cannot establish when a face existed: `earlier_face` also proves its cap
 /// against the last preceding solid feature's sketch and extrusion distance.
 struct PlanarFace {
@@ -692,14 +699,43 @@ struct PlanarFace {
     u: V3,
     v: V3,
     corners: Vec<V3>,
+    entry: Option<super::face_profile::EntryFace>,
 }
 
 impl PlanarFace {
     fn contains(&self, point: V3) -> bool {
+        if let Some(entry) = &self.entry {
+            return entry.contains(point);
+        }
         let flat = |p: V3| [dot(p, self.u), dot(p, self.v)];
         let polygon: Vec<[f64; 2]> = self.corners.iter().map(|p| flat(*p)).collect();
         inside(&polygon, flat(point))
     }
+}
+
+/// Circular historical boundaries need replay, since a fillet or an earlier
+/// hole may have changed the extrusion cap. Straight caps retain their existing proof.
+fn entry_face(
+    feature: &Value,
+    selection: Option<&Value>,
+    ctx: &Context,
+) -> Result<PlanarFace, String> {
+    if let Some(value) = selection
+        .filter(|s| s.get("kind").and_then(Value::as_str) == Some("historical"))
+        .and_then(|s| s.get("value"))
+    {
+        if let Some(entry) = super::face_profile::curved_hole_face(feature, value, ctx)? {
+            return Ok(PlanarFace {
+                point: entry.point,
+                normal: entry.normal,
+                u: [0.0; 3],
+                v: [0.0; 3],
+                corners: Vec::new(),
+                entry: Some(entry),
+            });
+        }
+    }
+    earlier_face(feature, selection, ctx)
 }
 
 fn earlier_face(
@@ -725,6 +761,7 @@ fn earlier_face(
                 u,
                 v,
                 corners,
+                entry: None,
             },
             ctx,
         )?;
@@ -845,6 +882,7 @@ fn earlier_face(
             u,
             v,
             corners,
+            entry: None,
         },
         ctx,
     )?;
@@ -908,6 +946,9 @@ fn earlier_cap(feature: &Value, face: &PlanarFace, ctx: &Context) -> Option<V3> 
         })
         .max_by_key(|row| row.get("ordinal").and_then(Value::as_u64))?;
     let op = super::operation(previous);
+    if super::operation_kind(previous) == Some("block") {
+        return box_cap(op, face);
+    }
     if super::operation_kind(previous) != Some("extrude")
         || op.get("op").and_then(Value::as_str) != Some("new_body")
         || op.pointer("/extent/kind").and_then(Value::as_str) != Some("one_sided")
@@ -992,6 +1033,65 @@ fn earlier_cap(feature: &Value, face: &PlanarFace, ctx: &Context) -> Option<V3> 
             let along = if height == 0.0 { -direction } else { direction };
             sketch.normal.map(|c| c * along)
         })
+    })
+}
+
+/// A box made as a new body: `face` must be one of its six faces, its four corners being four
+/// corners of the box that share a side. Returns the way that side faces, out of the box.
+fn box_cap(op: &Value, face: &PlanarFace) -> Option<V3> {
+    if op.get("op").and_then(Value::as_str) != Some("new_body") {
+        return None;
+    }
+    let (low, extent) = super::primitive::box_bounds(op).ok()?;
+    let high = [low[0] + extent[0], low[1] + extent[1], low[2] + extent[2]];
+    let near = |a: f64, b: f64| (a - b).abs() < 1e-7;
+    if face.corners.len() != 4 {
+        return None;
+    }
+    (0..3).find_map(|axis| {
+        let at = |corner: &V3| corner.get(axis).copied();
+        let first = at(face.corners.first()?)?;
+        let side = [(low.get(axis)?, -1.0), (high.get(axis)?, 1.0)]
+            .into_iter()
+            .find(|(bound, _)| near(first, **bound))?
+            .1;
+        let bound = if side < 0.0 { low } else { high };
+        let bound = *bound.get(axis)?;
+        if !face
+            .corners
+            .iter()
+            .all(|c| at(c).is_some_and(|v| near(v, bound)))
+        {
+            return None;
+        }
+        // The four corners are the four distinct corners of that side.
+        let (u, v) = match axis {
+            0 => (1, 2),
+            1 => (0, 2),
+            _ => (0, 1),
+        };
+        let mut seen = [false; 4];
+        for corner in &face.corners {
+            let pick = |i: usize, lo: &V3, hi: &V3| {
+                let value = *corner.get(i)?;
+                if near(value, *lo.get(i)?) {
+                    Some(0)
+                } else if near(value, *hi.get(i)?) {
+                    Some(1)
+                } else {
+                    None
+                }
+            };
+            let slot = pick(u, &low, &high)? * 2 + pick(v, &low, &high)?;
+            let cell = seen.get_mut(slot)?;
+            if *cell {
+                return None;
+            }
+            *cell = true;
+        }
+        let mut outward = [0.0; 3];
+        *outward.get_mut(axis)? = side;
+        Some(outward)
     })
 }
 
@@ -1099,6 +1199,7 @@ mod tests {
             origin: [0.0, 0.0, 10.0],
             x_dir: [1.0, 0.0, 0.0],
             y_dir: [0.0, 1.0, 0.0],
+            point_displacement: 0.0,
             points: vec![
                 ("origin".to_owned(), [0.0, 0.0]),
                 ("p1".to_owned(), [3.0, 4.0]),

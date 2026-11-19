@@ -470,11 +470,11 @@ impl<'a> Bindings<'a> {
     }
 
     fn bind(&self, p: &DesignParameter) -> Result<String, String> {
-        let expression = p
+        let degrees = p
             .expression
-            .trim()
-            .strip_prefix('=')
-            .unwrap_or(p.expression.trim());
+            .replace(" \u{b0}", " deg")
+            .replace('\u{b0}', " deg");
+        let expression = degrees.trim().strip_prefix('=').unwrap_or(degrees.trim());
         if expression.len() > MAX_EXPRESSION_BYTES {
             return Err("expression exceeds 65536 bytes".to_owned());
         }
@@ -918,6 +918,43 @@ mod map_tests {
         assert_eq!(
             shared.detail,
             "expression `d1 + 1 mm` kept as its value 11 mm: more than one parameter is named d1"
+        );
+    }
+
+    #[test]
+    fn a_degree_sign_reads_as_deg() {
+        let angle = |v: f64| json!({"kind": "angle", "value": v});
+        let parameters = json!([
+            parameter(1, "d98", "0.0 \u{b0}", angle(0.0), false),
+            parameter(2, "d99", "118.0 \u{b0}", angle(118.0), false),
+            parameter(3, "d100", "118\u{b0}", angle(118.0), false),
+            depending(
+                parameter(4, "d101", "d99 / 2 + 5\u{b0}", angle(64.0), false),
+                &[2]
+            ),
+        ]);
+        let model = with(cube(), json!([]), parameters);
+        let mut report = Report::default();
+        let (params, _) = map(&model, &mut report);
+        let expr = |name: &str| {
+            params
+                .iter()
+                .find(|p| p["name"] == name)
+                .and_then(|p| p["expr"].as_str())
+                .map(str::to_owned)
+        };
+        assert_eq!(expr("d98").as_deref(), Some("0.0 deg"));
+        assert_eq!(expr("d99").as_deref(), Some("118.0 deg"));
+        assert_eq!(expr("d100").as_deref(), Some("118 deg"));
+        assert_eq!(expr("d101").as_deref(), Some("d99 / 2 + 5 deg"));
+        assert!(report.losses().is_empty());
+    }
+
+    #[test]
+    fn other_unknown_tokens_still_refuse() {
+        assert_eq!(
+            validate("5 #", &std::collections::BTreeSet::new()).unwrap_err(),
+            "unsupported expression token #"
         );
     }
 
