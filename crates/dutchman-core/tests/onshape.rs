@@ -155,14 +155,27 @@ fn custom_features_name_the_missing_frozen_shape_even_with_rollback_details() {
         let feature = &wire["model"]["features"][ordinal];
         assert_eq!(feature["definition"]["value"]["kind"], "native");
         assert_eq!(feature["outputs"], json!([]));
-        let losses: Vec<_> = report
+        let name = feature["name"].as_str().unwrap();
+        let unsupported: Vec<_> = report
             .losses()
             .iter()
             .filter(|l| l.code.as_deref() == Some("onshape/history.not-supported"))
             .collect();
-        assert_eq!(losses.len(), 1);
+        // The custom feature has exactly one loss. A later feature that consumed its result can
+        // add its own (its producer is unproved); nothing earlier may.
+        let later: Vec<&str> = wire["model"]["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .skip(ordinal + 1)
+            .filter_map(|f| f["name"].as_str())
+            .collect();
+        let losses: Vec<_> = unsupported.iter().filter(|l| l.subject == name).collect();
+        assert_eq!(losses.len(), 1, "{unsupported:?}");
+        for other in unsupported.iter().filter(|l| l.subject != name) {
+            assert!(later.contains(&other.subject.as_str()), "{other:?}");
+        }
         let loss = losses[0];
-        let name = feature["name"].as_str().unwrap();
         assert_eq!(loss.subject, name);
         assert_eq!(loss.severity, Severity::Degraded);
         let reason = format!(
