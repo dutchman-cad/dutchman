@@ -450,10 +450,12 @@ jobs:
       - name: Check free disk space
         run: bash scripts/ci-disk-space.sh
       - uses: dtolnay/rust-toolchain@stable
+      # The Linux test job's build covers this one: restoring its cache keeps a second copy of the
+      # same dependencies out of the repository's cache storage.
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: roundtrip-linux-debug
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          shared-key: test-ubuntu-latest-debug
+          save-if: false
       - run: cargo build --locked -p dutchman --bin dutchman
       - run: df -h / .
       # Fetched archives are kept between runs, so a release server outage doesn't fail the
