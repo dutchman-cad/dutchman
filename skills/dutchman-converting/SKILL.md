@@ -43,8 +43,13 @@ Sketch-only Part Studios can omit STEP and convert to sketches alone; with Solid
 verified by replaying the sketches (no body expected). The reader also
 accepts built-in-plane sketches, complete tangent edge chains, hole `locations`
 with counterbore/countersink entries, construction-line revolve axes, midpoint relations,
-assigned variables and symmetric blind extrudes. Up-to-next ends and face/cap
-attachments retain a named history loss; up-to-face ends keep their selected face.
+assigned variables and symmetric blind extrudes. Face/cap attachments use stored
+sketch frames from `sketches.json`, checked against their planar input faces.
+Missing frames in older bundles retain `onshape/history.not-supported` and final
+STEP geometry: ask the owner to fetch again with the current build. Fetching adds
+one uncached sketch-information call per Part Studio within `max_calls`. Do not
+infer attachment origins or x directions from support faces. Up-to-face ends keep
+their selected face; up-to-next ends require the stored construction proofs.
 A planar face at a slant to the sketch, for either a start or an end, needs
 SolidCraft 0.44 or newer as the target. Older targets keep a named loss and the
 final geometry. Symmetric non-blind bounds remain named losses.

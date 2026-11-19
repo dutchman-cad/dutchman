@@ -1389,7 +1389,14 @@ The ZIP's manifest uses separate schema `dutchman.onshape-bundle/1` and records
 `definition` and `features` for assemblies. `external` lists `documentId`,
 `elementId`, and `microversionId` for other-document references. Raw API responses
 are retained verbatim. Part Studio roles are `features`, `bodydetails` (the rollback
-index file), optional `configuration` and `variables`, and `step`.
+index file), `sketches` (the raw sketch-information response at
+`partstudios/<element>/sketches.json`), optional `configuration` and `variables`, and
+`step`. The optional additive `sketches` role keeps bundle schema v1; older bundles
+retain their existing reading behavior. Each sketch entry binds its `featureId`
+to a sixteen-value row-major `sketchMatrix` (sketch-to-world, translation in metres).
+Missing or contradictory face-attachment frames keep `onshape/history.not-supported`
+with final STEP geometry; no report fields or loss codes change. The request adds
+one HTTP attempt per uncached Part Studio to the existing `calls` count.
 
 Successful manifests also contain `consistent: true` and `file_sources`, mapping each
 archive path (including generated indices and manifest) to `path_kind` (`m`, `v`, or

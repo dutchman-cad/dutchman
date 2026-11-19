@@ -138,6 +138,16 @@ impl Bundle {
     ) -> Result<(), Error> {
         let mut count = 0usize;
         for (path, response) in &self.json {
+            if path.ends_with("/sketches.json") {
+                if let Some(sketches) = response.get("sketches").and_then(Value::as_array) {
+                    if sketches.len() > super::ROWS {
+                        return Err(failure("sketch information exceeds the row limit"));
+                    }
+                    count = count
+                        .checked_add(sketches.len())
+                        .ok_or_else(|| failure("sketch information count overflow"))?;
+                }
+            }
             if !path.contains("/bodydetails/") {
                 continue;
             }
@@ -260,7 +270,11 @@ fn schema_response(name: &str, prefix: &str) -> bool {
     };
     if matches!(
         member,
-        "features.json" | "configuration.json" | "variables.json" | "bodydetails/index.json"
+        "features.json"
+            | "sketches.json"
+            | "configuration.json"
+            | "variables.json"
+            | "bodydetails/index.json"
     ) {
         return true;
     }

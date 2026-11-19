@@ -714,11 +714,14 @@ losses for meshes it could not decode.
 uses the keys saved by `dutchman onshape login` (or Connect Onshape in the app), or `ONSHAPE_ACCESS_KEY`/`ONSHAPE_SECRET_KEY` for scripts, and prints the HTTP
 attempt count. `--version VERSION_ID` selects an immutable version; `--json` prints
 `dutchman.onshape-fetch/1`. This fetcher saves API responses without converting CAD.
-Part Studios include features, needed input topology, variables/configuration, and
-final STEP; assemblies include their same-document Part Studios. Version links use
-version paths throughout. Workspace links pin supported reads to a microversion,
+Part Studios include features, stored sketch placements, needed input topology,
+variables/configuration, and final STEP; assemblies include their same-document
+Part Studios. Version links use version paths throughout. Workspace links pin supported reads to a microversion,
 use workspace paths for STEP/variables, and recheck the head before writing. A
 change triggers one refetch; a second change stops with “the document changed while
 fetching; try again, or use a version link”. Successful manifests record per-file
 path kinds/microversions and `consistent: true`. See [Onshape](onshape.md#fetching-a-document) for keys,
-limits, caching, and privacy.
+limits, caching, and privacy. Each uncached Part Studio now needs one additional
+sketch-information call. Fetch older bundles again when a face-attached sketch
+reports a missing attachment frame; conversion keeps the final shape with
+`onshape/history.not-supported` until that frame is stored.

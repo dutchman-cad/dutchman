@@ -58,12 +58,37 @@ pub(super) struct State {
     pub(super) edges: BTreeMap<String, Value>,
     complete_vertices: bool,
 }
+
+fn sketch_information<'a>(
+    bundle: &'a Bundle,
+    prefix: &str,
+) -> Mapping<Option<BTreeMap<&'a str, &'a Value>>> {
+    let path = format!("{prefix}/sketches.json");
+    if !bundle.contains(&path) {
+        return Ok(None);
+    }
+    let response = bundle
+        .json(&path)
+        .map_err(|_| "sketches.json is unreadable")?;
+    let mut sketches = BTreeMap::new();
+    for sketch in rows(response, "sketches")? {
+        if sketches
+            .insert(text(sketch, "featureId")?, sketch)
+            .is_some()
+        {
+            return Err("the stored sketch attachment information repeats a feature id".into());
+        }
+    }
+    Ok(Some(sketches))
+}
+
 pub(super) struct Inputs<'a> {
     bundle: &'a Bundle,
     prefix: &'a str,
     mid: &'a str,
     indices: BTreeSet<usize>,
     features: &'a [Value],
+    sketches: Mapping<Option<BTreeMap<&'a str, &'a Value>>>,
     pub(super) regions: std::cell::RefCell<super::regions::Recovery>,
 }
 
@@ -104,7 +129,17 @@ impl<'a> Inputs<'a> {
             mid,
             indices,
             features,
+            sketches: sketch_information(bundle, prefix),
             regions: std::cell::RefCell::default(),
+        })
+    }
+
+    pub(super) fn sketch_information(&self, native: &str) -> Mapping<Option<&Value>> {
+        let Some(sketches) = self.sketches.as_ref().map_err(Clone::clone)? else {
+            return Ok(None);
+        };
+        sketches.get(native).copied().map(Some).ok_or_else(|| {
+            "the stored sketch attachment frame is missing from sketches.json; fetch a new bundle".into()
         })
     }
 

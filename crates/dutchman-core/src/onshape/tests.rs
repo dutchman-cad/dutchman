@@ -2091,3 +2091,201 @@ fn stored_tangency_resolves_adjacent_roundoff_contacts_and_missing_or_conflictin
         super::review::validate(result);
     }
 }
+
+fn sketch_information_bundle(case: &str, cap: bool, tilted: bool) -> Vec<u8> {
+    let normal = if tilted {
+        [0.6, 0.0, 0.8]
+    } else {
+        [0.0, 0.0, 1.0]
+    };
+    let bytes = face_sketch_bundle(normal, true);
+    super::review::members(&bytes, |members| {
+        let path = "partstudios/studio/sketches.json";
+        let origin = if tilted {
+            [0.034, 0.07, -0.013]
+        } else {
+            [0.04, 0.07, 0.005]
+        };
+        let y = topology::cross(normal, [0.0, 1.0, 0.0]);
+        let mut matrix = json!([
+            0.0, y[0], normal[0], origin[0], 1.0, y[1], normal[1], origin[1], 0.0, y[2], normal[2],
+            origin[2], 0.0, 0.0, 0.0, 1.0
+        ]);
+        match case {
+            "off-plane" => matrix[11] = json!(0.05),
+            "nonorthogonal" => matrix[0] = json!(0.5),
+            "reversed-y" => {
+                for i in [1, 5, 9] {
+                    matrix[i] = json!(-matrix[i].as_f64().unwrap());
+                }
+            }
+            "scaled" => matrix[4] = json!(2.0),
+            "projective" => matrix[12] = json!(0.1),
+            "short" => {
+                matrix.as_array_mut().unwrap().pop();
+            }
+            "null" => matrix[3] = Value::Null,
+            "string" => matrix[3] = json!("0.04"),
+            "overflow" => matrix[3] = json!(1e308),
+            _ => {}
+        }
+        let row = json!({"featureId":"side-sketch","sketchMatrix":matrix});
+        let mut response = json!({"sourceMicroversion":"synthetic-microversion","sketches":[row]});
+        match case {
+            "wrong-id" => response["sketches"][0]["featureId"] = json!("another-sketch"),
+            "duplicate" => response["sketches"].as_array_mut().unwrap().push(row),
+            "missing-matrix" => {
+                response["sketches"][0]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("sketchMatrix");
+            }
+            "wrong-microversion" => response["sourceMicroversion"] = json!("another-microversion"),
+            _ => {}
+        }
+        if case != "absent" {
+            members.insert(path.into(), serde_json::to_vec(&response).unwrap());
+            let mut manifest: Value = serde_json::from_slice(&members["manifest.json"]).unwrap();
+            manifest["elements"][0]["files"]["sketches"] = json!(path);
+            members.insert(
+                "manifest.json".into(),
+                serde_json::to_vec(&manifest).unwrap(),
+            );
+        }
+        if cap {
+            let feature_path = "partstudios/studio/features.json";
+            let mut features: Value = serde_json::from_slice(&members[feature_path]).unwrap();
+            let query = &mut features["features"][2]["parameters"][0]["queries"][0];
+            replace_query(
+                query,
+                &json!({"entityType":"FACE","historyType":"CREATION",
+                "queryType":"CAP_FACE","operationId":["extrude.opExtrude"],"isStart":false}),
+            );
+            members.insert(feature_path.into(), serde_json::to_vec(&features).unwrap());
+        }
+    })
+}
+
+#[test]
+fn sketch_information_places_face_and_cap_sketches_from_stored_axes_only() {
+    for cap in [false, true] {
+        for tilted in [false, true] {
+            let result = super::review::decode(&sketch_information_bundle("present", cap, tilted));
+            let wire = super::review::wire(&result);
+            assert_eq!(
+                wire["model"]["features"][2]["definition"]["value"]["kind"],
+                "sketch"
+            );
+            let frame = &wire["model"]["sketches"]
+                .as_array()
+                .unwrap()
+                .last()
+                .unwrap()["placement"]["frame"];
+            assert_eq!(frame["u_axis"], topology::point([0.0, 1.0, 0.0]));
+            let expected = if tilted {
+                [34.0, 70.0, -13.0]
+            } else {
+                [40.0, 70.0, 5.0]
+            };
+            for (axis, value) in ["x", "y", "z"].into_iter().zip(expected) {
+                assert!((frame["origin"][axis].as_f64().unwrap() - value).abs() < 1e-12);
+            }
+            super::review::validate(result);
+        }
+    }
+}
+
+#[test]
+fn sketch_information_missing_ambiguous_or_malformed_frames_keep_named_loss_and_step() {
+    for case in [
+        "absent",
+        "wrong-id",
+        "duplicate",
+        "missing-matrix",
+        "off-plane",
+        "nonorthogonal",
+        "reversed-y",
+        "scaled",
+        "projective",
+        "short",
+        "null",
+        "string",
+        "overflow",
+    ] {
+        let result = super::review::decode(&sketch_information_bundle(case, false, false));
+        let wire = super::review::wire(&result);
+        assert_eq!(
+            wire["model"]["features"][2]["definition"]["value"]["kind"], "native",
+            "{case}"
+        );
+        assert!(
+            result
+                .report()
+                .losses()
+                .iter()
+                .any(
+                    |loss| loss.code.as_deref() == Some("onshape/history.not-supported")
+                        && loss.detail.contains("kept the final STEP geometry")
+                ),
+            "{case}"
+        );
+        super::review::validate(result);
+    }
+}
+
+#[test]
+fn sketch_information_microversion_must_match_the_bundle() {
+    let mut report = Report::default();
+    let result = crate::read_bytes(
+        Format::OnshapeBundle,
+        std::path::Path::new("synthetic.onshape-bundle"),
+        &sketch_information_bundle("wrong-microversion", false, false),
+        &mut report,
+    );
+    assert!(result.err().unwrap().to_string().contains("microversion"));
+}
+
+#[test]
+fn sketch_information_row_count_is_bounded() {
+    let bytes = super::review::members(
+        &sketch_information_bundle("present", false, false),
+        |members| {
+            members.insert(
+                "partstudios/studio/sketches.json".into(),
+                serde_json::to_vec(&json!({"sketches":vec![json!({}); ROWS + 1]})).unwrap(),
+            );
+        },
+    );
+    let mut report = Report::default();
+    let result = crate::read_bytes(
+        Format::OnshapeBundle,
+        std::path::Path::new("synthetic.onshape-bundle"),
+        &bytes,
+        &mut report,
+    );
+    assert!(result.err().unwrap().to_string().contains("row limit"));
+}
+
+#[test]
+fn optional_sketch_information_preserves_existing_default_plane_output() {
+    let baseline = super::review::decode(FIXTURE);
+    let bytes = super::review::members(FIXTURE, |members| {
+        let response: Value =
+            serde_json::from_slice(&members["partstudios/studio/features.json"]).unwrap();
+        let native = response["features"][0]["featureId"].clone();
+        members.insert(
+            "partstudios/studio/sketches.json".into(),
+            serde_json::to_vec(&json!({
+            "sketches":[{"featureId":native,"sketchMatrix":[
+                1.0,0.0,0.0,0.0, 0.0,1.0,0.0,0.0,
+                0.0,0.0,1.0,0.0, 0.0,0.0,0.0,1.0]}]}))
+            .unwrap(),
+        );
+    });
+    let updated = super::review::decode(&bytes);
+    assert_eq!(
+        super::review::wire(&baseline),
+        super::review::wire(&updated)
+    );
+    super::review::validate(updated);
+}

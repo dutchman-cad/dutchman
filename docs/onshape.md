@@ -11,7 +11,9 @@ dutchman convert bracket.onshape-bundle bracket.sc
 The ZIP follows `dutchman.onshape-bundle/1`: `manifest.json`,
 `partstudios/<eid>/features.json`, `bodydetails/index.json` and the required
 `bodydetails/<i>.json` responses, plus `export.step` when the Part Studio has bodies.
-Sketch-only bundles omit STEP. Features and bodydetails are raw REST responses.
+Sketch-only bundles omit STEP. Fresh bundles also include `sketches.json`, the raw
+Part Studio sketch-information response. These are additive v1 members; older
+bundles keep their existing behavior. Features and bodydetails are raw REST responses.
 The reader accepts stored and deflated members, without
 extracting them to disk. Assemblies and bundles with multiple elements are not
 supported yet; fetch one Part Studio instead.
@@ -31,6 +33,16 @@ and microversion, with a bundle-level `consistent` flag. A bundle marked
 `consistent: false` is refused: fetch it again, or use an immutable version link.
 Older v1 bundles without these fields still convert; response microversion checks
 continue to apply. A present consistency flag must be a JSON boolean.
+
+Face-attached sketches use their stored `sketches.json` record, matched by
+`featureId`. Onshape's sixteen-value, row-major `sketchMatrix` supplies the sketch's
+origin (metres), x direction and normal as a sketch-to-world transform. The reader
+checks finite, rigid axes and agreement with the selected planar rollback face;
+it never substitutes that face's origin or chooses an in-plane direction. An
+absent member in an older bundle, missing sketch entry or contradictory frame
+keeps `onshape/history.not-supported` and the final STEP geometry. Fetch the bundle
+again to capture the missing placement. Legacy explicit feature planes and built-in
+plane behavior remain supported.
 
 ## Editable history
 
@@ -266,7 +278,12 @@ The ZIP contains `manifest.json` and raw response bytes without rewriting the JS
   of those indices. The states before and after each extrude or revolve that makes
   a new part are kept too; the state after the last feature is
   stored as the index equal to the feature count. Suppressed features and
-  sketch-region-only queries do not request bodydetails. Optional `configuration.json` and `variables.json` are
+  sketch-region-only queries do not request bodydetails. `sketches.json` retains
+  every returned sketch's stored placement from `GET /api/v17/partstudios/d/<document>/<m|v>/<pin>/e/<element>/sketches`.
+  Manifest `files.sketches` names this member, and `file_sources` records its pin.
+  This request shares the signing, cache, size/privacy guards and call budget of
+  features and bodydetails; allow one more uncached call per Part Studio.
+  Optional `configuration.json` and `variables.json` are
   included when their endpoints return data. A Part Studio containing only sketches
   and assigned variables skips the export request and has no `export.step`. For
   other Part Studios, final `export.step` is fetched through
@@ -279,7 +296,7 @@ The ZIP contains `manifest.json` and raw response bytes without rewriting the JS
   References to other documents appear in manifest `external` entries with
   `documentId`, `elementId`, and `microversionId`; those documents are not fetched.
 
-No separate sketch, Parasolid, mass-property, FeatureScript, translation-status, or
+No separate Parasolid, mass-property, FeatureScript, translation-status, or
 account metadata files are included. Dutchman follows references within the document
 and refuses references to a different microversion of that document. It fetches at
 most 1,000 elements and 10,000 files. Responses are limited to 64 MiB; the complete

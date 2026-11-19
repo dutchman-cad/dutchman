@@ -13,7 +13,12 @@ use super::{
 };
 use crate::Report;
 const ORIGIN_ID: &str = "IB";
-fn frame(feature: &Value, model: &Model, face: &dyn Fn(&str) -> Mapping<Value>) -> Mapping<Value> {
+fn frame(
+    feature: &Value,
+    model: &Model,
+    face: &dyn Fn(&str) -> Mapping<Value>,
+    stored: &Mapping<Option<&Value>>,
+) -> Mapping<Value> {
     let [query] = queries(feature, "sketchPlane")? else {
         return Err("multiple sketch planes are not supported yet".into());
     };
@@ -26,7 +31,7 @@ fn frame(feature: &Value, model: &Model, face: &dyn Fn(&str) -> Mapping<Value>) 
             return Err("a sketch on more than one face is not supported yet".into());
         };
         let support = face(native.as_str().ok_or("a sketch face id is not a string")?)?;
-        attachment_frame(feature, &support)
+        attachment_frame(feature, &support, *stored.as_ref().map_err(Clone::clone)?)
     };
     let plane = if query
         .get("queryString")
@@ -98,10 +103,46 @@ fn cap_frame(_query: &Value, _model: &Model) -> Mapping<Value> {
     Err("the cap face has no stored sketch attachment origin, normal and x axis".into())
 }
 
-fn attachment_frame(feature: &Value, support: &Value) -> Mapping<Value> {
-    let plane = feature
-        .get("plane")
-        .ok_or("the sketch attachment plane and stored x axis are missing")?;
+// Onshape's sketchMatrix is a row-major homogeneous sketch-to-world transform.
+// Its translation is in metres; the columns give the stored x, y and normal axes.
+fn information_plane(sketch: &Value) -> Mapping<Value> {
+    let matrix = rows(sketch, "sketchMatrix")?;
+    let [xx, yx, nx, ox, xy, yy, ny, oy, xz, yz, nz, oz, a, b, c, d] = matrix else {
+        return Err("the stored sketch attachment matrix must contain sixteen values".into());
+    };
+    let value = |v: &Value| {
+        v.as_f64()
+            .filter(|v| v.is_finite())
+            .ok_or("the stored sketch attachment matrix has a non-finite value")
+    };
+    if [value(a)?, value(b)?, value(c)?, value(d)?] != [0.0, 0.0, 0.0, 1.0] {
+        return Err("the stored sketch attachment matrix is not affine".into());
+    }
+    let x = [value(xx)?, value(xy)?, value(xz)?];
+    let y = [value(yx)?, value(yy)?, value(yz)?];
+    let normal = [value(nx)?, value(ny)?, value(nz)?];
+    let expected_y = topology::cross(normal, x);
+    let roundoff = 64.0 * f64::EPSILON;
+    if [x, y, normal]
+        .into_iter()
+        .any(|axis| (axis.into_iter().map(|v| v * v).sum::<f64>() - 1.0).abs() > roundoff)
+        || y.into_iter()
+            .zip(expected_y)
+            .any(|(a, b)| (a - b).abs() > roundoff)
+    {
+        return Err("the stored sketch attachment matrix axes are not orthonormal".into());
+    }
+    Ok(
+        json!({"origin":topology::point([value(ox)?, value(oy)?, value(oz)?]),
+        "normal":topology::point(normal), "x":topology::point(x)}),
+    )
+}
+
+fn attachment_frame(feature: &Value, support: &Value, stored: Option<&Value>) -> Mapping<Value> {
+    let stored_plane = stored.map(information_plane).transpose()?;
+    // Legacy bundles may already carry an explicit plane in their feature response.
+    let plane = stored_plane.as_ref().or_else(|| feature.get("plane"))
+        .ok_or("the sketch attachment plane and stored x axis are missing; fetch a new bundle to capture sketches.json")?;
     let origin = topology::vector(
         plane
             .get("origin")
@@ -301,9 +342,12 @@ pub(super) fn map(
     }
     let native = text(feature, "featureId")?;
     let sketch_id = id("sketch", native);
-    let plane = frame(feature, model, &|face| {
-        inputs.load(ordinal, feature)?.face_frame(face)
-    })?;
+    let plane = frame(
+        feature,
+        model,
+        &|face| inputs.load(ordinal, feature)?.face_frame(face),
+        &inputs.sketch_information(native),
+    )?;
     let mut loci = BTreeMap::new();
     for entity in rows(feature, "entities")? {
         let native_entity = text(entity, "entityId")?;

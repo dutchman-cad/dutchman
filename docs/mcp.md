@@ -973,13 +973,17 @@ Keys come only from the server's local environment or private config file; never
 include them in tool arguments. This tool uses Onshape's network API and your own
 allowance and writes a private bundle/cache. Nothing is sent to Dutchman.
 
-Part Studios include features, input topology, optional variables/configuration,
-and final STEP; same-document assembly references are fetched too. Version URLs
-use version paths. Workspace URLs use microversion paths where supported and
+Part Studios include features, stored sketch placements, input topology, optional
+variables/configuration, and final STEP; same-document assembly references are
+fetched too. Version URLs use version paths. Workspace URLs use microversion paths where supported and
 workspace paths for STEP/variables, followed by a final head check. One change
 triggers a refetch; a second returns `onshape/changed`. Successful bundle manifests
 record `consistent: true` and per-file path kinds/microversions. All attempts share
 the tool's call budget. See [Onshape](onshape.md#fetching-a-document) for cache and privacy details.
+Capturing `sketches.json` costs one additional uncached call per Part Studio. Its
+stored frames let face-attached sketches map; older bundles without those frames
+retain `onshape/history.not-supported` and final geometry. Fetch them again to
+capture the placement.
 
 Offline Onshape bundles can contain sketches alone without a STEP export. Resolved
 extrusion-cap sketches, tangent chains, counterbore/countersink hole locations, sketch
