@@ -36,17 +36,17 @@ continue to apply. A present consistency flag must be a JSON boolean.
 
 | Source construction | Reader mapping | Limits and named losses |
 |---|---|---|
-| Planar sketch | CADIR sketch and solved curves | Built-in Top, Front and Right planes, forward end caps of resolved blind extrusions whose source sketch supplies the frame, and planar model faces parallel to a built-in plane. Faces at other orientations and non-planar faces are not supported yet. |
+| Planar sketch | CADIR sketch and solved curves | Built-in Top, Front and Right planes supply complete frames. Face and cap attachments map a stored complete attachment frame on a resolved planar input face; a face plane alone is insufficient. |
 | Lines, circular arcs, circles, ellipses, elliptical arcs, points | Exact sketch entities | Elliptical arcs retain their parameter interval and direction; the writer represents them as exact conics. Text, images, projected references without solved curves, and other curves are not supported yet. |
 | Simple spline | Polynomial planar CADIR NURBS | Non-periodic, non-rational curves with complete knots and control points, stored whole or as a segment over the whole knot range; the writer retains its own knot and degree limits. A trimmed spline segment is not supported yet. |
 | Constraints | Horizontal, vertical, fixed, parallel, perpendicular, tangent, equal, concentric, coincident loci, coincidence with the Origin point and midpoint | A point coincident with the Origin is tied to the SolidCraft sketch origin. A midpoint between two points becomes a midpoint on a construction line joining them. Other relations, and external references other than the Origin, are dropped with `onshape/sketch.constraint-not-supported`; solved geometry remains. Every dropped relation names its source constraint kind and reason. |
-| Dimensions | Length, distance between loci, radius, diameter, angle and CADIR parameters | Literal units, evaluated quantities and bounded arithmetic using earlier Part Studio variables are accepted. Diameter dimensions use `length`. Driven dimensions and expressions needing FeatureScript evaluation are reported. |
-| Solid extrude | Blind, through all, up to a planar face (at a slant to the sketch from SolidCraft 0.44), up to next; NEW/ADD/REMOVE/INTERSECT | Whole resolved sketch or explicit sketch-region boundaries, positive or reversed normal, symmetric blind distance split equally about the sketch plane (Onshape's depth is the total). Up to next becomes an end at the one input face it reaches, see below. Thin walls follow explicitly selected curves with one side, symmetric thickness or two offsets (SolidCraft 0.44 and newer). Symmetric with another bound, multiple-body Boolean scopes, second direction, draft, offset starts, surface bodies, and other bounds are not supported yet. |
+| Dimensions | Length, distance between loci, radius, diameter, angle and CADIR parameters | Complete dimensioned expressions, numeric quantities with explicit supported units and bounded arithmetic using earlier Part Studio variables are accepted. Diameter dimensions use `length`. Driven dimensions and expressions needing FeatureScript evaluation are reported. |
+| Solid extrude | Blind, through all, up to a planar face (at a slant to the sketch from SolidCraft 0.44); NEW/ADD/REMOVE/INTERSECT | Whole resolved sketch or explicit sketch-region boundaries, positive or reversed normal, symmetric blind distance split equally about the sketch plane (Onshape's depth is the total). Up to next needs exact stored-target coverage and first intersection. Thin walls need stored controls and a proved body scope, as below. Symmetric with another bound, multiple-body Boolean scopes, second direction, draft, offset starts, surface bodies, and other bounds are not supported yet. |
 | Solid revolve | Full or one-direction angle about a resolved straight input edge, or about a construction line of the profile's sketch, which stays the revolve's axis in SolidCraft | Other bounds and body types are not supported yet. One-direction geometry still passes the writer's side proof. |
 | Fillet | Circular, constant radius, explicit input edges and resolvable tangent chains (Onshape's default) | Variable, partial, conic, curvature and overflow forms are not supported yet. Tangent propagation needs complete shared vertex IDs and endpoint tangents; the chain is resolved from the feature's own rollback `bodydetails`. The written fillet blends exactly the listed edges (SolidCraft's tangent chain off), so it needs a SolidCraft 0.40 or newer target. The writer must prove every edge on replay. |
 | Chamfer | Equal offsets, two offsets, distance and angle in CADIR, with explicit input edges and resolvable tangent chains | The writer maps equal setbacks (including two equal offsets and a 45° distance-and-angle chamfer on perpendicular input faces). Asymmetric chamfers report missing input reference-face ordering; neither face nor direction is guessed. Tangent propagation has the same completeness requirement as fillets, and the chamfer likewise blends exactly the listed edges on SolidCraft 0.40 or newer. Replay proof still applies. |
-| Hole | Explicit sketch point `locations`; simple, counterbore and countersink entries; through, or blind to the shoulder with its drill point (118° when the feature leaves it out) or a flat 180° bottom; tapped holes from the hole table's thread standard, drilled at the tap-drill diameter | A tapped hole keeps an ISO metric thread as a cosmetic label, with its thread length in a blind hole (SolidCraft 0.40 and newer); otherwise the thread length is reported, and other thread standards keep the bore only. Reversed drilling, other hole tables and standard types, mate connectors and other ends are not supported yet. |
-| Assigned variables | SolidCraft parameters retaining units, with the same names and expressions (`#len / 2` becomes `len / 2`) | Earlier variables, literal units, parentheses and `+`, `-`, `*`, `/` with compatible units; measured variables, reassignment, forward references and FeatureScript functions are not supported yet. Sketch dimensions, blind and symmetric extrude depths and one-direction revolve angles that use variables stay driven by them, so editing the parameter in SolidCraft rebuilds the part. Other values that use variables (fillet and chamfer sizes, hole sizes) are written as their evaluated values with an `onshape/history.variable-evaluated` loss naming each one. Suppressed features, including parent-suppressed features, do not produce these losses. |
+| Hole | Explicit sketch point `locations`; simple, counterbore and countersink entries; through, or blind with a unique explicit drill-point angle and an explicit depth reference for an angled bottom, or an explicit flat 180° bottom; tapped holes from the hole table's thread standard, drilled at the tap-drill diameter | A standard must state its hand and modeled/cosmetic facts. A supported tapped hole keeps its ISO metric thread label, with its thread length in a blind hole (SolidCraft 0.40 and newer); otherwise the thread length is reported, and other thread standards keep the bore only. Reversed drilling, other hole tables and standard types, mate connectors and other ends are not supported yet. |
+| Assigned variables | SolidCraft parameters retaining units, with the same names and expressions (`#len / 2` becomes `len / 2`) | Earlier variables, literal units, parentheses and `+`, `-`, `*`, `/` with compatible units; measured variables, reassignment, forward references and FeatureScript functions are not supported yet. A refused replacement blocks each later consumer of that name; earlier parameters remain historical records. Sketch dimensions, blind and symmetric extrude depths and one-direction revolve angles that use variables stay driven by them, so editing the parameter in SolidCraft rebuilds the part. Other values that use variables (fillet and chamfer sizes, hole sizes) are written as their evaluated values with an `onshape/history.variable-evaluated` loss naming each one. Suppressed features, including parent-suppressed features, do not produce these losses. |
 | Other features, custom FeatureScript | Named `onshape/history.not-supported` loss | The shared partial-history path keeps the final STEP shape visible and retains the editable prefix where possible. |
 
 Assigned variables remain design parameters even if no sketch can be mapped and
@@ -58,16 +58,21 @@ parameter properties explicitly request retention without sketches, and feature
 properties identify symmetric parameters measured over the total span. Readers
 without these capabilities retain their previous default output.
 
-Onshape thin extrudes carry their selected sketch curves, wall thickness and side
-in CADIR v11's typed `design.features[].definition.operation.value.output.body`.
-The matching `model.features` projection carries the same identity, profile and
-extent. The writer checks both projections agree before emitting a SolidCraft
-thin extrude. Choose `--solidcraft-version 0.44.1` to target the verified release.
-`midplane` uses the total `thickness`; otherwise `thickness1` lies
-outside and `thickness2` inside, with `flipWall` exchanging them. A zero second
-thickness becomes a one-side wall. Fractional quantity literals retain the unit
-on the complete scalar expression. Targets before SolidCraft 0.44 and unresolved
-wall treatments keep the final geometry with a named loss.
+Thin extrusions map explicit sketch-curve selections from `wallShape` in the stored
+`MODEL` domain. `midplane`, `oppositeDirection` and the active thickness values
+must be present and consistent. Symmetric walls use `thickness` and do not need an
+inactive wall-side flag; directed walls use `flipWall`, `thickness1` and `thickness2`. Clockwise source carriers retain their stored
+side when normalized to the neutral curve direction; mixed directions that cannot
+share one side remain a named loss. Modifying operations must select the sole body
+at that feature's rollback through `booleanScope`; NEW has no Boolean targets.
+Missing or contradictory data retains `onshape/extrude.thin-not-supported` and final
+STEP geometry. No area or sampled point chooses a side or a body.
+
+Quantity expressions are evaluated with their dimensions over the complete expression,
+including fractions and arithmetic. A numeric fallback requires an explicit supported
+unit string; a missing or malformed unit keeps the construction Native with
+`onshape/history.not-supported`. Boolean operands and suppression fields must be
+Boolean when present, and parameter keys must be unique.
 
 Face and edge queries use `deterministicIds`, looked up only in bodydetails at
 the feature's rollback index (before that feature). The reader rejects missing or
@@ -80,26 +85,23 @@ offline. The built-in plane query forms are recognized explicitly, including lit
 `qCompressed` creation records naming `Top.planeOp`, `Front.planeOp`, or
 `Right.planeOp`. These planes supply their fixed origin, normal, and in-plane axis.
 Zlib literals and their boolean query fields are decoded within the same bounds.
-A cap query names the creating extrusion; the reader derives a forward end cap's
-location from that extrusion and its source sketch rather than from final STEP
-topology. Any other sketch on a model face (a side face, or a reversed or start cap)
-takes its plane from the face's deterministic ID in bodydetails at the sketch's
-rollback index: the normal is the face's outward normal (the surface normal,
-flipped when the face's `orientation` is false), the origin is the world origin
-projected onto the face, and the in-plane x axis follows the built-in planes
-(world X on a horizontal face, otherwise the horizontal direction that keeps world Z
-up). Only faces parallel to a built-in plane are admitted, because that is where this
-convention was measured.
+Face-plane and cap attachments map when the sketch feature stores a complete
+`plane` (`origin`, `normal`, `x`) and its deterministic face resolves in that
+feature's rollback topology. The stored frame must be orthogonal and coplanar with
+the referenced planar face. Translation and rotation come from the stored sketch
+frame; a face origin, face normal or inherited extrusion frame alone does not
+establish them. Missing or contradictory frames retain
+`onshape/history.not-supported`. Built-in plane frames remain supported.
 
-SolidCraft has no up-to-next end, so the reader finds the face Onshape's bound
-reaches in bodydetails at the feature's rollback index. Rays from points along
-every profile curve run along the extrude direction; each must meet the same
-planar input face first, and no other input face may lie inside the box the
-profile sweeps before it. A cut must leave material at that face and an added or
-new extrude must meet material there. The extrude then ends at that face, like up
-to face. A face at a slant to the sketch, for up to next or up to face, needs
-SolidCraft 0.44 or newer as the target; older targets get a named loss. Any other
-case, including a spline profile, is a named loss.
+`UP_TO_NEXT` maps when exact ray/plane intersections with stored per-feature input
+geometry prove one first positive termination over the complete closed profile.
+Straight closed face loops establish coverage, including holes. Analytic line,
+arc and ellipse bounds prove coverage and compare intersection distances over the
+whole profile; all potential earlier input faces participate. Finite samples,
+response bounding boxes, face areas and final-body faces provide no proof.
+Missing carriers, open or contradictory loops, unsupported target surfaces and
+unproved coverage retain `onshape/history.not-supported` with the precise reason.
+Explicit up-to-face selections retain their existing writer version gates.
 
 A compressed sketch-region query carries topology disambiguation naming its source
 sketch curves through `derivedFrom`, `sketchEntityId`, and the sketch's `wireOp` and
@@ -113,8 +115,15 @@ so the reader recovers its enclosing closed source loop and enclosed holes from
 the solved sketch. Open chains are refused before writing unless their straight
 segments lie wholly inside an excluded convex circular or elliptical hole, or an
 individual non-closing curve is proved disjoint from every other source curve.
-Isolation uses conservative projection intervals and bounds on conic equations;
-it does not sample curves or guess intersections. Uncertain contacts are refused.
+Isolation uses conservative projection intervals and bounds on conic equations,
+then closed-form line/line, line/conic and conic/conic intersections where those
+bounds overlap. Conic intersections reduce to quadratic or quartic equations.
+Stored tangent constraints can establish the unique line/conic or circle/circle
+contact when the rounded carrier coefficients alone leave its multiplicity
+uncertain. The carriers must agree with that relation within the existing
+arithmetic roundoff bound; missing or contradictory facts remain a named loss.
+Closed source boundaries and nonintersection establish hole containment; areas do
+not order or select holes. The reader does not sample curves or guess intersections. Uncertain contacts are refused.
 A divider
 meeting the interior of a frame edge must never expand the selected face, even
 with verification off. Curved ray crossings use the same endpoint-height rule as
@@ -130,8 +139,11 @@ curves, repeated intervals without disambiguation, tied boundary connections,
 and unsupported query encodings produce specific `onshape/history.not-supported`
 losses. Lines, circles, circular arcs, ellipses, and elliptical arcs have resolved boundary
 parameter ranges; other
-carriers still need their source trimming chart. The writer checks boundary
-closure, interior selection and replay against the original STEP geometry.
+carriers still need their source trimming chart. Directed endpoints must connect
+and close within floating-point roundoff. Analytic predicates prove boundary
+nonintersection, hole containment and separation, including recovered exterior
+boundaries. Ambiguous or nested selections retain `onshape/history.not-supported`.
+The writer independently checks interior selection and replay against original STEP geometry.
 
 The reader emits CADIR v11: final STEP topology and solved carriers belong to
 `geometry`, while sketches, feature definitions and rollback selections remain in
@@ -141,6 +153,8 @@ schema changes do not change the reader's selections, units or history limits.
 Lengths from REST geometry are converted from metres to millimetres; angles use
 radians. The source axes, origin and scale are preserved. Unsupported constructions
 stop body-building history rather than guessing a selection.
+
+Unresolved format conventions are recorded in [Onshape open items](onshape-open-items.md).
 
 ## Checking the result
 
@@ -168,8 +182,7 @@ loci, line ends or arc ends, through a construction carrier.
 
 The reader has defensive limits: 4,096 ZIP members, 16 MiB directory/ZIP64
 metadata, 32 MiB per JSON member, 256 MiB total expanded data, and 10,000 rows per
-input collection or topology arena. These are admission limits, not memory/time
-estimates. Compressed query literals additionally have a 1 MiB expanded limit,
+input collection or topology arena. JSON tree storage and depth are admitted before parsing and each response tree is cached. Rollback topology counts are charged before part matching; history rows are charged and reserved before projection. Embedded STEP decoding shares the caller resource session. These are admission limits, not memory/time estimates. Compressed query literals additionally have a 1 MiB expanded limit,
 4 MiB reference-allocation budget, 10,000 parsed nodes and 64 nesting levels.
 Variable expressions have a 65,536-byte input limit, 10,000 operands and
 64 parser levels. Bodydetails indices may be a JSON array of rollback integers (or

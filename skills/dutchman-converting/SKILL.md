@@ -28,9 +28,9 @@ explain a refused boundary using its specific loss. The ordinary history/verific
 report still applies. See `docs/onshape.md`.
 Ellipses and elliptical arcs retain editable curves. Variables keep units and
 expressions, and remain design parameters alongside the STEP fallback even when no
-sketch maps. Thin extrudes keep selected curves, thickness and side on SolidCraft
-0.44 and newer. Unresolved wall options retain `onshape/extrude.thin-not-supported`;
-older targets keep a named loss. Repeated ellipse trims use solved chord endpoints
+sketch maps. Thin extrudes map stored thicknesses, sides and directions after proving
+the selected input-body scope. Missing controls retain final STEP geometry with
+`onshape/extrude.thin-not-supported`. Repeated ellipse trims use solved chord endpoints
 and intersection records; outside-face witnesses recover complete closed loops.
 Tied intersections remain named losses. Asymmetric chamfers need input reference-face
 ordering. Keep final geometry and explain a named loss rather than guessing a side.
@@ -41,10 +41,10 @@ the final STEP shape remains available. Native symmetric distances and parameter
 fallback defaults stay unchanged.
 Sketch-only Part Studios can omit STEP and convert to sketches alone; with SolidCraft they are
 verified by replaying the sketches (no body expected). The reader also
-accepts resolved extrusion-cap sketches, complete tangent edge chains, hole `locations`
+accepts built-in-plane sketches, complete tangent edge chains, hole `locations`
 with counterbore/countersink entries, construction-line revolve axes, midpoint relations,
-assigned variables and symmetric blind extrudes. Up-to-next ends need one planar
-input face reached by the whole profile; up-to-face ends keep their selected face.
+assigned variables and symmetric blind extrudes. Up-to-next ends and face/cap
+attachments retain a named history loss; up-to-face ends keep their selected face.
 A planar face at a slant to the sketch, for either a start or an end, needs
 SolidCraft 0.44 or newer as the target. Older targets keep a named loss and the
 final geometry. Symmetric non-blind bounds remain named losses.
@@ -949,3 +949,11 @@ Desktop Onshape jobs retain the `.onshape-bundle` beside the `.sc` with the same
 name. **Show bundle** reveals it; **Send to Dutchman** opens the existing private report
 review with the archive attached and still requires a Send click.
 To share a document with us, send the .onshape-bundle; never send your keys.
+
+For offline Onshape bundles, review `onshape/history.not-supported` for unresolved
+variable rebinding, quantities without explicit units, malformed Booleans, face/cap
+attachments without stored frames, up-to-next extents without exact stored-target
+coverage, ambiguous directed regions and incomplete hole facts. Thin walls map stored
+controls after proving the input-body scope; missing or contradictory controls retain
+`onshape/extrude.thin-not-supported`. The final STEP shape remains available. Do not infer an omitted drill angle,
+depth reference, thread hand or presentation; see `docs/onshape-open-items.md`.

@@ -1,4 +1,7 @@
-use std::collections::BTreeMap;
+const SPLINE_DOMAIN_TOLERANCE: f64 = 1e-9;
+const POINT_U_TOLERANCE: f64 = 1e-6;
+const POINT_V_TOLERANCE: f64 = 1e-6;
+use std::collections::{BTreeMap, BTreeSet};
 
 use cadmpeg_ir::document::Model;
 use serde_json::{json, Value};
@@ -8,13 +11,8 @@ use super::{
     features::{parameter, quantity, queries},
     id, number, optional_rows, push, query as compressed, rows, text, topology, Mapping,
 };
-use crate::{Report, Severity};
-
-/// Onshape's deterministic id for the origin point of every Part Studio.
+use crate::Report;
 const ORIGIN_ID: &str = "IB";
-
-/// Built-in planes have a fixed source frame. A sketch on a model face takes the
-/// frame Onshape gives that face in the rollback state before the sketch.
 fn frame(feature: &Value, model: &Model, face: &dyn Fn(&str) -> Mapping<Value>) -> Mapping<Value> {
     let [query] = queries(feature, "sketchPlane")? else {
         return Err("multiple sketch planes are not supported yet".into());
@@ -27,7 +25,8 @@ fn frame(feature: &Value, model: &Model, face: &dyn Fn(&str) -> Mapping<Value>) 
         let [native] = deterministic.map(Vec::as_slice).unwrap_or_default() else {
             return Err("a sketch on more than one face is not supported yet".into());
         };
-        face(native.as_str().ok_or("a sketch face id is not a string")?)
+        let support = face(native.as_str().ok_or("a sketch face id is not a string")?)?;
+        attachment_frame(feature, &support)
     };
     let plane = if query
         .get("queryString")
@@ -95,82 +94,59 @@ fn frame(feature: &Value, model: &Model, face: &dyn Fn(&str) -> Mapping<Value>) 
         json!({"origin": topology::point([0.0; 3]), "normal": topology::point(normal), "u_axis": topology::point(u_axis)}),
     )
 }
+fn cap_frame(_query: &Value, _model: &Model) -> Mapping<Value> {
+    Err("the cap face has no stored sketch attachment origin, normal and x axis".into())
+}
 
-// A cap query names its creating extrusion and original sketch edges. Resolve
-// the complete frame from that construction, never from a final STEP face.
-fn cap_frame(query: &Value, model: &Model) -> Mapping<Value> {
-    let reason = "this cap-face sketch attachment is not supported yet";
-    let [operation] = rows(query, "operationId")? else {
-        return Err(reason.into());
-    };
-    let native = operation
-        .as_str()
-        .and_then(|s| s.strip_suffix(".opExtrude"))
-        .ok_or(reason)?;
-    if text(query, "entityType")? != "FACE" || text(query, "historyType")? != "CREATION" {
-        return Err(reason.into());
-    }
-    let is_start = query
-        .get("isStart")
-        .and_then(Value::as_bool)
-        .ok_or(reason)?;
-    let feature = model
-        .features
-        .iter()
-        .find(|f| f.id.as_str() == id("feature", native))
-        .ok_or(reason)?;
-    let wire = serde_json::to_value(feature).map_err(|_| reason)?;
-    let extrude = wire.pointer("/definition/value/value").ok_or(reason)?;
-    if wire
-        .pointer("/definition/value/kind")
-        .and_then(Value::as_str)
-        != Some("extrude")
+fn attachment_frame(feature: &Value, support: &Value) -> Mapping<Value> {
+    let plane = feature
+        .get("plane")
+        .ok_or("the sketch attachment plane and stored x axis are missing")?;
+    let origin = topology::vector(
+        plane
+            .get("origin")
+            .ok_or("the sketch attachment origin is missing")?,
+        1000.0,
+    )?;
+    let normal = topology::unit(topology::vector(
+        plane
+            .get("normal")
+            .ok_or("the sketch attachment normal is missing")?,
+        1.0,
+    )?)?;
+    let x = topology::unit(topology::vector(
+        plane
+            .get("x")
+            .ok_or("the sketch attachment stored x axis is missing")?,
+        1.0,
+    )?)?;
+    let support_origin = topology::vector(
+        support
+            .get("origin")
+            .ok_or("the attachment support origin is missing")?,
+        1.0,
+    )?;
+    let support_normal = topology::unit(topology::vector(
+        support
+            .get("normal")
+            .ok_or("the attachment support normal is missing")?,
+        1.0,
+    )?)?;
+    let dot = |a: [f64; 3], b: [f64; 3]| a.into_iter().zip(b).map(|(a, b)| a * b).sum::<f64>();
+    let scale = origin
+        .into_iter()
+        .chain(support_origin)
+        .map(f64::abs)
+        .fold(1.0_f64, f64::max);
+    let roundoff = 64.0 * f64::EPSILON;
+    if dot(x, normal).abs() > roundoff
+        || (dot(normal, support_normal).abs() - 1.0).abs() > roundoff
+        || dot(topology::sub(origin, support_origin), support_normal).abs() > roundoff * scale
     {
-        return Err(reason.into());
+        return Err("the stored sketch attachment frame contradicts its planar face".into());
     }
-    let profile = extrude.pointer("/profile/value").ok_or(reason)?;
-    let sketch_id = match profile.get("kind").and_then(Value::as_str) {
-        Some("sketch") => profile.get("value").and_then(Value::as_str),
-        Some("sketch_regions") => profile.pointer("/value/sketch").and_then(Value::as_str),
-        _ => None,
-    }
-    .ok_or(reason)?;
-    let sketch = model
-        .sketches
-        .iter()
-        .find(|s| s.id.as_str() == sketch_id)
-        .ok_or(reason)?;
-    let sketch = serde_json::to_value(sketch).map_err(|_| reason)?;
-    let frame = sketch.pointer("/placement/frame").ok_or(reason)?;
-    let origin = topology::vector(frame.get("origin").ok_or(reason)?, 1.0)?;
-    let normal = topology::unit(topology::vector(frame.get("normal").ok_or(reason)?, 1.0)?)?;
-    let sign = match extrude.pointer("/direction/kind").and_then(Value::as_str) {
-        Some("profile_normal") => 1.0,
-        Some("reversed_profile_normal") => -1.0,
-        _ => return Err(reason.into()),
-    };
-    if extrude.pointer("/extent/kind").and_then(Value::as_str) != Some("one_sided")
-        || extrude
-            .pointer("/extent/side/termination/kind")
-            .and_then(Value::as_str)
-            != Some("blind")
-    {
-        return Err(reason.into());
-    }
-    let depth = extrude
-        .pointer("/extent/side/termination/length")
-        .and_then(Value::as_f64)
-        .ok_or(reason)?;
-    if is_start || sign < 0.0 {
-        return Err("sketches on reversed or start extrusion caps need an explicit source frame; this attachment is not supported yet".into());
-    }
-    let distance = depth;
-    let [ox, oy, oz] = origin;
-    let [nx, ny, nz] = normal;
-    // The source cap's in-plane axes follow its extrusion sketch.
     Ok(
-        json!({"origin": topology::point([ox + nx * distance, oy + ny * distance, oz + nz * distance]),
-        "normal": topology::point(normal), "u_axis": frame.get("u_axis")}),
+        json!({"origin":topology::point(origin),"normal":topology::point(normal),"u_axis":topology::point(x)}),
     )
 }
 
@@ -213,15 +189,13 @@ pub(super) fn geometry(entity: &Value) -> Mapping<Value> {
                 return Ok(json!({"kind": "circle", "center": center, "radius": radius}));
             }
             let direction = coordinate(geometry, "yDir")?.atan2(coordinate(geometry, "xDir")?);
-            let sign = if geometry.get("clockwise").and_then(Value::as_bool) == Some(true) {
+            let sign = if super::boolean_field(geometry, "clockwise")? {
                 -1.0
             } else {
                 1.0
             };
             let a = direction + sign * coordinate(entity, "startParam")?;
             let b = direction + sign * coordinate(entity, "endParam")?;
-            // CADIR arcs traverse counterclockwise. Preserve native endpoints separately
-            // for constraints, swapping their loci when the source arc runs clockwise.
             let (a, b) = if sign < 0.0 { (b, a) } else { (a, b) };
             Ok(
                 json!({"kind": "arc", "center": center, "radius": radius, "start_angle": a, "end_angle": b}),
@@ -246,12 +220,11 @@ pub(super) fn geometry(entity: &Value) -> Mapping<Value> {
                 }
                 let start = coordinate(entity, "startParam")?;
                 let end = coordinate(entity, "endParam")?;
-                let (start, end) =
-                    if geometry.get("clockwise").and_then(Value::as_bool) == Some(true) {
-                        (-end, -start)
-                    } else {
-                        (start, end)
-                    };
+                let (start, end) = if super::boolean_field(geometry, "clockwise")? {
+                    (-end, -start)
+                } else {
+                    (start, end)
+                };
                 if end <= start || end - start > std::f64::consts::TAU {
                     return Err(
                         "the elliptical arc must span a positive interval of at most one turn"
@@ -269,15 +242,13 @@ pub(super) fn geometry(entity: &Value) -> Mapping<Value> {
             let knots = rows(geometry, "knots")?;
             match entity.get("btType").and_then(Value::as_str) {
                 Some("BTMSketchCurve-4") => {}
-                // Onshape stores a drawn spline as a segment over its curve. Only a segment
-                // spanning the whole knot domain is the spline itself; a trimmed one is not.
                 Some("BTMSketchCurveSegment-155") => {
                     let first = knots.first().and_then(Value::as_f64);
                     let last = knots.last().and_then(Value::as_f64);
                     let (Some(first), Some(last)) = (first, last) else {
                         return Err("spline knots are missing".into());
                     };
-                    let tolerance = 1e-9 * (last - first).abs().max(1.0);
+                    let tolerance = SPLINE_DOMAIN_TOLERANCE * (last - first).abs().max(1.0);
                     if (coordinate(entity, "startParam")? - first).abs() > tolerance
                         || (coordinate(entity, "endParam")? - last).abs() > tolerance
                     {
@@ -286,8 +257,8 @@ pub(super) fn geometry(entity: &Value) -> Mapping<Value> {
                 }
                 _ => return Err("trimmed sketch splines are not supported yet".into()),
             }
-            if geometry.get("isRational").and_then(Value::as_bool) == Some(true)
-                || geometry.get("isPeriodic").and_then(Value::as_bool) == Some(true)
+            if super::boolean_field(geometry, "isRational")?
+                || super::boolean_field(geometry, "isPeriodic")?
                 || geometry.get("dimension").and_then(Value::as_u64) != Some(2)
             {
                 return Err(
@@ -297,7 +268,7 @@ pub(super) fn geometry(entity: &Value) -> Mapping<Value> {
             let controls = rows(geometry, "controlPoints")?;
             if controls.len() % 2 != 0
                 || geometry.get("controlPointCount").and_then(Value::as_u64)
-                    != Some((controls.len() / 2) as u64)
+                    != Some(cadmpeg_core::decode::u64_from_index(controls.len() / 2))
             {
                 return Err("spline control point count does not match its coordinates".into());
             }
@@ -323,6 +294,7 @@ pub(super) fn map(
     inputs: &topology::Inputs<'_>,
     model: &mut Model,
     report: &mut Report,
+    unresolved: &BTreeSet<String>,
 ) -> Mapping<Value> {
     if feature.get("btType").and_then(Value::as_str) != Some("BTMSketch-151") {
         return Err("only planar sketches are supported yet".into());
@@ -345,10 +317,8 @@ pub(super) fn map(
         {
             return Err("sketch entity ids repeat".into());
         }
-        let clockwise = entity
-            .pointer("/geometry/clockwise")
-            .and_then(Value::as_bool)
-            == Some(true);
+        let clockwise =
+            super::boolean_field(entity.get("geometry").unwrap_or(&Value::Null), "clockwise")?;
         for (key, kind) in [
             ("startPointId", if clockwise { "end" } else { "start" }),
             ("endPointId", if clockwise { "start" } else { "end" }),
@@ -373,7 +343,7 @@ pub(super) fn map(
         push(
             &mut model.sketch_entities,
             json!({"id": entity_id, "sketch": sketch_id,
-            "endpoint_refs": [], "construction": entity.get("isConstruction").and_then(Value::as_bool).unwrap_or(false), "geometry": geometry(entity)?}),
+            "endpoint_refs": [], "construction": super::boolean_field(entity,"isConstruction")?, "geometry": geometry(entity)?}),
         )?;
     }
     let mut sketch =
@@ -389,8 +359,10 @@ pub(super) fn map(
         let parameter_count = model.parameters.len();
         let entity_count = model.sketch_entities.len();
         let constraint_count = model.sketch_constraints.len();
-        let result = constraint_row(constraint, native, &sketch_id, &plane, &loci, model)
-            .and_then(|row| push(&mut model.sketch_constraints, row));
+        let result = constraint_row(
+            constraint, native, &sketch_id, &plane, &loci, model, unresolved,
+        )
+        .and_then(|row| push(&mut model.sketch_constraints, row));
         if let Err(reason) = result {
             model.parameters.truncate(parameter_count);
             model.sketch_entities.truncate(entity_count);
@@ -400,7 +372,7 @@ pub(super) fn map(
                 .and_then(Value::as_str)
                 .unwrap_or("Unknown");
             report.push_coded(
-                Severity::Degraded,
+                crate::Severity::Degraded,
                 feature
                     .get("name")
                     .and_then(Value::as_str)
@@ -430,7 +402,6 @@ fn locus_position(locus: &Value, model: &Model) -> Mapping<Value> {
         .ok_or("the sketch point's geometry is missing")?;
     let kind = text(locus, "kind")?;
     if text(geometry, "kind")? == "arc" && matches!(kind, "start" | "end") {
-        // Arc loci already name the counterclockwise end the reader wrote.
         let angle = number(
             geometry,
             if kind == "start" {
@@ -458,8 +429,6 @@ fn locus_position(locus: &Value, model: &Model) -> Mapping<Value> {
         .cloned()
         .ok_or("the sketch point's position is missing".into())
 }
-
-/// Whether an external constraint reference names the part studio's origin point.
 fn names_origin(query: &Value) -> bool {
     let source = query
         .get("queryString")
@@ -480,9 +449,6 @@ fn names_origin(query: &Value) -> bool {
             && query.get("btType").and_then(Value::as_str)
                 == Some("BTMIndividualCreatedByQuery-137"))
 }
-
-/// The model origin in the sketch's own coordinates (millimetres): where it projects onto
-/// the sketch plane.
 fn projected_origin(plane: &Value) -> Mapping<[f64; 2]> {
     let origin = topology::vector(
         plane.get("origin").ok_or("the sketch frame is missing")?,
@@ -498,7 +464,6 @@ fn projected_origin(plane: &Value) -> Mapping<[f64; 2]> {
     )?)?;
     let v = topology::cross(normal, u);
     let dot = |a: [f64; 3], b: [f64; 3]| a.iter().zip(b).map(|(a, b)| a * b).sum::<f64>();
-    // Subtracting from zero keeps a negative zero out of the written values.
     Ok([0.0 - dot(origin, u), 0.0 - dot(origin, v)])
 }
 
@@ -509,6 +474,7 @@ fn constraint_row(
     plane: &Value,
     loci: &BTreeMap<String, Value>,
     model: &mut Model,
+    unresolved: &BTreeSet<String>,
 ) -> Mapping<Value> {
     let kind = text(constraint, "constraintType")?;
     let cid = id(
@@ -550,10 +516,10 @@ fn constraint_row(
             }
             let point = locus("localFirst")?;
             let [u, v] = projected_origin(plane)?;
-            // The source solve already holds the point there; a point elsewhere means the
-            // reference is not the origin this frame describes.
             let at = locus_position(&point, model)?;
-            if (number(&at, "u")? - u).abs() > 1e-6 || (number(&at, "v")? - v).abs() > 1e-6 {
+            if (number(&at, "u")? - u).abs() > POINT_U_TOLERANCE
+                || (number(&at, "v")? - v).abs() > POINT_V_TOLERANCE
+            {
                 return Err("the point coincident with the origin is not at the origin in the solved sketch; this constraint is not supported yet".into());
             }
             json!({"kind":"point_coordinate_values", "point":point,"values":[u, v]})
@@ -589,7 +555,7 @@ fn constraint_row(
             json!({"kind":"midpoint","point":midpoint,"entity":carrier})
         }
         "LENGTH" | "DISTANCE" | "RADIUS" | "DIAMETER" | "ANGLE" => {
-            if constraint.get("drivenDimension").and_then(Value::as_bool) == Some(true) {
+            if super::boolean_field(constraint, "drivenDimension")? {
                 return Err("driven sketch dimensions are not supported yet".into());
             }
             let key = match kind {
@@ -611,15 +577,13 @@ fn constraint_row(
                     Err(reason)
                 }
             })?;
-            let value = quantity(dimension, kind == "ANGLE", model)?;
+            let value = quantity(dimension, kind == "ANGLE", model, unresolved)?;
             let pid = id(
                 "parameter",
                 &format!("{native}/{}", text(constraint, "entityId")?),
             );
             let parameter_ordinal = model.parameters.len();
             let owner = id("feature", native);
-            // Ordinals number the parameters within their owning feature; cadmpeg's model
-            // check refuses two parameters of one feature with the same ordinal.
             let ordinal_in_owner = model
                 .parameters
                 .iter()
@@ -643,15 +607,14 @@ fn constraint_row(
                             super::expression::Dimension::Length
                         },
                         model,
+                        unresolved,
                     )
                 })
                 .transpose()?;
-            let expression = evaluated
-                .as_ref()
-                .map(|v| v.expression.clone())
-                .unwrap_or_else(|| {
-                    format!("{value} {}", if kind == "ANGLE" { "rad" } else { "mm" })
-                });
+            let expression = evaluated.as_ref().map_or_else(
+                || format!("{value} {}", if kind == "ANGLE" { "rad" } else { "mm" }),
+                |v| v.expression.clone(),
+            );
             let dependencies = evaluated.map(|v| v.dependencies).unwrap_or_default();
             push(
                 &mut model.parameters,

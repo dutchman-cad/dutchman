@@ -1,8 +1,10 @@
 use cadmpeg_ir::document::Model;
 use serde_json::{json, Value};
+use std::collections::BTreeSet;
 
-use super::{definition, id, number, push, rows, sketch, text, topology, Mapping};
 use crate::Report;
+const DRILL_TIP_ANGLE_TOLERANCE: f64 = 1e-9;
+use super::{definition, id, number, push, rows, sketch, text, topology, Mapping};
 
 pub(super) fn parameter<'a>(feature: &'a Value, key: &str) -> Mapping<&'a Value> {
     let mut found = rows(feature, "parameters")?
@@ -20,35 +22,42 @@ pub(super) fn parameter<'a>(feature: &'a Value, key: &str) -> Mapping<&'a Value>
 pub(super) fn value<'a>(feature: &'a Value, key: &str) -> Option<&'a str> {
     parameter(feature, key).ok()?.get("value")?.as_str()
 }
+pub(super) fn source_properties(feature: &Value, definition: &Value) -> Mapping<Value> {
+    Ok(
+        match definition.pointer("/value/kind").and_then(Value::as_str) {
+            Some("fillet" | "chamfer") => json!({"tangent_propagation":
+            if enabled(feature, "tangentPropagation")? { "resolved" } else { "off" }}),
+            _ => json!({}),
+        },
+    )
+}
 
-/// Source attributes the neutral definition of `definition` does not carry. A fillet or
-/// chamfer lists every edge it blends: with Onshape's tangent propagation on, the chain is
-/// resolved from the input topology (`resolved`); with it off, only the picked edges (`off`).
-/// Either way nothing propagates past the listed edges.
-pub(super) fn source_properties(feature: &Value, definition: &Value) -> Value {
-    match definition.pointer("/value/kind").and_then(Value::as_str) {
-        Some("fillet" | "chamfer") => json!({"tangent_propagation":
-            if enabled(feature, "tangentPropagation") { "resolved" } else { "off" }}),
-        _ => json!({}),
+pub(super) fn enabled(feature: &Value, key: &str) -> Mapping<bool> {
+    if !rows(feature, "parameters")?
+        .iter()
+        .any(|p| p.get("parameterId").and_then(Value::as_str) == Some(key))
+    {
+        return Ok(false);
     }
+    required_boolean(feature, key)
 }
-
-fn enabled(feature: &Value, key: &str) -> bool {
-    parameter(feature, key)
-        .ok()
-        .and_then(|p| p.get("value"))
+pub(super) fn required_boolean(feature: &Value, key: &str) -> Mapping<bool> {
+    parameter(feature, key)?
+        .get("value")
         .and_then(Value::as_bool)
-        == Some(true)
+        .ok_or_else(|| format!("parameter {key} must be Boolean"))
 }
-
-/// Quantity values are SI in REST; literal expressions retain explicit units. No
-/// FeatureScript evaluation, implicit unit guessing, or string substitution occurs.
-pub(super) fn quantity(parameter: &Value, angle: bool, model: &Model) -> Mapping<f64> {
+pub(super) fn quantity(
+    parameter: &Value,
+    angle: bool,
+    model: &Model,
+    unresolved: &BTreeSet<String>,
+) -> Mapping<f64> {
     fn scale(unit: &str, angle: bool) -> Option<f64> {
         match (angle, unit) {
-            (true, "radian" | "rad" | "") => Some(1.0),
+            (true, "radian" | "rad") => Some(1.0),
             (true, "degree" | "deg") => Some(std::f64::consts::PI / 180.0),
-            (false, "meter" | "m" | "") => Some(1000.0),
+            (false, "meter" | "m") => Some(1000.0),
             (false, "millimeter" | "mm") => Some(1.0),
             (false, "centimeter" | "cm") => Some(10.0),
             (false, "inch" | "in") => Some(25.4),
@@ -56,27 +65,31 @@ pub(super) fn quantity(parameter: &Value, angle: bool, model: &Model) -> Mapping
             _ => None,
         }
     }
-    if let Some(expression) = parameter.get("expression").and_then(Value::as_str) {
-        if expression.contains('#') {
-            return super::expression::evaluate(
-                expression,
-                if angle {
-                    super::expression::Dimension::Angle
-                } else {
-                    super::expression::Dimension::Length
-                },
-                model,
-            )
-            .map(|v| v.value);
+    if let Some(expression) = parameter.get("expression") {
+        let expression = expression
+            .as_str()
+            .ok_or("quantity expression must be a string")?;
+        let evaluated = super::expression::evaluate(
+            expression,
+            if angle {
+                super::expression::Dimension::Angle
+            } else {
+                super::expression::Dimension::Length
+            },
+            model,
+            unresolved,
+        );
+        if let Ok(value) = &evaluated {
+            return Ok(value.value);
         }
-        // REST quantities may retain fractional literals while their `value`
-        // is the default zero. The unit suffix applies to the whole scalar
-        // expression, including a parenthesized fraction.
         if let Some((scalar, unit)) = expression.trim().rsplit_once(char::is_whitespace) {
             if let Some(factor) = scale(unit, angle) {
-                if let Ok(value) =
-                    super::expression::evaluate(scalar, super::expression::Dimension::Scalar, model)
-                {
+                if let Ok(value) = super::expression::evaluate(
+                    scalar,
+                    super::expression::Dimension::Scalar,
+                    model,
+                    unresolved,
+                ) {
                     let result = value.value * factor;
                     if result.is_finite() {
                         return Ok(result);
@@ -84,12 +97,12 @@ pub(super) fn quantity(parameter: &Value, angle: bool, model: &Model) -> Mapping
                 }
             }
         }
+        if expression.contains('#') {
+            return evaluated.map(|value| value.value);
+        }
     }
-    let factor = scale(
-        parameter.get("units").and_then(Value::as_str).unwrap_or(""),
-        angle,
-    )
-    .ok_or("quantity units are not supported yet")?;
+    let factor =
+        scale(text(parameter, "units")?, angle).ok_or("quantity units are not supported yet")?;
     let result = number(parameter, "value")? * factor;
     if result.is_finite() {
         Ok(result)
@@ -98,8 +111,13 @@ pub(super) fn quantity(parameter: &Value, angle: bool, model: &Model) -> Mapping
     }
 }
 
-fn length(feature: &Value, key: &str, model: &Model) -> Mapping<f64> {
-    let n = quantity(parameter(feature, key)?, false, model)
+fn length(
+    feature: &Value,
+    key: &str,
+    model: &Model,
+    unresolved: &BTreeSet<String>,
+) -> Mapping<f64> {
+    let n = quantity(parameter(feature, key)?, false, model, unresolved)
         .map_err(|reason| format!("{key}: {reason}"))?;
     if n > 0.0 {
         Ok(n)
@@ -153,7 +171,6 @@ pub(super) fn profile(
     let [query] = query else {
         return Err("multiple profile queries are not supported yet".into());
     };
-    // A deterministic subset must never silently expand into the entire sketch.
     if query
         .get("deterministicIds")
         .and_then(Value::as_array)
@@ -171,7 +188,7 @@ pub(super) fn profile(
     ) {
         return Err("the sketch query is not supported yet".into());
     }
-    if query.get("filterInnerLoops").and_then(Value::as_bool) == Some(true) {
+    if super::boolean_field(query, "filterInnerLoops")? {
         return Err("filtered inner sketch regions are not supported yet".into());
     }
     let sketch_id = id("sketch", text(query, "featureId")?);
@@ -180,9 +197,6 @@ pub(super) fn profile(
     }
     Ok(json!({"kind": "sketch", "value": sketch_id}))
 }
-
-/// Explicit source sketch entities keep a subset a subset. Deterministic IDs
-/// are not expanded to every point or curve of the sketch.
 fn sketch_entities(queries: &[Value], model: &Model, entity_type: &str) -> Mapping<Value> {
     let mut selected = std::collections::BTreeSet::new();
     let mut selected_sketch = None;
@@ -232,121 +246,6 @@ fn sketch_entities(queries: &[Value], model: &Model, entity_type: &str) -> Mappi
         json!({"kind":"sketch_entities","value":{"sketch":selected_sketch.ok_or("the sketch selection is empty")?,"entities":selected}}),
     )
 }
-
-/// Model-space points on a planar profile's curves (mm) and its sketch normal.
-/// Region profiles sample only their boundary curves; a whole-sketch profile
-/// samples every non-construction curve, a superset that can only refuse more.
-fn profile_samples(profile: &Value, model: &Model) -> Mapping<(Vec<[f64; 3]>, [f64; 3])> {
-    let value = profile.get("value").ok_or("the profile is missing")?;
-    let sketch_id = value
-        .as_str()
-        .or_else(|| value.get("sketch").and_then(Value::as_str))
-        .ok_or("the profile sketch is missing")?;
-    let mut chosen = std::collections::BTreeSet::new();
-    for region in optional_array(value, "regions") {
-        let holes = optional_array(region, "hole_boundaries")
-            .iter()
-            .flat_map(|hole| hole.as_array().map(Vec::as_slice).unwrap_or_default());
-        for boundary in optional_array(region, "outer_boundary").iter().chain(holes) {
-            chosen.insert(text(boundary, "entity")?.to_owned());
-        }
-    }
-    let sketch = model
-        .sketches
-        .iter()
-        .find(|s| s.id.as_str() == sketch_id)
-        .ok_or("the profile sketch has no resolved frame")?;
-    let sketch = serde_json::to_value(sketch).map_err(|_| "the profile sketch is unreadable")?;
-    let frame = sketch
-        .pointer("/placement/frame")
-        .ok_or("the profile frame is missing")?;
-    let at = |key: &str| -> Mapping<[f64; 3]> {
-        topology::vector(
-            frame.get(key).ok_or("the profile frame is incomplete")?,
-            1.0,
-        )
-    };
-    let origin = at("origin")?;
-    let u = topology::unit(at("u_axis")?)?;
-    let normal = topology::unit(at("normal")?)?;
-    let v = topology::cross(normal, u);
-    let ([ox, oy, oz], [ux, uy, uz], [vx, vy, vz]) = (origin, u, v);
-    let world = |[a, b]: [f64; 2]| -> [f64; 3] {
-        [
-            ox + a * ux + b * vx,
-            oy + a * uy + b * vy,
-            oz + a * uz + b * vz,
-        ]
-    };
-    let mut samples = Vec::new();
-    for entity in &model.sketch_entities {
-        let entity = serde_json::to_value(entity).map_err(|_| "a profile curve is unreadable")?;
-        let selected = if chosen.is_empty() {
-            entity.get("construction").and_then(Value::as_bool) != Some(true)
-        } else {
-            chosen.contains(text(&entity, "id")?)
-        };
-        if entity.get("sketch").and_then(Value::as_str) != Some(sketch_id) || !selected {
-            continue;
-        }
-        let geometry = entity
-            .get("geometry")
-            .ok_or("a profile curve has no geometry")?;
-        let uv = |key: &str| -> Mapping<[f64; 2]> {
-            let point = geometry
-                .get(key)
-                .ok_or("a profile curve point is missing")?;
-            Ok([number(point, "u")?, number(point, "v")?])
-        };
-        match text(geometry, "kind")? {
-            "point" => {}
-            "line" => {
-                let ([ax, ay], [bx, by]) = (uv("start")?, uv("end")?);
-                for step in 0..=4 {
-                    let t = f64::from(step) / 4.0;
-                    samples.push(world([ax + t * (bx - ax), ay + t * (by - ay)]));
-                }
-            }
-            kind @ ("circle" | "arc") => {
-                let [cx, cy] = uv("center")?;
-                let radius = number(geometry, "radius")?;
-                let (from, to) = if kind == "circle" {
-                    (0.0, std::f64::consts::TAU)
-                } else {
-                    let from = number(geometry, "start_angle")?;
-                    let to = number(geometry, "end_angle")?;
-                    (
-                        from,
-                        if to < from {
-                            to + std::f64::consts::TAU
-                        } else {
-                            to
-                        },
-                    )
-                };
-                for step in 0..=32 {
-                    let t = from + (to - from) * f64::from(step) / 32.0;
-                    samples.push(world([cx + radius * t.cos(), cy + radius * t.sin()]));
-                }
-            }
-            _ => {
-                return Err("an up-to-next extrude of a spline profile is not supported yet".into())
-            }
-        }
-    }
-    if samples.is_empty() || samples.iter().flatten().any(|n| !n.is_finite()) {
-        return Err("the up-to-next profile has no resolved curves".into());
-    }
-    Ok((samples, normal))
-}
-
-fn optional_array<'a>(row: &'a Value, key: &str) -> &'a [Value] {
-    row.get(key)
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-}
-
 fn sketch_axis(feature: &Value, model: &Model) -> Mapping<Value> {
     let profile = sketch_entities(queries(feature, "axis")?, model, "EDGE")?;
     let sketch_id = profile
@@ -415,8 +314,6 @@ fn sketch_axis(feature: &Value, model: &Model) -> Mapping<Value> {
     };
     let start = world("start")?;
     let end = world("end")?;
-    // The reference keeps the axis tied to its line, so the written revolve follows the
-    // line when the sketch is edited; origin and direction remain the placed axis.
     Ok(json!({"origin":topology::point(start),
         "direction":topology::point(topology::unit(topology::sub(end,start))?),
         "reference":{"kind":"sketch_curves","value":{"sketch":sketch_id,"curves":[entity_id]}}}))
@@ -431,9 +328,6 @@ fn operation(feature: &Value) -> Mapping<&'static str> {
         _ => Err("the Boolean operation is not supported yet".into()),
     }
 }
-
-/// A feature value written with Part Studio variables becomes a parameter the feature owns,
-/// so the writer can keep it driven (`source_kind` names which value it sets).
 fn owned_variable(
     feature: &Value,
     ordinal: usize,
@@ -441,6 +335,7 @@ fn owned_variable(
     source_kind: &str,
     dimension: super::expression::Dimension,
     model: &mut Model,
+    unresolved: &BTreeSet<String>,
 ) -> Mapping<()> {
     let source = parameter(feature, key)?;
     let Some(expression) = source
@@ -450,7 +345,7 @@ fn owned_variable(
     else {
         return Ok(());
     };
-    let evaluated = super::expression::evaluate(expression, dimension, model)?;
+    let evaluated = super::expression::evaluate(expression, dimension, model, unresolved)?;
     let native = text(feature, "featureId")?;
     let kind = if dimension == super::expression::Dimension::Angle {
         "angle"
@@ -460,17 +355,16 @@ fn owned_variable(
     push(
         &mut model.parameters,
         json!({"id":id("parameter",&format!("{native}/{key}")),"owner":id("feature",native),"ordinal":0,
-        "name":format!("{key}{ordinal}"),"expression":evaluated.expression,"value":{"kind":kind,"value":evaluated.value.abs()},
+        "name":format!("{key}{ordinal}"),"expression":evaluated.expression,"value":{"kind":kind,"value":evaluated.value},
         "dependencies":evaluated.dependencies,"properties":{"source_kind":source_kind}}),
     )
 }
-
-/// Values written with Part Studio variables that no parameter keeps driven are written as
-/// their evaluated values; each one is reported so the lost link is visible.
-pub(super) fn report_evaluated_variables(feature: &Value, model: &Model, report: &mut Report) {
-    let Ok(native) = text(feature, "featureId") else {
-        return;
-    };
+pub(super) fn report_evaluated_variables(
+    feature: &Value,
+    model: &Model,
+    report: &mut Report,
+) -> Mapping<()> {
+    let native = text(feature, "featureId")?;
     let owner = id("feature", native);
     let name = feature
         .get("name")
@@ -485,11 +379,10 @@ pub(super) fn report_evaluated_variables(feature: &Value, model: &Model, report:
         ) else {
             continue;
         };
-        // A depth past a non-blind bound, or an angle on a full turn, is not used at all.
         let unused = match (key, text(feature, "featureType")) {
             ("depth", Ok("extrude")) => value(feature, "endBound") != Some("BLIND"),
             ("angle", Ok("revolve")) => {
-                value(feature, "revolveType") == Some("FULL") || enabled(feature, "fullRevolve")
+                value(feature, "revolveType") == Some("FULL") || enabled(feature, "fullRevolve")?
             }
             _ => false,
         };
@@ -507,6 +400,7 @@ pub(super) fn report_evaluated_variables(feature: &Value, model: &Model, report:
             );
         }
     }
+    Ok(())
 }
 
 pub(super) fn map(
@@ -514,9 +408,35 @@ pub(super) fn map(
     ordinal: usize,
     inputs: &topology::Inputs<'_>,
     model: &mut Model,
-    design: &mut cadmpeg_ir::document::Design,
     report: &mut Report,
+    unresolved: &BTreeSet<String>,
 ) -> Mapping<Value> {
+    let mut keys = std::collections::BTreeSet::new();
+    for parameter in rows(feature, "parameters")? {
+        if !keys.insert(text(parameter, "parameterId")?) {
+            return Err("feature parameter keys repeat".into());
+        }
+    }
+    for key in [
+        "hasSecondDirection",
+        "hasDraft",
+        "hasSecondDirectionDraft",
+        "hasOffset",
+        "isVariable",
+        "isPartial",
+        "allowEdgeOverflow",
+        "symmetric",
+        "oppositeDirection",
+        "fullRevolve",
+        "tangentPropagation",
+        "midplane",
+        "flipWall",
+        "isTapped",
+        "isTappedThrough",
+        "depthToTip",
+    ] {
+        enabled(feature, key)?;
+    }
     if feature
         .get("namespace")
         .and_then(Value::as_str)
@@ -533,11 +453,11 @@ pub(super) fn map(
         "isPartial",
         "allowEdgeOverflow",
     ] {
-        if enabled(feature, key) {
+        if enabled(feature, key)? {
             return Err(format!("{key} is not supported yet"));
         }
     }
-    if enabled(feature, "symmetric") && text(feature, "featureType")? != "extrude" {
+    if enabled(feature, "symmetric")? && text(feature, "featureType")? != "extrude" {
         return Err("symmetric extents for this feature are not supported yet".into());
     }
     let scoped = if parameter(feature, "booleanScope")
@@ -553,7 +473,7 @@ pub(super) fn map(
         None
     };
     match text(feature, "featureType")? {
-        "newSketch" => sketch::map(feature, ordinal, inputs, model, report),
+        "newSketch" => sketch::map(feature, ordinal, inputs, model, report, unresolved),
         "assignVariable" => {
             if value(feature, "mode").is_some_and(|m| m != "ASSIGNED") {
                 return Err("measured variables are not supported yet".into());
@@ -578,7 +498,7 @@ pub(super) fn map(
             };
             let source = parameter(feature, key)?;
             let expression = text(source, "expression")?;
-            let evaluated = super::expression::evaluate(expression, dimension, model)?;
+            let evaluated = super::expression::evaluate(expression, dimension, model, unresolved)?;
             let ordinal = model
                 .parameters
                 .iter()
@@ -599,54 +519,39 @@ pub(super) fn map(
             ))
         }
         "extrude" => {
-            if !matches!(value(feature, "bodyType"), Some("SOLID" | "THIN")) {
+            let thin = value(feature, "bodyType") == Some("THIN");
+            if !thin && value(feature, "bodyType") != Some("SOLID") {
                 return Err("non-solid extrudes are not supported yet".into());
             }
-            let key = if value(feature, "bodyType") == Some("THIN")
-                && rows(feature, "parameters")?
-                    .iter()
-                    .any(|p| p.get("parameterId").and_then(Value::as_str) == Some("wallShape"))
-            {
-                "wallShape"
-            } else {
-                "entities"
-            };
-            let profile = profile(feature, key, model, inputs)?;
-            let profile = if value(feature, "bodyType") == Some("THIN") {
+            let profile = profile(
+                feature,
+                if thin { "wallShape" } else { "entities" },
+                model,
+                inputs,
+            )?;
+            let profile = if thin {
                 super::thin::profile(profile, model)?
             } else {
                 profile
             };
-            if enabled(feature, "symmetric") && value(feature, "endBound") != Some("BLIND") {
+            if enabled(feature, "symmetric")? && value(feature, "endBound") != Some("BLIND") {
                 return Err("symmetric extrudes with this bound are not supported yet".into());
             }
             let termination = match value(feature, "endBound") {
                 Some("BLIND") => {
-                    json!({"kind": "blind", "length": length(feature, "depth", model)?})
+                    json!({"kind": "blind", "length": length(feature, "depth", model, unresolved)?})
                 }
                 Some("THROUGH_ALL") => json!({"kind": "through_all"}),
                 Some("UP_TO_SURFACE") => {
-                    let state = scoped
-                        .map(Ok)
-                        .unwrap_or_else(|| inputs.load(ordinal, feature))?;
+                    let state = scoped.map_or_else(|| inputs.load(ordinal, feature), Ok)?;
                     let face = state.selection(feature, "endBoundEntityFace", "faces")?;
                     state.require_planes(&face)?;
                     push(&mut model.feature_input_topologies, state.row.clone())?;
                     json!({"kind": "to_face", "face": face})
                 }
                 Some("UP_TO_NEXT") => {
-                    // SolidCraft has no up-to-next end. Resolve the one input face
-                    // that every profile ray meets first, then end at that face.
-                    let state = scoped
-                        .map(Ok)
-                        .unwrap_or_else(|| inputs.load(ordinal, feature))?;
-                    let (samples, normal) = profile_samples(&profile, model)?;
-                    let travel = if enabled(feature, "oppositeDirection") {
-                        normal.map(|n| -n)
-                    } else {
-                        normal
-                    };
-                    let face = state.next_face(&samples, travel, operation(feature)? == "cut")?;
+                    let state = scoped.map_or_else(|| inputs.load(ordinal, feature), Ok)?;
+                    let face = super::extent::next(&state, feature, &profile, model)?;
                     state.require_planes(&face)?;
                     push(&mut model.feature_input_topologies, state.row.clone())?;
                     json!({"kind": "to_face", "face": face})
@@ -654,21 +559,21 @@ pub(super) fn map(
                 _ => return Err("this extrude bound is not supported yet".into()),
             };
             if value(feature, "endBound") == Some("BLIND") {
-                // Onshape's symmetric depth is the total distance across both sides.
                 owned_variable(
                     feature,
                     ordinal,
                     "depth",
-                    if enabled(feature, "symmetric") {
+                    if enabled(feature, "symmetric")? {
                         "TotalDistance"
                     } else {
                         "AlongDistance"
                     },
                     super::expression::Dimension::Length,
                     model,
+                    unresolved,
                 )?;
             }
-            let direction = if enabled(feature, "oppositeDirection") {
+            let direction = if enabled(feature, "oppositeDirection")? {
                 json!({"kind": "reversed_profile_normal"})
             } else {
                 json!({"kind": "profile_normal"})
@@ -676,14 +581,8 @@ pub(super) fn map(
             let definition = definition(
                 "extrude",
                 json!({"profile": {"kind": "planar", "value": profile}, "direction": direction,
-                "start": {"kind": "profile_plane"}, "extent": {"kind": if enabled(feature,"symmetric") {"symmetric"} else {"one_sided"}, "side": {"termination": termination}}, "op": operation(feature)?, "solid": true}),
+                "start": {"kind": "profile_plane"}, "extent": {"kind": if enabled(feature,"symmetric")? {"symmetric"} else {"one_sided"}, "side": {"termination": termination}}, "op": operation(feature)?, "solid": true}),
             );
-            if value(feature, "bodyType") == Some("THIN") {
-                push(
-                    &mut design.features,
-                    super::thin::feature(feature, &definition, model)?,
-                )?;
-            }
             Ok(definition)
         }
         "revolve" => {
@@ -700,24 +599,30 @@ pub(super) fn map(
                 sketch_axis(feature, model)?
             } else {
                 scoped
-                    .map(Ok)
-                    .unwrap_or_else(|| inputs.load(ordinal, feature))?
+                    .map_or_else(|| inputs.load(ordinal, feature), Ok)?
                     .axis(feature, "axis")?
             };
             let angle = match value(feature, "revolveType") {
                 Some("FULL") => std::f64::consts::TAU,
-                Some("ONE_DIRECTION") => quantity(parameter(feature, "angle")?, true, model)?,
-                None if enabled(feature, "fullRevolve") => std::f64::consts::TAU,
+                Some("ONE_DIRECTION") => {
+                    quantity(parameter(feature, "angle")?, true, model, unresolved)?
+                }
+                None if enabled(feature, "fullRevolve")? => std::f64::consts::TAU,
                 None if parameter(feature, "fullRevolve")
                     .ok()
                     .and_then(|p| p.get("value"))
                     .and_then(Value::as_bool)
                     == Some(false) =>
                 {
-                    quantity(parameter(feature, "angle")?, true, model)?
+                    quantity(parameter(feature, "angle")?, true, model, unresolved)?
                 }
                 _ => return Err("this revolve extent is not supported yet".into()),
             };
+            if angle < 0.0 {
+                return Err(
+                    "the direction convention for a negative revolve angle is unresolved".into(),
+                );
+            }
             if angle < std::f64::consts::TAU {
                 owned_variable(
                     feature,
@@ -726,9 +631,10 @@ pub(super) fn map(
                     "AlongAngle",
                     super::expression::Dimension::Angle,
                     model,
+                    unresolved,
                 )?;
             }
-            let angle = if enabled(feature, "oppositeDirection") {
+            let angle = if enabled(feature, "oppositeDirection")? {
                 -angle
             } else {
                 angle
@@ -746,11 +652,9 @@ pub(super) fn map(
             {
                 return Err("only circular constant-radius edge fillets are supported yet".into());
             }
-            let state = scoped
-                .map(Ok)
-                .unwrap_or_else(|| inputs.load(ordinal, feature))?;
+            let state = scoped.map_or_else(|| inputs.load(ordinal, feature), Ok)?;
             let mut edges = state.selection(feature, "entities", "edges")?;
-            if enabled(feature, "tangentPropagation") {
+            if enabled(feature, "tangentPropagation")? {
                 edges = state.tangent_chain(&edges)?;
             }
             state.require_edges(&edges)?;
@@ -758,20 +662,20 @@ pub(super) fn map(
             let (key, spec) = if kind == "fillet" {
                 (
                     "radius",
-                    json!({"kind": "constant", "radius": length(feature, "radius", model)?}),
+                    json!({"kind": "constant", "radius": length(feature, "radius", model, unresolved)?}),
                 )
             } else {
                 (
                     "spec",
                     match value(feature, "chamferType") {
                         Some("EQUAL_OFFSETS") => {
-                            json!({"kind": "distance", "distance": length(feature, "width", model)?})
+                            json!({"kind": "distance", "distance": length(feature, "width", model, unresolved)?})
                         }
                         Some("TWO_OFFSETS") => {
-                            json!({"kind": "two_distances", "first": length(feature, "width1", model)?, "second": length(feature, "width2", model)?})
+                            json!({"kind": "two_distances", "first": length(feature, "width1", model, unresolved)?, "second": length(feature, "width2", model, unresolved)?})
                         }
                         Some("DISTANCE_ANGLE") => {
-                            json!({"kind": "distance_angle", "distance": length(feature, "width", model)?, "angle": quantity(parameter(feature, "angle")?, true, model)?})
+                            json!({"kind": "distance_angle", "distance": length(feature, "width", model, unresolved)?, "angle": quantity(parameter(feature, "angle")?, true, model, unresolved)?})
                         }
                         _ => return Err("this chamfer type is not supported yet".into()),
                     },
@@ -783,28 +687,25 @@ pub(super) fn map(
                 .insert(key.into(), spec);
             push(&mut model.feature_input_topologies, state.row)?;
             let operation = if kind == "chamfer" {
-                json!({"groups": [group], "flip_direction": enabled(feature, "oppositeDirection")})
+                json!({"groups": [group], "flip_direction": enabled(feature, "oppositeDirection")?})
             } else {
                 json!({"groups": [group]})
             };
             Ok(definition(kind, operation))
         }
-        "hole" => hole(feature, ordinal, inputs, model),
+        "hole" => hole(feature, ordinal, inputs, model, unresolved),
         other => Err(format!("{other} features are not supported yet")),
     }
 }
-
-/// Onshape's default included drill-point angle, used when the REST feature omits
-/// `tipAngle` (REST leaves default values out).
-const DEFAULT_TIP_ANGLE_DEGREES: f64 = 118.0;
 
 fn hole(
     feature: &Value,
     ordinal: usize,
     inputs: &topology::Inputs<'_>,
     model: &mut Model,
+    unresolved: &BTreeSet<String>,
 ) -> Mapping<Value> {
-    if enabled(feature, "oppositeDirection") {
+    if enabled(feature, "oppositeDirection")? {
         return Err("reversed hole drilling is not supported yet".into());
     }
     if rows(feature, "parameters")?.iter().any(|p| {
@@ -824,7 +725,7 @@ fn hole(
         Some(Some("Clearance")) => false,
         Some(_) => return Err("this hole standard type is not supported yet".into()),
     };
-    if enabled(feature, "isTapped") && !tapped {
+    if enabled(feature, "isTapped")? && !tapped {
         return Err("a tapped hole without a thread standard is not supported yet".into());
     }
     let profile = profile(
@@ -853,29 +754,28 @@ fn hole(
     let form = match value(feature, "style") {
         Some("SIMPLE") => json!({"kind":"simple"}),
         Some("C_BORE") => {
-            json!({"kind":"counterbore","diameter":length(feature, "cBoreDiameter", model)?,"depth":length(feature, "cBoreDepth", model)?})
+            json!({"kind":"counterbore","diameter":length(feature, "cBoreDiameter", model, unresolved)?,"depth":length(feature, "cBoreDepth", model, unresolved)?})
         }
         Some("C_SINK") => {
-            json!({"kind":"countersink","diameter":length(feature, "cSinkDiameter", model)?,"angle":quantity(parameter(feature, "cSinkAngle")?, true, model)?})
+            json!({"kind":"countersink","diameter":length(feature, "cSinkDiameter", model, unresolved)?,"angle":quantity(parameter(feature, "cSinkAngle")?, true, model, unresolved)?})
         }
         _ => return Err("this hole style is not supported yet".into()),
     };
     let through = match value(feature, "endStyle") {
-        Some("THROUGH") | Some("THROUGH_ALL") => true,
+        Some("THROUGH" | "THROUGH_ALL") => true,
         Some("BLIND") => false,
         _ => return Err("this hole end is not supported yet".into()),
     };
-    // A tapped hole is drilled at its tap-drill diameter; the thread is a label.
     let diameter = if tapped && parameter(feature, "tapDrillDiameter").is_ok() {
-        length(feature, "tapDrillDiameter", model)?
+        length(feature, "tapDrillDiameter", model, unresolved)?
     } else {
-        length(feature, "holeDiameter", model)?
+        length(feature, "holeDiameter", model, unresolved)?
     };
     let mut construction = json!({"kind": form});
     if let (Some(standard), Some(fields)) = (standard, construction.as_object_mut()) {
         fields.insert(
             "specification".into(),
-            specification(feature, standard, tapped, through, model)?,
+            specification(feature, standard, tapped, through, model, unresolved)?,
         );
     }
     let mut operation = json!({"profile": profile, "profile_filter": "points",
@@ -886,35 +786,29 @@ fn hole(
     if through {
         fields.insert("extent".into(), json!({"kind": "through_all"}));
     } else {
-        // Onshape measures a blind hole's depth to the shoulder, where the drill point begins.
-        let tip = match parameter(feature, "tipAngle") {
-            Ok(tip) => quantity(tip, true, model)?,
-            Err(_) => DEFAULT_TIP_ANGLE_DEGREES.to_radians(),
-        };
-        let bottom = if (tip - std::f64::consts::PI).abs() < 1e-9 {
+        let tip = quantity(parameter(feature, "tipAngle")?, true, model, unresolved)?;
+        let bottom = if (tip - std::f64::consts::PI).abs() < DRILL_TIP_ANGLE_TOLERANCE {
             json!({"kind": "flat"})
         } else if tip > 0.0 && tip < std::f64::consts::PI {
-            json!({"kind": "angled", "included_angle": tip, "depth_to_tip": false})
+            json!({"kind": "angled", "included_angle": tip, "depth_to_tip": required_boolean(feature, "depthToTip")?})
         } else {
             return Err("this drill point angle is not supported yet".into());
         };
         fields.insert(
             "extent".into(),
-            json!({"kind": "blind", "length": length(feature, "holeDepth", model)?}),
+            json!({"kind": "blind", "length": length(feature, "holeDepth", model, unresolved)?}),
         );
         fields.insert("bottom".into(), bottom);
     }
     Ok(definition("hole", operation))
 }
-
-/// The thread or clearance standard of a hole, read from Onshape's legacy hole table
-/// value (`standard`, `size`, `pitch`, `type`). The thread is cosmetic in Onshape.
 fn specification(
     feature: &Value,
     standard: &Value,
     tapped: bool,
     through: bool,
     model: &Model,
+    unresolved: &BTreeSet<String>,
 ) -> Mapping<Value> {
     let name = standard
         .get("standard")
@@ -922,14 +816,22 @@ fn specification(
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .ok_or("the hole standard is missing")?;
+    let hand = text(standard, "hand")?;
+    if !matches!(hand, "left" | "right") {
+        return Err("thread hand is unresolved".into());
+    }
+    let modeled = super::boolean_field(standard, "modeled")?;
+    let cosmetic = super::boolean_field(standard, "cosmetic")?;
+    if standard.get("modeled").is_none() || standard.get("cosmetic").is_none() {
+        return Err("hole standard modeled and cosmetic facts are unresolved".into());
+    }
     let size = standard
         .get("size")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|s| !s.is_empty());
     if !tapped {
-        let mut clearance = json!({"kind": "clearance", "standard": name, "modeled": false,
-            "cosmetic": false, "hand": "right", "depth": {"kind": "hole_depth"}});
+        let mut clearance = json!({"kind": "clearance", "standard": name, "hand": hand, "modeled": modeled, "cosmetic": cosmetic, "depth": {"kind": "hole_depth"}});
         let fields = clearance
             .as_object_mut()
             .ok_or("the hole clearance is missing")?;
@@ -946,20 +848,18 @@ fn specification(
         }
         return Ok(clearance);
     }
-    let depth = if through || enabled(feature, "isTappedThrough") {
+    let depth = if through || enabled(feature, "isTappedThrough")? {
         json!({"kind": "hole_depth"})
     } else {
-        json!({"kind": "blind", "depth": length(feature, "tappedDepth", model)?})
+        json!({"kind": "blind", "depth": length(feature, "tappedDepth", model, unresolved)?})
     };
-    let mut threaded = json!({"kind": "threaded", "standard": name, "modeled": false,
-        "cosmetic": true, "hand": "right", "depth": depth});
+    let mut threaded = json!({"kind": "threaded", "standard": name, "hand": hand, "modeled": modeled, "cosmetic": cosmetic, "depth": depth});
     let fields = threaded
         .as_object_mut()
         .ok_or("the hole thread is missing")?;
     if let Some(size) = size {
         fields.insert("designation".into(), json!(size));
     }
-    // Pitch reads like "1.00 mm" (metric) or "32 tpi" (unified threads per inch).
     if let Some(pitch) = standard.get("pitch").and_then(Value::as_str) {
         let mut parts = pitch.split_whitespace();
         if let (Some(Ok(n)), Some(unit), None) = (
@@ -980,7 +880,7 @@ fn specification(
     if parameter(feature, "majorDiameter").is_ok() {
         fields.insert(
             "major_diameter".into(),
-            json!(length(feature, "majorDiameter", model)?),
+            json!(length(feature, "majorDiameter", model, unresolved)?),
         );
     }
     Ok(threaded)

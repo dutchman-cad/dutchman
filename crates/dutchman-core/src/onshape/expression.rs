@@ -2,6 +2,7 @@
 //! This deliberately does not execute FeatureScript or resolve forward references.
 use cadmpeg_ir::document::Model;
 use serde_json::Value;
+use std::collections::BTreeSet;
 
 use super::{number, Mapping};
 
@@ -21,13 +22,19 @@ pub(super) struct Evaluated {
     pub display_unit: Option<String>,
 }
 
-pub(super) fn evaluate(source: &str, dimension: Dimension, model: &Model) -> Mapping<Evaluated> {
+pub(super) fn evaluate(
+    source: &str,
+    dimension: Dimension,
+    model: &Model,
+    unresolved: &BTreeSet<String>,
+) -> Mapping<Evaluated> {
     if source.len() > 65_536 {
         return Err("the variable expression exceeds the size limit".into());
     }
     let mut parser = Parser {
         rest: source,
         model,
+        unresolved,
         dependencies: Vec::new(),
         nodes: 0,
         display_unit: None,
@@ -47,6 +54,7 @@ pub(super) fn evaluate(source: &str, dimension: Dimension, model: &Model) -> Map
 struct Parser<'a> {
     rest: &'a str,
     model: &'a Model,
+    unresolved: &'a BTreeSet<String>,
     dependencies: Vec<String>,
     nodes: usize,
     display_unit: Option<String>,
@@ -96,9 +104,7 @@ impl Parser<'_> {
             };
             let (b, other, right) = self.atom(depth + 1)?;
             dim = match (op, dim, other) {
-                ('*', Dimension::Scalar, d)
-                | ('*', d, Dimension::Scalar)
-                | ('/', d, Dimension::Scalar) => d,
+                ('*', Dimension::Scalar, d) | ('*' | '/', d, Dimension::Scalar) => d,
                 ('/', a, b) if a == b => Dimension::Scalar,
                 _ => return Err(REFUSED.into()),
             };
@@ -133,6 +139,9 @@ impl Parser<'_> {
         }
         if self.take('#') {
             let name = self.word()?;
+            if self.unresolved.contains(&name) {
+                return Err(format!("variable #{name} has an unresolved latest binding"));
+            }
             let mut found = self
                 .model
                 .parameters

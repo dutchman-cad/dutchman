@@ -3,7 +3,8 @@
 use cadmpeg_ir::document::Model;
 use serde_json::{json, Value};
 
-use super::{features, id, rows, text, Mapping};
+use super::{features, id, rows, text, topology, Mapping};
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn profile(profile: Value, model: &Model) -> Mapping<Value> {
     if profile.get("kind").and_then(Value::as_str) != Some("sketch") {
@@ -23,7 +24,34 @@ pub(super) fn profile(profile: Value, model: &Model) -> Mapping<Value> {
     Ok(json!({"kind":"sketch_entities","value":{"sketch":sketch,"entities":entities}}))
 }
 
-pub(super) fn feature(source: &Value, definition: &Value, model: &Model) -> Mapping<Value> {
+pub(super) fn feature(
+    source: &Value,
+    definition: &Value,
+    model: &Model,
+    inputs: &topology::Inputs<'_>,
+    ordinal: usize,
+    unresolved: &BTreeSet<String>,
+) -> Mapping<Value> {
+    if features::value(source, "domain") != Some("MODEL") {
+        return Err("the thin extrusion domain is missing or not MODEL".into());
+    }
+    // The writer's all-targets projection is exact only for this proven sole body.
+    // NEW has no Boolean targets. Never infer a scope from the final STEP bodies.
+    if features::value(source, "operationType") != Some("NEW") {
+        inputs.load(ordinal, source)?.whole_body_scope(source)?;
+    }
+    let midplane = features::required_boolean(source, "midplane")?;
+    let flipped = if midplane {
+        false
+    } else {
+        features::required_boolean(source, "flipWall")?
+    };
+    features::required_boolean(source, "oppositeDirection")?;
+    for key in ["hasExtrudeDirection", "startOffset"] {
+        if features::enabled(source, key)? {
+            return Err(format!("thin extrusion {key} is not supported yet"));
+        }
+    }
     let extrude = definition
         .pointer("/value/value")
         .ok_or("the thin extrude definition is missing")?;
@@ -38,25 +66,78 @@ pub(super) fn feature(source: &Value, definition: &Value, model: &Model) -> Mapp
     if picks.is_empty() {
         return Err("the thin extrude has no selected sketch curves".into());
     }
+    let sketch = text(profile, "sketch")?;
+    let mut reversed = None;
+    let queries = rows(features::parameter(source, "wallShape")?, "queries")?
+        .iter()
+        .map(super::query::resolved)
+        .collect::<Mapping<Vec<_>>>()?;
+    let mut sources = BTreeMap::new();
+    for query in &queries {
+        let [operation] = rows(query, "operationId")? else {
+            return Err("the thin curve has multiple source operations".into());
+        };
+        let native_sketch = operation
+            .as_str()
+            .and_then(|s| s.strip_suffix(".wireOp"))
+            .ok_or("the thin curve source operation is missing")?;
+        let native_entity = text(query, "sketchEntityId")?;
+        if sources
+            .insert(
+                id("entity", &format!("{native_sketch}/{native_entity}")),
+                (native_sketch, native_entity),
+            )
+            .is_some()
+        {
+            return Err("the thin profile repeats a stored directed curve selection".into());
+        }
+    }
+    for selected in entities {
+        let selected = selected.as_str().ok_or("a thin curve id is missing")?;
+        let entity = model
+            .sketch_entities
+            .iter()
+            .find(|e| e.id().as_str() == selected)
+            .ok_or("a thin curve has no solved geometry")?;
+        if entity.sketch.as_str() != sketch || entity.construction {
+            return Err("the thin profile selects another sketch or construction geometry".into());
+        }
+        let (native_sketch, native_entity) = sources
+            .get(selected)
+            .ok_or("the thin curve has no stored directed sketch selection")?;
+        let source_entity = inputs.sketch_entity(native_sketch, native_entity)?;
+        let geometry = source_entity
+            .get("geometry")
+            .ok_or("the thin curve direction is missing")?;
+        let clockwise = super::boolean_field(geometry, "clockwise")?;
+        if reversed.is_some_and(|previous| previous != clockwise) && !midplane {
+            return Err("mixed thin curve directions cannot share one stored wall side yet".into());
+        }
+        reversed = Some(clockwise);
+    }
+    // Circle/ellipse canonicalization reverses clockwise source curves. Preserve
+    // the stored side relative to those curves; no area chooses the wall side.
+    let flipped = flipped ^ reversed.unwrap_or(false);
     let length = |key| -> Mapping<f64> {
-        features::quantity(features::parameter(source, key)?, false, model)
+        let n = features::quantity(features::parameter(source, key)?, false, model, unresolved)?;
+        if n < 0.0 {
+            return Err(format!("thin extrusion {key} must not be negative"));
+        }
+        Ok(n)
     };
     let literal = |value| json!({"kind":"literal","value":value});
-    let thickness = if features::parameter(source, "midplane")
-        .ok()
-        .and_then(|p| p.get("value"))
-        .and_then(Value::as_bool)
-        == Some(true)
-    {
-        json!({"kind":"symmetric","value":literal(length("thickness")?)})
+    let thickness = if midplane {
+        let thickness = length("thickness")?;
+        if thickness == 0.0 {
+            return Err("the thin extrusion has no positive wall thickness".into());
+        }
+        json!({"kind":"symmetric","value":literal(thickness)})
     } else {
         let first = length("thickness1")?;
         let second = length("thickness2")?;
-        let flipped = features::parameter(source, "flipWall")
-            .ok()
-            .and_then(|p| p.get("value"))
-            .and_then(Value::as_bool)
-            == Some(true);
+        if first == 0.0 && second == 0.0 {
+            return Err("the thin extrusion has no positive wall thickness".into());
+        }
         if second == 0.0 {
             json!({"kind":"one_side","value":{"value":literal(first),"side":{"kind":if flipped {"inside"} else {"outside"}}}})
         } else {

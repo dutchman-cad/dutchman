@@ -18,9 +18,9 @@ STEP export; see [Onshape](onshape.md). Compressed default-plane and sketch-regi
 queries use these existing rows and codes too. Unresolved source boundaries report
 a specific reason under `onshape/history.not-supported`; no report field changes.
 `onshape/extrude.thin-not-supported` is a Degraded loss at stage `map` for
-unresolved wall options. Resolved thin outputs keep thickness and side through
-CADIR v11 and map on SolidCraft 0.44 and newer; older targets report a named
-feature reason and preserve final geometry. Repeated ellipse trims and incomplete
+thin construction with missing or contradictory domain, input-body scope, thickness,
+side or direction values. Proven controls emit a typed design feature.
+The final STEP geometry remains available. Repeated ellipse trims and incomplete
 outside-face witness lists use the existing history rows; unresolved intersections
 and tied connections retain `onshape/history.not-supported`. Two-offset and distance-and-angle chamfers retain their dimensions in
 CADIR; asymmetric forms report missing input reference-face ordering in the existing
@@ -30,6 +30,18 @@ Unproven open dividers and exhausted cumulative region-recovery budgets produce
 Simplify the sketch or split the bundle when the recovery budget is exhausted;
 the final STEP shape remains available. Native symmetric distances and parameter
 fallback defaults stay unchanged.
+
+Onshape quantities need a dimensioned expression or explicit supported units.
+Malformed or repeated Boolean operands, unresolved latest variable bindings,
+face/cap sketch attachments without a stored complete frame, up-to-next extents without
+exact stored-target coverage, ambiguous directed region boundaries
+and missing required hole facts retain `onshape/history.not-supported` with a specific
+reason. A dropped sketch dimension instead uses
+`onshape/sketch.constraint-not-supported`, preserving the solved geometry.
+Blind holes need an explicit unique tip angle; angled bottoms also need Boolean
+`depthToTip`. Hole standards need explicit hand and modeled/cosmetic facts.
+Inspect these losses before relying on editable history; the final STEP shape remains.
+
 Explicit `--solidcraft-version` and MCP `solidcraft_version` options keep their
 full `x.y.z` value during writer preparation; the report's minor-only target is
 display metadata and is not parsed back into the option.

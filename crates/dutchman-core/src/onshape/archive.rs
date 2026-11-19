@@ -14,6 +14,7 @@ const EXPANDED_BYTES: u64 = 256 << 20;
 
 pub(super) struct Bundle {
     members: BTreeMap<String, Vec<u8>>,
+    json: BTreeMap<String, Value>,
 }
 
 fn failure(detail: impl std::fmt::Display) -> Error {
@@ -23,7 +24,10 @@ fn failure(detail: impl std::fmt::Display) -> Error {
 }
 
 impl Bundle {
-    pub fn open(bytes: &[u8]) -> Result<Self, Error> {
+    pub fn open(
+        ctx: &cadmpeg_core::decode::DecodeContext<'_>,
+        bytes: &[u8],
+    ) -> Result<Self, Error> {
         if !bytes.starts_with(b"PK\x03\x04") {
             return Err(failure("the contents do not have ZIP bundle magic"));
         }
@@ -61,7 +65,11 @@ impl Bundle {
             if member.size() > limit {
                 return Err(failure("the expanded data exceeds the bundle limit"));
             }
+            ctx.retain_bytes(member.size(), "Onshape expanded member")
+                .map_err(|error| Error::Decode(error.to_string()))?;
             let mut data = Vec::new();
+            data.try_reserve(usize::try_from(member.size()).map_err(failure)?)
+                .map_err(failure)?;
             member
                 .by_ref()
                 .take(limit + 1)
@@ -75,7 +83,29 @@ impl Bundle {
                 return Err(failure("a member name occurs more than once"));
             }
         }
-        Ok(Self { members })
+        let parse = |path: &str| -> Result<Value, Error> {
+            let data = members
+                .get(path)
+                .ok_or_else(|| failure(format!("{path} is missing")))?;
+            let text = std::str::from_utf8(data).map_err(failure)?;
+            ctx.parse_json_value(text, "Onshape JSON member")
+                .map_err(|error| Error::Decode(error.to_string()))
+        };
+        let manifest = parse("manifest.json")?;
+        let prefix = manifest
+            .pointer("/elements/0/id")
+            .and_then(Value::as_str)
+            .map(|id| format!("partstudios/{id}/"));
+        let mut json = BTreeMap::from([("manifest.json".to_owned(), manifest)]);
+        for name in members.keys() {
+            if prefix
+                .as_deref()
+                .is_some_and(|prefix| schema_response(name, prefix))
+            {
+                json.insert(name.clone(), parse(name)?);
+            }
+        }
+        Ok(Self { members, json })
     }
 
     pub fn bytes(&self, path: &str) -> Result<&[u8], Error> {
@@ -89,9 +119,68 @@ impl Bundle {
         self.members.contains_key(path)
     }
 
-    pub fn json(&self, path: &str) -> Result<Value, Error> {
-        serde_json::from_slice(self.bytes(path)?)
-            .map_err(|_| failure(format!("{path} could not be read as JSON")))
+    pub(super) fn json(&self, path: &str) -> Result<&Value, Error> {
+        self.json
+            .get(path)
+            .ok_or_else(|| failure(format!("{path} is missing")))
+    }
+    pub(super) fn validate_microversions(&self, expected: &str) -> Result<(), Error> {
+        for value in self.json.values() {
+            for key in ["sourceMicroversion", "microversionId"] {
+                super::microversion(value, key, expected).map_err(Error::Decode)?;
+            }
+        }
+        Ok(())
+    }
+    pub(super) fn admit_topology(
+        &self,
+        ctx: &cadmpeg_core::decode::DecodeContext<'_>,
+    ) -> Result<(), Error> {
+        let mut count = 0usize;
+        for (path, response) in &self.json {
+            if !path.contains("/bodydetails/") {
+                continue;
+            }
+            let Some(bodies) = response.get("bodies").and_then(Value::as_array) else {
+                continue;
+            };
+            let mut add = |length: usize| -> Result<(), Error> {
+                if length > super::ROWS {
+                    return Err(failure("topology exceeds the row limit"));
+                }
+                count = count
+                    .checked_add(length)
+                    .ok_or_else(|| failure("topology count overflow"))?;
+                Ok(())
+            };
+            add(bodies.len())?;
+            for body in bodies {
+                for key in ["faces", "edges", "vertices"] {
+                    if let Some(rows) = body.get(key).and_then(Value::as_array) {
+                        add(rows.len())?;
+                    }
+                }
+                if let Some(faces) = body.get("faces").and_then(Value::as_array) {
+                    for face in faces {
+                        if let Some(loops) = face.get("loops").and_then(Value::as_array) {
+                            add(loops.len())?;
+                            for boundary in loops {
+                                if let Some(coedges) =
+                                    boundary.get("coedges").and_then(Value::as_array)
+                                {
+                                    add(coedges.len())?;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        ctx.charge_entities(
+            cadmpeg_core::decode::u64_from_index(count),
+            "Onshape topology admission",
+        )
+        .map_err(|error| Error::Decode(error.to_string()))
     }
 }
 
@@ -162,4 +251,25 @@ fn directory(bytes: &[u8]) -> Option<()> {
         return None;
     }
     Some(())
+}
+
+// Only declared responses of the selected studio are JSON. Other attachments stay bytes.
+fn schema_response(name: &str, prefix: &str) -> bool {
+    let Some(member) = name.strip_prefix(prefix) else {
+        return false;
+    };
+    if matches!(
+        member,
+        "features.json" | "configuration.json" | "variables.json" | "bodydetails/index.json"
+    ) {
+        return true;
+    }
+    member
+        .strip_prefix("bodydetails/")
+        .and_then(|name| name.rsplit_once('.'))
+        .is_some_and(|(ordinal, extension)| {
+            extension == "json"
+                && !ordinal.is_empty()
+                && ordinal.bytes().all(|b| b.is_ascii_digit())
+        })
 }

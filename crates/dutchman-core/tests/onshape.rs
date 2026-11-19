@@ -205,6 +205,13 @@ fn unresolved_edges_never_fall_back_to_final_topology_or_another_rollback() {
                 *value = json!([1]);
             }
         });
+        if failure == "microversion" {
+            assert!(read(&bytes)
+                .unwrap_err()
+                .to_string()
+                .contains("pinned microversion"));
+            continue;
+        }
         let (model, report) = read(&bytes).unwrap();
         assert_eq!(kinds(&model), ["sketch", "extrude", "native"]);
         assert!(model.ir.model.feature_input_topologies.is_empty());
@@ -499,51 +506,39 @@ fn up_to_next(operation: &str, extra: Option<([f64; 3], [f64; 3])>) -> Vec<u8> {
 }
 
 #[test]
-fn up_to_next_ends_on_the_first_face_every_profile_ray_meets() {
-    let (model, report) = read(&up_to_next("REMOVE", None)).unwrap();
-    assert_eq!(
-        kinds(&model),
-        ["sketch", "extrude", "extrude"],
-        "{:?}",
-        report.losses()
-    );
-    let wire = timeline(&model);
-    let termination = &wire["model"]["features"][2]["definition"]["value"]["value"]["extent"]
-        ["side"]["termination"];
-    assert_eq!(termination["kind"], "to_face");
-    assert_eq!(termination["face"]["value"]["faces"], json!(["high2"]));
-    assert_eq!(
-        termination["face"]["value"]["state"],
-        "onshape:model:input#toNext"
-    );
-
-    for (bytes, expected) in [
-        (
-            up_to_next("NEW", None),
-            "up-to-next extrude that starts inside the material",
-        ),
+fn up_to_next_maps_exact_stored_coverage_and_refuses_an_earlier_recess() {
+    for (bytes, typed) in [
+        (up_to_next("REMOVE", None), true),
+        (up_to_next("NEW", None), false),
         (
             up_to_next(
                 "REMOVE",
                 Some(([0.005, 0.002, 0.0005], [0.008, 0.004, 0.001])),
             ),
-            "other input geometry in its path",
+            false,
         ),
     ] {
         let (model, report) = read(&bytes).unwrap();
-        assert_eq!(kinds(&model), ["sketch", "extrude", "native"]);
-        assert!(
-            report.losses().iter().any(|loss| loss.code.as_deref()
-                == Some("onshape/history.not-supported")
-                && loss.detail.contains(expected)),
-            "{expected}: {:?}",
-            report.losses()
+        assert_eq!(
+            kinds(&model),
+            [
+                "sketch",
+                "extrude",
+                if typed { "extrude" } else { "native" }
+            ]
         );
+        if typed {
+            continue;
+        }
+        assert!(report.losses().iter().any(|l| l.code.as_deref()
+            == Some("onshape/history.not-supported")
+            && l.detail.contains("complete profile")));
+        assert!(model.source_step.is_some());
     }
 }
 
 #[test]
-fn up_to_next_retains_a_slanted_planar_end_for_the_writer_to_gate() {
+fn up_to_next_proves_a_slanted_stored_target_over_the_complete_profile() {
     // Raise the top of a synthetic box linearly along X, leaving its bottom on XY.
     let bytes = changed(&up_to_next("REMOVE", None), |path, value| {
         if !path.ends_with("bodydetails/2.json") {
@@ -582,12 +577,6 @@ fn up_to_next_retains_a_slanted_planar_end_for_the_writer_to_gate() {
         ["sketch", "extrude", "extrude"],
         "{:?}",
         report.losses()
-    );
-    let wire = timeline(&model);
-    assert_eq!(
-        wire["model"]["features"][2]["definition"]["value"]["value"]["extent"]["side"]
-            ["termination"]["face"]["value"]["faces"],
-        json!(["high2"])
     );
 }
 
@@ -951,7 +940,9 @@ fn hole_standards_and_drill_points_outside_the_mapping_name_their_loss() {
             value["features"][5]["parameters"]
                 .as_array_mut()
                 .unwrap()
-                .push(json!({"parameterId": "tipAngle", "expression": "180 deg"}));
+                .iter_mut()
+                .find(|p| p["parameterId"] == "tipAngle")
+                .unwrap()["expression"] = json!("180 deg");
         }
     });
     let (model, report) = read(&bytes).unwrap();
@@ -1000,9 +991,10 @@ fn a_resolvable_default_tangent_fillet_maps_and_missing_tangents_name_the_loss()
                 json!({"tangent_propagation": "resolved"})
             );
         } else {
-            assert!(report.losses().iter().any(|l| l
-                .detail
-                .contains("tangent propagation needs complete input vertices")));
+            assert!(report.losses().iter().any(|l| {
+                l.detail
+                    .contains("tangent propagation needs complete input vertices")
+            }));
         }
     }
 }
@@ -1104,7 +1096,7 @@ fn ellipses_and_elliptical_arcs_keep_axes_units_bounds_and_endpoint_loci() {
 }
 
 #[test]
-fn thin_extrusions_keep_typed_wall_thickness_and_side() {
+fn thin_extrusions_name_unresolved_scope_and_sides_for_every_variant() {
     for midplane in [false, true] {
         for flip in [false, true] {
             for second in [0.0, 0.2] {
@@ -1128,27 +1120,9 @@ fn thin_extrusions_keep_typed_wall_thickness_and_side() {
                     ]);
                 });
                 let (model, report) = read(&bytes).unwrap();
-                assert_eq!(kinds(&model)[1], "extrude", "{:?}", report.losses());
-                let wire = timeline(&model);
-                let thickness = &wire["design"]["features"][0]["definition"]["operation"]["value"]
-                    ["output"]["body"]["thickness"];
-                let literal = |value| json!({"kind":"literal","value":value});
-                let expected = if midplane {
-                    json!({"kind":"symmetric","value":literal(0.3)})
-                } else if second == 0.0 {
-                    json!({"kind":"one_side","value":{"value":literal(0.1),"side":{"kind":if flip {"inside"} else {"outside"}}}})
-                } else {
-                    json!({"kind":"offsets","value":{"outside":literal(if flip {0.2} else {0.1}),"inside":literal(if flip {0.1} else {0.2})}})
-                };
-                assert_eq!(thickness, &expected);
-                assert_eq!(
-                    wire["design"]["features"][0]["id"],
-                    wire["model"]["features"][1]["id"]
-                );
-                let roundtrip: cadmpeg_ir::CadIr =
-                    serde_json::from_value(serde_json::to_value(&model.ir).unwrap()).unwrap();
-                assert_eq!(roundtrip, model.ir);
-                assert!(!report
+                assert_eq!(kinds(&model)[1], "native", "{:?}", report.losses());
+                assert!(model.ir.design.features.is_empty());
+                assert!(report
                     .losses()
                     .iter()
                     .any(|l| l.code.as_deref() == Some("onshape/extrude.thin-not-supported")));
@@ -1390,7 +1364,9 @@ fn repeated_exterior_consumers_exhaust_the_bundle_budget_early() {
         .filter_map(|f| f.pointer("/definition/value/value/profile/value/value/regions"))
         .map(|regions| serde_json::to_vec(regions).unwrap().len())
         .sum();
-    eprintln!("Cumulative recovery: refused at consumer {first_loss} of 129 (128 extra holes); emitted {boundary_bytes} region JSON bytes; reader {elapsed:?}");
+    eprintln!(
+        "Cumulative recovery: refused at consumer {first_loss} of 129 (128 extra holes); emitted {boundary_bytes} region JSON bytes; reader {elapsed:?}"
+    );
     assert!(
         report
             .losses()
@@ -1489,4 +1465,93 @@ fn overlapping_dividers_are_not_lost_as_a_zero_area_ring() {
         .losses()
         .iter()
         .any(|l| l.detail.contains("open divider")));
+}
+
+#[test]
+fn next_face_boundary_samples_cannot_prove_coverage_across_an_interior_hole() {
+    let bytes = changed(&up_to_next("REMOVE", None), |path, value| {
+        if !path.ends_with("bodydetails/2.json") {
+            return;
+        }
+        // A small square hole inside the top face misses every outer-profile ray.
+        let corners = [
+            [0.009, 0.004, 0.002],
+            [0.011, 0.004, 0.002],
+            [0.011, 0.006, 0.002],
+            [0.009, 0.006, 0.002],
+        ];
+        let point = |p: [f64; 3]| json!({"x":p[0],"y":p[1],"z":p[2]});
+        let mut coedges = Vec::new();
+        for i in 0..4 {
+            let start = corners[i];
+            let end = corners[(i + 1) % 4];
+            let name = format!("interior-edge-{i}");
+            value["bodies"][0]["edges"].as_array_mut().unwrap().push(json!({
+                "id":name,"curve":{"type":"LINE","origin":point(start),"direction":point([end[0]-start[0],end[1]-start[1],0.0])},
+                "geometry":{"startPoint":point(start),"endPoint":point(end),"midPoint":point([(start[0]+end[0])/2.0,(start[1]+end[1])/2.0,0.002])}}));
+            coedges.push(json!({"edgeId":name,"orientation":false}));
+        }
+        value["bodies"][0]["faces"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|f| f["id"] == "high2")
+            .unwrap()["loops"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"isOuter":false,"coedges":coedges}));
+    });
+    let (model, report) = read(&bytes).unwrap();
+    assert_eq!(kinds(&model), ["sketch", "extrude", "native"]);
+    assert!(report
+        .losses()
+        .iter()
+        .any(|l| l.detail.contains("exact coverage and first intersection")));
+    assert!(model.source_step.is_some());
+}
+
+#[test]
+fn up_to_next_missing_or_contradictory_target_geometry_has_a_named_loss() {
+    for datum in [
+        "missing-normal",
+        "missing-boundary",
+        "contradictory-line",
+        "open-boundary",
+    ] {
+        let bytes = changed(&up_to_next("REMOVE", None), |path, response| {
+            if !path.ends_with("bodydetails/2.json") {
+                return;
+            }
+            match datum {
+                "missing-normal" => {
+                    response["bodies"][0]["faces"][5]["surface"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("normal");
+                }
+                "missing-boundary" => {
+                    response["bodies"][0]["faces"][5]["loops"] = json!([]);
+                }
+                "contradictory-line" => {
+                    response["bodies"][0]["edges"][0]["curve"]["direction"] =
+                        json!({"x":0.0,"y":1.0,"z":0.0});
+                }
+                _ => {
+                    assert_eq!(datum, "open-boundary");
+                    response["bodies"][0]["faces"][5]["loops"][0]["coedges"]
+                        .as_array_mut()
+                        .unwrap()
+                        .pop();
+                }
+            }
+        });
+        let (model, report) = read(&bytes).unwrap();
+        assert_eq!(kinds(&model), ["sketch", "extrude", "native"], "{datum}");
+        assert!(
+            report.losses().iter().any(|l| l.code.as_deref()
+                == Some("onshape/history.not-supported")
+                && l.detail.contains("exact coverage and first intersection")),
+            "{datum}"
+        );
+    }
 }

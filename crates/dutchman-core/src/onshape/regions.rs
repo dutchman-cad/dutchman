@@ -1,15 +1,16 @@
 //! Resolve region picks through their source sketch-entity disambiguation, not
 //! deterministic-id ordering or a guess that the pick means the whole sketch.
+#[path = "region_proof.rs"]
+mod proof;
+pub(super) use proof::ClosedProfile;
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use cadmpeg_ir::document::Model;
 use serde_json::{json, Value};
 
 use super::{id, query, rows, text, topology, Mapping};
-
-// Shared by every consumer in a bundle. These are aggregate ceilings, not
-// per-feature allowances; a cached loop still charges each emitted boundary use.
-const WORK_LIMIT: usize = 1_000_000;
+pub(super) const WORK_LIMIT: usize = 1_000_000;
 const OUTPUT_LIMIT: usize = 20_000;
 const OUTPUT_BYTES: usize = 8 << 20;
 const BUDGET_LOSS: &str = "the sketch region recovery work or boundary output budget is exhausted; simplify the sketch or split the bundle";
@@ -48,8 +49,6 @@ impl Budget {
 
     fn boundary(&mut self, edge: &Edge) -> Mapping<()> {
         self.output(1)?;
-        // Count escaped IDs and numeric ranges without allocating a clone or
-        // output buffer. `false` is one byte longer than a reversed use's `true`.
         let boundary = Boundary {
             entity: &edge.id,
             parameter_range: edge.range,
@@ -243,9 +242,16 @@ pub(super) fn profile(
                     .ok_or("the sketch-region ellipse geometry is missing")?
                     .insert("bounds".to_owned(), json!(range));
             }
-            let resolved = Edge::new(entity_id.clone(), &entity)?;
-            // Repeated carriers are legitimate when the query identifies distinct
-            // intervals. Repeating an interval still has no unique boundary.
+            let mut resolved = Edge::new(entity_id.clone(), &entity)?;
+            let clockwise = super::boolean_field(
+                inputs
+                    .sketch_entity(native, source_id)?
+                    .get("geometry")
+                    .unwrap_or(&Value::Null),
+                "clockwise",
+            )?;
+            resolved.side =
+                side.as_i64().ok_or("boundary side is missing")? * if clockwise { -1 } else { 1 };
             let key = (entity_id, resolved.range.map(f64::to_bits));
             if !selected.insert(key) {
                 return Err("a sketch-region boundary repeats a source curve; its trimmed intervals are ambiguous".into());
@@ -255,6 +261,7 @@ pub(super) fn profile(
         if edges.is_empty() {
             return Err("the sketch region has no resolved boundary edges".into());
         }
+        attach_tangencies(&mut edges, model, &mut recovery.budget)?;
         let region = if outside {
             exterior_region(&sketch_id, &edges, model, &mut recovery)?
         } else {
@@ -275,11 +282,6 @@ pub(super) fn profile(
         json!({"kind": "sketch_regions", "value": {"sketch": sketch.ok_or("the sketch-region selection is empty")?, "regions": regions}}),
     )
 }
-
-/// An imprint edge's TOPOLOGY record names its start (+1) and end (-1).
-/// INTERSECT/ORDER ranks the intersections along the first source carrier's
-/// native angular chart. Only solved chord endpoints on a full ellipse are
-/// admitted here: no intersection solver, nearest-point choice or final body.
 fn ellipse_interval(
     edge: &Value,
     native: &str,
@@ -344,8 +346,6 @@ fn ellipse_interval(
             let u = (angle.cos() * x + angle.sin() * y) / major;
             let v = (-angle.sin() * x + angle.cos() * y) / minor;
             let residual = (u * u + v * v - 1.0).abs();
-            // A roundoff bound, not a joining tolerance. Endpoint residuals
-            // measured for this change are recorded in the review notes.
             if !residual.is_finite() || residual > 32.0 * f64::EPSILON {
                 return Err(
                     "the sketch-region intersection is not a solved ellipse endpoint".into(),
@@ -400,9 +400,10 @@ struct Edge {
     a: [f64; 2],
     b: [f64; 2],
     range: [f64; 2],
-    area: f64,
     closed: bool,
     geometry: Value,
+    side: i64,
+    tangent_peers: BTreeSet<String>,
 }
 
 impl Edge {
@@ -416,11 +417,11 @@ impl Edge {
                 .ok_or("a sketch-region endpoint is missing")?;
             Ok([super::number(point, "u")?, super::number(point, "v")?])
         };
-        let (a, b, range, area, closed) = match text(geometry, "kind")? {
+        let (a, b, range, closed) = match text(geometry, "kind")? {
             "line" => {
                 let a = point("start")?;
                 let b = point("end")?;
-                (a, b, [0.0, 1.0], cross(a, b), false)
+                (a, b, [0.0, 1.0], false)
             }
             kind @ ("circle" | "arc") => {
                 let [cx, cy] = point("center")?;
@@ -441,10 +442,7 @@ impl Edge {
                 let at = |t: f64| [cx + radius * t.cos(), cy + radius * t.sin()];
                 let a = at(from);
                 let b = if kind == "circle" { a } else { at(to) };
-                let [ax, ay] = a;
-                let [bx, by] = b;
-                let area = cx * (by - ay) - cy * (bx - ax) + radius * radius * (to - from);
-                (a, b, [from, to], area, kind == "circle")
+                (a, b, [from, to], kind == "circle")
             }
             "ellipse" => {
                 let [cx, cy] = point("center")?;
@@ -474,29 +472,32 @@ impl Edge {
                 };
                 let a = at(from);
                 let b = if bounds.is_none() { a } else { at(to) };
-                let [ax, ay] = a;
-                let [bx, by] = b;
-                let area = cx * (by - ay) - cy * (bx - ax) + major * minor * (to - from);
-                (a, b, [from, to], area, bounds.is_none())
+                (a, b, [from, to], bounds.is_none())
             }
             _ => {
                 return Err(
                     "the sketch-region source curve has no resolved boundary parameter range"
                         .into(),
-                )
+                );
             }
         };
-        if !area.is_finite() || a.iter().chain(&b).any(|n| !n.is_finite()) {
+        if a.iter().chain(&b).chain(&range).any(|n| !n.is_finite()) {
             return Err("the sketch-region boundary exceeds the finite range".into());
+        }
+        if text(geometry, "kind")? != "line"
+            && !(range[1] > range[0] && range[1] - range[0] <= std::f64::consts::TAU)
+        {
+            return Err("the sketch-region curve interval is missing or exceeds one turn".into());
         }
         Ok(Self {
             id,
             a,
             b,
             range,
-            area,
             closed,
             geometry: geometry.clone(),
+            side: 1,
+            tangent_peers: BTreeSet::new(),
         })
     }
 
@@ -504,14 +505,42 @@ impl Edge {
         json!({"entity": self.id, "parameter_range": self.range, "reversed": reverse})
     }
 }
+fn attach_tangencies(edges: &mut [Edge], model: &Model, budget: &mut Budget) -> Mapping<()> {
+    budget.work(
+        model
+            .sketch_constraints
+            .len()
+            .checked_add(edges.len())
+            .ok_or(BUDGET_LOSS)?,
+    )?;
+    let mut peers: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for constraint in &model.sketch_constraints {
+        let wire = serde_json::to_value(constraint)
+            .map_err(|_| "a stored tangent constraint is unreadable")?;
+        let Some(definition) = wire.get("definition") else {
+            continue;
+        };
+        if definition.get("kind").and_then(Value::as_str) != Some("tangent") {
+            continue;
+        }
+        let first = text(definition, "first")?;
+        let second = text(definition, "second")?;
+        peers.entry(first.into()).or_default().insert(second.into());
+        peers.entry(second.into()).or_default().insert(first.into());
+    }
+    for edge in edges {
+        if let Some(peers) = peers.get(&edge.id) {
+            budget.work(peers.len())?;
+            edge.tangent_peers = peers.clone();
+        }
+    }
+    Ok(())
+}
 
-// A proper, isolated open arc or segment cannot partition a planar face.
-// Prove separation from every other source curve, including attachments in
-// boundary interiors. Bounds are conservative; unresolved contacts are refused.
 fn isolated(edge: &Edge, loops: &Loops, budget: &mut Budget) -> Mapping<bool> {
     let [from, to] = edge.range;
-    if !matches!(text(&edge.geometry, "kind")?, "line")
-        && !(to > from && to - from < std::f64::consts::TAU)
+    if !(matches!(text(&edge.geometry, "kind")?, "line")
+        || to > from && to - from < std::f64::consts::TAU)
     {
         return Ok(false);
     }
@@ -546,10 +575,13 @@ impl Conic {
         ([a * c, a * s], [-b * s, b * c])
     }
 
-    fn normalize(self, [x, y]: [f64; 2]) -> [f64; 2] {
+    fn normalize(self, [point_x, point_y]: [f64; 2]) -> [f64; 2] {
         let [a, b] = self.radii;
         let [c, s] = self.axis;
-        [(c * x + s * y) / a, (-s * x + c * y) / b]
+        [
+            (c * point_x + s * point_y) / a,
+            (-s * point_x + c * point_y) / b,
+        ]
     }
 }
 
@@ -599,8 +631,6 @@ impl Edge {
 
     fn chart(&self) -> [f64; 2] {
         let [from, to] = self.range;
-        // Preserve the physical chart even for parameters stored past the seam;
-        // atan2(sin, cos) avoids subtracting a large number of approximate turns.
         let start = from.sin().atan2(from.cos());
         [start, start + (to - from)]
     }
@@ -618,17 +648,15 @@ impl Edge {
         let middle = (from + to) * 0.5;
         let [a, b] = conic.radii;
         let [c, s] = conic.axis;
-        let x = middle.cos() / a;
-        let y = middle.sin() / b;
-        Some([c * x - s * y, s * x + c * y])
+        let normal_x = middle.cos() / a;
+        let normal_y = middle.sin() / b;
+        Some([c * normal_x - s * normal_y, s * normal_x + c * normal_y])
     }
 }
 
 fn dot([x, y]: [f64; 2], [u, v]: [f64; 2]) -> f64 {
     x * u + y * v
 }
-
-// Exact extrema of c cos(t) + s sin(t), widened at endpoint-height roundoff.
 fn trig_bounds(c: f64, s: f64, [from, to]: [f64; 2]) -> [f64; 2] {
     let amplitude = c.hypot(s);
     if ![c, s, from, to, amplitude].iter().all(|v| v.is_finite()) {
@@ -699,6 +727,21 @@ fn separated(a: &Edge, b: &Edge) -> Mapping<bool> {
             return Ok(true);
         }
     }
+    if let (Some(conic), None) | (None, Some(conic)) = (ca, cb) {
+        let line = if ca.is_none() { a } else { b };
+        let offset = conic.normalize([line.a[0] - conic.center[0], line.a[1] - conic.center[1]]);
+        let delta = conic.normalize([line.b[0] - line.a[0], line.b[1] - line.a[1]]);
+        let qa = dot(delta, delta);
+        let qb = 2.0 * dot(offset, delta);
+        let qc = dot(offset, offset) - 1.0;
+        let uncertainty = BOUNDARY_ROUNDOFF_FACTOR
+            * f64::EPSILON
+            * (qb * qb + 4.0 * qa * qc.abs()).max(1.0)
+            * (1.0 + scale / conic.radii[0].min(conic.radii[1]));
+        if (qb * qb - 4.0 * qa * qc).abs() <= uncertainty {
+            return Ok(false);
+        }
+    }
     if let (Some(ca), Some(cb)) = (ca, cb) {
         for (edge, source, target) in [(a, ca, cb), (b, cb, ca)] {
             if conic_separated(edge, source, target, scale) {
@@ -706,13 +749,22 @@ fn separated(a: &Edge, b: &Edge) -> Mapping<bool> {
             }
         }
     }
-    Ok(false)
+    if let (Some(ca), Some(cb)) = (ca, cb) {
+        if ca.center == cb.center && ca.radii == cb.radii && ca.axis == cb.axis {
+            return Ok(false);
+        }
+    }
+    if ca.is_none()
+        && cb.is_none()
+        && cross(
+            [a.b[0] - a.a[0], a.b[1] - a.a[1]],
+            [b.b[0] - b.a[0], b.b[1] - b.a[1]],
+        ) == 0.0
+    {
+        return Ok(false);
+    }
+    Ok(intersections(a, b)?.is_empty())
 }
-
-// The target's implicit ellipse equation along a source conic is a degree-two
-// trigonometric polynomial. Bounding each harmonic proves the entire interval
-// stays strictly inside or outside that carrier, without sampling or guessing
-// intersection points. Overlapping bounds remain an unsupported contact.
 fn conic_separated(edge: &Edge, source: Conic, target: Conic, scale: f64) -> bool {
     let [x, y] = source.center;
     let [cx, cy] = target.center;
@@ -737,6 +789,220 @@ fn conic_separated(edge: &Edge, source: Conic, target: Conic, scale: f64) -> boo
         && (low > 1.0 + tolerance || high < 1.0 - tolerance)
 }
 
+fn on_curve(edge: &Edge, point: [f64; 2]) -> Mapping<bool> {
+    let Some(conic) = edge.conic()? else {
+        let delta = [edge.b[0] - edge.a[0], edge.b[1] - edge.a[1]];
+        let length = dot(delta, delta);
+        if length == 0.0 {
+            return Err("a boundary line has no direction".into());
+        }
+        let t = dot([point[0] - edge.a[0], point[1] - edge.a[1]], delta) / length;
+        return Ok((0.0..=1.0).contains(&t));
+    };
+    if edge.closed {
+        return Ok(true);
+    }
+    let [u, v] = conic.normalize([point[0] - conic.center[0], point[1] - conic.center[1]]);
+    let offset = (v.atan2(u) - edge.range[0]).rem_euclid(std::f64::consts::TAU);
+    let roundoff = BOUNDARY_ROUNDOFF_FACTOR * f64::EPSILON * std::f64::consts::TAU;
+    Ok(offset <= edge.range[1] - edge.range[0] + roundoff
+        || std::f64::consts::TAU - offset <= roundoff)
+}
+
+fn intersections(a: &Edge, b: &Edge) -> Mapping<Vec<[f64; 2]>> {
+    let candidates = if a.tangent_peers.contains(&b.id) || b.tangent_peers.contains(&a.id) {
+        if let Some(point) = tangent_contact(a, b)? {
+            vec![point]
+        } else {
+            carrier_intersections(a, b).map_err(|reason| {
+                format!(
+                    "the {} and {} boundary intersection is unresolved: {reason}",
+                    a.geometry
+                        .get("kind")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown"),
+                    b.geometry
+                        .get("kind")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown")
+                )
+            })?
+        }
+    } else {
+        carrier_intersections(a, b).map_err(|reason| {
+            format!(
+                "the {} and {} boundary intersection is unresolved: {reason}",
+                a.geometry
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown"),
+                b.geometry
+                    .get("kind")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+            )
+        })?
+    };
+    if candidates.iter().flatten().any(|n| !n.is_finite()) {
+        return Err("the analytic boundary intersection exceeds the finite range".into());
+    }
+    candidates
+        .into_iter()
+        .filter_map(|point| {
+            match on_curve(a, point).and_then(|x| on_curve(b, point).map(|y| x && y)) {
+                Ok(true) => Some(Ok(point)),
+                Ok(false) => None,
+                Err(reason) => Some(Err(reason)),
+            }
+        })
+        .collect()
+}
+fn tangent_contact(a: &Edge, b: &Edge) -> Mapping<Option<[f64; 2]>> {
+    let roundoff = BOUNDARY_ROUNDOFF_FACTOR * f64::EPSILON;
+    match (a.conic()?, b.conic()?) {
+        (Some(conic), None) | (None, Some(conic)) => {
+            let line = if a.conic()?.is_none() { a } else { b };
+            let offset =
+                conic.normalize([line.a[0] - conic.center[0], line.a[1] - conic.center[1]]);
+            let delta = conic.normalize([line.b[0] - line.a[0], line.b[1] - line.a[1]]);
+            let length = dot(delta, delta);
+            if length == 0.0 || !length.is_finite() {
+                return Err("the stored tangent line has no finite direction".into());
+            }
+            let t = -dot(offset, delta) / length;
+            let normal_distance = cross(offset, delta).abs() / length.sqrt();
+            if !t.is_finite()
+                || !normal_distance.is_finite()
+                || (normal_distance - 1.0).abs() > roundoff * (normal_distance + 1.0)
+            {
+                return Err(
+                    "the stored tangent constraint contradicts its line and conic carriers".into(),
+                );
+            }
+            Ok(Some([
+                line.a[0] + t * (line.b[0] - line.a[0]),
+                line.a[1] + t * (line.b[1] - line.a[1]),
+            ]))
+        }
+        (Some(ca), Some(cb)) if ca.radii[0] == ca.radii[1] && cb.radii[0] == cb.radii[1] => {
+            let delta = [cb.center[0] - ca.center[0], cb.center[1] - ca.center[1]];
+            let d = delta[0].hypot(delta[1]);
+            let r = ca.radii[0];
+            let s = cb.radii[0];
+            if d == 0.0 || !d.is_finite() {
+                return Err("the stored tangent circles have no distinct finite centers".into());
+            }
+            let tolerance = roundoff * (d + r + s).max(1.0);
+            let external = (d - r - s).abs() <= tolerance;
+            let internal = (d - (r - s).abs()).abs() <= tolerance;
+            if external == internal {
+                return Err("the stored tangent constraint contradicts its circle carriers".into());
+            }
+            let along = if external || r > s { r } else { -r };
+            Ok(Some([
+                ca.center[0] + along * delta[0] / d,
+                ca.center[1] + along * delta[1] / d,
+            ]))
+        }
+        _ => Ok(None),
+    }
+}
+fn carrier_intersections(a: &Edge, b: &Edge) -> Mapping<Vec<[f64; 2]>> {
+    let candidates = match (a.conic()?, b.conic()?) {
+        (None, None) => {
+            let da = [a.b[0] - a.a[0], a.b[1] - a.a[1]];
+            let db = [b.b[0] - b.a[0], b.b[1] - b.a[1]];
+            let offset = [b.a[0] - a.a[0], b.a[1] - a.a[1]];
+            let determinant = cross(da, db);
+            let first_numerator = cross(offset, db);
+            let second_numerator = cross(offset, da);
+            if ![determinant, first_numerator, second_numerator]
+                .iter()
+                .all(|n| n.is_finite())
+            {
+                return Err("the analytic line intersection exceeds the finite range".into());
+            }
+            if determinant == 0.0 {
+                if cross(offset, da) == 0.0 {
+                    return Err("the analytic boundary lines overlap or touch".into());
+                }
+                Vec::new()
+            } else {
+                let t = first_numerator / determinant;
+                let u = second_numerator / determinant;
+                if !t.is_finite() || !u.is_finite() {
+                    return Err(
+                        "the analytic line intersection parameters exceed the finite range".into(),
+                    );
+                }
+                if (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u) {
+                    vec![[a.a[0] + t * da[0], a.a[1] + t * da[1]]]
+                } else {
+                    Vec::new()
+                }
+            }
+        }
+        (Some(conic), None) | (None, Some(conic)) => {
+            let line = if a.conic()?.is_none() { a } else { b };
+            let offset =
+                conic.normalize([line.a[0] - conic.center[0], line.a[1] - conic.center[1]]);
+            let delta = conic.normalize([line.b[0] - line.a[0], line.b[1] - line.a[1]]);
+            super::intersection::roots(&[
+                dot(offset, offset) - 1.0,
+                2.0 * dot(offset, delta),
+                dot(delta, delta),
+            ])?
+            .into_iter()
+            .filter(|t| (0.0..=1.0).contains(t))
+            .map(|t| {
+                [
+                    line.a[0] + t * (line.b[0] - line.a[0]),
+                    line.a[1] + t * (line.b[1] - line.a[1]),
+                ]
+            })
+            .collect()
+        }
+        (Some(source), Some(target)) => {
+            let offset = target.normalize([
+                source.center[0] - target.center[0],
+                source.center[1] - target.center[1],
+            ]);
+            let (cosine, sine) = source.vectors();
+            let c = target.normalize(cosine);
+            let s = target.normalize(sine);
+            let x = [offset[0] + c[0], 2.0 * s[0], offset[0] - c[0]];
+            let y = [offset[1] + c[1], 2.0 * s[1], offset[1] - c[1]];
+            let square =
+                |[a, b, c]: [f64; 3]| [a * a, 2.0 * a * b, b * b + 2.0 * a * c, 2.0 * b * c, c * c];
+            let xx = square(x);
+            let yy = square(y);
+            let coefficients: Vec<_> = xx
+                .into_iter()
+                .zip(yy)
+                .zip([1.0, 0.0, 2.0, 0.0, 1.0])
+                .map(|((x, y), d)| x + y - d)
+                .collect();
+            let at = |angle: f64| {
+                [
+                    source.center[0] + cosine[0] * angle.cos() + sine[0] * angle.sin(),
+                    source.center[1] + cosine[1] * angle.cos() + sine[1] * angle.sin(),
+                ]
+            };
+            let mut points: Vec<_> = super::intersection::roots(&coefficients)?
+                .into_iter()
+                .map(|t| at(2.0 * t.atan()))
+                .collect();
+            // tan(theta/2) omits theta=pi. Test that algebraic chart seam too.
+            let seam = dot([x[2], y[2]], [x[2], y[2]]) - 1.0;
+            if seam.abs() <= BOUNDARY_ROUNDOFF_FACTOR * f64::EPSILON {
+                points.push(at(std::f64::consts::PI));
+            }
+            points
+        }
+    };
+    Ok(candidates)
+}
+
 fn cross([a, b]: [f64; 2], [c, d]: [f64; 2]) -> f64 {
     a * d - b * c
 }
@@ -745,66 +1011,185 @@ fn distance([a, b]: [f64; 2], [c, d]: [f64; 2]) -> f64 {
     (a - c).hypot(b - d)
 }
 
+const BOUNDARY_ROUNDOFF_FACTOR: f64 = 64.0;
+fn boundary_roundoff(edges: &[Edge]) -> f64 {
+    BOUNDARY_ROUNDOFF_FACTOR
+        * f64::EPSILON
+        * edges
+            .iter()
+            .flat_map(|e| e.a.into_iter().chain(e.b))
+            .map(f64::abs)
+            .fold(1.0_f64, f64::max)
+}
 fn region(mut edges: Vec<Edge>) -> Mapping<Value> {
-    // Order carriers by geometric adjacency. This introduces no joining
-    // tolerance: the writer must independently close the directed intervals,
-    // find an interior point and prove the replay against the source STEP.
-    // Equal alternatives are ambiguous and must not depend on query order.
+    let roundoff = boundary_roundoff(&edges);
     let mut rings = Vec::new();
     while let Some(first) = edges.pop() {
-        let start = first.a;
-        let mut end = first.b;
-        let mut area = first.area;
-        let mut boundary = vec![first.boundary(false)];
-        while !first.closed && !edges.is_empty() {
-            let mut candidates = edges
+        let reverse = first.side < 0;
+        let start = if reverse { first.b } else { first.a };
+        let mut end = if reverse { first.a } else { first.b };
+        let mut closed = first.closed;
+        let mut boundary = vec![(first, reverse)];
+        while !closed {
+            let candidates: Vec<_> = edges
                 .iter()
                 .enumerate()
                 .filter(|(_, e)| !e.closed)
-                .flat_map(|(i, e)| {
-                    [
-                        (distance(end, e.a), i, false),
-                        (distance(end, e.b), i, true),
-                    ]
-                })
-                .collect::<Vec<_>>();
-            candidates.sort_by(|a, b| a.0.total_cmp(&b.0));
-            let Some(&(gap, index, reverse)) = candidates.first() else {
-                break;
+                .filter(|(_, e)| distance(end, if e.side < 0 { e.b } else { e.a }) <= roundoff)
+                .map(|(i, _)| i)
+                .collect();
+            let [index] = candidates.as_slice() else {
+                return Err("the directed sketch-region boundary is open or ambiguous".into());
             };
-            if distance(end, start) < gap {
+            let edge = edges.remove(*index);
+            let reverse = edge.side < 0;
+            end = if reverse { edge.a } else { edge.b };
+            boundary.push((edge, reverse));
+            closed = distance(start, end) <= roundoff;
+        }
+        let ring = Ring { edges: boundary };
+        admit_ring(&ring, roundoff)?;
+        rings.push(ring);
+    }
+    for (i, ring) in rings.iter().enumerate() {
+        for other in rings.iter().take(i) {
+            admit_separate_rings(ring, other)?;
+        }
+    }
+    let mut outer_indices = Vec::new();
+    for (i, ring) in rings.iter().enumerate() {
+        let mut contains_all = true;
+        for (j, other) in rings.iter().enumerate() {
+            if i != j && !ring.contains(other.edges.first().ok_or("empty region boundary")?.0.a)? {
+                contains_all = false;
                 break;
             }
-            if !gap.is_finite() || candidates.get(1).is_some_and(|other| other.0 == gap) {
+        }
+        if contains_all {
+            outer_indices.push(i);
+        }
+    }
+    let [outer_index] = outer_indices.as_slice() else {
+        return Err("the directed sketch region needs one outer loop".into());
+    };
+    let outer = rings.remove(*outer_index);
+    if !outer.positive()? {
+        return Err("the directed outer boundary has a contradictory material side".into());
+    }
+    for (i, hole) in rings.iter().enumerate() {
+        if hole.positive()? {
+            return Err("the directed hole boundary has a contradictory material side".into());
+        }
+        admit_separate_rings(&outer, hole)?;
+        if !outer.contains(hole.edges.first().ok_or("empty hole")?.0.a)? {
+            return Err("the sketch-region hole lies outside its outer boundary".into());
+        }
+        for other in rings.iter().take(i) {
+            admit_separate_rings(other, hole)?;
+            if other.contains(hole.edges.first().ok_or("empty hole")?.0.a)?
+                || hole.contains(other.edges.first().ok_or("empty hole")?.0.a)?
+            {
+                return Err("the selected sketch-region holes are nested".into());
+            }
+        }
+    }
+    Ok(
+        json!({"kind":"trimmed", "outer_boundary":outer.boundary(), "hole_boundaries":rings.iter().map(Ring::boundary).collect::<Vec<_>>()}),
+    )
+}
+fn admit_separate_rings(a: &Ring, b: &Ring) -> Mapping<()> {
+    for (first, _) in &a.edges {
+        for (second, _) in &b.edges {
+            if !separated(first, second)? {
                 return Err(
-                    "the sketch-region boundary does not form unambiguous closed loops".into(),
+                    "the sketch-region loops intersect or their separation is unresolved".into(),
                 );
             }
-            let edge = edges.remove(index);
-            end = if reverse { edge.a } else { edge.b };
-            area += if reverse { -edge.area } else { edge.area };
-            boundary.push(edge.boundary(reverse));
         }
-        if !area.is_finite() || area == 0.0 {
-            return Err("the sketch-region boundary has no resolved enclosed area".into());
-        }
-        rings.push((area.abs(), boundary));
     }
-    // A single planar face has one exterior; other rings are its holes. The
-    // writer checks their closure and nesting when choosing an interior point.
-    rings.sort_by(|a, b| a.0.total_cmp(&b.0));
-    let (_, outer) = rings
-        .pop()
-        .ok_or("the sketch region has no resolved boundary edges")?;
-    let holes = rings
-        .into_iter()
-        .map(|(_, boundary)| boundary)
-        .collect::<Vec<_>>();
-    Ok(json!({"kind": "trimmed", "outer_boundary": outer, "hole_boundaries": holes}))
+    Ok(())
 }
-
-// Normalize only floating-point endpoint roundoff, using the existing source
-// loop closure bound. Arc/line junctions then agree even at sin(PI)'s residual.
+fn admit_ring(ring: &Ring, roundoff: f64) -> Mapping<()> {
+    for (i, (edge, _)) in ring.edges.iter().enumerate() {
+        if !edge.closed && distance(edge.a, edge.b) <= roundoff {
+            return Err("the sketch-region boundary contains a degenerate edge".into());
+        }
+        for (j, (other, _)) in ring.edges.iter().take(i).enumerate() {
+            let adjacent = i == j + 1 || j == 0 && i + 1 == ring.edges.len();
+            if separated(edge, other)? {
+                continue;
+            }
+            if !adjacent || !endpoint_contact(edge, other, roundoff)? {
+                return Err(
+                    "the sketch-region boundary intersects or its intersection is unresolved"
+                        .into(),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+fn endpoint_contact(first: &Edge, second: &Edge, roundoff: f64) -> Mapping<bool> {
+    let endpoint = |point| {
+        [first.a, first.b]
+            .iter()
+            .any(|first| distance(*first, point) <= roundoff)
+            && [second.a, second.b]
+                .iter()
+                .any(|second| distance(*second, point) <= roundoff)
+    };
+    match (first.conic()?, second.conic()?) {
+        (None, None) => {
+            let first_delta = [first.b[0] - first.a[0], first.b[1] - first.a[1]];
+            let second_delta = [second.b[0] - second.a[0], second.b[1] - second.a[1]];
+            let determinant = cross(first_delta, second_delta);
+            if determinant.abs()
+                <= roundoff
+                    * first_delta[0]
+                        .hypot(first_delta[1])
+                        .max(second_delta[0].hypot(second_delta[1]))
+            {
+                let shared = [first.a, first.b].into_iter().any(endpoint);
+                let axis = usize::from(first_delta[0].abs() < first_delta[1].abs());
+                let [a, b, c, d] = [first.a, first.b, second.a, second.b].map(|point| {
+                    if axis == 0 {
+                        point[0]
+                    } else {
+                        point[1]
+                    }
+                });
+                let low = a.min(b).max(c.min(d));
+                let high = a.max(b).min(c.max(d));
+                return Ok(shared && high - low <= roundoff);
+            }
+            let offset = [second.a[0] - first.a[0], second.a[1] - first.a[1]];
+            let parameter = cross(offset, second_delta) / determinant;
+            Ok(endpoint([
+                first.a[0] + parameter * first_delta[0],
+                first.a[1] + parameter * first_delta[1],
+            ]))
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            Ok(intersections(first, second)?.into_iter().all(endpoint))
+        }
+        (Some(ca), Some(cb)) => {
+            if ca.center != cb.center
+                || ca.radii != cb.radii
+                || ca.axis != cb.axis
+                || first.closed
+                || second.closed
+            {
+                return Ok(intersections(first, second)?.into_iter().all(endpoint));
+            }
+            let tau = std::f64::consts::TAU;
+            let a_span = first.range[1] - first.range[0];
+            let b_span = second.range[1] - second.range[0];
+            let offset = (second.range[0] - first.range[0]).rem_euclid(tau);
+            let tolerance = BOUNDARY_ROUNDOFF_FACTOR * f64::EPSILON * tau;
+            Ok(offset >= a_span - tolerance && offset + b_span <= tau + tolerance)
+        }
+    }
+}
 fn ray_heights(y: f64, ay: f64, by: f64) -> (f64, f64) {
     let tolerance = 64.0 * f64::EPSILON * ay.abs().max(by.abs()).max(y.abs()).max(1.0);
     let height = |v: f64| {
@@ -824,61 +1209,106 @@ fn ray_crosses_segment([x, y]: [f64; 2], [ax, ay]: [f64; 2], [bx, by]: [f64; 2])
 
 struct Ring {
     edges: Vec<(Edge, bool)>,
-    area: f64,
 }
 
 impl Ring {
+    /// Orientation at the exact left support of a simple closed boundary.
+    /// Stored derivatives establish the material side; no enclosed area or
+    /// sampled interior point chooses the direction.
+    fn positive(&self) -> Mapping<bool> {
+        let mut minimum = f64::INFINITY;
+        for (edge, _) in &self.edges {
+            minimum = minimum.min(edge.projection([1.0, 0.0], edge.conic()?)[0]);
+        }
+        let tolerance = BOUNDARY_ROUNDOFF_FACTOR * f64::EPSILON * minimum.abs().max(1.0);
+        let mut sign = None;
+        for (edge, reversed) in &self.edges {
+            let mut derivatives = Vec::new();
+            if let Some(conic) = edge.conic()? {
+                let (cosine, sine) = conic.vectors();
+                let extremum = sine[0].atan2(cosine[0]) + std::f64::consts::PI;
+                let [from, to] = edge.range;
+                let extremum = from + (extremum - from).rem_euclid(std::f64::consts::TAU);
+                for t in [Some(from), Some(to), (extremum <= to).then_some(extremum)]
+                    .into_iter()
+                    .flatten()
+                {
+                    let x = conic.center[0] + cosine[0] * t.cos() + sine[0] * t.sin();
+                    if (x - minimum).abs() <= tolerance {
+                        derivatives.push(-cosine[1] * t.sin() + sine[1] * t.cos());
+                    }
+                }
+            } else if (edge.a[0] - minimum).abs() <= tolerance
+                || (edge.b[0] - minimum).abs() <= tolerance
+            {
+                derivatives.push(edge.b[1] - edge.a[1]);
+            }
+            for dy in derivatives {
+                let dy = if *reversed { -dy } else { dy };
+                if dy.abs() <= tolerance {
+                    continue;
+                }
+                let positive = dy < 0.0;
+                if sign.is_some_and(|previous| previous != positive) {
+                    return Err(
+                        "the stored boundary direction is contradictory at its analytic support"
+                            .into(),
+                    );
+                }
+                sign = Some(positive);
+            }
+        }
+        sign.ok_or_else(|| "the stored boundary direction has no resolved analytic support".into())
+    }
     fn boundary(&self) -> Vec<Value> {
         self.edges.iter().map(|(e, r)| e.boundary(*r)).collect()
     }
 
-    fn contains(&self, [x, y]: [f64; 2]) -> Mapping<bool> {
+    fn contains(&self, [point_x, point_y]: [f64; 2]) -> Mapping<bool> {
         let mut crossings = 0;
         for (edge, _) in &self.edges {
-            let g = &edge.geometry;
-            if text(g, "kind")? == "line" {
+            let geometry = &edge.geometry;
+            if text(geometry, "kind")? == "line" {
                 let [ax, ay] = edge.a;
                 let [bx, by] = edge.b;
-                if ray_crosses_segment([x, y], [ax, ay], [bx, by]) {
+                if ray_crosses_segment([point_x, point_y], [ax, ay], [bx, by]) {
                     crossings += 1;
                 }
                 continue;
             }
-            let center = g.get("center").ok_or("the region carrier has no center")?;
+            let center = geometry
+                .get("center")
+                .ok_or("the region carrier has no center")?;
             let cx = super::number(center, "u")?;
             let cy = super::number(center, "v")?;
-            let (a, b, angle) = if text(g, "kind")? == "ellipse" {
+            let (major_radius, minor_radius, angle) = if text(geometry, "kind")? == "ellipse" {
                 (
-                    super::number(g, "major_radius")?,
-                    super::number(g, "minor_radius")?,
-                    super::number(g, "major_angle")?,
+                    super::number(geometry, "major_radius")?,
+                    super::number(geometry, "minor_radius")?,
+                    super::number(geometry, "major_angle")?,
                 )
             } else {
-                let radius = super::number(g, "radius")?;
+                let radius = super::number(geometry, "radius")?;
                 (radius, radius, 0.0)
             };
-            let ax = a * angle.cos();
-            let ay = a * angle.sin();
-            let bx = -b * angle.sin();
-            let by = b * angle.cos();
+            let ax = major_radius * angle.cos();
+            let ay = major_radius * angle.sin();
+            let bx = -minor_radius * angle.sin();
+            let by = minor_radius * angle.cos();
             let radius = ay.hypot(by);
-            let level = (y - cy) / radius;
+            let level = (point_y - cy) / radius;
             if level.abs() > 1.0 || edge.closed && level.abs() == 1.0 {
                 continue;
             }
             let phase = by.atan2(ay);
             let [from, to] = edge.range;
-            // Split at height extrema. Every piece is monotone in y and uses
-            // exactly the line branch's geometric half-open endpoint rule.
-            // This avoids angular endpoint tests, which amplify roundoff near
-            // tangencies. A root at an interior extremum is a tangent touch.
             let mut stops = vec![from];
             let pi = std::f64::consts::PI;
             let first = from + (phase - from).rem_euclid(pi);
             for i in 0..3 {
-                let t = first + f64::from(i) * pi;
-                if t > from && t < to {
-                    stops.push(t);
+                let parameter = first + f64::from(i) * pi;
+                if parameter > from && parameter < to {
+                    stops.push(parameter);
                 }
             }
             stops.push(to);
@@ -898,18 +1328,18 @@ impl Ring {
                 } else {
                     cy + ay * hi.cos() + by * hi.sin()
                 };
-                let (da, db) = ray_heights(y, ya, yb);
+                let (da, db) = ray_heights(point_y, ya, yb);
                 if (da > 0.0) == (db > 0.0) || da == 0.0 && *lo != from || db == 0.0 && *hi != to {
                     continue;
                 }
                 let middle = (lo + hi) * 0.5;
                 let rising = -ay * middle.sin() + by * middle.cos() > 0.0;
-                let t = if rising {
+                let parameter = if rising {
                     phase - level.acos()
                 } else {
                     phase + level.acos()
                 };
-                if cx + ax * t.cos() + bx * t.sin() > x {
+                if cx + ax * parameter.cos() + bx * parameter.sin() > point_x {
                     crossings += 1;
                 }
             }
@@ -917,11 +1347,6 @@ impl Ring {
         Ok(crossings % 2 == 1)
     }
 }
-
-/// TOPOLOGY disambiguation is a witness list, not necessarily the complete
-/// face boundary. A face outside every named closed carrier also needs its
-/// enclosing source loop and the other enclosed holes, even if not witnessed.
-/// Recover only isolated, endpoint-connected loops; a branch is a named loss.
 fn source_loops(sketch: &str, model: &Model, budget: &mut Budget) -> Mapping<Loops> {
     let refused = "the outside sketch region has no unique enclosing source loop";
     let mut edges = Vec::new();
@@ -936,8 +1361,7 @@ fn source_loops(sketch: &str, model: &Model, budget: &mut Budget) -> Mapping<Loo
         }
         edges.push(Edge::new(entity.id().as_str().to_owned(), &wire)?);
     }
-    // Permit only f64 arithmetic roundoff. Source-loop closure measurements
-    // for this change are recorded in the review notes.
+    attach_tangencies(&mut edges, model, budget)?;
     let scale = edges
         .iter()
         .flat_map(|e| e.a.into_iter().chain(e.b))
@@ -949,7 +1373,6 @@ fn source_loops(sketch: &str, model: &Model, budget: &mut Budget) -> Mapping<Loo
     while let Some(first) = edges.pop() {
         let start = first.a;
         let mut end = first.b;
-        let mut area = first.area;
         let mut closed = first.closed || distance(start, end) <= roundoff;
         let mut members = vec![(first, false)];
         while !closed {
@@ -974,20 +1397,35 @@ fn source_loops(sketch: &str, model: &Model, budget: &mut Budget) -> Mapping<Loo
             };
             let edge = edges.remove(*index);
             end = if *reverse { edge.a } else { edge.b };
-            area += if *reverse { -edge.area } else { edge.area };
             members.push((edge, *reverse));
             closed = distance(start, end) <= roundoff;
         }
-        if !area.is_finite() {
-            return Err("the outside sketch region has no finite source-loop area".into());
-        }
-        if closed && area != 0.0 {
-            rings.push(Ring {
-                edges: members,
-                area: area.abs(),
-            });
+        if closed {
+            budget.work(
+                members
+                    .len()
+                    .checked_mul(members.len().saturating_sub(1))
+                    .ok_or(BUDGET_LOSS)?,
+            )?;
+            let ring = Ring { edges: members };
+            if admit_ring(&ring, roundoff).is_ok() {
+                rings.push(ring);
+            } else {
+                open.extend(ring.edges.into_iter().map(|(edge, _)| edge));
+            }
         } else {
             open.extend(members.into_iter().map(|(edge, _)| edge));
+        }
+    }
+    for (i, ring) in rings.iter().enumerate() {
+        for other in rings.iter().take(i) {
+            budget.work(
+                ring.edges
+                    .len()
+                    .checked_mul(other.edges.len())
+                    .ok_or(BUDGET_LOSS)?,
+            )?;
+            admit_separate_rings(ring, other)?;
         }
     }
     Ok(Loops { rings, open })
@@ -1009,8 +1447,6 @@ fn exterior_region(
     let rings = &topology.rings;
     let mut candidates = Vec::new();
     for (index, ring) in rings.iter().enumerate() {
-        // A witnessed carrier cannot itself be the enclosing boundary of the
-        // face on its outside. Every witness point must lie inside the loop.
         budget.work(
             ring.edges
                 .len()
@@ -1040,8 +1476,6 @@ fn exterior_region(
             candidates.push(index);
         }
     }
-    // Multiple enclosing loops need more topology evidence. Do not choose
-    // between them by area or source order.
     let [index] = candidates.as_slice() else {
         return Err(refused.into());
     };
@@ -1060,15 +1494,8 @@ fn exterior_region(
         let mut nested = false;
         for (j, other) in rings.iter().enumerate() {
             budget.work(1)?;
-            if other.area > ring.area && other.area < outer.area {
-                budget.work(other.edges.len())?;
-            }
-            if j != i
-                && j != index
-                && other.area > ring.area
-                && other.area < outer.area
-                && other.contains(point)?
-            {
+            budget.work(other.edges.len())?;
+            if j != i && j != index && other.contains(point)? {
                 nested = true;
                 break;
             }
@@ -1077,9 +1504,6 @@ fn exterior_region(
             holes.push(ring);
         }
     }
-    // An open chain can attach inside boundary edges and partition the selected
-    // face. Prove each curve stays inside an excluded convex hole or is isolated
-    // from every other curve. Never discard an unproven chain and expand the selection.
     for edge in &topology.open {
         let mut excluded = false;
         for hole in &holes {
@@ -1091,6 +1515,36 @@ fn exterior_region(
         }
         if !excluded && !isolated(edge, topology, budget)? {
             return Err("the outside sketch region has an open divider whose effect on the selected face is not supported yet".into());
+        }
+    }
+    let boundary_count = std::iter::once(outer)
+        .chain(holes.iter().copied())
+        .try_fold(0usize, |count, ring| {
+            count.checked_add(ring.edges.len()).ok_or(BUDGET_LOSS)
+        })?;
+    budget.work(
+        boundary_count
+            .checked_mul(boundary_count)
+            .ok_or(BUDGET_LOSS)?,
+    )?;
+    budget.work(topology.rings.iter().try_fold(0usize, |count, ring| {
+        count.checked_add(ring.edges.len()).ok_or(BUDGET_LOSS)
+    })?)?;
+    let roundoff = BOUNDARY_ROUNDOFF_FACTOR
+        * f64::EPSILON
+        * topology
+            .rings
+            .iter()
+            .flat_map(|r| &r.edges)
+            .flat_map(|(e, _)| e.a.into_iter().chain(e.b))
+            .map(f64::abs)
+            .fold(1.0_f64, f64::max);
+    admit_ring(outer, roundoff)?;
+    for (i, hole) in holes.iter().enumerate() {
+        admit_ring(hole, roundoff)?;
+        admit_separate_rings(outer, hole)?;
+        for other in holes.iter().take(i) {
+            admit_separate_rings(other, hole)?;
         }
     }
     for ring in std::iter::once(outer).chain(holes.iter().copied()) {
@@ -1112,26 +1566,28 @@ fn segment_in_hole(edge: &Edge, hole: &Ring) -> Mapping<bool> {
     if !carrier.closed {
         return Ok(false);
     }
-    let g = &carrier.geometry;
-    let center = g.get("center").ok_or("the region carrier has no center")?;
+    let geometry = &carrier.geometry;
+    let center = geometry
+        .get("center")
+        .ok_or("the region carrier has no center")?;
     let cx = super::number(center, "u")?;
     let cy = super::number(center, "v")?;
-    let (a, b, angle) = if text(g, "kind")? == "ellipse" {
+    let (major_radius, minor_radius, angle) = if text(geometry, "kind")? == "ellipse" {
         (
-            super::number(g, "major_radius")?,
-            super::number(g, "minor_radius")?,
-            super::number(g, "major_angle")?,
+            super::number(geometry, "major_radius")?,
+            super::number(geometry, "minor_radius")?,
+            super::number(geometry, "major_angle")?,
         )
-    } else if text(g, "kind")? == "circle" {
-        let r = super::number(g, "radius")?;
-        (r, r, 0.0)
+    } else if text(geometry, "kind")? == "circle" {
+        let radius = super::number(geometry, "radius")?;
+        (radius, radius, 0.0)
     } else {
         return Ok(false);
     };
-    Ok([edge.a, edge.b].iter().all(|[x, y]| {
-        let u = ((x - cx) * angle.cos() + (y - cy) * angle.sin()) / a;
-        let v = (-(x - cx) * angle.sin() + (y - cy) * angle.cos()) / b;
-        u * u + v * v <= 1.0 + 32.0 * f64::EPSILON
+    Ok([edge.a, edge.b].iter().all(|[point_x, point_y]| {
+        let unit_u = ((point_x - cx) * angle.cos() + (point_y - cy) * angle.sin()) / major_radius;
+        let unit_v = (-(point_x - cx) * angle.sin() + (point_y - cy) * angle.cos()) / minor_radius;
+        unit_u * unit_u + unit_v * unit_v <= 1.0 + 32.0 * f64::EPSILON
     }))
 }
 
@@ -1142,7 +1598,8 @@ mod tests {
     use std::f64::consts::{FRAC_PI_2, PI, TAU};
 
     fn edge(name: &str, geometry: Value) -> Edge {
-        Edge::new(name.to_owned(), &json!({"geometry":geometry})).unwrap()
+        let record = serde_json::Map::from_iter([("geometry".into(), geometry)]);
+        Edge::new(name.to_owned(), &Value::Object(record)).unwrap()
     }
 
     fn half_ring(ellipse: bool, from: f64, to: f64, reverse: bool) -> Ring {
@@ -1162,14 +1619,13 @@ mod tests {
         if reverse {
             edges.reverse();
         }
-        Ring { edges, area: PI }
+        Ring { edges }
     }
 
     #[test]
     fn curved_endpoint_height_crossings_agree_with_lines_and_reversed_uses() {
         for ellipse in [false, true] {
             for reverse in [false, true] {
-                // The exact reported upper semicircle and horizontal diameter.
                 let upper = half_ring(ellipse, 0.0, PI, reverse);
                 assert!(!upper.contains([-3.0, 0.0]).unwrap());
                 assert!(!upper.contains([3.0, 0.0]).unwrap());
@@ -1178,8 +1634,6 @@ mod tests {
                 let lower = half_ring(ellipse, PI, TAU, reverse);
                 assert!(!lower.contains([-3.0, 0.0]).unwrap());
                 assert!(lower.contains([0.0, -0.5]).unwrap());
-                // Endpoints at extrema: a touch from two incident uses counts
-                // twice (or zero), while an interior tangent counts zero.
                 let left = half_ring(ellipse, FRAC_PI_2, 3.0 * FRAC_PI_2, reverse);
                 for y in [-1.0, 1.0] {
                     assert!(!left.contains([-3.0, y]).unwrap());
@@ -1199,7 +1653,6 @@ mod tests {
             };
             let ring = Ring {
                 edges: vec![(edge("closed", g), false)],
-                area: PI,
             };
             assert!(ring.contains([0.0, 0.0]).unwrap());
             assert!(!ring.contains([-3.0, 0.0]).unwrap());
@@ -1228,7 +1681,6 @@ mod tests {
             );
             let ring = Ring {
                 edges: vec![(arc, reverse), (chord, reverse)],
-                area: 1.0,
             };
             for y in heights {
                 assert!(!ring.contains([-6.0, y]).unwrap());
@@ -1266,7 +1718,7 @@ mod tests {
             "translated",
             json!({"kind":"arc","center":{"u":origin,"v":origin},"radius":2.0,"start_angle":PI/4.0,"end_angle":3.0*PI/4.0}),
         );
-        for (gap, proven) in [(0.0, false), (0.000001, false), (0.001, true)] {
+        for (gap, proven) in [(0.0, false), (0.000_001, false), (0.001, true)] {
             let line = edge(
                 "line",
                 json!({"kind":"line","start":{"u":origin-1.0,"v":origin+2.0+gap},"end":{"u":origin+1.0,"v":origin+2.0+gap}}),
@@ -1403,5 +1855,42 @@ mod tests {
             }
             assert!(refused);
         }
+    }
+}
+
+#[cfg(test)]
+mod closed_form_tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+    use super::*;
+    #[test]
+    fn rotated_ellipse_carriers_have_all_four_closed_form_intersections() {
+        for scale in [1.0, 10.0, 1000.0] {
+            let ellipse = |angle| {
+                Edge::new(String::new(),&json!({"geometry":{"kind":"ellipse","center":{"u":0.0,"v":0.0},"major_radius":3.0*scale,"minor_radius":scale,"major_angle":angle}})).unwrap()
+            };
+            let a = ellipse(0.0);
+            let b = ellipse(0.4);
+            let points = intersections(&a, &b).unwrap();
+            assert_eq!(points.len(), 4, "{points:?}");
+            for point in points {
+                for conic in [a.conic().unwrap().unwrap(), b.conic().unwrap().unwrap()] {
+                    let normalized = conic.normalize(point);
+                    assert!((dot(normalized, normalized) - 1.0).abs() < 1e-12);
+                }
+            }
+        }
+    }
+    #[test]
+    fn a_stored_tangent_claim_cannot_hide_a_normal_gap_behind_line_length() {
+        let circle = Edge::new(
+            "circle".into(),
+            &json!({"geometry":{"kind":"circle","center":{"u":0.0,"v":0.0},"radius":1.0}}),
+        )
+        .unwrap();
+        let mut line=Edge::new("line".into(),&json!({"geometry":{"kind":"line","start":{"u":-1e12,"v":10.0},"end":{"u":1e12,"v":10.0}}})).unwrap();
+        line.tangent_peers.insert(circle.id.clone());
+        assert!(intersections(&line, &circle)
+            .unwrap_err()
+            .contains("contradicts"));
     }
 }

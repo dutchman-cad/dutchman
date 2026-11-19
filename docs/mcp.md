@@ -36,16 +36,29 @@ bundle's STEP geometry. Fillets and chamfers (tangent chains included) need a So
 0.40 or newer target. See [Onshape](onshape.md) for the supported subset.
 Ellipses and elliptical arcs map through the shared sketch writer. Variables retain
 units, expressions and sketch/extrude dependencies, also alongside a STEP fallback.
-Thin extrudes retain selected curves, thickness and side on SolidCraft 0.44 and
-newer (set `solidcraft_version` to `0.44.1`). Repeated ellipse trims use intersection
+Thin extrudes map stored thicknesses, side and direction controls after proving the
+selected input-body scope. Missing controls retain final STEP geometry with
+`onshape/extrude.thin-not-supported`. Repeated ellipse trims use intersection
 records and solved chord endpoints; outside-face witnesses recover complete closed
-source loops. Unresolved wall options retain `onshape/extrude.thin-not-supported`;
+source loops. All unresolved thin construction retains `onshape/extrude.thin-not-supported`;
 asymmetric chamfers report missing input reference-face ordering.
 Unproven open dividers and exhausted cumulative region-recovery budgets produce
 `onshape/history.not-supported` before writing, including with verification off.
 Simplify the sketch or split the bundle when the recovery budget is exhausted;
 the final STEP shape remains available. Native symmetric distances and parameter
 fallback defaults stay unchanged.
+
+Onshape quantities need a dimensioned expression or explicit supported units.
+Malformed or repeated Boolean operands, unresolved latest variable bindings,
+face/cap sketch attachments without a stored complete frame, up-to-next extents without
+exact stored-target coverage, ambiguous directed region boundaries
+and missing required hole facts retain `onshape/history.not-supported` with a specific
+reason. A dropped sketch dimension instead uses
+`onshape/sketch.constraint-not-supported`, preserving the solved geometry.
+Blind holes need an explicit unique tip angle; angled bottoms also need Boolean
+`depthToTip`. Hole standards need explicit hand and modeled/cosmetic facts.
+Inspect these losses before relying on editable history; the final STEP shape remains.
+
 An explicitly inconsistent bundle is refused with a request to fetch it again or
 use a version link. Legacy v1 bundles without consistency metadata remain readable.
 Default-plane frames and explicit sketch-region boundaries can be resolved from
@@ -942,6 +955,13 @@ undecoded mesh container or an unresolved source alone cannot supply a count, so
 existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
+
+Onshape up-to-next extents use exact intersections with stored input faces to prove
+coverage and first termination over closed profile boundaries. Face/cap attachments
+need stored complete frames. Thin extrudes need stored thickness, side and direction
+controls plus a proved input-body scope. Missing or contradictory data retains the
+existing named loss and final STEP geometry; region holes use closed-boundary
+containment and closed-form line/conic intersections, never area or finite samples.
 
 ## Fetch an Onshape snapshot
 

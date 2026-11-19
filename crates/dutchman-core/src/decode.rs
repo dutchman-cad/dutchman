@@ -71,8 +71,15 @@ pub(crate) fn decode_with_progress(
     catch_unwind(AssertUnwindSafe(|| {
         #[cfg(feature = "onshape")]
         if format == Format::OnshapeBundle {
-            let mut model = crate::onshape::read(path, bytes, report, progress)?;
-            with_fallback(&mut model.ir, report, &policy(), bytes.len() as u64)?;
+            let arena = DecodeArena::new();
+            let policy = policy();
+            let (ctx, _) = DecodeContext::from_root_bytes(bytes, &arena, &policy)
+                .map_err(|error| Error::Decode(error.to_string()))?;
+            let result = crate::onshape::read(&ctx, path, bytes, report, progress);
+            ctx.finish_session()
+                .map_err(|error| Error::Decode(error.to_string()))?;
+            let mut model = result?;
+            with_fallback(&mut model.ir, report, &policy, bytes.len() as u64)?;
             return Ok(model);
         }
         decode_unguarded(
@@ -91,6 +98,54 @@ pub(crate) fn decode_with_progress(
             "the {} decoder failed unexpectedly on this file",
             format.name()
         )))
+    })
+}
+
+/// Decode a bundle's STEP member in its parent's resource session and panic guard.
+#[cfg(feature = "onshape")]
+pub(crate) fn onshape_step(
+    ctx: &DecodeContext<'_>,
+    path: &Path,
+    bytes: &[u8],
+    report: &mut Report,
+    progress: Option<&crate::Progress<'_>>,
+) -> Result<Model, Error> {
+    if let Some(progress) = progress {
+        progress.stage(Stage::Decode);
+    }
+    let catalog = InputCatalog::with_builtins();
+    let forced = forced_input("step").map_err(|error| Error::Decode(error.to_string()))?;
+    let root = View::over_retained(bytes);
+    let ResolvedSource::Native { codec, .. } = catalog
+        .resolve_source(ctx, root, forced)
+        .map_err(|error| Error::Decode(error.to_string()))?
+    else {
+        return Err(Error::Decode(
+            "Onshape STEP decoder is not available".into(),
+        ));
+    };
+    let _depth = ctx
+        .enter_nested("Onshape STEP member")
+        .map_err(|error| Error::Decode(error.to_string()))?;
+    let decoded = codec
+        .decode_with_context(ctx, root)
+        .map_err(|error| decode_failure(Format::Step, error))?;
+    let (ir, decoded_report, fidelity) = decoded.into_parts();
+    if !decoded_report.geometry_transferred() {
+        return Err(Error::Decode(
+            "no geometry could be read from the Onshape STEP member".into(),
+        ));
+    }
+    report.extend_from_cadmpeg(&decoded_report.losses);
+    Ok(Model {
+        ir,
+        fidelity: Some(fidelity),
+        name: design_name(path),
+        source_file: path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned()),
+        assembly: None,
+        source_step: None,
     })
 }
 

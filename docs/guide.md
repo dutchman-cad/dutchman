@@ -23,18 +23,21 @@ See [the port audit](cadir-v11.md) for the pinned reader contract.
 Local Onshape bundles (`.onshape-bundle`) convert through the same command:
 `dutchman convert bracket.onshape-bundle bracket.sc`. The reader works offline on
 one Part Studio, including sketch-only bundles without STEP. Supported history includes
-resolved extrusion-cap sketches, tangent chains, construction-line revolve axes,
+built-in-plane sketches, tangent chains, construction-line revolve axes,
 counterbore/countersink holes, midpoint relations, assigned variables and symmetric
 blind extrudes. Variables become SolidCraft parameters that keep sketch dimensions,
-extrude depths and revolve angles driven. Up-to-next extrudes use the single planar input face reached by the
-whole profile; up-to-face extrudes retain their selected planar input face. A face
+extrude depths and revolve angles driven. Up-to-next extents map when exact intersections with stored input faces prove coverage
+and the first termination over the complete closed profile. Face/cap sketch attachments
+need a stored complete frame; unresolved cases report `onshape/history.not-supported`.
+Up-to-face extrudes retain their selected planar input face. A face
 at a slant to the sketch needs SolidCraft 0.44 or newer as the target. Older targets
 retain a named loss and the final geometry. Unresolved selections and unsupported
 expressions retain named losses.
 Ellipses and elliptical arcs keep editable geometry. Variables keep their units and
 expressions, including when conversion falls back to STEP with no usable sketch.
-Thin walls keep their curve selections, thickness and side on SolidCraft 0.44
-and newer (`--solidcraft-version 0.44.1`); older targets retain a named loss.
+Thin walls map from stored thicknesses, side and direction controls, and a proved
+sole input-body selection for modifying operations. Missing or contradictory controls
+retain the final STEP geometry with `onshape/extrude.thin-not-supported`.
 Repeated ellipse carriers use solved chord endpoints and intersection records to retain distinct trimmed regions.
 Asymmetric chamfers explain the missing input reference-face ordering.
 Unproven open dividers and exhausted cumulative region-recovery budgets produce
@@ -42,6 +45,18 @@ Unproven open dividers and exhausted cumulative region-recovery budgets produce
 Simplify the sketch or split the bundle when the recovery budget is exhausted;
 the final STEP shape remains available. Native symmetric distances and parameter
 fallback defaults stay unchanged.
+
+Onshape quantities need a dimensioned expression or explicit supported units.
+Malformed or repeated Boolean operands, unresolved latest variable bindings,
+face/cap sketch attachments without a stored complete frame, up-to-next extents without
+exact stored-target coverage, ambiguous directed region boundaries
+and missing required hole facts retain `onshape/history.not-supported` with a specific
+reason. A dropped sketch dimension instead uses
+`onshape/sketch.constraint-not-supported`, preserving the solved geometry.
+Blind holes need an explicit unique tip angle; angled bottoms also need Boolean
+`depthToTip`. Hole standards need explicit hand and modeled/cosmetic facts.
+Inspect these losses before relying on editable history; the final STEP shape remains.
+
 See [Onshape](onshape.md) for editable features, required rollback
 responses, and the STEP fallback when a feature is not supported yet.
 Bundles marked `consistent: false` are refused; fetch again or use a version link.

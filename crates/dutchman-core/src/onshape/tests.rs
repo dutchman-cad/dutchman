@@ -308,6 +308,7 @@ fn a_region_can_keep_an_outer_circle_and_an_inner_hole() {
         boundary[0]["derivedFrom"]["sketchEntityId"] = json!("outer");
         let mut hole = boundary.clone();
         hole[0]["derivedFrom"]["sketchEntityId"] = json!("inner");
+        hole[1] = json!(-1);
         value["disambiguationData"][0]["entities"] = json!([hole, boundary]);
         replace_query(query, &value);
     });
@@ -390,6 +391,9 @@ fn adjacent_regions_keep_the_shared_edge_in_each_directed_boundary() {
                     .map(|name| {
                         let mut edge = edge.clone();
                         edge[0]["derivedFrom"]["sketchEntityId"] = json!(name);
+                        if i == 1 && *name == "divider" {
+                            edge[1] = json!(-1);
+                        }
                         edge
                     })
                     .collect(),
@@ -487,7 +491,7 @@ fn sketch_dimension_ordinals_restart_for_each_owner() {
 }
 
 #[test]
-fn zlib_cap_queries_keep_face_sketches_in_the_source_frame() {
+fn zlib_cap_queries_refuse_unresolved_attachment_frames() {
     use base64::Engine;
     let bytes = changed(|response| {
         let mut face_sketch = response["features"][0].clone();
@@ -511,22 +515,16 @@ fn zlib_cap_queries_keep_face_sketches_in_the_source_frame() {
             .push(face_sketch);
     });
     let (wire, report) = read(&bytes);
-    assert_eq!(
-        kinds(&wire),
-        ["sketch", "extrude", "sketch"],
-        "{:?}",
-        report.losses()
-    );
-    let sketch = wire["sketches"]
+    assert_eq!(kinds(&wire), ["sketch", "extrude", "native"]);
+    assert!(wire["sketches"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|s| s["id"] == id("sketch", "cap-sketch"))
-        .unwrap();
-    assert_eq!(
-        sketch["placement"]["frame"]["origin"],
-        topology::point([0.0, 0.0, 5.0])
-    );
+        .all(|s| s["id"] != id("sketch", "cap-sketch")));
+    assert!(report
+        .losses()
+        .iter()
+        .any(|l| l.detail.contains("attachment")));
 }
 
 // A sketch on a side face: the zlib query names the face by its deterministic id
@@ -588,40 +586,17 @@ fn face_sketch_bundle(normal: [f64; 3], orientation: bool) -> Vec<u8> {
 }
 
 #[test]
-fn zlib_face_queries_take_the_outward_face_plane_before_the_sketch() {
-    // The surface normal points into the body; the face's orientation flips it.
-    let (wire, report) = read(&face_sketch_bundle([0.0, 1.0, 0.0], false));
-    assert_eq!(
-        kinds(&wire),
-        ["sketch", "extrude", "sketch"],
-        "{:?}",
-        report.losses()
-    );
-    let sketch = wire["sketches"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|s| s["id"] == id("sketch", "side-sketch"))
-        .unwrap();
-    assert_eq!(
-        sketch["placement"]["frame"],
-        json!({"origin": topology::point([0.0, -20.0, 0.0]),
-            "normal": topology::point([0.0, -1.0, 0.0]),
-            "u_axis": topology::point([1.0, 0.0, 0.0])})
-    );
-    let (wire, _) = read(&face_sketch_bundle([0.0, 0.0, 1.0], true));
-    let sketch = wire["sketches"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|s| s["id"] == id("sketch", "side-sketch"))
-        .unwrap();
-    assert_eq!(
-        sketch["placement"]["frame"],
-        json!({"origin": topology::point([0.0, 0.0, 5.0]),
-            "normal": topology::point([0.0, 0.0, 1.0]),
-            "u_axis": topology::point([1.0, 0.0, 0.0])})
-    );
+fn face_plane_frames_remain_unresolved_for_both_senses() {
+    for normal in [[0.0, 1.0, 0.0], [0.0, 0.0, 1.0], [0.6, 0.0, 0.8]] {
+        for sense in [false, true] {
+            let (wire, report) = read(&face_sketch_bundle(normal, sense));
+            assert_eq!(kinds(&wire), ["sketch", "extrude", "native"]);
+            assert!(report
+                .losses()
+                .iter()
+                .any(|l| l.detail.contains("attachment")));
+        }
+    }
 }
 
 #[test]
@@ -629,9 +604,10 @@ fn face_sketches_on_unmeasured_orientations_are_refused_by_name() {
     let (wire, report) = read(&face_sketch_bundle([0.6, 0.0, 0.8], true));
     assert_eq!(kinds(&wire)[2], "native");
     assert!(
-        report.losses().iter().any(|loss| loss
-            .detail
-            .contains("not parallel to a default plane are not supported yet")),
+        report
+            .losses()
+            .iter()
+            .any(|loss| loss.detail.contains("attachment")),
         "{:?}",
         report.losses()
     );
@@ -797,16 +773,21 @@ fn variable_arithmetic_refuses_forward_references_wrong_units_and_excessive_nest
     let model = cadmpeg_ir::document::Model::default();
     for source in ["#missing", "1 mm + 2 deg", "1 mm / 0", "sin(2 mm)"] {
         assert!(
-            evaluate(source, Dimension::Length, &model).is_err(),
+            evaluate(source, Dimension::Length, &model, &Default::default()).is_err(),
             "{source}"
         );
     }
     let nested = format!("{}1 mm{}", "(".repeat(100), ")".repeat(100));
-    assert!(evaluate(&nested, Dimension::Length, &model).is_err());
+    assert!(evaluate(&nested, Dimension::Length, &model, &Default::default()).is_err());
     assert_eq!(
-        evaluate("2 * (3 mm + 1 cm)", Dimension::Length, &model)
-            .unwrap()
-            .value,
+        evaluate(
+            "2 * (3 mm + 1 cm)",
+            Dimension::Length,
+            &model,
+            &Default::default()
+        )
+        .unwrap()
+        .value,
         26.0
     );
 }
@@ -872,11 +853,10 @@ fn the_origin_named_by_its_deterministic_id_holds_a_point_at_the_sketch_origin()
         .any(|l| l.code.as_deref() == Some("onshape/sketch.constraint-not-supported")));
     // A point the source solve left elsewhere is not tied to the origin.
     let (wire, report) = read(&constrain(0.002));
-    assert!(!wire["sketch_constraints"]
-        .as_array()
-        .is_some_and(|rows| rows
-            .iter()
-            .any(|c| c["definition"]["kind"] == "point_coordinate_values")));
+    assert!(!wire["sketch_constraints"].as_array().is_some_and(|rows| {
+        rows.iter()
+            .any(|c| c["definition"]["kind"] == "point_coordinate_values")
+    }));
     assert!(report.losses().iter().any(|l| l.code.as_deref()
         == Some("onshape/sketch.constraint-not-supported")
         && l.detail.contains("not at the origin")));
@@ -1004,6 +984,7 @@ fn ellipse_regions_keep_exact_angular_boundaries_and_holes() {
         outer[0]["derivedFrom"]["sketchEntityId"] = json!("outer");
         let mut inner = outer.clone();
         inner[0]["derivedFrom"]["sketchEntityId"] = json!("inner");
+        inner[1] = json!(-1);
         value["disambiguationData"][0]["entities"] = json!([inner, outer]);
         replace_query(query, &value);
     });
@@ -1288,7 +1269,11 @@ fn bound_parts(states: &[(usize, &[(&str, &str)])], creators: &[usize]) -> Vec<u
     .unwrap();
     model.ir.geometry.bodies[0].name = Some("Part B".to_owned());
     let bytes = with_parts(states);
-    let bundle = archive::Bundle::open(&bytes).unwrap();
+    let arena = cadmpeg_core::decode::DecodeArena::new();
+    let policy = crate::decode::policy();
+    let (ctx, _) =
+        cadmpeg_core::decode::DecodeContext::from_root_bytes(&bytes, &arena, &policy).unwrap();
+    let bundle = archive::Bundle::open(&ctx, &bytes).unwrap();
     let inputs =
         topology::Inputs::new(&bundle, "partstudios/studio", "synthetic-microversion", &[])
             .unwrap();
@@ -1346,9 +1331,10 @@ fn a_spline_segment_maps_only_over_its_whole_knot_domain() {
                 .any(|e| e["geometry"]["kind"] == "nurbs"));
         } else {
             assert_eq!(kinds(&wire)[0], "native");
-            assert!(report.losses().iter().any(|l| l
-                .detail
-                .contains("trimmed sketch splines are not supported yet")));
+            assert!(report.losses().iter().any(|l| {
+                l.detail
+                    .contains("trimmed sketch splines are not supported yet")
+            }));
         }
     }
 }
@@ -1452,12 +1438,13 @@ fn a_dropped_constraint_names_its_kind_even_when_an_operand_is_missing() {
     });
     let (wire, report) = read(&bytes);
     assert_eq!(kinds(&wire), ["sketch", "extrude"]);
-    assert!(report.losses().iter().any(|loss| loss.code.as_deref()
-        == Some("onshape/sketch.constraint-not-supported")
-        && loss
-            .detail
-            .starts_with("HORIZONTAL sketch constraint is not supported yet:")
-        && loss.detail.contains("kept the solved sketch geometry")));
+    assert!(report.losses().iter().any(|loss| {
+        loss.code.as_deref() == Some("onshape/sketch.constraint-not-supported")
+            && loss
+                .detail
+                .starts_with("HORIZONTAL sketch constraint is not supported yet:")
+            && loss.detail.contains("kept the solved sketch geometry")
+    }));
 }
 
 /// `fixture` with `variables` placed before its features. Every later feature moves down by
@@ -1633,4 +1620,474 @@ fn a_variable_value_no_parameter_drives_is_a_named_loss() {
     assert!(losses[0]
         .detail
         .starts_with("radius uses Part Studio variables"));
+}
+
+#[test]
+fn directed_regions_reject_open_separated_crossing_and_reversed_boundaries() {
+    for case in ["open", "gap", "disjoint", "nested", "reversed", "crossing"] {
+        let bytes = changed(|response| {
+            response["features"][0]["constraints"] = json!([]);
+            let query_template = query::resolved(selected(response)).unwrap();
+            let edge = query_template["disambiguationData"][0]["entities"][0][0].clone();
+            let mut resolved = query_template;
+            let mut boundaries = Vec::new();
+            if matches!(case, "disjoint" | "nested") {
+                response["features"][0]["entities"] = json!([
+                    {"btType":"BTMSketchCurve-4","entityId":"outer","geometry":{"btType":"BTCurveGeometryCircle-115","radius":0.01}},
+                    {"btType":"BTMSketchCurve-4","entityId":"inner","geometry":{"btType":"BTCurveGeometryCircle-115","radius":0.003,"xCenter":if case == "disjoint" {0.03} else {0.0}}}]);
+                for (name, side) in [("outer", 1), ("inner", -1)] {
+                    let mut edge = edge.clone();
+                    edge["derivedFrom"]["sketchEntityId"] = json!(name);
+                    boundaries.push(json!([edge, side]));
+                }
+            } else if case == "open" {
+                response["features"][0]["entities"] = json!([{"btType":"BTMSketchCurveSegment-155","entityId":"open","startParam":0.0,"endParam":1.0,
+                    "geometry":{"btType":"BTCurveGeometryLine-117","pntX":1.0,"dirY":1.0}}]);
+                let mut edge = edge.clone();
+                edge["derivedFrom"]["sketchEntityId"] = json!("open");
+                boundaries.push(json!([edge, 1]));
+            } else {
+                boundaries = resolved["disambiguationData"][0]["entities"]
+                    .as_array()
+                    .unwrap()
+                    .clone();
+                if case == "gap" {
+                    response["features"][0]["entities"][0]["geometry"]["pntX"] = json!(0.001);
+                }
+                if case == "reversed" {
+                    boundaries[0][1] = json!(-1);
+                }
+                if case == "crossing" {
+                    let points = [[0.0, 0.0], [0.02, 0.02], [0.0, 0.02], [0.02, 0.0]];
+                    for (i, entity) in response["features"][0]["entities"]
+                        .as_array_mut()
+                        .unwrap()
+                        .iter_mut()
+                        .take(4)
+                        .enumerate()
+                    {
+                        let a = points[i];
+                        let b = points[(i + 1) % 4];
+                        entity["startParam"] = json!(0.0);
+                        entity["endParam"] = json!(1.0);
+                        entity["geometry"] = json!({"btType":"BTCurveGeometryLine-117","pntX":a[0],"pntY":a[1],"dirX":b[0]-a[0],"dirY":b[1]-a[1]});
+                    }
+                }
+            }
+            resolved["disambiguationData"][0]["entities"] = json!(boundaries);
+            replace_query(selected(response), &resolved);
+        });
+        let result = super::review::decode(&bytes);
+        let wire = super::review::wire(&result);
+        let feature = &wire["model"]["features"][1]["definition"]["value"];
+        assert_eq!(
+            feature["kind"],
+            if case == "nested" {
+                "extrude"
+            } else {
+                "native"
+            },
+            "{case}: {:?}",
+            result.report().losses()
+        );
+        if case == "nested" {
+            assert_eq!(
+                feature["value"]["profile"]["value"]["value"]["regions"][0]["hole_boundaries"]
+                    .as_array()
+                    .unwrap()
+                    .len(),
+                1
+            );
+        } else {
+            assert!(result
+                .report()
+                .losses()
+                .iter()
+                .any(|l| l.code.as_deref() == Some("onshape/history.not-supported")));
+        }
+        super::review::validate(result);
+    }
+}
+
+#[test]
+fn face_plane_tangential_origins_and_rotated_local_geometry_keep_attachment_native() {
+    for sense in [false, true] {
+        for rotated in [false, true] {
+            let bytes = super::review::edit(
+                &face_sketch_bundle([0.0, 0.0, 1.0], sense),
+                |path, response| {
+                    if path.ends_with("bodydetails/2.json") {
+                        response["bodies"][0]["faces"][0]["surface"]["origin"] =
+                            topology::point([0.04, 0.07, 0.005]);
+                    }
+                    if path.ends_with("features.json") && rotated {
+                        for entity in response["features"][2]["entities"].as_array_mut().unwrap() {
+                            if entity["geometry"]["btType"] != "BTCurveGeometryLine-117" {
+                                continue;
+                            }
+                            let geometry = &mut entity["geometry"];
+                            let x = geometry["pntX"].as_f64().unwrap_or(0.0);
+                            let y = geometry["pntY"].as_f64().unwrap_or(0.0);
+                            let dx = geometry["dirX"].as_f64().unwrap_or(0.0);
+                            let dy = geometry["dirY"].as_f64().unwrap_or(0.0);
+                            geometry["pntX"] = json!(-y);
+                            geometry["pntY"] = json!(x);
+                            geometry["dirX"] = json!(-dy);
+                            geometry["dirY"] = json!(dx);
+                        }
+                    }
+                },
+            );
+            let result = super::review::decode(&bytes);
+            let wire = super::review::wire(&result);
+            assert_eq!(
+                wire["model"]["features"][2]["definition"]["value"]["kind"],
+                "native"
+            );
+            assert!(result
+                .report()
+                .losses()
+                .iter()
+                .any(|l| l.code.as_deref() == Some("onshape/history.not-supported")));
+            super::review::validate(result);
+        }
+    }
+}
+
+#[test]
+fn stored_attachment_frame_maps_and_missing_or_contradictory_axes_refuse() {
+    for datum in ["present", "absent", "contradictory", "off-plane"] {
+        let bytes = super::review::edit(
+            &face_sketch_bundle([0.0, 0.0, 1.0], true),
+            |path, response| {
+                if !path.ends_with("features.json") || datum == "absent" {
+                    return;
+                }
+                response["features"][2]["plane"] = json!({
+                "origin":{"x":0.04,"y":0.07,"z":if datum=="off-plane" {0.006} else {0.005}},
+                "normal":{"x":0.0,"y":0.0,"z":1.0},
+                "x":if datum=="contradictory" {json!({"x":0.0,"y":0.0,"z":1.0})} else {json!({"x":0.0,"y":1.0,"z":0.0})}});
+            },
+        );
+        let result = super::review::decode(&bytes);
+        let wire = super::review::wire(&result);
+        assert_eq!(
+            wire["model"]["features"][2]["definition"]["value"]["kind"],
+            if datum == "present" {
+                "sketch"
+            } else {
+                "native"
+            },
+            "{datum}"
+        );
+        if datum == "present" {
+            assert_eq!(
+                wire["model"]["sketches"]
+                    .as_array()
+                    .unwrap()
+                    .last()
+                    .unwrap()["placement"]["frame"]["origin"],
+                topology::point([40.0, 70.0, 5.0])
+            );
+        } else {
+            assert!(result.report().losses().iter().any(|l| l.code.as_deref()
+                == Some("onshape/history.not-supported")
+                && l.detail.contains("attachment")));
+        }
+        super::review::validate(result);
+    }
+}
+
+fn stored_thin_bundle(
+    reverse: bool,
+    flip: bool,
+    operation: &str,
+    missing: Option<&str>,
+) -> Vec<u8> {
+    super::review::edit(FIXTURE, |path, response| {
+        if path.ends_with("features.json") {
+            response["features"].as_array_mut().unwrap().truncate(2);
+            let sketch = response["features"][0]["featureId"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            let entity = response["features"][0]["entities"][0]["entityId"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            response["features"][0]["entities"]
+                .as_array_mut()
+                .unwrap()
+                .truncate(1);
+            response["features"][0]["constraints"] = json!([]);
+            if reverse {
+                let geometry = &mut response["features"][0]["entities"][0]["geometry"];
+                geometry["pntX"] = json!(0.02);
+                geometry["dirX"] = json!(-1.0);
+            }
+            let query = json!({"entityType":"EDGE","historyType":"CREATION","queryType":"SKETCH_ENTITY","operationId":[format!("{sketch}.wireOp")],"sketchEntityId":entity});
+            let encoded = serde_json::to_string(&format!("%{}", compact(&query))).unwrap();
+            let source = &mut response["features"][1];
+            source["parameters"] = json!([
+                {"parameterId":"bodyType","value":"THIN"},
+                {"parameterId":"domain","value":"MODEL"},
+                {"parameterId":"operationType","value":operation},
+                {"parameterId":"wallShape","queries":[{"queryString":format!("query=qCompressed(1.0,{encoded},id);")}]},
+                {"parameterId":"endBound","value":"BLIND"},
+                {"parameterId":"depth","expression":"2 mm"},
+                {"parameterId":"midplane","value":false},
+                {"parameterId":"flipWall","value":flip},
+                {"parameterId":"oppositeDirection","value":reverse},
+                {"parameterId":"thickness1","expression":"1 mm"},
+                {"parameterId":"thickness2","expression":"0 mm"}
+            ]);
+            if operation != "NEW" {
+                source["parameters"].as_array_mut().unwrap().push(
+                    json!({"parameterId":"booleanScope","queries":[{"deterministicIds":["body"]}]}),
+                );
+            }
+            if let Some(missing) = missing {
+                source["parameters"]
+                    .as_array_mut()
+                    .unwrap()
+                    .retain(|p| p["parameterId"] != missing);
+            }
+        }
+        if path.ends_with("bodydetails/1.json") && operation != "NEW" {
+            response["bodies"] = json!([{"id":"body","faces":[],"edges":[],"vertices":[]}]);
+        }
+    })
+}
+#[test]
+fn stored_thin_scope_and_controls_map_a_typed_design() {
+    for operation in ["NEW", "ADD", "REMOVE", "INTERSECT"] {
+        for reverse in [false, true] {
+            for flip in [false, true] {
+                let result =
+                    super::review::decode(&stored_thin_bundle(reverse, flip, operation, None));
+                let wire = super::review::wire(&result);
+                assert_eq!(
+                    wire["model"]["features"][1]["definition"]["value"]["kind"],
+                    "extrude",
+                    "{:?}",
+                    result.report().losses()
+                );
+                let design = &wire["design"]["features"][0]["definition"]["operation"]["value"];
+                assert_eq!(
+                    design["output"]["body"]["thickness"]["value"]["side"]["kind"],
+                    if flip { "inside" } else { "outside" }
+                );
+                assert_eq!(design["direction"]["reversed"]["value"], reverse);
+                super::review::validate(result);
+            }
+        }
+    }
+}
+#[test]
+fn missing_thin_scope_side_thickness_or_direction_refuses_with_named_loss() {
+    for missing in [
+        "domain",
+        "booleanScope",
+        "flipWall",
+        "oppositeDirection",
+        "thickness1",
+        "thickness2",
+        "midplane",
+    ] {
+        let result = super::review::decode(&stored_thin_bundle(false, false, "ADD", Some(missing)));
+        let wire = super::review::wire(&result);
+        assert_eq!(
+            wire["model"]["features"][1]["definition"]["value"]["kind"], "native",
+            "{missing}"
+        );
+        assert!(result.ir().design.features.is_empty());
+        assert!(
+            result
+                .report()
+                .losses()
+                .iter()
+                .any(|l| l.code.as_deref() == Some("onshape/extrude.thin-not-supported")),
+            "{missing}"
+        );
+        super::review::validate(result);
+    }
+    let bytes = super::review::edit(
+        &stored_thin_bundle(false, false, "ADD", None),
+        |path, response| {
+            if path.ends_with("bodydetails/1.json") {
+                response["bodies"]
+                    .as_array_mut()
+                    .unwrap()
+                    .push(json!({"id":"another-body","faces":[],"edges":[],"vertices":[]}));
+            }
+        },
+    );
+    let result = super::review::decode(&bytes);
+    assert_eq!(
+        super::review::wire(&result)["model"]["features"][1]["definition"]["value"]["kind"],
+        "native"
+    );
+    assert!(result
+        .report()
+        .losses()
+        .iter()
+        .any(|l| l.code.as_deref() == Some("onshape/extrude.thin-not-supported")));
+}
+
+#[test]
+fn exact_conic_intersections_map_closed_lenses_and_refuse_missing_intervals() {
+    for elliptical in [false, true] {
+        for missing in [false, true] {
+            let bytes = changed(|response| {
+                response["features"][0]["constraints"] = json!([]);
+                let angle = if elliptical {
+                    (1.0_f64 / 3.0).acos()
+                } else {
+                    std::f64::consts::PI / 3.0
+                };
+                let geometry = |x| {
+                    if elliptical {
+                        json!({"btType":"BTCurveGeometryEllipse-1189","xCenter":x,"yCenter":0.0,"radius":0.003,"minorRadius":0.002,"xDir":1.0,"yDir":0.0,"clockwise":false})
+                    } else {
+                        json!({"btType":"BTCurveGeometryCircle-115","xCenter":x,"yCenter":0.0,"radius":0.002,"xDir":1.0,"yDir":0.0,"clockwise":false})
+                    }
+                };
+                response["features"][0]["entities"] = json!([
+                    {"btType":"BTMSketchCurveSegment-155","entityId":"left","startParam":-angle,"endParam":angle,"geometry":geometry(-0.001)},
+                    {"btType":"BTMSketchCurveSegment-155","entityId":"right","startParam":std::f64::consts::PI-angle,"endParam":std::f64::consts::PI+angle,"geometry":geometry(0.001)}]);
+                if missing {
+                    response["features"][0]["entities"][1]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("endParam");
+                }
+                let mut query = query::resolved(selected(response)).unwrap();
+                let edge = query["disambiguationData"][0]["entities"][0][0].clone();
+                let edges: Vec<_> = ["left", "right"]
+                    .into_iter()
+                    .map(|name| {
+                        let mut edge = edge.clone();
+                        edge["derivedFrom"]["sketchEntityId"] = json!(name);
+                        json!([edge, 1])
+                    })
+                    .collect();
+                query["disambiguationData"][0]["entities"] = json!(edges);
+                replace_query(selected(response), &query);
+            });
+            let result = super::review::decode(&bytes);
+            let wire = super::review::wire(&result);
+            assert_eq!(
+                wire["model"]["features"][1]["definition"]["value"]["kind"],
+                if missing { "native" } else { "extrude" },
+                "ellipse={elliptical}, missing={missing}: {:?}",
+                result.report().losses()
+            );
+            if missing {
+                assert!(result
+                    .report()
+                    .losses()
+                    .iter()
+                    .any(|l| l.code.as_deref() == Some("onshape/history.not-supported")));
+            }
+            super::review::validate(result);
+        }
+    }
+}
+
+#[test]
+fn stored_symmetric_thickness_maps_without_an_inactive_wall_side() {
+    for present in [true, false] {
+        let bytes = super::review::edit(
+            &stored_thin_bundle(false, false, "NEW", Some("flipWall")),
+            |path, response| {
+                if !path.ends_with("features.json") {
+                    return;
+                }
+                let feature = &mut response["features"][1];
+                super::review::parameter(feature, "midplane")["value"] = json!(true);
+                if present {
+                    feature["parameters"]
+                        .as_array_mut()
+                        .unwrap()
+                        .push(json!({"parameterId":"thickness","expression":"2 mm"}));
+                }
+            },
+        );
+        let result = super::review::decode(&bytes);
+        let wire = super::review::wire(&result);
+        assert_eq!(
+            wire["model"]["features"][1]["definition"]["value"]["kind"],
+            if present { "extrude" } else { "native" },
+            "{:?}",
+            result.report().losses()
+        );
+        if present {
+            assert_eq!(
+                wire["design"]["features"][0]["definition"]["operation"]["value"]["output"]["body"]
+                    ["thickness"]["kind"],
+                "symmetric"
+            );
+        } else {
+            assert!(result
+                .report()
+                .losses()
+                .iter()
+                .any(|l| l.code.as_deref() == Some("onshape/extrude.thin-not-supported")));
+        }
+        super::review::validate(result);
+    }
+}
+
+#[test]
+fn stored_tangency_resolves_adjacent_roundoff_contacts_and_missing_or_conflicting_data_refuses() {
+    for datum in ["present", "absent", "contradictory"] {
+        let bytes = changed(|response| {
+            let top = if datum == "contradictory" {
+                0.0011
+            } else {
+                0.001 + 8e-18
+            };
+            response["features"][0]["entities"] = json!([
+                {"btType":"BTMSketchCurveSegment-155","entityId":"right","startParam":-std::f64::consts::FRAC_PI_2,"endParam":std::f64::consts::FRAC_PI_2,"geometry":{"btType":"BTCurveGeometryCircle-115","xCenter":0.001,"yCenter":0.0,"radius":0.001,"xDir":1.0,"yDir":0.0}},
+                {"btType":"BTMSketchCurveSegment-155","entityId":"top","startParam":0.0,"endParam":0.002,"geometry":{"btType":"BTCurveGeometryLine-117","pntX":0.001,"pntY":top,"dirX":-1.0,"dirY":0.0}},
+                {"btType":"BTMSketchCurveSegment-155","entityId":"left","startParam":std::f64::consts::FRAC_PI_2,"endParam":3.0*std::f64::consts::FRAC_PI_2,"geometry":{"btType":"BTCurveGeometryCircle-115","xCenter":-0.001,"yCenter":0.0,"radius":0.001,"xDir":1.0,"yDir":0.0}},
+                {"btType":"BTMSketchCurveSegment-155","entityId":"bottom","startParam":0.0,"endParam":0.002,"geometry":{"btType":"BTCurveGeometryLine-117","pntX":-0.001,"pntY":-0.001,"dirX":1.0,"dirY":0.0}}
+            ]);
+            response["features"][0]["constraints"] = if datum == "absent" {
+                json!([])
+            } else {
+                json!([("right","top"),("right","bottom"),("left","top"),("left","bottom")].into_iter().enumerate().map(|(i,(a,b))| json!({"entityId":format!("tangent-{i}"),"constraintType":"TANGENT","parameters":[{"parameterId":"localFirst","value":a},{"parameterId":"localSecond","value":b}]})).collect::<Vec<_>>())
+            };
+            let mut query = query::resolved(selected(response)).unwrap();
+            let template = query["disambiguationData"][0]["entities"][0][0].clone();
+            query["disambiguationData"][0]["entities"] = json!(["right", "top", "left", "bottom"]
+                .into_iter()
+                .map(|name| {
+                    let mut edge = template.clone();
+                    edge["derivedFrom"]["sketchEntityId"] = json!(name);
+                    json!([edge, 1])
+                })
+                .collect::<Vec<_>>());
+            replace_query(selected(response), &query);
+        });
+        let result = super::review::decode(&bytes);
+        assert_eq!(
+            super::review::wire(&result)["model"]["features"][1]["definition"]["value"]["kind"],
+            if datum == "present" {
+                "extrude"
+            } else {
+                "native"
+            },
+            "{datum}: {:?}",
+            result.report().losses()
+        );
+        if datum != "present" {
+            assert!(result
+                .report()
+                .losses()
+                .iter()
+                .any(|l| l.code.as_deref() == Some("onshape/history.not-supported")));
+        }
+        super::review::validate(result);
+    }
 }
