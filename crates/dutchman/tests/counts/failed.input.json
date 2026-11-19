@@ -1,0 +1,12 @@
+{
+  "ok": false,
+  "input": {
+    "format": "inventor_part",
+    "path": "C:\\private\\part.ipt"
+  },
+  "error": {
+    "message": "private error",
+    "stage": "decode",
+    "kind": "private kind"
+  }
+}

@@ -10,7 +10,7 @@ report (replace `part.f3d` with your file or folder):
 dutchman convert-all --out-dir converted --report-anon report-anon.json part.f3d
 ```
 
-In the desktop app, **Report anonymously on GitHub** on the failed file (under **Help us fix it**)
+In the desktop app, **GitHub issue** in **Is there a problem? Is something missing?**
 does this for you. Review
 `report-anon.json`, then paste it into the
 [**A file didn't convert**](https://github.com/dutchman-cad/dutchman/issues/new?template=file-did-not-convert.yml)
@@ -107,7 +107,8 @@ in the source usually avoids it.
 
 If a file opens in the app that made it but Dutchman can't convert it, it's a bug in Dutchman,
 and the file is the quickest way to fix it. A failed file's card in the desktop and web apps
-has the steps (in the desktop app, open **Help us fix it** under **Review and send report**):
+has the steps (in the desktop app, in **Is there a problem? Is something missing?** at the bottom
+left; **Report this file…** on a card chooses that file):
 
 1. **Join our Discord server.** Already in? Skip this step.
 2. **DM Dutchy.** The button copies a message and opens Dutchy's DM. Paste the message.
@@ -123,7 +124,8 @@ has the steps (in the desktop app, open **Help us fix it** under **Review and se
 Only the Dutchman team sees it. It's never published or used in public tests, and we delete it
 on request.
 
-To send no file, use **Report anonymously on GitHub** instead: no file, no names.
+The secondary pills are **Anonymous report** (review before direct cloud upload) and
+**GitHub issue** (a public issue under your GitHub username).
 
 ## When you can't share the file
 

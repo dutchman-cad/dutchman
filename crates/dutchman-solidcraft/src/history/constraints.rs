@@ -836,8 +836,11 @@ impl Mapper<'_, '_> {
             return None;
         }
         let center = self.position(c.center?)?;
-        let a = self.position(c.start?)?;
-        let b = self.position(c.end?)?;
+        // Sweep constraints address the emitted CCW arc; endpoint loci retain source order.
+        let row = self.builder_curve(c.index)?;
+        let endpoint = |key: &str| self.position(usize::try_from(row.get(key)?.as_u64()?).ok()?);
+        let a = endpoint("a")?;
+        let b = endpoint("b")?;
         let sweep = signed_angle(
             [a[0] - center[0], a[1] - center[1]],
             [b[0] - center[0], b[1] - center[1]],
@@ -1341,6 +1344,33 @@ mod tests {
             json!({"kind": "line",
             "start": {"u": a[0], "v": a[1]}, "end": {"u": b[0], "v": b[1]}}),
         )
+    }
+
+    #[test]
+    fn sketch_clockwise_arc_sweep_constraint_uses_emitted_order() {
+        let model = json!({});
+        let ctx = Context::testing(&model);
+        let mut builder = Builder::default();
+        builder
+            .entity(
+                &entity(
+                    "cw",
+                    json!({"kind":"arc","center":{"u":0.0,"v":0.0},
+            "radius":3.0,"start_angle":0.0,"end_angle":-std::f64::consts::FRAC_PI_2}),
+                ),
+                &mut Report::default(),
+            )
+            .unwrap();
+        let mut mapper = Mapper {
+            ctx: &ctx,
+            builder: &mut builder,
+        };
+        let result = mapper
+            .map(&json!({"kind":"arc_angle","entity":"cw",
+            "angle":std::f64::consts::FRAC_PI_2}))
+            .unwrap();
+        assert_eq!(result[0]["type"], "arc_sweep");
+        assert_eq!(result[0]["value"], std::f64::consts::FRAC_PI_2);
     }
 
     /// A 40 × 30 rectangle (`b`, `r`, `t`, `l`), a circle `c` of radius 5 at (20, 15), a
