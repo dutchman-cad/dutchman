@@ -14,6 +14,7 @@ pub const BUILD_VERSION: &str = match option_env!("DUTCHMAN_NIGHTLY_VERSION") {
 pub mod anon;
 pub mod batch;
 pub mod choices;
+pub mod counts;
 pub mod diagnose;
 pub mod diagnostics;
 pub mod doctor;
@@ -29,6 +30,7 @@ pub mod report_policy;
 pub mod report_send;
 pub mod repro;
 pub mod saved_report;
+pub mod share_links;
 pub mod stop;
 pub mod watch;
 pub mod worker;
@@ -475,15 +477,10 @@ impl ConvertOptions {
     }
 
     fn prepare_writer(&self, input: &Path, memory_note: Option<String>) -> PreparedWriter {
-        let mut options = self.clone();
+        // The report's target is a display-only minor. Keep the typed release, including
+        // its patch, for writer gates and the default file extension.
+        let options = self.clone();
         let solidcraft = json::solidcraft_info(self);
-        if let Some(target) = solidcraft
-            .as_ref()
-            .and_then(|value| value.get("target"))
-            .and_then(Value::as_str)
-        {
-            options.solidcraft_version = target.parse().ok();
-        }
         let memory_stop = !self.no_memory_check
             && self.preset != choices::Preset::Fast
             && self.part.is_none()
@@ -781,6 +778,60 @@ pub fn inspect_report(input: &Path, search: &PartSearch) -> Value {
     }
 }
 
+/// Reads `input` and lists its bodies, its feature timeline with what Dutchman can map of each
+/// feature, and its parameters: the `dutchman.contents/1` report. Nothing is written and
+/// SolidCraft is not run; steps only SolidCraft can confirm are named as such.
+pub fn contents(input: &Path, search: &PartSearch) -> Result<Value, Error> {
+    contents_inner(input, search, None)
+}
+
+/// Lists contents with read progress and a five-second heartbeat.
+pub fn contents_with_progress(
+    input: &Path,
+    search: &PartSearch,
+    on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
+) -> Result<Value, Error> {
+    let progress = dutchman_core::Progress::new(on_progress);
+    progress.run(|| contents_inner(input, search, Some(&progress)))
+}
+
+fn contents_inner(
+    input: &Path,
+    search: &PartSearch,
+    progress: Option<&dutchman_core::Progress<'_>>,
+) -> Result<Value, Error> {
+    if let Some(progress) = progress {
+        progress.stage(dutchman_core::Stage::Input);
+    }
+    let mut report = Report::default();
+    let format = Format::from_path(input).ok_or_else(|| Error::UnknownFormat {
+        path: input.to_path_buf(),
+    })?;
+    let model = dutchman_core::read_with_progress(format, input, search, &mut report, progress)?;
+    if let Some(progress) = progress {
+        progress.stage(dutchman_core::Stage::Map);
+    }
+    let writer = SolidCraftWriter::new()
+        .target_version(Some(dutchman_solidcraft::SolidCraftVersion::default()));
+    let parts = writer.verdicts(&model);
+    Ok(json::contents(
+        input,
+        &report,
+        &parts,
+        &writer.resolved_version().to_string(),
+        model
+            .assembly
+            .as_ref()
+            .map(|assembly| (assembly.parts.len(), assembly.placements.len())),
+    ))
+}
+
+/// The `dutchman.contents/1` report of listing `input`, failed or not.
+pub fn contents_report(input: &Path, search: &PartSearch) -> Value {
+    contents(input, search)
+        .unwrap_or_else(|err| json::error(json::CONTENTS, json::input(input), &err))
+}
+
 impl Inspection {
     /// The `dutchman.inspect/1` report.
     pub fn json(&self, input: &Path) -> Value {
@@ -835,6 +886,36 @@ mod option_tests {
                 report.history_check_skipped(),
                 Some((9_000_000_000, 2_000_000_000))
             );
+        }
+    }
+
+    #[test]
+    fn prepared_writers_preserve_explicit_patch_targets() {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join("synthetic.ipt");
+        std::fs::write(&input, b"synthetic").unwrap();
+        for release in ["0.18.2", "0.25.1", "0.44.1"] {
+            let target: SolidCraftVersion = release.parse().unwrap();
+            let options = ConvertOptions {
+                no_verify: true,
+                solidcraft: Some(dir.path().join("missing-solidcraft-cli")),
+                solidcraft_version: Some(target),
+                ..Default::default()
+            };
+            let prepared = options.prepare_writer(&input, None);
+            let OutputWriter::SolidCraft(writer) = &prepared.writer else {
+                panic!("expected the SolidCraft writer");
+            };
+            assert_eq!(writer.resolved_version(), target);
+            assert_eq!(prepared.extension(), target.extension());
+            assert_eq!(
+                prepared.solidcraft.as_ref().unwrap()["target"],
+                target.minor()
+            );
+            let Some(OutputWriter::SolidCraft(fallback)) = &prepared.without_history else {
+                panic!("expected the geometry-only fallback");
+            };
+            assert_eq!(fallback.resolved_version(), target);
         }
     }
 

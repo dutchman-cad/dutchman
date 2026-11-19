@@ -261,8 +261,9 @@ fn decode_unguarded(
     Ok(model)
 }
 
-/// Diagnose only typed mesh selections with known members. An unresolved import or an
-/// undecoded-container loss alone does not establish how many mesh bodies exist.
+/// Count mesh bodies from decoded tessellations and typed mesh selections with known members.
+/// An unresolved import or an undecoded-container loss alone does not establish how many mesh
+/// bodies exist.
 fn mesh_only_error(
     format: Format,
     ir: &cadmpeg_ir::CadIr,
@@ -279,15 +280,19 @@ fn mesh_only_error(
         return None;
     }
     let mut bodies = BTreeSet::new();
+    let mut suppressed = BTreeSet::new();
     for feature in &ir.model.features {
-        if feature.suppressed == Some(true) {
-            continue;
-        }
         let FeatureOperation::MeshImport { tessellations } =
             feature.evaluation.definition().operation()
         else {
             continue;
         };
+        if feature.suppressed == Some(true) {
+            if let MeshSelection::Tessellations(ids) = tessellations {
+                suppressed.extend(ids.iter().map(|id| id.as_str()));
+            }
+            continue;
+        }
         match tessellations {
             MeshSelection::Tessellations(ids) => {
                 for id in ids {
@@ -303,6 +308,13 @@ fn mesh_only_error(
                 }
             }
             _ => return None,
+        }
+    }
+    // Every Fusion tessellation is a decoded mesh body, also one without a mesh-import feature.
+    for tessellation in &ir.model.tessellations {
+        let id = tessellation.id.as_str();
+        if !suppressed.contains(id) {
+            bodies.insert((None, id));
         }
     }
     if bodies.is_empty() {
@@ -389,7 +401,7 @@ struct Phase {
     sink: Option<std::sync::Arc<dyn crate::MemberObserver>>,
     name: &'static str,
     bytes: u64,
-    started: std::time::Instant,
+    started: crate::time::Instant,
 }
 
 impl Phase {
@@ -405,7 +417,7 @@ impl Phase {
             sink,
             name,
             bytes,
-            started: std::time::Instant::now(),
+            started: crate::time::Instant::now(),
         }
     }
 }
@@ -429,7 +441,7 @@ struct Members {
     step: std::cell::RefCell<Option<Phase>>,
     bytes: u64,
     sink: std::sync::Arc<dyn crate::MemberObserver>,
-    started: std::cell::RefCell<std::collections::BTreeMap<String, std::time::Instant>>,
+    started: std::cell::RefCell<std::collections::BTreeMap<String, crate::time::Instant>>,
 }
 
 impl cadmpeg_codec_f3d::F3zMemberObserver for Members {
@@ -478,7 +490,7 @@ impl cadmpeg_codec_f3d::F3zMemberObserver for Members {
         let mut started = self.started.borrow_mut();
         // The decoder also caps archive members; bound diagnostics independently.
         if started.len() < 100_000 {
-            started.insert(path.to_owned(), std::time::Instant::now());
+            started.insert(path.to_owned(), crate::time::Instant::now());
         }
         self.sink
             .member_event(path, crate::MemberEvent::Start, 0, None);
@@ -1015,6 +1027,66 @@ mod tests {
         model.ir.model.features = vec![feature.clone(), feature];
         let error = mesh_only_error(Format::FusionArchive, &model.ir, false).unwrap();
         assert!(error.to_string().contains("has mesh bodies (1)"));
+    }
+
+    fn tessellation(id: &str) -> cadmpeg_ir::tessellation::Tessellation {
+        use cadmpeg_ir::math::Point3;
+        use cadmpeg_ir::tessellation::{Tessellation, TessellationId, TessellationMesh};
+        let point = |x: f64, y: f64, z: f64| Point3 { x, y, z };
+        let mesh = TessellationMesh::List {
+            vertices: vec![
+                point(0.0, 0.0, 0.0),
+                point(10.0, 0.0, 0.0),
+                point(0.0, 10.0, 0.0),
+            ],
+            triangles: vec![[0, 1, 2]],
+        };
+        Tessellation::new(TessellationId::mint(id).unwrap(), mesh, Vec::new()).unwrap()
+    }
+
+    #[test]
+    fn mesh_only_diagnostic_counts_decoded_meshes_without_a_mesh_import() {
+        let mut model = cube();
+        model.ir.model.features.clear();
+        model.ir.model.tessellations = vec![
+            tessellation("test:model:tessellation#a"),
+            tessellation("test:model:tessellation#b"),
+        ];
+        // A design with B-rep bodies keeps its conversion.
+        assert!(mesh_only_error(Format::FusionArchive, &model.ir, true).is_none());
+        model.ir.geometry.bodies.clear();
+        let error = mesh_only_error(Format::FusionArchive, &model.ir, true).unwrap();
+        assert_eq!(error.stage(), Stage::Project);
+        assert_eq!(error.kind(), "no_geometry");
+        assert_eq!(error.to_string(), "cannot convert this design: it has mesh bodies (2), which Dutchman doesn't convert yet, and no solid bodies could be read. Convert the meshes to solids in Fusion, then save a new copy");
+        assert!(mesh_only_error(Format::InventorPart, &model.ir, true).is_none());
+    }
+
+    #[test]
+    fn mesh_only_diagnostic_counts_an_imported_mesh_once() {
+        let mut model = cube();
+        model.ir.geometry.bodies.clear();
+        model.ir.model.tessellations = vec![tessellation("test:model:tessellation#mesh")];
+        model.ir.model.features = vec![mesh_import(
+            serde_json::json!({"kind": "tessellations", "value": ["test:model:tessellation#mesh"]}),
+        )];
+        let error = mesh_only_error(Format::FusionArchive, &model.ir, true).unwrap();
+        assert!(error.to_string().contains("has mesh bodies (1)"));
+        model.ir.model.features[0].suppressed = Some(true);
+        assert!(mesh_only_error(Format::FusionArchive, &model.ir, true).is_none());
+    }
+
+    #[test]
+    fn mesh_only_diagnostic_adds_decoded_meshes_to_native_members() {
+        let mut model = cube();
+        model.ir.geometry.bodies.clear();
+        model.ir.model.tessellations = vec![tessellation("test:model:tessellation#decoded")];
+        model.ir.model.features =
+            vec![mesh_import(serde_json::json!({"kind": "native", "value": {
+                "native": "test:model:source#mesh", "members": ["17", "23"]
+            }}))];
+        let error = mesh_only_error(Format::FusionArchive, &model.ir, false).unwrap();
+        assert!(error.to_string().contains("has mesh bodies (3)"));
     }
 
     #[test]

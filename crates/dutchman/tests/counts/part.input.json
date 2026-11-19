@@ -1,0 +1,119 @@
+{
+  "ok": true,
+  "input": {
+    "format": "fusion_archive",
+    "path": "/private/example.f3d",
+    "version": "secret-version",
+    "name": "private-name"
+  },
+  "verification": {
+    "status": "verified",
+    "reason": "private verification"
+  },
+  "elapsed_ms": 1000,
+  "history": {
+    "features": [
+      {
+        "kind": "extrude",
+        "status": "mapped",
+        "name": "private-feature",
+        "reason": "private reason",
+        "ordinal": 0,
+        "variant": "private variant",
+        "output_ids": [
+          "private-id"
+        ]
+      },
+      {
+        "kind": "fillet",
+        "status": "mapped",
+        "name": "private-feature",
+        "reason": "private reason",
+        "ordinal": 1,
+        "variant": "private variant",
+        "output_ids": [
+          "private-id"
+        ],
+        "inferred": {
+          "deviation": 9
+        }
+      },
+      {
+        "kind": "sketch",
+        "status": "not_needed",
+        "name": "private-feature",
+        "reason": "private reason",
+        "ordinal": 2,
+        "variant": "private variant",
+        "output_ids": [
+          "private-id"
+        ]
+      },
+      {
+        "kind": "shell",
+        "status": "left_out",
+        "name": "private-feature",
+        "reason": "private reason",
+        "ordinal": 3,
+        "variant": "private variant",
+        "output_ids": [
+          "private-id"
+        ]
+      },
+      {
+        "kind": "loft",
+        "status": "blocked",
+        "name": "private-feature",
+        "reason": "private reason",
+        "ordinal": 4,
+        "variant": "private variant",
+        "output_ids": [
+          "private-id"
+        ]
+      },
+      {
+        "kind": "sweep",
+        "status": "blocked",
+        "name": "private-feature",
+        "reason": "private reason",
+        "ordinal": 5,
+        "variant": "private variant",
+        "output_ids": [
+          "private-id"
+        ],
+        "category": "private-category"
+      },
+      {
+        "kind": "native",
+        "status": "mapped",
+        "name": "private-feature",
+        "reason": "private reason",
+        "ordinal": 6,
+        "variant": "private variant",
+        "output_ids": [
+          "private-id"
+        ],
+        "reapplied": true
+      }
+    ]
+  },
+  "losses": [
+    {
+      "subject": "private-body",
+      "message": "private loss",
+      "code": "private code"
+    }
+  ],
+  "geometry": {
+    "vertices": [
+      [
+        1,
+        2,
+        3
+      ]
+    ]
+  },
+  "names": [
+    "private-name"
+  ]
+}

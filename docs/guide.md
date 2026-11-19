@@ -7,6 +7,50 @@ If a reader supplies only CADIR v11 design history, the final geometry is kept a
 the report says its ordered selections and evaluation states are not mapped yet.
 See [the port audit](cadir-v11.md) for the pinned reader contract.
 
+## Public share links
+
+Paste a public Fusion or Google Drive **file** share link into the desktop app's link
+field and choose **Add link**, paste it when no text field is focused, or drop a saved
+`.url` or `.webloc` link shortcut into the window. The file downloads in the background,
+then joins the same queue as local files. Choose an output folder and convert as usual.
+URI text drops also work when delivered by a desktop integration. Some desktop/browser combinations do not deliver
+raw URL drops through the window toolkit; paste the link in that case.
+
+The CLI accepts the same links:
+
+```sh
+dutchman convert 'https://drive.google.com/file/d/FILE_ID/view' -o design.sc
+```
+
+Quote links in a shell. With no output path, the CLI writes in the current folder using
+the downloaded file's name; an existing default output still requires `--force`.
+Project ZIP links use the existing bounded project extraction and batch conversion.
+
+Only public files needing no login work. Google Drive file links use
+`https://drive.google.com/uc?export=download&id=FILE_ID`, including Drive's virus-scan
+confirmation page. Drive folders and Google Docs documents are not file downloads.
+Fusion links from `a360.co` or `*.autodesk360.com` work when the share page exposes a
+public download URL or download link. If downloads are disabled or require login,
+Dutchman asks you to download the design yourself and drop the file into the app.
+Private and expired links get the same plain explanation.
+
+Downloads use HTTPS, a 200 MB cap matching the web app's default upload limit, a two-minute
+total timeout across DNS, connection, TLS and response streaming, and at most twelve
+requests. Every redirect and confirmation action is checked before contacting its host.
+Resolved addresses must be public unicast: local, private,
+link-local, CGNAT, reserved and cloud metadata destinations are refused, including
+IPv4-mapped IPv6 forms. Each connection uses the screened DNS answer without a second
+lookup. Drive downloads stay on `drive.google.com`,
+`drive.usercontent.google.com`, or `googleusercontent.com` and its subdomains; Fusion
+stays on `a360.co`, `autodesk360.com` and its subdomains, or `autodesk.com` and its subdomains. Other download hosts require a manual download.
+
+The original share link is never included in reports or sent to another service as a
+referrer. Dutchman uses no browser login or credentials and does not load the page's
+scripts, images, or other resources. Downloaded files live in a private temporary folder;
+failed downloads are removed immediately. The CLI removes its download after conversion,
+errors, Ctrl-C, and intentional exits (including a closed output pipe); the app retains downloads while queued files or result cards need them, then removes
+them when cleared or when the app closes. Converted outputs stay in your output folder.
+
 ## Ask your assistant about a saved desktop result
 
 A desktop conversion saves `<stem>.report.json` beside its design (`.failed.json` for a
@@ -54,7 +98,7 @@ A design stores its geometry compressed, so a large assembly stays small: SolidC
 [Install](install.md) has every option, checksums, and the one-time
 [first-run approval](install.md#opening-the-app-the-first-time) on macOS. Install
 [SolidCraft](install.md#solidcraft-optional-recommended) too: Dutchman uses it to check each
-converted history. The supported SolidCraft window is currently 0.18.2–0.43.
+converted history. The supported SolidCraft window is currently 0.18.2–0.44.
 
 ## Your first conversion
 
@@ -86,7 +130,7 @@ dutchman: Info: step/native.passthrough-record-omitted: 2 uninterpreted passthro
 dutchman: Info: step/native.source-record-omitted: 1 source-native record(s) were not represented in STEP
 dutchman: Info: history: flattened: the design carries no feature history
 dutchman: (repeated notes are grouped and long notes shortened; --verbose prints every note in full)
-Want to help Dutchman read SolidWorks better? If you have SolidWorks, you can make a few small test files from short recipes: https://dutchman-cad.github.io/fixtures/ or type /volunteer in our Discord (https://discord.gg/yTcseBEdeu).
+Want to help Dutchman read SolidWorks better? If you have SolidWorks, you can make a few small test files from short recipes: https://dutchmancad.xyz/fixtures/ or type /volunteer in our Discord (https://discord.gg/yTcseBEdeu).
 ```
 
 The synthetic SolidWorks cube lacks native version and configuration metadata, so those
@@ -101,6 +145,11 @@ or `editable history, unverified`). After progress updates, the lines on stderr 
 `--verbose` prints them whole. An explicitly named existing output file is
 replaced (`--no-clobber` keeps it, and the conversion fails instead), and nothing is written
 when the conversion fails.
+
+Inventor attached sheet-metal plates and their bends can keep editable history on an unchanged
+L-shaped or notched base. The plate must span one proven straight profile edge at 90 degrees;
+see [sheet-metal limits](history.md#sheet-metal). Unproven picks or base perimeters with curved,
+open, crossing, disconnected, or collinear edges keep geometry and name the blocked feature.
 
 SolidCraft output accepts `.sc`, `.solidcraft`, and `.solvecraft`; each uses the same container.
 Other targets use their own extension.
@@ -271,6 +320,25 @@ profiles and sweep paths select the whole chain. Constraints that cannot apply t
 are left out with an Info message; the solved geometry remains exact. A loft through such a
 chain is not mapped yet (more edges in a section would change the lofted surface).
 
+Fusion Split Body keeps editable history when its tool is a resolved datum plane or
+input faces whose boundaries prove they lie on one plane. The faces' plane extends through
+the target body. Curved or noncoplanar tools, incomplete input selections, and final-body
+face selections receive specific refusal reasons; conversion keeps the original geometry.
+A body kept only earlier in the timeline is imported from the source's history body before
+the Split. When a Base Feature already imported that same body, the Split reuses it.
+The new Split history body imports and input-face tools need SolidCraft 0.40 or newer.
+Existing Base Feature imports retain their version support.
+Older targets keep the original geometry with a named version reason; existing datum-plane splits remain available. Targeting an installed 0.25–0.39 release also shows the usual older-version notice.
+
+A hole on a planar face can retain its history even when that face has a rounded corner or
+an earlier circular hole. Dutchman checks the source boundary and asks SolidCraft to prove
+that face exists before drilling. A placement inside an existing hole, outside the face,
+or facing out of it stays blocked with a specific reason; conversion keeps the original
+shape. This proof needs SolidCraft replay; when replay is unavailable or disabled, the
+original shape stays visible.
+This extension requires a target of SolidCraft 0.40.0 or newer; older targets retain the
+original geometry with a named reason.
+
 ## Open the result in SolidCraft
 
 In the SolidCraft app, use File, Open, or start it with the design:
@@ -300,7 +368,7 @@ Which SolidCraft a design is written for, and how Dutchman finds the installed o
 ## Where next
 
 - [The desktop app](desktop.md): presets, estimates, the SolidCraft version, and updates.
-- [The command line](command-line.md): options, `inspect`, whole folders, watching a folder.
+- [The command line](command-line.md): options, `inspect`, `contents`, whole folders, watching a folder.
 - [Choosing what to keep](presets.md): Fast, Standard, Full, and the memory and time estimate.
 - [Formats](formats.md): what converts from each program.
 - [Feature history](history.md): what maps onto SolidCraft, and what stops a history.
@@ -366,6 +434,16 @@ This page used to hold everything. Each part now has its own page:
 
 [Look before you convert: inspect](command-line.md#look-before-you-convert-inspect)
 
+### List what a file holds: contents
+
+Assembly-owned features and parameters are included under their component paths,
+with records already present in child parts counted once.
+
+[List what a file holds: contents](command-line.md#list-what-a-file-holds-contents)
+
+Contents reports what maps for the newest SolidCraft release known to this build,
+without looking for or launching an installed SolidCraft CLI.
+
 ### Progress during conversion
 
 [Progress during conversion](command-line.md#progress-during-conversion)
@@ -390,14 +468,77 @@ This page used to hold everything. Each part now has its own page:
 
 [Feature history and the SolidCraft check](history.md)
 
+Contour flanges map when cadmpeg supplies an open sketch chain of lines and arcs, a blind
+sweep along the sketch normal, and material on one side. Their thickness, bend radius and
+supplied K-factor become a sheet rule. Unsupported contour forms keep the original geometry
+and report the reason; see [sheet-metal history](history.md#sheet-metal).
+
 A trimmed profile region, including a revolve's, is selected by a point inside its boundary. When a
 native profile selection can't be resolved, Dutchman tries the selected curves and then the whole
 sketch, and keeps the feature only when SolidCraft's body check confirms it; the loss
 `history/profile-region-inferred` says so. Otherwise the feature stays blocked with its reason.
+When neither confirms, Dutchman measures every region of the sketch the selection can name (up to
+24) in SolidCraft against the source, and keeps the feature only when exactly one region matches;
+the loss `history/profile-region-measured` says so. A last fillet or chamfer whose edges can't be
+proven is measured the same way, choosing among the rebuilt edges within 2 mm of each source edge.
+Such features are marked `inferred` in the JSON report, never exact. A tie, or no match, keeps
+the feature blocked. New inferences against the final shape also require a measured surface
+distance; an unavailable comparison or a part with multiple final bodies keeps the refusal.
+New measured regions are tried only at the last body-building feature, against the original
+solid with both face counts. Every source and replayed body must have finite volume, area,
+complete bounds and derived placement; missing measurements keep the refusal. Regions reported
+only by centroids are refused because a centroid may lie outside its own region. One 120 s
+feature budget covers region discovery (including `sketch.inspect`), mapping and all candidate
+evaluations; late results keep the refusal.
+
+Closed circular input edges can become editable fillets and equal-setback chamfers when
+explicitly targeting SolidCraft 0.44.1 or newer. Their source edge must reference an exact
+stored circle with centre, axis, radius and a full-turn parameter range. Its stored topology must identify one earlier named owning body;
+only that body supplies replay candidates, even when another body has a coincident rim.
+Missing carrier or ownership evidence, ellipses, and transformed source carriers remain
+refused. The rebuilt rim may be split into an edge path or have a different seam. SolidCraft must also confirm the circular carrier's centre, axis, radius,
+and analytic length through `inspect.measure`; seam samples alone cannot establish its plane.
+Gaps, overlaps, ambiguous bodies, and other closed curves remain blockers.
+Use `--solidcraft-version 0.44.1` to select this patch release. The exact target stays in
+effect through input preparation and geometry-only fallbacks; JSON displays its minor, `0.44`.
+Older targets report `blends on closed input circles need SolidCraft 0.44 patch 1 or newer`
+and keep the original geometry. The existing history status and reason fields report refusals.
+
+For SolidCraft 0.44 and newer, extrude joins, cuts and intersections can keep a
+selected body scope at the final body-building feature when the reader names
+modified bodies and replay matches the final source geometry. The Info note `history/body-scope-confirmed`
+records this confirmation. Intermediate body centres cannot confirm body scope,
+so intermediate features keep the previous mapping. Without confirmation the
+previous mapping applies; older targets keep their existing output.
+
+On SolidCraft 0.44 and newer, a consumed boolean tool with no final body row
+keeps a name only when its identity is proved: the source retains exactly one
+history body with `produced_by` matching its single-output producer, or the
+complete replay matches the final source geometry. Replay candidates keep
+their names only after that check passes; intermediate body centres cannot
+confirm them. An output ID alone is not proof. Without proof, selecting the
+tool stops editable history with "it selects a body that an earlier feature
+has not named". Older targets keep the previous mapping.
 
 Constant-radius fillets and equal-setback chamfers whose proven input edges span several
 bodies become one SolidCraft blend per body, with numbered names from the same source
 feature. The report keeps one `mapped` feature outcome for that source feature.
+
+For SolidCraft 0.44 and newer, sweep paths may select a connected open chain of proven input
+edges on one earlier body. Missing source geometry, ambiguous matches, topological guide rails, and older
+targets keep the original geometry and report a specific history blocker. Closed sweep
+paths, including loops assembled from open edges, still require a proven start and traversal
+direction and remain refused. An unavailable exact curve measurement blocks only the feature
+that needs it; earlier straight-edge blends remain editable. These proofs
+require a SolidCraft replay for body-edge selections; `--no-verify` cannot establish those
+edges. A stored sketch wire instead resolves to its owning earlier sketch when every edge
+matches one entire mapped curve, including the midpoint and length of an arc.
+
+A history using these edge paths stays hidden beside the
+original unless the full comparison succeeds. This also applies when checking is off
+or the original cannot be measured soundly. The original position and shape remain
+visible, and the report explains the unverified check. Other histories keep their
+existing verification behavior.
 
 
 Offset datum planes need no building feature when their support resolves or all their
@@ -516,7 +657,7 @@ Face counts alone never flag a difference. Missing measurements are explicit. Ch
 No automatic report is sent. The observed false-positive rate for the two
 placement-golden assemblies is 0/329 evaluated body rows (0%);
 [calibration results and limits](doctor-calibration.md) give the coverage and denominators.
-The STEP itself stays local; use the private-send card if you choose to share it.
+The STEP itself stays local; use the private Discord steps if you choose to share it.
 
 The structural checks also flag `geometry_untrimmed_torus`: a toroidal face without
 trim loops sharing a shell with other faces. Review its boundary before reporting a
@@ -545,22 +686,27 @@ produced. These small controls establish basic behavior, not a false-positive ra
 for large assemblies or arbitrary designs.
 
 <a id="report-consent"></a>
-Report consent is per report. On a converted desktop card, expand
-**Something wrong? Report this file**; on a failed card, the actions are already visible.
-**Review and send report**
-opens a review with bundle or summary. A bundle is selected when available; otherwise
+After a conversion, **Output folder** folds into a summary so the reporting steps stay
+in view. Click its folder path or **Change…** to reopen all output settings. **Clear**
+removes the designs and results and restores the expanded settings.
+
+Report consent is per report. In the desktop app, the **Anonymous report** and **GitHub issue**
+pills sit directly below the three steps in **Is there a problem? Is something missing?**,
+and also appear under **More**. **Anonymous report** opens a review for the chosen file
+with bundle or summary. A bundle is selected when available; otherwise
 only the anonymous summary is offered and selected: version, OS, format, source app and
 problem signature only. Converted results use `converted-with-problem` and never
 reuse a prior failure bundle. The review displays the exact metadata and sharing choices.
 Descriptions are not supported in the anonymous envelope; describe the problem privately
-or in the GitHub form without private names or paths. Whole files use the private-send card on Discord. A separate box,
+or in the GitHub form without private names or paths. Whole files go privately to Dutchy on Discord. A separate box,
 **You may use this report in a public test case**, starts unticked.
 Nothing is sent before clicking Send. A report is sent only when a matching receipt
 arrives. A temporary failure gets one short retry, then keeps the report locally;
 retrying later requires clicking **Retry**, which appears after a failure. A daily cap
 asks you to try again tomorrow.
-GitHub accepts the anonymous summary only; never attach a geometry bundle there. For a
-converted result the form asks what differs from the original, without claiming conversion failed.
+**Anonymous report** sends to the cloud inbox after review. **GitHub issue** opens the
+prefilled public issue form under your GitHub username. Never attach a geometry bundle
+there. For a converted result the form asks what differs from the original, without claiming conversion failed.
 
 For the CLI, first make a local preview (always printed as JSON):
 
@@ -589,8 +735,12 @@ Report summaries identify the authoring app from the native format, such as Fusi
 Inventor. Exchange formats and unclassified `.prt` use `unknown` because their authoring
 app cannot be inferred. The build version is included alongside this information.
 
-The desktop keeps its page scrollbar visible to reach every private-send option in the results.
-Copied-report notices use the success colour and clear on the next action.
+Desktop anonymous reports take `versions.solidcraft` and `run.verify` from the saved
+conversion report, so changing the installed CLI or verification setting afterward does
+not rewrite what checked that file. No schema fields change.
+
+The desktop scrollbars let you reach the report panel and every result.
+Each reporting step shows its own copied-message notice beside the action.
 **Check a folder** keeps the app header; **Part to check** selects a part for local checks.
 
 `dutchman diagnose part.f3d --bundle --out diagnosis` cuts a private reproduction
@@ -598,7 +748,7 @@ bundle without narrowing. Ordinary diagnosis, narrowing, and doctor also try to 
 bundle when cadmpeg's decoded model fails a check. A cut must reproduce the same
 failure signature; Dutchman widens it if needed and keeps no bundle if proof fails.
 A refused cut, including a closure wider than the current fragment byte limit, is a
-normal no-bundle result; choose summary or the private-send card.
+normal no-bundle result; choose summary or the private Discord steps.
 Shrinking runs for up to ten seconds (or the shorter time limit). Creating
 `diagnose/cancel-bundle` in the output folder stops shrinking between candidates and
 keeps the last proven cut.
@@ -609,8 +759,8 @@ previews never show their contents. Bundles contain numeric geometry. Review the
 before choosing to send. A bundle is the default when available. The service caps the entire multipart request at 25 MiB, including metadata and
 upload overhead. Dutchman keeps gzip bundles at least 64 KiB below that cap and checks the complete
 size before enabling Send. If it will not fit, use the
-private-send card or send a summary. Decode refusals have no bundle yet; choose
-an anonymous summary or the private-send card. Nothing is sent by diagnosis.
+private Discord steps or send a summary. Decode refusals have no bundle yet; choose
+an anonymous summary or the private Discord steps. Nothing is sent by diagnosis.
 
 ## Assembly placements
 
@@ -635,8 +785,8 @@ that moves, and is reported. Smart also keeps the first placement of a displayed
 everything inside it) when a part below it would leave the bounds grown by 10%. JSON `part_positions` adds `derived_holders`
 and `holder_conflicts`; `bound_displayed` and `derived_holders` partition `displayed`, preserving the displayed/current/first-placement total.
 
-Local CLI and desktop progress names the running part or stage and its elapsed time,
-including “Still …” notices and full-sentence check-limit consequences. Durations use one
+Local CLI and desktop progress names the running part or stage and its elapsed time, the
+feature a design's history is on ("Feature 29 of 37 · Extrude 1"), including “Still …” notices and full-sentence check-limit consequences. Durations use one
 format, such as `1 min 1 s` or `2 min`. Desktop folder runs keep the longest-running file,
 its stage and step visible below the completed count, with the number of other active files. See
 [progress during conversion](command-line.md#progress-during-conversion). MCP final reports
@@ -650,3 +800,56 @@ undecoded mesh container or an unresolved source alone cannot supply a count, so
 existing read error remains.
 Designs with both B-rep and mesh bodies still convert their B-rep bodies and report reader
 losses for meshes it could not decode.
+
+Meeting 3D curve endpoints do not create relations without a decoded source relation.
+
+Decoded 3D sketches retain supported neutral joins, dimensions, axis directions
+and endpoint tangencies on SolidCraft 0.44 and newer; dimensions keep their
+parameters. Other relations are reported as not carried. A selected planar line
+loop can supply an extrude through a separate planar profile sketch only after
+the source body check confirms it. A message saying its planar 3D sketch profile
+has not been confirmed means the original shape is retained. Earlier targets
+keep their existing output. See [Fusion conversion](fusion.md) for the
+remaining spatial constraints and profile limits.
+
+A planar 3D sketch profile copy carries at most 400,000 constraints, including
+repeated line occurrences across all relations. If it exceeds that copy limit,
+reduce repeated relations and convert again; the original shape is retained.
+
+## SolidCraft plugin component
+
+The [plugin front end](plugin.md) converts files through the same core and SolidCraft writer,
+with host-drawn conversion options and a structured loss report. It implements SolidCraft's
+`craft:plugin` importer interface; see that page for the build. To install it, see
+[Dutchman in SolidCraft](solidcraft-plugin.md).
+
+The plugin aborts on host input failures before writing output. Its bounded loss report
+prioritizes dropped and degraded losses and includes an explicit truncation notice and
+`details.truncation` counts when shortened; see [the plugin contract](plugin.md).
+
+A new-body extrude, revolve, sweep or loft can still be reported as `mapped`
+when its required profile or path is absent from the source and its stored result
+is written as a named Import so later features can continue. This fallback runs only
+after ordinary mapping and measured inference fail. An unresolved selection in an
+existing sketch, an unsupported option or an unconfirmed measurement keeps its
+usual refusal. The Degraded loss `history/body-fallback-imported` explains the
+absent input. Recover the original external design to recover the editable recipe.
+Cuts and joins cannot use this fallback.
+
+Each history row in `dutchman.convert/1` and `dutchman.inspect/1` now includes
+`output_ids` and `output_match`, linking it to features in the saved design. A split
+can have several ids; dropped or merged rows have none. Inspection returns empty ids
+with `not_written`. These fields are additive; schemas and existing fields are unchanged.
+See [the JSON report reference](json.md) for the matching values.
+
+
+## Counts-only anonymous reports
+
+Use `--report-counts --report-anon FILE` with `convert` or `convert-all` to write
+`dutchman.report-counts/1`. For MCP `convert_all`, set `report_counts: true` and
+`report_anon` to the destination. This opt-in profile holds counts and fixed categories;
+it has no messages, file IDs, names, paths, dimensions or geometry. It cannot use
+`report_salt` or `report_key`. Source version bands remain `unknown` when unavailable.
+Review the exact file before sharing. This option writes locally and does not authorize
+sending; retain the existing user confirmation before sharing a report.
+See the counts-only schema in [JSON reports](json.md).

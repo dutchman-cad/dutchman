@@ -12,7 +12,7 @@ the assistant when to load it.
 It teaches the assistant to:
 
 - check the format, and say plainly what to do with formats Dutchman does not convert
-- inspect a file before converting it
+- inspect a file before converting it, and list its bodies, features and parameters
 - check the result in SolidCraft instead of trusting the reply alone
 - explain the loss report in plain words
 - keep the user's designs on the user's machine
@@ -52,3 +52,11 @@ Copy-Item -Recurse dutchman\skills\dutchman-converting $HOME\.claude\skills\
 
 When a tool, an argument, a report field or a message these files describe changes, update
 them in the same pull request.
+
+The [SolidCraft component front end](../docs/plugin.md) uses a host-drawn options form and
+returns SolidCraft's loss report with `dutchman.plugin.loss/1` details; the conversion skill's CLI/MCP workflow is unchanged.
+Plugin authoring and evaluator integration details are documented on that page.
+
+The plugin aborts on host input failures before writing output. Its bounded loss report
+prioritizes dropped and degraded losses and includes an explicit truncation notice and
+`details.truncation` counts when shortened; see [the plugin contract](../docs/plugin.md).

@@ -412,12 +412,12 @@ fn mirror_plane(pattern: Option<&Value>) -> Result<Value, String> {
     Ok(json!({"type": "custom", "plane": {"origin": origin, "x_dir": x, "y_dir": y}}))
 }
 
-/// The SolidCraft pattern layout for a CADIR pattern transform.
 /// Whether a linear direction places its instances on both sides of the original.
 fn symmetric(direction: &Value) -> bool {
     direction.get("symmetric").and_then(Value::as_bool) == Some(true)
 }
 
+/// The SolidCraft pattern layout for a CADIR pattern transform.
 fn layout(pattern: Option<&Value>) -> Result<Value, String> {
     let pattern = pattern.ok_or("it has no layout")?;
     match pattern.get("kind").and_then(Value::as_str) {

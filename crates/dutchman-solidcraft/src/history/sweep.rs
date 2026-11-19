@@ -57,7 +57,24 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         .ok_or("its sketch is not an earlier mapped sketch")?
         .feature;
 
-    let (path_sketch, path) = curves(definition.get("path"), ctx, "path")?;
+    let topological =
+        definition.pointer("/path/kind").and_then(Value::as_str) == Some("historical_edges");
+    let (path_sketch, path, edges) = if topological {
+        if !crate::VersionGate::TopologicalEdges.supported(ctx.target_version) {
+            return Err("sweep paths of input edges need SolidCraft 0.44 or newer; choose a newer target to keep this feature editable".to_owned());
+        }
+        let selection = definition.get("path").ok_or("it has no path")?;
+        let (inputs, points) = super::blend::historical(feature, selection, ctx, false)?;
+        super::blend::connected(&inputs)?;
+        if let Some((sketch, path)) = super::edge_path::sketch(feature, selection, &inputs, ctx)? {
+            (Some(sketch), path, None)
+        } else {
+            (None, Vec::new(), Some((inputs, points)))
+        }
+    } else {
+        let (sketch, path) = curves(definition.get("path"), ctx, "path")?;
+        (Some(sketch), path, None)
+    };
     whole(definition.get("path_extent"), "path")?;
 
     let mut extra = Map::new();
@@ -156,6 +173,7 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
     };
     let body_names = body_names(feature, ctx, operation);
 
+    ctx.topological_replay_required |= topological;
     let id = ctx.id();
     ctx.builds = true;
     let mut out = json!({
@@ -165,11 +183,29 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         "suppressed": false,
         "sketch": sketch,
         "profiles": profiles,
-        "path_sketch": path_sketch,
-        "path": path,
         "operation": operation,
     });
     if let Some(fields) = out.as_object_mut() {
+        if let Some((inputs, points)) = edges {
+            // Body-edge paths leave the sketch-path fields empty in the saved feature.
+            fields.insert("path_sketch".to_owned(), json!(0));
+            fields.insert("path".to_owned(), json!([]));
+            fields.insert("path_edges".to_owned(), json!(points));
+            ctx.blends.push(super::blend::Pending {
+                feature: 0,
+                outcome: 0,
+                subject: String::new(),
+                edges: inputs,
+                angle_chamfer: false,
+                face: None,
+                extra: None,
+                trimmed: false,
+                path: true,
+            });
+        } else {
+            fields.insert("path_sketch".to_owned(), json!(path_sketch));
+            fields.insert("path".to_owned(), json!(path));
+        }
         if surface {
             fields.remove("operation");
         }

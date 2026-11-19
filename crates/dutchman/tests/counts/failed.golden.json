@@ -1,0 +1,21 @@
+{
+  "schema": "dutchman.report-counts/1",
+  "converter_version": [
+    0,
+    0,
+    0
+  ],
+  "files": [
+    {
+      "source_format": "inventor_part",
+      "source_version_band": "unknown",
+      "document": "part",
+      "verification": "unknown",
+      "timing": "unknown",
+      "converted": false,
+      "count": 1
+    }
+  ],
+  "features": [],
+  "features_by_kind": {}
+}

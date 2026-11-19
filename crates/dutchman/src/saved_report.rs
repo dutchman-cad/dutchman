@@ -83,3 +83,16 @@ pub fn read(input: &Path) -> Result<Value, String> {
     }
     Ok(crate::json::with_loss_groups(report))
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::indexing_slicing)]
+mod tests {
+    #[test]
+    fn reads_version_one_reports_without_output_links() {
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("part.report.json");
+        let report = serde_json::json!({"schema": "dutchman.convert/1", "ok": true, "losses": []});
+        std::fs::write(&path, serde_json::to_vec(&report).unwrap()).unwrap();
+        assert_eq!(super::read(&path).unwrap()["schema"], "dutchman.convert/1");
+    }
+}

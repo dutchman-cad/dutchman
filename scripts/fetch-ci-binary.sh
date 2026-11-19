@@ -11,7 +11,7 @@
 #   main: the newest successful nightly build (nightly.yml builds main every day, against
 #         cadmpeg's main; its files are kept 7 days).
 #   <pr-number>: the full build of the pull request's head commit, which exists only for
-#         packaging changes, the `release-build` label, or a run started by hand. Without one,
+#         a release-build.yml run started by hand. Without one,
 #         this says how to get it.
 #   rc: the newest successful release-candidate build (tags vX.Y.Z-rc.N; files kept 30 days).
 #   <tag> (v0.2.8-rc.1): that candidate's build.
@@ -122,10 +122,8 @@ case $ref in
     done < <(runs_of release-build.yml --commit "$sha")
     {
       echo "Pull request $ref has no full build at its head commit ($sha) for $target."
-      echo "A pull request gets one only for packaging changes or the release-build label:"
-      echo "  gh pr edit $ref -R $repo --add-label release-build"
-      echo "or start it for the branch: gh workflow run release-build.yml -R $repo --ref $branch"
-      echo "then run this script again when it finishes (about an hour cold, less with warm caches)."
+      echo "Start a release build for the branch: gh workflow run release-build.yml -R $repo --ref $branch"
+      echo "then run this script again when it finishes (the release build uses no Rust cache)."
       echo "Or take the nightly build of main: scripts/fetch-ci-binary.sh main $target $dir"
     } >&2
     exit 1

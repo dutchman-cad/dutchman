@@ -46,7 +46,7 @@ sending anything anywhere. The button only copies text; nothing is sent.
    `dutchman` command inside it, which the guide shows how to put on your `PATH`); elsewhere, the release archive. Check that `dutchman --version`
    prints the version.
 2. Optional, recommended: install a current SolidCraft (any release from the last
-   two weeks, currently 0.18.2–0.43). Older targets down to 0.18.2 get simplified features. With it, Dutchman checks every converted design
+   two weeks, currently 0.18.2–0.44). Older targets down to 0.18.2 get simplified features. With it, Dutchman checks every converted design
    in SolidCraft: whether a feature history replays to the same shape, and whether the
    geometry shows whole, with a volume. Dutchman finds the command-line tool inside an
    installed SolidCraft app (`SolidCraft.app` on macOS, under Program Files on Windows). If
@@ -149,9 +149,10 @@ see which of your files it is. [The report's fields](report-anon.md) are all des
 
 ## 5. Report what you found
 
-**One failed or wrongly converted file, from the app.** Failed cards have
-**Review and send report**. On a converted card, first expand
-**Something wrong? Report this file** for the same review and private-send steps.
+**One failed or wrongly converted file, from the app.** Every finished card has
+**Report this file…**, which chooses the file in **Is there a problem? Is something
+missing?** at the bottom left. There, join the Discord server and DM Dutchy, or open
+**More** for **Anonymous report**.
 The review shows the exact anonymous metadata. There is no free-text description in
 this envelope yet; describe the problem in the private DM or GitHub form instead. You see what the
 report holds and choose before anything goes. No GitHub or Discord account is needed, and the app
