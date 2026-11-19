@@ -436,6 +436,9 @@ pub fn success(schema: &str, input: Value, report: &Report) -> Map<String, Value
             }
         }
     }
+    if let Some(tolerances) = report.verification_tolerances() {
+        out.insert("verification_tolerances".to_owned(), tolerances.clone());
+    }
     if let Some((needed, available)) = report.history_check_skipped() {
         out.insert(
             "history_check_skipped".to_owned(),
@@ -763,7 +766,8 @@ pub fn progress(input: &Path, event: dutchman_core::ProgressEvent) -> Value {
         "stage": event.stage.id(), "elapsed_ms": event.elapsed_ms,
         "designs_read": event.designs_read, "designs_total": event.designs_total,
         "heartbeat": event.heartbeat,
-        "running": event.running.as_ref().map(|s| json!({"kind": s.kind.id(), "name": s.name, "elapsed_ms": s.elapsed_ms, "usual_ms": s.usual_ms, "limit_ms": s.limit_ms, "consequence": s.consequence})),
+        "running": event.running.as_ref().map(|s| json!({"kind": s.kind.id(), "name": s.name, "elapsed_ms": s.elapsed_ms, "usual_ms": s.usual_ms, "limit_ms": s.limit_ms, "consequence": s.consequence,
+            "feature": s.feature.as_ref().map(|f| json!({"index": f.index, "total": f.total, "name": f.name, "measured": f.measured}))})),
     })
 }
 
@@ -795,6 +799,14 @@ pub(crate) fn parse_progress(value: &Value) -> Option<dutchman_core::ProgressEve
                         .get("consequence")
                         .and_then(Value::as_str)
                         .map(str::to_owned),
+                    feature: v.get("feature").filter(|f| f.is_object()).and_then(|f| {
+                        Some(dutchman_core::FeatureStep {
+                            index: f.get("index")?.as_u64()?,
+                            total: f.get("total")?.as_u64()?,
+                            name: f.get("name").and_then(Value::as_str).map(str::to_owned),
+                            measured: f.get("measured").and_then(Value::as_bool).unwrap_or(false),
+                        })
+                    }),
                 })
             }),
     })
@@ -1067,21 +1079,21 @@ mod tests {
     #[test]
     fn installed_version_notices_are_pure_and_non_blocking() {
         for (found, status, notice) in [
-            (Some("0.44.0"), "newer", Some("SolidCraft 0.44 is newer than this Dutchman knows. Designs are written for 0.43 and open fine in 0.44.")),
+            (Some("0.45.0"), "newer", Some("SolidCraft 0.45 is newer than this Dutchman knows. Designs are written for 0.44 and open fine in 0.45.")),
             (Some("0.17.9"), "too_old", Some("SolidCraft 0.17 is too old to open Dutchman's designs. Install a newer SolidCraft to open them.")),
             (Some("0.18.1"), "current", None),
-            (Some("0.43.9"), "current", None),
+            (Some("0.44.9"), "current", None),
             (Some("0.24.0"), "older_loses_history", Some("Designs are written for SolidCraft 0.24, the version you have. A newer SolidCraft keeps more of their history.")),
             (Some("0.25.1"), "current", None),
             (Some("0.26.0"), "current", None),
             (Some("0.27.1"), "current", None),
-            (Some("0.43.0"), "current", None),
+            (Some("0.44.0"), "current", None),
             (Some("0.18.2"), "older_loses_history", Some("Designs are written for SolidCraft 0.18, the version you have. A newer SolidCraft keeps more of their history.")),
             (None, "none_found", None),
         ] {
             let mut report = json!({"solidcraft": solidcraft_values(None, found.map(str::to_owned))});
             assert_eq!(report["solidcraft"]["status"], status);
-            assert_eq!(report["solidcraft"]["known_newest"], "0.43");
+            assert_eq!(report["solidcraft"]["known_newest"], "0.44");
             assert_eq!(solidcraft_notice(&report).as_deref(), notice);
             report["error"] = json!({"message": "conversion failed"});
             assert!(solidcraft_notice(&report).is_none());
@@ -1094,7 +1106,7 @@ mod tests {
     #[test]
     fn cli_version_lines_are_normalized_like_the_writer() {
         for (line, version) in [
-            ("solidcraft-cli 0.43.0", Some("0.43.0")),
+            ("solidcraft-cli 0.44.0", Some("0.44.0")),
             ("solidcraft-cli v0.26.0-beta", Some("0.26.0")),
             ("solidcraft-cli 0.25", Some("0.25.0")),
             ("not a version", None),
@@ -1116,7 +1128,7 @@ mod tests {
         conversion_choices(&mut report, Path::new("missing.ipt"), &options);
         assert_eq!(
             report["solidcraft"],
-            json!({"target": "0.25", "found": null, "known_newest": "0.43", "status": "none_found"})
+            json!({"target": "0.25", "found": null, "known_newest": "0.44", "status": "none_found"})
         );
     }
 
@@ -1145,7 +1157,7 @@ mod tests {
         assert_eq!(writer.resolved_version(), target);
         assert_eq!(
             solidcraft_info(&options).unwrap(),
-            json!({"target": "0.25", "found": null, "known_newest": "0.43", "status": "none_found"})
+            json!({"target": "0.25", "found": null, "known_newest": "0.44", "status": "none_found"})
         );
         assert!(options.reported_solidcraft_version().is_none());
         assert!(!dir.path().join("solidcraft-cli.spawned").exists());
@@ -1153,20 +1165,20 @@ mod tests {
 
     #[test]
     fn solidcraft_versions_report_target_found_and_absence() {
-        let target = "0.43.0".parse().unwrap();
+        let target = "0.44.0".parse().unwrap();
         for (found, line) in [
             (
                 Some("0.26.0".to_owned()),
-                "Target SolidCraft 0.43 (found 0.26.0)",
+                "Target SolidCraft 0.44 (found 0.26.0)",
             ),
             (
-                Some("0.43.1".to_owned()),
-                "Target SolidCraft 0.43 (found 0.43.1)",
+                Some("0.44.1".to_owned()),
+                "Target SolidCraft 0.44 (found 0.44.1)",
             ),
-            (None, "Target SolidCraft 0.43 (none found)"),
+            (None, "Target SolidCraft 0.44 (none found)"),
         ] {
             let report = json!({"solidcraft": solidcraft_values(Some(target), found.clone())});
-            assert_eq!(report["solidcraft"]["target"], "0.43");
+            assert_eq!(report["solidcraft"]["target"], "0.44");
             assert_eq!(report["solidcraft"]["found"], json!(found));
             assert_eq!(solidcraft_line(&report).as_deref(), Some(line));
             let mut refused = report.clone();
@@ -1177,7 +1189,7 @@ mod tests {
             solidcraft_values(None, Some("0.26.0".into()))["target"],
             "0.26"
         );
-        assert_eq!(solidcraft_values(None, None)["target"], "0.43");
+        assert_eq!(solidcraft_values(None, None)["target"], "0.44");
         for to in [
             crate::OutputFormat::Freecad,
             crate::OutputFormat::Fcstd,
@@ -1584,6 +1596,28 @@ mod tests {
     }
 
     #[test]
+    fn verification_tolerances_are_reported_only_when_the_writer_states_them() {
+        let mut report = Report::default();
+        let plain = Value::Object(success(CONVERT, json!({}), &report));
+        assert!(plain.get("verification_tolerances").is_none());
+        report.set_verification_tolerances(dutchman_solidcraft::verification_tolerances());
+        let out = Value::Object(success(CONVERT, json!({}), &report));
+        assert_eq!(out["verification_tolerances"]["version"], 1);
+        assert_eq!(
+            out["verification_tolerances"]["replay"]["volume_relative"],
+            dutchman_solidcraft::VOLUME_TOLERANCE
+        );
+        assert_eq!(
+            out["verification_tolerances"]["stored_bodies"]["exact_box_min_mm"],
+            0.5
+        );
+        // A merged part report keeps them.
+        let mut whole = Report::default();
+        whole.append(report);
+        assert!(whole.verification_tolerances().is_some());
+    }
+
+    #[test]
     fn a_freecad_difference_uses_the_shared_verification_report() {
         let mut report = Report::default();
         report.set_outcome(Outcome {
@@ -1677,5 +1711,35 @@ mod running_progress_tests {
         assert_eq!(parse_progress(&record), Some(event));
         record.as_object_mut().unwrap().remove("running");
         assert!(parse_progress(&record).unwrap().running.is_none());
+    }
+
+    #[test]
+    fn feature_progress_roundtrips_and_older_workers_have_none() {
+        let saved = std::sync::Mutex::new(None);
+        let callback = |event| *saved.lock().unwrap() = Some(event);
+        let reporter = dutchman_core::Progress::new(&callback);
+        let _step = reporter.step(
+            dutchman_core::StepKind::Preparing,
+            Some("Bracket"),
+            None,
+            None,
+        );
+        let timeline = reporter.features(37);
+        timeline.at(29, Some("Extrude 1"));
+        let _measuring = reporter.measuring();
+        let event = saved.lock().unwrap().clone().unwrap();
+        let mut record = progress(Path::new("bracket.f3d"), event.clone());
+        assert_eq!(
+            record["running"]["feature"],
+            json!({"index": 29, "total": 37, "name": "Extrude 1", "measured": true})
+        );
+        assert_eq!(parse_progress(&record), Some(event));
+        record["running"].as_object_mut().unwrap().remove("feature");
+        assert!(parse_progress(&record)
+            .unwrap()
+            .running
+            .unwrap()
+            .feature
+            .is_none());
     }
 }

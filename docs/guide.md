@@ -11,7 +11,26 @@ Earlier targets
 report `design/reference.frozen` and keep frozen derived bodies. Missing references,
 part subsets, configurations or transformed inserts name the reason under
 `onshape/history.not-supported`; fetch a new bundle for missing references.
+
+Derived Boolean conversion requires an explicit stored `keepTools` boolean. Missing or
+contradictory choices retain `onshape/history.not-supported`; later records still convert.
+Captured studio responses are checked against their own manifest microversion, independently
+of the root studio. Fetch a new bundle when the reported reference evidence is missing.
+
 See [Onshape bundles](onshape.md) for the supported reference forms.
+
+Onshape history dependencies follow consumed operands in their stored order. Deterministic
+body, face and edge selections need a unique earlier producer proved by rollback
+transitions; unresolved or ambiguous producers retain `onshape/history.not-supported`.
+Every present scope query list is validated, while an empty list keeps implicit scope.
+Thread depth follows explicit `isTappedThrough` and `tappedDepth`, independently of bore depth.
+A record the reader cannot convert becomes a named loss and the remaining records continue.
+Unreadable or oversized members use `onshape/member.not-supported`; malformed features
+remain Native with `onshape/history.not-supported`. Container admission and exhausted
+caller resource budgets can still stop conversion. Inspect the reported losses before
+relying on editable history.
+Open, one-sided thin walls retain directed left/right data in the reader; writing
+those sides is not supported yet, so the final STEP geometry remains.
 
 Onshape sketch constraint losses name the source constraint kind and why it could not
 be mapped. The solved sketch geometry remains; inspect these losses even when body
@@ -36,20 +55,90 @@ See [the port audit](cadir-v11.md) for the pinned reader contract.
 Local Onshape bundles (`.onshape-bundle`) convert through the same command:
 `dutchman convert bracket.onshape-bundle bracket.sc`. The reader works offline on
 one Part Studio, including sketch-only bundles without STEP. Supported history includes
-resolved extrusion-cap sketches, tangent chains, construction-line revolve axes,
+built-in-plane sketches, tangent chains, construction-line revolve axes,
 counterbore/countersink holes, midpoint relations, assigned variables and symmetric
 blind extrudes. Variables become SolidCraft parameters that keep sketch dimensions,
-extrude depths and revolve angles driven. Up-to-next extrudes use the single planar input face reached by the
-whole profile; up-to-face extrudes retain their selected planar input face. A face
+extrude depths and revolve angles driven. Up-to-next extents map when exact intersections with stored input faces prove coverage
+and the first termination over the complete closed profile. Face/cap sketch attachments
+need a stored complete frame; unresolved cases report `onshape/history.not-supported`.
+Up-to-face extrudes retain their selected planar input face. A face
 at a slant to the sketch needs SolidCraft 0.44 or newer as the target. Older targets
 retain a named loss and the final geometry. Unresolved selections and unsupported
 expressions retain named losses.
+Ellipses and elliptical arcs keep editable geometry. Variables keep their units and
+expressions, including when conversion falls back to STEP with no usable sketch.
+Thin walls map from stored thicknesses, side and direction controls, and a proved
+sole input-body selection for modifying operations. Missing or contradictory controls
+retain the final STEP geometry with `onshape/extrude.thin-not-supported`.
+Repeated ellipse carriers use solved chord endpoints and intersection records to retain distinct trimmed regions.
+Asymmetric chamfers explain the missing input reference-face ordering.
+Unproven open dividers and exhausted cumulative region-recovery budgets produce
+`onshape/history.not-supported` before writing, including with verification off.
+Simplify the sketch or split the bundle when the recovery budget is exhausted;
+the final STEP shape remains available. Native symmetric distances and parameter
+fallback defaults stay unchanged.
+
+Onshape quantities need a dimensioned expression or explicit supported units.
+Malformed or repeated Boolean operands, unresolved latest variable bindings,
+face/cap sketch attachments without a stored complete frame, up-to-next extents without
+exact stored-target coverage, ambiguous directed region boundaries
+and missing required hole facts retain `onshape/history.not-supported` with a specific
+reason. A dropped sketch dimension instead uses
+`onshape/sketch.constraint-not-supported`, preserving the solved geometry.
+Blind holes need an explicit unique tip angle; angled bottoms also need Boolean
+`depthToTip`. Hole standards need explicit hand and modeled/cosmetic facts.
+Inspect these losses before relying on editable history; the final STEP shape remains.
+
 See [Onshape](onshape.md) for editable features, required rollback
 responses, and the STEP fallback when a feature is not supported yet.
 Bundles marked `consistent: false` are refused; fetch again or use a version link.
 Older v1 bundles without consistency metadata still convert. Default-plane sketches
 and explicit sketch-region extrudes also accept the API's compressed query records;
 ambiguous boundaries retain a specific history loss and the final STEP geometry.
+
+## Public share links
+
+Paste a public Fusion or Google Drive **file** share link into the desktop app's link
+field and choose **Add link**, paste it when no text field is focused, or drop a saved
+`.url` or `.webloc` link shortcut into the window. The file downloads in the background,
+then joins the same queue as local files. Choose an output folder and convert as usual.
+URI text drops also work when delivered by a desktop integration. Some desktop/browser combinations do not deliver
+raw URL drops through the window toolkit; paste the link in that case.
+
+The CLI accepts the same links:
+
+```sh
+dutchman convert 'https://drive.google.com/file/d/FILE_ID/view' -o design.sc
+```
+
+Quote links in a shell. With no output path, the CLI writes in the current folder using
+the downloaded file's name; an existing default output still requires `--force`.
+Project ZIP links use the existing bounded project extraction and batch conversion.
+
+Only public files needing no login work. Google Drive file links use
+`https://drive.google.com/uc?export=download&id=FILE_ID`, including Drive's virus-scan
+confirmation page. Drive folders and Google Docs documents are not file downloads.
+Fusion links from `a360.co` or `*.autodesk360.com` work when the share page exposes a
+public download URL or download link. If downloads are disabled or require login,
+Dutchman asks you to download the design yourself and drop the file into the app.
+Private and expired links get the same plain explanation.
+
+Downloads use HTTPS, a 200 MB cap matching the web app's default upload limit, a two-minute
+total timeout across DNS, connection, TLS and response streaming, and at most twelve
+requests. Every redirect and confirmation action is checked before contacting its host.
+Resolved addresses must be public unicast: local, private,
+link-local, CGNAT, reserved and cloud metadata destinations are refused, including
+IPv4-mapped IPv6 forms. Each connection uses the screened DNS answer without a second
+lookup. Drive downloads stay on `drive.google.com`,
+`drive.usercontent.google.com`, or `googleusercontent.com` and its subdomains; Fusion
+stays on `a360.co`, `autodesk360.com` and its subdomains, or `autodesk.com` and its subdomains. Other download hosts require a manual download.
+
+The original share link is never included in reports or sent to another service as a
+referrer. Dutchman uses no browser login or credentials and does not load the page's
+scripts, images, or other resources. Downloaded files live in a private temporary folder;
+failed downloads are removed immediately. The CLI removes its download after conversion,
+errors, Ctrl-C, and intentional exits (including a closed output pipe); the app retains downloads while queued files or result cards need them, then removes
+them when cleared or when the app closes. Converted outputs stay in your output folder.
 
 ## Ask your assistant about a saved desktop result
 
@@ -98,7 +187,7 @@ A design stores its geometry compressed, so a large assembly stays small: SolidC
 [Install](install.md) has every option, checksums, and the one-time
 [first-run approval](install.md#opening-the-app-the-first-time) on macOS. Install
 [SolidCraft](install.md#solidcraft-optional-recommended) too: Dutchman uses it to check each
-converted history. The supported SolidCraft window is currently 0.18.2–0.43.
+converted history. The supported SolidCraft window is currently 0.18.2–0.44.
 
 ## Your first conversion
 
@@ -145,6 +234,11 @@ or `editable history, unverified`). After progress updates, the lines on stderr 
 `--verbose` prints them whole. An explicitly named existing output file is
 replaced (`--no-clobber` keeps it, and the conversion fails instead), and nothing is written
 when the conversion fails.
+
+Inventor attached sheet-metal plates and their bends can keep editable history on an unchanged
+L-shaped or notched base. The plate must span one proven straight profile edge at 90 degrees;
+see [sheet-metal limits](history.md#sheet-metal). Unproven picks or base perimeters with curved,
+open, crossing, disconnected, or collinear edges keep geometry and name the blocked feature.
 
 SolidCraft output accepts `.sc`, `.solidcraft`, and `.solvecraft`; each uses the same container.
 Other targets use their own extension.
@@ -270,8 +364,12 @@ Repeated stderr notes of the same kind are grouped with a count. `--verbose`, `-
 and JSON retain each individual loss. Fusion’s material warning can also appear for a
 default material: the decoded model does not establish that no source appearance was lost.
 
-A Dropped appearance binding names its body or face target. “Its target is absent from the
-decoded model” means no decoded geometry can receive it; “its target exists in the decoded
+Appearance or attribute bindings for one placed instance or an evaluation state are
+left out with a specific loss: Dutchman has no per-occurrence override for them.
+Definition-level appearance bindings still colour every placement of that definition.
+
+A Dropped definition-level appearance binding names its body or face target.
+“Its target is absent from the decoded model” means no decoded geometry can receive it; “its target exists in the decoded
 model but has no placed component geometry” means the target was decoded but is not placed.
 Bindings to consumed or removed Fusion geometry have a separate explanation. “Its body has
 no geometry the STEP writer can write” means the decoded target exists, but its shape cannot
@@ -310,6 +408,15 @@ splines are clamped first. Uniform splines stay one spline. Endpoints are shared
 profiles and sweep paths select the whole chain. Constraints that cannot apply to a chain
 are left out with an Info message; the solved geometry remains exact. A loft through such a
 chain is not mapped yet (more edges in a section would change the lofted surface).
+
+A hole on a planar face can retain its history even when that face has a rounded corner or
+an earlier circular hole. Dutchman checks the source boundary and asks SolidCraft to prove
+that face exists before drilling. A placement inside an existing hole, outside the face,
+or facing out of it stays blocked with a specific reason; conversion keeps the original
+shape. This proof needs SolidCraft replay; when replay is unavailable or disabled, the
+original shape stays visible.
+This extension requires a target of SolidCraft 0.40.0 or newer; older targets retain the
+original geometry with a named reason.
 
 ## Open the result in SolidCraft
 
@@ -675,8 +782,8 @@ that moves, and is reported. Smart also keeps the first placement of a displayed
 everything inside it) when a part below it would leave the bounds grown by 10%. JSON `part_positions` adds `derived_holders`
 and `holder_conflicts`; `bound_displayed` and `derived_holders` partition `displayed`, preserving the displayed/current/first-placement total.
 
-Local CLI and desktop progress names the running part or stage and its elapsed time,
-including “Still …” notices and full-sentence check-limit consequences. Durations use one
+Local CLI and desktop progress names the running part or stage and its elapsed time, the
+feature a design's history is on ("Feature 29 of 37 · Extrude 1"), including “Still …” notices and full-sentence check-limit consequences. Durations use one
 format, such as `1 min 1 s` or `2 min`. Desktop folder runs keep the longest-running file,
 its stage and step visible below the completed count, with the number of other active files. See
 [progress during conversion](command-line.md#progress-during-conversion). MCP final reports
@@ -697,11 +804,25 @@ losses for meshes it could not decode.
 uses the keys saved by `dutchman onshape login` (or Connect Onshape in the app), or `ONSHAPE_ACCESS_KEY`/`ONSHAPE_SECRET_KEY` for scripts, and prints the HTTP
 attempt count. `--version VERSION_ID` selects an immutable version; `--json` prints
 `dutchman.onshape-fetch/1`. This fetcher saves API responses without converting CAD.
-Part Studios include features, needed input topology, variables/configuration, and
-final STEP; assemblies include their same-document Part Studios. Version links use
-version paths throughout. Workspace links pin supported reads to a microversion,
+Part Studios include features, stored sketch placements, needed input topology,
+variables/configuration, and final STEP; assemblies include their same-document
+Part Studios. Version links use version paths throughout. Workspace links pin supported reads to a microversion,
 use workspace paths for STEP/variables, and recheck the head before writing. A
 change triggers one refetch; a second change stops with “the document changed while
 fetching; try again, or use a version link”. Successful manifests record per-file
 path kinds/microversions and `consistent: true`. See [Onshape](onshape.md#fetching-a-document) for keys,
-limits, caching, and privacy.
+limits, caching, and privacy. Each uncached Part Studio now needs one additional
+sketch-information call. Fetch older bundles again when a face-attached sketch
+reports a missing attachment frame; conversion keeps the final shape with
+`onshape/history.not-supported` until that frame is stored.
+
+## SolidCraft plugin component
+
+The [plugin front end](plugin.md) converts files through the same core and SolidCraft writer,
+with host-drawn conversion options and a structured loss report. It implements SolidCraft's
+`craft:plugin` importer interface; see that page for the build. To install it, see
+[Dutchman in SolidCraft](solidcraft-plugin.md).
+
+The plugin aborts on host input failures before writing output. Its bounded loss report
+prioritizes dropped and degraded losses and includes an explicit truncation notice and
+`details.truncation` counts when shortened; see [the plugin contract](plugin.md).

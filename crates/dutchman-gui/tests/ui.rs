@@ -91,7 +91,7 @@ fn header_harness(width: f32, theme: ThemePreference, update: bool) -> Harness<'
         .with_size(egui::vec2(width, 680.0))
         .build_eframe(|cc| test_app(cc));
     h.ctx.set_theme(theme);
-    h.state_mut().preview_solidcraft(Some("0.43.9"));
+    h.state_mut().preview_solidcraft(Some("0.44.9"));
     if update {
         h.state_mut()
             .updater
@@ -122,11 +122,11 @@ fn assert_header_fits(h: &Harness<'_, App>, width: f32, update: bool, theme: &st
     let narrow = width - 64.0 < 850.0;
     let mut labels = vec!["Settings", "Report a problem"];
     let found = h
-        .query_by_label(if narrow { "0.43" } else { "SolidCraft 0.43" })
+        .query_by_label(if narrow { "0.44" } else { "SolidCraft 0.44" })
         .is_some();
     labels.push(match (narrow, found) {
-        (true, true) => "0.43",
-        (false, true) => "SolidCraft 0.43",
+        (true, true) => "0.44",
+        (false, true) => "SolidCraft 0.44",
         (true, false) => "not found",
         (false, false) => "SolidCraft not found",
     });
@@ -581,13 +581,13 @@ fn screenshots() {
             "A newer release is available: the Update pill in the header.",
         );
         for (found, case, update, width) in [
-            (Some("0.43.9"), "current", false, 1120.0),
-            (Some("0.44.0"), "newer", false, 1120.0),
-            (Some("0.44.0"), "newer-update", true, 1120.0),
+            (Some("0.44.9"), "current", false, 1120.0),
+            (Some("0.45.0"), "newer", false, 1120.0),
+            (Some("0.45.0"), "newer-update", true, 1120.0),
             (Some("0.17.9"), "too-old", false, 1120.0),
             (Some("0.24.0"), "older-history", false, 1120.0),
             (None, "none-found", false, 1120.0),
-            (Some("0.44.0"), "narrow", true, 760.0),
+            (Some("0.45.0"), "narrow", true, 760.0),
         ] {
             let mut preview = Harness::builder()
                 .with_size(egui::vec2(width, 680.0))
@@ -631,7 +631,7 @@ fn screenshots() {
                     "too-old" => "is too old to open Dutchman's designs",
                     "older-history" => "A newer SolidCraft keeps more of their history.",
                     "none-found" => "SolidCraft not found. Install SolidCraft",
-                    _ => "SolidCraft 0.43 is installed.",
+                    _ => "SolidCraft 0.44 is installed.",
                 })
                 .is_some());
             let file = format!("00-solidcraft-{case}-{name}.png");
@@ -914,11 +914,12 @@ fn dropped_files_and_results_show_format_status_and_one_invitation() {
     harness.state_mut().add_inputs([first, second]);
     harness.state_mut().set_out_dir(dir.path().join("out"));
     harness.run_steps(8);
-    for program in ["Creo", "NX"] {
-        assert!(harness
-            .query_by_label(&format!("{program} .prt: opens, no geometry yet  L1"))
-            .is_some());
-    }
+    assert!(harness
+        .query_by_label("Creo .prt: opens, no geometry yet  L1")
+        .is_some());
+    assert!(harness
+        .query_by_label("NX .prt: reads geometry  L1")
+        .is_some());
     convert(&mut harness);
     assert!(harness
         .state()
@@ -942,11 +943,13 @@ fn dropped_files_and_results_show_format_status_and_one_invitation() {
 /// Opening a missing-CLI preview retries discovery. Isolate its environment without
 /// changing the process-wide environment of the other, concurrently running tests.
 fn isolate_missing_cli_preview(test: &str) -> bool {
-    if std::env::var_os("SOLIDCRAFT_CLI").is_none() {
+    const ISOLATED: &str = "DUTCHMAN_GUI_MISSING_CLI_PREVIEW";
+    if std::env::var(ISOLATED).as_deref() == Ok(test) {
         return false;
     }
     let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--exact", test, "--nocapture"])
+        .env(ISOLATED, test)
         .env_remove("SOLIDCRAFT_CLI")
         .env("PATH", "")
         .output()
@@ -1015,13 +1018,13 @@ fn solidcraft_status_panel_waits_for_a_click_and_shares_version_notices() {
         return;
     }
     for (found, expected) in [
-        (Some("0.44.0"), "is newer than this Dutchman knows"),
+        (Some("0.45.0"), "is newer than this Dutchman knows"),
         (Some("0.17.9"), "is too old to open Dutchman's designs"),
         (
             Some("0.24.0"),
             "A newer SolidCraft keeps more of their history.",
         ),
-        (Some("0.43.0"), "SolidCraft 0.43 is installed."),
+        (Some("0.44.0"), "SolidCraft 0.44 is installed."),
         (None, "SolidCraft not found. Install SolidCraft"),
     ] {
         let mut harness = Harness::builder()
@@ -1088,14 +1091,44 @@ fn solidcraft_panel_takes_a_chosen_cli_and_explains_the_app_alone() {
         .query_by_label_contains("Found the SolidCraft app")
         .is_none());
 
-    script(&dir.path().join("solidcraft-cli"), "solidcraft-cli 0.43.0");
+    script(&dir.path().join("solidcraft-cli"), "solidcraft-cli 0.44.0");
     harness.state_mut().choose_solidcraft_cli(&app);
     harness.run_steps(8);
-    assert!(harness.query_by_label("SolidCraft 0.43").is_some());
+    assert!(harness.query_by_label("SolidCraft 0.44").is_some());
     assert!(harness.query_by_label("Find automatically").is_some());
     assert!(harness
         .query_by_label_contains("the portable ZIP and the MSI")
         .is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn solidcraft_panel_refuses_a_chosen_cli_older_than_the_oldest_supported() {
+    if isolate_missing_cli_preview(
+        "solidcraft_panel_refuses_a_chosen_cli_older_than_the_oldest_supported",
+    ) {
+        return;
+    }
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let cli = dir.path().join("solidcraft-cli");
+    std::fs::write(&cli, "#!/bin/sh\necho 'solidcraft-cli 0.17.0'\n").unwrap();
+    std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1120.0, 680.0))
+        .build_eframe(|cc| test_app(cc));
+    harness.state_mut().preview_solidcraft(None);
+    harness.run_steps(8);
+    harness
+        .get_by_label("SolidCraft not found")
+        .click_accesskit();
+    harness.run_steps(8);
+    harness.state_mut().choose_solidcraft_cli(&cli);
+    harness.run_steps(8);
+    assert!(harness
+        .query_by_label_contains("older than SolidCraft 0.18 patch 2")
+        .is_some());
+    assert!(harness.query_by_label("Find automatically").is_none());
 }
 
 #[test]
@@ -2930,7 +2963,7 @@ fn fit_harness_for(
         .with_size(egui::vec2(size[0], size[1]))
         .build_eframe(|cc| test_app(cc));
     harness.ctx.set_theme(theme);
-    harness.state_mut().preview_solidcraft(Some("0.43.9"));
+    harness.state_mut().preview_solidcraft(Some("0.44.9"));
     // A fixed checker, so no path of the machine running the test is shown.
     #[cfg(feature = "test-support")]
     harness.state_mut().set_checker_for_test(true);
@@ -3349,7 +3382,7 @@ fn solidcraft_window_screenshots() {
             "{window:?} outside {viewport:?}"
         );
         let texts: &[&str] = if found {
-            &["SolidCraft 0.43 is installed."]
+            &["SolidCraft 0.44 is installed."]
         } else {
             &[
                 "SolidCraft not found.",
@@ -3501,7 +3534,7 @@ fn running_step_screenshots() {
     ] {
         for seconds in [0, 61, 120, 121] {
             let mut harness = screenshot_harness(theme);
-            harness.state_mut().preview_solidcraft(Some("0.43.0"));
+            harness.state_mut().preview_solidcraft(Some("0.44.0"));
             harness.state_mut().set_checker_for_test(true);
             harness
                 .state_mut()
@@ -3527,6 +3560,7 @@ fn running_step_screenshots() {
                             consequence: Some(
                                 dutchman_core::progress_words::history_limit(false, false).into(),
                             ),
+                            feature: None,
                         }),
                     }),
                 });
@@ -3565,7 +3599,7 @@ fn folder_run_keeps_the_oldest_file_visible_below_the_counts() {
             .with_size(egui::vec2(width, 800.0))
             .build_eframe(|cc| test_app(cc));
         harness.ctx.set_theme(theme);
-        harness.state_mut().preview_solidcraft(Some("0.43.0"));
+        harness.state_mut().preview_solidcraft(Some("0.44.0"));
         harness.state_mut().set_checker_for_test(true);
         let rows = (0..1293)
             .map(|index| {
@@ -3602,6 +3636,7 @@ fn folder_run_keeps_the_oldest_file_visible_below_the_counts() {
                             consequence: Some(
                                 dutchman_core::progress_words::history_limit(false, false).into(),
                             ),
+                            feature: None,
                         }),
                     }),
                 }
@@ -3682,7 +3717,7 @@ mod paste_inputs {
     fn onshape_open_enables_only_for_a_document_link_and_keeps_text_paste_in_the_field() {
         let mut h = window(true);
         assert!(h.get_by_label("Open").accesskit_node().is_disabled());
-        let field = h.get_by_role(egui::accesskit::Role::TextInput);
+        let field = h.get_by_label("or paste an Onshape link");
         assert_eq!(field.accesskit_node().value().unwrap_or_default(), "");
         field.focus();
         h.step();
@@ -3691,8 +3726,7 @@ mod paste_inputs {
         assert!(h.get_by_label("Open").accesskit_node().is_disabled());
         assert!(h.query_by_label("Download file").is_none());
         // Replace the text through ordinary keyboard editing, preserving the focused field.
-        h.get_by_role(egui::accesskit::Role::TextInput)
-            .click_accesskit();
+        h.get_by_label("or paste an Onshape link").click_accesskit();
         h.input_mut().events.push(egui::Event::Key {
             key: egui::Key::A,
             physical_key: None,
@@ -3933,5 +3967,102 @@ mod paste_inputs {
         assert_eq!(h.state().rows().len(), 1);
         wait_for_conversion(&mut h);
         assert_bundle_survives_exit(h, output.path());
+    }
+}
+
+/// The card names the feature the history is on and says when SolidCraft measures it.
+/// With `DUTCHMAN_GUI_SCREENSHOTS`, it also saves both themes, plain and measured.
+#[cfg(feature = "test-support")]
+#[test]
+fn a_running_card_shows_the_feature_and_the_measured_note() {
+    use egui_kittest::kittest::NodeT as _;
+
+    for (theme, label) in [
+        (ThemePreference::Light, "Day"),
+        (ThemePreference::Dark, "Night"),
+    ] {
+        for measured in [false, true] {
+            let mut harness = screenshot_harness(theme);
+            harness.state_mut().preview_solidcraft(Some("0.44.1"));
+            harness.state_mut().set_checker_for_test(true);
+            harness
+                .state_mut()
+                .preview_running_for_test(dutchman_gui::app::Row {
+                    input: PathBuf::from("Bracket.f3d"),
+                    output: None,
+                    status: Status::Converting,
+                    report: None,
+                    job: None,
+                    size: None,
+                    progress: Some(dutchman_core::ProgressEvent {
+                        stage: dutchman_core::Stage::Map,
+                        elapsed_ms: 42_000,
+                        designs_read: 1,
+                        designs_total: Some(1),
+                        heartbeat: true,
+                        running: Some(dutchman_core::RunningStep {
+                            kind: dutchman_core::StepKind::Preparing,
+                            name: Some("Bracket".into()),
+                            elapsed_ms: 12_000,
+                            usual_ms: dutchman_core::StepKind::Preparing.usual_ms(),
+                            limit_ms: None,
+                            consequence: None,
+                            feature: Some(dutchman_core::FeatureStep {
+                                index: 29,
+                                total: 37,
+                                name: Some("Extrude 1".into()),
+                                measured,
+                            }),
+                        }),
+                    }),
+                });
+            harness.run_steps(8);
+            assert!(harness
+                .query_by_label("Building history for Bracket: 12 s")
+                .is_some());
+            let feature = harness.get_by_label("Feature 29 of 37 · Extrude 1").rect();
+            assert!(
+                egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1100.0, 800.0))
+                    .contains_rect(feature)
+            );
+            // The design is already read (1/1), but feature mapping is only 29/37.
+            let progress = harness.get_by_role(egui::accesskit::Role::ProgressIndicator);
+            assert_eq!(progress.accesskit_node().numeric_value(), Some(78.0));
+            let track = progress.rect();
+            assert!(track.top() >= feature.bottom());
+            assert!((track.left() - feature.left()).abs() < 1.0);
+            // The results card has 436 points of inner width at this window size.
+            assert!((track.width() - 436.0).abs() < 2.0, "{track:?}");
+            let palette = if label == "Day" {
+                dutchman_gui::theme::DAY
+            } else {
+                dutchman_gui::theme::NIGHT
+            };
+            assert!(harness.output().shapes.iter().any(|shape| {
+                matches!(&shape.shape, egui::Shape::Rect(rect)
+                    if rect.rect == track && rect.fill == palette.surface_2)
+            }));
+            assert!(harness.output().shapes.iter().any(|shape| {
+                matches!(&shape.shape, egui::Shape::Rect(rect)
+                    if rect.rect.min == track.min
+                        && (rect.rect.width() / track.width() - 29.0 / 37.0).abs() < 0.001
+                        && rect.fill == palette.spectre)
+            }));
+            assert!(harness
+                .query_by_label("Fusion .f3d: reads geometry")
+                .is_none());
+            let note = dutchman_core::progress_words::measured();
+            assert_eq!(harness.query_by_label(note).is_some(), measured);
+            if let Some(dir) = std::env::var_os("DUTCHMAN_GUI_SCREENSHOTS") {
+                let dir = PathBuf::from(dir);
+                std::fs::create_dir_all(&dir).unwrap();
+                let state = if measured { "measured" } else { "mapping" };
+                harness
+                    .render()
+                    .unwrap()
+                    .save(dir.join(format!("feature-progress-{state}-{label}.png")))
+                    .unwrap();
+            }
+        }
     }
 }

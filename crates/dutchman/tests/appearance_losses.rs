@@ -57,9 +57,9 @@ fn appearance_causes_are_counted_without_design_identifiers() {
             _ => {}
         }
         wire["model"]["appearance_bindings"] = json!([
-            {"id": "synthetic:private:binding#body", "target": {"kind":"body","value":body}, "appearance": "synthetic:private:appearance#red", "channels": {}},
-            {"id": "synthetic:private:binding#target", "target": target, "appearance": colour, "channels": {}},
-            {"id": "synthetic:private:binding#repeat", "target": target, "appearance": colour, "channels": {}}
+            {"id": "synthetic:private:binding#body", "target": {"entity": {"kind":"body","value":body}}, "appearance": "synthetic:private:appearance#red", "channels": {}},
+            {"id": "synthetic:private:binding#target", "target": {"entity": target}, "appearance": colour, "channels": {}},
+            {"id": "synthetic:private:binding#repeat", "target": {"entity": target}, "appearance": colour, "channels": {}}
         ]);
         model.ir = serde_json::from_value(wire).unwrap();
         let mut report = Report::default();

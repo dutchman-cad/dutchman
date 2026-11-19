@@ -62,7 +62,7 @@ and each body's position, box, area, and volume with the original. Position and 
 allow the larger of 0.01 mm and 0.02% of the larger box diagonal, for the centre distance and
 each minimum/maximum coordinate. The size term is four times the measuring mesh chord
 allowance, with margin above the measured 0.0022 mm difference on a 38 mm curved body.
-Volume and area keep their measuring mesh tolerances. Bodies are paired by nearest box
+Volume and area keep their measuring mesh tolerances ([every number](#verification-tolerances)). Bodies are paired by nearest box
 centre, with volume breaking ties. When SolidCraft gives no box for a pair, only area and
 volume are compared. The result is in the
 `history:` line of the report and in `verification.status` in `--json`:
@@ -75,6 +75,45 @@ volume are compared. The result is in the
 | `flattened` | No body-building prefix could be retained. The design keeps the imported geometry and mapped sketches with resolved planes, hidden for reference. |
 | `not_applicable` | There was no history to write, or `--import-only`. |
 
+
+### Verification tolerances
+
+Every number below is a constant in `crates/dutchman-solidcraft/src/tolerances.rs`, and the
+conversion report states them in `verification_tolerances` (see [json.md](json.md)). Millimetres
+are mm; a "share" is a fraction of the size it applies to.
+
+**Replay against the original** (both evaluated in the same SolidCraft, so kernel differences
+cancel):
+
+| Compared | Allowed difference |
+|---|---|
+| Bodies | The same count. Bodies are paired by nearest box centre, volume breaking ties. |
+| Volume | The larger of 1e-4 (0.01%) of the larger volume and the mesh allowance: each body's area times the mesh chord, `max(5e-5 of the box diagonal, 1e-4 mm)`, summed for both bodies. With no area or box from SolidCraft, only 1e-4. |
+| Area | 1e-3 (0.1%) of the larger area, when SolidCraft gives both. |
+| Position (box centre) and box corners | The larger of 0.01 mm and 2e-4 (0.02%, four mesh chords) of the larger box diagonal; the centre distance and each minimum and maximum coordinate. Skipped when SolidCraft gives no box. |
+| Face count | Not compared: SolidCraft merges faces that share a surface. |
+| Centre of mass | Not compared. The centre compared is the centre of the body's box. |
+
+**Bodies the source stores at a point in a partial history** (a retained prefix against the
+source's own body at that step): the source's body count must not exceed the replay's, and each
+stored body needs a replayed body whose box centre is within the larger of 0.5 mm and 1% of the
+replayed box diagonal when the stored box is the solid's own, or 1 mm and 2% when it is a box
+over sampled points. More replayed bodies than the source lists is not a difference.
+
+**Geometry written as an import:** a solid body with a volume below 1e-6 mm³ counts as having
+none. There is no original to compare with, so only SolidCraft's own warnings apply.
+
+**Proofs against the source before a feature maps** (a failed proof leaves the feature out or
+refuses the choice rather than failing the replay):
+
+| Proof | Allowed difference |
+|---|---|
+| Fillet and chamfer input edge | Exactly one rebuilt edge passes through the edge midpoint within 1e-6 mm, with ends and length within 1e-6 (of the larger, at least 1 mm), and direction within 1e-6 of parallel. A refusal says the nearest rebuilt edge is farther than 0.01 mm when the rebuilt body, not the tolerance, differs. |
+| Profile face the source names | Positions within 1e-5 mm; directions within 1e-5 of parallel; the face's plane within 1e-4 mm of the sketch plane; area within 1e-4 (2e-2 when an edge is curved, as SolidCraft measures those from a mesh) of the face's, at least 1 mm². Its edges are covered within 1e-4 of a straight edge's length, within 1e-3 of the radius (at least 1 mm) from the circle, and within 2e-3 rad of a curved edge's turn. |
+| Extrude end cap | The swept profile's area within the larger of 1 mm² and 3% of the cap's area; a face's plane within 1e-4 mm of the end plane. |
+
+The advisory body comparison behind `dutchman diagnose` uses its own, looser numbers (1% for
+volume and area, 0.1 mm to 0.5 mm for position) and does not decide whether a history verifies.
 
 Assembly visibility reports count source-hidden placements separately from retained
 editable history. An Info `visibility` note, `N editable-history component placement(s)
@@ -349,13 +388,17 @@ as mapped with its plate) when the plate is one rectangle that spans the whole p
 stands square to the sheet at 90 degrees, is flush with the edge's end face, has the sheet's
 thickness and starts where the bend ends or, as Inventor stores a flange measured from where
 the outer faces meet, at the sheet's outer face; the flange height is the plate's far end measured
-from the sheet's outer face. Any other plate, or a bend without its plate, keeps the geometry
+from the sheet's outer face. The unchanged base can be a single simple polygon, including an
+L-shaped or notched sheet: attachment uses the actual profile edge, including a concave edge,
+rather than the edge of a bounding rectangle. Curved, open, crossing, disconnected, or
+collinear base edges and base profiles with holes or partial regions are not supported yet
+by this attachment proof. Any other plate, or a bend without its plate, keeps the geometry
 and reports the unsupported shape. Hems keep geometry: CADIR specifies developed length while SolidCraft requires length to the
 outer face, and rolled, teardrop, and unresolved hem forms are not supported yet. A sheet-metal
 corner that cadmpeg proves leaves its body unchanged (a single flange's corner, with nothing to
-relieve) needs no SolidCraft feature and is counted as not needed. CADIR has no
-contour-flange, bend, unfold/refold, or corner-relief operations, nor K-factor or relief
-settings; sheet rules keep SolidCraft's defaults for those settings. The report names the
+relieve) needs no SolidCraft feature and is counted as not needed. Contour flanges and
+unfold/refold operations are not mapped yet. Sheet rules keep SolidCraft's defaults for
+K-factor and relief settings. The report names the
 first feature that stops the history; the original geometry is still converted.
 
 ## Partial history
@@ -380,10 +423,10 @@ When a partial history is checked against the source's stored bodies, each kept 
 sit where the source has it: within the larger of 1 mm and 2% of its box diagonal when the
 source's position is approximate, or 0.5 mm and 1% when it is exact.
 
-Dutchman targets SolidCraft 0.43 with the same writer capabilities as 0.40 and keeps
-design format 23. Saving a design in SolidCraft 0.43 upgrades it to format 57, which
-SolidCraft 0.30.1 and earlier cannot open. SolidCraft 0.40.1 through 0.42
-open designs saved in 0.43 with a warning about the newer format.
+Dutchman targets SolidCraft 0.44 with the same writer capabilities as 0.40 and keeps
+design format 23. Saving a design in SolidCraft 0.44 upgrades it to format 58, which
+SolidCraft 0.30.1 and earlier cannot open. SolidCraft 0.40.1 through 0.43
+open designs saved in 0.44 with a warning about the newer format.
 
 For targets of SolidCraft 0.30 or newer, partial and unverified editable-history copies
 use **Hide its History**: their features stay in the Browser and keep rebuilding, but

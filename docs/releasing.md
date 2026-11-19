@@ -1,13 +1,18 @@
 # Releasing
 
-Each release is built once, as its final release candidate. A candidate is a tag `vX.Y.Z-rc.N` on a `main` commit; it runs the full release build. When one is good, the release tag `vX.Y.Z` on the same commit turns that build into a draft release in about five minutes, with no second build. Ordinary pull requests and pushes to `main` run only the quick debug build and tests.
+Releases ship the files built by their final release candidate. A candidate is a tag
+`vX.Y.Z-rc.N` on a `main` commit; it runs the full release build. When one is good, the release
+tag `vX.Y.Z` on the same commit promotes those files into a draft in about five minutes.
+Candidate and stable tags also run the full CI matrix and release builds; the stable-tag
+rebuild does not replace the promoted candidate files. PRs run fast Linux checks, and the
+merge queue runs the full matrix once per group. Pushes to `main` keep their existing checks.
 
 1. Refresh the SolidCraft window alongside the cadmpeg pin. `WINDOW_OLDEST` stays an
    exact, checksum-pinned release from the rolling 14-day window, never below the internal
    `OLDEST_SOLIDCRAFT` floor (0.18.2). `NEWEST_SOLIDCRAFT` names only the newest known
-   minor, currently `[0, 43]`; a patch release requires no Dutchman constant or docs update.
+   minor, currently `[0, 44]`; a patch release requires no Dutchman constant or docs update.
    Choose the oldest release and newest minor from SolidCraft's release dates, then run
-   `GITHUB_TOKEN=... scripts/solidcraft-window.sh 0.18.2 0.43` with a read-only GitHub token.
+   `GITHUB_TOKEN=... scripts/solidcraft-window.sh 0.18.2 0.44` with a read-only GitHub token.
    The script reads the authenticated GitHub releases list, selects the highest published
    stable patch of that minor, and checks its checksum metadata. It prints the constants,
    the oldest pinned checksum, and the newest minor's dynamic CI matrix entry. Copy those
@@ -70,8 +75,8 @@ Each release is built once, as its final release candidate. A candidate is a tag
    (`release-image.yml`), which publishes `ghcr.io/dutchman-cad/dutchman:X.Y.Z` and `:latest`
    from the published release's checksum-verified Linux archives, with no second Rust build;
    a draft never reaches the registry. To republish a release's image, run it on demand with
-   that tag (`gh workflow run release-image.yml -f tag=vX.Y.Z`). Candidate runs and packaging
-   pull requests build both image architectures without logging in or pushing.
+   that tag (`gh workflow run release-image.yml -f tag=vX.Y.Z`). Candidate, merge-queue and manual full
+   runs build both image architectures without logging in or pushing.
    The same run then builds the Arch Linux package: the `arch-package` job turns the draft's
    x86_64 archive into `dutchman-bin-X.Y.Z-x86_64.pkg.tar.zst` with `makepkg` in an
    `archlinux:latest` container (as a non-root user) and attaches it and its `.sha256` to the
@@ -105,14 +110,15 @@ a release always ships a candidate's tested files.
 
 | Trigger | Runs |
 |---|---|
-| Candidate tag `vX.Y.Z-rc.N` | Full build and packaging of that commit; files kept 30 days. Fails first if `X.Y.Z` differs from `Cargo.toml`'s version. A newer candidate cancels a running one. Saves the Rust caches. |
+| Candidate tag `vX.Y.Z-rc.N` | Full build and packaging of that commit; files kept 30 days. Fails first if `X.Y.Z` differs from `Cargo.toml`'s version. A newer candidate cancels a running one. No Rust caches. |
 | Tag `v0.0.0-rc.dryrun*` | The same, without the version check (for measuring) |
-| Release tag `vX.Y.Z` | `release.yml`: the candidate's files become a draft release; nothing is built |
+| Release tag `vX.Y.Z` | Full CI and release builds; independently, `release.yml` promotes the candidate's files into a draft release |
 | Tag `v0.0.0-dryrun*` | The same, but no release is created and the elapsed time is logged |
-| Pull request that changes packaging, or with the `release-build` label | Full build; superseded runs are cancelled |
-| Any other pull request | `ci.yml` only: debug build and tests on every platform |
+| Pull request (including packaging changes and labels) | Fast Linux checks in `ci.yml`; docs-only changes use focused docs tests |
+| Merge queue group | Full CI matrix, all placements and full release builds, required by `ci-result` |
 | Push to `main` | `ci.yml` only; it saves the debug Rust caches that pull requests restore |
-| Run by hand (`gh workflow run release-build.yml --ref <branch>`) | Full build |
+| Run by hand (`gh workflow run ci.yml --ref <branch>`) | Full queue matrix, including placements and release builds |
+| Run by hand (`gh workflow run release-build.yml --ref <branch>`) | Release builds only |
 | Nightly | Its own daily build of `main`, unchanged |
 
 On Linux each build job also runs `scripts/package-appimage.sh`, which makes
@@ -126,8 +132,17 @@ official releases and checked against SHA-256 values pinned in the script; to mo
 tool, change the version and both checksums for each architecture together. The AppImage embeds
 `gh-releases-zsync|dutchman-cad|dutchman|latest|dutchman-*-<arch>.AppImage.zsync`, so the
 `.zsync` must stay attached to every release. `release.yml` requires the four AppImage files
-(and their checksums) and adds version-less copies like the other assets. A change under
-`packaging/linux/` starts the full build on a pull request.
+(and their checksums) and adds version-less copies like the other assets. Changes under
+`packaging/linux/` receive the full build in the merge queue or a manual full run.
+
+The `plugin` job builds the SolidCraft plugin once, on Linux: `dutchman-plugin` for
+`wasm32-unknown-unknown` with the size settings in `.cargo/config.toml`, wrapped by
+`scripts/package-plugin.sh` into `dutchman-plugin-X.Y.Z.zip` (the manifest stamped with the
+version, and the component) with its `.sha256`. It then converts the public fixtures with the
+packaged component in Wasmtime and uploads the zip as the `dutchman-X.Y.Z-plugin` artifact.
+`release.yml` requires it and adds the version-less `dutchman-plugin.zip`. A change to
+`crates/dutchman-plugin/plugin.json` or `.cargo/config.toml` starts the full build on a pull
+request. See [the plugin notes](plugin.md).
 
 For just the Linux x86_64 tarball and its checksum, dispatch with `targets: linux-x86_64`: `gh workflow run release-build.yml --ref <branch> -f targets=linux-x86_64`.
 
@@ -146,20 +161,14 @@ archives. The per-chip Mac archives remain release assets for Homebrew. On Windo
 installs the MSI, upgrades it from a lower version and over a second build of the same version
 (`MajorUpgrade` allows same-version upgrades, so rc.2 installs over rc.1),
 refuses a downgrade, installs as a standard user, uninstalls, and runs the release-mode updater
-tests. Rust caches are kept per target and profile for those checks and saved only by pushes to `main`. The full release builds (candidates, packaging pull requests, runs by hand) restore and save no cache: what users download is always built from scratch.
+tests. Rust caches are kept per target and profile for those checks and saved only by pushes to `main`. The full release builds (queue groups, candidate and stable tags, runs by hand) restore and save no cache: what users download is always built from scratch.
 
-The `plan` job in `release-build.yml` starts the builds for a pull request that:
-   - changes `.github/workflows/`, `Cargo.toml` other than its version lines (it holds the
-     profiles), `Dockerfile`,
-     `docker/`, `compose.yaml`, `packaging/linux/`, `scripts/*msi*`, `scripts/package*`, `scripts/macos-dmg.sh`,
-     `scripts/archive-readme.py`, `scripts/downloads.py`, `assets/install/`, `assets/dmg/`,
-     `assets/windows/`, `skills/`, the app icon and `examples/ico.rs`, or
-     `crates/dutchman-gui/src/update.rs` and `update/`;
-   - carries the `release-build` label (the label starts the run when it is added), for any
-     other change that needs the full builds, such as one to `Cargo.lock` that might break a
-     release link.
-
-Without one of those, the workflow still reports on the pull request, with its builds skipped.
+The `plan` job enables all release targets for every queue group, candidate or stable tag,
+and manual full run. It no longer filters packaging paths or reads PR labels. The queue
+calls `release-build.yml` as a reusable workflow, so `ci-result` waits for it; tags run it
+directly so release promotion can still find the candidate's artifacts. A full CI dispatch
+stores release artifacts under its CI run; a standalone release-build dispatch remains
+available for `scripts/fetch-ci-binary.sh`.
 
 The release tag finds the candidate with `scripts/find-release-run.sh`: a successful run of
 `release-build.yml`, started by pushing a tag `vX.Y.Z-rc.*`, for exactly the tagged commit, which

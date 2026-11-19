@@ -44,6 +44,21 @@ fn name(drawing: &Drawing) -> &str {
     drawing.object.rsplit('#').next().unwrap_or(&drawing.object)
 }
 
+/// V11 retains a local drawing object's source name as an unresolved reference.
+/// Match a complete name to one decoded drawing, never a model sub-element or
+/// an external/instance target. Ambiguous names stay unresolved.
+fn drawing_target<'a>(
+    link: &cadmpeg_ir::ReferenceSelection,
+    objects: &BTreeMap<&str, Option<&'a str>>,
+) -> Option<&'a str> {
+    if !matches!(link.target, cadmpeg_ir::ReferenceTarget::Unresolved)
+        || link.native.as_ref()?.codec.as_str() != "fcstd"
+    {
+        return None;
+    }
+    objects.get(link.native_text()?).copied().flatten()
+}
+
 /// Map selected pages. An absent selection exports all pages in source order.
 pub fn pages(
     model: &Model,
@@ -85,6 +100,13 @@ pub fn pages(
         )));
     }
     let by_id: BTreeMap<_, _> = drawings.iter().map(|d| (d.id.as_str(), d)).collect();
+    let mut objects = BTreeMap::new();
+    for drawing in drawings {
+        objects
+            .entry(name(drawing))
+            .and_modify(|target| *target = None)
+            .or_insert(Some(drawing.id.as_str()));
+    }
     let annotations: BTreeMap<_, _> = model
         .ir
         .model
@@ -180,7 +202,7 @@ pub fn pages(
             for role in ["Views", "Group"] {
                 if let Some(links) = drawing.relationships.get(role) {
                     for link in links.iter().rev() {
-                        if let Some(target) = link.local_target() {
+                        if let Some(target) = drawing_target(link, &objects) {
                             let child_offset =
                                 if drawing.kind == DrawingKind::Projection && role == "Views" {
                                     drawing.position.map_or(offset, |p| {
@@ -487,4 +509,51 @@ fn gui_visibility(providers: &[&ViewPresentation]) -> Option<bool> {
     let mut values = providers.iter().filter_map(|provider| provider.visible);
     let first = values.next()?;
     values.all(|value| value == first).then_some(first)
+}
+
+#[cfg(test)]
+mod reference_tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+
+    fn reference(wire: &str) -> cadmpeg_ir::ReferenceSelection {
+        cadmpeg_ir::design::read::from_str(wire, &Default::default()).unwrap()
+    }
+
+    #[test]
+    fn local_drawing_links_follow_complete_source_object_names() {
+        let objects = BTreeMap::from([("Front", Some("synthetic:model:drawing#front"))]);
+        let link = reference(
+            r#"{"target":{"kind":"unresolved"},"native":{"codec":"fcstd","value":{"kind":"text","value":"Front"}}}"#,
+        );
+        assert_eq!(
+            drawing_target(&link, &objects),
+            Some("synthetic:model:drawing#front")
+        );
+    }
+
+    #[test]
+    fn subelements_missing_objects_and_ambiguous_names_are_not_page_members() {
+        let objects = BTreeMap::from([("Front", None)]);
+        for source in ["Front", "Front.Edge1", "Missing"] {
+            let wire = format!(
+                r#"{{"target":{{"kind":"unresolved"}},"native":{{"codec":"fcstd","value":{{"kind":"text","value":"{source}"}}}}}}"#
+            );
+            assert_eq!(drawing_target(&reference(&wire), &objects), None);
+        }
+    }
+
+    #[test]
+    fn external_and_scoped_references_do_not_select_a_local_drawing() {
+        let objects = BTreeMap::from([("Front", Some("synthetic:model:drawing#front"))]);
+        for wire in [
+            r#"{"target":{"kind":"external","value":{"document":"other.FCStd","object":"Front"}},"native":{"codec":"fcstd","value":{"kind":"text","value":"Front"}}}"#,
+            r#"{"target":{"kind":"entity","value":{"entity":{"kind":"occurrence","value":"synthetic:model:occurrence#one"},"path":[]}},"native":{"codec":"fcstd","value":{"kind":"text","value":"Front"}}}"#,
+            r#"{"target":{"kind":"entity","value":{"entity":{"kind":"occurrence","value":"synthetic:model:occurrence#one"},"state":{"of":{"kind":"tool","value":"synthetic:design:feature#earlier"}}}},"native":{"codec":"fcstd","value":{"kind":"text","value":"Front"}}}"#,
+            r#"{"target":{"kind":"unresolved"},"native":{"codec":"other","value":{"kind":"text","value":"Front"}}}"#,
+        ] {
+            assert_eq!(drawing_target(&reference(wire), &objects), None);
+        }
+    }
 }

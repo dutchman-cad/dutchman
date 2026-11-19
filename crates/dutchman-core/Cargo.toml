@@ -25,7 +25,9 @@ zip = { workspace = true, optional = true }
 [features]
 # Every input format but FreeCAD. A build may name only the formats it reads (as a
 # sandboxed importer does), so it links only those cadmpeg codecs.
-default = ["formats"]
+default = ["formats", "source-reader"]
+# Capability-based reader API for sandboxed front ends.
+source-reader = []
 formats = ["fusion", "inventor", "solidworks", "catia", "creo", "nx", "rhino", "step", "iges", "sat", "pvz", "onshape"]
 onshape = ["step", "dep:zip", "dep:base64", "dep:flate2"]
 fusion = ["cadmpeg-registry/f3d"]

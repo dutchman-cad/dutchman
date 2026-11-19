@@ -4,7 +4,7 @@
 use serde_json::{json, Value};
 
 use super::profile::profile;
-use super::sketch::{dot, number, v3, Shape, V3};
+use super::sketch::{cross, dot, number, v3, Shape, P2, V3};
 use super::{name, Context};
 
 /// Maps a base flange whose operation is `definition`.
@@ -85,8 +85,8 @@ pub(super) fn edge_flange(
     let radius = number(definition.get("bend_radius"))
         .filter(|v| *v > 0.0)
         .ok_or("its flange bend radius is not given")?;
-    let base = base_edges(ctx, preceding)?;
-    let picks: Vec<V3> = prove_picks(state, selected, &base.edges)?
+    let base = base_edges(ctx, preceding, false)?;
+    let picks: Vec<V3> = prove_picks(state, selected, &base)?
         .into_iter()
         .map(|pick| pick.point)
         .collect();
@@ -105,7 +105,7 @@ pub(super) fn edge_flange(
 struct Pick {
     /// The input edge's midpoint.
     point: V3,
-    /// Its index among the rebuilt edges: 0 to 3 on the sketch face, 4 to 7 on the far face.
+    /// Its index among the rebuilt edges: sketch perimeter, then far perimeter, then thickness.
     index: usize,
     /// The rebuilt edge's end points.
     ends: (V3, V3),
@@ -135,11 +135,7 @@ fn selected_edges<'a, 'b>(
 }
 
 /// Proves each selected input edge is exactly one rebuilt edge of the base sheet.
-fn prove_picks(
-    state: &Value,
-    selected: &[Value],
-    rebuilt: &[(V3, V3)],
-) -> Result<Vec<Pick>, String> {
+fn prove_picks(state: &Value, selected: &[Value], base: &Base) -> Result<Vec<Pick>, String> {
     let geometry = state
         .get("edge_geometry")
         .and_then(Value::as_array)
@@ -167,7 +163,8 @@ fn prove_picks(
         let start = v3(row.get("start")).ok_or("its input edge start vertex is missing")?;
         let end = v3(row.get("end")).ok_or("its input edge end vertex is missing")?;
         let tangent = v3(row.get("tangent")).ok_or("its input edge tangent is missing")?;
-        let matches: Vec<_> = rebuilt
+        let matches: Vec<_> = base
+            .edges
             .iter()
             .enumerate()
             .filter(|(_, (a, b))| on_segment(point, *a, *b))
@@ -180,8 +177,8 @@ fn prove_picks(
                 )
             }
         };
-        // The last four edges are the plate's thickness edges, which cannot grow a flange.
-        if index >= 8 || taken.contains(&(index % 4)) {
+        // The final edges join the two faces through the thickness and cannot grow a flange.
+        if index >= 2 * base.perimeter || taken.contains(&(index % base.perimeter)) {
             return Err("its input edges repeat a pick or select a thickness edge".to_owned());
         }
         let direction = difference(*b, *a);
@@ -193,7 +190,7 @@ fn prove_picks(
                 "its input edge vertices or tangent differ from the rebuilt edge".to_owned(),
             );
         }
-        taken.push(index % 4);
+        taken.push(index % base.perimeter);
         picks.push(Pick {
             point,
             index,
@@ -203,7 +200,7 @@ fn prove_picks(
     Ok(picks)
 }
 
-/// The rebuilt base sheet: its twelve edges and the numbers a flange on it needs.
+/// The rebuilt base sheet and the numbers a flange on it needs.
 struct Base {
     edges: Vec<(V3, V3)>,
     thickness: f64,
@@ -211,13 +208,15 @@ struct Base {
     growth: V3,
     /// A point on the sketch face.
     origin: V3,
-    /// The centre of the sketch face.
-    center: V3,
+    /// Number of edges on each face.
+    perimeter: usize,
+    /// Outward unit direction across each sketch perimeter edge.
+    outward: Vec<V3>,
 }
 
-/// Enumerates all twelve edges of the pre-feature body from the mapped base sketch.
+/// Enumerates the pre-feature body edges from the mapped base sketch.
 /// Refuse other histories rather than assume their final edges survived earlier operations.
-fn base_edges(ctx: &Context, preceding: &[Value]) -> Result<Base, String> {
+fn base_edges(ctx: &Context, preceding: &[Value], attached: bool) -> Result<Base, String> {
     let mut solids = preceding
         .iter()
         .filter(|f| f.get("type").and_then(Value::as_str) != Some("sketch"));
@@ -231,9 +230,12 @@ fn base_edges(ctx: &Context, preceding: &[Value]) -> Result<Base, String> {
                 .to_owned(),
         );
     }
-    let reason =
-        "an edge flange on a base sheet that is not one plain rectangle is not supported yet";
-    if base.pointer("/profiles/type").and_then(Value::as_str) != Some("all") {
+    let reason = if attached {
+        "an attached plate needs one closed, non-crossing base perimeter with distinct straight edges; curved, disconnected, or collinear base edges are not supported yet"
+    } else {
+        "an edge flange on a base sheet that is not one plain rectangle is not supported yet"
+    };
+    if !attached && base.pointer("/profiles/type").and_then(Value::as_str) != Some("all") {
         return Err(reason.to_owned());
     }
     let sketch = ctx
@@ -249,6 +251,70 @@ fn base_edges(ctx: &Context, preceding: &[Value]) -> Result<Base, String> {
         .pointer("/sketch/curves")
         .and_then(Value::as_array)
         .ok_or(reason)?;
+    let ring = if attached {
+        profile_ring(sketch, curves, base.get("profiles").ok_or(reason)?).ok_or(reason)?
+    } else {
+        rectangular_ring(sketch, curves, reason)?
+    };
+    let rule = base.get("rule").and_then(Value::as_str).ok_or(reason)?;
+    let thickness = ctx
+        .sheet_rules
+        .iter()
+        .find(|(_, name)| name == rule)
+        .map(|(thickness, _)| *thickness)
+        .ok_or(reason)?;
+    let sign = if base.get("flip").and_then(Value::as_bool) == Some(true) {
+        -1.0
+    } else {
+        1.0
+    };
+    let shift = |p: V3| -> V3 {
+        let [x, y, z] = p;
+        let [nx, ny, nz] = sketch.normal;
+        [
+            x + sign * thickness * nx,
+            y + sign * thickness * ny,
+            z + sign * thickness * nz,
+        ]
+    };
+    let perimeter = ring.len();
+    let area = super::crossing::signed_area(ring.iter().copied());
+    let mut outward = Vec::new();
+    for (a, b) in &ring {
+        let direction = difference(sketch.world(*b), sketch.world(*a));
+        outward.push(scale(
+            cross(direction, sketch.normal),
+            area.signum() / dot(direction, direction).sqrt(),
+        ));
+    }
+    let mut edges = Vec::new();
+    for top in [false, true] {
+        for (a, b) in &ring {
+            let (a, b) = (sketch.world(*a), sketch.world(*b));
+            edges.push(if top { (shift(a), shift(b)) } else { (a, b) });
+        }
+    }
+    for (p, _) in &ring {
+        let p = sketch.world(*p);
+        edges.push((p, shift(p)));
+    }
+    let [nx, ny, nz] = sketch.normal;
+    Ok(Base {
+        edges,
+        thickness,
+        growth: [sign * nx, sign * ny, sign * nz],
+        origin: sketch.origin,
+        perimeter,
+        outward,
+    })
+}
+
+/// Preserve the existing rectangular edge-flange proof and edge ordering.
+fn rectangular_ring(
+    sketch: &super::sketch::Mapped,
+    curves: &[Value],
+    reason: &str,
+) -> Result<Vec<(P2, P2)>, String> {
     if curves.len() != 4
         || curves
             .iter()
@@ -307,47 +373,91 @@ fn base_edges(ctx: &Context, preceding: &[Value]) -> Result<Base, String> {
             return Err(reason.to_owned());
         }
     }
-    let rule = base.get("rule").and_then(Value::as_str).ok_or(reason)?;
-    let thickness = ctx
-        .sheet_rules
+    Ok(ring)
+}
+
+/// Read actual emitted profile lines, ignoring construction geometry. Only a single simple
+/// perimeter is admitted: holes, disconnected regions, curves, and merged collinear edges
+/// need a different proof of which edges SolidCraft builds.
+fn profile_ring(
+    sketch: &super::sketch::Mapped,
+    curves: &[Value],
+    selection: &Value,
+) -> Option<Vec<(P2, P2)>> {
+    if curves
         .iter()
-        .find(|(_, name)| name == rule)
-        .map(|(thickness, _)| *thickness)
-        .ok_or(reason)?;
-    let sign = if base.get("flip").and_then(Value::as_bool) == Some(true) {
-        -1.0
-    } else {
-        1.0
-    };
-    let shift = |p: V3| -> V3 {
-        let [x, y, z] = p;
-        let [nx, ny, nz] = sketch.normal;
-        [
-            x + sign * thickness * nx,
-            y + sign * thickness * ny,
-            z + sign * thickness * nz,
-        ]
-    };
-    let center = sketch.world([(x0 + x1) / 2.0, (y0 + y1) / 2.0]);
-    let mut edges = Vec::new();
-    for top in [false, true] {
-        for (a, b) in &ring {
-            let (a, b) = (sketch.world(*a), sketch.world(*b));
-            edges.push(if top { (shift(a), shift(b)) } else { (a, b) });
+        .filter(|curve| curve.get("construction").and_then(Value::as_bool) != Some(true))
+        .count()
+        > super::crossing::MAX_LINES
+    {
+        return None;
+    }
+    // Explicit selections are safe here only when they take the same single perimeter as
+    // the whole emitted sketch. Extra solid curves could subdivide or merge its edges.
+    let selected = match selection.get("type")?.as_str()? {
+        "all" => None,
+        "curves" => {
+            let [boundary] = selection.get("loops")?.as_array()?.as_slice() else {
+                return None;
+            };
+            Some(boundary.as_array()?)
         }
+        "whole_boundaries" => {
+            let [region] = selection.get("profiles")?.as_array()?.as_slice() else {
+                return None;
+            };
+            if !region.get("holes")?.as_array()?.is_empty() {
+                return None;
+            }
+            Some(region.get("outer")?.as_array()?)
+        }
+        _ => return None,
+    };
+    if selected.is_some_and(|selected| selected.len() > super::crossing::MAX_LINES) {
+        return None;
     }
-    for p in corners {
-        let p = sketch.world(p);
-        edges.push((p, shift(p)));
+    let by_id: std::collections::BTreeMap<_, _> = sketch
+        .shapes
+        .values()
+        .filter_map(|shape| match shape {
+            Shape::Curve(curve) => Some((curve.id.as_str(), curve)),
+            _ => None,
+        })
+        .collect();
+    let mut lines = Vec::new();
+    for curve in curves {
+        if curve.get("construction").and_then(Value::as_bool) == Some(true) {
+            continue;
+        }
+        let id = curve.get("id")?.as_str()?;
+        if selected.is_some_and(|selected| {
+            selected
+                .iter()
+                .filter(|pick| pick.as_str() == Some(id))
+                .count()
+                != 1
+        }) {
+            return None;
+        }
+        let mapped = by_id.get(id)?;
+        if mapped.kind != "line" {
+            return None;
+        }
+        lines.push((
+            sketch.points.get(mapped.start?)?.1,
+            sketch.points.get(mapped.end?)?.1,
+        ));
     }
-    let [nx, ny, nz] = sketch.normal;
-    Ok(Base {
-        edges,
-        thickness,
-        growth: [sign * nx, sign * ny, sign * nz],
-        origin: sketch.origin,
-        center,
-    })
+    if selected.is_some_and(|selected| selected.len() != lines.len()) {
+        return None;
+    }
+    let ring = super::crossing::line_ring(&lines)?;
+    Some(
+        ring.iter()
+            .copied()
+            .zip(ring.iter().copied().cycle().skip(1))
+            .collect(),
+    )
 }
 
 fn difference(a: V3, b: V3) -> V3 {
@@ -425,11 +535,11 @@ pub(super) fn attached_plate(
     let thickness = number(definition.get("thickness"))
         .filter(|t| *t > 0.0)
         .ok_or("its thickness is not given")?;
-    let base = base_edges(ctx, preceding)?;
+    let base = base_edges(ctx, preceding, true)?;
     if (thickness - base.thickness).abs() > TOL {
         return Err("its thickness differs from the base sheet's".to_owned());
     }
-    let picks = prove_picks(state, selected, &base.edges)?;
+    let picks = prove_picks(state, selected, &base)?;
     let [pick] = picks.as_slice() else {
         return Err("a plate attached along several edges is not supported yet".to_owned());
     };
@@ -449,15 +559,11 @@ pub(super) fn attached_plate(
     if dot(normal, e).abs() > 1e-6 || dot(normal, growth).abs() > 1e-6 {
         return Err("a plate not square to the base sheet is not supported yet".to_owned());
     }
-    // Outward from the base across the picked edge, in the base plane.
-    let out = difference(pick.point, base.center);
-    let out = difference(out, scale(e, dot(out, e)));
-    let out = difference(out, scale(growth, dot(out, growth)));
-    let reach = dot(out, out).sqrt();
-    if reach < TOL {
-        return Err("its picked edge has no outward direction".to_owned());
-    }
-    let out = scale(out, 1.0 / reach);
+    // The profile's winding supplies the local outward direction even at a concave edge.
+    let out = *base
+        .outward
+        .get(pick.index % base.perimeter)
+        .ok_or("its picked edge has no outward direction")?;
     let offset = dot(difference(sketch.origin, a), out);
     if offset.abs() > TOL && (offset + thickness).abs() > TOL {
         return Err(
@@ -465,7 +571,7 @@ pub(super) fn attached_plate(
         );
     }
     // The flange rises from the picked face: up from the far face, down from the sketch face.
-    let top = pick.index >= 4;
+    let top = pick.index >= base.perimeter;
     let rise = if top { growth } else { scale(growth, -1.0) };
     let outer = if top {
         base.origin

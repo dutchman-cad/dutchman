@@ -297,6 +297,11 @@ fn workspace_head_is_resolved_again_instead_of_returning_a_stale_cache() {
     assert_eq!(report.calls, 2);
     assert!(second.sent[0].1.contains("currentmicroversion"));
 }
+fn sketch_information(mid: &str) -> Value {
+    json!({"sourceMicroversion":mid,"sketches":[{"featureId":"sketch",
+        "sketchMatrix":[1.0,0.0,0.0,0.0, 0.0,1.0,0.0,0.0,
+            0.0,0.0,1.0,0.0, 0.0,0.0,0.0,1.0]}]})
+}
 fn partstudio_replies(mid: &str, marker: &str) -> VecDeque<Response> {
     let json_at =
         |text: &str| response(200, serde_json::from_str(&text.replace(MID, mid)).unwrap());
@@ -330,6 +335,7 @@ fn partstudio_replies(mid: &str, marker: &str) -> VecDeque<Response> {
             headers: BTreeMap::new(),
             body: include_bytes!("fixtures/onshape/export.step").to_vec(),
         },
+        response(200, sketch_information(mid)),
     ])
 }
 fn partstudio_mock(mid: &str, marker: &str) -> Mock {
@@ -397,7 +403,7 @@ fn version_partstudio_uses_version_paths_and_writes_complete_bundle_verbatim() {
     let dir = tempfile::tempdir().unwrap();
     let mut mock = partstudio_mock(MID, "1");
     let report = run(&mut mock, &dir, PS, 50).unwrap();
-    assert_eq!(report.calls, 10);
+    assert_eq!(report.calls, 11);
     for (_, path, _) in &mock.sent {
         // The API's document metadata, job polling and result download paths do not have a w/v/m parameter.
         if !path.ends_with(&format!("/documents/{DID}"))
@@ -436,11 +442,12 @@ fn version_partstudio_uses_version_paths_and_writes_complete_bundle_verbatim() {
             format!("partstudios/{PS}/configuration.json"),
             format!("partstudios/{PS}/export.step"),
             format!("partstudios/{PS}/features.json"),
+            format!("partstudios/{PS}/sketches.json"),
             format!("partstudios/{PS}/variables.json")
         ]
     );
     let manifest = assert_sources(&mut zip, MID, "v");
-    assert_eq!(manifest["calls"], 10);
+    assert_eq!(manifest["calls"], 11);
     assert_eq!(
         manifest["elements"][0]["files"]["step"],
         format!("partstudios/{PS}/export.step")
@@ -533,7 +540,7 @@ fn workspace_partstudio_no_change_is_consistent_and_mixes_only_supported_paths()
     mock.replies
         .push_back(response(200, json!({"microversion":MID})));
     let report = workspace_run(&mut mock, &dir, 50).unwrap();
-    assert_eq!(report.calls, 11);
+    assert_eq!(report.calls, 12);
     assert_sources(&mut open_bundle(&dir), MID, "m");
     for (_, path, _) in &mock.sent {
         if path.contains("/variables/")
@@ -543,6 +550,7 @@ fn workspace_partstudio_no_change_is_consistent_and_mixes_only_supported_paths()
             assert!(path.contains(&format!("/w/{VID}/")));
         } else if path.ends_with("/features")
             || path.ends_with("/bodydetails")
+            || path.ends_with("/sketches")
             || path.ends_with("/configuration")
             || path.ends_with("/elements")
         {
@@ -570,7 +578,7 @@ fn workspace_change_then_stable_refetches_once_and_does_not_reuse_unverified_wor
     mock.replies
         .push_back(response(200, json!({"microversion":MID2})));
     let report = workspace_run(&mut mock, &dir, 50).unwrap();
-    assert_eq!(report.calls, 21);
+    assert_eq!(report.calls, 23);
     let mut zip = open_bundle(&dir);
     assert_sources(&mut zip, MID2, "m");
     let vars = zip_value(&mut zip, &format!("partstudios/{PS}/variables.json"));
@@ -592,6 +600,8 @@ fn workspace_change_then_stable_refetches_once_and_does_not_reuse_unverified_wor
     for _ in 0..5 {
         workspace_responses.pop_front();
     }
+    // The sketch-information response uses a pinned /m/ path and is already cached.
+    workspace_responses.pop_back();
     probe.replies.extend(workspace_responses);
     probe
         .replies
@@ -624,7 +634,7 @@ fn workspace_change_twice_stops_with_stated_message_and_keeps_existing_output() 
     ));
     let error = workspace_run(&mut mock, &dir, 50).err().unwrap();
     assert_eq!(error.kind, ErrorKind::Changed);
-    assert_eq!(error.calls, 21);
+    assert_eq!(error.calls, 23);
     assert_eq!(
         error.message,
         "the document changed while fetching; try again, or use a version link"
@@ -942,7 +952,7 @@ fn same_document_two_part_revolute_assembly_includes_referenced_partstudio_once(
     part.pop_front();
     mock.replies.extend(part);
     let report = run(&mut mock, &dir, AS, 50).unwrap();
-    assert_eq!(report.calls, 12);
+    assert_eq!(report.calls, 13);
     let mut zip = open_bundle(&dir);
     let manifest = assert_sources(&mut zip, MID, "v");
     assert_eq!(manifest["elements"].as_array().unwrap().len(), 2);
@@ -956,9 +966,9 @@ fn same_document_two_part_revolute_assembly_includes_referenced_partstudio_once(
 fn workspace_budget_must_cover_the_final_consistency_check() {
     let dir = tempfile::tempdir().unwrap();
     let mut mock = partstudio_mock(MID, "1");
-    let error = workspace_run(&mut mock, &dir, 10).err().unwrap();
+    let error = workspace_run(&mut mock, &dir, 11).err().unwrap();
     assert_eq!(error.kind, ErrorKind::Budget);
-    assert_eq!(error.calls, 10);
+    assert_eq!(error.calls, 11);
     assert!(!dir.path().join("test.onshape-bundle").exists());
     let mut retry = Mock::default();
     retry
@@ -968,6 +978,8 @@ fn workspace_budget_must_cover_the_final_consistency_check() {
     for _ in 0..5 {
         workspace_responses.pop_front();
     }
+    // The sketch-information response uses a pinned /m/ path and is already cached.
+    workspace_responses.pop_back();
     retry.replies.extend(workspace_responses);
     retry
         .replies
@@ -982,10 +994,10 @@ fn workspace_refetch_uses_the_same_total_call_budget() {
         200,
         json!({"microversion":"888888888888888888888888"}),
     ));
-    let error = workspace_run(&mut mock, &dir, 11).err().unwrap();
+    let error = workspace_run(&mut mock, &dir, 12).err().unwrap();
     assert_eq!(error.kind, ErrorKind::Budget);
-    assert_eq!(error.calls, 11);
-    assert_eq!(mock.sent.len(), 11);
+    assert_eq!(error.calls, 12);
+    assert_eq!(mock.sent.len(), 12);
     assert!(!dir.path().join("test.onshape-bundle").exists());
 }
 #[test]
@@ -1002,7 +1014,7 @@ fn immutable_export_job_resumes_after_budget_interruption_without_a_second_post(
         part.pop_front();
     }
     retry.replies.extend(part);
-    assert_eq!(run(&mut retry, &dir, PS, 2).unwrap().calls, 2);
+    assert_eq!(run(&mut retry, &dir, PS, 3).unwrap().calls, 3);
     assert_eq!(retry.sent[0].1, "/api/v17/translations/export-job");
     assert!(retry.sent.iter().all(|(method, _, _)| method == "GET"));
 }
@@ -1025,7 +1037,7 @@ fn failed_export_has_a_typed_error_and_can_be_retried() {
         part.pop_front();
     }
     retry.replies.extend(part);
-    assert_eq!(run(&mut retry, &dir, PS, 50).unwrap().calls, 3);
+    assert_eq!(run(&mut retry, &dir, PS, 50).unwrap().calls, 4);
     assert_eq!(retry.sent[0].0, "POST");
 }
 #[test]
@@ -1076,7 +1088,9 @@ fn immediate_step_export_can_omit_unused_job_and_result_document_fields() {
         headers: BTreeMap::new(),
         body: include_bytes!("fixtures/onshape/export.step").to_vec(),
     });
-    assert_eq!(run(&mut mock, &dir, PS, 50).unwrap().calls, 9);
+    mock.replies
+        .push_back(response(200, sketch_information(MID)));
+    assert_eq!(run(&mut mock, &dir, PS, 50).unwrap().calls, 10);
     assert!(mock.sleeps.is_empty());
 }
 #[test]
@@ -1469,9 +1483,10 @@ fn sketch_only_fetch_skips_step_and_converts_without_a_body() {
         }]})),
         response(200,json!({"microversionId":MID,"bodies":[]})),
         response(404,json!({})),response(404,json!({})),
+        response(200, sketch_information(MID)),
     ]);
     let report = run(&mut mock, &dir, PS, 50).unwrap();
-    assert_eq!(report.calls, 7);
+    assert_eq!(report.calls, 8);
     assert!(mock
         .sent
         .iter()
@@ -1613,9 +1628,10 @@ fn a_sketch_only_part_studio_fetches_without_step_and_keeps_every_sketch_kind() 
         response(200, json!({"microversionId":MID,"bodies":[]})),
         response(404, json!({})),
         response(200, json!([])),
+        response(200, sketch_information(MID)),
     ]);
     let fetched = run(&mut mock, &dir, PS, 50).unwrap();
-    assert_eq!(fetched.calls, 7);
+    assert_eq!(fetched.calls, 8);
     assert!(mock.replies.is_empty());
     assert!(mock
         .sent
@@ -1830,4 +1846,160 @@ fn frontend_writer_publishes_derived_design_companions() {
         .file_name()
         .to_string_lossy()
         .starts_with("derived-")));
+}
+
+#[test]
+fn sketch_information_is_captured_verbatim_with_manifest_and_source_record() {
+    for workspace in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut mock = partstudio_mock(MID, "1");
+        let raw = format!("  {}\n", sketch_information(MID));
+        mock.replies.back_mut().unwrap().body = raw.as_bytes().to_vec();
+        if workspace {
+            mock.replies
+                .push_back(response(200, json!({"microversion":MID})));
+            workspace_run(&mut mock, &dir, 50).unwrap();
+        } else {
+            run(&mut mock, &dir, PS, 50).unwrap();
+        }
+        let kind = if workspace { "m" } else { "v" };
+        let content = if workspace { MID } else { VID };
+        let request = mock
+            .sent
+            .iter()
+            .find(|(_, path, _)| path.ends_with("/sketches"))
+            .unwrap();
+        assert_eq!(
+            request,
+            &(
+                "GET".into(),
+                format!("/api/v17/partstudios/d/{DID}/{kind}/{content}/e/{PS}/sketches"),
+                String::new()
+            )
+        );
+        let mut zip = open_bundle(&dir);
+        let manifest = assert_sources(&mut zip, MID, kind);
+        let path = format!("partstudios/{PS}/sketches.json");
+        assert_eq!(manifest["schema"], "dutchman.onshape-bundle/1");
+        assert_eq!(manifest["elements"][0]["files"]["sketches"], path);
+        let mut bytes = Vec::new();
+        zip.by_name(&path).unwrap().read_to_end(&mut bytes).unwrap();
+        assert_eq!(bytes, raw.as_bytes());
+    }
+}
+
+#[test]
+fn sketch_information_budget_stop_resumes_from_cached_feature_and_export_reads() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("test.onshape-bundle"), b"previous").unwrap();
+    let mut mock = partstudio_mock(MID, "1");
+    let error = run(&mut mock, &dir, PS, 10).err().unwrap();
+    assert_eq!(error.kind, ErrorKind::Budget);
+    assert_eq!(error.calls, 10);
+    assert!(mock
+        .sent
+        .iter()
+        .all(|(_, path, _)| !path.ends_with("/sketches")));
+    assert_eq!(
+        std::fs::read(dir.path().join("test.onshape-bundle")).unwrap(),
+        b"previous"
+    );
+    let mut retry = Mock::default();
+    retry
+        .replies
+        .push_back(response(200, sketch_information(MID)));
+    assert_eq!(run(&mut retry, &dir, PS, 1).unwrap().calls, 1);
+    assert_eq!(retry.sent.len(), 1);
+    assert!(retry.sent[0].1.ends_with("/sketches"));
+    let mut cached = Mock::default();
+    assert_eq!(run(&mut cached, &dir, PS, 0).unwrap().calls, 0);
+    assert!(cached.sent.is_empty());
+}
+
+#[test]
+fn sketch_information_uses_existing_microversion_privacy_and_http_guards() {
+    for (status, body, expected) in [
+        (
+            200,
+            json!({"sourceMicroversion":"888888888888888888888888","sketches":[]}),
+            ErrorKind::Response,
+        ),
+        (
+            200,
+            json!({"sketches":[],"name":SECRET}),
+            ErrorKind::Privacy,
+        ),
+        (404, json!({}), ErrorKind::Response),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut mock = partstudio_mock(MID, "1");
+        *mock.replies.back_mut().unwrap() = response(status, body);
+        let error = run(&mut mock, &dir, PS, 50).err().unwrap();
+        assert_eq!(error.kind, expected);
+        assert_eq!(error.calls, 11);
+        assert!(!error.to_string().contains(SECRET));
+        assert!(!dir.path().join("test.onshape-bundle").exists());
+    }
+}
+
+#[test]
+fn a_fetched_face_sketch_uses_its_stored_placement_during_offline_reading() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut mock = partstudio_mock(MID, "1");
+    // The transport fixture has a metadata-only STEP reply. Use the existing
+    // synthetic plate's geometry so this regression reaches offline history mapping.
+    let mut fixture = zip::ZipArchive::new(std::io::Cursor::new(
+        include_bytes!(
+            "../../dutchman-core/tests/fixtures/onshape-default-plane-regions.onshape-bundle"
+        )
+        .as_slice(),
+    ))
+    .unwrap();
+    let mut step = Vec::new();
+    fixture
+        .by_name("partstudios/studio/export.step")
+        .unwrap()
+        .read_to_end(&mut step)
+        .unwrap();
+    mock.replies[9].body = step;
+    mock.replies[3] = response(
+        200,
+        json!({"sourceMicroversion":MID,"features":[
+            {"btType":"BTMSketch-151","featureType":"newSketch","featureId":"sketch","name":"Sketch",
+             "parameters":[{"parameterId":"sketchPlane","queries":[{"btType":"BTMIndividualQuery-138","deterministicIds":["support"]}]}],
+             "entities":[{"btType":"BTMSketchPoint-158","entityId":"point","x":0.003,"y":0.004}],"constraints":[]},
+            {"featureType":"unsupportedSynthetic","featureId":"unsupported","parameters":[]}
+        ]}),
+    );
+    mock.replies[4] = response(
+        200,
+        json!({"microversionId":MID,"bodies":[{"id":"body",
+        "faces":[{"id":"support","orientation":true,"loops":[],"surface":{"type":"PLANE",
+            "origin":{"x":0.01,"y":-0.02,"z":0.005},"normal":{"z":1.0}}}]}]}),
+    );
+    *mock.replies.back_mut().unwrap() = response(
+        200,
+        json!({"sourceMicroversion":MID,"sketches":[
+        {"featureId":"sketch","sketchMatrix":[0.0,-1.0,0.0,0.04, 1.0,0.0,0.0,0.07,
+            0.0,0.0,1.0,0.005, 0.0,0.0,0.0,1.0]}]}),
+    );
+    run(&mut mock, &dir, PS, 50).unwrap();
+    let mut report = dutchman_core::Report::default();
+    let model = dutchman_core::read(
+        dutchman_core::Format::OnshapeBundle,
+        &dir.path().join("test.onshape-bundle"),
+        &mut report,
+    )
+    .unwrap();
+    let wire = serde_json::to_value(&model.ir).unwrap();
+    assert_eq!(
+        wire["model"]["sketches"][0]["placement"]["frame"]["origin"],
+        json!({"x":40.0,"y":70.0,"z":5.0})
+    );
+    assert_eq!(
+        wire["model"]["sketches"][0]["placement"]["frame"]["u_axis"],
+        json!({"x":0.0,"y":1.0,"z":0.0})
+    );
+    assert!(model.source_step.is_some());
+    assert!(!report.losses().iter().any(|loss| loss.subject == "Sketch"));
 }

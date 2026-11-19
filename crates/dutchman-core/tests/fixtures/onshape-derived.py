@@ -28,7 +28,8 @@ def generate(cli):
                     "documentId": D, "versionId": V, "elementId": E})]),
             shapes.feature("boolean", "Cut", [shapes.enum("operationType", "SUBTRACTION"),
                 shapes.query("targets", deterministicIds=["base"]),
-                shapes.query("tools", deterministicIds=["inserted"])])]
+                shapes.query("tools", deterministicIds=["inserted"]),
+                shapes.param("keepTools", "BTMParameterBoolean", value=False)])]
     files = {}
     def studio(folder, eid, features, states, step):
         prefix = f"{folder}partstudios/{eid}"

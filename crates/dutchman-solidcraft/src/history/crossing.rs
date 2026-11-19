@@ -311,6 +311,71 @@ pub(super) fn stray_curves(
     strays.difference(&named).cloned().collect()
 }
 
+/// The curves among `ids` that touch, enter or cross a loop `feature` selects whole from the
+/// sketch. Solid, such a curve divides the region and SolidCraft finds no profile with the
+/// source's boundary. A curve or selected loop that cannot be followed counts as dividing.
+pub(super) fn dividing(
+    sketch: &Value,
+    entities: &[&Value],
+    feature: &Value,
+    ids: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let Some(id) = sketch.get("id").and_then(Value::as_str) else {
+        return ids.clone();
+    };
+    let mut used = BTreeSet::new();
+    if ids.len() > MAX_LINES
+        || region_uses(
+            super::operation(feature),
+            id,
+            &[id],
+            sketch,
+            entities,
+            &mut used,
+            0,
+        ) != Some(true)
+    {
+        return ids.clone();
+    }
+    let selected: Vec<&[Value]> = loops(sketch)
+        .into_iter()
+        .filter(|members| {
+            members.iter().all(|member| {
+                member
+                    .get("entity")
+                    .and_then(Value::as_str)
+                    .is_some_and(|entity| used.contains(entity))
+            })
+        })
+        .collect();
+    let Some(polygons) = selected
+        .iter()
+        .map(|members| polygon(members, entities))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return ids.clone();
+    };
+    ids.iter()
+        .filter(|id| {
+            entity_named(entities, id)
+                .and_then(samples)
+                .is_none_or(|points| polygons.iter().any(|polygon| meets(&points, polygon)))
+        })
+        .cloned()
+        .collect()
+}
+
+/// Whether a curve, as points along it, lies on or inside the polygon or crosses its edges.
+fn meets(points: &[P2], polygon: &[P2]) -> bool {
+    let tolerance = tolerance(polygon);
+    points
+        .iter()
+        .any(|&p| inside(p, polygon) || on_boundary(p, polygon, tolerance))
+        || points.iter().zip(points.iter().skip(1)).any(|(&c, &d)| {
+            edges(polygon).any(|(a, b)| !matches!(intersection(a, b, c, d), Ok(None)))
+        })
+}
+
 /// Adds to `found` each of `ids` that a string inside `value` names.
 fn named_in(value: &Value, ids: &BTreeSet<String>, found: &mut BTreeSet<String>, depth: usize) {
     if depth > MAX_SELECTION_DEPTH {
@@ -613,8 +678,59 @@ fn samples(entity: &Value) -> Option<Vec<P2>> {
                     .collect(),
             )
         }
+        "ellipse" => {
+            let (from, to) = ellipse_range(geometry)?;
+            ellipse_samples(geometry, from, to)
+        }
         _ => None,
     }
+}
+
+/// An ellipse uses its principal-axis angular chart, including a bounded arc's
+/// stored interval. Sampling selects an interior point; the written curve stays exact.
+fn ellipse_range(geometry: &Value) -> Option<(f64, f64)> {
+    match geometry.get("bounds").filter(|v| !v.is_null()) {
+        Some(bounds) => {
+            let bounds = bounds.as_array()?;
+            Some((number(bounds.first())?, number(bounds.get(1))?))
+        }
+        None => Some((0.0, std::f64::consts::TAU)),
+    }
+}
+
+fn ellipse_axes(geometry: &Value) -> Option<(P2, P2, P2)> {
+    let center = super::sketch::p2(geometry.get("center"))?;
+    let major = number(geometry.get("major_radius"))?;
+    let minor = number(geometry.get("minor_radius"))?;
+    let angle = number(geometry.get("major_angle"))?;
+    (major > 0.0 && minor > 0.0).then_some((
+        center,
+        [major * angle.cos(), major * angle.sin()],
+        [-minor * angle.sin(), minor * angle.cos()],
+    ))
+}
+
+fn ellipse_samples(geometry: &Value, from: f64, to: f64) -> Option<Vec<P2>> {
+    if from == to || (to - from).abs() > std::f64::consts::TAU {
+        return None;
+    }
+    let ([cx, cy], [ax, ay], [bx, by]) = ellipse_axes(geometry)?;
+    // The ellipse is an affine image of a unit circle. Reuse the existing angular
+    // subdivision, bounding chord error by its semi-major radius below.
+    let count = ((to - from).abs() / std::f64::consts::TAU * CIRCLE_SAMPLES as f64)
+        .ceil()
+        .max(2.0) as usize;
+    Some(
+        (0..=count)
+            .map(|i| {
+                let t = from + (to - from) * i as f64 / count as f64;
+                [
+                    cx + ax * t.cos() + bx * t.sin(),
+                    cy + ay * t.cos() + by * t.sin(),
+                ]
+            })
+            .collect(),
+    )
 }
 
 /// How close the ends of two boundary uses must be for a ring to close.
@@ -685,6 +801,7 @@ fn use_samples(use_: &Value, entities: &[&Value], reading: fn(f64) -> f64) -> Op
                     .collect(),
             )
         }
+        "ellipse" => ellipse_samples(geometry, from, to),
         _ => None,
     }
 }
@@ -761,7 +878,7 @@ pub(super) fn trimmed_rings(uses: &[&[Value]], entities: &[&Value]) -> Option<Ve
                     entity_named(entities, id)
                         .and_then(|entity| entity.pointer("/geometry/kind"))
                         .and_then(Value::as_str)
-                        .is_some_and(|kind| matches!(kind, "arc" | "circle"))
+                        .is_some_and(|kind| matches!(kind, "arc" | "circle" | "ellipse"))
                 })
                 .collect()
         })
@@ -854,6 +971,12 @@ pub(super) fn boundary_error(entities: &[&Value]) -> Option<f64> {
         let count = match geometry.get("kind")?.as_str()? {
             "circle" => CIRCLE_SAMPLES,
             "arc" => ARC_SAMPLES.min(CIRCLE_SAMPLES),
+            "ellipse" => {
+                let radius = number(geometry.get("major_radius"))?;
+                error = error
+                    .max(radius * (1.0 - (std::f64::consts::PI / CIRCLE_SAMPLES as f64).cos()));
+                continue;
+            }
             _ => continue,
         };
         let radius = number(geometry.get("radius"))?;
@@ -880,7 +1003,22 @@ pub(super) fn trimmed_bounds(
             high = high.max(value);
         }
         let geometry = entity_named(entities, use_.get("entity")?.as_str()?)?.get("geometry")?;
-        if matches!(geometry.get("kind")?.as_str()?, "circle" | "arc") {
+        if geometry.get("kind")?.as_str()? == "ellipse" {
+            let (center, [ax, ay], [bx, by]) = ellipse_axes(geometry)?;
+            let [cx, cy] = center;
+            let base = at(center);
+            let x = at([cx + ax, cy + ay]) - base;
+            let y = at([cx + bx, cy + by]) - base;
+            let angle = y.atan2(x);
+            let (from, to) = range(use_)?;
+            for theta in [angle, angle + std::f64::consts::PI] {
+                if (theta - from.min(to)).rem_euclid(std::f64::consts::TAU) <= (to - from).abs() {
+                    let value = base + x * theta.cos() + y * theta.sin();
+                    low = low.min(value);
+                    high = high.max(value);
+                }
+            }
+        } else if matches!(geometry.get("kind")?.as_str()?, "circle" | "arc") {
             let center = super::sketch::p2(geometry.get("center"))?;
             let radius = number(geometry.get("radius"))?;
             let base = at(center);
@@ -1000,7 +1138,7 @@ fn inside(p: P2, polygon: &[P2]) -> bool {
 
 /// A line arrangement is deliberately bounded: intersections and directed edges grow
 /// quadratically. Larger arrangements keep the existing refusal.
-const MAX_LINES: usize = 128;
+pub(super) const MAX_LINES: usize = 128;
 const MAX_SELECTION_DEPTH: usize = 64;
 const MAX_EDGES: usize = 16_384;
 const MAX_POINTS: usize = 2048;
@@ -1103,6 +1241,62 @@ pub(super) fn rings_cross(a: &[P2], b: &[P2]) -> bool {
     edges(a).any(|(p, q)| {
         edges(b).any(|(r, s)| !intersection(p, q, r, s).is_ok_and(|hit| hit.is_none()))
     })
+}
+
+/// Follow one simple perimeter of exact emitted lines. Share the bounded arrangement
+/// limits and intersection checks with profile selection. Collinear neighbours are refused
+/// because SolidCraft can merge them into one edge, changing the historical edge endpoints.
+pub(super) fn line_ring(lines: &[(P2, P2)]) -> Option<Vec<P2>> {
+    if !(3..=MAX_LINES).contains(&lines.len()) {
+        return None;
+    }
+    let &(first, mut end) = lines.first()?;
+    let mut remaining: Vec<_> = lines.iter().copied().skip(1).collect();
+    let mut ring = vec![first];
+    while !remaining.is_empty() {
+        ring.push(end);
+        let mut matches = remaining.iter().enumerate().filter_map(|(i, &(a, b))| {
+            if super::sketch::distance(end, a) <= EPS {
+                Some((i, b))
+            } else if super::sketch::distance(end, b) <= EPS {
+                Some((i, a))
+            } else {
+                None
+            }
+        });
+        let (index, next) = matches.next()?;
+        if matches.next().is_some() {
+            return None;
+        }
+        remaining.swap_remove(index);
+        end = next;
+    }
+    if super::sketch::distance(end, first) > EPS || self_crossing(&ring) {
+        return None;
+    }
+    for ((a, b), &c) in edges(&ring).zip(ring.iter().cycle().skip(2)) {
+        let u = subtract(b, a);
+        let v = subtract(c, b);
+        if super::sketch::distance(a, b) <= EPS
+            || determinant(u, v).abs() <= EPS * u[0].hypot(u[1]) * v[0].hypot(v[1])
+        {
+            return None;
+        }
+    }
+    (signed_area(edges(&ring)).abs() > EPS * EPS).then_some(ring)
+}
+
+/// Signed area relative to the first vertex, avoiding cancellation when a small
+/// perimeter is far from the sketch origin. The edge order determines the sign.
+pub(super) fn signed_area(lines: impl IntoIterator<Item = (P2, P2)>) -> f64 {
+    let mut lines = lines.into_iter();
+    let Some((origin, _)) = lines.next() else {
+        return 0.0;
+    };
+    lines
+        .map(|(a, b)| determinant(subtract(a, origin), subtract(b, origin)))
+        .sum::<f64>()
+        / 2.0
 }
 
 fn self_crossing(ring: &[P2]) -> bool {
@@ -1755,6 +1949,66 @@ mod tests {
     use super::*;
 
     #[test]
+    fn translated_line_perimeters_keep_their_area_and_winding() {
+        for (points, area) in [
+            (vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]], 1.0),
+            (
+                vec![
+                    [0.0, 0.0],
+                    [3.0, 0.0],
+                    [3.0, 1.0],
+                    [1.0, 1.0],
+                    [1.0, 3.0],
+                    [0.0, 3.0],
+                ],
+                5.0,
+            ),
+        ] {
+            for offset in [0.0, 100_000_000.0, 100_000_001.0] {
+                for reverse in [false, true] {
+                    let mut translated: Vec<_> = points
+                        .iter()
+                        .map(|[x, y]| [x + offset, y + offset])
+                        .collect();
+                    if reverse {
+                        translated.reverse();
+                    }
+                    let lines: Vec<_> = edges(&translated).collect();
+                    let ring = line_ring(&lines).unwrap();
+                    assert_eq!(
+                        signed_area(edges(&ring)),
+                        if reverse { -area } else { area }
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn emitted_line_perimeters_are_bounded_closed_and_unambiguous() {
+        // Out-of-order, reversed segments still describe the same concave perimeter.
+        let lines = [
+            ([0.0, 0.0], [30.0, 0.0]),
+            ([10.0, 10.0], [30.0, 10.0]),
+            ([0.0, 30.0], [10.0, 30.0]),
+            ([30.0, 10.0], [30.0, 0.0]),
+            ([10.0, 30.0], [10.0, 10.0]),
+            ([0.0, 0.0], [0.0, 30.0]),
+        ];
+        let ring = line_ring(&lines).unwrap();
+        assert_eq!(ring.len(), 6);
+        assert_eq!(ring_area(&ring), 500.0);
+        assert!(line_ring(&lines[..5]).is_none());
+        let mut branched = lines.to_vec();
+        branched.push(([30.0, 0.0], [40.0, 0.0]));
+        assert!(line_ring(&branched).is_none());
+        let mut zero_edge = lines.to_vec();
+        zero_edge.push(([30.0, 0.0], [30.0, 0.0]));
+        assert!(line_ring(&zero_edge).is_none());
+        assert!(line_ring(&[lines[0]; MAX_LINES + 1]).is_none());
+    }
+
+    #[test]
     fn curves_bounding_a_selected_trimmed_region_are_named() {
         let sketch = json!({"id": "s"});
         let features = vec![
@@ -2019,5 +2273,33 @@ mod tests {
         assert!((ring_area(&ring).abs() - 16.0).abs() < 1e-6, "{ring:?}");
         // Read as millimetres, the same stretch would run past the line's end.
         assert!(trimmed_ring(tab([3.0, 7.0]).as_array().unwrap(), &refs).is_none());
+    }
+    #[test]
+    fn elliptical_region_sampling_bounds_and_interior_stay_in_the_exact_chart() {
+        for span in [1.0_f64, 4.0, std::f64::consts::TAU] {
+            let ellipse = serde_json::json!({"id":"oval", "geometry":{"kind":"ellipse",
+                "center":{"u":3.0,"v":4.0},"major_radius":6.0,"minor_radius":2.0,
+                "major_angle":std::f64::consts::FRAC_PI_2}});
+            let end = [3.0 - 2.0 * span.sin(), 4.0 + 6.0 * span.cos()];
+            let chord = line("chord", end, [3.0, 10.0]);
+            let entities = vec![&ellipse, &chord];
+            let mut uses = vec![
+                serde_json::json!({"entity":"oval","parameter_range":[0.0,span],"reversed":false}),
+            ];
+            if span < std::f64::consts::TAU {
+                uses.push(serde_json::json!({"entity":"chord","parameter_range":[0.0,1.0],"reversed":false}));
+            }
+            let ring = trimmed_ring(&uses, &entities).unwrap();
+            let point = interior_point(&ring, &[], boundary_error(&entities).unwrap()).unwrap();
+            assert!(((point[0] - 3.0) / 2.0).powi(2) + ((point[1] - 4.0) / 6.0).powi(2) < 1.0);
+            let (low, high) = trimmed_bounds(&uses, &entities, |p| p[1]).unwrap();
+            assert!((high - 10.0).abs() < 1e-12);
+            let expected = if span >= std::f64::consts::PI {
+                -2.0
+            } else {
+                end[1]
+            };
+            assert!((low - expected).abs() < 1e-12);
+        }
     }
 }

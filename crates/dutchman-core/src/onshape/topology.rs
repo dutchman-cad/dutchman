@@ -27,11 +27,21 @@ pub(super) fn vector(row: &Value, factor: f64) -> Mapping<[f64; 3]> {
 pub(super) fn point([x, y, z]: [f64; 3]) -> Value {
     json!({"x": x, "y": y, "z": z})
 }
-pub(super) fn sub([a, b, c]: [f64; 3], [d, e, f]: [f64; 3]) -> [f64; 3] {
-    [a - d, b - e, c - f]
+pub(super) fn sub(
+    [first_x, first_y, first_z]: [f64; 3],
+    [second_x, second_y, second_z]: [f64; 3],
+) -> [f64; 3] {
+    [first_x - second_x, first_y - second_y, first_z - second_z]
 }
-pub(super) fn cross([a, b, c]: [f64; 3], [d, e, f]: [f64; 3]) -> [f64; 3] {
-    [b * f - c * e, c * d - a * f, a * e - b * d]
+pub(super) fn cross(
+    [first_x, first_y, first_z]: [f64; 3],
+    [second_x, second_y, second_z]: [f64; 3],
+) -> [f64; 3] {
+    [
+        first_y * second_z - first_z * second_y,
+        first_z * second_x - first_x * second_z,
+        first_x * second_y - first_y * second_x,
+    ]
 }
 pub(super) fn unit(v: [f64; 3]) -> Mapping<[f64; 3]> {
     let length = v.iter().map(|v| v * v).sum::<f64>().sqrt();
@@ -42,182 +52,275 @@ pub(super) fn unit(v: [f64; 3]) -> Mapping<[f64; 3]> {
     }
 }
 
-fn dot([a, b, c]: [f64; 3], [d, e, f]: [f64; 3]) -> f64 {
-    a * d + b * e + c * f
-}
-
-fn along([a, b, c]: [f64; 3], t: f64, [d, e, f]: [f64; 3]) -> [f64; 3] {
-    [a + t * d, b + t * e, c + t * f]
-}
-
-/// An input edge as model-space points (mm): a line's ends, a circle sampled
-/// through its midpoint from start to end, or all the way round when closed.
-fn polyline(edge: &Value) -> Mapping<Vec<[f64; 3]>> {
-    let curve = edge
-        .get("curve")
-        .ok_or("the input edge has no analytic curve")?;
-    let geometry = edge
-        .get("geometry")
-        .ok_or("the input edge has no geometric data")?;
-    let at = |key: &str| -> Mapping<[f64; 3]> {
-        vector(
-            geometry.get(key).ok_or("an input edge point is missing")?,
-            1000.0,
-        )
-    };
-    let (start, mid, end) = (at("startPoint")?, at("midPoint")?, at("endPoint")?);
-    match text(curve, "type")? {
-        "LINE" => Ok(vec![start, end]),
-        "CIRCLE" => {
-            let center = vector(
-                curve.get("origin").ok_or("circle center is missing")?,
-                1000.0,
-            )?;
-            let axis = unit(vector(
-                curve
-                    .get("normal")
-                    .or_else(|| curve.get("direction"))
-                    .ok_or("circle axis is missing")?,
-                1.0,
-            )?)?;
-            let offset = sub(start, center);
-            let radial = sub(offset, axis.map(|n| n * dot(offset, axis)));
-            let radius = dot(radial, radial).sqrt();
-            let x = unit(radial)?;
-            let y = cross(axis, x);
-            let angle = |p: [f64; 3]| {
-                let q = sub(p, center);
-                dot(q, y).atan2(dot(q, x)).rem_euclid(std::f64::consts::TAU)
-            };
-            let closed = dot(sub(end, start), sub(end, start)).sqrt() <= 1e-6 * radius.max(1.0);
-            let sweep = if closed {
-                std::f64::consts::TAU
-            } else {
-                let to = angle(end);
-                if angle(mid) < to {
-                    to
-                } else {
-                    to - std::f64::consts::TAU
-                }
-            };
-            Ok((0..=32)
-                .map(|step| {
-                    let t = sweep * f64::from(step) / 32.0;
-                    along(along(center, radius * t.cos(), x), radius * t.sin(), y)
-                })
-                .collect())
-        }
-        other => Err(format!("{other} input edges are not supported yet")),
-    }
-}
-
-/// Where a point in a face's plane lies: `Some(true)` inside, `Some(false)` on
-/// its boundary within `on`, `None` outside. Even-odd over every loop's segments.
-fn within(
-    point: [f64; 3],
-    origin: [f64; 3],
-    normal: [f64; 3],
-    boundary: &[Vec<[f64; 3]>],
-    on: f64,
-) -> Option<bool> {
-    let [nx, _, _] = normal;
-    let helper = if nx.abs() < 0.9 {
-        [1.0, 0.0, 0.0]
-    } else {
-        [0.0, 1.0, 0.0]
-    };
-    let x = unit(cross(normal, helper)).ok()?;
-    let y = cross(normal, x);
-    let flat = |p: [f64; 3]| {
-        let q = sub(p, origin);
-        [dot(q, x), dot(q, y)]
-    };
-    let [px, py] = flat(point);
-    let mut inside = false;
-    for points in boundary {
-        for pair in points.windows(2) {
-            let [a, b] = pair else { continue };
-            let ([ax, ay], [bx, by]) = (flat(*a), flat(*b));
-            let (dx, dy) = (bx - ax, by - ay);
-            let length = dx * dx + dy * dy;
-            let t = if length > 0.0 {
-                (((px - ax) * dx + (py - ay) * dy) / length).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            if (px - ax - t * dx).hypot(py - ay - t * dy) <= on {
-                return Some(false);
-            }
-            if (ay > py) != (by > py) && px < ax + (py - ay) * dx / dy {
-                inside = !inside;
-            }
-        }
-    }
-    inside.then_some(true)
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum OperandKind {
+    Body,
+    Face,
+    Edge,
 }
 
 pub(super) struct State {
     pub row: Value,
-    faces: BTreeMap<String, Value>,
-    edges: BTreeMap<String, Value>,
+    pub(super) faces: BTreeMap<String, Value>,
+    pub(super) edges: BTreeMap<String, Value>,
     complete_vertices: bool,
 }
 
-/// The small rollback index is admitted once, independent of feature count.
+type StoredSketches<'a> = Mapping<Option<BTreeMap<&'a str, Mapping<&'a Value>>>>;
+
+fn sketch_information<'a>(bundle: &'a Bundle, prefix: &str) -> StoredSketches<'a> {
+    let path = format!("{prefix}/sketches.json");
+    if !bundle.contains(&path) {
+        return Ok(None);
+    }
+    let response = bundle
+        .json(&path)
+        .map_err(|_| "sketches.json is unreadable")?;
+    let mut sketches = BTreeMap::new();
+    for sketch in rows(response, "sketches")? {
+        let Ok(native) = text(sketch, "featureId") else {
+            continue;
+        };
+        if sketches.insert(native, Ok(sketch)).is_some() {
+            sketches.insert(
+                native,
+                Err("the stored sketch attachment information repeats a feature id".into()),
+            );
+        }
+    }
+    Ok(Some(sketches))
+}
+
 pub(super) struct Inputs<'a> {
     bundle: &'a Bundle,
     prefix: &'a str,
     mid: &'a str,
-    indices: BTreeSet<usize>,
+    indices: Mapping<BTreeSet<usize>>,
+    features: &'a [Value],
+    body_features: Vec<usize>,
+    provenance: std::cell::RefCell<Provenance<'a>>,
+    sketches: StoredSketches<'a>,
+    pub(super) regions: std::cell::RefCell<super::regions::Recovery>,
 }
 
 impl<'a> Inputs<'a> {
-    pub fn new(bundle: &'a Bundle, prefix: &'a str, mid: &'a str) -> Mapping<Self> {
-        let index = bundle
-            .json(&format!("{prefix}/bodydetails/index.json"))
-            .map_err(|_| "bodydetails/index.json is missing or unreadable; fetch a new bundle")?;
-        // Format 1 specifies the index's meaning but no JSON envelope.
-        let entries = index
-            .as_array()
-            .or_else(|| index.get("indices").and_then(Value::as_array))
-            .filter(|rows| rows.len() <= super::ROWS)
-            .ok_or("the bodydetails index is missing or exceeds the rollback limit")?;
-        let mut indices = BTreeSet::new();
-        for entry in entries {
-            let ordinal = if let Some(ordinal) = entry.as_u64() {
-                usize::try_from(ordinal)
-                    .map_err(|_| "a rollback index exceeds this platform's range")?
-            } else {
-                entry
-                    .as_str()
-                    .and_then(|path| path.strip_suffix(".json"))
-                    .and_then(|i| i.parse::<usize>().ok())
-                    .ok_or("a rollback index has no integer or file name")?
-            };
-            if !indices.insert(ordinal) {
-                return Err("the bodydetails index repeats a rollback index".into());
+    pub(super) fn new(
+        bundle: &'a Bundle,
+        prefix: &'a str,
+        mid: &'a str,
+        features: &'a [Value],
+    ) -> Mapping<Self> {
+        let indices = (|| -> Mapping<BTreeSet<usize>> {
+            let index = bundle
+                .json(&format!("{prefix}/bodydetails/index.json"))
+                .map_err(|_| {
+                    "bodydetails/index.json is missing or unreadable; fetch a new bundle"
+                })?;
+            let entries = index
+                .as_array()
+                .or_else(|| index.get("indices").and_then(Value::as_array))
+                .filter(|rows| rows.len() <= super::ROWS)
+                .ok_or("the bodydetails index is missing or exceeds the rollback limit")?;
+            let mut indices = BTreeSet::new();
+            for entry in entries {
+                let ordinal = if let Some(ordinal) = entry.as_u64() {
+                    usize::try_from(ordinal)
+                        .map_err(|_| "a rollback index exceeds this platform's range")?
+                } else {
+                    entry
+                        .as_str()
+                        .and_then(|path| path.strip_suffix(".json"))
+                        .and_then(|i| i.parse::<usize>().ok())
+                        .ok_or("a rollback index has no integer or file name")?
+                };
+                if !indices.insert(ordinal) {
+                    return Err("the bodydetails index repeats a rollback index".into());
+                }
             }
-        }
+            Ok(indices)
+        })();
         Ok(Self {
             bundle,
             prefix,
             mid,
             indices,
+            features,
+            body_features: features
+                .iter()
+                .enumerate()
+                .filter(|(_, feature)| {
+                    !matches!(
+                        feature.get("featureType").and_then(Value::as_str),
+                        Some("newSketch" | "assignVariable")
+                    ) && super::suppression(feature) != Ok(true)
+                })
+                .map(|(i, _)| i)
+                .collect(),
+            provenance: std::cell::RefCell::default(),
+            sketches: sketch_information(bundle, prefix),
+            regions: std::cell::RefCell::default(),
         })
     }
 
-    pub fn load(&self, ordinal: usize, feature: &Value) -> Mapping<State> {
-        if !self.indices.contains(&ordinal) {
+    pub(super) fn sketch_information(&self, native: &str) -> Mapping<Option<&Value>> {
+        let Some(sketches) = self.sketches.as_ref().map_err(Clone::clone)? else {
+            return Ok(None);
+        };
+        sketches.get(native).ok_or("the stored sketch attachment frame is missing from sketches.json; fetch a new bundle")?.as_ref().copied().map(Some).map_err(Clone::clone)
+    }
+
+    pub(super) fn unique_feature(&self, native: &str, ordinal: usize) -> Mapping<()> {
+        if self
+            .features
+            .iter()
+            .take(ordinal)
+            .filter(|feature| feature.get("featureId").and_then(Value::as_str) == Some(native))
+            .count()
+            != 1
+        {
+            return Err("the feature dependency producer id is missing or ambiguous".into());
+        }
+        Ok(())
+    }
+
+    pub(super) fn sketch_entities(&self, native: &str) -> Mapping<&[Value]> {
+        let source = self
+            .features
+            .iter()
+            .find(|source| source.get("featureId").and_then(Value::as_str) == Some(native))
+            .ok_or("the source sketch is missing")?;
+        rows(source, "entities")
+    }
+    pub(super) fn sketch_entity(&self, sketch: &str, entity: &str) -> Mapping<&Value> {
+        let sketch = self
+            .features
+            .iter()
+            .find(|f| f.get("featureId").and_then(Value::as_str) == Some(sketch))
+            .ok_or("the region's source sketch is missing")?;
+        rows(sketch, "entities")?
+            .iter()
+            .find(|e| e.get("entityId").and_then(Value::as_str) == Some(entity))
+            .ok_or_else(|| "the region's source sketch entity is missing".into())
+    }
+
+    pub(super) fn load(&self, ordinal: usize, feature: &Value) -> Mapping<State> {
+        if !self
+            .indices
+            .as_ref()
+            .map_err(Clone::clone)?
+            .contains(&ordinal)
+        {
             return Err(format!(
                 "bodydetails for rollback index {ordinal} is missing"
             ));
         }
         load(self.bundle, self.prefix, ordinal, self.mid, feature)
     }
+    pub(super) fn producer(
+        &self,
+        ordinal: usize,
+        native: &str,
+        kind: OperandKind,
+    ) -> Mapping<String> {
+        let mut provenance = self
+            .provenance
+            .try_borrow_mut()
+            .map_err(|_| "feature dependency provenance is already in use")?;
+        if let Some((index, reason)) = &provenance.failed {
+            if ordinal >= *index {
+                return Err(reason.clone());
+            }
+        }
+        if provenance.through.is_none_or(|through| through < ordinal) {
+            let lower = provenance
+                .through
+                .map_or(std::ops::Bound::Unbounded, std::ops::Bound::Excluded);
+            for index in self
+                .indices
+                .as_ref()
+                .map_err(Clone::clone)?
+                .range((lower, std::ops::Bound::Included(ordinal)))
+            {
+                let response: &'a Value = self
+                    .bundle
+                    .json(&format!("{}/bodydetails/{index}.json", self.prefix))
+                    .map_err(|_| "feature dependency rollback is unreadable")?;
+                let current = match operands(response) {
+                    Ok(current) => current,
+                    Err(reason) => {
+                        provenance.failed = Some((*index, reason.clone()));
+                        return Err(reason);
+                    }
+                };
+                provenance.observe(*index, current)?;
+            }
+        }
+        let history = provenance
+            .history
+            .get(&kind)
+            .and_then(|by_id| by_id.get(native))
+            .ok_or("feature dependency topology id has no rollback producer")?;
+        let position = history.partition_point(|transition| transition.at <= ordinal);
+        let interval = position
+            .checked_sub(1)
+            .and_then(|at| history.get(at))
+            .and_then(|transition| transition.interval.clone())
+            .ok_or("feature dependency topology producer is unresolved")?;
+        let first = self
+            .body_features
+            .partition_point(|feature| *feature < interval.start);
+        let end = self
+            .body_features
+            .partition_point(|feature| *feature < interval.end);
+        let candidates = self
+            .body_features
+            .get(first..end)
+            .ok_or("feature dependency rollback range is unresolved")?;
+        let [producer] = candidates else {
+            return Err(if candidates.is_empty() {
+                "feature dependency topology producer is unresolved"
+            } else {
+                "feature dependency topology producer is ambiguous"
+            }
+            .into());
+        };
+        Ok(text(
+            self.features
+                .get(*producer)
+                .ok_or("feature dependency producer is missing")?,
+            "featureId",
+        )?
+        .to_owned())
+    }
 
-    /// The solid parts at a rollback state, by part id, with each part's name.
-    pub fn parts(&self, ordinal: usize) -> Mapping<BTreeMap<String, Option<String>>> {
-        if !self.indices.contains(&ordinal) {
+    /// Whole-studio references need every row accounted for. An unknown body must
+    /// not disappear from the evidence and make a subset look like the whole studio.
+    pub(super) fn solid_parts(&self, ordinal: usize) -> Mapping<BTreeMap<String, Option<String>>> {
+        let parts = self.parts(ordinal)?;
+        let response = self
+            .bundle
+            .json(&format!("{}/bodydetails/{ordinal}.json", self.prefix))
+            .map_err(|_| "the whole-studio rollback snapshot is unreadable")?;
+        for body in rows(response, "bodies")? {
+            if text(body, "type")? != "SOLID"
+                || body
+                    .get("consumedByComposite")
+                    .is_some_and(|value| value.as_bool() != Some(false))
+            {
+                return Err("the whole-studio selection contains an unresolved or non-solid body; select a studio of separate solids".into());
+            }
+            text(body, "id")?;
+        }
+        Ok(parts)
+    }
+
+    pub(super) fn parts(&self, ordinal: usize) -> Mapping<BTreeMap<String, Option<String>>> {
+        if !self
+            .indices
+            .as_ref()
+            .map_err(Clone::clone)?
+            .contains(&ordinal)
+        {
             return Err(format!(
                 "bodydetails for rollback index {ordinal} is missing"
             ));
@@ -228,9 +331,9 @@ impl<'a> Inputs<'a> {
             .map_err(|_| {
                 format!("bodydetails for rollback index {ordinal} is missing or unreadable")
             })?;
-        super::microversion(&response, "microversionId", self.mid)?;
+        super::microversion(response, "microversionId", self.mid)?;
         let mut parts = BTreeMap::new();
-        for body in rows(&response, "bodies")? {
+        for body in rows(response, "bodies")? {
             if body.get("type").and_then(Value::as_str) != Some("SOLID")
                 || body.get("consumedByComposite").and_then(Value::as_bool) == Some(true)
             {
@@ -249,6 +352,173 @@ impl<'a> Inputs<'a> {
     }
 }
 
+struct Operand<'a> {
+    record: &'a Value,
+    boundary: Vec<(&'a str, usize)>,
+}
+
+const F64_EXACT_INTEGER_LIMIT: u64 = 9_007_199_254_740_992;
+
+fn stored_equal(first: &Value, second: &Value) -> bool {
+    if std::ptr::eq(first, second) {
+        return true;
+    }
+    match (first, second) {
+        (Value::Number(first), Value::Number(second)) => {
+            if first == second {
+                return true;
+            }
+            if first.is_f64() == second.is_f64() {
+                return false;
+            }
+            let integer = if first.is_f64() { second } else { first };
+            let magnitude = integer
+                .as_u64()
+                .or_else(|| integer.as_i64().map(i64::unsigned_abs));
+            magnitude.is_some_and(|value| value <= F64_EXACT_INTEGER_LIMIT)
+                && first.as_f64() == second.as_f64()
+        }
+        (Value::Array(first), Value::Array(second)) => {
+            first.len() == second.len()
+                && first
+                    .iter()
+                    .zip(second)
+                    .all(|(first, second)| stored_equal(first, second))
+        }
+        (Value::Object(first), Value::Object(second)) => {
+            first.len() == second.len()
+                && first.iter().all(|(key, value)| {
+                    second
+                        .get(key)
+                        .is_some_and(|other| stored_equal(value, other))
+                })
+        }
+        _ => first == second,
+    }
+}
+
+impl PartialEq for Operand<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.boundary == other.boundary && stored_equal(self.record, other.record)
+    }
+}
+
+type Operands<'a> = BTreeMap<OperandKind, BTreeMap<&'a str, Operand<'a>>>;
+
+struct Transition {
+    at: usize,
+    interval: Option<std::ops::Range<usize>>,
+}
+
+#[derive(Default)]
+struct Provenance<'a> {
+    through: Option<usize>,
+    previous: Operands<'a>,
+    history: BTreeMap<OperandKind, BTreeMap<&'a str, Vec<Transition>>>,
+    failed: Option<(usize, String)>,
+}
+
+impl<'a> Provenance<'a> {
+    fn observe(&mut self, at: usize, mut current: Operands<'a>) -> Mapping<()> {
+        for (kind, previous) in &self.previous {
+            for native in previous.keys() {
+                if current
+                    .get(kind)
+                    .and_then(|values| values.get(*native))
+                    .is_none()
+                {
+                    self.history
+                        .entry(*kind)
+                        .or_default()
+                        .entry(*native)
+                        .or_default()
+                        .push(Transition { at, interval: None });
+                }
+            }
+        }
+        for kind in [OperandKind::Edge, OperandKind::Face, OperandKind::Body] {
+            let Some(values) = current.get_mut(&kind) else {
+                continue;
+            };
+            for (native, value) in values {
+                for (edge, revision) in &mut value.boundary {
+                    *revision = self
+                        .history
+                        .get(&OperandKind::Edge)
+                        .and_then(|edges| edges.get(*edge))
+                        .and_then(|changes| changes.last())
+                        .ok_or("feature dependency boundary has no stored edge revision")?
+                        .at;
+                }
+                if self
+                    .previous
+                    .get(&kind)
+                    .and_then(|values| values.get(*native))
+                    != Some(value)
+                {
+                    self.history
+                        .entry(kind)
+                        .or_default()
+                        .entry(*native)
+                        .or_default()
+                        .push(Transition {
+                            at,
+                            interval: Some(self.through.unwrap_or(0)..at),
+                        });
+                }
+            }
+        }
+        self.previous = current;
+        self.through = Some(at);
+        Ok(())
+    }
+}
+
+fn operands(response: &Value) -> Mapping<Operands<'_>> {
+    let mut result = Operands::new();
+    let mut insert = |kind, native, record, boundary| -> Mapping<()> {
+        if result
+            .entry(kind)
+            .or_default()
+            .insert(native, Operand { record, boundary })
+            .is_some()
+        {
+            return Err("feature dependency topology id repeats within its kind".into());
+        }
+        Ok(())
+    };
+    for body in rows(response, "bodies")? {
+        insert(OperandKind::Body, text(body, "id")?, body, Vec::new())?;
+        let mut edges = BTreeMap::new();
+        for edge in optional_rows(body, "edges")? {
+            let native = text(edge, "id")?;
+            if edges.insert(native, edge).is_some() {
+                return Err("feature dependency topology repeats an edge".into());
+            }
+            insert(OperandKind::Edge, native, edge, Vec::new())?;
+        }
+        for face in optional_rows(body, "faces")? {
+            let mut boundary = BTreeMap::new();
+            for row in optional_rows(face, "loops")? {
+                for coedge in optional_rows(row, "coedges")? {
+                    let native = text(coedge, "edgeId")?;
+                    if !edges.contains_key(native) {
+                        return Err("feature dependency boundary edge is unresolved".into());
+                    }
+                    boundary.insert(native, 0usize);
+                }
+            }
+            insert(
+                OperandKind::Face,
+                text(face, "id")?,
+                face,
+                boundary.into_iter().collect(),
+            )?;
+        }
+    }
+    Ok(result)
+}
+
 fn load(
     bundle: &Bundle,
     prefix: &str,
@@ -261,14 +531,14 @@ fn load(
         .map_err(|_| {
             format!("bodydetails for rollback index {ordinal} is missing or unreadable")
         })?;
-    super::microversion(&response, "microversionId", mid)?;
+    super::microversion(response, "microversionId", mid)?;
     let mut faces = BTreeMap::new();
     let mut edges = BTreeMap::new();
     let mut bodies = BTreeSet::new();
     let mut vertices = BTreeSet::new();
     let mut complete_vertices = true;
     let mut samples = Vec::new();
-    for body in rows(&response, "bodies")? {
+    for body in rows(response, "bodies")? {
         if !bodies.insert(text(body, "id")?.to_owned()) {
             return Err("bodydetails repeats a body id".into());
         }
@@ -399,13 +669,11 @@ fn sample(edge: &Value) -> Mapping<Value> {
 }
 
 impl State {
-    /// A single input body selected explicitly is the same scope as the writer's
-    /// implicit sole-body target. Never turn a subset into an all-body operation.
-    pub fn whole_body_scope(&self, feature: &Value) -> Mapping<()> {
+    pub(super) fn whole_body_scope(&self, feature: &Value) -> Mapping<()> {
         self.whole_body_scope_key(feature, "booleanScope")
     }
 
-    pub fn whole_body_scope_key(&self, feature: &Value, key: &str) -> Mapping<()> {
+    pub(super) fn whole_body_scope_key(&self, feature: &Value, key: &str) -> Mapping<()> {
         let bodies = rows(&self.row, "bodies")?;
         if bodies.len() != 1 {
             return Err("Boolean scopes with multiple input bodies are not supported yet".into());
@@ -434,7 +702,7 @@ impl State {
         Ok(())
     }
 
-    pub fn selection(&self, feature: &Value, key: &str, kind: &str) -> Mapping<Value> {
+    pub(super) fn selection(&self, feature: &Value, key: &str, kind: &str) -> Mapping<Value> {
         let mut selected = BTreeSet::new();
         for query in queries(feature, key)? {
             let ids = rows(query, "deterministicIds")?;
@@ -449,7 +717,9 @@ impl State {
                     self.faces.contains_key(native)
                 };
                 if !exists {
-                    return Err(format!("deterministic {kind} id {native} is absent at this feature's rollback index"));
+                    return Err(format!(
+                        "deterministic {kind} id {native} is absent at this feature's rollback index"
+                    ));
                 }
                 if !selected.insert(native) {
                     return Err("a deterministic selection repeats an id".into());
@@ -463,10 +733,7 @@ impl State {
             .insert(kind.into(), json!(selected));
         Ok(json!({"kind": "historical", "value": value}))
     }
-
-    /// Expand only through shared topological vertices with resolved endpoint
-    /// tangents. Missing neighbours must not silently shorten the source chain.
-    pub fn tangent_chain(&self, selection: &Value) -> Mapping<Value> {
+    pub(super) fn tangent_chain(&self, selection: &Value) -> Mapping<Value> {
         let reason = "tangent propagation needs complete input vertices and endpoint tangents; this edge set is not supported yet";
         if !self.complete_vertices {
             return Err(reason.into());
@@ -517,7 +784,6 @@ impl State {
                         .map(|(a, b)| a * b)
                         .sum::<f64>()
                         .abs();
-                    // Only floating point roundoff in unit-vector arithmetic is allowed.
                     if dot >= 1.0 - 32.0 * f64::EPSILON && selected.insert((*other).to_owned()) {
                         pending.push((*other).to_owned());
                     }
@@ -533,7 +799,7 @@ impl State {
         Ok(result)
     }
 
-    pub fn require_edges(&self, selection: &Value) -> Mapping<()> {
+    pub(super) fn require_edges(&self, selection: &Value) -> Mapping<()> {
         let ids = selection
             .pointer("/value/edges")
             .and_then(Value::as_array)
@@ -547,151 +813,7 @@ impl State {
         }
         Ok(())
     }
-
-    /// The input face an up-to-next extrude ends on: the one planar face that every
-    /// profile ray meets first, with nothing else of any input body in the swept box
-    /// before it. Whether a face at a slant to the sketch can be written is the
-    /// writer's call, by target release. A cut must leave material
-    /// there; an added extrude must meet material. Anything else is refused.
-    pub fn next_face(&self, samples: &[[f64; 3]], travel: [f64; 3], cut: bool) -> Mapping<Value> {
-        const ON: f64 = 1e-4;
-        let travel = unit(travel)?;
-        let mut segments = 0usize;
-        let mut planes = Vec::new();
-        for (face_id, face) in &self.faces {
-            if face.pointer("/surface/type").and_then(Value::as_str) != Some("PLANE") {
-                continue;
-            }
-            let surface = face.get("surface").ok_or("input face surface is missing")?;
-            let origin = vector(
-                surface.get("origin").ok_or("plane origin is missing")?,
-                1000.0,
-            )?;
-            let normal = unit(vector(
-                surface.get("normal").ok_or("plane normal is missing")?,
-                1.0,
-            )?)?;
-            let across = dot(normal, travel);
-            if across.abs() < 1e-9 {
-                continue;
-            }
-            let mut boundary = Vec::new();
-            for lp in rows(face, "loops")? {
-                for coedge in rows(lp, "coedges")? {
-                    let edge = self
-                        .edges
-                        .get(text(coedge, "edgeId")?)
-                        .ok_or("face boundary edge is missing")?;
-                    let points = polyline(edge)?;
-                    segments = segments.saturating_add(points.len());
-                    boundary.push(points);
-                }
-            }
-            planes.push((face_id.as_str(), origin, normal, across, boundary));
-        }
-        if samples.len().saturating_mul(segments) > 50_000_000 {
-            return Err(
-                "an up-to-next extrude over this many input faces is not supported yet".into(),
-            );
-        }
-        // Each profile ray's nearest hit: (distance, inside rather than on the edge, face).
-        let mut first = Vec::new();
-        for p in samples {
-            let mut best: Option<(f64, bool, &str)> = None;
-            for (face_id, origin, normal, across, boundary) in &planes {
-                let t = dot(sub(*origin, *p), *normal) / across;
-                if !t.is_finite() || t <= ON {
-                    continue;
-                }
-                let hit = along(*p, t, travel);
-                let Some(inside) = within(hit, *origin, *normal, boundary, ON) else {
-                    continue;
-                };
-                let better = match best {
-                    None => true,
-                    Some((d, strict, _)) => t < d - ON || (t <= d + ON && inside && !strict),
-                };
-                if better {
-                    best = Some((t, inside, *face_id));
-                }
-            }
-            first.push(best.ok_or(
-                "an up-to-next extrude whose profile does not meet one input face everywhere is not supported yet",
-            )?);
-        }
-        let face_id = first
-            .first()
-            .map(|hit| hit.2)
-            .ok_or("the up-to-next profile is empty")?;
-        if first.iter().any(|hit| hit.2 != face_id) {
-            return Err(
-                "an up-to-next extrude that ends on several input faces is not supported yet"
-                    .into(),
-            );
-        }
-        let face = self.faces.get(face_id).ok_or("input face is missing")?;
-        let normal = unit(vector(
-            face.pointer("/surface/normal")
-                .ok_or("plane normal is missing")?,
-            1.0,
-        )?)?;
-        let outward = match face.get("orientation").and_then(Value::as_bool) {
-            Some(true) => dot(normal, travel),
-            Some(false) => -dot(normal, travel),
-            None => return Err("the up-to-next face has no resolved orientation".into()),
-        };
-        if cut != (outward > 0.0) {
-            return Err(if cut {
-                "an up-to-next cut that starts outside the material is not supported yet"
-            } else {
-                "an up-to-next extrude that starts inside the material is not supported yet"
-            }
-            .into());
-        }
-        // Nothing of any input body may lie inside the swept box short of that face.
-        const CLEAR: f64 = 1e-3;
-        let mut low = [f64::INFINITY; 3];
-        let mut high = [f64::NEG_INFINITY; 3];
-        for (p, (t, _, _)) in samples.iter().zip(&first) {
-            for point in [*p, along(*p, *t, travel)] {
-                for ((l, h), n) in low.iter_mut().zip(high.iter_mut()).zip(point) {
-                    *l = l.min(n);
-                    *h = h.max(n);
-                }
-            }
-        }
-        for (other_id, other) in &self.faces {
-            if other_id.as_str() == face_id {
-                continue;
-            }
-            let corner = |key: &str| -> Mapping<[f64; 3]> {
-                vector(
-                    other
-                        .get("box")
-                        .and_then(|b| b.get(key))
-                        .ok_or("an input face has no bounding box")?,
-                    1000.0,
-                )
-            };
-            let (min, max) = (corner("minCorner")?, corner("maxCorner")?);
-            let overlaps = min
-                .iter()
-                .zip(max)
-                .zip(low.iter().zip(high))
-                .all(|((a, b), (l, h))| *a < h - CLEAR && b > l + CLEAR);
-            if overlaps {
-                return Err("an up-to-next extrude with other input geometry in its path is not supported yet".into());
-            }
-        }
-        let mut value = json!({"state": self.row.get("id"), "native": "Onshape up-to-next face"});
-        value
-            .as_object_mut()
-            .ok_or("selection is missing")?
-            .insert("faces".into(), json!([face_id]));
-        Ok(json!({"kind": "historical", "value": value}))
-    }
-
-    pub fn require_planes(&self, selection: &Value) -> Mapping<()> {
+    pub(super) fn require_planes(&self, selection: &Value) -> Mapping<()> {
         let ids = selection
             .pointer("/value/faces")
             .and_then(Value::as_array)
@@ -719,64 +841,24 @@ impl State {
         }
         Ok(())
     }
-
-    /// The sketch frame Onshape gives a planar model face: the face's outward
-    /// normal, the world origin projected onto the face's plane, and the in-plane
-    /// x axis its default planes use (world X for a horizontal plane, otherwise the
-    /// in-plane direction for which world Z is up). Only faces parallel to a
-    /// default plane are admitted; other orientations are refused.
-    pub fn face_frame(&self, face_id: &str) -> Mapping<Value> {
+    pub(super) fn face_frame(&self, face_id: &str) -> Mapping<Value> {
         let face = self
             .faces
             .get(face_id)
             .ok_or("the sketch face is absent at this feature's rollback index")?;
         let surface = face
             .get("surface")
-            .ok_or("the sketch face has no surface")?;
-        if surface.get("type").and_then(Value::as_str) != Some("PLANE") {
-            return Err("sketches on non-planar faces are not supported yet".into());
+            .ok_or("the sketch attachment surface is missing")?;
+        if text(surface, "type")? != "PLANE" {
+            return Err("the sketch attachment surface is not planar".into());
         }
-        // The surface normal follows the face only when the face's orientation is set.
-        let sense = match face.get("orientation").and_then(Value::as_bool) {
-            Some(true) => 1.0,
-            Some(false) => -1.0,
-            None => return Err("the sketch face has no orientation".into()),
-        };
-        let normal = unit(vector(
-            surface
-                .get("normal")
-                .ok_or("the sketch face normal is missing")?,
-            sense,
-        )?)?;
-        let origin = vector(
-            surface
-                .get("origin")
-                .ok_or("the sketch face origin is missing")?,
-            1000.0,
-        )?;
-        // Exact axis alignment only: Onshape's in-plane axis for other
-        // orientations has not been measured.
-        let ones = normal.iter().filter(|n| n.abs() > 1.0 - 1e-12).count();
-        let zeros = normal.iter().filter(|n| n.abs() < 1e-12).count();
-        if ones != 1 || zeros != 2 {
-            return Err(
-                "sketches on faces that are not parallel to a default plane are not supported yet"
-                    .into(),
-            );
-        }
-        let normal = normal.map(f64::round);
-        let [_, _, nz] = normal;
-        let u_axis = if nz != 0.0 {
-            [1.0, 0.0, 0.0]
-        } else {
-            cross([0.0, 0.0, 1.0], normal)
-        };
-        let offset = origin.iter().zip(normal).map(|(o, n)| o * n).sum::<f64>();
-        Ok(json!({"origin": point(normal.map(|n| n * offset + 0.0)),
-            "normal": point(normal.map(|n| n + 0.0)), "u_axis": point(u_axis.map(|n| n + 0.0))}))
+        Ok(
+            json!({"origin":point(vector(surface.get("origin").ok_or("the sketch attachment support origin is missing")?,1000.0)?),
+            "normal":point(unit(vector(surface.get("normal").ok_or("the sketch attachment support normal is missing")?,1.0)?)?)}),
+        )
     }
 
-    pub fn axis(&self, feature: &Value, key: &str) -> Mapping<Value> {
+    pub(super) fn axis(&self, feature: &Value, key: &str) -> Mapping<Value> {
         let selection = self.selection(feature, key, "edges")?;
         let ids = selection
             .pointer("/value/edges")

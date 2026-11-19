@@ -37,6 +37,7 @@ mod shell;
 mod sketch;
 mod spatial;
 mod sweep;
+mod thin;
 mod thread;
 mod wire;
 
@@ -593,6 +594,8 @@ struct Context<'a> {
     model: &'a Value,
     /// Current topology, separate from the model records on CADIR v11.
     geometry: &'a Value,
+    /// Typed v11 outputs paired by identity with model-history projections.
+    design: &'a Value,
     /// The arenas `model` holds when it is a subset of the whole; reading another is a bug,
     /// which a debug build panics on.
     reading_only: Option<&'static [&'static str]>,
@@ -660,6 +663,7 @@ impl<'a> Context<'a> {
             source: None,
             model,
             geometry: &Value::Null,
+            design: &Value::Null,
             reading_only: None,
             children: [("regions", OnceCell::new()), ("faces", OnceCell::new())]
                 .into_iter()
@@ -884,17 +888,20 @@ pub(crate) fn map_with_sketches(
         target_version,
         keep_sketches,
         &mut |_, _, _| false,
+        None,
     )
 }
 
 /// Mapping with a host check for otherwise unresolved sketch-selection candidates.
-/// Planning has no check and retains the original profile refusal.
+/// Planning has no check and retains the original profile refusal. `progress` hears of
+/// each timeline feature as mapping reaches it.
 pub(crate) fn map_with_profile_check(
     model: &Model,
     report: &mut Report,
     target_version: crate::SolidCraftVersion,
     keep_sketches: bool,
     check: &mut infer::Check<'_>,
+    progress: Option<&dutchman_core::Progress<'_>>,
 ) -> Mapping {
     let mut features_out = Vec::new();
     let mut references = History::default();
@@ -906,6 +913,7 @@ pub(crate) fn map_with_profile_check(
         target_version,
         keep_sketches,
         check,
+        progress,
     );
     let mut mapping = Mapping {
         result,
@@ -1034,6 +1042,7 @@ fn hidden_bodies(ctx: &Context) -> Vec<String> {
     names
 }
 
+#[allow(clippy::too_many_arguments)]
 fn map_into(
     model: &Model,
     report: &mut Report,
@@ -1042,6 +1051,7 @@ fn map_into(
     target_version: crate::SolidCraftVersion,
     keep_sketches: bool,
     check: &mut infer::Check<'_>,
+    progress: Option<&dutchman_core::Progress<'_>>,
 ) -> Result<History, String> {
     if model.ir.model.features.is_empty() && !model.ir.design.features.is_empty() {
         return Err(
@@ -1057,6 +1067,7 @@ fn map_into(
     let mut ctx =
         Context::new(wire).with_geometry(document.get("geometry").unwrap_or(&Value::Null));
     ctx.source = Some(model);
+    ctx.design = document.get("design").unwrap_or(&Value::Null);
     ctx.target_version = target_version;
     ctx.params = param_names;
     let mut features: Vec<&Value> = ctx.arena("features").iter().collect();
@@ -1102,7 +1113,11 @@ fn map_into(
                 .map(str::to_owned)
         })
         .collect();
+    let timeline = progress.map(|p| p.features(features.len() as u64));
     for (position, feature) in features.into_iter().enumerate() {
+        if let Some(timeline) = &timeline {
+            timeline.at(position as u64 + 1, name(feature));
+        }
         let outcome = |status, reason: Option<String>| FeatureOutcome {
             name: name(feature).map(str::to_owned),
             kind: kind(feature),
@@ -1566,6 +1581,8 @@ enum Proven {
     Bodies(usize),
     /// A face profile's sketch rewritten on the other side of its plane, if it had to be.
     Sketch(Option<Value>),
+    /// A hole axis signed to enter the proven face.
+    Hole(sketch::V3),
 }
 
 /// Proves the input edges of every blend of a history that maps, on the bodies `replay`
@@ -1628,7 +1645,9 @@ pub(crate) fn prove_blends(
                             Ok(Proven::Bodies(added))
                         }),
                         Some(face) => face_profile::prove(face, replay).and_then(|mirrored| {
-                            if mirrored {
+                            if let Some(direction) = face.entry_direction(mirrored)? {
+                                Ok(Proven::Hole(direction))
+                            } else if mirrored {
                                 face.sketch(true)
                                     .map(|(sketch, _)| Proven::Sketch(Some(sketch)))
                             } else {
@@ -1683,6 +1702,30 @@ pub(crate) fn prove_blends(
                     if index.saturating_add(1) < blends.len() {
                         // The extrude now runs the other way, so later proofs need a replay
                         // of the history as it will be written, not the one before the flip.
+                        let remaining: Vec<u64> = after
+                            .iter()
+                            .skip(index.saturating_add(1))
+                            .flatten()
+                            .copied()
+                            .collect();
+                        let faces = blends
+                            .iter()
+                            .skip(index.saturating_add(1))
+                            .any(|p| p.face.is_some());
+                        replayed = replay(history, &remaining, faces);
+                        step = 0;
+                    }
+                }
+            }
+            Ok(Proven::Hole(direction)) => {
+                let target = history
+                    .features
+                    .get_mut(pending.feature.saturating_add(inserted));
+                let value = serde_json::json!(direction);
+                if let Some(fields) = target.and_then(Value::as_object_mut) {
+                    let changed = fields.get("direction") != Some(&value);
+                    fields.insert("direction".to_owned(), value);
+                    if changed && index.saturating_add(1) < blends.len() {
                         let remaining: Vec<u64> = after
                             .iter()
                             .skip(index.saturating_add(1))

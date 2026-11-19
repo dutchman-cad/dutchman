@@ -61,6 +61,7 @@ pub(super) fn reference(value: &Value, depth: usize) -> Mapping<Option<(&str, &s
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn map(
+    ctx: &cadmpeg_core::decode::DecodeContext<'_>,
     feature: &Value,
     ordinal: usize,
     inputs: &topology::Inputs<'_>,
@@ -132,19 +133,20 @@ pub(super) fn map(
     if text(document, "id")? != d
         || text(document, "wvid")? != v
         || text(document, "workspace_or_version")? != "v"
-        || text(&manifest, "root_element")? != e
+        || text(manifest, "root_element")? != e
     {
         return Err("the captured Part Studio does not match the pinned derived reference; fetch a new bundle".into());
     }
-    let before = inputs.parts(ordinal)?;
-    let after = inputs.parts(ordinal.saturating_add(1))?;
+    let before = inputs.solid_parts(ordinal)?;
+    let after = inputs.solid_parts(ordinal.saturating_add(1))?;
     if before.iter().any(|(id, name)| after.get(id) != Some(name)) {
         return Err("the derived feature changes an existing body; only an unchanged-placement Part Studio insert is supported yet".into());
     }
     let mut source = super::read_studio(
+        ctx,
         std::path::Path::new("Referenced studio"),
         bundle,
-        &manifest,
+        manifest,
         &prefix,
         depth + 1,
         reference_budget,
@@ -172,9 +174,19 @@ pub(super) fn map(
         if body.name.as_ref().is_none_or(|name| name.trim().is_empty()));
     let source_parts = if missing_single_name || !selected.is_empty() {
         let source_prefix = format!("{prefix}partstudios/{e}");
-        let source_inputs =
-            topology::Inputs::new(bundle, &source_prefix, text(document, "microversion")?)?;
-        Some(source_inputs.parts(source.ir.model.features.len()).map_err(|reason| {
+        let source_features = rows(
+            bundle
+                .json(&format!("{source_prefix}/features.json"))
+                .map_err(|e| e.to_string())?,
+            "features",
+        )?;
+        let source_inputs = topology::Inputs::new(
+            bundle,
+            &source_prefix,
+            text(document, "microversion")?,
+            source_features,
+        )?;
+        Some(source_inputs.solid_parts(source_features.len()).map_err(|reason| {
             format!("the referenced final parts snapshot cannot be used ({reason}); fetch a new bundle")
         })?)
     } else {
@@ -261,40 +273,47 @@ pub(super) fn boolean(
             return Err(format!("Boolean parameter {key} is not supported yet"));
         }
     }
-    let keep = if parameters
-        .iter()
-        .any(|parameter| parameter.get("parameterId").and_then(Value::as_str) == Some("keepTools"))
-    {
-        features::parameter(feature, "keepTools")?
-            .get("value")
-            .and_then(Value::as_bool)
-            .ok_or("the Boolean keep-tools choice has no boolean value")?
-    } else {
-        false
-    };
-    let parts = inputs.parts(ordinal)?;
-    let selected = |key| -> Mapping<Vec<String>> {
+    let keep = features::parameter(feature, "keepTools")?
+        .get("value")
+        .and_then(Value::as_bool)
+        .ok_or("the Boolean keep-tools choice has no stored boolean value")?;
+    let parts = inputs.solid_parts(ordinal)?;
+    let selected = |key| -> Mapping<Vec<(String, String)>> {
         let mut picked = Vec::new();
         for query in features::queries(feature, key)? {
             let ids = rows(query, "deterministicIds")?;
-            if query.get("queryString").is_some() || ids.is_empty() {
+            if query.get("queryString").is_some()
+                || ids.is_empty()
+                || query
+                    .get("namespace")
+                    .is_some_and(|namespace| namespace.as_str() != Some(""))
+            {
                 return Err("Boolean body queries are not resolved".into());
             }
             for value in ids {
                 let native = value.as_str().ok_or("a Boolean body identity is missing")?;
-                if !parts.contains_key(native) || picked.contains(&id("body", native)) {
+                if !parts.contains_key(native)
+                    || picked.iter().any(|(local, _)| local == &id("body", native))
+                {
                     return Err(
                         "a Boolean body is missing or repeats in its input rollback state".into(),
                     );
                 }
-                picked.push(id("body", native));
+                let producer = inputs.producer(ordinal, native, topology::OperandKind::Body)?;
+                inputs.unique_feature(&producer, ordinal)?;
+                picked.push((id("body", native), id("feature", &producer)));
             }
         }
         Ok(picked)
     };
     let target = selected("targets")?;
     let tools = selected("tools")?;
-    if target.len() != 1 || tools.is_empty() || target.iter().any(|id| tools.contains(id)) {
+    if target.len() != 1
+        || tools.is_empty()
+        || target
+            .iter()
+            .any(|(local, _)| tools.iter().any(|(tool, _)| tool == local))
+    {
         return Err("this Boolean needs one target and disjoint tool bodies".into());
     }
     let op = match features::value(feature, "operationType") {
@@ -303,9 +322,9 @@ pub(super) fn boolean(
         Some("INTERSECTION" | "INTERSECT") => "intersect",
         _ => return Err("this Boolean operation is not supported yet".into()),
     };
-    let generated = |selected: Vec<String>| -> Mapping<Value> {
+    let generated = |selected: Vec<(String, String)>| -> Mapping<Value> {
         let mut references = Vec::new();
-        for local in selected {
+        for (local, producer) in selected {
             let owners: Vec<_> = model
                 .feature_result_topologies
                 .iter()
@@ -316,6 +335,12 @@ pub(super) fn boolean(
                     "a Boolean body cannot be tied uniquely to an earlier feature result".into(),
                 );
             };
+            if owner.output_of.as_str() != producer {
+                return Err(
+                    "the Boolean body producer disagrees with its stored rollback transition"
+                        .into(),
+                );
+            }
             references.push(json!({"feature":owner.output_of,"local_id":local}));
         }
         Ok(

@@ -77,7 +77,9 @@ impl Mapped {
     /// The SolidCraft curve the source entity `entity` became.
     pub(crate) fn curve(&self, entity: &str) -> Option<&Curve> {
         match self.shapes.get(entity)? {
-            Shape::Curve(curve) if curve.kind != "compound_conic" => Some(curve),
+            Shape::Curve(curve) if curve.kind != "compound_conic" || !curve.pieces.is_empty() => {
+                Some(curve)
+            }
             Shape::Curve(_) => None,
             Shape::Point(_) => None,
         }
@@ -1027,12 +1029,13 @@ impl Builder {
                     }
                     return Err(why.to_owned());
                 }
-                // One source curve can become several exact conics in the whole sketch.
-                // Do not expose just the first piece as a selectable whole source curve.
+                // Keep every exact piece under the source curve's identity so a region
+                // selects the whole arc, rather than just its first conic.
                 let count = 4usize;
                 let index = self.curves.len();
                 let mut ends = None;
                 let mut id = String::new();
+                let mut pieces = Vec::with_capacity(count);
                 for piece in 0..count {
                     let start = first + span * piece as f64 / count as f64;
                     let end = first + span * (piece + 1) as f64 / count as f64;
@@ -1065,6 +1068,23 @@ impl Builder {
                         json!({"type": "conic", "a": a, "b": b, "apex": apex, "rho": rho}),
                         &[],
                     );
+                    let piece_index = self.curves.len().saturating_sub(1);
+                    let piece_id = self
+                        .curves
+                        .get(piece_index)
+                        .and_then(|c| c.get("id"))
+                        .and_then(Value::as_str)
+                        .ok_or_else(bad)?
+                        .to_owned();
+                    pieces.push(Curve {
+                        pieces: Vec::new(),
+                        index: piece_index,
+                        id: piece_id,
+                        kind: "conic",
+                        start: Some(a),
+                        end: Some(b),
+                        center: None,
+                    });
                     if piece == 0 {
                         id = self
                             .curves
@@ -1083,7 +1103,7 @@ impl Builder {
                     self.shapes.insert(
                         source.to_owned(),
                         Shape::Curve(Curve {
-                            pieces: Vec::new(),
+                            pieces,
                             index,
                             id,
                             kind: "compound_conic",
@@ -2091,5 +2111,25 @@ mod tests {
             std::fs::write(&golden, &pretty).unwrap();
         }
         assert_eq!(pretty, std::fs::read_to_string(&golden).unwrap());
+    }
+    #[test]
+    fn long_elliptical_arcs_keep_every_exact_piece_for_profile_selection() {
+        let mut builder = Builder::default();
+        let mut arc = entity(json!({"kind":"ellipse","center":{"u":0.0,"v":0.0},
+            "major_angle":0.0,"major_radius":6.0,"minor_radius":2.0,"bounds":[0.0,4.0]}));
+        arc["id"] = json!("oval-arc");
+        builder.entity(&arc, &mut Report::default()).unwrap();
+        let Shape::Curve(curve) = builder.shapes.get("oval-arc").unwrap() else {
+            return;
+        };
+        assert_eq!(curve.kind, "compound_conic");
+        assert_eq!(curve.ids().len(), 4);
+        assert_eq!(curve.pieces.len(), 4);
+        assert_eq!(curve.start, curve.pieces.first().unwrap().start);
+        assert_eq!(curve.end, curve.pieces.last().unwrap().end);
+        assert!(curve
+            .ids()
+            .iter()
+            .all(|id| builder.curves.iter().any(|c| c["id"] == *id)));
     }
 }
