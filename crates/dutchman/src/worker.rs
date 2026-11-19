@@ -447,6 +447,26 @@ pub(crate) fn search_args(search: &PartSearch) -> Vec<OsString> {
     args
 }
 
+/// How a file's failure begins when application shutdown ended it.
+pub const SHUTDOWN_STOPPED: &str = "stopped after the 30 s shutdown grace period";
+
+/// How a file's failure begins after an explicit user cancellation.
+pub const CANCELLED: &str = "stopped at your request";
+
+/// Explicit cancellation ends the process tree immediately; application shutdown allows grace.
+#[derive(Clone, Copy)]
+pub enum StopSignal<'a> {
+    Cancel(&'a std::sync::atomic::AtomicBool),
+    Shutdown(&'a std::sync::atomic::AtomicBool),
+}
+
+impl StopSignal<'_> {
+    pub(crate) fn requested(self) -> bool {
+        let (Self::Cancel(flag) | Self::Shutdown(flag)) = self;
+        flag.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
 /// Converts `job` in a child process started from `program`, within `limits`, and returns
 /// its convert report, or a failure report saying why the child stopped.
 pub fn convert_isolated(
@@ -478,6 +498,25 @@ pub fn convert_isolated_with_progress(
     shutdown: Option<&std::sync::atomic::AtomicBool>,
     on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
 ) -> Value {
+    convert_isolated_with_stop(
+        program,
+        job,
+        options,
+        limits,
+        shutdown.map(StopSignal::Shutdown),
+        on_progress,
+    )
+}
+
+/// Converts in a child with an explicit cancellation or shutdown policy.
+pub fn convert_isolated_with_stop(
+    program: &Path,
+    job: &Job,
+    options: &ConvertOptions,
+    limits: &Limits,
+    shutdown: Option<StopSignal<'_>>,
+    on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
+) -> Value {
     crate::diagnostics::run(&job.input, options, on_progress, |progress, log| {
         convert_isolated_inner(program, job, options, limits, shutdown, progress, log)
     })
@@ -491,7 +530,7 @@ fn convert_isolated_inner(
     job: &Job,
     options: &ConvertOptions,
     limits: &Limits,
-    shutdown: Option<&std::sync::atomic::AtomicBool>,
+    shutdown: Option<StopSignal<'_>>,
     on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
     log: Option<&crate::diagnostics::Log>,
 ) -> Value {
@@ -523,7 +562,11 @@ fn convert_isolated_inner(
     let mut copies: Vec<tempfile::TempDir> = Vec::new();
     let mut current = job.clone();
     while let Some(Some(design)) = stuck.take() {
-        if !is_archive(&job.input) || left_out.len() >= MAX_LEFT_OUT || left_out.contains(&design) {
+        if shutdown.is_some_and(StopSignal::requested)
+            || !is_archive(&job.input)
+            || left_out.len() >= MAX_LEFT_OUT
+            || left_out.contains(&design)
+        {
             break;
         }
         let Some((dir, input)) = archive_without(&current.input, &design) else {
@@ -724,7 +767,7 @@ fn convert_once(
     job: &Job,
     options: &ConvertOptions,
     limits: &Limits,
-    shutdown: Option<&std::sync::atomic::AtomicBool>,
+    shutdown: Option<StopSignal<'_>>,
     on_progress: &(dyn Fn(dutchman_core::ProgressEvent) + Send + Sync),
     log: Option<&crate::diagnostics::Log>,
 ) -> (Value, Option<Option<String>>) {
@@ -852,10 +895,8 @@ fn convert_once(
                 limits.timeout.as_secs(),
                 at.id()
             )),
-            Stopped::Shutdown => fail(format!(
-                "stopped after the 30 s shutdown grace period while at the {} stage",
-                at.id()
-            )),
+            Stopped::Cancelled => fail(format!("{CANCELLED} while at the {} stage", at.id())),
+            Stopped::Shutdown => fail(format!("{SHUTDOWN_STOPPED} while at the {} stage", at.id())),
             Stopped::OverMemory(bytes) => fail(format!(
             "stopped when it held {} MB, over Dutchman's limit of {} MB for one file, while at \
              the {} stage",
@@ -1073,6 +1114,8 @@ enum Stopped {
     Exited(std::process::ExitStatus),
     /// Stopped for running past its time.
     TimedOut,
+    /// Stopped at the user's request without a shutdown grace period.
+    Cancelled,
     /// Stopped after the shutdown grace period.
     Shutdown,
     /// Stopped for holding this many bytes, over its limit.
@@ -1091,7 +1134,7 @@ fn supervise(
     limits: &Limits,
     reading: &Mutex<Reading>,
     watch_memory: bool,
-    shutdown: Option<&std::sync::atomic::AtomicBool>,
+    shutdown: Option<StopSignal<'_>>,
 ) -> Stopped {
     let mut stopping = None;
     let started = Instant::now();
@@ -1110,7 +1153,13 @@ fn supervise(
                 return Stopped::Lost(err);
             }
         }
-        if shutdown.is_some_and(|flag| flag.load(std::sync::atomic::Ordering::Relaxed)) {
+        if matches!(shutdown, Some(StopSignal::Cancel(_)))
+            && shutdown.is_some_and(StopSignal::requested)
+        {
+            stop(child);
+            return Stopped::Cancelled;
+        }
+        if shutdown.is_some_and(StopSignal::requested) {
             let since = stopping.get_or_insert_with(Instant::now);
             if since.elapsed() >= Duration::from_secs(30) {
                 stop(child);

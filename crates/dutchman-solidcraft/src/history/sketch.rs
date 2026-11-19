@@ -12,10 +12,10 @@ use serde_json::{json, Value};
 use super::{constraints, name, Context};
 
 /// Positions closer than this (mm) are one point.
-const COINCIDENT: f64 = 1e-6;
+pub(super) const COINCIDENT: f64 = 1e-6;
 
 /// Directions closer than this are the same axis.
-const PARALLEL: f64 = 1e-9;
+pub(super) const PARALLEL: f64 = 1e-9;
 
 /// A 2D point in sketch coordinates.
 pub(crate) type P2 = [f64; 2];
@@ -37,6 +37,8 @@ pub(crate) struct Mapped {
     pub(crate) y_dir: V3,
     /// The SolidCraft sketch's points, by index: their ids and positions in the sketch.
     pub(crate) points: Vec<(String, P2)>,
+    /// Largest displacement of a defining point when reusing an emitted point (mm).
+    pub(crate) point_displacement: f64,
     /// What each source entity became, by its id.
     pub(crate) shapes: BTreeMap<String, Shape>,
 }
@@ -233,6 +235,7 @@ pub(crate) fn map(
                     (id.to_owned(), *at)
                 })
                 .collect(),
+            point_displacement: builder.point_displacement,
             shapes: builder.shapes.clone(),
         },
     );
@@ -281,6 +284,7 @@ pub(crate) fn synthesized(
                 (id.to_owned(), *at)
             })
             .collect(),
+        point_displacement: builder.point_displacement,
         shapes: builder.shapes.clone(),
     };
     let feature = json!({
@@ -615,6 +619,8 @@ pub(crate) struct Builder {
     joints: Vec<Value>,
     /// The last number used per point or curve id prefix (conics use `q` to avoid constraint ids).
     counters: BTreeMap<&'static str, u64>,
+    /// Largest displacement of a defining point when reusing an emitted point (mm).
+    pub(crate) point_displacement: f64,
     /// What each source entity became, by its id.
     pub(crate) shapes: BTreeMap<String, Shape>,
 }
@@ -628,6 +634,7 @@ impl Default for Builder {
             curves: Vec::new(),
             joints: Vec::new(),
             counters: BTreeMap::new(),
+            point_displacement: 0.0,
             shapes: BTreeMap::new(),
         }
     }
@@ -669,6 +676,9 @@ impl Builder {
             self.positions.push(pos);
             self.positions.len() - 1
         });
+        if let Some(&written) = self.positions.get(index) {
+            self.point_displacement = self.point_displacement.max(distance(pos, written));
+        }
         if let Some(r) = endpoint_ref {
             if !self.endpoint_refs.iter().any(|(known, _)| known == r) {
                 self.endpoint_refs.push((r.to_owned(), index));

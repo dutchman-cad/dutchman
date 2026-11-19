@@ -283,6 +283,43 @@ fn points_on(
     Ok(points)
 }
 
+/// The one plane every face `value` selects lies on, as a point on the first face and the
+/// plane's unit normal (its side is not known from the boundaries). Faces that do not all lie
+/// on one plane are refused.
+pub(super) fn coplanar_faces(
+    feature: &Value,
+    value: &Value,
+    ctx: &Context,
+) -> Result<(V3, V3), String> {
+    let ids = value
+        .get("faces")
+        .and_then(Value::as_array)
+        .filter(|ids| !ids.is_empty() && ids.len() <= FACES)
+        .ok_or("its face selection is empty or exceeds the face limit")?;
+    let mut faces = Vec::new();
+    let mut total = 0usize;
+    for (index, id) in ids.iter().enumerate() {
+        if ids.iter().take(index).any(|previous| previous == id) {
+            return Err("its splitting face is selected more than once".to_owned());
+        }
+        // Tool faces may meet at an edge. Read each boundary independently so the
+        // disjoint-profile rule for extrusions does not reject adjacent coplanar tools.
+        let one = json!({"state": value.get("state"), "faces": [id]});
+        let boundary = boundaries(feature, &one, ctx)?;
+        let [face] = boundary.as_slice() else {
+            return Err(BAD.to_owned());
+        };
+        total = total.saturating_add(face.edges.len());
+        if total > EDGES {
+            return Err("its faces have more boundary edges than the face limit".to_owned());
+        }
+        plane(&boundary, &samples(face))?;
+        faces.extend(boundary);
+    }
+    let points: Vec<V3> = faces.iter().flat_map(samples).collect();
+    plane(&faces, &points).map_err(|_| "its faces are not planar together".to_owned())
+}
+
 /// A point inside the one planar face `value` selects, clear of its edges and its holes, and
 /// the unit normal of its plane, from the boundary samples of its input topology.
 pub(super) fn planar_face(
@@ -516,7 +553,8 @@ fn point_in(face: &Boundary, planar_only: bool) -> Result<V3, String> {
 }
 
 /// The point of a planar face farthest from its boundary among the centres of the triangles
-/// its outline corners make that lie inside it, holes left out.
+/// its outline corners make that lie inside it, holes left out. If those all land in holes,
+/// try interval midpoints on bounded scan lines through the same loops.
 fn planar_point(face: &Boundary, origin: V3, normal: V3) -> Result<V3, String> {
     let helper = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
         .into_iter()
@@ -557,6 +595,35 @@ fn planar_point(face: &Boundary, origin: V3, normal: V3) -> Result<V3, String> {
             }
             let room = clearance(centre);
             if room > 1e-3 && best.is_none_or(|(_, most)| room > most) {
+                best = Some((centre, room));
+            }
+        }
+    }
+    if best.is_none() {
+        // Corner triangles can all land in holes (or the opening of a thin frame).
+        // Intersections with every trim ring split a scan line into intervals; their
+        // midpoints also find narrow strips that a uniform point grid would miss.
+        // Keep the old picks when available, and apply the same containment and
+        // clearance proof to every new candidate. Curve chords need extra room:
+        // their sagitta bounds the difference from the actual circular boundary.
+        let chord_error = face.edges.iter().fold(0.0_f64, |error, edge| {
+            let sagitta = match edge {
+                Edge::Line { .. } => 0.0,
+                Edge::Arc { radius, .. } => {
+                    radius * (1.0 - (edge_sweep(edge).abs() / f64::from(ARC_STEPS) / 2.0).cos())
+                }
+                Edge::Circle { radius, .. } => {
+                    radius * (1.0 - (TAU / f64::from(CIRCLE_STEPS) / 2.0).cos())
+                }
+            };
+            error.max(sagitta)
+        });
+        for centre in scan_candidates(&rings) {
+            if !inside_face(centre) {
+                continue;
+            }
+            let room = clearance(centre);
+            if room > 1e-3 + chord_error && best.is_none_or(|(_, most)| room > most) {
                 best = Some((centre, room));
             }
         }
@@ -617,6 +684,50 @@ fn planar_rings(
         rings.push(polygon);
     }
     Ok(rings)
+}
+
+/// Midpoints of the widest scan intervals, with fixed work and candidate limits.
+fn scan_candidates(rings: &[Vec<[f64; 2]>]) -> Vec<[f64; 2]> {
+    let mut candidates = Vec::new();
+    for swapped in [false, true] {
+        let orient = |[u, v]: [f64; 2]| if swapped { [v, u] } else { [u, v] };
+        let low = rings
+            .iter()
+            .flatten()
+            .map(|p| orient(*p)[0])
+            .fold(f64::INFINITY, f64::min);
+        let high = rings
+            .iter()
+            .flatten()
+            .map(|p| orient(*p)[0])
+            .fold(f64::NEG_INFINITY, f64::max);
+        for k in 1..16 {
+            let at = low + (high - low) * f64::from(k) / 16.0;
+            let mut crossings = Vec::new();
+            for ring in rings {
+                for (a, b) in ring
+                    .iter()
+                    .zip(ring.iter().cycle().skip(1))
+                    .take(ring.len())
+                {
+                    let ([a0, a1], [b0, b1]) = (orient(*a), orient(*b));
+                    if (a0 > at) != (b0 > at) {
+                        crossings.push(a1 + (at - a0) * (b1 - a1) / (b0 - a0));
+                    }
+                }
+            }
+            crossings.sort_by(f64::total_cmp);
+            // Pairing sorted crossings is the even-odd fill rule, across all rings.
+            for [a, b] in crossings.as_chunks::<2>().0 {
+                candidates.push((b - a, orient([at, (a + b) / 2.0])));
+            }
+            // Retain only the widest intervals seen so far, bounding allocation
+            // by one scan line plus the candidate limit even on hostile inputs.
+            candidates.sort_by(|a, b| b.0.total_cmp(&a.0));
+            candidates.truncate(256);
+        }
+    }
+    candidates.into_iter().map(|(_, p)| p).collect()
 }
 
 /// How far `p` is from the segment `a`-`b`.
@@ -1488,6 +1599,8 @@ mod tests {
             end: [10.0, 0.0, 0.0],
             length: TAU * 10.0,
             name: "cap".to_owned(),
+            index: None,
+            circle: None,
         };
         let cap = ReplayedFace {
             name: "cap".to_owned(),
@@ -1553,6 +1666,8 @@ mod tests {
             mid: at(mid),
             length,
             name: "f".to_owned(),
+            index: None,
+            circle: None,
         }
     }
 
@@ -1672,6 +1787,43 @@ mod tests {
         assert!((p[0] - 5.0 * half.cos()).abs() < 1e-6, "{p:?}");
         assert!((p[1] - 5.0 * half.sin()).abs() < 1e-6, "{p:?}");
         assert!((p[2] - 5.0).abs() < 1e-6, "{p:?}");
+    }
+
+    #[test]
+    fn a_thin_frame_with_many_holes_gets_a_point_outside_every_hole() {
+        // Synthetic rectangular frame: every old corner-triangle centre lies in
+        // the central opening. Twenty circular perforations occupy the top rail.
+        let rectangle = |low: [f64; 2], high: [f64; 2]| {
+            let corners = [low, [high[0], low[1]], high, [low[0], high[1]]];
+            (0..4).map(move |k| Edge::Line {
+                start: [corners[k][0], corners[k][1], 0.0],
+                end: [corners[(k + 1) % 4][0], corners[(k + 1) % 4][1], 0.0],
+            })
+        };
+        let holes: Vec<V3> = (0..20)
+            .map(|k| [5.0 + 5.0 * f64::from(k), 79.0, 0.0])
+            .collect();
+        let mut edges: Vec<Edge> = rectangle([0.0, 0.0], [120.0, 80.0])
+            .chain(rectangle([2.0, 2.0], [118.0, 78.0]))
+            .collect();
+        edges.extend(holes.iter().map(|&center| Edge::Circle {
+            start: add(center, [0.35, 0.0, 0.0]),
+            mid: add(center, [-0.35, 0.0, 0.0]),
+            center,
+            radius: 0.35,
+            axis: [0.0, 0.0, 1.0],
+        }));
+        let p = point_in(&Boundary { edges, area: 0.0 }, true).unwrap();
+        assert_eq!(p[2], 0.0);
+        assert!(
+            p[0] > 0.001 && p[0] < 119.999 && p[1] > 0.001 && p[1] < 79.999,
+            "{p:?}"
+        );
+        assert!(
+            p[0] < 1.999 || p[0] > 118.001 || p[1] < 1.999 || p[1] > 78.001,
+            "{p:?}"
+        );
+        assert!(holes.iter().all(|&c| norm(sub(p, c)) > 0.351), "{p:?}");
     }
 
     #[test]

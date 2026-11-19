@@ -69,6 +69,19 @@ fn written(model: &Model) -> (Vec<u8>, Report) {
         .verification(Verification::Off)
         .write(model, &mut bytes, &mut report)
         .unwrap();
+    let doc = document(&bytes);
+    for row in &report.outcome().unwrap().features {
+        for id in &row.output.ids {
+            assert!(
+                doc["features"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|feature| feature["id"] == *id),
+                "{row:?}"
+            );
+        }
+    }
     (bytes, report)
 }
 
@@ -177,7 +190,18 @@ fn each_parts_history_is_reported() {
     part.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     assembly.parts.push(part);
     assembly.placements[1].part = 1;
-    let (_, report) = written(&model);
+    let (bytes, report) = written(&model);
+    let row = &report.outcome().unwrap().features[0];
+    assert_eq!(row.output.ids.len(), 1);
+    let doc = document(&bytes);
+    let saved = doc["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|feature| feature["id"] == row.output.ids[0])
+        .unwrap();
+    assert_eq!(saved["type"], "sphere");
+    assert_eq!(saved["name"], "Ball");
     let parts = report.parts();
     assert_eq!(parts.len(), 2);
     assert_eq!(parts[0].name, "synthetic_cube");

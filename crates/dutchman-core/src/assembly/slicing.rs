@@ -135,8 +135,8 @@ pub(super) struct Index<'a> {
     /// `body_centers` lists that features of more than one definition carry. Such a list
     /// can't be the state of each owning component, so a component's slice leaves it out.
     pub shared_centers: BTreeSet<&'a str>,
-    /// History bodies by the feature whose result each is: a base feature's own body, which
-    /// a slice keeping that feature carries with it. Nothing else refers to them.
+    /// History bodies by the feature that produces or consumes them. A slice keeping
+    /// either feature carries the complete nested body with it.
     pub nests: BTreeMap<String, Vec<String>>,
 }
 
@@ -213,6 +213,7 @@ impl<'a> Index<'a> {
             body: Option<String>,
             shell: Option<String>,
             produced_by: Option<String>,
+            consumed_by: Option<String>,
         }
         let mut index = Self::new(document);
         for (&arena, rows) in source.geometry.iter().chain(&source.model) {
@@ -221,8 +222,13 @@ impl<'a> Index<'a> {
                 let identity: Identity =
                     serde_json::from_str(row.get()).map_err(|err| err.to_string())?;
                 if let Some(id) = identity.id {
-                    if let (HISTORY_BODIES, Some(feature)) = (arena, identity.produced_by) {
-                        index.nests.entry(feature).or_default().push(id.clone());
+                    if arena == HISTORY_BODIES {
+                        for feature in [identity.produced_by, identity.consumed_by]
+                            .into_iter()
+                            .flatten()
+                        {
+                            index.nests.entry(feature).or_default().push(id.clone());
+                        }
                     }
                     let parent = match arena {
                         "regions" => identity.body,
@@ -260,15 +266,16 @@ impl<'a> Index<'a> {
             index.arenas.push(arena);
             for (ordinal, row) in values.as_array().into_iter().flatten().enumerate() {
                 if let Some(id) = row.get("id").and_then(Value::as_str) {
-                    if let (HISTORY_BODIES, Some(feature)) = (
-                        arena.as_str(),
-                        row.get("produced_by").and_then(Value::as_str),
-                    ) {
-                        index
-                            .nests
-                            .entry(feature.to_owned())
-                            .or_default()
-                            .push(id.to_owned());
+                    if arena == HISTORY_BODIES {
+                        for field in ["produced_by", "consumed_by"] {
+                            if let Some(feature) = row.get(field).and_then(Value::as_str) {
+                                index
+                                    .nests
+                                    .entry(feature.to_owned())
+                                    .or_default()
+                                    .push(id.to_owned());
+                            }
+                        }
                     }
                     let parent = match arena.as_str() {
                         "regions" => row.get("body"),

@@ -1,7 +1,7 @@
 //! A Model Context Protocol server: Dutchman's commands as tools an AI agent can call.
 //!
 //! It speaks JSON-RPC 2.0 over stdio, one message per line, as the MCP stdio transport
-//! defines. The tools are `convert`, `inspect`, `formats` and `convert_all`; each returns the
+//! defines. The tools are `convert`, `inspect`, `contents`, `formats` and `convert_all`; each returns the
 //! JSON report the command's `--json` prints (`docs/json.md`), so an agent and a script see
 //! the same documents. A conversion that fails is a tool error carrying its failure report.
 
@@ -127,7 +127,8 @@ fn answer(method: &str, params: &Value) -> Result<Value, (i64, String)> {
                     "Converts native CAD files ({}) into SolidCraft designs (.sc). Use \
                      read_report to diagnose an existing desktop or watch result without decoding; \
                      its full report contains private local paths and must stay local. Use \
-                     inspect to see what a file would carry across, convert for one file, \
+                     inspect to see what a file would carry across, contents to list its \
+                     bodies, features and parameters with what maps, convert for one file, \
                      convert_all for many. Paths are on the machine running this server; give \
                      absolute paths. Use diagnose_narrow for anonymous local failure narrowing and rebuild recipes; no diagnostic tool sends files.",
                     dutchman_core::Format::supported_names()
@@ -150,6 +151,7 @@ fn answer(method: &str, params: &Value) -> Result<Value, (i64, String)> {
             let (report, schema) = match name {
                 "convert" => (convert(arguments), crate::json::CONVERT),
                 "inspect" => (inspect(arguments), crate::json::INSPECT),
+                "contents" => (contents(arguments), crate::json::CONTENTS),
                 "read_report" => (read_report(arguments), crate::json::CONVERT),
                 "formats" => (
                     only(arguments, &[]).map(|()| crate::formats::json()),
@@ -372,6 +374,13 @@ fn tools() -> Value {
             "name": "inspect",
             "title": "Inspect a CAD file",
             "description": "Read one native CAD file and report what converting it would carry across, without writing anything. Returns the dutchman.inspect/1 report. Check conversion.possible and conversion.reason: ok means inspection succeeded, not that conversion is possible.",
+            "inputSchema": {"type": "object", "properties": {"input": input, "project": project_property(), "search": search_property()}, "required": ["input"], "additionalProperties": false},
+            "annotations": {"readOnlyHint": true},
+        },
+        {
+            "name": "contents",
+            "title": "List a CAD file's contents",
+            "description": "Read one native CAD file and list its bodies, its feature timeline (kind, name, suppressed) with what Dutchman can map of each feature (mapped, needs_solidcraft_check, not_supported_yet with the reason, and more), and its parameters (name, value, unit, expression). Writes nothing and runs no SolidCraft. Returns the dutchman.contents/1 report. LOCAL USE ONLY: the reply holds the file's private names and paths.",
             "inputSchema": {"type": "object", "properties": {"input": input, "project": project_property(), "search": search_property()}, "required": ["input"], "additionalProperties": false},
             "annotations": {"readOnlyHint": true},
         },
@@ -757,6 +766,14 @@ fn inspect(arguments: &Arguments) -> Result<Value, String> {
     ))
 }
 
+fn contents(arguments: &Arguments) -> Result<Value, String> {
+    only(arguments, &["input", "project", "search"])?;
+    Ok(crate::contents_report(
+        &path(arguments, "input")?,
+        &part_search(arguments)?,
+    ))
+}
+
 fn convert_all(arguments: &Arguments) -> Result<Value, String> {
     only(
         arguments,
@@ -1101,6 +1118,62 @@ mod tests {
         assert_eq!(report["input"]["path"], "/x/a.iam");
         let report = &call("formats", json!({"x": 1}))["result"]["structuredContent"];
         assert_eq!(report["schema"], "dutchman.formats/1");
+    }
+
+    #[test]
+    fn contents_lists_a_design_without_writing_anything() {
+        check_contents_without_writing("design_sketch_constraints.f3d");
+    }
+
+    #[cfg(feature = "freecad")]
+    #[test]
+    fn contents_lists_a_freecad_design_without_writing_anything() {
+        check_contents_without_writing("design_history.FCStd");
+    }
+
+    fn check_contents_without_writing(fixture: &str) {
+        let dir = tempfile::tempdir().unwrap();
+        let input = dir.path().join(fixture);
+        std::fs::copy(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../dutchman-core/tests/fixtures")
+                .join(fixture),
+            &input,
+        )
+        .unwrap();
+        let result = &call("contents", json!({"input": input}))["result"];
+        assert_eq!(result["isError"], false, "{result}");
+        let report = &result["structuredContent"];
+        assert_eq!(report["schema"], "dutchman.contents/1");
+        assert!(report["bodies"]["count"].as_u64().unwrap() >= 1);
+        let features = report["features"]["items"].as_array().unwrap();
+        assert!(!features.is_empty());
+        for feature in features {
+            let verdict = feature["verdict"].as_str().unwrap();
+            assert!(crate::json::VERDICTS.contains(&verdict), "{verdict}");
+            assert!(feature["suppressed"].is_boolean());
+            if matches!(verdict, "needs_solidcraft_check" | "not_supported_yet") {
+                assert!(feature["reason"].is_string(), "{feature}");
+            }
+        }
+        let counted: u64 = crate::json::VERDICTS
+            .iter()
+            .map(|word| report["features"]["verdicts"][word].as_u64().unwrap())
+            .sum();
+        assert_eq!(counted, features.len() as u64);
+        // Nothing was written beside the file.
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+
+        let refused = &call("contents", json!({"input": input, "output": "x.sc"}))["result"];
+        assert_eq!(refused["isError"], true);
+        assert_eq!(
+            refused["structuredContent"]["schema"],
+            "dutchman.contents/1"
+        );
+        assert!(refused["structuredContent"]["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("unknown argument output"));
     }
 
     #[test]

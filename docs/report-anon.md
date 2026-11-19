@@ -25,12 +25,11 @@ you choose whether to attach it. The log has no names or contents from the desig
 ## Converted files with a wrong result
 
 Converted files are included in this report as well as failures. The desktop's
-**Something wrong? Report this file** section offers anonymous review and private-send
-steps for every converted result that has a saved report, whatever it lost: history not kept
-or only partly kept, features flattened or blocked, parts left unplaced, or colours dropped,
-at any loss level. The card has a visible **Report this file…** button that opens the section;
-the section itself starts closed. Only an assembly whose part files were not found
-is offered the missing-parts search instead.
+**Is there a problem? Is something missing?** panel, always open at the bottom left, offers
+the private Discord steps and, under **More**, the anonymous review for every result that has
+a saved report, whether it lost anything or not. Every finished card has a **Report this
+file…** button that chooses its file in the panel. An assembly whose part files were not found
+is offered the missing-parts search, and the panel still asks about it.
 The separate endpoint summary envelope (`dutchman.report-send/1`) supports only bounded
 metadata and sharing choices; it has no free-text description field. The review displays
 that exact envelope. Converted-file summaries use `converted-with-problem` as their
