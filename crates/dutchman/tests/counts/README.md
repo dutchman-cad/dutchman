@@ -1,0 +1,1 @@
+Synthetic conversion reports authored in code for counts-profile tests. No native designs or third-party files are included. Each input has an explicit golden. Converter version numbers are normalized for release-independent comparison.

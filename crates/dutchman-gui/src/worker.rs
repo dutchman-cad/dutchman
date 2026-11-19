@@ -105,6 +105,30 @@ impl Run {
         messages: Sender<Message>,
         ctx: egui::Context,
     ) -> Self {
+        Self::start_using(inputs, out_dir, options, messages, ctx, converter_program())
+    }
+
+    /// Use a real process stub while retaining the production planning and supervision path.
+    #[cfg(feature = "test-support")]
+    pub(crate) fn start_isolated_for_test(
+        inputs: Vec<PathBuf>,
+        out_dir: PathBuf,
+        options: &ConvertOptions,
+        messages: Sender<Message>,
+        ctx: egui::Context,
+        program: PathBuf,
+    ) -> Self {
+        Self::start_using(inputs, out_dir, options, messages, ctx, Some(program))
+    }
+
+    fn start_using(
+        inputs: Vec<PathBuf>,
+        out_dir: PathBuf,
+        options: &ConvertOptions,
+        messages: Sender<Message>,
+        ctx: egui::Context,
+        program: Option<PathBuf>,
+    ) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let writer = options.writer();
         let options = options.clone();
@@ -154,7 +178,7 @@ impl Run {
                     }
                     send(Message::Progress(event));
                 };
-                match converter_program() {
+                match program {
                     Some(program) => batch::run_isolated(
                         &jobs,
                         &options,
@@ -216,7 +240,7 @@ impl Run {
         Run { stop }
     }
 
-    /// Starts no further file; those converting finish.
+    /// Starts no further file and terminates the isolated converters and their children.
     pub fn stop(&self) {
         self.stop.store(true, Ordering::Relaxed);
     }

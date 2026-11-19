@@ -99,6 +99,8 @@ fn check(scenario: &str) {
                 Err(error) => panic!("Mock accept failed: {error}"),
             }
         };
+        // macOS/BSD: an accepted socket inherits the listener's non-blocking mode.
+        socket.set_nonblocking(false).unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(5)))
             .unwrap();
