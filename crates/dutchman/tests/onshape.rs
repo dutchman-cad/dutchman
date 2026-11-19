@@ -1767,14 +1767,38 @@ fn derived_fetch_captures_a_pinned_other_document_studio_and_reuses_its_cache() 
         response(404,json!({})),response(404,json!({})),
         response(200,json!({"requestState":"DONE","resultExternalDataIds":["source-step"]})),
         Response{status:200,headers:BTreeMap::new(),body:b"ISO-10303-21; source synthetic geometry".to_vec()},
+        response(200, sketch_information(OTHER_MID)),
         response(200,json!({"microversionId":MID,"bodies":[]})),
         response(200,json!({"microversionId":MID,"bodies":[{"id":"inserted","type":"SOLID","properties":{"name":"Tool"}}]})),
         response(404,json!({})),response(404,json!({})),
         response(200,json!({"requestState":"DONE","resultExternalDataIds":["host-step"]})),
         Response{status:200,headers:BTreeMap::new(),body:b"ISO-10303-21; host synthetic geometry".to_vec()},
+        response(200, sketch_information(MID)),
     ]);
     let fetched = run(&mut mock, &dir, PS, 50).unwrap();
     assert!(mock.replies.is_empty(), "{:?}", mock.sent);
+    let sketch_requests: Vec<_> = mock
+        .sent
+        .iter()
+        .filter(|(_, path, _)| path.ends_with("/sketches"))
+        .collect();
+    assert_eq!(
+        sketch_requests,
+        [
+            &(
+                "GET".into(),
+                format!(
+                    "/api/v17/partstudios/d/{OTHER}/v/{OTHER_VERSION}/e/{OTHER_ELEMENT}/sketches"
+                ),
+                String::new(),
+            ),
+            &(
+                "GET".into(),
+                format!("/api/v17/partstudios/d/{DID}/v/{VID}/e/{PS}/sketches"),
+                String::new(),
+            ),
+        ]
+    );
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(
         std::fs::read(&fetched.output).unwrap(),
     ))
