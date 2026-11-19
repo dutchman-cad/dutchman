@@ -217,7 +217,7 @@ fn interchange_codecs_convert_generated_geometry_through_step() {
     use cadmpeg_registry::{build_encoder, Format};
     let dir = tempfile::tempdir().unwrap();
     let mut ir = cadmpeg_ir::examples::unit_cube().unwrap();
-    for face in &mut ir.model.faces {
+    for face in &mut ir.geometry.faces {
         face.name = None;
     }
     for (format, extension) in [(Format::Step, "stp"), (Format::Rhino, "3dm")] {

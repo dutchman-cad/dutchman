@@ -1,8 +1,11 @@
 //! Solid primitives, as SolidCraft primitive features: spheres, tori about the Z axis, coils
-//! along any axis, and full cylinders and cones placed by their feature frame.
+//! along any axis, full cylinders and cones placed by their feature frame, and boxes whose
+//! frame is aligned with the model axes.
 //!
-//! Boxes are not mapped: cadmpeg gives a box as dimensions and a placement without saying
-//! whether the placement is the box's corner or its centre.
+//! cadmpeg places a box by its minimum corner: it spans its frame's positive x, y and z from
+//! the frame origin. SolidCraft's box is axis-aligned, placed by its lowest corner, so a box
+//! whose frame axes each lie along a model axis (either way) maps to the same solid; any other
+//! frame has no SolidCraft box.
 
 use serde_json::{json, Value};
 
@@ -221,11 +224,103 @@ fn coil_start_angle(axis: [f64; 3], radial: [f64; 3]) -> Result<f64, String> {
         .to_degrees())
 }
 
-/// Why a box primitive is not mapped.
-pub(crate) fn unplaced(_kind: &str) -> String {
-    "boxes are not mapped yet: cadmpeg does not say whether a box's placement is its corner or \
-     its centre"
-        .to_owned()
+/// How close (as a cosine) a box frame axis must be to a model axis.
+const ALONG_AXIS: f64 = 1.0 - 1e-9;
+
+/// The minimum corner and the extent along the model axes of a box whose operation is
+/// `definition`.
+pub(crate) fn box_bounds(definition: &Value) -> Result<([f64; 3], [f64; 3]), String> {
+    let dimensions = definition
+        .get("dimensions")
+        .and_then(Value::as_array)
+        .filter(|dimensions| dimensions.len() == 3)
+        .ok_or("a box without resolved dimensions is not mapped yet")?;
+    let mut size = [0.0f64; 3];
+    for (cell, value) in size.iter_mut().zip(dimensions) {
+        *cell = length(Some(value), "size")?;
+    }
+    let frame = frame(definition, "box")?;
+    let origin = [frame[0][3], frame[1][3], frame[2][3]];
+    // The box in model space: each frame axis runs along one model axis, so the box spans
+    // that axis from the origin by its dimension, forwards or backwards.
+    let mut low = origin;
+    let mut extent = [0.0f64; 3];
+    let mut used = [false; 3];
+    let [r0, r1, r2] = frame;
+    let columns = [
+        [r0[0], r1[0], r2[0]],
+        [r0[1], r1[1], r2[1]],
+        [r0[2], r1[2], r2[2]],
+    ];
+    for (column, dimension) in columns.into_iter().zip(size.iter()) {
+        let direction = unit(column).ok_or("its placement is malformed")?;
+        let along = direction
+            .iter()
+            .position(|c| c.abs() >= ALONG_AXIS)
+            .filter(|axis| !used.get(*axis).copied().unwrap_or(true))
+            .ok_or(
+                "a box turned off the model axes is not mapped yet: SolidCraft's box is \
+                 axis-aligned",
+            )?;
+        if let (Some(flag), Some(span), Some(start), Some(sign)) = (
+            used.get_mut(along),
+            extent.get_mut(along),
+            low.get_mut(along),
+            direction.get(along),
+        ) {
+            *flag = true;
+            *span = *dimension;
+            if *sign < 0.0 {
+                *start -= dimension;
+            }
+        }
+    }
+    Ok((low, extent))
+}
+
+/// Maps a box (a block) whose operation is `definition`: dimensions along its frame's x, y
+/// and z, from the frame origin, which is the box's minimum corner.
+pub(crate) fn block(
+    feature: &Value,
+    definition: &Value,
+    ctx: &mut Context,
+) -> Result<Value, String> {
+    let (low, extent) = box_bounds(definition)?;
+    let operation = operation(definition.get("op"))?;
+    let [length_x, width_y, height_z] = extent;
+    Ok(primitive(
+        feature,
+        ctx,
+        operation,
+        "box",
+        "Box",
+        json!({"corner": low, "length": mm(length_x), "width": mm(width_y),
+               "height": mm(height_z)}),
+    ))
+}
+
+/// The feature frame of a placed primitive (`kind` names it in reasons): three rows of a 3×4
+/// local-to-model transform.
+fn frame(definition: &Value, kind: &str) -> Result<[[f64; 4]; 3], String> {
+    let rows = definition
+        .get("placement")
+        .and_then(Value::as_array)
+        .filter(|rows| rows.len() == 3)
+        .ok_or_else(|| format!("a {kind} primitive without a placement is not mapped yet"))?;
+    let mut frame = [[0.0f64; 4]; 3];
+    for (row, values) in frame.iter_mut().zip(rows) {
+        let values = values
+            .as_array()
+            .filter(|values| values.len() == 4)
+            .ok_or("its placement is malformed")?;
+        for (cell, value) in row.iter_mut().zip(values) {
+            *cell = value
+                .as_f64()
+                .filter(|v| v.is_finite())
+                .ok_or("its placement is malformed")?;
+        }
+    }
+    Ok(frame)
 }
 
 /// Maps a cylinder or cone primitive whose operation is `definition`. Each stands on its
@@ -248,24 +343,7 @@ pub(crate) fn placed(
             "a part-turn {kind} is not mapped yet: SolidCraft's {kind} is always whole"
         ));
     }
-    let rows = definition
-        .get("placement")
-        .and_then(Value::as_array)
-        .filter(|rows| rows.len() == 3)
-        .ok_or_else(|| format!("a {kind} primitive without a placement is not mapped yet"))?;
-    let mut frame = [[0.0f64; 4]; 3];
-    for (row, values) in frame.iter_mut().zip(rows) {
-        let values = values
-            .as_array()
-            .filter(|values| values.len() == 4)
-            .ok_or("its placement is malformed")?;
-        for (cell, value) in row.iter_mut().zip(values) {
-            *cell = value
-                .as_f64()
-                .filter(|v| v.is_finite())
-                .ok_or("its placement is malformed")?;
-        }
-    }
+    let frame = frame(definition, kind)?;
     let [r0, r1, r2] = frame;
     let base = [r0[3], r1[3], r2[3]];
     let axis = unit([r0[2], r1[2], r2[2]]).ok_or("its placement is malformed")?;

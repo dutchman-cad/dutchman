@@ -98,7 +98,7 @@ fn cylinder_point(ctx: &Context, selection: &Value) -> Result<V3, String> {
         .get("surface")
         .and_then(Value::as_str)
         .and_then(|id| ctx.row("surfaces", id))
-        .and_then(|s| s.get("geometry"))
+        .and_then(|s| s.pointer("/geometry/value"))
         .ok_or("its thread surface is missing")?;
     if geometry.get("kind").and_then(Value::as_str) != Some("cylinder") {
         return Err("its thread face is not cylindrical".to_owned());
@@ -139,7 +139,7 @@ fn band_point(ctx: &Context, face: &Value, geometry: &Value) -> Option<V3> {
         }
         let circle = ctx
             .row("curves", edge.pointer("/carrier/curve")?.as_str()?)?
-            .get("geometry")?;
+            .pointer("/geometry/value")?;
         if circle.get("kind")?.as_str()? != "circle"
             || (number(circle.get("radius"))? - radius).abs() > 1e-6
             || dot(unit(v3(circle.get("axis"))?)?, axis).abs() < 1.0 - 1e-9
@@ -182,15 +182,15 @@ mod tests {
     fn model() -> Value {
         json!({
             "faces": [{"id": "f", "surface": "s", "loops": {"loops": ["lo", "hi"]}}],
-            "surfaces": [{"id": "s", "geometry": {"kind": "cylinder", "origin": {"x": 0,"y": 0,"z": 0},
-                "axis": {"x": 0,"y": 0,"z": 1}, "ref_direction": {"x": 1,"y": 0,"z": 0}, "radius": 1.5}}],
+            "surfaces": [{"id": "s", "geometry": {"kind":"solved", "value": {"kind": "cylinder", "origin": {"x": 0,"y": 0,"z": 0},
+                "axis": {"x": 0,"y": 0,"z": 1}, "ref_direction": {"x": 1,"y": 0,"z": 0}, "radius": 1.5}}}],
             "loops": [{"id": "lo", "boundary": {"coedges": ["cl"]}}, {"id": "hi", "boundary": {"coedges": ["ch"]}}],
             "coedges": [{"id": "cl", "edge": "el"}, {"id": "ch", "edge": "eh"}],
             "edges": [{"id": "el", "carrier": {"curve": "a", "param_range": [0, std::f64::consts::TAU]}},
                 {"id": "eh", "carrier": {"curve": "b", "param_range": [0, std::f64::consts::TAU]}}],
             "curves": [
-                {"id": "a", "geometry": {"kind": "circle", "center": {"x": 0,"y": 0,"z": 0}, "axis": {"x": 0,"y": 0,"z": 1}, "radius": 1.5}},
-                {"id": "b", "geometry": {"kind": "circle", "center": {"x": 0,"y": 0,"z": 8}, "axis": {"x": 0,"y": 0,"z": 1}, "radius": 1.5}}
+                {"id": "a", "geometry": {"kind":"solved", "value": {"kind": "circle", "center": {"x": 0,"y": 0,"z": 0}, "axis": {"x": 0,"y": 0,"z": 1}, "radius": 1.5}}},
+                {"id": "b", "geometry": {"kind":"solved", "value": {"kind": "circle", "center": {"x": 0,"y": 0,"z": 8}, "axis": {"x": 0,"y": 0,"z": 1}, "radius": 1.5}}}
             ]
         })
     }
@@ -203,7 +203,7 @@ mod tests {
     #[test]
     fn cosmetic_thread_without_standard_keeps_exact_size_and_length() {
         let model = model();
-        let mut ctx = Context::new(&model);
+        let mut ctx = Context::testing(&model);
         let out = map(
             &json!({"name": "Thread 1"}),
             &definition(),
@@ -229,7 +229,7 @@ mod tests {
         let mut d = definition();
         d.as_object_mut().unwrap().remove("modeled");
         let mut report = Report::default();
-        let out = map(&json!({}), &d, &mut Context::new(&model), &mut report).unwrap();
+        let out = map(&json!({}), &d, &mut Context::testing(&model), &mut report).unwrap();
         assert_eq!(out["type"], "thread");
         assert!(report.losses()[0]
             .detail
@@ -239,7 +239,7 @@ mod tests {
     #[test]
     fn cosmetic_thread_refuses_unproven_or_conflicting_data() {
         let model = model();
-        let mut ctx = Context::new(&model);
+        let mut ctx = Context::testing(&model);
         for (field, value, reason) in [
             ("modeled", json!(true), "modeled thread"),
             ("pitch", Value::Null, "resolved diameter and pitch"),
@@ -270,7 +270,7 @@ mod tests {
         assert!(map(
             &json!({}),
             &definition(),
-            &mut Context::new(&incomplete),
+            &mut Context::testing(&incomplete),
             &mut Report::default()
         )
         .unwrap_err()

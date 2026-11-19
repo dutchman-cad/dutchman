@@ -6,8 +6,13 @@ decoding land in cadmpeg and reach Dutchman when the pin is bumped. This page sa
 Dutchman makes of what that codec gives, and which upstream gaps keep SolidWorks history from
 replaying. It drives what is asked of cadmpeg next.
 
-State at the cadmpeg commit pinned in `Cargo.toml` (`651fe819`, cadmpeg 0.6.11).
+State at the cadmpeg commit pinned in `Cargo.toml` (`9249a19b`, after cadmpeg 0.6.12).
 `dutchman formats` reports the reader's current reader status alongside what Dutchman converts.
+
+Compact extrusion continuation records now supply their join or cut operation when their
+owning feature and class resolve. An extrusion whose start is not the sketch plane stays
+unresolved and reported. Unresolved profiles and sketch bindings remain the history blockers
+described below.
 
 ## Parts (`.sldprt`)
 
@@ -88,6 +93,9 @@ Assemblies convert as placed parts and nested components. cadmpeg supplies produ
 occurrences and placements; Dutchman resolves external `.sldprt` and `.sldasm` references
 through the shared assembly file finder. Absolute Windows paths are matched by file name,
 case-insensitively, beside the assembly first, then through the project and `--search` folders.
+When none of the assembly's part files can be found or read, and the assembly holds no bodies
+of its own, conversion stops with "none of the assembly's parts could be found or read", and the
+report lists each part file it looked for.
 See [finding part files](inventor.md#finding-the-part-files) for the shared search rules.
 
 Local sub-assemblies keep their component tree. Referenced assembly files are read recursively,

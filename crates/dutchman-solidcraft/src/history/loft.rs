@@ -33,6 +33,7 @@ yet: whether the inner loops are holes in the lofted shape is not known";
 /// How many of its sketch's loops a section selects, when it selects whole loops by kind
 /// (the whole sketch, or a list of its profiles). Other selections name their regions.
 fn loops_selected(section: &Value, ctx: &Context) -> usize {
+    let section = super::profile::planar(section);
     let value = section.get("value");
     match section.get("kind").and_then(Value::as_str) {
         Some("sketch") => value
@@ -71,7 +72,7 @@ pub(crate) fn map(
     let guides = match guidance.get("kind").and_then(Value::as_str) {
         None => &[][..],
         Some("guides") => guidance
-            .get("path")
+            .get("value")
             .and_then(Value::as_array)
             .map_or(&[][..], Vec::as_slice),
         Some("centerline") => return Err("lofts along a centreline are not mapped yet".to_owned()),
@@ -136,6 +137,9 @@ pub(crate) fn map(
     let mut sections = Vec::with_capacity(sources.len());
     let mut apex_sketches = Vec::new();
     for (index, section) in sources.iter().enumerate() {
+        let section = section
+            .get("value")
+            .ok_or("its loft section has no value")?;
         if matches!(
             section.get("kind").and_then(Value::as_str),
             Some("point" | "native_point" | "vertex")
@@ -258,6 +262,7 @@ mod tests {
             origin: [0.0; 3],
             x_dir: [1.0, 0.0, 0.0],
             y_dir: [0.0, 1.0, 0.0],
+            point_displacement: 0.0,
             points: Vec::new(),
             shapes: shapes
                 .into_iter()

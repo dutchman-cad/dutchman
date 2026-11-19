@@ -47,14 +47,14 @@ pub(crate) fn fusion(model: Model, report: &mut Report) -> Model {
         .collect();
     let hidden = model
         .ir
-        .model
+        .geometry
         .bodies
         .iter()
         .filter(|body| body.visible == Some(false) && owned.contains(body.id.as_str()))
         .count();
     if hidden > 0 {
         report.push(Severity::Info, "bodies", format!(
-            "{hidden} user-hidden Fusion bodies were kept; parts with both shown and hidden bodies are shown whole"
+            "{hidden} user-hidden Fusion bodies were kept, marked hidden: SolidCraft 0.42 and newer open them hidden; older releases show a part with both shown and hidden bodies whole"
         ));
     }
     // Fusion needs no visibility rewrite when it has no unowned hidden bodies.
@@ -63,7 +63,7 @@ pub(crate) fn fusion(model: Model, report: &mut Report) -> Model {
     if model.ir.native.namespace("fcstd").is_none()
         && !model
             .ir
-            .model
+            .geometry
             .bodies
             .iter()
             .any(|body| body.visible == Some(false) && !owned.contains(body.id.as_str()))
@@ -77,23 +77,28 @@ pub(crate) fn fusion(model: Model, report: &mut Report) -> Model {
             // to diagnose against the decoded model.
             let before: BTreeSet<_> = model
                 .ir
-                .model
+                .geometry
                 .bodies
                 .iter()
                 .map(|b| b.id.as_str())
-                .chain(model.ir.model.faces.iter().map(|f| f.id.as_str()))
+                .chain(model.ir.geometry.faces.iter().map(|f| f.id.as_str()))
                 .collect();
             let kept: BTreeSet<_> = shown
                 .ir
-                .model
+                .geometry
                 .bodies
                 .iter()
                 .map(|b| b.id.as_str())
-                .chain(shown.ir.model.faces.iter().map(|f| f.id.as_str()))
+                .chain(shown.ir.geometry.faces.iter().map(|f| f.id.as_str()))
                 .collect();
             shown.ir.model.appearance_bindings.retain(|binding| {
                 use cadmpeg_ir::appearance::AppearanceTarget;
-                let (kind,id) = match &binding.target {
+                // A state or instance does not describe this definition's current
+                // geometry. Leave its specific refusal to appearance mapping.
+                if binding.target.path.is_some() || binding.target.state.is_some() {
+                    return true;
+                }
+                let (kind,id) = match &binding.target.entity {
                     AppearanceTarget::Body(id) => ("body",id.as_str()),
                     AppearanceTarget::Face(id) => ("face",id.as_str()),
                     _ => return true,
@@ -130,7 +135,7 @@ pub(crate) fn shown(model: &Model) -> Result<Option<(Model, usize)>, String> {
 }
 
 fn filtered(model: &Model, fusion: bool) -> Result<Option<(Model, usize)>, String> {
-    let bodies = &model.ir.model.bodies;
+    let bodies = &model.ir.geometry.bodies;
     let mut document = serde_json::to_value(&model.ir).map_err(|err| err.to_string())?;
     // FreeCAD hides what a hidden container holds. Other formats say each body's and each
     // occurrence's own visibility, and the assembly writer keeps hidden occurrences hidden.
@@ -144,7 +149,7 @@ fn filtered(model: &Model, fusion: bool) -> Result<Option<(Model, usize)>, Strin
     let hidden_ids = if freecad && !fusion {
         hidden_bodies(&document)
     } else {
-        listed(document.pointer("/model/bodies"))
+        listed(document.pointer("/geometry/bodies"))
             .iter()
             .filter(|body| body.get("visible").and_then(Value::as_bool) == Some(false))
             .filter_map(|body| body.get("id").and_then(Value::as_str))
@@ -156,11 +161,15 @@ fn filtered(model: &Model, fusion: bool) -> Result<Option<(Model, usize)>, Strin
     if (hidden == 0 && !visibility_changed) || (!fusion && hidden == bodies.len()) {
         return Ok(None);
     }
-    let wire = document
-        .get_mut("model")
-        .and_then(Value::as_object_mut)
+    crate::input_edges::preserve(&mut document, &model.ir);
+    let mut geometry_home = document
+        .get_mut("geometry")
+        .ok_or("the model is malformed")?
+        .take();
+    let wire = geometry_home
+        .as_object_mut()
         .ok_or("the model is malformed")?;
-    crate::input_edges::preserve(wire, &model.ir);
+    let tessellations = listed(document.pointer("/model/tessellations"));
     let shown_rows: Vec<&Value> = listed(wire.get("bodies"))
         .iter()
         .filter(|body| {
@@ -171,11 +180,13 @@ fn filtered(model: &Model, fusion: bool) -> Result<Option<(Model, usize)>, Strin
         .iter()
         .filter(|(arena, _)| BREP.contains(&arena.as_str()))
         .flat_map(|(_, rows)| listed(Some(rows)))
+        .chain(tessellations)
         .filter_map(|row| row.get("id").and_then(Value::as_str))
         .collect();
     let rows: std::collections::BTreeMap<&str, &Value> = wire
         .values()
         .flat_map(|rows| listed(Some(rows)))
+        .chain(tessellations)
         .filter_map(|row| Some((row.get("id").and_then(Value::as_str)?, row)))
         .collect();
     // A procedural construction names the curve or surface it constructs, not the other way
@@ -192,12 +203,27 @@ fn filtered(model: &Model, fusion: bool) -> Result<Option<(Model, usize)>, Strin
             }
         }
     }
+    let mut children: BTreeMap<&str, Vec<&Value>> = BTreeMap::new();
+    for (arena, key) in [("regions", "body"), ("faces", "shell")] {
+        for row in listed(wire.get(arena)) {
+            if let Some(parent) = row.get(key).and_then(Value::as_str) {
+                children.entry(parent).or_default().push(row);
+            }
+        }
+    }
     // The geometry the shown bodies reach; the rest of the geometry is the hidden bodies'.
     let mut reached: BTreeSet<String> = BTreeSet::new();
     let mut queue: Vec<&Value> = shown_rows;
     while let Some(row) = queue.pop() {
         let mut refs = Vec::new();
         strings(row, &mut refs);
+        if let Some(id) = row.get("id").and_then(Value::as_str) {
+            for child in children.get(id).into_iter().flatten() {
+                if let Some(id) = child.get("id").and_then(Value::as_str) {
+                    refs.push(id);
+                }
+            }
+        }
         for reference in refs {
             if geometry.contains(reference) && reached.insert(reference.to_owned()) {
                 if let Some(next) = rows.get(reference) {
@@ -231,6 +257,19 @@ fn filtered(model: &Model, fusion: bool) -> Result<Option<(Model, usize)>, Strin
             }
         });
     }
+    if let Some(rows) = document
+        .pointer_mut("/model/tessellations")
+        .and_then(Value::as_array_mut)
+    {
+        rows.retain(|row| {
+            !row.get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| unreached.contains(id))
+        });
+    }
+    if let Some(home) = document.get_mut("geometry") {
+        *home = geometry_home;
+    }
     // cadmpeg is third-party code; a panic in it is a reason, not a crash.
     let text = document.to_string();
     let ir = std::panic::catch_unwind(|| cadmpeg_ir::CadIr::from_json(&text))
@@ -254,7 +293,7 @@ fn filtered(model: &Model, fusion: bool) -> Result<Option<(Model, usize)>, Strin
 /// its descendants, even when their own visibility is explicitly true.
 fn hidden_bodies(document: &Value) -> BTreeSet<String> {
     let model = document.get("model").unwrap_or(&Value::Null);
-    let mut hidden: BTreeSet<String> = listed(model.get("bodies"))
+    let mut hidden: BTreeSet<String> = listed(document.pointer("/geometry/bodies"))
         .iter()
         .filter(|body| body.get("visible").and_then(Value::as_bool) == Some(false))
         .filter_map(|body| body.get("id").and_then(Value::as_str).map(str::to_owned))
@@ -326,7 +365,7 @@ fn hidden_bodies(document: &Value) -> BTreeSet<String> {
             .into_iter()
             .filter(|id| !shown_bodies.contains(id.as_str())),
     );
-    let bodies: BTreeSet<&str> = listed(model.get("bodies"))
+    let bodies: BTreeSet<&str> = listed(document.pointer("/geometry/bodies"))
         .iter()
         .filter_map(|body| body.get("id").and_then(Value::as_str))
         .collect();
@@ -494,26 +533,24 @@ mod tests {
     fn consumed_geometry_appearance_targets_are_not_reported_as_decoder_omissions() {
         let mut model = two_cubes(Some(false));
         let mut wire = serde_json::to_value(&model.ir).unwrap();
-        let body = wire["model"]["bodies"][1]["id"].clone();
-        let face = wire["model"]["faces"]
+        let body = wire["geometry"]["bodies"][1]["id"].clone();
+        let face = wire["geometry"]["faces"]
             .as_array()
             .unwrap()
             .iter()
             .find(|f| f["id"].as_str().unwrap().ends_with("~copy"))
             .unwrap()["id"]
             .clone();
-        wire["model"]["appearances"] = json!([{
-            "id":"synthetic:test:appearance#red", "base_color":{"r":1.0,"g":0.0,"b":0.0,"a":1.0}
-        }]);
+        wire["model"]["appearances"] = json!([{"id": "synthetic:test:appearance#red", "base_color": {"r":1.0,"g":0.0,"b":0.0,"a":1.0}, "properties": {}, "textures": []}]);
         wire["model"]["appearance_bindings"] = json!([
-            {"id":"synthetic:test:binding#body", "target":{"kind":"body","id":body},"appearance":"synthetic:test:appearance#red"},
-            {"id":"synthetic:test:binding#face", "target":{"kind":"face","id":face},"appearance":"synthetic:test:appearance#red"},
-            {"id":"synthetic:test:binding#missing", "target":{"kind":"face","id":"synthetic:test:face#missing"},"appearance":"synthetic:test:appearance#red"}
+            {"id": "synthetic:test:binding#body", "target": {"entity": {"kind":"body","value":body}}, "appearance": "synthetic:test:appearance#red", "channels": {}},
+            {"id": "synthetic:test:binding#face", "target": {"entity": {"kind":"face","value":face}}, "appearance": "synthetic:test:appearance#red", "channels": {}},
+            {"id": "synthetic:test:binding#missing", "target": {"entity": {"kind":"face","value":"synthetic:test:face#missing"}}, "appearance": "synthetic:test:appearance#red", "channels": {}}
         ]);
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let mut report = Report::default();
         let shown = fusion(model, &mut report);
-        assert_eq!(shown.ir.model.bodies.len(), 1);
+        assert_eq!(shown.ir.geometry.bodies.len(), 1);
         assert_eq!(shown.ir.model.appearance_bindings.len(), 1);
         assert!(shown.ir.model.appearance_bindings[0]
             .id
@@ -540,7 +577,7 @@ mod tests {
             Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/synthetic_cube.ipt");
         let part = crate::read(Format::InventorPart, &fixture, &mut Report::default()).unwrap();
         let mut wire = serde_json::to_value(&part.ir).unwrap();
-        let model = wire["model"].as_object_mut().unwrap();
+        let model = wire["geometry"].as_object_mut().unwrap();
         let ids: BTreeMap<String, String> = model
             .iter()
             .filter(|(arena, _)| {
@@ -598,7 +635,7 @@ mod tests {
         let mut model =
             crate::read(Format::InventorPart, &fixture, &mut Report::default()).unwrap();
         let mut wire = serde_json::to_value(&model.ir).unwrap();
-        let m = &mut wire["model"];
+        let m = &mut wire["geometry"];
         let id = |arena: &str, key: usize| format!("test:tool:{arena}#{key}");
         let point = |z: f64| json!({"x": 5.0, "y": 5.0, "z": z});
         let axis = json!({"x": 0.0, "y": 0.0, "z": 1.0});
@@ -608,15 +645,11 @@ mod tests {
                 "id": id("point", i), "position": {"x": 7.0, "y": 5.0, "z": z}}));
             m["vertices"].as_array_mut().unwrap().push(json!({
                 "id": id("vertex", i), "point": id("point", i)}));
-            m["curves"].as_array_mut().unwrap().push(json!({
-                "id": id("curve", i), "geometry": {"kind": "circle", "center": point(z),
-                    "axis": axis, "ref_direction": reference, "radius": 2.0}}));
-            m["edges"].as_array_mut().unwrap().push(json!({
-                "id": id("edge", i), "start": id("vertex", i), "end": id("vertex", i),
-                "carrier": {"curve": id("curve", i), "param_range": [0.0, std::f64::consts::TAU]}}));
-            m["surfaces"].as_array_mut().unwrap().push(json!({
-                "id": id("surface", i), "geometry": {"kind": "plane", "origin": point(z),
-                    "normal": axis, "u_axis": reference}}));
+            m["curves"].as_array_mut().unwrap().push(json!({"id": id("curve", i), "geometry": {"kind":"solved", "value": {"kind": "circle", "center": point(z),
+                    "axis": axis, "ref_direction": reference, "radius": 2.0}}}));
+            m["edges"].as_array_mut().unwrap().push(json!({"id": id("edge", i), "carrier": {"curve": id("curve", i), "param_range": [0.0, std::f64::consts::TAU]}, "ends": {"start": id("vertex", i), "end": id("vertex", i)}}));
+            m["surfaces"].as_array_mut().unwrap().push(json!({"id": id("surface", i), "geometry": {"kind":"solved", "value": {"kind": "plane", "origin": point(z),
+                    "normal": axis, "u_axis": reference}}}));
             for (key, face, forward) in [(i, i, i == 1), (i + 2, 2, i == 0)] {
                 m["coedges"].as_array_mut().unwrap().push(json!({
                     "id": id("coedge", key), "owner_loop": id("loop", key),
@@ -624,34 +657,33 @@ mod tests {
                     "sense": if forward {"forward"} else {"reversed"}, "pcurves": []}));
                 m["loops"].as_array_mut().unwrap().push(json!({
                     "id": id("loop", key), "face": id("face", face),
-                    "boundary": {"kind": "ring", "coedges": [id("coedge", key)]}}));
+                    "boundary": {"kind": "ring", "coedges": [id("coedge", key)], "vertex_uses": []}}));
             }
         }
-        m["surfaces"].as_array_mut().unwrap().push(json!({
-            "id": id("surface", 2), "geometry": {"kind": "cylinder", "origin": point(0.0),
-                "axis": axis, "ref_direction": reference, "radius": 2.0}}));
+        m["surfaces"].as_array_mut().unwrap().push(json!({"id": id("surface", 2), "geometry": {"kind":"solved", "value": {"kind": "cylinder", "origin": point(0.0),
+                "axis": axis, "ref_direction": reference, "radius": 2.0}}}));
         for i in 0..3 {
             m["faces"].as_array_mut().unwrap().push(json!({
                 "id": id("face", i), "shell": id("shell", 0), "surface": id("surface", i),
                 "sense": if i == 0 {"reversed"} else {"forward"},
-                "loops": {"classification": "unspecified", "loops": if i == 2 {
+                "loops": {"kind": "unspecified", "loops": if i == 2 {
                     vec![id("loop", 2), id("loop", 3)]
                 } else {vec![id("loop", i)]}}}));
         }
         m["shells"].as_array_mut().unwrap().push(json!({
             "id": id("shell", 0), "region": id("region", 0),
-            "members": [{"kind": "face", "id": id("face", 0)}, {"kind": "face", "id": id("face", 1)}, {"kind": "face", "id": id("face", 2)}]}));
+            "members": []}));
         m["regions"].as_array_mut().unwrap().push(json!({
             "id": id("region", 0), "body": id("body", 0), "shells": [id("shell", 0)]}));
-        m["bodies"].as_array_mut().unwrap().push(json!({
-            "id": id("body", 0), "kind": "solid", "regions": [id("region", 0)], "visible": false}));
+        m["bodies"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": id("body", 0), "kind": "solid", "visible": false}));
         let target = m["bodies"][0]["id"].clone();
-        m["product_definitions"] =
-            json!([{"id": "test:model:component#box", "kind": "part", "bodies": [target]}]);
-        m["features"] = json!([{"id": "test:model:feature#cut", "ordinal": 0, "suppressed": false,
-            "outputs": [target], "definition": {"definition": "combine", "op": "cut", "keep_tools": false,
-                "operands": {"target": {"kind": "bodies", "value": [target]},
-                    "tools": {"kind": "bodies", "value": [id("body", 0)]}}}}]);
+        let m = &mut wire["model"];
+        m["product_definitions"] = json!([{"id": "test:model:component#box", "kind": "part", "bodies": [target], "bom_properties": {}, "sketches": []}]);
+        m["features"] = json!([{"id": "test:model:feature#cut", "ordinal": 0, "suppressed": false, "outputs": [target], "definition": {"kind": "operation", "value": {"kind": "combine", "value": {"op": "cut", "keep_tools": false, "operands": {"target": {"kind": "bodies", "value": [target]},
+                    "tools": {"kind": "bodies", "value": [id("body", 0)]}}, "destination": "target_component"}}}, "dependencies": [], "source_properties": {}, "source_content": []}]);
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         model
     }
@@ -674,8 +706,8 @@ mod tests {
         let model = fusion_cut();
         let mut report = Report::default();
         let kept = fusion(model, &mut report);
-        assert_eq!(kept.ir.model.bodies.len(), 1);
-        assert_eq!(kept.ir.model.faces.len(), 6);
+        assert_eq!(kept.ir.geometry.bodies.len(), 1);
+        assert_eq!(kept.ir.geometry.faces.len(), 6);
         assert_eq!(kept.ir.model.features.len(), 1);
         assert_eq!(report.losses().len(), 1);
         assert_eq!(report.losses()[0].severity, Severity::Info);
@@ -690,7 +722,7 @@ mod tests {
     fn fusion_user_hidden_component_members_are_kept() {
         let mut model = fusion_cut();
         let mut wire = serde_json::to_value(&model.ir).unwrap();
-        let tool = wire["model"]["bodies"][1]["id"].clone();
+        let tool = wire["geometry"]["bodies"][1]["id"].clone();
         wire["model"]["product_definitions"][0]["bodies"]
             .as_array_mut()
             .unwrap()
@@ -698,8 +730,8 @@ mod tests {
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let mut report = Report::default();
         let kept = fusion(model, &mut report);
-        assert_eq!(kept.ir.model.bodies.len(), 2);
-        assert_eq!(kept.ir.model.faces.len(), 9);
+        assert_eq!(kept.ir.geometry.bodies.len(), 2);
+        assert_eq!(kept.ir.geometry.faces.len(), 9);
         assert_eq!(report.losses().len(), 1);
         assert_eq!(report.losses()[0].severity, Severity::Info);
         assert!(report.losses()[0].detail.contains("user-hidden"));
@@ -709,21 +741,20 @@ mod tests {
     fn fusion_hidden_bodies_owned_by_placed_assembly_parts_are_kept() {
         let mut model = fusion_cut();
         let mut wire = serde_json::to_value(&model.ir).unwrap();
-        let tool = wire["model"]["bodies"][1]["id"].clone();
+        let tool = wire["geometry"]["bodies"][1]["id"].clone();
         wire["model"]["product_definitions"]
             .as_array_mut()
             .unwrap()
-            .push(json!({
-            "id": "test:model:component#tool", "kind": "part", "bodies": [tool]}));
+            .push(json!({"id": "test:model:component#tool", "kind": "part", "bodies": [tool], "bom_properties": {}, "sketches": []}));
         wire["model"]["occurrences"] = json!([{
             "id": "test:model:occurrence#tool", "ordinal": 0,
-            "prototype": {"scope": "local", "definition": "test:model:component#tool"},
+            "prototype": {"kind": "local", "definition": "test:model:component#tool"},
             "parent": {"kind": "root"}, "transform": crate::placement::IDENTITY,
             "scale": [1, 1, 1], "visible": false}]);
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let mut report = Report::default();
         let kept = fusion(model, &mut report);
-        assert_eq!(kept.ir.model.bodies.len(), 2);
+        assert_eq!(kept.ir.geometry.bodies.len(), 2);
         assert_eq!(kept.ir.model.occurrences.len(), 1);
         assert!(report
             .losses()
@@ -768,13 +799,12 @@ mod tests {
 
     #[test]
     fn a_shown_link_keeps_geometry_hidden_in_the_source_container() {
-        let document = json!({"model": {
-            "bodies": [{"id": "b", "visible": true}],
+        let document = json!({"geometry": {"bodies": [{"id": "b", "visible": true}]}, "model": {
             "features": [{"native_ref": "Body", "outputs": ["b"]}],
-            "product_definitions": [{"id": "part", "kind": "part", "bodies": ["b"]}],
+            "product_definitions": [{"id": "part", "kind": "part", "bodies": ["b"], "bom_properties": {}, "sketches": []}],
             "occurrences": [
-                {"id": "source", "prototype": {"definition": "part"}, "native_ref": "Body"},
-                {"id": "link", "prototype": {"definition": "part"}, "native_ref": "Link"}]
+                {"id": "source", "prototype": {"kind": "local", "definition": "part"}, "native_ref": "Body", "ordinal": 0, "scale": [1, 1, 1]},
+                {"id": "link", "prototype": {"kind": "local", "definition": "part"}, "native_ref": "Link", "ordinal": 0, "scale": [1, 1, 1]}]
         }, "native": {"fcstd": {
             "objects": [{"id": "Part", "type_name": "App::Part"}],
             "properties": [
@@ -807,15 +837,15 @@ mod tests {
     fn hidden_ancestors_override_visible_children_but_shown_instances_survive() {
         let mut model = two_cubes(Some(true));
         let mut wire = serde_json::to_value(&model.ir).unwrap();
-        let second = wire["model"]["bodies"][1]["id"].clone();
+        let second = wire["geometry"]["bodies"][1]["id"].clone();
         wire["model"]["product_definitions"] = json!([
-            {"id": "test:model:component#container", "kind": "group"},
-            {"id": "test:model:component#nested", "kind": "group"},
-            {"id": "test:model:component#part", "kind": "part", "bodies": [second]},
+            {"id": "test:model:component#container", "kind": "group", "bom_properties": {}, "bodies": [], "sketches": []},
+            {"id": "test:model:component#nested", "kind": "group", "bom_properties": {}, "bodies": [], "sketches": []},
+            {"id": "test:model:component#part", "kind": "part", "bodies": [second], "bom_properties": {}, "sketches": []},
         ]);
         let occurrence = |id: &str, definition: &str, parent: Value, visible: bool| {
             json!({
-            "id": id, "prototype": {"scope": "local", "definition": definition},
+            "id": id, "prototype": {"kind": "local", "definition": definition},
             "parent": parent, "ordinal": 0, "transform": crate::placement::IDENTITY,
             "scale": [1, 1, 1], "visible": visible})
         };
@@ -860,14 +890,14 @@ mod tests {
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let (shown, count) = shown(&model).unwrap().unwrap();
         assert_eq!(count, 1);
-        assert_eq!(shown.ir.model.bodies.len(), 1);
+        assert_eq!(shown.ir.geometry.bodies.len(), 1);
     }
 
     #[test]
     fn a_shown_curve_keeps_its_construction_and_basis() {
         let model = two_cubes(Some(false));
         let mut wire = serde_json::to_value(&model.ir).unwrap();
-        let m = wire["model"].as_object_mut().unwrap();
+        let m = wire["geometry"].as_object_mut().unwrap();
         // A subset construction of one shown and one hidden edge curve, each over a basis curve
         // of its own: the construction names the curve, nothing names the construction.
         let mut constructions = Vec::new();
@@ -890,9 +920,7 @@ mod tests {
                 .clone();
             basis["id"] = json!(format!("{curve}:basis"));
             bases.push(basis);
-            constructions.push(json!({
-                "id": format!("{curve}:construction"), "curve": curve,
-                "definition": {"kind": "subset", "source": format!("{curve}:basis"),
+            constructions.push(json!({"id": format!("{curve}:construction"), "curve": curve, "definition": {"kind": "subset", "source": format!("{curve}:basis"),
                     "parameter_range": edge["carrier"]["param_range"], "sense": true}}));
         }
         m["curves"].as_array_mut().unwrap().extend(bases);
@@ -904,7 +932,7 @@ mod tests {
         let (shown, _) = shown(&model).unwrap().unwrap();
         let kept = serde_json::to_value(&shown.ir).unwrap();
         let ids = |arena: &str| -> Vec<String> {
-            listed(kept["model"].get(arena))
+            listed(kept["geometry"].get(arena))
                 .iter()
                 .filter_map(|row| row["id"].as_str().map(str::to_owned))
                 .collect()
@@ -922,14 +950,17 @@ mod tests {
     #[test]
     fn hidden_bodies_and_their_geometry_are_left_out() {
         let model = two_cubes(Some(false));
-        assert_eq!(model.ir.model.bodies.len(), 2);
-        assert_eq!(model.ir.model.faces.len(), 12);
+        assert_eq!(model.ir.geometry.bodies.len(), 2);
+        assert_eq!(model.ir.geometry.faces.len(), 12);
         let (shown, hidden) = shown(&model).unwrap().unwrap();
         assert_eq!(hidden, 1);
-        assert_eq!(shown.ir.model.bodies.len(), 1);
-        assert_eq!(shown.ir.model.faces.len(), 6);
-        assert_eq!(shown.ir.model.edges.len(), 12);
-        assert_eq!(shown.ir.model.bodies[0].id, model.ir.model.bodies[0].id);
+        assert_eq!(shown.ir.geometry.bodies.len(), 1);
+        assert_eq!(shown.ir.geometry.faces.len(), 6);
+        assert_eq!(shown.ir.geometry.edges.len(), 12);
+        assert_eq!(
+            shown.ir.geometry.bodies[0].id,
+            model.ir.geometry.bodies[0].id
+        );
     }
 
     #[test]
@@ -940,18 +971,18 @@ mod tests {
             // The stored base is elsewhere: its sample cannot come from the visible cube.
             for (arena, path) in [
                 ("points", "/position/x"),
-                ("curves", "/geometry/origin/x"),
-                ("surfaces", "/geometry/origin/x"),
+                ("curves", "/geometry/value/origin/x"),
+                ("surfaces", "/geometry/value/origin/x"),
             ] {
-                for row in wire["model"][arena].as_array_mut().unwrap() {
+                for row in wire["geometry"][arena].as_array_mut().unwrap() {
                     if row["id"].as_str().unwrap().ends_with("~copy") {
                         let x = row.pointer_mut(path).unwrap();
                         *x = json!(x.as_f64().unwrap() + 30.0);
                     }
                 }
             }
-            let body = wire["model"]["bodies"][1]["id"].clone();
-            let edge = wire["model"]["edges"]
+            let body = wire["geometry"]["bodies"][1]["id"].clone();
+            let edge = wire["geometry"]["edges"]
                 .as_array()
                 .unwrap()
                 .iter()
@@ -967,22 +998,25 @@ mod tests {
             group["edges"] = json!({"kind": "resolved", "value": {
                 "edges": [edge], "native": "synthetic base selection"}});
             wire["model"]["features"] = json!([
-                {"id": "test:model:feature#base", "ordinal": 0, "outputs": [body], "suppressed": false,
-                    "definition": {"definition": "native", "kind": "synthetic"}},
-                {"id": "test:model:feature#blend", "ordinal": 1, "dependencies": ["test:model:feature#base"], "suppressed": false,
-                    "definition": {"definition": kind, "groups": [group]}}
+                {"id": "test:model:feature#base", "ordinal": 0, "outputs": [body], "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "native", "value": {"kind": "synthetic", "parameters": {}}}}, "dependencies": [], "source_properties": {}, "source_content": []},
+                {"id": "test:model:feature#blend", "ordinal": 1, "dependencies": ["test:model:feature#base"], "suppressed": false, "definition": {"kind": "operation", "value": {"kind": kind, "value": {"groups": [group]}}}, "source_properties": {}, "source_content": [], "outputs": []}
             ]);
+            if kind == "chamfer" {
+                wire["model"]["features"][1]["definition"]["value"]["value"]["flip_direction"] =
+                    json!(false);
+            }
             model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
             let (shown, _) = shown(&model).unwrap().unwrap();
-            assert_eq!(shown.ir.model.bodies.len(), 1);
+            assert_eq!(shown.ir.geometry.bodies.len(), 1);
             assert!(shown
                 .ir
-                .model
+                .geometry
                 .edges
                 .iter()
                 .all(|e| e.id.as_str() != edge.as_str().unwrap()));
             let kept = serde_json::to_value(&shown.ir).unwrap();
-            let selection = &kept["model"]["features"][1]["definition"]["groups"][0]["edges"];
+            let selection =
+                &kept["model"]["features"][1]["definition"]["value"]["value"]["groups"][0]["edges"];
             assert_eq!(selection["kind"], "historical");
             let state = &kept["model"]["feature_input_topologies"][0];
             assert_eq!(state["input_of"], "test:model:feature#blend");
@@ -998,16 +1032,14 @@ mod tests {
     fn structure_naming_a_hidden_body_still_reads() {
         let mut model = two_cubes(Some(false));
         let mut wire = serde_json::to_value(&model.ir).unwrap();
-        let ids: Vec<Value> = listed(wire["model"].get("bodies"))
+        let ids: Vec<Value> = listed(wire["geometry"].get("bodies"))
             .iter()
             .map(|body| body["id"].clone())
             .collect();
-        wire["model"]["product_definitions"] = json!([{
-            "id": "fcstd:model:component#body", "kind": "part", "label": "Body", "bodies": ids,
-        }]);
+        wire["model"]["product_definitions"] = json!([{"id": "fcstd:model:component#body", "kind": "part", "label": "Body", "bodies": ids, "bom_properties": {}, "sketches": []}]);
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let (shown, _) = shown(&model).unwrap().unwrap();
-        assert_eq!(shown.ir.model.bodies.len(), 1);
+        assert_eq!(shown.ir.geometry.bodies.len(), 1);
     }
 
     #[test]
@@ -1016,18 +1048,16 @@ mod tests {
         let mut model = two_cubes(Some(false));
         let mut wire = serde_json::to_value(&model.ir).unwrap();
         let sketch = "fcstd:model:sketch#Sketch";
-        wire["model"]["sketches"] = json!([{"id": sketch, "name": "Sketch",
-            "placement": {"kind": "resolved", "frame": {
+        wire["model"]["sketches"] = json!([{"id": sketch, "name": "Sketch", "placement": {"kind": "resolved", "frame": {
                 "origin": {"x": 0.0, "y": 0.0, "z": 0.0},
                 "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
-                "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0}}}}]);
-        wire["model"]["sketch_entities"] = json!([{"id": "fcstd:model:sketch-entity#1",
-            "sketch": sketch, "geometry": {"kind": "line",
-            "start": {"u": 0.0, "v": 0.0}, "end": {"u": 10.0, "v": 0.0}}}]);
+                "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0}}}, "profiles": []}]);
+        wire["model"]["sketch_entities"] = json!([{"id": "fcstd:model:sketch-entity#1", "sketch": sketch, "geometry": {"kind": "line",
+            "start": {"u": 0.0, "v": 0.0}, "end": {"u": 10.0, "v": 0.0}}, "endpoint_refs": [], "construction": false}]);
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let (shown, _) = shown(&model).unwrap().unwrap();
-        assert_eq!(shown.ir.model.bodies.len(), 1);
-        assert_eq!(shown.ir.model.faces.len(), 6);
+        assert_eq!(shown.ir.geometry.bodies.len(), 1);
+        assert_eq!(shown.ir.geometry.faces.len(), 6);
         assert_eq!(shown.ir.model.sketches.len(), 1);
         assert_eq!(shown.ir.model.sketch_entities.len(), 1);
     }
@@ -1042,7 +1072,7 @@ mod tests {
     fn a_design_hiding_every_body_converts_as_stored() {
         let mut model = two_cubes(Some(false));
         let mut wire = serde_json::to_value(&model.ir).unwrap();
-        wire["model"]["bodies"][0]["visible"] = json!(false);
+        wire["geometry"]["bodies"][0]["visible"] = json!(false);
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         assert!(shown(&model).unwrap().is_none());
     }

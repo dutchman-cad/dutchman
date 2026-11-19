@@ -14,7 +14,7 @@ save browser edits to a file yourself.
 
 ## Set up
 
-Use Docker with Compose and support for git build contexts. Copy this folder to
+Use Docker with Compose. Copy this folder to
 your server, then change into the copy. Create the folders as the user who owns
 the designs:
 
@@ -35,10 +35,10 @@ Check the share's ownership and permissions for the configured UID and GID.
 On SELinux hosts, use a shared label (`:z`) on both `/designs` mounts.
 
 ```sh
-docker compose up -d --build
+docker compose up -d
 ```
 
-The first build compiles SolidCraft and takes a while. Open `http://localhost:8080`
+The first start downloads the images. Open `http://localhost:8080`
 on the server, or `http://<server>:8080` from another computer. Set `PORT` in `.env`
 to change the port. Only Caddy publishes a port.
 
@@ -81,22 +81,15 @@ origin, including scheme and any port, then recreate the services.
 ## Update
 
 ```sh
-docker compose pull proxy dutchman watch
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
-This updates Caddy within its pinned 2.x minor and Dutchman to its newest
-release. SolidCraft stays at the commit pinned in `compose.yaml`; change that pin
-to update it, then rebuild. The example needs Dutchman 0.2.2 or later for
-`--base-path`, `--output-dir` and `--solidcraft`. To hold Dutchman at one version,
-set both Dutchman images to that version instead of `latest`; for builds of
-`main`, use `nightly`.
-
-The SolidCraft web image is not publicly pullable yet
-([#2878](https://github.com/tangency-labs/solidcraft/issues/2878)). This example
-builds commit `66b872a749d01759a288724a95cc0a3bce9db879`, which includes
-[#6670](https://github.com/tangency-labs/solidcraft/pull/6670) for opening a result
-on the same origin. Once the image is public and a release includes #6670, remove
-the `solidcraft` service's `build` section and set its image to
-`ghcr.io/tangency-labs/solidcraft-web:latest`. Include `solidcraft` in subsequent
-`docker compose pull` commands.
+This updates Caddy within its pinned 2.x minor, and SolidCraft and Dutchman to
+their newest releases. The example needs Dutchman 0.2.2 or later for
+`--base-path`, `--output-dir`, and `--solidcraft`, and SolidCraft 0.24.0 or later
+for opening a result on the same origin. To hold Dutchman at one version, set
+both Dutchman images to that version instead of `latest` (`X.Y.Z-solidcraft` for the
+`dutchman` service); for builds of `main`, use `nightly`. SolidCraft's image takes a version
+tag the same way, such as
+`ghcr.io/tangency-labs/solidcraft-web:0.42.0`.

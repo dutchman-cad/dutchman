@@ -294,16 +294,20 @@ jobs:
           # Move the tag; stable tags are never touched.
           gh api -X PATCH "repos/${GITHUB_REPOSITORY}/git/refs/tags/nightly" -f sha="$DUTCHMAN_SHA" -F force=true \
             || gh api -X POST "repos/${GITHUB_REPOSITORY}/git/refs" -f ref=refs/tags/nightly -f sha="$DUTCHMAN_SHA"
-          if gh release view nightly --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            for asset in $(gh release view nightly --repo "$GITHUB_REPOSITORY" --json assets -q '.assets[].name'); do
-              gh release delete-asset nightly "$asset" --repo "$GITHUB_REPOSITORY" --yes
-            done
-            gh release edit nightly --repo "$GITHUB_REPOSITORY" --prerelease --title "Nightly ${date}" --notes-file notes.md
-          else
-            gh release create nightly --repo "$GITHUB_REPOSITORY" --prerelease --title "Nightly ${date}" \
-              --notes-file notes.md --verify-tag
+          # Publish a new release each run, so its date is the build's: fill a draft with the
+          # files, then delete the old release (the tag stays) and publish the draft. Download
+          # links by tag go dark only between those two calls.
+          old=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/nightly" -q .id 2>/dev/null || true)
+          new=$(gh api -X POST "repos/${GITHUB_REPOSITORY}/releases" -f tag_name=nightly \
+            -f name="Nightly ${date}" -F body=@notes.md -F draft=true -F prerelease=true -q .id)
+          for file in artifacts/*; do
+            gh api -X POST "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/${new}/assets?name=$(basename "$file")" \
+              -H "Content-Type: application/octet-stream" --input "$file" > /dev/null
+          done
+          if [ -n "$old" ]; then
+            gh api -X DELETE "repos/${GITHUB_REPOSITORY}/releases/${old}"
           fi
-          gh release upload nightly artifacts/* --repo "$GITHUB_REPOSITORY" --clobber
+          gh api -X PATCH "repos/${GITHUB_REPOSITORY}/releases/${new}" -F draft=false -F prerelease=true > /dev/null
 
   image:
     needs: [changes, publish]

@@ -185,7 +185,7 @@ fn a_body_inside_a_hidden_part_does_not_add_a_solid() {
     std::fs::write(&path, writer.finish().unwrap().into_inner()).unwrap();
     let model =
         dutchman_core::read(Format::FreeCadDocument, &path, &mut Report::default()).unwrap();
-    assert_eq!(model.ir.model.bodies.len(), 1);
+    assert_eq!(model.ir.geometry.bodies.len(), 1);
 }
 
 #[test]

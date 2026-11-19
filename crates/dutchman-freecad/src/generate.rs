@@ -79,10 +79,25 @@ fn unsupported(kind: &str, row: &Value) -> Option<&'static str> {
 }
 
 pub(crate) fn history(rows: &[Value]) -> Result<String, String> {
+    emit(rows, false)
+}
+
+/// The history of a part whose result is several bodies: each new-body feature starts a Body
+/// of its own, and `rebuild_bodies` in [`crate::bodies::PRELUDE`] places every later feature.
+pub(crate) fn history_bodies(rows: &[Value]) -> Result<String, String> {
+    emit(rows, true)
+}
+
+fn emit(rows: &[Value], bodies: bool) -> Result<String, String> {
     if rows.len() > 100_000 {
         return Err("more than 100000 mapped features are not supported yet".to_owned());
     }
-    let mut code = "objects = {}\nnames = {}\ntip = None\n".to_owned();
+    let mut code = if bodies {
+        "states = []\nsketch_rows = {}\n"
+    } else {
+        "objects = {}\nnames = {}\ntip = None\n"
+    }
+    .to_owned();
     let mut names = std::collections::BTreeSet::new();
     for row in rows {
         let kind = row.get("type").and_then(Value::as_str).unwrap_or("unknown");
@@ -151,9 +166,24 @@ pub(crate) fn history(rows: &[Value]) -> Result<String, String> {
                 ));
             }
         }
-        code.push_str("tip = rebuild(");
-        code.push_str(&data(row).map_err(|error| error.to_string())?);
-        code.push_str(", body, objects, names, tip)\n");
+        if bodies {
+            let made = row
+                .get("body_names")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
+            if made > 1 {
+                return Err(format!(
+                    "feature {name:?}: one feature that makes several bodies is not supported yet in FreeCAD output"
+                ));
+            }
+            code.push_str("rebuild_bodies(");
+            code.push_str(&data(row).map_err(|error| error.to_string())?);
+            code.push_str(", states, sketch_rows)\n");
+        } else {
+            code.push_str("tip = rebuild(");
+            code.push_str(&data(row).map_err(|error| error.to_string())?);
+            code.push_str(", body, objects, names, tip)\n");
+        }
     }
     Ok(code)
 }
@@ -237,9 +267,16 @@ def parameter_table(rows):
             obj.addProperty('App::PropertyFloat', key, 'Parameters')
             setattr(obj, key, scalar)
 
+parameter_values = {}
+
 def quantity(value):
-    # Quantities come from the mapper, never from source expressions.
+    # Quantities come from the mapper, never from source expressions. A parameter the mapper
+    # names (a dimension driven by it) is its solved value: FreeCAD's quantity parser takes a
+    # single quantity, not a name or an expression.
     text = str(value).strip().strip('()').strip()
+    sign, name = (-1, text[1:].strip()) if text.startswith('-') else (1, text)
+    if name in parameter_values:
+        return sign * quantity(parameter_values[name])
     if '/' in str(value):
         first, second = str(value).split('/', 1)
         return quantity(first) / quantity(second)

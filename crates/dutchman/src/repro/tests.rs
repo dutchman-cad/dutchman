@@ -21,7 +21,7 @@ fn seam_model(count: usize) -> Model {
     .unwrap();
     let body_ids: Vec<_> = model
         .ir
-        .model
+        .geometry
         .bodies
         .iter()
         .map(|body| body.id.as_str())
@@ -29,11 +29,11 @@ fn seam_model(count: usize) -> Model {
     model = dutchman_core::with_bodies(&model, &body_ids, "Synthetic".into()).unwrap();
     let source = serde_json::to_value(&model.ir).unwrap();
     let mut document = source.clone();
-    let coedges_per_cube = model.ir.model.coedges.len();
+    let coedges_per_cube = model.ir.geometry.coedges.len();
     let failing_cubes = count.div_ceil(coedges_per_cube).max(1);
     let mut combined = serde_json::Map::new();
     for body in 0..failing_cubes + 2 {
-        let mut wire = source["model"].clone();
+        let mut wire = source["geometry"].clone();
         let ids: BTreeMap<String, String> = wire
             .as_object()
             .unwrap()
@@ -78,41 +78,46 @@ fn seam_model(count: usize) -> Model {
                 .extend(rows.as_array().unwrap().clone());
         }
     }
-    document["model"] = Value::Object(combined);
+    document["geometry"] = Value::Object(combined);
     model.ir = serde_json::from_value(document).unwrap();
     // One failing body may contain several disjoint cube regions; this allows the
     // worked example to produce exactly 88 findings without changing the check.
     let extra_regions: Vec<_> = model
         .ir
-        .model
+        .geometry
         .bodies
         .iter()
         .skip(2)
         .take(failing_cubes - 1)
-        .flat_map(|body| body.regions.clone())
+        .flat_map(|body| {
+            model
+                .ir
+                .geometry
+                .body_regions(&body.id)
+                .map(|region| region.id.clone())
+        })
         .collect();
-    let owner = model.ir.model.bodies[1].id.clone();
-    for region in &mut model.ir.model.regions {
+    let owner = model.ir.geometry.bodies[1].id.clone();
+    for region in &mut model.ir.geometry.regions {
         if extra_regions.contains(&region.id) {
             region.body = owner.clone();
         }
     }
-    model.ir.model.bodies[1].regions.extend(extra_regions);
-    let last = model.ir.model.bodies.pop().unwrap();
-    model.ir.model.bodies.truncate(2);
-    model.ir.model.bodies.push(last);
-    model.ir.model.bodies[2].name = Some("PrivateBody2".into());
+    let last = model.ir.geometry.bodies.pop().unwrap();
+    model.ir.geometry.bodies.truncate(2);
+    model.ir.geometry.bodies.push(last);
+    model.ir.geometry.bodies[2].name = Some("PrivateBody2".into());
     let checked = dutchman_core::repro::check(&model);
     assert!(checked.is_ok(), "{checked:?}");
     let vertices: BTreeMap<_, _> = model
         .ir
-        .model
+        .geometry
         .vertices
         .iter()
         .map(|vertex| {
             let point = model
                 .ir
-                .model
+                .geometry
                 .points
                 .iter()
                 .find(|point| point.id == vertex.point)
@@ -125,20 +130,23 @@ fn seam_model(count: usize) -> Model {
         .collect();
     let endpoints: BTreeMap<_, _> = model
         .ir
-        .model
+        .geometry
         .edges
         .iter()
         .map(|edge| {
             (
                 edge.id.clone(),
-                (vertices[&edge.start].clone(), vertices[&edge.end].clone()),
+                (
+                    vertices[edge.start().unwrap()].clone(),
+                    vertices[edge.end().unwrap()].clone(),
+                ),
             )
         })
         .collect();
-    let prototype = model.ir.model.curves[0].clone();
+    let prototype = model.ir.geometry.curves[0].clone();
     for (i, coedge) in model
         .ir
-        .model
+        .geometry
         .coedges
         .iter_mut()
         .skip(coedges_per_cube)
@@ -156,17 +164,19 @@ fn seam_model(count: usize) -> Model {
         let mut curve = prototype.clone();
         curve.id = serde_json::from_value(json!(format!("secret:part1:curve#seam{i:06}"))).unwrap();
         curve.geometry = serde_json::from_value(json!({
-            "kind": "nurbs", "degree": 1, "knots": [0.0, 0.0, 0.25, 0.75, 0.8, 1.0, 1.0],
-            "poles": {"form": "polynomial", "points": [{"x": 100.0, "y": 100.0, "z": 100.0}, {"x": 100.0, "y": 100.0, "z": 100.0}, start, end, {"x": 100.0, "y": 100.0, "z": 100.0}]},
-            "periodic": true
+            "kind": "solved", "value": {
+                "kind": "nurbs", "degree": 1, "knots": [0.0, 0.0, 0.25, 0.75, 0.8, 1.0, 1.0],
+                "poles": {"kind": "polynomial", "points": [{"x": 100.0, "y": 100.0, "z": 100.0}, {"x": 100.0, "y": 100.0, "z": 100.0}, start, end, {"x": 100.0, "y": 100.0, "z": 100.0}]},
+                "periodic": true
+            }
         })).unwrap();
         coedge.use_curve = Some(
             serde_json::from_value(json!({"curve": curve.id, "parameter_range": [0.75, 1.80]}))
                 .unwrap(),
         );
-        model.ir.model.curves.push(curve);
+        model.ir.geometry.curves.push(curve);
     }
-    model.ir.model.curves.sort_by(|a, b| a.id.cmp(&b.id));
+    model.ir.geometry.curves.sort_by(|a, b| a.id.cmp(&b.id));
     model.name = "PrivateDesign 123.456".into();
     model.source_file = Some("C:\\PrivateFolder\\PrivateDesign.f3d".into());
     model
@@ -200,10 +210,10 @@ fn repro_seam_check_narrows_to_second_body_and_never_leaks_private_data() {
     let text = serde_json::to_string(&anon).unwrap();
     let steps = next_steps(&anon);
     let source = serde_json::to_value(&model.ir).unwrap();
-    for id in source["model"]
-        .as_object()
-        .unwrap()
-        .values()
+    let arenas = ["geometry", "model"].map(|home| source[home].as_object().unwrap());
+    for id in arenas
+        .iter()
+        .flat_map(|arenas| arenas.values())
         .filter_map(Value::as_array)
         .flatten()
         .filter_map(|row| row["id"].as_str())
@@ -211,10 +221,9 @@ fn repro_seam_check_narrows_to_second_body_and_never_leaks_private_data() {
         assert!(!text.contains(id));
         assert!(!steps.contains(id));
     }
-    for name in source["model"]
-        .as_object()
-        .unwrap()
-        .values()
+    for name in arenas
+        .iter()
+        .flat_map(|arenas| arenas.values())
         .filter_map(Value::as_array)
         .flatten()
         .flat_map(|row| [row.get("name"), row.get("label")])
@@ -263,6 +272,28 @@ fn repro_synthetic_88_findings_worked_example() {
 }
 
 #[test]
+fn repro_surface_kinds_keep_solved_and_procedural_categories() {
+    let mut model = seam_model(0);
+    let surface_count = model.ir.geometry.surfaces.len();
+    assert_eq!(
+        kinds(&model)["surface_kinds"],
+        json!({"plane": surface_count})
+    );
+    model.ir.geometry.surfaces[0].geometry = serde_json::from_value(json!({
+        "kind": "procedural", "value": {
+            "construction": "secret:part1:procedural_surface#000000"
+        }
+    }))
+    .unwrap();
+    let report = kinds(&model);
+    assert_eq!(
+        report["surface_kinds"],
+        json!({"plane": surface_count - 1, "procedural": 1})
+    );
+    assert!(!report.to_string().contains("secret:"));
+}
+
+#[test]
 fn repro_writer_trials_are_candidates_without_structured_codes() {
     struct FailsOnBody;
     impl Writer for FailsOnBody {
@@ -277,7 +308,7 @@ fn repro_writer_trials_are_candidates_without_structured_codes() {
         ) -> Result<(), Error> {
             if model
                 .ir
-                .model
+                .geometry
                 .bodies
                 .iter()
                 .any(|body| body.name.as_deref() == Some("PrivateBody1"))

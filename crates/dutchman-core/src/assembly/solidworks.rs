@@ -141,6 +141,19 @@ pub(super) fn resolve(
             unresolved.push(left);
         }
     }
+    // Every referenced part file was left out and the assembly holds no bodies of its own:
+    // say that the parts were not found, rather than letting the writer report parts
+    // without geometry.
+    if !external.is_empty()
+        && external.values().all(Result::is_err)
+        && model.ir.geometry.bodies.is_empty()
+    {
+        return Err(Error::Assembly(
+            "none of the assembly's parts could be found or read; if they are elsewhere, give \
+             the project folder that holds them"
+                .to_owned(),
+        ));
+    }
     let mut assembly = local_components_with_threads(
         model,
         &external,
@@ -192,19 +205,60 @@ mod tests {
 
     fn occurrence(key: usize, path: &str, parent: Value) -> Value {
         json!({"id": format!("synthetic:assembly:occurrence#{key}"), "ordinal": key,
-            "prototype": {"scope": "external", "document": {"resolution": "path", "path": path}, "object": "Default"},
+            "prototype": {"kind": "external", "document": {"kind": "path", "path": path}, "object": "Default"},
             "parent": parent, "name": format!("Part {key}"),
             "transform": [[1,0,0,30 * key],[0,1,0,0],[0,0,1,0]], "scale": [1,1,1]})
     }
 
     fn assembly(cube: &Model, rows: Vec<Value>) -> Model {
         let mut wire = serde_json::to_value(&cube.ir).unwrap();
-        wire["model"]["bodies"] = json!([]);
+        wire["geometry"]["bodies"] = json!([]);
         wire["model"]["occurrences"] = json!(rows);
         Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
             ..cube.clone()
         }
+    }
+
+    #[test]
+    fn an_assembly_whose_parts_are_all_missing_says_they_were_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let cube = cube();
+        let source = assembly(
+            &cube,
+            vec![
+                occurrence(1, "renamed-a.sldprt", json!({"kind":"root"})),
+                occurrence(2, r"C:\old\renamed-b.SLDPRT", json!({"kind":"root"})),
+            ],
+        );
+        let decode = |_: Format, _: &Path, _: &mut Report| Ok(cube.clone());
+        let mut report = Report::default();
+        let settings = PartSearch::project(dir.path());
+        let error = resolve(
+            &source,
+            &dir.path().join("Top.SLDASM"),
+            &mut report,
+            &decode,
+            &Finder::new(&settings),
+            &mut Vec::new(),
+            &mut SolidWorksReads::new(),
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("none of the assembly's parts could be found or read"),
+            "{error}"
+        );
+        // Each missing part is still reported, so the user sees which files to look for.
+        assert_eq!(
+            report
+                .losses()
+                .iter()
+                .filter(|loss| loss.subject.starts_with("occurrence"))
+                .count(),
+            2
+        );
     }
 
     #[test]
@@ -231,9 +285,7 @@ mod tests {
         let mut part = cube.clone();
         part.ir.model.configurations.clear();
         part.ir.model.configurations.push(
-            serde_json::from_value(json!({
-                "id":"synthetic:part:configuration#default", "name":"Default", "active":true
-            }))
+            serde_json::from_value(json!({"id": "synthetic:part:configuration#default", "name": "Default", "active": true, "ordinal": 0, "properties": {}, "parameter_overrides": {}, "parameter_values": {}, "feature_states": {}}))
             .unwrap(),
         );
         let reads = Cell::new(0);
@@ -275,6 +327,38 @@ mod tests {
     }
 
     #[test]
+    fn scoped_display_appearances_are_reported_before_their_meshes_are_released() {
+        for (key, value, reason) in [
+            (
+                "path",
+                json!([{"occurrence": {"kind": "occurrence", "value": "synthetic:display:occurrence#one"}}]),
+                "appearance bindings for one placed instance are not supported yet",
+            ),
+            (
+                "state",
+                json!({"of": {"kind": "tool", "value": "synthetic:display:feature#earlier"}}),
+                "appearance bindings for an evaluation state are not supported yet",
+            ),
+        ] {
+            let mut source = cube();
+            let mut target = json!({"entity": {"kind": "tessellation", "value": "synthetic:display:tessellation#triangle"}});
+            target[key] = value;
+            source.ir.model.appearance_bindings.push(
+                serde_json::from_value(json!({
+                    "id": "synthetic:display:binding#scoped", "target": target,
+                    "appearance": "synthetic:display:appearance#paint", "channels": {}
+                }))
+                .unwrap(),
+            );
+            let mut report = Report::default();
+            release_solidworks_display(&mut source, &mut report);
+            assert!(source.ir.model.appearance_bindings.is_empty());
+            assert_eq!(report.losses().len(), 1);
+            assert!(report.losses()[0].detail.ends_with(reason));
+        }
+    }
+
+    #[test]
     fn display_meshes_are_released_without_changing_exact_geometry_or_history() {
         use cadmpeg_ir::math::Point3;
         use cadmpeg_ir::tessellation::{Tessellation, TessellationMesh};
@@ -303,22 +387,19 @@ mod tests {
         for (key, target) in [
             (
                 "mesh",
-                json!({"kind":"tessellation", "id":"synthetic:display:tessellation#triangle"}),
+                json!({"kind":"tessellation", "value":"synthetic:display:tessellation#triangle"}),
             ),
             (
                 "group",
-                json!({"kind":"triangle_group", "id":{"tessellation":"synthetic:display:tessellation#triangle", "group":"front"}}),
+                json!({"kind":"triangle_group", "value":{"tessellation":"synthetic:display:tessellation#triangle", "group":"front"}}),
             ),
             (
                 "body",
-                json!({"kind":"body", "id":source.ir.model.bodies[0].id}),
+                json!({"kind":"body", "value":source.ir.geometry.bodies[0].id}),
             ),
         ] {
             source.ir.model.appearance_bindings.push(
-                serde_json::from_value(json!({
-                    "id":format!("synthetic:display:binding#{key}"), "target":target,
-                    "appearance":"synthetic:display:appearance#paint"
-                }))
+                serde_json::from_value(json!({"id": format!("synthetic:display:binding#{key}"), "target": {"entity": target}, "appearance": "synthetic:display:appearance#paint", "channels": {}}))
                 .unwrap(),
             );
         }
@@ -340,7 +421,7 @@ mod tests {
         source.ir.model.tessellations.clear();
         source.ir.model.appearance_bindings.retain(|binding| {
             matches!(
-                binding.target,
+                binding.target.entity,
                 cadmpeg_ir::appearance::AppearanceTarget::Body(_)
             )
         });
@@ -527,7 +608,7 @@ mod tests {
         let cube = cube();
         let mut local = occurrence(1, "unused", json!({"kind":"root"}));
         local["prototype"] =
-            json!({"scope":"local", "definition":"synthetic:assembly:component#holder"});
+            json!({"kind":"local", "definition":"synthetic:assembly:component#holder"});
         let mut source = assembly(
             &cube,
             vec![
@@ -538,11 +619,11 @@ mod tests {
                     json!({"kind":"occurrence", "occurrence":"synthetic:assembly:occurrence#1"}),
                 ),
                 json!({"id":"synthetic:assembly:occurrence#3", "ordinal":3, "parent":{"kind":"root"},
-                "prototype":{"scope":"unresolved"}, "transform":IDENTITY, "scale":[1,1,1]}),
+                "prototype":{"kind":"unresolved"}, "transform":IDENTITY, "scale":[1,1,1]}),
             ],
         );
         let mut wire = serde_json::to_value(&source.ir).unwrap();
-        wire["model"]["product_definitions"] = json!([{"id":"synthetic:assembly:component#holder", "kind":"part", "source_name":"Holder", "bodies":[]}]);
+        wire["model"]["product_definitions"] = json!([{"id": "synthetic:assembly:component#holder", "kind": "part", "source_name": "Holder", "bodies": [], "bom_properties": {}, "sketches": []}]);
         source.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("Pin.SLDPRT"), b"").unwrap();

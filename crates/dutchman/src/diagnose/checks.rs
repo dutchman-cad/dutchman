@@ -33,7 +33,7 @@ fn walk(
             findings.push(finding);
         }
     }
-    for (index, body) in model.ir.model.bodies.iter().enumerate() {
+    for (index, body) in model.ir.geometry.bodies.iter().enumerate() {
         if body
             .transform
             .is_some_and(|t| t.affine_rows().iter().flatten().any(|v| !v.is_finite()))
@@ -144,19 +144,18 @@ mod tests {
             &mut dutchman_core::Report::default(),
         )
         .unwrap();
-        let face = part.ir.model.faces.first_mut().unwrap();
+        let face = part.ir.geometry.faces.first_mut().unwrap();
         let surface_id = face.surface.clone();
-        face.loops =
-            serde_json::from_value(json!({"classification": "unspecified", "loops": []})).unwrap();
+        face.loops = serde_json::from_value(json!({"kind": "unspecified", "loops": []})).unwrap();
         part.ir
-            .model
+            .geometry
             .surfaces
             .iter_mut()
             .find(|s| s.id == surface_id)
             .unwrap()
-            .geometry = serde_json::from_value(json!({"kind": "torus",
+            .geometry = serde_json::from_value(json!({"kind": "solved", "value": {"kind": "torus",
                 "center": {"x": 0, "y": 0, "z": 0}, "axis": {"x": 0, "y": 0, "z": 1},
-                "ref_direction": {"x": 1, "y": 0, "z": 0}, "major_radius": 5, "minor_radius": 1}))
+                "ref_direction": {"x": 1, "y": 0, "z": 0}, "major_radius": 5, "minor_radius": 1}}))
         .unwrap();
         let mut container = part.clone();
         container.assembly = Some(dutchman_core::Assembly {

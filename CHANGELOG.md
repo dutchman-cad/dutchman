@@ -8,6 +8,136 @@ Unreleased changes live in [changelog.d/](changelog.d/).
 
 [Semantic Versioning]: https://semver.org/spec/v2.0.0.html
 
+## 0.2.10 (2026-11-16)
+
+### Known issues
+
+- A kept feature can replay from the wrong sketch region and still be counted as kept. The final
+  shape is unaffected, because it comes from the source design
+  ([dutchman-cad/dutchman#489](https://github.com/dutchman-cad/dutchman/issues/489)).
+- Some large Fusion `.f3d` designs reach the 900 s limit for one file while being read
+  ([dutchman-cad/dutchman#604](https://github.com/dutchman-cad/dutchman/issues/604)).
+
+### Formats
+
+- Fusion files retain more component placements and keep part history past assembly-only steps.
+- SolidWorks reading recognises more compact extrusion operations.
+- FreeCAD faces keep their internal edges.
+- Fusion files keep more part history: Combine, Sweep, path pattern, sphere, Emboss, contour
+  flange, unfold and refold steps are read, and body ownership and component placements
+  resolve in more designs, including bodies a design keeps without placing them.
+- Fusion archives whose design metadata joins an asset identity to its version now open.
+- SolidWorks extrusions that start away from the sketch plane are reported instead of being
+  placed on it.
+- FreeCAD output rebuilds parts that end as several bodies: each new-body feature opens its own Body, and later joins, cuts, holes and patterns go to the body the geometry says.
+- FreeCAD macros: a dimension driven by a parameter now rebuilds with the parameter's value;
+  FreeCAD stopped such a rebuild with "syntax error".
+- A Fusion design that holds only mesh bodies (an imported STL, OBJ or 3MF) now says how many mesh bodies it has and that Dutchman does not convert meshes yet, instead of "no geometry could be read". Convert the meshes to solids in Fusion and save a new copy.
+- Fusion bodies you hid stay hidden in SolidCraft 0.42 and newer, which now honours the hidden
+  mark Dutchman writes for them; the conversion note says so.
+
+### History
+
+- A fillet or chamfer whose edge cannot be found on the rebuilt body now says why: no rebuilt
+  edge passes through its midpoint (and how far the nearest one is), more than one does, or the
+  one that does has other ends, another length, another kind of curve or another direction.
+- Combine, body mirror and split steps whose bodies Fusion stores one reference each now keep
+  their editable history instead of stopping it.
+- Keep complete extrusion profiles when another feature selects subdivisions of the same sketch.
+- Resolve shared circle boundaries together so unambiguous region selections keep editable history.
+- Copying or moving a component in a Fusion timeline no longer stops the part's editable
+  history.
+- Keep converting Fusion feature history past As-built joints.
+- A Fusion Hole placed on a face of the model as it was before the hole now converts to a SolidCraft hole when the source's own extrusion proves that face.
+- A radial Fusion Hole on a round part (a whole cylinder, drilled along a radius toward its axis) now converts: the hole starts where the source places it on the cylinder.
+- An extrude of an earlier body's face now finds that face when it has small rounded corners,
+  such as the end of an aluminium extrusion profile, instead of stopping the editable history.
+- An extrude of a face that re-applies to a base body known only as the design ends now stops
+  the editable history with a reason that says so, instead of being placed on the wrong side.
+- Constant-radius fillets and equal-setback chamfers selected on several bodies keep editable
+  history, with one blend per body, so later features can continue rebuilding.
+- Features recorded as changing no geometry are left out without stopping editable history.
+- A fillet or chamfer after an extrude of an earlier body's face now finds its edges when that
+  extrude grows away from the body, instead of stopping the editable history.
+- A Fusion cut that takes a disc and the ring around it, along with the whole loop around both, now replays: the loop that is not a region of the sketch on its own is written as the ring and the disc.
+- A cut or intersect that comes before any feature builds a body is now reported as not mapped, with that reason, instead of failing when SolidCraft replays the history.
+- An Inventor sheet-metal corner that leaves its part unchanged (the corner of a single flange)
+  no longer stops the editable history.
+- Inventor sheet-metal flanges with their default height setting now keep their editable
+  history as SolidCraft edge flanges, and a flange that still can't map says where its plate
+  starts.
+- Revolves distinguish trimmed profile regions that share the same curves.
+- Unresolved sketch selections can retain editable features when the source body check confirms
+  the inferred region, with a note identifying each inference.
+- A Fusion extrude whose sketch has no Sketch step of its own in the timeline now finds that
+  sketch and keeps its editable history.
+
+### Assemblies
+
+- A design whose placed components carry no geometry of their own, while the design itself
+  does, now converts its bodies as one part instead of failing.
+
+### Desktop app
+
+- Running from the Linux AppImage, Update now downloads the release's AppImage, checks its
+  SHA-256, replaces the AppImage file with it, and restarts. The old file stays if anything fails.
+- The prompt to send a failed file now asks plainly for a STEP export of the exact same design, and
+  the command line, web and docs say the same.
+
+### Command line and install
+
+- Arch Linux users get a pacman package, `dutchman-bin`, attached to each release, with a
+  PKGBUILD in `packaging/arch/` for the AUR.
+- The `latest-solidcraft` image bundles SolidCraft 0.43.0, the newest SolidCraft Dutchman targets.
+- `--json` also works before the command (`dutchman --json convert in.f3d out.sc`), like
+  `--quiet`; it used to stop with a usage error there.
+- Each release has a Linux AppImage for x86_64 and ARM64, `dutchman-<version>-<arch>.AppImage`.
+  It runs on any distribution, starts the desktop app, holds the command line programs, and
+  carries update information, with a `.zsync` file for delta updates.
+- The command-line guide has a section for scripts and PDM systems: the exact command, exit
+  codes, the one JSON line on stdout, and how to tell an editable part from a geometry-only
+  import.
+- When the program reading Dutchman's output stops early (`dutchman … | head`), Dutchman ends
+  quietly with status 141 instead of printing a panic.
+- Designs open in SolidCraft 0.18.2 to 0.43.
+- SolidCraft 0.43 is the newest known target.
+- Dutchman Web's results are easier to read: repeated losses share one line with their count,
+  a failed file's message starts with a capital and leaves the report address to its button,
+  the plan line and a single part leave out counts of nothing, and the page says once when
+  the server has no SolidCraft to check histories with.
+- Uploads from the Dutchman Web page work in browsers again. Since 0.2.1 the page told
+  browsers to send no origin with its own form, so Chrome and Firefox uploads were refused
+  with "Submit uploads from this server's page or a configured public origin."
+
+### cadmpeg
+
+- The cadmpeg pin moves from `f9d0a14` to `9249a19` (cadmpeg 0.6.12).
+- Fusion: Scale factors, Move motion, partial Holes, partial component copies, unresolved Base
+  Features, and assembly constraints with unresolved operands stay in history. Chamfer sets,
+  fillet blends, shell faces, extrude extents, to-face extrude targets, and Loft section regions
+  resolve more often, and features that change no geometry are marked.
+- Fusion: user-assigned names for bodies, sketches, and work planes are read.
+- SolidWorks: the Front and Top sketch plane frames are corrected, and mesh bodies, approximate
+  surfaces, and missing profile curves are reported.
+- STEP: open edges, whole closed surfaces, and pole-bounded spindle torus solids are kept.
+  CATIA: more endpoint stations, spline spans, and sheet trims decode.
+
+### Docs
+
+- Bug forms require Dutchman, SolidCraft, and source program versions.
+- AI reporting instructions collect versions automatically and ask once for missing source details.
+- After a report, AI helpers show four optional tiers at once (chase the problem down with a synthetic reproduction, find the cause in cadmpeg, fix it there, finish it with a Dutchman pull request), ask once how far to go, and then do every tier up to that answer.
+- The Compose example for SolidCraft and Dutchman on one address uses the published SolidCraft
+  web image, so it starts in under a minute with SolidCraft 0.42 instead of compiling an old
+  SolidCraft for a quarter of an hour.
+- The Docker and web pages start Dutchman Web from the pulled image without rebuilding it.
+- Docker docs show how to add SolidCraft's checker to the published image, without building
+  Dutchman, so histories are checked; building it yourself with SolidCraft works on ARM64 too.
+- Each release also publishes `ghcr.io/dutchman-cad/dutchman:X.Y.Z-solidcraft` and
+  `latest-solidcraft` for x86_64 and ARM64: the same image with SolidCraft's checker, so Docker
+  users get checked histories with no build step. The default image stays small. The Compose
+  example uses it for Dutchman Web.
+
 ## 0.2.9 (2026-11-13)
 
 ### Known issues

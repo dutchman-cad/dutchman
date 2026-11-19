@@ -51,6 +51,7 @@ fn body_box(slices: &slicing::Index<'_>, bodies: &[&str]) -> Result<Option<BodyB
             }
             continue;
         }
+        queue.extend(slices.children.get(&id).into_iter().flatten().cloned());
         let mut refs = Vec::new();
         strings(&value, &mut refs);
         queue.extend(
@@ -130,7 +131,7 @@ fn selections(
                     }
                     "sketch_regions" => {
                         for region in selected.get("regions")?.as_array()? {
-                            match region.get("region")?.as_str()? {
+                            match region.get("kind")?.as_str()? {
                                 "loops" => {
                                     profile(sketch, region.get("outer")?, out)?;
                                     for index in region

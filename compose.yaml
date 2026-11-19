@@ -1,5 +1,7 @@
-# Dutchman Web, the browser interface, on port 8080 (docs/web.md):
-#   DUTCHMAN_WEB_PASSWORD=choose-one docker compose up -d --build
+# Dutchman Web, the browser interface, on port 8080 (docs/web.md). With the published image
+# pulled and tagged `dutchman` (docs/docker.md):
+#   DUTCHMAN_WEB_PASSWORD=choose-one docker compose up -d
+# Add --build to build the image from this checkout instead.
 services:
   dutchman-web:
     build: .

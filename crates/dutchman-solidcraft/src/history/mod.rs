@@ -16,12 +16,14 @@ mod crossing;
 mod datum;
 mod delete_face;
 mod dof;
+mod edge_path;
 mod extrude;
 mod face_profile;
 mod faces;
 mod helix;
 mod helpers;
 mod hole;
+pub(crate) mod infer;
 mod loft;
 mod modify;
 mod move_face;
@@ -44,10 +46,13 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use dutchman_core::{FeatureOutcome, FeatureStatus, Model, Report, Severity};
 use serde_json::{json, Value};
 
-/// The CADIR wire versions the mapping reads. Version 7 adds only assembly joint kinds and a
-/// sheet-metal thickness side, neither of which the mapping uses. Version 11 adds
-/// fragment/reproduction metadata without changing the complete-model feature mapping.
+/// Accepted document versions. In-memory models use cadmpeg's current v11 serializer;
+/// topology homes and enum payloads are read in that serializer's wire layout.
 const IR_VERSIONS: [&str; 6] = ["6", "7", "8", "9", "10", "11"];
+
+/// The reason of a feature that is not mapped because an earlier one blocks the history.
+pub(crate) const AFTER_BLOCKER: &str =
+    "after the first blocking feature; kept in the imported final shape";
 
 /// A replayable history: SolidCraft parameters and features in timeline order.
 #[derive(Clone, Debug, Default)]
@@ -76,6 +81,8 @@ pub(crate) struct History {
     pub(crate) next_id: u64,
     /// New pattern instance sets must fall back if an attempted replay cannot finish.
     pub(crate) pattern_replay_required: bool,
+    /// Newly mapped topological picks cannot replace the original after an inconclusive check.
+    pub(crate) topological_replay_required: bool,
     /// Source features that became SolidCraft features or needed none.
     pub(crate) mapped: usize,
     /// Of those, the ones that needed no feature: a component insert, a joint, a default plane.
@@ -84,15 +91,24 @@ pub(crate) struct History {
     pub(crate) reapplied: usize,
     /// Active source features.
     pub(crate) total: usize,
-    /// Blends whose input edges wait for SolidCraft's replay of the history before them
+    /// Features whose input edges or faces wait for SolidCraft's replay before them
     /// ([`prove_blends`]); until then each has no body.
     pub(crate) blends: Vec<blend::Pending>,
     /// Ids of sketch features whose source sketch is hidden in the source.
     pub(crate) hidden: Vec<u64>,
+    /// Names of the bodies the history builds that the source hides (a Fusion body with its
+    /// eye off). Imported bodies stay hidden through their STEP's INVISIBILITY; a body the
+    /// history rebuilds has no STEP of its own, so the writer lists it in
+    /// `visibility.hidden_bodies` instead.
+    pub(crate) hidden_bodies: Vec<String>,
     /// Ids of features whose source profile is the whole of a sketch with more than one
     /// profile. Which of them it takes isn't stated, so each is kept only when SolidCraft's
     /// check confirms the replay ([`History::first_unconfirmed`]).
     pub(crate) unconfirmed: BTreeSet<u64>,
+    /// Ids of features whose profile region Dutchman chose by measuring every candidate
+    /// ([`infer`]). A final shape that differs from the source suspects them as it suspects
+    /// unconfirmed profiles, so the timeline keeps no more than it would without them.
+    pub(crate) measured: BTreeSet<u64>,
 }
 
 /// The bodies the source stores right after `feature`, to compare its replay with. A base
@@ -112,9 +128,10 @@ fn compared_state(
 /// doesn't say which of them such a reference takes: a cut that took them all can remove
 /// the body Fusion keeps.
 fn whole_of_several(feature: &Value, ctx: &Context) -> bool {
-    let Some(profile) = feature.pointer("/definition/profile") else {
+    let Some(profile) = operation(feature).get("profile") else {
         return false;
     };
+    let profile = profile::planar(profile);
     profile.get("kind").and_then(Value::as_str) == Some("sketch")
         && profile
             .get("value")
@@ -181,17 +198,21 @@ impl History {
     pub(crate) fn first_unconfirmed(&self) -> Option<(usize, String)> {
         self.features.iter().find_map(|feature| {
             let id = feature.get("id").and_then(Value::as_u64)?;
-            if !self.unconfirmed.contains(&id) {
-                return None;
-            }
             let name = feature.get("name").and_then(Value::as_str).unwrap_or("?");
-            Some((
-                *self.sources.get(&id)?,
+            let why = if self.unconfirmed.contains(&id) {
                 format!(
                     "feature \"{name}\": its profile is the whole of a sketch with several \
                      profiles, and SolidCraft's check could not confirm which it takes"
-                ),
-            ))
+                )
+            } else if self.measured.contains(&id) {
+                format!(
+                    "feature \"{name}\": its profile region was inferred by measurement, and \
+                     the complete replay does not match the source"
+                )
+            } else {
+                return None;
+            };
+            Some((*self.sources.get(&id)?, why))
         })
     }
 
@@ -221,11 +242,12 @@ pub(crate) fn imported(
     }
     let wire = serde_json::to_value(&model.ir)
         .map_err(|err| dutchman_core::Error::Encode(format!("cannot map appearances: {err}")))?;
-    let mut ctx = Context::new(wire.get("model").unwrap_or(&Value::Null));
+    let mut ctx = Context::new(wire.get("model").unwrap_or(&Value::Null))
+        .with_geometry(wire.get("geometry").unwrap_or(&Value::Null));
     ctx.source = Some(model);
     let ids: Vec<_> = model
         .ir
-        .model
+        .geometry
         .bodies
         .iter()
         .map(|body| body.id.as_str())
@@ -348,6 +370,9 @@ impl History {
             };
             for key in ["id", "sketch", "path_sketch"] {
                 if let Some(id) = fields.get(key).and_then(Value::as_u64) {
+                    if key == "path_sketch" && id == 0 {
+                        continue;
+                    }
                     fields.insert(key.to_owned(), Value::from(id.saturating_add(offset)));
                 }
             }
@@ -385,16 +410,18 @@ impl History {
                     }
                 }
             }
-            if let Some(constraints) = fields
-                .get_mut("sketch")
-                .and_then(|sketch| sketch.get_mut("constraints"))
-                .and_then(Value::as_array_mut)
-            {
-                for constraint in constraints {
-                    let param = constraint.get("param").and_then(Value::as_str);
-                    if let Some(new) = param.and_then(|p| renamed.get(p)).cloned() {
-                        if let Some(fields) = constraint.as_object_mut() {
-                            fields.insert("param".to_owned(), Value::String(new));
+            for key in ["constraints", "wire_constraints"] {
+                if let Some(constraints) = fields
+                    .get_mut("sketch")
+                    .and_then(|sketch| sketch.get_mut(key))
+                    .and_then(Value::as_array_mut)
+                {
+                    for constraint in constraints {
+                        let param = constraint.get("param").and_then(Value::as_str);
+                        if let Some(new) = param.and_then(|p| renamed.get(p)).cloned() {
+                            if let Some(fields) = constraint.as_object_mut() {
+                                fields.insert("param".to_owned(), Value::String(new));
+                            }
                         }
                     }
                 }
@@ -509,7 +536,7 @@ impl History {
                 .unwrap_or_else(|| name.to_owned())
         };
         for feature in &mut self.features {
-            for key in ["body_names", "bodies", "tools"] {
+            for key in ["body_names", "bodies", "tools", "targets"] {
                 if let Some(names) = feature.get_mut(key).and_then(Value::as_array_mut) {
                     for name in names {
                         if let Some(old) = name.as_str() {
@@ -518,7 +545,7 @@ impl History {
                     }
                 }
             }
-            for key in ["target", "body"] {
+            for key in ["target", "body", "path_body"] {
                 if let Some(value) = feature.get_mut(key) {
                     if let Some(old) = value.as_str() {
                         *value = Value::String(rename(old));
@@ -530,6 +557,9 @@ impl History {
             .into_iter()
             .map(|(name, look)| (rename(&name), look))
             .collect();
+        for name in &mut self.hidden_bodies {
+            *name = rename(name);
+        }
         for face in &mut self.face_looks {
             if let Some(fields) = face.as_object_mut() {
                 if let Some(old) = fields.get("body").and_then(Value::as_str) {
@@ -571,19 +601,24 @@ impl FromIterator<String> for BodyNames {
 }
 
 type RowIndex<'a> = OnceCell<HashMap<&'a str, &'a Value>>;
+type ChildIndex<'a> = OnceCell<HashMap<&'a str, Vec<&'a Value>>>;
 
 /// The model and what has been mapped so far.
+#[derive(Clone)]
 struct Context<'a> {
     /// Source for guarded STEP restatement of stored feature bodies.
     source: Option<&'a Model>,
     /// The CADIR `model` object.
     model: &'a Value,
+    /// Current topology, separate from the model records on CADIR v11.
+    geometry: &'a Value,
     /// The arenas `model` holds when it is a subset of the whole; reading another is a bug,
     /// which a debug build panics on.
     reading_only: Option<&'static [&'static str]>,
     /// Borrowed rows, indexed once on the first lookup in each arena. Geometry walks
     /// otherwise scan whole arenas for every edge, vertex and point they visit.
     rows: BTreeMap<&'a str, RowIndex<'a>>,
+    children: BTreeMap<&'static str, ChildIndex<'a>>,
     target_version: crate::SolidCraftVersion,
     next_id: u64,
     /// SolidCraft parameter names by CADIR parameter id.
@@ -603,8 +638,11 @@ struct Context<'a> {
     /// All features making a composite pattern's instance set, including its seeds.
     pattern_features: BTreeMap<String, Vec<String>>,
     pattern_replay_required: bool,
+    topological_replay_required: bool,
     /// The source bodies the history makes under their own names: (CADIR body id, name).
     named_bodies: Vec<(String, String)>,
+    /// Trial names that must be discarded unless the complete source body check passes.
+    confirming_consumed_bodies: bool,
     default_bodies: BTreeMap<String, String>,
     /// Region of each explicitly named imported shape.
     imported_regions: BTreeMap<String, String>,
@@ -616,7 +654,7 @@ struct Context<'a> {
     builds: bool,
     /// The sheet thicknesses (mm) its sheet-metal features use, each with its rule's name.
     sheet_rules: Vec<(f64, String)>,
-    /// Blends and face profiles mapped so far, waiting for SolidCraft's replay to prove them.
+    /// Blends, sweep paths and face profiles waiting for SolidCraft's replay to prove them.
     blends: Vec<blend::Pending>,
     /// Features the feature being mapped needs before it (a sketch of a face's boundary).
     extra: Vec<Value>,
@@ -631,14 +669,28 @@ struct Context<'a> {
     reapplied: BTreeSet<String>,
     /// Set by a base feature being mapped with its body as the design ends.
     final_body: bool,
+    /// Set by the feature being mapped: a selection the source does not record was inferred.
+    inferred: Option<dutchman_core::Inferred>,
+    /// Set by the feature being mapped: that selection was chosen by measuring every
+    /// candidate, so a final shape that differs suspects it first.
+    measured: bool,
 }
 
 impl<'a> Context<'a> {
+    #[cfg(test)]
+    fn testing(model: &'a Value) -> Self {
+        Self::new(model).with_geometry(model)
+    }
+
     fn new(model: &'a Value) -> Self {
         Context {
             source: None,
             model,
+            geometry: &Value::Null,
             reading_only: None,
+            children: [("regions", OnceCell::new()), ("faces", OnceCell::new())]
+                .into_iter()
+                .collect(),
             rows: model
                 .as_object()
                 .into_iter()
@@ -657,7 +709,9 @@ impl<'a> Context<'a> {
             consumed_bends: std::collections::BTreeSet::new(),
             pattern_features: BTreeMap::new(),
             pattern_replay_required: false,
+            topological_replay_required: false,
             named_bodies: Vec::new(),
+            confirming_consumed_bodies: false,
             default_bodies: BTreeMap::new(),
             imported_regions: BTreeMap::new(),
             unwritten_bodies: BTreeSet::new(),
@@ -671,6 +725,8 @@ impl<'a> Context<'a> {
             profile_mismatch: false,
             reapplied: BTreeSet::new(),
             final_body: false,
+            inferred: None,
+            measured: false,
         }
     }
 
@@ -693,6 +749,36 @@ impl<'a> Context<'a> {
                     .any(|feature| feature.get("name").and_then(Value::as_str) == Some(name))
         };
         numbered_name(&base, taken)
+    }
+
+    fn with_geometry(mut self, geometry: &'a Value) -> Self {
+        self.geometry = geometry;
+        self.rows.extend(
+            geometry
+                .as_object()
+                .into_iter()
+                .flatten()
+                .filter(|(_, rows)| rows.is_array())
+                .map(|(name, _)| (name.as_str(), OnceCell::new())),
+        );
+        self
+    }
+
+    /// Unordered topology children, indexed from their authoritative parent pointers.
+    fn children(&self, arena: &str, parent: &str, id: &str) -> &[&'a Value] {
+        let Some(index) = self.children.get(arena) else {
+            return &[];
+        };
+        let rows = index.get_or_init(|| {
+            let mut rows: HashMap<&str, Vec<&Value>> = HashMap::new();
+            for row in self.arena(arena) {
+                if let Some(parent) = row.get(parent).and_then(Value::as_str) {
+                    rows.entry(parent).or_default().push(row);
+                }
+            }
+            rows
+        });
+        rows.get(id).map_or(&[], Vec::as_slice)
     }
 
     /// A row of a CADIR arena by id.
@@ -766,8 +852,14 @@ impl<'a> Context<'a> {
             "arena {name:?} is read from a model that holds only {:?}",
             self.reading_only,
         );
-        self.model
-            .get(name)
+        let home = if cadmpeg_ir::document::ArenaName::parse(name)
+            .is_some_and(|arena| arena.home() == cadmpeg_ir::document::ArenaHome::Geometry)
+        {
+            self.geometry
+        } else {
+            self.model
+        };
+        home.get(name)
             .and_then(Value::as_array)
             .map_or(&[], Vec::as_slice)
     }
@@ -817,16 +909,106 @@ pub(crate) fn map_with_sketches(
     target_version: crate::SolidCraftVersion,
     keep_sketches: bool,
 ) -> Mapping {
-    let mut features_out = Vec::new();
-    let mut references = History::default();
-    let result = map_into(
+    map_with_profile_check(
         model,
         report,
+        target_version,
+        keep_sketches,
+        &mut infer::Unmeasured,
+        None,
+    )
+}
+
+/// Mapping with a host check for otherwise unresolved sketch-selection candidates.
+/// Planning has no check and retains the original profile refusal. `progress` hears of
+/// each timeline feature as mapping reaches it.
+pub(crate) fn map_with_profile_check(
+    model: &Model,
+    report: &mut Report,
+    target_version: crate::SolidCraftVersion,
+    keep_sketches: bool,
+    check: &mut infer::Check<'_>,
+    progress: Option<&dutchman_core::Progress<'_>>,
+) -> Mapping {
+    map_with_source_profile_check(
+        model,
+        report,
+        target_version,
+        keep_sketches,
+        check,
+        progress,
+        &[],
+    )
+}
+
+/// Decode losses are read-only evidence, separate from the history losses being written.
+pub(crate) fn map_with_source_profile_check(
+    model: &Model,
+    report: &mut Report,
+    target_version: crate::SolidCraftVersion,
+    keep_sketches: bool,
+    check: &mut infer::Check<'_>,
+    progress: Option<&dutchman_core::Progress<'_>>,
+    source_losses: &[dutchman_core::Loss],
+) -> Mapping {
+    let mut features_out = Vec::new();
+    let mut references = History::default();
+    let mut notes = Report::default();
+    let mut result = map_into(
+        model,
+        &mut notes,
         &mut features_out,
         &mut references,
         target_version,
         keep_sketches,
+        false,
+        check,
+        progress,
+        source_losses,
     );
+    // A missing consumed identity may be tried only in an isolated complete replay.
+    // Failed, unavailable or partial checks leave the original mapping and its blocker.
+    if crate::VersionGate::ScopedBodies.supported(target_version)
+        && result.as_ref().is_ok_and(|history| {
+            history.stop.as_deref().is_some_and(|why| {
+                why.contains("it selects a body that an earlier feature has not named")
+            })
+        })
+    {
+        let mut trial_notes = Report::default();
+        let mut trial_features = Vec::new();
+        let mut trial_references = History::default();
+        let trial = map_into(
+            model,
+            &mut trial_notes,
+            &mut trial_features,
+            &mut trial_references,
+            target_version,
+            keep_sketches,
+            true,
+            check,
+            progress,
+            source_losses,
+        );
+        if trial.as_ref().is_ok_and(|history| {
+            history.stop.is_none()
+                && matches!(
+                    check.fit(history, None, true, false),
+                    infer::Fit::Matches(_)
+                )
+        }) {
+            result = trial;
+            notes = trial_notes;
+            features_out = trial_features;
+            references = trial_references;
+            notes.push(
+                Severity::Info,
+                "history",
+                "The source body check confirmed the consumed tool bodies",
+            );
+        }
+    }
+    report.append(notes);
     let mut mapping = Mapping {
         result,
         features: features_out,
@@ -930,6 +1112,31 @@ fn discard_reference_sketches(mapping: &mut Mapping) {
         .count();
 }
 
+/// Whether a mapped feature cuts from or intersects the bodies before it.
+fn cuts_a_body(feature: &Value) -> bool {
+    matches!(
+        feature.get("operation").and_then(Value::as_str),
+        Some("cut" | "intersect")
+    ) && feature.get("type").and_then(Value::as_str) != Some("sketch")
+}
+
+/// The names of the bodies the history builds whose source body is hidden, once each.
+fn hidden_bodies(ctx: &Context) -> Vec<String> {
+    let mut names = Vec::new();
+    for (id, name) in &ctx.named_bodies {
+        let hidden = ctx
+            .row("bodies", id)
+            .and_then(|row| row.get("visible"))
+            .and_then(Value::as_bool)
+            == Some(false);
+        if hidden && !names.contains(name) {
+            names.push(name.clone());
+        }
+    }
+    names
+}
+
+#[allow(clippy::too_many_arguments)]
 fn map_into(
     model: &Model,
     report: &mut Report,
@@ -937,17 +1144,33 @@ fn map_into(
     references: &mut History,
     target_version: crate::SolidCraftVersion,
     keep_sketches: bool,
+    confirming_consumed_bodies: bool,
+    check: &mut infer::Check<'_>,
+    progress: Option<&dutchman_core::Progress<'_>>,
+    source_losses: &[dutchman_core::Loss],
 ) -> Result<History, String> {
+    if model.ir.model.features.is_empty() && !model.ir.design.features.is_empty() {
+        return Err(
+            "CADIR v11 design-only history is not mapped yet: its ordered selections and evaluation states have no model-history projection".to_owned(),
+        );
+    }
     let document =
         serde_json::to_value(&model.ir).map_err(|err| format!("cannot read the model: {err}"))?;
     check_version(&document)?;
-    let wire = document.get("model").cloned().unwrap_or(Value::Null);
+    let wire = document.get("model").unwrap_or(&Value::Null);
     let (params, param_names) = params::map(model, report);
     references.params = params.clone();
-    let mut ctx = Context::new(&wire);
+    let mut ctx =
+        Context::new(wire).with_geometry(document.get("geometry").unwrap_or(&Value::Null));
     ctx.source = Some(model);
     ctx.target_version = target_version;
+    ctx.confirming_consumed_bodies = confirming_consumed_bodies;
     ctx.params = param_names;
+    let modern_spatial = target_version >= crate::SolidCraftVersion::V0_44_0;
+    let is_sketch = |feature: &Value| {
+        kind(feature) == "sketch"
+            || (modern_spatial && operation_kind(feature) == Some("spatial_sketch"))
+    };
     let mut features: Vec<&Value> = ctx.arena("features").iter().collect();
     let no_timeline = features.is_empty();
     features.sort_by_key(|feature| feature.get("ordinal").and_then(Value::as_u64));
@@ -957,7 +1180,7 @@ fn map_into(
         .iter()
         .filter(|feature| {
             let kind = kind(feature);
-            !(kind == "sketch"
+            !(is_sketch(feature)
                 || kind.starts_with("datum")
                 || matches!(kind.as_str(), "tree_node" | "reference_image")
                 || is_assembly_feature(feature)
@@ -968,8 +1191,36 @@ fn map_into(
 
     let mut history = History::default();
     let mut blocked: Option<String> = None;
-    for feature in features {
+    let last_builder = features.iter().rposition(|feature| {
+        let kind = kind(feature);
+        feature.get("suppressed").and_then(Value::as_bool) != Some(true)
+            && !unchanged_geometry(feature)
+            && !(is_sketch(feature)
+                || kind.starts_with("datum")
+                || matches!(kind.as_str(), "tree_node" | "reference_image")
+                || is_assembly_feature(feature)
+                || helpers::is_helper(feature))
+    });
+    // Sketches the source keeps without a timeline row of their own (cadmpeg gives some only in
+    // its sketch arena). One a feature uses is mapped just before that feature; the others are
+    // added after the timeline, below.
+    let bound: std::collections::BTreeSet<String> = ctx
+        .arena("features")
+        .iter()
+        .filter_map(|feature| {
+            operation(feature)
+                .pointer("/sketch/sketch")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .collect();
+    let timeline = progress.map(|p| p.features(features.len() as u64));
+    for (position, feature) in features.into_iter().enumerate() {
+        if let Some(timeline) = &timeline {
+            timeline.at(position as u64 + 1, name(feature));
+        }
         let outcome = |status, reason: Option<String>| FeatureOutcome {
+            output: Default::default(),
             name: name(feature).map(str::to_owned),
             kind: kind(feature),
             status,
@@ -979,6 +1230,7 @@ fn map_into(
             profile_unverified: false,
             reapplied: false,
             final_body: false,
+            inferred: None,
         };
         if feature.get("suppressed").and_then(Value::as_bool) == Some(true) {
             report.push(
@@ -1004,7 +1256,7 @@ fn map_into(
             ));
             continue;
         }
-        if !keep_sketches && blocked.is_some() && kind(feature) == "sketch" {
+        if !keep_sketches && blocked.is_some() && is_sketch(feature) {
             out.push(outcome(
                 FeatureStatus::LeftOut,
                 Some("reference sketch left out by choice".to_owned()),
@@ -1012,25 +1264,72 @@ fn map_into(
             continue;
         }
         history.total += 1;
-        let definition = operation(feature);
         let structural = matches!(
-            definition.get("definition").and_then(Value::as_str),
+            operation_kind(feature),
             Some("datum_principal_plane" | "tree_node" | "reference_image")
         ) || is_assembly_feature(feature)
             || helpers::is_helper(feature);
-        if blocked.is_some() && (kind(feature) != "sketch" || !keep_sketches) && !structural {
+        if blocked.is_some() && (!is_sketch(feature) || !keep_sketches) && !structural {
             out.push(outcome(
                 FeatureStatus::Blocked,
-                Some(
-                    "after the first blocking feature; kept in the imported final shape".to_owned(),
-                ),
+                Some(AFTER_BLOCKER.to_owned()),
             ));
             continue;
         }
+        map_unbound_sketches(feature, &bound, &mut ctx, report, &mut history, references);
         let builds = ctx.builds;
+        let named_bodies = ctx.named_bodies.len();
         let before = history.features.len();
         let blends = ctx.blends.len();
-        match map_feature(feature, &mut ctx, report, &mut history.features) {
+        let inferred = infer::map(
+            feature,
+            &mut ctx,
+            report,
+            &mut history,
+            &params,
+            last_builder == Some(position),
+            check,
+        );
+        let mapped = inferred
+            .unwrap_or_else(|| map_feature(feature, &mut ctx, report, &mut history.features));
+        // A cut or intersection with no body before it: SolidCraft has nothing to cut and
+        // refuses the feature when it replays.
+        let mapped = mapped.and_then(|mapped| match &mapped {
+            Mapped::Feature(built) if !builds && cuts_a_body(built) => Err(
+                "it cuts or intersects a body, and no earlier feature in the history builds one"
+                    .to_owned(),
+            ),
+            _ => Ok(mapped),
+        });
+        let mut imported_body = false;
+        let mapped = mapped.or_else(|reason| {
+            // Measured inference above has already had its chance. Only a source input
+            // proven absent can replace a refused recipe with its retained result.
+            if !base::missing_input(feature, &ctx, source_losses) {
+                return Err(reason);
+            }
+            ctx.builds = builds;
+            ctx.named_bodies.truncate(named_bodies);
+            ctx.extra.clear();
+            ctx.blends.truncate(blends);
+            history.features.truncate(before);
+            let imported = base::fallback(feature, &mut ctx).map_err(|_| reason.clone())?;
+            ctx.profile_unverified = false;
+            ctx.profile_mismatch = false;
+            ctx.inferred = None;
+            ctx.measured = false;
+            report.push_coded(
+                Severity::Degraded,
+                describe(feature),
+                "history/body-fallback-imported",
+                format!(
+                    "Stored result imported because its required profile or path is absent from this design ({reason}); later features continue on this body"
+                ),
+            );
+            imported_body = true;
+            Ok(Mapped::Feature(imported))
+        });
+        match mapped {
             Ok(Mapped::Nothing) => {
                 history.mapped += 1;
                 history.not_needed += 1;
@@ -1057,10 +1356,18 @@ fn map_into(
                 }
                 if mapped.get("type").and_then(Value::as_str) == Some("sketch") {
                     references.features.push(mapped.clone());
-                    let source = operation(feature)
-                        .pointer("/sketch/sketch")
-                        .and_then(Value::as_str)
-                        .and_then(|id| ctx.row("sketches", id));
+                    let source =
+                        if modern_spatial && operation_kind(feature) == Some("spatial_sketch") {
+                            operation(feature)
+                                .get("sketch")
+                                .and_then(Value::as_str)
+                                .and_then(|id| ctx.row("spatial_sketches", id))
+                        } else {
+                            operation(feature)
+                                .pointer("/sketch/sketch")
+                                .and_then(Value::as_str)
+                                .and_then(|id| ctx.row("sketches", id))
+                        };
                     if let (Some(source), Some(id)) =
                         (source, mapped.get("id").and_then(Value::as_u64))
                     {
@@ -1078,8 +1385,15 @@ fn map_into(
                 }
                 history.features.push(mapped);
                 let mut kept = outcome(FeatureStatus::Mapped, None);
+                kept.output.ids = history
+                    .features
+                    .iter()
+                    .skip(before)
+                    .filter_map(|feature| feature.get("id").and_then(Value::as_u64))
+                    .collect();
                 kept.profile_unverified = std::mem::take(&mut ctx.profile_unverified);
                 kept.final_body = std::mem::take(&mut ctx.final_body);
+                kept.inferred = ctx.inferred.take();
                 kept.reapplied = feature
                     .get("id")
                     .and_then(Value::as_str)
@@ -1099,6 +1413,8 @@ fn map_into(
                 ctx.builds = builds;
                 ctx.profile_unverified = false;
                 ctx.final_body = false;
+                ctx.inferred = None;
+                ctx.measured = false;
                 if std::mem::take(&mut ctx.profile_mismatch) {
                     report.push_coded(
                         Severity::Degraded,
@@ -1114,8 +1430,12 @@ fn map_into(
                 out.push(outcome(FeatureStatus::Blocked, Some(reason)));
             }
         }
+        let measured = std::mem::take(&mut ctx.measured);
         for emitted in history.features.iter().skip(before) {
             if let Some(id) = emitted.get("id").and_then(Value::as_u64) {
+                if measured {
+                    history.measured.insert(id);
+                }
                 history.sources.insert(id, out.len().saturating_sub(1));
                 if let Some(centers) = out
                     .last()
@@ -1123,7 +1443,7 @@ fn map_into(
                 {
                     history.stored_bodies.insert(id, centers);
                 }
-                if whole_of_several(feature, &ctx) {
+                if !imported_body && whole_of_several(feature, &ctx) {
                     history.unconfirmed.insert(id);
                 }
             }
@@ -1135,24 +1455,15 @@ fn map_into(
         .count();
     // Some decoders supply sketches without timeline rows. Their resolved frames are
     // independent of replayed topology; unresolved attachments are refused by sketch::map.
-    let bound: std::collections::BTreeSet<&str> = ctx
-        .arena("features")
-        .iter()
-        .filter_map(|feature| {
-            operation(feature)
-                .pointer("/sketch/sketch")
-                .and_then(Value::as_str)
-        })
-        .collect();
     for sketch in ctx.arena("sketches") {
         let Some(id) = sketch.get("id").and_then(Value::as_str) else {
             continue;
         };
-        if !keep_sketches || bound.contains(id) {
+        if !keep_sketches || bound.contains(id) || ctx.sketches.contains_key(id) {
             continue;
         }
         let feature = serde_json::json!({"name": sketch.get("name")});
-        let definition = serde_json::json!({"sketch": {"space": "planar", "sketch": id}});
+        let definition = serde_json::json!({"sketch": {"kind": "planar", "sketch": id}});
         match sketch::map(&feature, &definition, &mut ctx, report) {
             Ok(mut mapped) => {
                 let name = ctx.unique_name(&mapped, history.features.iter());
@@ -1195,6 +1506,7 @@ fn map_into(
     if history.stop.is_none() {
         report.append(appearance_report);
     }
+    history.hidden_bodies = hidden_bodies(&ctx);
     history.looks = std::mem::take(&mut ctx.looks);
     history.default_bodies = std::mem::take(&mut ctx.default_bodies);
     history.sheet_rules = ctx
@@ -1204,6 +1516,7 @@ fn map_into(
         .collect();
     history.next_id = ctx.next_id;
     history.pattern_replay_required = ctx.pattern_replay_required;
+    history.topological_replay_required = ctx.topological_replay_required;
     history.blends = std::mem::take(&mut ctx.blends);
     Ok(history)
 }
@@ -1238,7 +1551,7 @@ pub(crate) fn sketches_where(
     if count == 0 {
         return (kept, 0);
     }
-    if model.ir.check_decode_depth().is_err() || !IR_VERSIONS.contains(&model.ir.ir_version()) {
+    if model.ir.check_scope().is_err() || !IR_VERSIONS.contains(&model.ir.ir_version()) {
         return (kept, count);
     }
     // Reference sketches read only the neutral arenas in `wire::SKETCH_ARENAS`. Keep those
@@ -1261,7 +1574,7 @@ pub(crate) fn sketches_where(
         }
         let feature = serde_json::json!({ "name": sketch.get("name") });
         let definition = serde_json::json!({
-            "sketch": { "space": "planar", "sketch": sketch.get("id") },
+            "sketch": { "kind": "planar", "sketch": sketch.get("id") },
         });
         // A sketch that does not map is counted, and leaves no notes of its own behind.
         let mut notes = Report::default();
@@ -1412,8 +1725,12 @@ fn split_blend(
 enum Proven {
     /// The blend is proven and emitted, with this many additional per-body operations.
     Bodies(usize),
+    /// A sweep path bound to the unique earlier body carrying all its edges.
+    Path,
     /// A face profile's sketch rewritten on the other side of its plane, if it had to be.
     Sketch(Option<Value>),
+    /// A hole axis signed to enter the proven face.
+    Hole(sketch::V3),
 }
 
 /// Proves the input edges of every blend of a history that maps, on the bodies `replay`
@@ -1423,6 +1740,7 @@ enum Proven {
 pub(crate) fn prove_blends(
     mapping: &mut Mapping,
     mut replay: impl FnMut(&History, &[u64], bool) -> Replayed,
+    mut measure: impl FnMut(&History, std::time::Duration) -> infer::Fit,
 ) {
     let Ok(history) = &mut mapping.result else {
         return;
@@ -1455,7 +1773,11 @@ pub(crate) fn prove_blends(
     let mut inserted = 0usize;
     for (index, (pending, marker)) in blends.iter().zip(&after).enumerate() {
         let proven = match (marker, &replayed) {
-            (None, _) => Err("no feature before it builds a body to blend".to_owned()),
+            (None, _) => Err(if pending.path {
+                "no feature before it builds a body carrying its path".to_owned()
+            } else {
+                "no feature before it builds a body to blend".to_owned()
+            }),
             (Some(_), Err(why)) => Err(format!(
                 "its input edges are found only on SolidCraft's replay of the history before \
                  it, and there is none: {why}"
@@ -1466,6 +1788,18 @@ pub(crate) fn prove_blends(
                 match at {
                     Some(Ok(replay)) => match &pending.face {
                         None => blend::prove(pending, &replay.bodies).and_then(|selections| {
+                            if pending.path {
+                                let [selection] = selections.as_slice() else {
+                                    return Err("its input edge path crosses several rebuilt bodies, which is not supported yet".to_owned());
+                                };
+                                let fields = history.features
+                                    .get_mut(pending.feature.saturating_add(inserted))
+                                    .and_then(Value::as_object_mut)
+                                    .ok_or("the mapped sweep is missing")?;
+                                fields.insert("path_body".to_owned(), json!(selection.body));
+                                fields.insert("path_edges".to_owned(), json!(selection.points));
+                                return Ok(Proven::Path);
+                            }
                             let added = selections.len().saturating_sub(1);
                             split_blend(
                                 history,
@@ -1476,7 +1810,9 @@ pub(crate) fn prove_blends(
                             Ok(Proven::Bodies(added))
                         }),
                         Some(face) => face_profile::prove(face, replay).and_then(|mirrored| {
-                            if mirrored {
+                            if let Some(direction) = face.entry_direction(mirrored)? {
+                                Ok(Proven::Hole(direction))
+                            } else if mirrored {
                                 face.sketch(true)
                                     .map(|(sketch, _)| Proven::Sketch(Some(sketch)))
                             } else {
@@ -1493,10 +1829,51 @@ pub(crate) fn prove_blends(
                 }
             }
         };
+        // A last blend whose edges the proof cannot pin down: measure the nearby rebuilt edges.
+        let proven = match proven {
+            Err(reason) if pending.face.is_none() && reason.starts_with(blend::UNPROVEN) => {
+                let at = pending.feature.saturating_add(inserted);
+                let bodies = replayed
+                    .as_ref()
+                    .ok()
+                    .and_then(|steps| steps.get(step.saturating_sub(1)))
+                    .and_then(|replay| replay.as_ref().ok())
+                    .map(|replay| &replay.bodies);
+                match bodies.and_then(|bodies| {
+                    infer::edges(history, at, pending.outcome, pending, bodies, &mut measure)
+                }) {
+                    Some(Ok((selections, inferred))) => {
+                        let added = selections.len().saturating_sub(1);
+                        split_blend(history, at, pending.outcome, selections).map(|()| {
+                            for id in history
+                                .features
+                                .iter()
+                                .skip(at)
+                                .take(added.saturating_add(1))
+                                .filter_map(|feature| feature.get("id").and_then(Value::as_u64))
+                            {
+                                history.measured.insert(id);
+                            }
+                            if let Some(outcome) = mapping.features.get_mut(pending.outcome) {
+                                outcome.inferred = Some(inferred);
+                            }
+                            Proven::Bodies(added)
+                        })
+                    }
+                    Some(Err(why)) => Err(format!("{reason}; {why}")),
+                    None => Err(reason),
+                }
+            }
+            proven => proven,
+        };
         match proven {
-            Ok(Proven::Bodies(added)) => {
+            Ok(proven @ (Proven::Bodies(_) | Proven::Path)) => {
+                let (added, path) = match proven {
+                    Proven::Bodies(added) => (added, false),
+                    _ => (0, true),
+                };
                 inserted = inserted.saturating_add(added);
-                if added > 0 && index.saturating_add(1) < blends.len() {
+                if (added > 0 || path) && index.saturating_add(1) < blends.len() {
                     // Later blends must see all per-body operations, including earlier
                     // radius groups. Their original last IDs remain rollback markers.
                     let remaining: Vec<u64> = after
@@ -1508,7 +1885,7 @@ pub(crate) fn prove_blends(
                     let faces = blends
                         .iter()
                         .skip(index.saturating_add(1))
-                        .any(|p| p.face.is_some());
+                        .any(|pending| pending.face.is_some());
                     replayed = replay(history, &remaining, faces);
                     step = 0;
                 }
@@ -1528,6 +1905,46 @@ pub(crate) fn prove_blends(
                             fields.insert(key.to_owned(), value.clone());
                         }
                     }
+                    if index.saturating_add(1) < blends.len() {
+                        // The extrude now runs the other way, so later proofs need a replay
+                        // of the history as it will be written, not the one before the flip.
+                        let remaining: Vec<u64> = after
+                            .iter()
+                            .skip(index.saturating_add(1))
+                            .flatten()
+                            .copied()
+                            .collect();
+                        let faces = blends
+                            .iter()
+                            .skip(index.saturating_add(1))
+                            .any(|pending| pending.face.is_some());
+                        replayed = replay(history, &remaining, faces);
+                        step = 0;
+                    }
+                }
+            }
+            Ok(Proven::Hole(direction)) => {
+                let target = history
+                    .features
+                    .get_mut(pending.feature.saturating_add(inserted));
+                let value = serde_json::json!(direction);
+                if let Some(fields) = target.and_then(Value::as_object_mut) {
+                    let changed = fields.get("direction") != Some(&value);
+                    fields.insert("direction".to_owned(), value);
+                    if changed && index.saturating_add(1) < blends.len() {
+                        let remaining: Vec<u64> = after
+                            .iter()
+                            .skip(index.saturating_add(1))
+                            .flatten()
+                            .copied()
+                            .collect();
+                        let faces = blends
+                            .iter()
+                            .skip(index.saturating_add(1))
+                            .any(|p| p.face.is_some());
+                        replayed = replay(history, &remaining, faces);
+                        step = 0;
+                    }
                 }
             }
             Err(reason) => {
@@ -1543,6 +1960,55 @@ pub(crate) fn prove_blends(
     }
     if let Some((source, reason)) = first {
         shorten(mapping, source, reason);
+    }
+}
+
+/// Maps, just before `feature`, each sketch it uses that the source keeps without a timeline
+/// row (`bound` holds those that have one) and that is not mapped yet, so the feature finds it.
+/// A sketch that does not map is left for the feature to refuse with its own reason.
+fn map_unbound_sketches(
+    feature: &Value,
+    bound: &std::collections::BTreeSet<String>,
+    ctx: &mut Context,
+    report: &mut Report,
+    history: &mut History,
+    references: &mut History,
+) {
+    let mut used = Vec::new();
+    collect_strings(operation(feature), &mut used);
+    for id in used {
+        if bound.contains(&id) || ctx.sketches.contains_key(&id) {
+            continue;
+        }
+        let Some(sketch) = ctx.row("sketches", &id) else {
+            continue;
+        };
+        let source = serde_json::json!({"name": sketch.get("name")});
+        let definition = serde_json::json!({"sketch": {"kind": "planar", "sketch": id}});
+        let Ok(mut mapped) = sketch::map(&source, &definition, ctx, report) else {
+            continue;
+        };
+        let name = ctx.unique_name(&mapped, history.features.iter());
+        if let Some(fields) = mapped.as_object_mut() {
+            fields.insert("name".to_owned(), Value::String(name));
+        }
+        if sketch.get("visible").and_then(Value::as_bool) == Some(false) {
+            if let Some(id) = mapped.get("id").and_then(Value::as_u64) {
+                history.hidden.push(id);
+            }
+        }
+        references.features.push(mapped.clone());
+        history.features.push(mapped);
+    }
+}
+
+/// Every string in `value`, depth first.
+fn collect_strings(value: &Value, out: &mut Vec<String>) {
+    match value {
+        Value::String(text) => out.push(text.clone()),
+        Value::Array(items) => items.iter().for_each(|item| collect_strings(item, out)),
+        Value::Object(fields) => fields.values().for_each(|item| collect_strings(item, out)),
+        _ => {}
     }
 }
 
@@ -1563,8 +2029,24 @@ pub(crate) fn shorten(mapping: &mut Mapping, source: usize, reason: String) {
                 .and_then(|id| history.sources.get(&id))
                 .is_some_and(|row| *row < source)
     });
-    for feature in mapping.features.iter_mut().skip(source) {
-        if feature.status == FeatureStatus::Mapped && feature.kind != "sketch" {
+    // Only the 0.44 writer emits wire_constraints. Keep its independent/repaired spatial
+    // sketches as reference rows, just like planar sketches, when body history stops.
+    let spatial: BTreeSet<usize> = history
+        .features
+        .iter()
+        .filter(|feature| feature.pointer("/sketch/wire_constraints").is_some())
+        .filter_map(|feature| {
+            feature
+                .get("id")
+                .and_then(Value::as_u64)
+                .and_then(|id| history.sources.get(&id))
+                .copied()
+        })
+        .collect();
+    for (index, feature) in mapping.features.iter_mut().enumerate().skip(source) {
+        let sketch = feature.kind == "sketch"
+            || (feature.kind == "spatial_sketch" && spatial.contains(&index));
+        if feature.status == FeatureStatus::Mapped && !sketch {
             feature.status = FeatureStatus::Blocked;
             feature.reason = Some(reason.clone());
         }
@@ -1636,6 +2118,7 @@ fn unchanged_geometry(feature: &Value) -> bool {
             | "spatial_sketch"
             | "tree_node"
             | "insert_component"
+            | "component_transfer"
             | "assembly_joint"
             | "reference_image"
             | "cosmetic_thread"
@@ -1653,7 +2136,7 @@ fn map_feature(
 ) -> Result<Mapped, String> {
     let definition = operation(feature);
     if matches!(
-        definition.get("definition").and_then(Value::as_str),
+        operation_kind(feature),
         Some("datum_principal_plane" | "datum_plane" | "datum_offset_plane")
     ) {
         return datum::map(feature, ctx).map(|()| Mapped::Nothing);
@@ -1664,11 +2147,18 @@ fn map_feature(
     if helpers::is_helper(feature) {
         return helpers::map(feature, ctx, report);
     }
-    match definition.get("definition").and_then(Value::as_str) {
+    match operation_kind(feature) {
         // A folder, a PartDesign Body or another node that orders the tree and builds nothing.
         Some("tree_node") => Ok(Mapped::Nothing),
         // A raster image placed for reference (a Fusion Canvas): it builds no geometry.
         Some("reference_image") => Ok(Mapped::Nothing),
+        // A corner the source proves leaves its body as it was (topology included) needs no
+        // SolidCraft feature: a corner of one flange, say, with nothing to relieve.
+        Some("sheet_metal_corner")
+            if definition.get("effect").and_then(Value::as_str) == Some("unchanged") =>
+        {
+            Ok(Mapped::Nothing)
+        }
         Some("sketch") => sketch::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some("spatial_sketch") => {
             spatial::map(feature, definition, ctx, report).map(Mapped::Feature)
@@ -1682,7 +2172,7 @@ fn map_feature(
         Some("coil") => primitive::coil(feature, definition, ctx).map(Mapped::Feature),
         Some("helical_sweep") => helix::map(feature, definition, ctx, report).map(Mapped::Feature),
         Some("primitive") => primitive::placed(feature, definition, ctx).map(Mapped::Feature),
-        Some(kind @ "block") => Err(primitive::unplaced(kind)),
+        Some("block") => primitive::block(feature, definition, ctx).map(Mapped::Feature),
         Some("shell") => shell::map(feature, definition, ctx).map(Mapped::Feature),
         // Draft still needs the geometry of its own input faces.
         Some("draft") => Err("draft waits on input face geometry".to_owned()),
@@ -1746,10 +2236,12 @@ fn map_feature(
     }
 }
 
-/// Assembly timeline rows build no part geometry; occurrences and joints carry them.
+/// Assembly timeline rows build no part geometry; occurrences and joints carry them. A
+/// component transfer copies an occurrence or moves it to another owner: the occurrence
+/// tree places the result, whether or not cadmpeg resolves which occurrence it was.
 fn is_assembly_feature(feature: &Value) -> bool {
-    match operation(feature).get("definition").and_then(Value::as_str) {
-        Some("insert_component" | "assembly_joint") => true,
+    match operation_kind(feature) {
+        Some("insert_component" | "component_transfer" | "assembly_joint") => true,
         // cadmpeg retains unresolved As-built joints as native operations with a stable
         // source tag. Display names may be edited and must never identify an operation.
         Some("native") => matches!(
@@ -1760,22 +2252,30 @@ fn is_assembly_feature(feature: &Value) -> bool {
     }
 }
 
-/// The feature's operation, looking through a post-processing wrapper.
-fn operation(feature: &Value) -> &Value {
+/// The tagged operation enum, looking through the definition wrapper.
+fn operation_enum(feature: &Value) -> &Value {
     let definition = feature.get("definition").unwrap_or(&Value::Null);
-    match definition.get("definition").and_then(Value::as_str) {
-        Some("post_process") => definition.get("operation").unwrap_or(&Value::Null),
-        _ => definition,
+    match definition.get("kind").and_then(Value::as_str) {
+        Some("post_process") => definition
+            .pointer("/value/operation")
+            .unwrap_or(&Value::Null),
+        Some("operation") => definition.get("value").unwrap_or(&Value::Null),
+        _ => &Value::Null,
     }
+}
+
+/// The payload of the feature's operation on the CADIR v11 wire.
+fn operation(feature: &Value) -> &Value {
+    operation_enum(feature).get("value").unwrap_or(&Value::Null)
+}
+
+fn operation_kind(feature: &Value) -> Option<&str> {
+    operation_enum(feature).get("kind").and_then(Value::as_str)
 }
 
 /// The CADIR operation name of a feature (`extrude`, `fillet`, …).
 fn kind(feature: &Value) -> String {
-    operation(feature)
-        .get("definition")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown")
-        .to_owned()
+    operation_kind(feature).unwrap_or("unknown").to_owned()
 }
 
 /// The message for an input selection of a form that is not mapped, naming that form:
@@ -1852,7 +2352,7 @@ pub(crate) fn variant(feature: &Value) -> Option<String> {
         }
         "hole" => {
             let form = op
-                .pointer("/shape/construction/kind/kind")
+                .pointer("/shape/construction/value/kind/kind")
                 .and_then(Value::as_str)
                 .unwrap_or("other");
             parts.push(form.replace('_', " "));
@@ -1944,6 +2444,25 @@ mod tests {
         assert_eq!(history.features[1]["radius"], history.features[2]["radius"]);
         assert_eq!(history.sources.get(&4), Some(&1));
         assert_eq!(history.sources.get(&2), Some(&1));
+        let mut rows: Vec<FeatureOutcome> = (0..3)
+            .map(|_| FeatureOutcome {
+                output: Default::default(),
+                name: None,
+                kind: "fillet".to_owned(),
+                status: FeatureStatus::Mapped,
+                reason: None,
+                ordinal: None,
+                variant: None,
+                profile_unverified: false,
+                reapplied: false,
+                final_body: false,
+                inferred: None,
+            })
+            .collect();
+        crate::output_links::history(&mut rows, &history, 10);
+        assert_eq!(rows[1].output.ids, [14, 12]);
+        assert_eq!(rows[1].output.method, dutchman_core::OutputMatch::Emitted);
+
         assert_eq!(
             history.stored_bodies.keys().copied().collect::<Vec<_>>(),
             [2]
@@ -2037,25 +2556,22 @@ mod tests {
 
     #[test]
     fn variants_describe_the_form_without_sizes() {
-        let extrude = json!({"definition": {"definition": "extrude",
-            "start": {"kind": "from_face"},
-            "extent": {"kind": "one_sided", "side": {"termination": {"kind": "to_plane"}}}}});
+        let extrude = json!({"definition": {"kind":"operation", "value": {"kind": "extrude", "value": {"start": {"kind": "from_face"}, "extent": {"kind": "one_sided", "side": {"termination": {"kind": "to_plane"}}}}}}});
         assert_eq!(
             variant(&extrude).as_deref(),
             Some("extrude, to a plane, start from a face")
         );
-        let hole = json!({"definition": {"definition": "hole",
-            "shape": {"construction": {"kind": {"kind": "counterbore"}}, "diameter": 5.0},
-            "extent": {"kind": "through_all"}}});
+        let hole = json!({"definition": {"kind":"operation", "value": {"kind": "hole", "value": {"shape": {"construction": {"kind": "form", "value": {"kind": {"kind": "counterbore"}}}, "diameter": 5.0}, "extent": {"kind": "through_all"}}}}});
         assert_eq!(
             variant(&hole).as_deref(),
             Some("hole, counterbore, through all")
         );
-        let fillet = json!({"definition": {"definition": "fillet",
-            "groups": [{"radius": 1.0}, {"radius": 2.0}]}});
+        let fillet = json!({"definition": {"kind":"operation", "value": {"kind": "fillet", "value": {"groups": [{"radius": 1.0}, {"radius": 2.0}]}}}});
         assert_eq!(variant(&fillet).as_deref(), Some("fillet, 2 radius groups"));
         assert_eq!(
-            variant(&json!({"definition": {"definition": "native"}})),
+            variant(
+                &json!({"definition": {"kind":"operation", "value": {"kind": "native", "value": {"parameters": {}}}}})
+            ),
             None
         );
     }
@@ -2066,7 +2582,7 @@ mod tests {
             .map(|i| json!({"id": format!("synthetic:face:{i}"), "ordinal": i}))
             .collect();
         let model = json!({"faces": faces, "points": [{"id": "point"}]});
-        let ctx = Context::new(&model);
+        let ctx = Context::testing(&model);
         assert!(ctx.rows.values().all(|index| index.get().is_none()));
         for row in ctx.arena("faces").iter().rev() {
             let id = row["id"].as_str().unwrap();
@@ -2091,12 +2607,14 @@ mod tests {
             "points": [{"id": "same", "value": 3}],
             "metadata": {"id": "same"}
         });
-        let ctx = Context::new(&model);
+        let ctx = Context::testing(&model);
         assert_eq!(ctx.row("faces", "same").unwrap()["value"], 1);
         assert_eq!(ctx.row("points", "same").unwrap()["value"], 3);
         assert!(ctx.row("metadata", "same").is_none());
         assert!(ctx.row("faces", "7").is_none());
-        assert!(Context::new(&Value::Null).row("faces", "same").is_none());
+        assert!(Context::testing(&Value::Null)
+            .row("faces", "same")
+            .is_none());
     }
 
     fn datum(key: u32, ordinal: u64) -> Value {
@@ -2104,7 +2622,7 @@ mod tests {
             key,
             ordinal,
             "XY Plane",
-            json!({"definition": "datum_principal_plane", "plane": "top"}),
+            json!({"kind": "datum_principal_plane", "value": {"plane": "top"}}),
         )
     }
 
@@ -2113,8 +2631,27 @@ mod tests {
             key,
             ordinal,
             name,
-            json!({"definition": "native", "kind": "Mystery", "parameters": {}}),
+            json!({"kind": "native", "value": {"kind": "Mystery", "parameters": {}}}),
         )
+    }
+
+    #[test]
+    fn spatial_dimension_parameters_follow_assembly_renaming() {
+        let mut history = History {
+            params: vec![json!({"name":"rise", "expr":"30 mm", "unit":"mm"})],
+            features: vec![
+                json!({"id":1, "type":"sketch", "sketch": {"wire_constraints": [{"id":"k1", "type":"distance", "a":{"wire":"w1","index":0}, "b":{"wire":"w1","index":1}, "param":"rise", "value":30.0}]}}),
+            ],
+            ..History::default()
+        };
+        let mut taken = ["rise".to_owned()].into_iter().collect();
+        history.relocate(10, 2, "Part", &mut taken);
+        assert_eq!(history.params[0]["name"], "Part_rise");
+        assert_eq!(
+            history.features[0]["sketch"]["wire_constraints"][0]["param"],
+            "Part_rise"
+        );
+        assert_eq!(history.features[0]["id"], 11);
     }
 
     #[test]
@@ -2125,6 +2662,7 @@ mod tests {
                 json!({"target": "Part", "tools": ["Part"]}),
                 json!({"bodies": ["Part"]}),
                 json!({"body": "Part"}),
+                json!({"targets": ["Part", "Other"]}),
             ],
             ..History::default()
         };
@@ -2135,6 +2673,10 @@ mod tests {
         assert_eq!(history.features[1]["tools"], json!(["Part (Second)"]));
         assert_eq!(history.features[2]["bodies"], json!(["Part (Second)"]));
         assert_eq!(history.features[3]["body"], "Part (Second)");
+        assert_eq!(
+            history.features[4]["targets"],
+            json!(["Part (Second)", "Other"])
+        );
     }
 
     #[test]
@@ -2225,21 +2767,15 @@ mod tests {
             "binder",
             "tree_node",
             "insert_component",
+            "component_transfer",
             "assembly_joint",
             "reference_image",
             "cosmetic_thread",
         ] {
-            let feature = json!({
-                "source_properties": {"transition_geometry": "unchanged"},
-                "definition": {"definition": kind},
-            });
+            let feature = json!({"source_properties": {"transition_geometry": "unchanged"}, "definition": {"kind":"operation", "value": {"kind": kind, "value": {}}}});
             assert!(!unchanged_geometry(&feature), "{kind}");
         }
-        let empty_base = json!({
-            "source_properties": {"transition_geometry": "unchanged"},
-            "definition": {"definition": "base_feature",
-                "bodies": {"kind": "resolved", "value": {"bodies": []}}},
-        });
+        let empty_base = json!({"source_properties": {"transition_geometry": "unchanged"}, "definition": {"kind":"operation", "value": {"kind": "base_feature", "value": {"bodies": {"kind": "resolved", "value": {"bodies": []}}}}}});
         assert!(!unchanged_geometry(&empty_base));
     }
 
@@ -2259,9 +2795,8 @@ mod tests {
     #[test]
     fn a_reference_image_builds_nothing() {
         let model = json!({"features": []});
-        let mut ctx = Context::new(&model);
-        let canvas = json!({"id": "f3d:model:feature#7", "ordinal": 7, "name": "Canvas 1",
-            "definition": {"definition": "reference_image", "asset": "f3d:model:asset#1"}});
+        let mut ctx = Context::testing(&model);
+        let canvas = json!({"id": "f3d:model:feature#7", "ordinal": 7, "name": "Canvas 1", "definition": {"kind": "operation", "value": {"kind": "reference_image", "value": {"asset": "f3d:model:asset#1"}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []});
         let mut features = Vec::new();
         let mapped = map_feature(&canvas, &mut ctx, &mut Report::default(), &mut features);
         assert!(matches!(mapped, Ok(Mapped::Nothing)));
@@ -2274,7 +2809,7 @@ mod tests {
             2,
             1,
             "Body",
-            json!({"definition": "tree_node", "role": "history"}),
+            json!({"kind": "tree_node", "value": {"role": "history", "children": {"children": []}}}),
         );
         let model = with(cube(), json!([datum(1, 0), body]), json!([]));
         let mapping = map(
@@ -2300,15 +2835,44 @@ mod tests {
             2,
             1,
             "Component Insert 1",
-            json!({"definition": "insert_component", "occurrence": "f3d:model:occurrence#1"}),
+            json!({"kind": "insert_component", "value": {"occurrence": "f3d:model:occurrence#1"}}),
         );
         let joint = feature(
             3,
             2,
             "Joint 1",
-            json!({"definition": "assembly_joint", "joint": "f3d:model:joint#1"}),
+            json!({"kind": "assembly_joint", "value": {"joint": "f3d:model:joint#1"}}),
         );
         let model = with(cube(), json!([datum(1, 0), insert, joint]), json!([]));
+        let mapping = map(
+            &model,
+            &mut Report::default(),
+            crate::SolidCraftVersion::default(),
+        );
+        assert_eq!(
+            mapping.result.unwrap_err(),
+            "no feature in the history builds geometry"
+        );
+        let statuses: Vec<FeatureStatus> = mapping.features.iter().map(|f| f.status).collect();
+        assert_eq!(statuses, [FeatureStatus::NotNeeded; 3]);
+    }
+
+    #[test]
+    fn component_copies_and_moves_in_the_timeline_are_not_needed() {
+        let copy = feature(
+            2,
+            1,
+            "CopyPaste 1",
+            json!({"kind": "component_transfer", "value": {"mode": "copy", "occurrence": "f3d:model:occurrence#1"}}),
+        );
+        // An unresolved source still builds no part geometry.
+        let moved = feature(
+            3,
+            2,
+            "CutPaste 1",
+            json!({"kind": "component_transfer", "value": {"mode": "reparent"}}),
+        );
+        let model = with(cube(), json!([datum(1, 0), copy, moved]), json!([]));
         let mapping = map(
             &model,
             &mut Report::default(),
@@ -2330,7 +2894,7 @@ mod tests {
             2,
             1,
             "DatumPlane",
-            json!({"definition": "datum_plane", "frame": frame}),
+            json!({"kind": "datum_plane", "value": {"frame": frame}}),
         );
         let model = with(cube(), json!([datum(1, 0), placed]), json!([]));
         let mapping = map(
@@ -2373,7 +2937,7 @@ mod tests {
         source.ir = cadmpeg_ir::examples::unit_cube().unwrap();
         source.fidelity = None;
         let mut wire = serde_json::to_value(&source.ir).unwrap();
-        let template = wire["model"].clone();
+        let template = wire["geometry"].clone();
         for (prefix, label) in [("skin", "Skin"), ("other", "Other")] {
             let text = serde_json::to_string(&template)
                 .unwrap()
@@ -2385,16 +2949,16 @@ mod tests {
                 "points", "vertices", "curves", "edges", "coedges", "loops", "surfaces", "faces",
                 "shells", "regions", "bodies",
             ] {
-                wire["model"][arena]
+                wire["geometry"][arena]
                     .as_array_mut()
                     .unwrap()
                     .extend(copy[arena].as_array().unwrap().iter().cloned());
             }
         }
-        wire["model"]["bodies"][0]["name"] = json!("Solid");
+        wire["geometry"]["bodies"][0]["name"] = json!("Solid");
         source.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let model = &wire["model"];
-        let mut ctx = Context::new(model);
+        let mut ctx = Context::new(model).with_geometry(&wire["geometry"]);
         ctx.source = Some(&source);
         let outputs: Value = serde_json::from_str(
             &outputs
@@ -2404,11 +2968,7 @@ mod tests {
                 .replace("b#3", "synthetic:other:body#0"),
         )
         .unwrap();
-        let stored = json!({
-            "id": "f#1", "ordinal": 0, "name": "Composite1", "suppressed": false,
-            "outputs": outputs,
-            "definition": {"definition": "stored_geometry"},
-        });
+        let stored = json!({"id": "f#1", "ordinal": 0, "name": "Composite1", "suppressed": false, "outputs": outputs, "definition": {"kind": "operation", "value": {"kind": "stored_geometry", "value": {}}}, "dependencies": [], "source_properties": {}, "source_content": []});
         match map_feature(&stored, &mut ctx, &mut Report::default(), &mut Vec::new())? {
             Mapped::Feature(mapped) => Ok(mapped),
             Mapped::Nothing | Mapped::Consumed => Err("mapped to nothing".to_owned()),
@@ -2455,16 +3015,31 @@ mod tests {
     #[test]
     fn a_whole_sketch_of_several_profiles_waits_for_confirmation() {
         let model = json!({"sketches": [
-            {"id": "two", "profiles": [[{"entity": "a"}], [{"entity": "b"}]]},
-            {"id": "one", "profiles": [[{"entity": "a"}]]},
+            {"id": "two", "profiles": [[{"entity": "a", "reversed": false}], [{"entity": "b", "reversed": false}]]},
+            {"id": "one", "profiles": [[{"entity": "a", "reversed": false}]]},
         ]});
-        let ctx = Context::new(&model);
-        let whole =
-            |sketch: &str| json!({"definition": {"profile": {"kind": "sketch", "value": sketch}}});
+        let ctx = Context::testing(&model);
+        let whole = |sketch: &str| {
+            feature(
+                1,
+                0,
+                "Extrude",
+                json!({"kind": "extrude", "value": {
+                    "profile": {"kind": "planar", "value": {"kind": "sketch", "value": sketch}}
+                }}),
+            )
+        };
         assert!(whole_of_several(&whole("two"), &ctx));
         assert!(!whole_of_several(&whole("one"), &ctx));
-        let picked = json!({"definition": {"profile": {"kind": "sketch_profiles",
-            "value": {"sketch": "two", "profiles": [0]}}}});
+        let picked = feature(
+            1,
+            0,
+            "Extrude",
+            json!({"kind": "extrude", "value": {
+                "profile": {"kind": "planar", "value": {"kind": "sketch_profiles",
+                    "value": {"sketch": "two", "profiles": [0]}}}
+            }}),
+        );
         assert!(!whole_of_several(&picked, &ctx));
 
         let mut history = History {
@@ -2554,6 +3129,7 @@ mod tests {
         let feature = json!({"name": "Base Feature 1",
             "source_properties": {"body_centers": "1:0,0,10"}});
         let outcome = |final_body: bool| FeatureOutcome {
+            output: Default::default(),
             name: Some("Base Feature 1".to_owned()),
             kind: "base_feature".to_owned(),
             status: FeatureStatus::Mapped,
@@ -2563,6 +3139,7 @@ mod tests {
             profile_unverified: false,
             reapplied: false,
             final_body,
+            inferred: None,
         };
         assert_eq!(
             compared_state(&outcome(false), &feature).map(|c| c.len()),

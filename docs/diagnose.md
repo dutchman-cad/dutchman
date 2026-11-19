@@ -227,6 +227,6 @@ proven bundle during ordinary diagnosis, narrowing and doctor. The local
 The gzip retains numeric geometry. Cuts that do not reproduce the original signature are
 widened and checked again; if proof still fails, no bundle is saved. Shrinking has a ten
 second budget and keeps the last proven cut when cancelled with `diagnose/cancel-bundle`.
-Decode refusals have no bundle yet. Choose a summary or the private-send card. The
+Decode refusals have no bundle yet. Choose a summary or the private Discord steps. The
 whole multipart upload must fit 25 MiB, including metadata and framing. Bundles
 reserve 64 KiB below that cap; those that will not fit stay local for private sending.

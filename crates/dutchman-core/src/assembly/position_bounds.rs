@@ -104,7 +104,7 @@ struct BodyBounds {
 
 /// Definition-local bounds, keyed by neutral product definition id.
 pub(super) fn definitions(model: &Model) -> BTreeMap<&str, (Option<Bounds>, Option<Bounds>)> {
-    let ir = &model.ir.model;
+    let ir = &model.ir.geometry;
     const MAX_BOUND_ENTITIES: usize = 2_000_000;
     let entities = [
         ir.points.len(),
@@ -160,7 +160,7 @@ pub(super) fn definitions(model: &Model) -> BTreeMap<&str, (Option<Bounds>, Opti
     let mut bodies: BTreeMap<String, BodyBounds> = BTreeMap::new();
     let mut edge = |edge: &cadmpeg_ir::topology::Edge, body: &str| {
         let value = bodies.entry(body.to_owned()).or_default();
-        for vertex in [&edge.start, &edge.end] {
+        for vertex in edge.vertices() {
             if let Some(point) = vertices.get(vertex.as_str()) {
                 add(&mut value.inner, Bounds::point(*point));
                 add(&mut value.outer, Bounds::point(*point));
@@ -355,7 +355,10 @@ pub(super) fn definitions(model: &Model) -> BTreeMap<&str, (Option<Bounds>, Opti
             Some((body.id.as_str(), value))
         })
         .collect();
-    ir.product_definitions
+    model
+        .ir
+        .model
+        .product_definitions
         .iter()
         .map(|definition| {
             let mut inner = None;

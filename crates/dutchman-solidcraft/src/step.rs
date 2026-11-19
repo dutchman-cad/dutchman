@@ -47,7 +47,7 @@ pub(crate) fn restatable(model: &Model) -> Result<(), Error> {
 fn plan(model: &Model) -> Result<cadmpeg_ir::codec::write::ExportPlan, Error> {
     // With no bodies at all, cadmpeg plans an empty file rather than saying so. Without a face,
     // cadmpeg writes what is left (wire edges, points), none of it a solid or a surface.
-    if model.ir.model.bodies.is_empty() || model.ir.model.faces.is_empty() {
+    if model.ir.geometry.bodies.is_empty() || model.ir.geometry.faces.is_empty() {
         return Err(no_geometry());
     }
     let input = EncodeInput::new(&model.ir, model.fidelity.as_ref());
@@ -68,7 +68,7 @@ fn plan(model: &Model) -> Result<cadmpeg_ir::codec::write::ExportPlan, Error> {
         .iter()
         .filter(|loss| loss.code.to_string() == "step/topology.face-no-writable-bounds")
         .count();
-    if unbounded >= model.ir.model.faces.len() {
+    if unbounded >= model.ir.geometry.faces.len() {
         return Err(no_geometry());
     }
     Ok(plan)
@@ -130,7 +130,10 @@ fn restate_unguarded(model: &Model, report: &mut Report) -> Result<String, Error
 /// surface is left out of the STEP, so the solid it bounds opens with no volume.
 fn unwritten_surfaces(model: &Model) -> Option<String> {
     let wire = serde_json::to_value(&model.ir).ok()?;
-    let surfaces = wire.get("model")?.get("procedural_surfaces")?.as_array()?;
+    let surfaces = wire
+        .get("geometry")?
+        .get("procedural_surfaces")?
+        .as_array()?;
     let helices = surfaces
         .iter()
         .filter(|surface| {
@@ -213,9 +216,9 @@ mod tests {
     #[test]
     fn a_solid_reduced_to_a_sheet_gets_a_counted_degraded_loss() {
         let mut ir = cadmpeg_ir::examples::unit_cube().unwrap();
-        let removed = ir.model.edges[0].curve().unwrap().clone();
-        ir.model.edges[0].carrier = cadmpeg_ir::topology::EdgeCarrier::Free;
-        ir.model.curves.retain(|curve| curve.id != removed);
+        let removed = ir.geometry.edges[0].curve().unwrap().clone();
+        ir.geometry.edges[0].carrier = cadmpeg_ir::topology::EdgeCarrier::Free;
+        ir.geometry.curves.retain(|curve| curve.id != removed);
         let model = Model {
             ir,
             fidelity: None,
@@ -237,7 +240,7 @@ mod tests {
                     .detail
                     .starts_with("1 solid region converted to an open sheet")));
         let mut sheet = model;
-        sheet.ir.model.bodies[0].kind = cadmpeg_ir::topology::BodyKind::Sheet;
+        sheet.ir.geometry.bodies[0].kind = cadmpeg_ir::topology::BodyKind::Sheet;
         let mut report = Report::default();
         restate(&sheet, &mut report).unwrap();
         assert!(!report

@@ -20,8 +20,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
 FROM debian:bookworm-slim
 ARG TARGETARCH
 # Optional: a SolidCraft release whose `solidcraft-cli` checks each written history
-# (Linux x86_64 only). Give both, for example --build-arg SOLIDCRAFT_VERSION=0.20.0
-# --build-arg SOLIDCRAFT_SHA256=<the release archive's SHA-256>.
+# (Linux x86_64 or ARM64). Give both, for example --build-arg SOLIDCRAFT_VERSION=0.42.0
+# --build-arg SOLIDCRAFT_SHA256=<the SHA-256 of the release archive for this architecture>.
 ARG SOLIDCRAFT_VERSION=
 ARG SOLIDCRAFT_SHA256=
 
@@ -32,10 +32,11 @@ RUN apt-get update \
 RUN --mount=type=bind,from=build,source=/usr/local/bin,target=/mnt/bin set -eu; \
     install -m 0755 /mnt/bin/dutchman /mnt/bin/dutchman-mcp /mnt/bin/dutchman-web /usr/local/bin/; \
     if [ -n "$SOLIDCRAFT_VERSION" ]; then \
-      if [ "$TARGETARCH" != amd64 ]; then echo "SolidCraft releases are for Linux x86_64 only" >&2; exit 1; fi; \
+      case "$TARGETARCH" in amd64) arch=x86_64 ;; arm64) arch=aarch64 ;; \
+        *) echo "SolidCraft releases are for Linux x86_64 and ARM64" >&2; exit 1 ;; esac; \
       if [ -z "$SOLIDCRAFT_SHA256" ]; then echo "SOLIDCRAFT_SHA256 is needed with SOLIDCRAFT_VERSION" >&2; exit 1; fi; \
       apt-get update; apt-get install -y --no-install-recommends curl; \
-      archive="solidcraft-${SOLIDCRAFT_VERSION}-linux-x86_64.tar.gz"; \
+      archive="solidcraft-${SOLIDCRAFT_VERSION}-linux-${arch}.tar.gz"; \
       curl -fsSL -o "/tmp/$archive" "https://github.com/tangency-labs/solidcraft/releases/download/v${SOLIDCRAFT_VERSION}/$archive"; \
       echo "${SOLIDCRAFT_SHA256}  /tmp/$archive" | sha256sum -c -; \
       mkdir -p /opt/solidcraft; tar -xzf "/tmp/$archive" -C /opt/solidcraft --strip-components=1; \

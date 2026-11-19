@@ -69,6 +69,19 @@ fn written(model: &Model) -> (Vec<u8>, Report) {
         .verification(Verification::Off)
         .write(model, &mut bytes, &mut report)
         .unwrap();
+    let doc = document(&bytes);
+    for row in &report.outcome().unwrap().features {
+        for id in &row.output.ids {
+            assert!(
+                doc["features"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|feature| feature["id"] == *id),
+                "{row:?}"
+            );
+        }
+    }
     (bytes, report)
 }
 
@@ -173,16 +186,22 @@ fn each_parts_history_is_reported() {
     let mut part = assembly.parts[0].clone();
     part.name = "Ball".to_owned();
     let mut wire = serde_json::to_value(&part.ir).unwrap();
-    wire["model"]["features"] = serde_json::json!([{
-        "id": "f3d:model:feature#1", "ordinal": 0, "name": "Ball", "suppressed": false,
-        "outputs": [wire["model"]["bodies"][0]["id"]],
-        "definition": {"definition": "sphere", "center": {"x": 5.0, "y": 5.0, "z": 5.0},
-                       "radius": 5.0, "op": "new_body"},
-    }]);
+    wire["model"]["features"] = serde_json::json!([{"id": "f3d:model:feature#1", "ordinal": 0, "name": "Ball", "suppressed": false, "outputs": [wire["geometry"]["bodies"][0]["id"]], "definition": {"kind": "operation", "value": {"kind": "sphere", "value": {"center": {"x": 5.0, "y": 5.0, "z": 5.0}, "radius": 5.0, "op": "new_body"}}}, "dependencies": [], "source_properties": {}, "source_content": []}]);
     part.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     assembly.parts.push(part);
     assembly.placements[1].part = 1;
-    let (_, report) = written(&model);
+    let (bytes, report) = written(&model);
+    let row = &report.outcome().unwrap().features[0];
+    assert_eq!(row.output.ids.len(), 1);
+    let doc = document(&bytes);
+    let saved = doc["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|feature| feature["id"] == row.output.ids[0])
+        .unwrap();
+    assert_eq!(saved["type"], "sphere");
+    assert_eq!(saved["name"], "Ball");
     let parts = report.parts();
     assert_eq!(parts.len(), 2);
     assert_eq!(parts[0].name, "synthetic_cube");
@@ -205,12 +224,7 @@ fn folders_keep_mapped_history_and_its_suppressed_original() {
     let assembly = model.assembly.as_mut().unwrap();
     let mut part = assembly.parts[0].clone();
     let mut wire = serde_json::to_value(&part.ir).unwrap();
-    wire["model"]["features"] = serde_json::json!([{
-        "id": "f3d:model:feature#1", "ordinal": 0, "name": "Ball", "suppressed": false,
-        "outputs": [wire["model"]["bodies"][0]["id"]],
-        "definition": {"definition": "sphere", "center": {"x": 5.0, "y": 5.0, "z": 5.0},
-                       "radius": 5.0, "op": "new_body"},
-    }]);
+    wire["model"]["features"] = serde_json::json!([{"id": "f3d:model:feature#1", "ordinal": 0, "name": "Ball", "suppressed": false, "outputs": [wire["geometry"]["bodies"][0]["id"]], "definition": {"kind": "operation", "value": {"kind": "sphere", "value": {"center": {"x": 5.0, "y": 5.0, "z": 5.0}, "radius": 5.0, "op": "new_body"}}}, "dependencies": [], "source_properties": {}, "source_content": []}]);
     part.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     assembly.parts.push(part);
     assembly.placements[1].part = 1;
@@ -240,16 +254,13 @@ fn an_assembly_parts_unverified_history_can_be_kept_hidden_beside_its_original()
     let assembly = model.assembly.as_mut().unwrap();
     let mut part = assembly.parts[0].clone();
     let mut wire = serde_json::to_value(&part.ir).unwrap();
-    wire["model"]["features"] = serde_json::json!([{
-        "id": "f3d:model:feature#1", "ordinal": 0, "name": "Ball", "suppressed": false,
-        "outputs": [wire["model"]["bodies"][0]["id"]],
-        "definition": {"definition": "sphere", "center": {"x": 5.0, "y": 5.0, "z": 5.0},
-                       "radius": 5.0, "op": "new_body"},
-    }]);
+    wire["model"]["features"] = serde_json::json!([{"id": "f3d:model:feature#1", "ordinal": 0, "name": "Ball", "suppressed": false, "outputs": [wire["geometry"]["bodies"][0]["id"]], "definition": {"kind": "operation", "value": {"kind": "sphere", "value": {"center": {"x": 5.0, "y": 5.0, "z": 5.0}, "radius": 5.0, "op": "new_body"}}}, "dependencies": [], "source_properties": {}, "source_content": []}]);
     part.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     assembly.parts.push(part);
     assembly.placements[1].part = 1;
-    for target in ["0.29.0", "0.30.0", "0.40.0", "0.41.0"] {
+    for target in [
+        "0.29.0", "0.30.0", "0.40.0", "0.41.0", "0.42.0", "0.43.0", "0.44.0",
+    ] {
         let mut report = Report::default();
         let mut bytes = Vec::new();
         SolidCraftWriter::new()
@@ -360,9 +371,11 @@ fn a_part_with_no_bodies_is_an_empty_component_its_joints_still_join() {
         let mut empty = assembly.parts[0].clone();
         let mut wire = serde_json::to_value(&empty.ir).unwrap();
         // Every arena emptied: a component with nothing in it.
-        for arena in wire["model"].as_object_mut().unwrap().values_mut() {
-            if arena.is_array() {
-                *arena = serde_json::json!([]);
+        for home in ["geometry", "model"] {
+            for arena in wire[home].as_object_mut().unwrap().values_mut() {
+                if arena.is_array() {
+                    *arena = serde_json::json!([]);
+                }
             }
         }
         empty.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
@@ -428,9 +441,11 @@ fn empty_leaf_numbers_include_holders_and_are_stable_across_workers() {
     let top = model.assembly.as_mut().unwrap();
     let mut empty = top.parts[0].clone();
     let mut wire = serde_json::to_value(&empty.ir).unwrap();
-    for arena in wire["model"].as_object_mut().unwrap().values_mut() {
-        if arena.is_array() {
-            *arena = json!([]);
+    for home in ["geometry", "model"] {
+        for arena in wire[home].as_object_mut().unwrap().values_mut() {
+            if arena.is_array() {
+                *arena = json!([]);
+            }
         }
     }
     empty.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
@@ -496,6 +511,40 @@ fn an_assembly_that_places_no_parts_is_written_as_an_empty_design() {
             "the assembly places no parts".to_owned()
         ))
     );
+}
+
+#[test]
+fn an_assembly_whose_placed_parts_are_empty_writes_its_own_bodies_as_one_part() {
+    let mut model = placed_twice();
+    if let Some(assembly) = &mut model.assembly {
+        for part in &mut assembly.parts {
+            part.ir.geometry.bodies.clear();
+            part.ir.geometry.faces.clear();
+        }
+    }
+    let writer = SolidCraftWriter::new().verification(Verification::Off);
+    assert_eq!(writer.convertible(&model), Ok(()));
+    let mut planned = Report::default();
+    writer.plan(&model, &mut planned);
+    let (bytes, report) = written(&model);
+    for report in [&planned, &report] {
+        let notes: Vec<_> = report
+            .losses()
+            .iter()
+            .filter(|loss| {
+                loss.detail
+                    .starts_with("the assembly's placed parts hold no geometry")
+            })
+            .collect();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].severity, dutchman_core::Severity::Degraded);
+    }
+    let flat = Model {
+        assembly: None,
+        ..model.clone()
+    };
+    let (flat_bytes, _) = written(&flat);
+    assert_eq!(document(&bytes), document(&flat_bytes));
 }
 
 #[test]
@@ -714,15 +763,15 @@ fn evaluate(cli: &Path, design: &[u8]) -> Vec<Value> {
 fn with_components(nested: bool) -> Model {
     let part = placed_twice().assembly.unwrap().parts[0].clone();
     let mut wire = serde_json::to_value(&part.ir).unwrap();
-    let body = wire["model"]["bodies"][0]["id"].clone();
+    let body = wire["geometry"]["bodies"][0]["id"].clone();
     wire["model"]["product_definitions"] = serde_json::json!([
-        {"id": "f3d:model:component#block", "kind": "part", "label": "Block", "bodies": [body]},
-        {"id": "f3d:model:component#root", "kind": "part", "label": "Top", "bodies": []},
+        {"id": "f3d:model:component#block", "kind": "part", "label": "Block", "bodies": [body], "bom_properties": {}, "sketches": []},
+        {"id": "f3d:model:component#root", "kind": "part", "label": "Top", "bodies": [], "bom_properties": {}, "sketches": []},
     ]);
     let placed = |key: u32, definition: &str, x: f64, parent: Value| {
         serde_json::json!({
             "id": format!("f3d:model:occurrence#{key}"),
-            "prototype": {"scope": "local", "definition": format!("f3d:model:component#{definition}")},
+            "prototype": {"kind": "local", "definition": format!("f3d:model:component#{definition}")},
             "parent": parent,
             "ordinal": key,
             "transform": [[1.0, 0.0, 0.0, x], [0.0, 1.0, 0.0, 0.0], [0.0, 0.0, 1.0, 0.0]],
@@ -774,10 +823,7 @@ fn a_design_with_components_becomes_components_and_occurrences() {
 fn with_sketches() -> Model {
     let model = with_components(false);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    let sketch = |key: u32, placement: Value| {
-        serde_json::json!({"id": format!("f3d:model:sketch#{key}"), "name": format!("Layout {key}"),
-                           "visible": false, "placement": placement})
-    };
+    let sketch = |key: u32, placement: Value| serde_json::json!({"id": format!("f3d:model:sketch#{key}"), "name": format!("Layout {key}"), "visible": false, "placement": placement, "profiles": []});
     wire["model"]["sketches"] = serde_json::json!([
         sketch(
             1,
@@ -789,23 +835,14 @@ fn with_sketches() -> Model {
         ),
         sketch(2, serde_json::json!({"kind": "unresolved"})),
     ]);
-    wire["model"]["sketch_entities"] = serde_json::json!([{
-        "id": "f3d:model:sketch-entity#1",
-        "sketch": "f3d:model:sketch#1",
-        "construction": false,
-        "geometry": {"kind": "line", "start": {"u": 0.0, "v": 0.0}, "end": {"u": 20.0, "v": 0.0}},
-    }]);
+    wire["model"]["sketch_entities"] = serde_json::json!([{"id": "f3d:model:sketch-entity#1", "sketch": "f3d:model:sketch#1", "construction": false, "geometry": {"kind": "line", "start": {"u": 0.0, "v": 0.0}, "end": {"u": 20.0, "v": 0.0}}, "endpoint_refs": []}]);
     wire["model"]["sketch_constraints"] = serde_json::json!([{
         "id": "f3d:model:sketch-constraint#1",
         "sketch": "f3d:model:sketch#1",
         "definition": {"kind": "distance", "entities": ["f3d:model:sketch-entity#1"],
                        "parameter": "f3d:model:parameter#1"},
     }]);
-    let parameter = |key: u32, name: &str, value: f64| {
-        serde_json::json!({"id": format!("f3d:model:parameter#{key}"), "name": name,
-                           "expression": format!("{value} mm"),
-                           "value": {"kind": "length", "value": value}})
-    };
+    let parameter = |key: u32, name: &str, value: f64| serde_json::json!({"id": format!("f3d:model:parameter#{key}"), "name": name, "expression": format!("{value} mm"), "value": {"kind": "length", "value": value}, "ordinal": 0, "dependencies": [], "properties": {}});
     wire["model"]["parameters"] =
         serde_json::json!([parameter(1, "span", 20.0), parameter(2, "spare", 5.0)]);
     Model {
@@ -920,29 +957,20 @@ fn with_sketch_of_a_component_without_bodies() -> Model {
     wire["model"]["sketches"] = serde_json::json!(ids
         .iter()
         .enumerate()
-        .map(|(n, id)| serde_json::json!({
-            "id": id, "name": format!("Layout {}", n + 1),
-            "placement": {"kind": "resolved", "frame": {
+        .map(|(n, id)| serde_json::json!({"id": id, "name": format!("Layout {}", n + 1), "placement": {"kind": "resolved", "frame": {
                 "origin": {"x": 0.0, "y": 0.0, "z": 0.0},
                 "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
                 "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0},
-            }},
-        }))
+            }}, "profiles": []}))
         .collect::<Vec<_>>());
     wire["model"]["sketch_entities"] = serde_json::json!(ids
         .iter()
         .enumerate()
-        .map(|(n, id)| serde_json::json!({
-            "id": format!("f3d:model:sketch-entity#{n}"), "sketch": id, "construction": false,
-            "geometry": {"kind": "line", "start": {"u": 0.0, "v": 0.0}, "end": {"u": 20.0, "v": 0.0}},
-        }))
+        .map(|(n, id)| serde_json::json!({"id": format!("f3d:model:sketch-entity#{n}"), "sketch": id, "construction": false, "geometry": {"kind": "line", "start": {"u": 0.0, "v": 0.0}, "end": {"u": 20.0, "v": 0.0}}, "endpoint_refs": []}))
         .collect::<Vec<_>>());
     let definitions = wire["model"]["product_definitions"].as_array_mut().unwrap();
     definitions[1]["sketches"] = serde_json::json!([ids[0]]);
-    definitions.push(serde_json::json!({
-        "id": "f3d:model:component#ghost", "kind": "part", "label": "Ghost",
-        "bodies": [], "sketches": [ids[1]],
-    }));
+    definitions.push(serde_json::json!({"id": "f3d:model:component#ghost", "kind": "part", "label": "Ghost", "bodies": [], "sketches": [ids[1]], "bom_properties": {}}));
     let mut model = Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
         ..model
@@ -1135,22 +1163,15 @@ fn jointed() -> Model {
     let side = |key: Option<u32>| {
         let operand = match key {
             None => {
-                serde_json::json!({"container": {"container": "root"}, "object": "root:origin"})
+                serde_json::json!({"container": {"kind": "root"}, "object": "root:origin", "subelements": []})
             }
-            Some(key) => serde_json::json!({
-                "container": {"container": "occurrence", "occurrence": format!("f3d:model:occurrence#{key}")},
-                "object": key.to_string(),
-            }),
+            Some(key) => {
+                serde_json::json!({"container": {"kind": "occurrence", "occurrence": format!("f3d:model:occurrence#{key}"), "occurrence_path": []}, "object": key.to_string(), "subelements": []})
+            }
         };
         serde_json::json!({"operand": operand, "frame": frame(key), "detached": false})
     };
-    let joint = |key: u32, a: Value, b: Value| {
-        serde_json::json!({
-            "id": format!("f3d:model:joint#{key}"),
-            "operands": {"arity": "pair", "kind": {"kind": "fixed"}, "connectors": [a, b]},
-            "suppressed": false,
-        })
-    };
+    let joint = |key: u32, a: Value, b: Value| serde_json::json!({"id": format!("f3d:model:joint#{key}"), "operands": {"kind": "pair", "value": {"kind": {"kind": "fixed"}, "connectors": [a, b]}}, "suppressed": false, "drives": []});
     wire["model"]["assembly_joints"] = serde_json::json!([
         joint(1, side(Some(0)), side(Some(1))),
         joint(2, side(None), side(Some(9))),
@@ -1292,22 +1313,15 @@ fn hinged(kind: Value) -> Model {
     let side = |key: Option<u32>, at: Value| {
         let operand = match key {
             None => {
-                serde_json::json!({"container": {"container": "root"}, "object": "root:origin"})
+                serde_json::json!({"container": {"kind": "root"}, "object": "root:origin", "subelements": []})
             }
-            Some(key) => serde_json::json!({
-                "container": {"container": "occurrence", "occurrence": format!("f3d:model:occurrence#{key}")},
-                "object": key.to_string(),
-            }),
+            Some(key) => {
+                serde_json::json!({"container": {"kind": "occurrence", "occurrence": format!("f3d:model:occurrence#{key}"), "occurrence_path": []}, "object": key.to_string(), "subelements": []})
+            }
         };
         serde_json::json!({"operand": operand, "frame": at, "detached": false})
     };
-    let joint = |key: u32, kind: Value, a: Value, b: Value| {
-        serde_json::json!({
-            "id": format!("f3d:model:joint#{key}"),
-            "operands": {"arity": "pair", "kind": kind, "connectors": [a, b]},
-            "suppressed": false,
-        })
-    };
+    let joint = |key: u32, kind: Value, a: Value, b: Value| serde_json::json!({"id": format!("f3d:model:joint#{key}"), "operands": {"kind": "pair", "value": {"kind": kind, "connectors": [a, b]}}, "suppressed": false, "drives": []});
     wire["model"]["assembly_joints"] = serde_json::json!([
         joint(
             1,
@@ -1407,7 +1421,7 @@ fn joints_tied_to_nothing_ground_one_part_and_keep_their_frame_sense() {
 #[test]
 fn revolute_and_slider_joints_are_written_with_their_motion() {
     let (bytes, report) = written(&hinged(serde_json::json!({"kind": "revolute",
-        "angular_limits": {"bounds": "range", "minimum": -1.0, "maximum": 2.0}})));
+        "angular_limits": {"kind": "range", "minimum": -1.0, "maximum": 2.0}})));
     let mut archive = ZipArchive::new(Cursor::new(bytes)).unwrap();
     let mut text = String::new();
     archive
@@ -1462,10 +1476,10 @@ fn joint_offsets_keep_the_written_snaps_closed() {
         for sense in ["opposed", "aligned"] {
             let mut model = hinged(kind.clone());
             let mut wire = serde_json::to_value(&model.ir).unwrap();
-            wire["model"]["assembly_joints"][1]["operands"]["frame_sense"] = json!(sense);
+            wire["model"]["assembly_joints"][1]["operands"]["value"]["frame_sense"] = json!(sense);
             // Start off the joint axis so each kind must place the unposed second part.
-            wire["model"]["assembly_joints"][1]["operands"]["connectors"][1]["frame"][1][3] =
-                json!(4.0);
+            wire["model"]["assembly_joints"][1]["operands"]["value"]["connectors"][1]["frame"][1]
+                [3] = json!(4.0);
             model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
             model.assembly = dutchman_core::local_assembly(&model).unwrap();
             let (bytes, _) = written(&model);
@@ -1556,10 +1570,10 @@ fn joint_offsets_keep_the_written_snaps_closed() {
 fn grounded_hinge() -> Model {
     let mut model = hinged(serde_json::json!({"kind": "revolute"}));
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    let connector = wire["model"]["assembly_joints"][0]["operands"]["connectors"][1].clone();
-    wire["model"]["assembly_joints"][0]["operands"] = serde_json::json!({
-        "arity": "grounded", "connector": connector,
-    });
+    let connector =
+        wire["model"]["assembly_joints"][0]["operands"]["value"]["connectors"][1].clone();
+    wire["model"]["assembly_joints"][0]["operands"] =
+        serde_json::json!({"kind": "grounded", "value": {"connector": connector}});
     for (index, y) in [5.0, 35.0].into_iter().enumerate() {
         wire["model"]["occurrences"][index]["transform"] = serde_json::json!([
             [0.0, -1.0, 0.0, 15.0],
@@ -1787,11 +1801,8 @@ fn flattened_parts_keep_helper_info_once_per_part() {
     let part = &mut model.assembly.as_mut().unwrap().parts[0];
     let mut wire = serde_json::to_value(&part.ir).unwrap();
     wire["model"]["features"] = serde_json::json!([
-        {"id": "test:model:feature#helper", "ordinal": 0, "name": "Unused point",
-            "suppressed": false, "definition": {"definition": "datum_point",
-                "position": {"x": 0.0, "y": 0.0, "z": 0.0}}},
-        {"id": "test:model:feature#later", "ordinal": 1, "name": "Later",
-            "suppressed": false, "definition": {"definition": "native", "kind": "Mystery"}}
+        {"id": "test:model:feature#helper", "ordinal": 0, "name": "Unused point", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "datum_point", "value": {"position": {"x": 0.0, "y": 0.0, "z": 0.0}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []},
+        {"id": "test:model:feature#later", "ordinal": 1, "name": "Later", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "native", "value": {"kind": "Mystery", "parameters": {}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}
     ]);
     part.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     let (_, report) = written(&model);
@@ -2005,28 +2016,20 @@ fn mixed_histories() -> Model {
     let mut part = assembly.parts[0].clone();
     part.name = "Repeated name".to_owned();
     let mut wire = serde_json::to_value(&part.ir).unwrap();
-    let sphere = serde_json::json!({
-        "id": "test:model:feature#sphere", "ordinal": 0, "name": "Ball", "suppressed": false,
-        "outputs": [wire["model"]["bodies"][0]["id"]],
-        "definition": {"definition": "sphere", "center": {"x": 5.0, "y": 5.0, "z": 5.0},
-                       "radius": 5.0, "op": "new_body"},
-    });
+    let sphere = serde_json::json!({"id": "test:model:feature#sphere", "ordinal": 0, "name": "Ball", "suppressed": false, "outputs": [wire["geometry"]["bodies"][0]["id"]], "definition": {"kind": "operation", "value": {"kind": "sphere", "value": {"center": {"x": 5.0, "y": 5.0, "z": 5.0}, "radius": 5.0, "op": "new_body"}}}, "dependencies": [], "source_properties": {}, "source_content": []});
     wire["model"]["features"] = serde_json::json!([sphere]);
     part.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     assembly.parts.push(part.clone());
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
-        .push(serde_json::json!({
-            "id": "test:model:feature#later", "ordinal": 1, "name": "Later", "suppressed": false,
-            "definition": {"definition": "native", "kind": "Mystery"},
-        }));
+        .push(serde_json::json!({"id": "test:model:feature#later", "ordinal": 1, "name": "Later", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "native", "value": {"kind": "Mystery", "parameters": {}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
     part.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     assembly.parts.push(part.clone());
     // A restatement failure must retry serially and keep its Dropped note at this position.
-    part.ir.model.faces.clear();
+    part.ir.geometry.faces.clear();
     assembly.parts.push(part.clone());
-    part.ir.model.bodies.clear();
+    part.ir.geometry.bodies.clear();
     assembly.parts.push(part);
     assembly.placements = assembly
         .parts
@@ -2071,7 +2074,7 @@ fn parallel_replay_checks_keep_partial_histories_and_reports_identical() {
 fn bound_components(mode: &str, stored: bool) -> Model {
     let mut model = with_components(false);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    let face_ids: Vec<_> = wire["model"]["faces"]
+    let face_ids: Vec<_> = wire["geometry"]["faces"]
         .as_array()
         .unwrap()
         .iter()
@@ -2082,21 +2085,21 @@ fn bound_components(mode: &str, stored: bool) -> Model {
         text = text.replace(id, &format!("f3d:brep/component.smb/brep:entity#{n}"));
     }
     wire = serde_json::from_str(&text).unwrap();
-    let body = wire["model"]["bodies"][0]["id"].clone();
-    wire["model"]["bodies"][0]
+    let body = wire["geometry"]["bodies"][0]["id"].clone();
+    wire["geometry"]["bodies"][0]
         .as_object_mut()
         .unwrap()
         .remove("color");
     wire["model"]["appearances"] = json!([
-        {"id": "synthetic:test:appearance#red", "name": "Red paint", "base_color": {"r": 1.0, "g": 0.0, "b": 0.0, "a": 0.4}},
-        {"id": "synthetic:test:appearance#blue", "name": "Blue paint", "base_color": {"r": 0.0, "g": 0.0, "b": 1.0, "a": 1.0}},
+        {"id": "synthetic:test:appearance#red", "name": "Red paint", "base_color": {"r": 1.0, "g": 0.0, "b": 0.0, "a": 0.4}, "properties": {}, "textures": []},
+        {"id": "synthetic:test:appearance#blue", "name": "Blue paint", "base_color": {"r": 0.0, "g": 0.0, "b": 1.0, "a": 1.0}, "properties": {}, "textures": []},
     ]);
     let mut bindings = Vec::new();
     if mode.starts_with("body") {
-        bindings.push(json!({"id": "synthetic:test:appearance-binding#body", "target": {"kind": "body", "id": body}, "appearance": "synthetic:test:appearance#red"}));
+        bindings.push(json!({"id": "synthetic:test:appearance-binding#body", "target": {"entity": {"kind": "body", "value": body}}, "appearance": "synthetic:test:appearance#red", "channels": {}}));
     }
     if mode != "body" {
-        for (n, face) in wire["model"]["faces"]
+        for (n, face) in wire["geometry"]["faces"]
             .as_array()
             .unwrap()
             .iter()
@@ -2105,13 +2108,12 @@ fn bound_components(mode: &str, stored: bool) -> Model {
             if mode == "body_face" && n != 0 {
                 continue;
             }
-            bindings.push(json!({"id": format!("synthetic:test:appearance-binding#{n}"), "target": {"kind": "face", "id": face["id"]},
-                "appearance": if mode.starts_with("body_") || (mode == "mixed" && n == 0) { "synthetic:test:appearance#blue" } else { "synthetic:test:appearance#red" }}));
+            bindings.push(json!({"id": format!("synthetic:test:appearance-binding#{n}"), "target": {"entity": {"kind": "face", "value": face["id"]}}, "appearance": if mode.starts_with("body_") || (mode == "mixed" && n == 0) { "synthetic:test:appearance#blue" } else { "synthetic:test:appearance#red" }, "channels": {}}));
         }
     }
     wire["model"]["appearance_bindings"] = json!(bindings);
     wire["model"]["features"] = if stored {
-        json!([{"id": "synthetic:test:feature#stored", "ordinal": 0, "name": "Stored solid", "suppressed": false, "dependencies": [], "outputs": [body], "definition": {"definition": "stored_geometry"}}])
+        json!([{"id": "synthetic:test:feature#stored", "ordinal": 0, "name": "Stored solid", "suppressed": false, "dependencies": [], "outputs": [body], "definition": {"kind": "operation", "value": {"kind": "stored_geometry", "value": {}}}, "source_properties": {}, "source_content": []}])
     } else {
         json!([])
     };
@@ -2220,9 +2222,7 @@ fn component_appearance_bindings_colour_imports_and_stored_solids() {
 fn missing_face_appearance_bindings_are_reported() {
     let mut model = bound_components("uniform", false);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    wire["model"]["appearance_bindings"].as_array_mut().unwrap().push(json!({
-        "id": "synthetic:test:appearance-binding#missing", "target": {"kind": "face", "id": "f3d:brep/component.smb/brep:entity#missing"}, "appearance": "synthetic:test:appearance#red"
-    }));
+    wire["model"]["appearance_bindings"].as_array_mut().unwrap().push(json!({"id": "synthetic:test:appearance-binding#missing", "target": {"entity": {"kind": "face", "value": "f3d:brep/component.smb/brep:entity#missing"}}, "appearance": "synthetic:test:appearance#red", "channels": {}}));
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model.assembly = dutchman_core::local_assembly(&model).unwrap();
     let (_, report) = written(&model);
@@ -2429,7 +2429,7 @@ fn definition_points(bytes: &[u8], component: &Value) -> Vec<[f64; 3]> {
     let model = read(Format::Step, &path, &mut Report::default()).unwrap();
     model
         .ir
-        .model
+        .geometry
         .points
         .iter()
         .map(|p| {
@@ -3064,22 +3064,26 @@ fn a_part_placed_at_a_changed_layout_is_not_repeated() {
 fn bound_components_with_wire(stored: bool) -> Model {
     let mut model = bound_components("body", stored);
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    let edge = wire["model"]["edges"][0]["id"].clone();
+    let edge = wire["geometry"]["edges"][0]["id"].clone();
     let body = "synthetic:test:body#saved-edge";
     let region = "synthetic:test:region#saved-edge";
     let shell = "synthetic:test:shell#saved-edge";
-    wire["model"]["bodies"].as_array_mut().unwrap().push(json!({
-        "id": body, "kind": "wire", "regions": [region], "name": "Body"
-    }));
-    wire["model"]["regions"]
+    wire["geometry"]["bodies"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id": body, "kind": "wire", "name": "Body"}));
+    wire["geometry"]["regions"]
         .as_array_mut()
         .unwrap()
         .push(json!({
             "id": region, "body": body, "shells": [shell]
         }));
-    wire["model"]["shells"].as_array_mut().unwrap().push(json!({
-        "id": shell, "region": region, "members": [{"kind": "wire_edge", "id": edge}]
-    }));
+    wire["geometry"]["shells"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "id": shell, "region": region, "members": [{"kind": "wire_edge", "id": edge}]
+        }));
     wire["model"]["product_definitions"]
         .as_array_mut()
         .unwrap()
@@ -3106,7 +3110,7 @@ fn saved_wire_edges_keep_the_solid_appearance_in_each_placement() {
         let model = bound_components_with_wire(stored);
         assert!(model.assembly.as_ref().unwrap().parts[0]
             .ir
-            .model
+            .geometry
             .bodies
             .iter()
             .any(|body| body.id.as_str() == "synthetic:test:body#saved-edge"));
@@ -3191,24 +3195,23 @@ fn an_unwritable_sibling_keeps_the_written_bodys_appearance() {
         let shell = "synthetic:test:shell#unresolved-solid";
         let face = "synthetic:test:face#unresolved-solid";
         let surface = "synthetic:test:surface#unresolved-solid";
-        wire["model"]["bodies"]
+        wire["geometry"]["bodies"]
             .as_array_mut()
             .unwrap()
-            .push(json!({"id":body,"kind":"solid","name":"Body","regions":[region]}));
-        wire["model"]["regions"]
+            .push(json!({"id": body, "kind": "solid", "name": "Body"}));
+        wire["geometry"]["regions"]
             .as_array_mut()
             .unwrap()
             .push(json!({"id":region,"body":body,"shells":[shell]}));
-        wire["model"]["shells"]
+        wire["geometry"]["shells"]
             .as_array_mut()
             .unwrap()
-            .push(json!({"id":shell,"region":region,"members":[{"kind":"face","id":face}]}));
-        wire["model"]["faces"].as_array_mut().unwrap().push(json!({"id":face,"shell":shell,"surface":surface,"sense":"forward","loops":{"classification":"unspecified","loops":[]}}));
-        wire["model"]["surfaces"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({"id":surface,"geometry":{
-            "kind":"unknown"}}));
+            .push(json!({"id":shell,"region":region,"members":[]}));
+        wire["geometry"]["faces"].as_array_mut().unwrap().push(json!({"id":face,"shell":shell,"surface":surface,"sense":"forward","loops":{"kind": "unspecified", "loops": []}}));
+        wire["geometry"]["surfaces"].as_array_mut().unwrap().push(
+            json!({"id": surface, "geometry": {"kind":"solved", "value": {
+            "kind":"unknown"}}}),
+        );
         wire["model"]["product_definitions"]
             .as_array_mut()
             .unwrap()
@@ -3224,15 +3227,18 @@ fn an_unwritable_sibling_keeps_the_written_bodys_appearance() {
                 .unwrap()
                 .push(json!(body));
         }
-        wire["model"]["appearance_bindings"].as_array_mut().unwrap().push(json!({
-            "id":"synthetic:test:binding#unresolved-solid", "target":{"kind":"body","id":body},"appearance":"synthetic:test:appearance#blue"}));
+        wire["model"]["appearance_bindings"].as_array_mut().unwrap().push(json!({"id": "synthetic:test:binding#unresolved-solid", "target": {"entity": {"kind":"body","value":body}}, "appearance": "synthetic:test:appearance#blue", "channels": {}}));
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         model.assembly = dutchman_core::local_assembly(&model).unwrap();
         let part = &model.assembly.as_ref().unwrap().parts[0];
         assert!(
-            part.ir.model.bodies.iter().any(|b| b.id.as_str() == body),
+            part.ir
+                .geometry
+                .bodies
+                .iter()
+                .any(|b| b.id.as_str() == body),
             "{:?}",
-            part.ir.model.bodies
+            part.ir.geometry.bodies
         );
         assert!(
             part.ir

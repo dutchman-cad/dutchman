@@ -72,7 +72,10 @@ pub async fn security_headers(request: Request, next: Next) -> Response {
     for (name, value) in [
         (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         (header::X_FRAME_OPTIONS, "DENY"),
-        (header::REFERRER_POLICY, "no-referrer"),
+        // Not `no-referrer`: with it, browsers send `Origin: null` on the page's own form
+        // posts, and `allowed_origin` refuses every upload. `same-origin` still sends
+        // nothing to other sites.
+        (header::REFERRER_POLICY, "same-origin"),
         (
             header::CONTENT_SECURITY_POLICY,
             "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",

@@ -135,6 +135,38 @@ sudo ln -sf "/Applications/Dutchman Convert.app/Contents/Helpers/dutchman-mcp" /
 
 With 0.1.5 or earlier, write `/Applications/Dutchman.app` in these commands instead.
 
+## Linux: the AppImage
+
+Each release from 0.2.10 on has one AppImage per processor, `dutchman-VERSION-x86_64.AppImage` and
+`dutchman-VERSION-aarch64.AppImage`, each with a `.sha256` file. It runs on any distribution
+with a recent enough glibc (the archives are built in Debian 12) and needs the same X11 or
+Wayland session with OpenGL as the archive. Nothing is installed:
+
+```sh
+chmod +x dutchman-VERSION-x86_64.AppImage
+./dutchman-VERSION-x86_64.AppImage
+```
+
+That starts the desktop app. A launcher that manages AppImages, such as Gear Lever, adds it to
+the application menu and can put it on your `PATH`; it also finds new releases, because each
+AppImage carries update information (a `.zsync` file is attached to every release for
+AppImageUpdate and similar tools). The app's own **Update now** also replaces the AppImage
+file after checking its SHA-256; if its folder is not writable, it says so and you download the
+new file instead.
+
+The same file holds `dutchman`, `dutchman-mcp`, and `dutchman-web`. Choose one by name, with
+`--run`, or with an environment variable:
+
+```sh
+./dutchman-VERSION-x86_64.AppImage --run dutchman convert design.f3d
+DUTCHMAN_APPIMAGE_RUN=dutchman-mcp ./dutchman-VERSION-x86_64.AppImage
+# a link named dutchman runs the command line program, so it is on your PATH under that name
+ln -s "$PWD/dutchman-VERSION-x86_64.AppImage" ~/.local/bin/dutchman
+dutchman --version
+```
+
+Links named `dutchman-mcp` and `dutchman-web` work the same way.
+
 ## From a release archive
 
 Each [release](https://github.com/dutchman-cad/dutchman/releases) has archives for the
@@ -286,9 +318,9 @@ it says so under the check option:
 
 Dutchman is made for the current SolidCraft (any release from the last two weeks);
 older versions get simplified features, or pass `--solidcraft-version x.y.z` on
-`convert`, `convert-all`, or `watch`. The current window is 0.18.2–0.41; roundtrip
+`convert`, `convert-all`, or `watch`. The current window is 0.18.2–0.44; roundtrip
 checks cover its oldest and newest releases. Each design targets the found CLI's version,
-even with `--no-verify`, else the newest release known at build time (currently 0.41).
+even with `--no-verify`, else the newest release known at build time (currently 0.44).
 Versions below 0.18.2 and malformed versions are refused. Older targets remain accepted
 down to 0.18.2. Features that need a newer release block history with a named reason
 and preserve the original geometry as for other blockers.

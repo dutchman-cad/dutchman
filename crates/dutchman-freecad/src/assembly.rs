@@ -87,12 +87,12 @@ pub(crate) fn finish(
         let raw = raw.map_or(&[][..], Vec::as_slice);
         let paths = direct_paths(&wire, assembly);
         for (index, row) in raw.iter().enumerate() {
-            let definition = row.pointer("/operands/kind");
+            let definition = row.pointer("/operands/value/kind");
             let family = definition
                 .and_then(|kind| kind.get("kind"))
                 .and_then(Value::as_str);
             let grounded =
-                row.pointer("/operands/arity").and_then(Value::as_str) == Some("grounded");
+                row.pointer("/operands/kind").and_then(Value::as_str) == Some("grounded");
             if grounded || matches!(family, Some("fixed" | "revolute" | "slider")) {
                 // Written from the converted joint above.
                 if family == Some("fixed")
@@ -188,7 +188,7 @@ fn direct_paths(wire: &Value, assembly: &Assembly) -> BTreeMap<String, Vec<usize
     roots.sort_by_key(|row| row.get("ordinal").and_then(Value::as_u64));
     let mut out = BTreeMap::new();
     for (index, row) in roots.into_iter().enumerate() {
-        if row.pointer("/prototype/scope").and_then(Value::as_str) != Some("local") {
+        if row.pointer("/prototype/kind").and_then(Value::as_str) != Some("local") {
             return BTreeMap::new();
         }
         let Some(placement) = assembly.placements.get(index) else {
@@ -211,7 +211,7 @@ fn operand(connector: &Value, paths: &BTreeMap<String, Vec<usize>>) -> Result<Ve
     let container = operand
         .get("container")
         .ok_or("the operand has no container")?;
-    if container.get("container").and_then(Value::as_str) != Some("occurrence") {
+    if container.get("kind").and_then(Value::as_str) != Some("occurrence") {
         return Err(
             "root and external CADIR operands are not supported yet in FreeCAD output".to_owned(),
         );
@@ -304,9 +304,9 @@ fn raw_joint(
         .get("suppressed")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    if operands.get("arity").and_then(Value::as_str) == Some("grounded") {
+    if operands.get("kind").and_then(Value::as_str) == Some("grounded") {
         let connector = operands
-            .get("connector")
+            .pointer("/value/connector")
             .ok_or("the ground has no connector")?;
         let path = operand(connector, paths)?;
         if suppressed {
@@ -314,6 +314,7 @@ fn raw_joint(
         }
         return Ok((None, Some(path)));
     }
+    let operands = operands.get("value").ok_or("the joint has no family")?;
     let definition = operands.get("kind").ok_or("the joint has no family")?;
     let family = definition
         .get("kind")

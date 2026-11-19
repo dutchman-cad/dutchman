@@ -75,21 +75,15 @@ impl std::fmt::Display for SelectError {
 /// CADIR's arenas), as a size to rank parts by.
 pub fn entity_count(model: &Model) -> u64 {
     let m = &model.ir.model;
+    let g = &model.ir.geometry;
     let mut total = 0usize;
+    macro_rules! count { ($($arena:ident),+ $(,)?) => { $( total = total.saturating_add(g.$arena.len()); )+ }; }
+    count!(
+        bodies, regions, shells, faces, loops, coedges, edges, vertices, points, curves, surfaces,
+        pcurves,
+    );
     macro_rules! count { ($($arena:ident),+ $(,)?) => { $( total = total.saturating_add(m.$arena.len()); )+ }; }
     count!(
-        bodies,
-        regions,
-        shells,
-        faces,
-        loops,
-        coedges,
-        edges,
-        vertices,
-        points,
-        curves,
-        surfaces,
-        pcurves,
         features,
         sketches,
         parameters,
@@ -108,7 +102,7 @@ pub fn catalog(model: &Model) -> Vec<PartInfo> {
             parent: None,
             depth: 0,
             assembly: false,
-            bodies: model.ir.model.bodies.len(),
+            bodies: model.ir.geometry.bodies.len(),
             entities: entity_count(model),
             subtree_entities: entity_count(model),
             name: model.name.clone(),
@@ -127,7 +121,7 @@ fn list(assembly: &Assembly, parent: Option<usize>, depth: usize, out: &mut Vec<
             parent,
             depth,
             assembly: part.assembly.is_some(),
-            bodies: part.ir.model.bodies.len(),
+            bodies: part.ir.geometry.bodies.len(),
             entities: entity_count(part),
             subtree_entities: 0,
             name: part.name.clone(),
@@ -415,10 +409,7 @@ mod tests {
         ir["model"]["features"] = Value::Array(
             rows.iter()
                 .map(|(ordinal, suppressed)| {
-                    json!({"id": format!("f3d:model:feature#{}", ordinal + 100),
-                        "ordinal": ordinal, "name": format!("f{ordinal}"),
-                        "suppressed": suppressed,
-                        "definition": {"definition": "native", "kind": "X", "parameters": {}}})
+                    json!({"id": format!("f3d:model:feature#{}", ordinal + 100), "ordinal": ordinal, "name": format!("f{ordinal}"), "suppressed": suppressed, "definition": {"kind": "operation", "value": {"kind": "native", "value": {"kind": "X", "parameters": {}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []})
                 })
                 .collect(),
         );

@@ -1,6 +1,7 @@
 name: Release image
 
-# Publishes ghcr.io/dutchman-cad/dutchman:X.Y.Z and :latest when a release is published, from
+# Publishes ghcr.io/dutchman-cad/dutchman:X.Y.Z and :latest, and the same image with SolidCraft's
+# checker as :X.Y.Z-solidcraft and :latest-solidcraft (docker/solidcraft.env), when a release is published, from
 # that release's own checksum-verified Linux archives, with no second Rust build. A pushed tag
 # only makes a draft (release.yml), so nothing reaches the registry before a maintainer
 # publishes the release. Runs on demand for a published release tag too, to republish its image.
@@ -73,6 +74,7 @@ jobs:
         with:
           context: build-context
           file: docker/release.Dockerfile
+          target: default
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
@@ -81,3 +83,21 @@ jobs:
           build-args: |
             VERSION=${{ steps.metadata.outputs.version }}
             LICENSES=${{ steps.metadata.outputs.licenses }}
+      - name: Read the SolidCraft pin
+        run: grep -E '^SOLIDCRAFT_[A-Z0-9_]+=[0-9a-f.]+$' docker/solidcraft.env >> "$GITHUB_ENV"
+      - uses: docker/build-push-action@v7
+        with:
+          context: build-context
+          file: docker/release.Dockerfile
+          target: solidcraft
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/dutchman-cad/dutchman:${{ steps.metadata.outputs.version }}-solidcraft
+            ghcr.io/dutchman-cad/dutchman:latest-solidcraft
+          build-args: |
+            VERSION=${{ steps.metadata.outputs.version }}
+            LICENSES=${{ steps.metadata.outputs.licenses }}
+            SOLIDCRAFT_VERSION=${{ env.SOLIDCRAFT_VERSION }}
+            SOLIDCRAFT_SHA256_AMD64=${{ env.SOLIDCRAFT_SHA256_AMD64 }}
+            SOLIDCRAFT_SHA256_ARM64=${{ env.SOLIDCRAFT_SHA256_ARM64 }}

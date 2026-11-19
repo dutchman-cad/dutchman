@@ -573,7 +573,7 @@ fn note_assumptions(
         .filter(|joint| joint.get("suppressed").and_then(Value::as_bool) != Some(true))
     {
         for connector in joint
-            .pointer("/operands/connectors")
+            .pointer("/operands/value/connectors")
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
@@ -715,8 +715,7 @@ mod tests {
             crate::PartPositions::FirstPlaced,
         ] {
             let mut document = json!({"model":{"occurrences":[
-                {"id":"a","native_ref":"r","transform":at(0.0),"parent":{"kind":"root"},
-                 "prototype":{"scope":"external","document":{"path":"dir/Pin.f3d"}}}
+                {"id": "a", "native_ref": "r", "transform": at(0.0), "parent": {"kind":"root"}, "prototype": {"kind":"external","document":{"path":"dir/Pin.f3d"}}, "ordinal": 0, "scale": [1, 1, 1]}
             ]},"native":{"f3d":{"xref_references":[{"id":"r"}]}}});
             assert_eq!(
                 assumed(&mut document, mode),
@@ -728,17 +727,14 @@ mod tests {
     #[test]
     fn a_part_with_only_its_stored_pose_is_named_with_what_holds_it_unless_a_joint_holds_it() {
         let rows = json!([
-            {"id":"holder","native_ref":"h","transform":at(0.0),"parent":{"kind":"root"},
-             "prototype":{"definition":"d1"}},
-            {"id":"loose","native_ref":"l","transform":at(5.0),
-             "parent":{"kind":"occurrence","occurrence":"holder"},"prototype":{"definition":"d2"}},
-            {"id":"joined","native_ref":"j","transform":at(9.0),"parent":{"kind":"root"},
-             "prototype":{"definition":"d2"}}
+            {"id": "holder", "native_ref": "h", "transform": at(0.0), "parent": {"kind":"root"}, "prototype": {"definition":"d1"}, "ordinal": 0, "scale": [1, 1, 1]},
+            {"id": "loose", "native_ref": "l", "transform": at(5.0), "parent": {"kind":"occurrence","occurrence":"holder"}, "prototype": {"definition":"d2"}, "ordinal": 0, "scale": [1, 1, 1]},
+            {"id": "joined", "native_ref": "j", "transform": at(9.0), "parent": {"kind":"root"}, "prototype": {"definition":"d2"}, "ordinal": 0, "scale": [1, 1, 1]}
         ]);
         let mut document = json!({"model":{"occurrences":rows,
             "product_definitions":[{"id":"d1","label":"Motor"},{"id":"d2","label":"Pulley"}],
-            "assembly_joints":[{"operands":{"connectors":[
-                {"operand":{"container":{"occurrence":"joined"}}}]}}]},
+            "assembly_joints":[{"operands":{"kind":"two","value":{"connectors":[
+                {"operand":{"container":{"occurrence":"joined"}}}]}}}]},
             "native":{"f3d":{}}});
         assert_eq!(
             assumed(&mut document, crate::PartPositions::Smart),
@@ -793,9 +789,7 @@ mod tests {
     }
 
     fn occurrence(id: &str, parent: Option<&str>, native: &str, x: f64) -> Value {
-        json!({"id": id, "native_ref": native, "transform": at(x),
-            "parent": parent.map_or(json!({"kind": "root"}), |id| json!({"kind": "occurrence", "occurrence": id})),
-            "prototype": {"scope": "local"}})
+        json!({"id": id, "native_ref": native, "transform": at(x), "parent": parent.map_or(json!({"kind": "root"}), |id| json!({"kind": "occurrence", "occurrence": id})), "prototype": {"kind": "local"}, "ordinal": 0, "scale": [1, 1, 1]})
     }
 
     fn displayed(id: &str, x: f64) -> Value {
@@ -1032,7 +1026,7 @@ mod tests {
     fn member_pose_composes_with_each_insertion_and_not_its_local_owner() {
         let mut insertion = occurrence("insert", None, "reference", 100.0);
         // cadmpeg resolves an archive insertion to a local prototype.
-        assert_eq!(insertion["prototype"]["scope"], "local");
+        assert_eq!(insertion["prototype"]["kind"], "local");
         insertion["transform"] = json!([
             [0.0, -1.0, 0.0, 100.0],
             [1.0, 0.0, 0.0, 20.0],

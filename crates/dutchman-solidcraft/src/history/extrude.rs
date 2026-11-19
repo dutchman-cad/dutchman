@@ -16,9 +16,34 @@ pub(crate) fn map(
     ctx: &mut Context,
     preceding: &[Value],
 ) -> Result<Value, String> {
-    let face_profile =
-        definition.pointer("/profile/kind").and_then(Value::as_str) == Some("historical_faces");
-    let (sketch_id, profiles) = if face_profile {
+    let reference = definition.get("profile").map(super::profile::planar);
+    let face_profile = reference
+        .and_then(|profile| profile.get("kind"))
+        .and_then(Value::as_str)
+        == Some("historical_faces");
+    if face_profile
+        && feature
+            .get("id")
+            .and_then(Value::as_str)
+            .is_some_and(|id| ctx.reapplied.contains(id))
+    {
+        // Its body was imported as the design ends, so the face's outward side there is not
+        // the side it had when the extrude was made; finding it would point the extrude the
+        // wrong way.
+        return Err(
+            "an extrude of a face, re-applied to a base body stored only as the design ends, \
+             is not mapped yet: the face's side is known only on the body before it"
+                .to_owned(),
+        );
+    }
+    let spatial_profile = reference
+        .and_then(|r| r.get("kind"))
+        .and_then(Value::as_str)
+        == Some("spatial_sketch_profiles")
+        && ctx.target_version >= crate::SolidCraftVersion::V0_44_0;
+    let (sketch_id, profiles) = if spatial_profile {
+        super::spatial::profile::map(reference.ok_or("it has no profile")?, ctx)?
+    } else if face_profile {
         // The sketch of the face's boundary runs along the face's outward normal; mapping
         // assumes that side and the replay corrects it, so nothing here may depend on the
         // side beyond travelling along or against the profile normal.
@@ -34,11 +59,13 @@ pub(crate) fn map(
         }
         super::face_profile::map(
             feature,
-            definition.pointer("/profile/value").unwrap_or(&Value::Null),
+            reference
+                .and_then(|profile| profile.get("value"))
+                .unwrap_or(&Value::Null),
             ctx,
         )?
     } else {
-        profile(definition.get("profile"), ctx)?
+        profile(reference, ctx)?
     };
     let profile_sketch = if face_profile {
         None
@@ -182,7 +209,7 @@ pub(crate) fn map(
     if !face_profile {
         let proven = match (operation, end) {
             ("new_body", Some(end)) if ctx.sole_builder => {
-                match super::cap::check(definition.get("profile"), ctx, &end) {
+                match super::cap::check(reference, ctx, &end) {
                     Ok(proven) => proven,
                     Err(reason) => {
                         ctx.profile_mismatch = true;
@@ -461,10 +488,32 @@ pub(super) fn body_names(
     if outputs.is_empty() {
         return None;
     }
-    let rows: Vec<&Value> = outputs
+    let rows: Vec<Option<&Value>> = outputs
         .iter()
-        .map(|id| ctx.row("bodies", id.as_str()?))
+        .map(|id| Some(ctx.row("bodies", id.as_str()?)))
         .collect::<Option<_>>()?;
+    // An output ID alone cannot prove a consumed body's identity. A single output
+    // and a single history body from this producer establish the correspondence;
+    // multiple historical bodies would leave it ambiguous. An isolated replay trial
+    // may defer proof to the complete source check. Older targets retain the original
+    // all-or-nothing naming.
+    if rows.iter().any(Option::is_none) {
+        if !crate::VersionGate::ScopedBodies.supported(ctx.target_version) || outputs.len() != 1 {
+            return None;
+        }
+        if !ctx.confirming_consumed_bodies {
+            let producer = feature.get("id")?.as_str()?;
+            let mut bodies = ctx.source?.ir.model.history_bodies.iter().filter(|body| {
+                body.produced_by
+                    .as_ref()
+                    .is_some_and(|id| id.as_str() == producer)
+            });
+            bodies.next()?;
+            if bodies.next().is_some() {
+                return None;
+            }
+        }
+    }
     let mut taken: std::collections::BTreeSet<String> = ctx
         .named_bodies
         .iter()
@@ -473,7 +522,7 @@ pub(super) fn body_names(
     let given: Vec<Option<String>> = rows
         .iter()
         .map(|row| {
-            row.get("name")
+            row.and_then(|row| row.get("name"))
                 .and_then(Value::as_str)
                 .filter(|name| !name.trim().is_empty())
                 .map(str::to_owned)
@@ -493,11 +542,11 @@ pub(super) fn body_names(
             })
         })
         .collect();
-    for (row, name) in rows.iter().zip(&names) {
-        if let Some(look) = row.get("color").and_then(look) {
+    for ((row, output), name) in rows.iter().zip(outputs).zip(&names) {
+        if let Some(look) = row.and_then(|row| row.get("color")).and_then(look) {
             ctx.looks.insert(name.clone(), look);
         }
-        if let Some(id) = row.get("id").and_then(Value::as_str) {
+        if let Some(id) = output.as_str() {
             ctx.named_bodies.push((id.to_owned(), name.clone()));
         }
     }
@@ -530,7 +579,7 @@ mod tests {
             &Value::Null,
             extent,
             forward,
-            &Context::new(&Value::Null),
+            &Context::testing(&Value::Null),
             [0.0, 0.0, 1.0],
         )
     }

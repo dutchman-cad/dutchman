@@ -95,11 +95,7 @@ pub const REPORT_CONVERTED: &str = "Something wrong? Report this file";
 pub const SEND_CONVERTED_INTRO: &str =
     "If the converted result has lost features, wrong placement or missing colours, help us fix it:";
 
-pub const REPORT_HELP: &str =
-    "If the file opens in the app that made it, this is a bug in Dutchman: \
-                     report it on GitHub. The form opens filled in with the error and an \
-                     anonymous report that names no file; read it before you submit, and \
-                     never attach the design.";
+pub const REPORT_HELP: &str = "Opens a prefilled GitHub issue under your GitHub username.";
 pub const MISSING_HELP: &str =
     "Choose the folder that holds them, or one of them, to convert this file again \
              searching there too.";
@@ -130,7 +126,7 @@ pub fn report_link(report: &Value, anonymous: &Value) -> ReportLink {
 }
 
 /// The secondary way to report a failed file: nothing of the file, no names.
-pub const REPORT_BUTTON: &str = "Report anonymously on GitHub";
+pub const REPORT_BUTTON: &str = "GitHub issue";
 /// The folded section of a failed card that holds the other ways to send the file.
 pub const SEND_FOLD: &str = "Help us fix it";
 pub const SEND_INTRO: &str =
@@ -140,9 +136,9 @@ pub const SEND_JOIN_BUTTON: &str = "Open invite";
 pub const SEND_JOIN_NOTE: &str = "Already in? Skip this step.";
 pub const SEND_DM_TITLE: &str = "DM Dutchy";
 pub const SEND_DM_BUTTON: &str = "Copy and open DM";
-pub const SEND_STEP_TITLE: &str = "Have a STEP export?";
-pub const SEND_STEP_TEXT: &str = "If you can export a STEP of the same design, add it too. \
-     It helps us compare, but it isn't required.";
+pub const SEND_STEP_TITLE: &str = "Please add a STEP export";
+pub const SEND_STEP_TEXT: &str = "Strongly recommended: a STEP export of the exact same design \
+     (same version, part positions and state) lets us check every part. It really helps us fix it.";
 pub const SEND_SMALL_PRINT: &str = "Only the Dutchman team sees it. It's never published or \
      used in public tests, and we delete it on request.";
 pub const SEND_COPIED: &str = "The message is copied: paste it into the DM with Dutchy.";

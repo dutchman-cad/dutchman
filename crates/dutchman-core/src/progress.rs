@@ -1,10 +1,11 @@
 //! Stage and scoped running-step progress. No work is done per geometry entity.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use crate::time::Instant;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 #[cfg(not(target_family = "wasm"))]
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use crate::Stage;
 
@@ -114,6 +115,20 @@ pub struct RunningStep {
     pub limit_ms: Option<u64>,
     /// Fixed consequence text, supplied by the owner of the limit.
     pub consequence: Option<String>,
+    /// The timeline feature this step's worker is on, when it goes feature by feature.
+    pub feature: Option<FeatureStep>,
+}
+/// One feature of a design's timeline, as history mapping reaches it. The name is private
+/// local display text, like [`RunningStep::name`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FeatureStep {
+    /// Position in the source timeline, from 1.
+    pub index: u64,
+    /// Features in the source timeline, suppressed ones included.
+    pub total: u64,
+    pub name: Option<String>,
+    /// Checked by measurement in the target application, which takes longer than mapping.
+    pub measured: bool,
 }
 impl ProgressEvent {
     pub fn running_line(&self) -> String {
@@ -126,7 +141,103 @@ impl ProgressEvent {
                 usual_ms: StepKind::stage(self.stage).usual_ms(),
                 limit_ms: None,
                 consequence: None,
+                feature: None,
             }),
+        }
+    }
+
+    /// "Feature 29 of 37 · Extrude 1" while a design's history goes feature by feature.
+    pub fn feature_line(&self) -> Option<String> {
+        self.running
+            .as_ref()
+            .and_then(|step| step.feature.as_ref())
+            .map(super::progress_words::feature)
+    }
+
+    /// The note shown while the current feature is checked by measurement.
+    pub fn measured_note(&self) -> Option<&'static str> {
+        self.running
+            .as_ref()
+            .and_then(|step| step.feature.as_ref())
+            .filter(|feature| feature.measured)
+            .map(|_| super::progress_words::measured())
+    }
+}
+
+/// How often feature changes alone may emit an event; a heartbeat flushes the latest one.
+const FEATURE_INTERVAL: Duration = Duration::from_millis(250);
+
+#[cfg(not(target_family = "wasm"))]
+type Worker = std::thread::ThreadId;
+#[cfg(target_family = "wasm")]
+type Worker = ();
+fn current_worker() -> Worker {
+    #[cfg(not(target_family = "wasm"))]
+    {
+        std::thread::current().id()
+    }
+}
+fn step_worker(step: &ActiveStep) -> Worker {
+    #[cfg(not(target_family = "wasm"))]
+    {
+        step.thread
+    }
+    #[cfg(target_family = "wasm")]
+    {
+        let _ = step;
+    }
+}
+struct ActiveFeature {
+    id: u64,
+    worker: Worker,
+    feature: FeatureStep,
+}
+fn display_name(name: &str) -> String {
+    name.chars()
+        .take(240)
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect()
+}
+
+/// A design's timeline on one worker; ends with the guard, also when work unwinds.
+pub struct FeatureGuard<'p, 'a> {
+    progress: &'p Progress<'a>,
+    id: u64,
+}
+impl FeatureGuard<'_, '_> {
+    /// The worker reached feature `index` (from 1). Cheap: events for feature changes alone
+    /// are limited to four a second, and the heartbeat shows the latest one.
+    pub fn at(&self, index: u64, name: Option<&str>) {
+        if let Ok(mut features) = self.progress.features.lock() {
+            if let Some(active) = features.iter_mut().find(|f| f.id == self.id) {
+                active.feature.index = index;
+                active.feature.name = name.map(display_name);
+                active.feature.measured = false;
+            }
+        }
+        self.progress.pending.store(true, Ordering::Relaxed);
+        self.progress.flush_feature();
+    }
+}
+impl Drop for FeatureGuard<'_, '_> {
+    fn drop(&mut self) {
+        if let Ok(mut features) = self.progress.features.lock() {
+            features.retain(|f| f.id != self.id);
+        }
+        self.progress.pending.store(false, Ordering::Relaxed);
+        self.progress.emit(None, false, false);
+    }
+}
+
+/// Marks this worker's current feature as checked by measurement until dropped.
+pub struct MeasureGuard<'p, 'a> {
+    progress: &'p Progress<'a>,
+    id: Option<u64>,
+}
+impl Drop for MeasureGuard<'_, '_> {
+    fn drop(&mut self) {
+        if let Some(id) = self.id {
+            self.progress.set_measured(id, false);
         }
     }
 }
@@ -236,6 +347,10 @@ pub struct Progress<'a> {
     stage_usual: Vec<(StepKind, u64)>,
     read: AtomicU64,
     total: AtomicU64,
+    features: Mutex<Vec<ActiveFeature>>,
+    feature_emitted: Mutex<Option<Instant>>,
+    /// A feature change not yet emitted, flushed by the heartbeat thread.
+    pending: AtomicBool,
     callback: &'a (dyn Fn(ProgressEvent) + Send + Sync),
 }
 
@@ -251,6 +366,9 @@ impl<'a> Progress<'a> {
             stage_usual: Vec::new(),
             read: AtomicU64::new(0),
             total: AtomicU64::new(u64::MAX),
+            features: Mutex::new(Vec::new()),
+            feature_emitted: Mutex::new(None),
+            pending: AtomicBool::new(false),
             callback,
         }
     }
@@ -311,16 +429,12 @@ impl<'a> Progress<'a> {
                 started: Instant::now(),
                 step: RunningStep {
                     kind,
-                    name: name.map(|name| {
-                        name.chars()
-                            .take(240)
-                            .map(|c| if c.is_control() { ' ' } else { c })
-                            .collect()
-                    }),
+                    name: name.map(display_name),
                     elapsed_ms: 0,
                     usual_ms,
                     limit_ms: limit.map(|d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX)),
                     consequence: consequence.map(str::to_owned),
+                    feature: None,
                 },
             });
         }
@@ -330,6 +444,85 @@ impl<'a> Progress<'a> {
 
     pub fn stage(&self, stage: Stage) {
         self.emit(Some(stage), false, false);
+    }
+
+    /// Starts going through a timeline of `total` features on this worker; see
+    /// [`FeatureGuard::at`]. Shown with the worker's running step until the guard ends.
+    pub fn features(&self, total: u64) -> FeatureGuard<'_, 'a> {
+        let id = self.next_step.fetch_add(1, Ordering::Relaxed);
+        if let Ok(mut features) = self.features.lock() {
+            features.push(ActiveFeature {
+                id,
+                worker: current_worker(),
+                feature: FeatureStep {
+                    index: 0,
+                    total,
+                    name: None,
+                    measured: false,
+                },
+            });
+        }
+        FeatureGuard { progress: self, id }
+    }
+
+    /// Marks the feature this worker is on as checked by measurement, at once, until the
+    /// guard ends. Does nothing outside a timeline.
+    pub fn measuring(&self) -> MeasureGuard<'_, 'a> {
+        let worker = current_worker();
+        let id = self.features.lock().ok().and_then(|features| {
+            features
+                .iter()
+                .filter(|f| f.worker == worker)
+                .map(|f| f.id)
+                .max()
+        });
+        if let Some(id) = id {
+            self.set_measured(id, true);
+        }
+        MeasureGuard { progress: self, id }
+    }
+
+    /// Use one clock for immediate updates and timer flushes, so a flushed update cannot
+    /// be followed immediately by another feature-only event.
+    fn flush_feature(&self) {
+        let due = self
+            .feature_emitted
+            .lock()
+            .map(|mut last| {
+                let now = Instant::now();
+                if last.is_none_or(|at| now.duration_since(at) >= FEATURE_INTERVAL)
+                    && self.pending.swap(false, Ordering::Relaxed)
+                {
+                    *last = Some(now);
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap_or_else(|_| self.pending.swap(false, Ordering::Relaxed));
+        if due {
+            self.emit(None, false, false);
+        }
+    }
+
+    fn set_measured(&self, id: u64, measured: bool) {
+        if let Ok(mut features) = self.features.lock() {
+            if let Some(active) = features.iter_mut().find(|f| f.id == id) {
+                active.feature.measured = measured;
+            }
+        }
+        self.pending.store(false, Ordering::Relaxed);
+        self.emit(None, false, false);
+    }
+
+    /// The innermost timeline on `worker`, or on any worker for a whole-stage snapshot.
+    fn feature_on(&self, worker: Option<Worker>) -> Option<FeatureStep> {
+        let features = self.features.lock().ok()?;
+        features
+            .iter()
+            .filter(|f| worker.is_none_or(|worker| f.worker == worker) && f.feature.index > 0)
+            .max_by_key(|f| f.id)
+            .map(|f| f.feature.clone())
     }
 
     /// Set the number of unique designs once discovery is complete. Do not count placements.
@@ -386,6 +579,7 @@ impl<'a> Progress<'a> {
                                 let mut step = s.step.clone();
                                 step.elapsed_ms = u64::try_from(s.started.elapsed().as_millis())
                                     .unwrap_or(u64::MAX);
+                                step.feature = self.feature_on(Some(step_worker(s)));
                                 step
                             })
                     })
@@ -401,6 +595,7 @@ impl<'a> Progress<'a> {
                             usual_ms: self.stage_usual(StepKind::stage(*stage)),
                             limit_ms: None,
                             consequence: None,
+                            feature: self.feature_on(None),
                         })
                     }),
             });
@@ -413,16 +608,24 @@ impl<'a> Progress<'a> {
         self.run_every(Duration::from_secs(5), work)
     }
 
+    /// Periodically flushes feature changes that were not emitted at once.
     #[cfg(not(target_family = "wasm"))]
     fn run_every<T>(&self, interval: Duration, work: impl FnOnce() -> T) -> T {
         std::thread::scope(|scope| {
             let (stop, receive) = mpsc::channel::<()>();
             scope.spawn(move || {
+                let mut beat = Instant::now();
                 while matches!(
-                    receive.recv_timeout(interval),
+                    receive.recv_timeout(interval.min(FEATURE_INTERVAL)),
                     Err(mpsc::RecvTimeoutError::Timeout)
                 ) {
-                    self.heartbeat();
+                    if beat.elapsed() >= interval {
+                        beat = Instant::now();
+                        self.pending.store(false, Ordering::Relaxed);
+                        self.heartbeat();
+                    } else {
+                        self.flush_feature();
+                    }
                 }
             });
             let _stop = stop;
@@ -614,5 +817,85 @@ mod running_tests {
                 .kind,
             StepKind::Preparing
         );
+    }
+
+    #[test]
+    fn timer_flush_and_immediate_features_share_the_rate_limit() {
+        let events = Mutex::new(Vec::new());
+        let callback = |event: ProgressEvent| events.lock().unwrap().push(event);
+        let progress = Progress::new(&callback);
+        let _step = progress.step(StepKind::Preparing, None, None, None);
+        let timeline = progress.features(3);
+        timeline.at(1, Some("Sketch"));
+        timeline.at(2, Some("Extrude"));
+        let before = events.lock().unwrap().len();
+        // Make the timer flush due without waiting for wall-clock time.
+        *progress.feature_emitted.lock().unwrap() = Some(Instant::now() - FEATURE_INTERVAL);
+        progress.flush_feature();
+        assert_eq!(events.lock().unwrap().len(), before + 1);
+        timeline.at(3, Some("Fillet"));
+        assert_eq!(events.lock().unwrap().len(), before + 1);
+        assert!(progress.pending.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn features_follow_their_worker_are_limited_and_flushed_by_the_timer() {
+        let events = Mutex::new(Vec::new());
+        let callback = |event: ProgressEvent| events.lock().unwrap().push(event);
+        let progress = Progress::new(&callback);
+        let feature = |events: &Mutex<Vec<ProgressEvent>>| {
+            events
+                .lock()
+                .unwrap()
+                .last()
+                .unwrap()
+                .running
+                .as_ref()
+                .unwrap()
+                .feature
+                .clone()
+        };
+        let _part = progress.step(StepKind::Preparing, Some("Bracket"), None, None);
+        let timeline = progress.features(37);
+        assert_eq!(feature(&events), None);
+        timeline.at(1, Some("Sketch\n1"));
+        let first = feature(&events).unwrap();
+        assert_eq!((first.index, first.total), (1, 37));
+        assert_eq!(first.name.as_deref(), Some("Sketch 1"));
+        // A thousand fast features do not each print a line.
+        let before = events.lock().unwrap().len();
+        for index in 2..=1000 {
+            timeline.at(index, Some("Extrude 1"));
+        }
+        assert!(events.lock().unwrap().len() - before <= 1);
+        progress.run_every(Duration::from_millis(400), || {
+            timeline.at(29, Some("Extrude 1"));
+            let started = Instant::now();
+            while feature(&events).map(|f| f.index) != Some(29) {
+                assert!(started.elapsed() < Duration::from_secs(2), "not flushed");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert!(!events.lock().unwrap().last().unwrap().heartbeat);
+        });
+        {
+            let _measuring = progress.measuring();
+            assert!(feature(&events).unwrap().measured);
+            // Another worker's step never shows this worker's feature.
+            std::thread::scope(|scope| {
+                scope
+                    .spawn(|| {
+                        let _other = progress.step(StepKind::Preparing, Some("Pin"), None, None);
+                        assert!(progress.feature_on(Some(current_worker())).is_none());
+                    })
+                    .join()
+                    .unwrap();
+            });
+        }
+        assert!(!feature(&events).unwrap().measured);
+        drop(timeline);
+        assert_eq!(feature(&events), None);
+        // Outside a timeline, measuring changes nothing.
+        let _measuring = progress.measuring();
+        assert_eq!(feature(&events), None);
     }
 }

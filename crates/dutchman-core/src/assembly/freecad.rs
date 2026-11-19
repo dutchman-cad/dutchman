@@ -353,18 +353,39 @@ fn select_shape(
         .ok_or_else(|| {
             format!("linked object \"{object}\" was not found in the referenced document")
         })?;
+    let geometry = document
+        .get("geometry")
+        .and_then(Value::as_object)
+        .ok_or("the geometry is malformed")?;
     let wire = document
         .get("model")
         .and_then(Value::as_object)
         .ok_or("the model is malformed")?;
-    let rows: BTreeMap<&str, &Value> = wire
+    let rows: BTreeMap<&str, &Value> = geometry
         .iter()
+        .chain(wire)
         .filter(|(arena, _)| !NOT_GEOMETRY.contains(&arena.as_str()) || arena.as_str() == "bodies")
         .flat_map(|(_, rows)| rows.as_array().into_iter().flatten())
         .filter_map(|row| Some((row.get("id")?.as_str()?, row)))
         .collect();
+    let mut children: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (arena, parent) in [("regions", "body"), ("faces", "shell")] {
+        for row in geometry
+            .get(arena)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let (Some(parent), Some(id)) = (
+                row.get(parent).and_then(Value::as_str),
+                row.get("id").and_then(Value::as_str),
+            ) {
+                children.entry(parent).or_default().push(id);
+            }
+        }
+    }
     let mut bodies = Vec::new();
-    for body in &model.ir.model.bodies {
+    for body in &model.ir.geometry.bodies {
         let mut seen = BTreeSet::new();
         let mut pending = vec![body.id.as_str()];
         let mut owners = BTreeSet::new();
@@ -384,6 +405,7 @@ fn select_shape(
             let mut references = Vec::new();
             strings(row, &mut references);
             pending.extend(references.into_iter().filter(|id| rows.contains_key(id)));
+            pending.extend(children.get(id).into_iter().flatten().copied());
         }
         if owners.len() == 1 && owners.contains(owner) {
             bodies.push(body.id.as_str());
@@ -403,7 +425,7 @@ fn select_shape(
     )?;
     if selected
         .ir
-        .model
+        .geometry
         .bodies
         .iter()
         .filter_map(|body| body.transform)
@@ -413,13 +435,13 @@ fn select_shape(
     }
     let placement = selected
         .ir
-        .model
+        .geometry
         .bodies
         .first()
         .and_then(|body| body.transform)
         .map(|transform| transform.affine_rows())
         .unwrap_or(IDENTITY);
-    for body in &mut selected.ir.model.bodies {
+    for body in &mut selected.ir.geometry.bodies {
         let at = body
             .transform
             .map(|transform| transform.affine_rows())
@@ -440,6 +462,41 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn a_standalone_shape_follows_v11_parents_to_point_provenance() {
+        let mut model = crate::read(
+            Format::InventorPart,
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/synthetic_cube.ipt"),
+            &mut Report::default(),
+        )
+        .unwrap();
+        for point in &mut model.ir.geometry.points {
+            point.source_object = Some(
+                serde_json::from_value(json!({
+                    "format": "fcstd", "object_id": "test:source:object#body", "instance_path": []
+                }))
+                .unwrap(),
+            );
+        }
+        model.ir.model.product_definitions.clear();
+        model.ir.model.occurrences.clear();
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        wire["native"]["fcstd"] = json!({"objects": [{
+            "id": "test:source:object#body", "name": "Standalone"
+        }]});
+        model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+        let (selected, _) = select(&model, "Standalone").unwrap();
+        assert_eq!(selected.ir.geometry.bodies.len(), 1);
+        assert_eq!(
+            selected.ir.geometry.faces.len(),
+            model.ir.geometry.faces.len()
+        );
+        assert_eq!(
+            selected.ir.geometry.points.len(),
+            model.ir.geometry.points.len()
+        );
+    }
+
+    #[test]
     fn selecting_a_part_keeps_its_children_and_excludes_other_document_objects() {
         let mut model = crate::read(
             Format::InventorPart,
@@ -447,15 +504,15 @@ mod tests {
             &mut Report::default(),
         )
         .unwrap();
-        let body = model.ir.model.bodies[0].id.as_str();
+        let body = model.ir.geometry.bodies[0].id.as_str();
         let mut wire = serde_json::to_value(&model.ir).unwrap();
         wire["model"]["product_definitions"] = json!([
-            {"id": "test:assembly:product_definition#part", "kind": "part", "source_name": "TargetPart"},
-            {"id": "test:assembly:product_definition#body", "kind": "object", "source_name": "Body", "bodies": [body]},
+            {"id": "test:assembly:product_definition#part", "kind": "part", "source_name": "TargetPart", "bom_properties": {}, "bodies": [], "sketches": []},
+            {"id": "test:assembly:product_definition#body", "kind": "object", "source_name": "Body", "bodies": [body], "bom_properties": {}, "sketches": []},
         ]);
         let occurrence = |id: &str, definition: &str, parent: Value, x: f64| {
             json!({
-                "id": id, "prototype": {"scope": "local", "definition": definition},
+                "id": id, "prototype": {"kind": "local", "definition": definition},
                 "parent": parent, "name": id, "ordinal": 0,
                 "transform": [[1.0,0.0,0.0,x],[0.0,1.0,0.0,0.0],[0.0,0.0,1.0,0.0]],
                 "scale": [1.0,1.0,1.0]
@@ -489,6 +546,6 @@ mod tests {
         assert_eq!(selected.parts.len(), 1);
         assert_eq!(selected.placements.len(), 1);
         assert_eq!(selected.placements[0].transform[0][3], 2.0);
-        assert_eq!(selected.parts[0].ir.model.bodies.len(), 1);
+        assert_eq!(selected.parts[0].ir.geometry.bodies.len(), 1);
     }
 }

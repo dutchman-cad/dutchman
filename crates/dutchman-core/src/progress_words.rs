@@ -1,5 +1,5 @@
 //! Local progress wording, kept together for a future message catalog.
-use crate::{ProgressEvent, RunningStep, Stage, StepKind};
+use crate::{FeatureStep, ProgressEvent, RunningStep, Stage, StepKind};
 
 pub fn counts(read: u64, total: Option<u64>) -> String {
     match total {
@@ -14,6 +14,12 @@ pub fn total_elapsed(ms: u64) -> String {
 
 pub fn summary(event: &ProgressEvent) -> String {
     let mut text = event.running_line();
+    if let Some(feature) = event.feature_line() {
+        text.push_str(&format!("; {feature}"));
+        if event.measured_note().is_some() {
+            text.push_str(" (checking by measurement, which takes longer)");
+        }
+    }
     if event.designs_total.is_some() || event.designs_read > 0 {
         text.push_str(&format!(
             "; {}",
@@ -44,7 +50,23 @@ pub fn running_file(name: &str, event: &ProgressEvent, others: usize) -> String 
         ));
     }
     text.push_str(&format!("\n{}", event.running_line()));
+    if let Some(feature) = event.feature_line() {
+        text.push_str(&format!("\n{feature}"));
+    }
     text
+}
+
+/// "Feature 29 of 37 · Extrude 1", or without the name when the source has none.
+pub fn feature(feature: &FeatureStep) -> String {
+    match &feature.name {
+        Some(name) => format!("Feature {} of {} · {name}", feature.index, feature.total),
+        None => format!("Feature {} of {}", feature.index, feature.total),
+    }
+}
+
+/// Shown beside a feature while SolidCraft measures it against the original.
+pub fn measured() -> &'static str {
+    "Checking this feature by measurement in SolidCraft. Features checked by measurement take longer."
 }
 
 pub fn running(step: &RunningStep) -> String {
@@ -154,6 +176,7 @@ mod tests {
                 usual_ms: 60_000,
                 limit_ms: Some(120_000),
                 consequence: Some(consequence.into()),
+                feature: None,
             };
             assert_eq!(running(&step), format!("Bracket took longer than the 2 min check limit: {expected}."));
         }
@@ -174,6 +197,7 @@ mod tests {
                 usual_ms: 60_000,
                 limit_ms: None,
                 consequence: None,
+                feature: None,
             }),
         };
         assert_eq!(
@@ -187,6 +211,52 @@ mod tests {
     }
 
     #[test]
+    fn a_feature_shows_its_place_in_the_timeline_and_the_measured_note() {
+        let mut event = ProgressEvent {
+            stage: Stage::Map,
+            elapsed_ms: 12_000,
+            designs_read: 1,
+            designs_total: Some(1),
+            heartbeat: false,
+            running: Some(RunningStep {
+                kind: StepKind::Preparing,
+                name: Some("Bracket".into()),
+                elapsed_ms: 3_000,
+                usual_ms: 30_000,
+                limit_ms: None,
+                consequence: None,
+                feature: Some(FeatureStep {
+                    index: 29,
+                    total: 37,
+                    name: Some("Extrude 1".into()),
+                    measured: false,
+                }),
+            }),
+        };
+        assert_eq!(
+            event.feature_line().as_deref(),
+            Some("Feature 29 of 37 · Extrude 1")
+        );
+        assert_eq!(event.measured_note(), None);
+        assert_eq!(
+            event.to_string(),
+            "Building history for Bracket: 3 s; Feature 29 of 37 · Extrude 1; 1 of 1 designs read; 12 s elapsed"
+        );
+        let feature = event.running.as_mut().unwrap().feature.as_mut().unwrap();
+        feature.measured = true;
+        feature.name = None;
+        assert_eq!(event.measured_note(), Some(measured()));
+        assert_eq!(
+            event.to_string(),
+            "Building history for Bracket: 3 s; Feature 29 of 37 (checking by measurement, which takes longer); 1 of 1 designs read; 12 s elapsed"
+        );
+        assert_eq!(
+            running_file("Bracket.f3d", &event, 0),
+            "Bracket.f3d: building history\nBuilding history for Bracket: 3 s\nFeature 29 of 37"
+        );
+    }
+
+    #[test]
     fn usual_notice_is_strict_and_limit_notice_matches_timeout_boundary() {
         let mut step = RunningStep {
             kind: StepKind::Checking,
@@ -195,6 +265,7 @@ mod tests {
             usual_ms: 60_000,
             limit_ms: Some(120_000),
             consequence: Some(history_limit(false, true).into()),
+            feature: None,
         };
         assert_eq!(running(&step), "Checking Bracket: 12 s");
         step.elapsed_ms = 60_000;

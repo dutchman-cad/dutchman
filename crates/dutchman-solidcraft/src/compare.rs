@@ -22,7 +22,7 @@ const POSITION_DIAGONAL_RELATIVE: f64 = 0.001;
 /// a shell by itself, including a separate cavity shell; in a joined shell it
 /// suggests a trimmed patch has lost its boundary. Return anonymous entity numbers.
 pub fn topology(model: &Model) -> Vec<Value> {
-    let topology = &model.ir.model;
+    let topology = &model.ir.geometry;
     let surfaces: std::collections::BTreeSet<_> = topology
         .surfaces
         .iter()
@@ -32,7 +32,7 @@ pub fn topology(model: &Model) -> Vec<Value> {
     let shells: std::collections::BTreeMap<_, _> = topology
         .shells
         .iter()
-        .filter(|s| s.faces().len() > 1)
+        .filter(|s| topology.shell_faces(&s.id).take(2).count() > 1)
         .map(|s| (&s.id, &s.region))
         .collect();
     let regions: std::collections::BTreeMap<_, _> =
@@ -526,7 +526,7 @@ mod tests {
     fn untrimmed_torus_in_joined_shell_is_advisory_but_whole_torus_is_allowed() {
         use cadmpeg_ir::geometry::{analytic::TorusSurface, SurfaceGeometry};
         use cadmpeg_ir::math::{Point3, Vector3};
-        use cadmpeg_ir::topology::{FaceLoops, Shell};
+        use cadmpeg_ir::topology::FaceLoops;
 
         let mut model = dutchman_core::read_in(
             dutchman_core::Format::FusionArchive,
@@ -536,13 +536,13 @@ mod tests {
             &mut Report::default(),
         )
         .unwrap();
-        let face = model.ir.model.faces.first().unwrap();
+        let face = model.ir.geometry.faces.first().unwrap();
         let surface_id = face.surface.clone();
         let face_id = face.id.clone();
         let shell_id = face.shell.clone();
         let surface = model
             .ir
-            .model
+            .geometry
             .surfaces
             .iter_mut()
             .find(|s| s.id == surface_id)
@@ -559,28 +559,18 @@ mod tests {
         ));
         // A toroidal patch with trims is ordinary geometry.
         assert!(topology(&model).is_empty());
-        model.ir.model.faces.first_mut().unwrap().loops = FaceLoops::unspecified(Vec::new());
+        model.ir.geometry.faces.first_mut().unwrap().loops = FaceLoops::unspecified(Vec::new());
         let findings = topology(&model);
         assert_eq!(
             findings,
             vec![json!({"body": 1, "face": 1, "code": "geometry_untrimmed_torus"})]
         );
         // A shell consisting only of that closed face is a legitimate whole torus.
-        let shell = model
+        model
             .ir
-            .model
-            .shells
-            .iter_mut()
-            .find(|s| s.id == shell_id)
-            .unwrap();
-        *shell = Shell::new(
-            shell.id.clone(),
-            shell.region.clone(),
-            vec![face_id],
-            vec![],
-            vec![],
-        )
-        .unwrap();
+            .geometry
+            .faces
+            .retain(|face| face.shell != shell_id || face.id == face_id);
         assert!(topology(&model).is_empty());
     }
 

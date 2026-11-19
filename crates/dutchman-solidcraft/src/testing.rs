@@ -44,6 +44,7 @@ pub(crate) fn feature(key: u32, ordinal: u64, name: &str, definition: Value) -> 
         "ordinal": ordinal,
         "name": name,
         "suppressed": false,
-        "definition": definition,
+        "definition": {"kind": "operation", "value": definition},
+        "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [],
     })
 }

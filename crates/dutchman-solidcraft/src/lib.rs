@@ -17,6 +17,7 @@ pub mod compare;
 mod container;
 mod document;
 mod evaluator;
+mod output_links;
 #[cfg(not(target_family = "wasm"))]
 pub use evaluator::CliEvaluator;
 pub use evaluator::SolidCraftEvaluator;
@@ -25,9 +26,13 @@ mod placements;
 mod repeats;
 mod replay;
 mod step;
+mod tolerances;
+pub use tolerances::report as verification_tolerances;
 #[cfg(test)]
 mod testing;
+mod verdicts;
 mod verify;
+pub use verdicts::{FeatureVerdict, PartVerdicts, Verdict};
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -36,7 +41,7 @@ use dutchman_core::{
     Check, Error, FeatureOutcome, FeatureStatus, Mode, Model, Outcome, Report, Severity, Stage,
     Writer,
 };
-use serde_json::Value;
+use serde_json::{json, Value};
 
 pub use verify::{
     cached_solidcraft_version, chosen_cli, discover, find_cli, search_report, solidcraft_minor,
@@ -72,6 +77,9 @@ const HISTORY: &str = "history";
 /// The report subject of what SolidCraft shows of the written geometry.
 const GEOMETRY: &str = "geometry";
 
+/// What the report says turned history off, unless a front end names its own choice.
+const IMPORT_ONLY_REASON: &str = "--import-only";
+
 /// Writes `.sc` designs.
 #[derive(Clone, Debug)]
 pub struct SolidCraftWriter {
@@ -82,6 +90,7 @@ pub struct SolidCraftWriter {
     #[cfg(test)]
     prepare_available: Option<u64>,
     import_only: bool,
+    import_only_reason: String,
     sketches: bool,
     joints: bool,
     target_version: Option<SolidCraftVersion>,
@@ -105,6 +114,7 @@ impl Default for SolidCraftWriter {
             #[cfg(test)]
             prepare_available: None,
             import_only: false,
+            import_only_reason: IMPORT_ONLY_REASON.to_owned(),
             sketches: true,
             joints: true,
             target_version: None,
@@ -203,6 +213,13 @@ impl SolidCraftWriter {
         self
     }
 
+    /// How the report names the choice that turned history off, in the words of the front
+    /// end that offers it: `--import-only` (the command line's flag) by default.
+    pub fn import_only_reason(mut self, reason: impl Into<String>) -> Self {
+        self.import_only_reason = reason.into();
+        self
+    }
+
     /// Keep reference sketches, including those beside imported geometry.
     pub fn sketches(mut self, enabled: bool) -> Self {
         self.sketches = enabled;
@@ -216,7 +233,7 @@ impl SolidCraftWriter {
     }
 
     /// How a written history is checked, and which SolidCraft CLI finds the input edges of
-    /// its blends (see [`SolidCraftWriter::replay`]).
+    /// its blends and body-edge sweep paths (see [`SolidCraftWriter::replay`]).
     pub fn verification(mut self, verification: Verification) -> Self {
         self.replay = verification.clone();
         self.verification = verification;
@@ -224,9 +241,9 @@ impl SolidCraftWriter {
         self
     }
 
-    /// Which SolidCraft CLI replays the history before each fillet or chamfer to find the
-    /// edges it blends, after [`SolidCraftWriter::verification`] has set it too. Without one
-    /// ([`Verification::Off`], or none found) blends are refused, saying why.
+    /// Which SolidCraft CLI replays the history to prove blend and body-edge sweep-path input edges,
+    /// after [`SolidCraftWriter::verification`] has set it too. Without one
+    /// ([`Verification::Off`], or none found) those selections are refused, saying why.
     pub fn replay(mut self, replay: Verification) -> Self {
         self.replay = replay;
         self
@@ -290,6 +307,10 @@ impl SolidCraftWriter {
         self.hide_unverified || self.memory_skip.get().is_some()
     }
 
+    fn keep_unverified_history_hidden(&self, history: &history::History) -> bool {
+        self.keep_unverified_hidden() || history.topological_replay_required
+    }
+
     /// How long each SolidCraft evaluation may run before the check gives up.
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
@@ -300,11 +321,8 @@ impl SolidCraftWriter {
     /// with, when it has no geometry SolidCraft can import (for an assembly, when none of its
     /// parts has). Plans the STEP restatement without writing anything.
     pub fn convertible(&self, model: &Model) -> Result<(), String> {
-        fn any_part(assembly: &dutchman_core::Assembly) -> bool {
-            assembly.parts.iter().any(|part| match &part.assembly {
-                Some(sub) => any_part(sub),
-                None => step::restatable(part).is_ok(),
-            })
+        if let Some(flat) = flattened_assembly(model) {
+            return self.convertible(&flat);
         }
         match &model.assembly {
             Some(assembly) if any_part(assembly) || assembly.placements.is_empty() => Ok(()),
@@ -324,6 +342,11 @@ impl SolidCraftWriter {
     /// What writing `model` would do, without restating its geometry, writing anything or
     /// replaying geometry in SolidCraft: the history's mapping, as `dutchman inspect` shows it.
     pub fn plan(&self, model: &Model, report: &mut Report) -> Outcome {
+        document::report_scoped_attributes(model, report);
+        if let Some(flat) = flattened_assembly(model) {
+            report.push(Severity::Degraded, GEOMETRY, FLATTENED_ASSEMBLY);
+            return self.plan(&flat, report);
+        }
         if empty_assembly(model) {
             return empty_outcome();
         }
@@ -336,18 +359,22 @@ impl SolidCraftWriter {
         if self.import_only {
             return Outcome {
                 mode: Mode::Import,
-                check: Check::NotApplicable("--import-only".to_owned()),
+                check: Check::NotApplicable(self.import_only_reason.clone()),
                 features: Vec::new(),
             };
         }
         let mut history_report = Report::default();
-        let mut mapping = history::map_with_sketches(
+        let mut mapping = history::map_with_source_profile_check(
             model,
             &mut history_report,
             self.resolved_version(),
             self.sketches,
+            &mut history::infer::Unmeasured,
+            None,
+            report.losses(),
         );
         self.plan_blends(&mut mapping);
+        output_links::not_written(&mut mapping.features);
         let undecoded = no_decoded_history(&mapping.features);
         match mapping.result {
             Ok(ref history) if history.stop.is_some() => {
@@ -514,13 +541,18 @@ impl SolidCraftWriter {
     fn plan_blends(&self, mapping: &mut history::Mapping) {
         if self.evaluator.is_none() || matches!(self.replay, Verification::Off) {
             if let Err(why) = verify::find_cli(&self.replay) {
-                history::prove_blends(mapping, |_, _, _| Err(why.clone()));
+                history::prove_blends(
+                    mapping,
+                    |_, _, _| Err(why.clone()),
+                    |_, _| history::infer::Fit::Unknown,
+                );
             }
         }
     }
 
     /// Finds the input edges of the history's blends on SolidCraft's replay of the history
-    /// written so far (two runs of the CLI for the whole design, within the timeout), or
+    /// written so far (two base CLI runs, plus a carrier pass for closed circles, within
+    /// the timeout), or
     /// refuses them, saying why.
     fn prove_blends(
         &self,
@@ -531,43 +563,183 @@ impl SolidCraftWriter {
     ) -> Result<(), Error> {
         let mut remaining = self.timeout;
         let mut failure = None;
-        history::prove_blends(mapping, |history, after, faces| {
-            if let Some(why) = self.memory_refusal() {
-                return Err(why);
-            }
-            let cli = self
-                .selected_evaluator(&self.replay)
-                .map_err(|why| why.to_string())?;
-            // SolidCraft evaluates a whole design when it opens it, rolled back or not, so
-            // the replay gets the history only up to the last step it inspects: a slow later
-            // feature would otherwise cost every proof run its full time.
-            let prefix = through_last(history, after);
-            let history = prefix.as_ref().unwrap_or(history);
-            let design = match self.history_design(model, history, step, Live::History, false) {
-                Ok(design) => design,
-                Err(err) => {
-                    let why = err.to_string();
-                    failure = Some(err);
+        let mut circles = false;
+        history::prove_blends(
+            mapping,
+            |history, after, faces| {
+                circles |= history
+                    .blends
+                    .iter()
+                    .any(|pending| pending.needs_circle_carriers());
+                if let Some(why) = self.memory_refusal() {
                     return Err(why);
                 }
-            };
-            let _checking = progress.map(|p| {
-                p.step(
-                    dutchman_core::StepKind::CheckingBlends,
-                    Some(&model.name),
-                    Some(remaining),
-                    Some(dutchman_core::progress_words::blend_limit()),
-                )
-            });
-            let started = std::time::Instant::now();
-            let replayed = verify::replay_edges(cli.as_ref(), remaining, &design, after, faces);
-            remaining = remaining.saturating_sub(started.elapsed());
-            replayed
-        });
+                let cli = self
+                    .selected_evaluator(&self.replay)
+                    .map_err(|why| why.to_string())?;
+                // SolidCraft evaluates a whole design when it opens it, rolled back or not, so
+                // the replay gets the history only up to the last step it inspects: a slow later
+                // feature would otherwise cost every proof run its full time.
+                let prefix = through_last(history, after);
+                let history = prefix.as_ref().unwrap_or(history);
+                let design = match self.history_design(model, history, step, Live::History, false) {
+                    Ok(design) => design,
+                    Err(err) => {
+                        let why = err.to_string();
+                        failure = Some(err);
+                        return Err(why);
+                    }
+                };
+                let _checking = progress.map(|p| {
+                    p.step(
+                        dutchman_core::StepKind::CheckingBlends,
+                        Some(&model.name),
+                        Some(remaining),
+                        Some(dutchman_core::progress_words::blend_limit()),
+                    )
+                });
+                let started = dutchman_core::time::Instant::now();
+                let replayed =
+                    verify::replay_edges(cli.as_ref(), remaining, &design, after, faces, circles);
+                remaining = remaining.saturating_sub(started.elapsed());
+                replayed
+            },
+            |history, budget| {
+                self.bounded_profile_check(model, history, step, None, true, budget, progress)
+            },
+        );
         match failure {
             Some(err) => Err(err),
             None => Ok(()),
         }
+    }
+
+    /// Share the feature's remaining budget across original, replay and surface measurements.
+    #[allow(clippy::too_many_arguments)]
+    fn bounded_profile_check(
+        &self,
+        model: &Model,
+        prefix: &history::History,
+        step: &str,
+        stored: Option<&[verify::StoredBody]>,
+        final_state: bool,
+        budget: Duration,
+        progress: Option<&dutchman_core::Progress<'_>>,
+    ) -> history::infer::Fit {
+        let started = dutchman_core::time::Instant::now();
+        let Ok(evaluator) = self.selected_evaluator(&self.verification) else {
+            return history::infer::Fit::Unknown;
+        };
+        let mut writer = self.clone();
+        writer.evaluator = Some(std::sync::Arc::new(evaluator::Budgeted::new(
+            evaluator,
+            budget.saturating_sub(started.elapsed()),
+        )));
+        writer.profile_check(model, prefix, step, stored, final_state, true, progress)
+    }
+
+    /// Measure an inferred profile with the same comparison used for unconfirmed whole-sketch
+    /// profiles. Unknown measurements never confirm an inference. At the final body-building
+    /// feature, compare the complete replay with the source as well; with `compare`, also load
+    /// the source's solid beside a one-body replay for the distance between their surfaces.
+    #[allow(clippy::too_many_arguments)]
+    fn profile_check(
+        &self,
+        model: &Model,
+        prefix: &history::History,
+        step: &str,
+        stored: Option<&[verify::StoredBody]>,
+        final_state: bool,
+        compare: bool,
+        progress: Option<&dutchman_core::Progress<'_>>,
+    ) -> history::infer::Fit {
+        use dutchman_core::InferredAgainst;
+        use history::infer::{Fit, Measure};
+        if self.memory_refusal().is_some() {
+            return Fit::Unknown;
+        }
+        let Ok(cli) = self.selected_evaluator(&self.verification) else {
+            return Fit::Unknown;
+        };
+        let _measuring = progress.map(|p| p.measuring());
+        let Ok(design) = self.history_design(model, prefix, step, Live::History, false) else {
+            return Fit::Unknown;
+        };
+        if final_state {
+            return match self.check_measurements(model, prefix, step, &design, progress, compare) {
+                Ok(verify::Outcome::Matches) => {
+                    let one_body = solid_bodies(model) == 1 && sheet_bodies(model) == 0;
+                    let deviation = if compare {
+                        if !one_body {
+                            return Fit::Unknown;
+                        }
+                        let Some(deviation) =
+                            verify::deviation(cli.as_ref(), self.timeout, &design, prefix.next_id)
+                                .filter(|deviation| deviation.faces.is_some())
+                        else {
+                            return Fit::Unknown;
+                        };
+                        Some(deviation)
+                    } else {
+                        None
+                    };
+                    Fit::Matches(Measure {
+                        against: InferredAgainst::OriginalShape,
+                        deviation,
+                    })
+                }
+                Ok(verify::Outcome::Differs(_)) => Fit::Differs,
+                Ok(verify::Outcome::Unverified(_)) | Err(_) => Fit::Unknown,
+            };
+        }
+        let Some(stored) = stored.filter(|stored| !stored.is_empty()) else {
+            return Fit::Unknown;
+        };
+        let (outcome, bodies) = verify::replay(cli.as_ref(), self.timeout, &design);
+        match (outcome, bodies) {
+            (verify::Outcome::Matches, Some(bodies))
+                if bodies
+                    .iter()
+                    .all(|body| body.center.is_some() && body.size.is_some()) =>
+            {
+                if verify::bodies_differ(Some(stored), Some(&bodies)).is_none() {
+                    Fit::Matches(Measure {
+                        against: InferredAgainst::StoredBodies,
+                        deviation: None,
+                    })
+                } else {
+                    Fit::Differs
+                }
+            }
+            (verify::Outcome::Differs(_), _) => Fit::Differs,
+            _ => Fit::Unknown,
+        }
+    }
+
+    /// Count the regions the written sketch has. `sketch.inspect` supplies centroids,
+    /// which do not prove interior selections, so these regions cannot yet be inferred.
+    fn sketch_regions(
+        &self,
+        model: &Model,
+        prefix: &history::History,
+        step: &str,
+        sketch: u64,
+        budget: Duration,
+    ) -> Option<usize> {
+        let started = dutchman_core::time::Instant::now();
+        if self.memory_refusal().is_some() {
+            return None;
+        }
+        let cli = self.selected_evaluator(&self.verification).ok()?;
+        let cli = evaluator::Budgeted::new(cli, budget.saturating_sub(started.elapsed()));
+        let design = self
+            .history_design(model, prefix, step, Live::History, false)
+            .ok()?;
+        let script = [json!({"command": "sketch.inspect", "params": {"sketch": sketch}})];
+        let results = cli
+            .run(&design, &script, self.timeout, "sketch regions")
+            .ok()?;
+        Some(results.first()?.get("profiles")?.as_array()?.len())
     }
 
     /// Keeps the largest replayable prefix we can identify from SolidCraft's first error.
@@ -597,7 +769,7 @@ impl SolidCraftWriter {
             }
         }
         let cli = self.selected_evaluator(&self.verification);
-        let started = std::time::Instant::now();
+        let started = dutchman_core::time::Instant::now();
         let _checking = progress.map(|p| {
             p.step(
                 dutchman_core::StepKind::CheckingPrefix,
@@ -707,17 +879,29 @@ impl SolidCraftWriter {
                 == Some("sketch")
             {
                 // Retry the solved geometry without constraints before giving up its sketch.
-                if let Some(constraints) = history
-                    .features
-                    .get_mut(at)
-                    .and_then(|f| f.get_mut("sketch"))
-                    .and_then(|s| s.get_mut("constraints"))
-                    .and_then(Value::as_array_mut)
-                    .filter(|constraints| !constraints.is_empty())
-                {
-                    dropped = constraints.len();
-                    constraints.clear();
-                    repaired = true;
+                for key in ["constraints", "wire_constraints"] {
+                    if let Some(constraints) = history
+                        .features
+                        .get_mut(at)
+                        .and_then(|f| f.get_mut("sketch"))
+                        .and_then(|s| s.get_mut(key))
+                        .and_then(Value::as_array_mut)
+                        .filter(|constraints| !constraints.is_empty())
+                    {
+                        dropped += constraints.len();
+                        constraints.clear();
+                        repaired = true;
+                        if key == "wire_constraints" {
+                            if let Some(sketch) = history
+                                .features
+                                .get_mut(at)
+                                .and_then(|f| f.get_mut("sketch"))
+                                .and_then(Value::as_object_mut)
+                            {
+                                sketch.insert("wires_joined".to_owned(), Value::Bool(false));
+                            }
+                        }
+                    }
                 }
                 if repaired {
                     if let Some(sketch) = history.features.get(at) {
@@ -780,6 +964,19 @@ impl SolidCraftWriter {
         written: &[u8],
         progress: Option<&dutchman_core::Progress<'_>>,
     ) -> Result<verify::Outcome, Error> {
+        self.check_measurements(model, history, step, written, progress, false)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_measurements(
+        &self,
+        model: &Model,
+        history: &history::History,
+        step: &str,
+        written: &[u8],
+        progress: Option<&dutchman_core::Progress<'_>>,
+        complete: bool,
+    ) -> Result<verify::Outcome, Error> {
         if let Some(why) = self.memory_refusal() {
             return Ok(verify::Outcome::Unverified(why));
         }
@@ -791,7 +988,12 @@ impl SolidCraftWriter {
         if let Some(why) = self.memory_refusal() {
             return Ok(verify::Outcome::Unverified(why));
         }
-        let result = verify::compare_with_progress(
+        let compare = if complete {
+            verify::compare_complete
+        } else {
+            verify::compare_with_progress
+        };
+        let result = compare(
             cli.as_ref(),
             self.timeout,
             written,
@@ -804,11 +1006,13 @@ impl SolidCraftWriter {
             &model.name,
             dutchman_core::progress_words::history_limit(
                 history.pattern_replay_required,
-                self.keep_unverified_hidden(),
+                self.keep_unverified_history_hidden(history),
             ),
         );
         Ok(match result {
-            verify::Outcome::Unverified(why) if history.pattern_replay_required => {
+            // New inference must retain Unknown so an unmeasured candidate cannot be
+            // treated as a nonmatch when proving uniqueness.
+            verify::Outcome::Unverified(why) if history.pattern_replay_required && !complete => {
                 verify::Outcome::Differs(format!(
                     "the pattern instance set could not be verified: {why}"
                 ))
@@ -818,9 +1022,70 @@ impl SolidCraftWriter {
     }
 }
 
+/// The writer's SolidCraft measurements, as measured inference asks for them.
+pub(crate) struct Measuring<'a, 'p> {
+    pub(crate) writer: &'a SolidCraftWriter,
+    pub(crate) model: &'a Model,
+    pub(crate) step: &'a str,
+    pub(crate) progress: Option<&'a dutchman_core::Progress<'p>>,
+}
+
+impl history::infer::Host for Measuring<'_, '_> {
+    fn fit(
+        &mut self,
+        prefix: &history::History,
+        stored: Option<&[verify::StoredBody]>,
+        final_state: bool,
+        compare: bool,
+    ) -> history::infer::Fit {
+        self.writer.profile_check(
+            self.model,
+            prefix,
+            self.step,
+            stored,
+            final_state,
+            compare,
+            self.progress,
+        )
+    }
+
+    fn fit_bounded(
+        &mut self,
+        prefix: &history::History,
+        stored: Option<&[verify::StoredBody]>,
+        final_state: bool,
+        budget: Duration,
+    ) -> history::infer::Fit {
+        self.writer.bounded_profile_check(
+            self.model,
+            prefix,
+            self.step,
+            stored,
+            final_state,
+            budget,
+            self.progress,
+        )
+    }
+
+    fn regions(
+        &mut self,
+        prefix: &history::History,
+        sketch: u64,
+        budget: Duration,
+    ) -> Option<usize> {
+        self.writer
+            .sketch_regions(self.model, prefix, self.step, sketch, budget)
+    }
+}
+
 fn report_sketches(features: &[FeatureOutcome], report: &mut Report) {
     for feature in features.iter().filter(|f| {
-        f.kind == "sketch" && (f.status == FeatureStatus::Blocked || f.reason.is_some())
+        (f.kind == "sketch"
+            || (f.kind == "spatial_sketch"
+                && f.reason
+                    .as_deref()
+                    .is_some_and(|r| r.contains("not carried after replay failed"))))
+            && (f.status == FeatureStatus::Blocked || f.reason.is_some())
     }) {
         report.push(
             Severity::Degraded,
@@ -919,7 +1184,7 @@ fn sheet_bodies(model: &Model) -> usize {
     use cadmpeg_ir::topology::BodyKind;
     model
         .ir
-        .model
+        .geometry
         .bodies
         .iter()
         .filter(|body| matches!(body.kind, BodyKind::Sheet | BodyKind::General))
@@ -968,6 +1233,34 @@ fn parameters_only(model: &Model) -> bool {
         && matches!(step::restatable(model), Err(Error::NoGeometry(_)))
 }
 
+/// Whether any part `assembly` places, at any depth, has geometry SolidCraft can import.
+fn any_part(assembly: &dutchman_core::Assembly) -> bool {
+    assembly.parts.iter().any(|part| match &part.assembly {
+        Some(sub) => any_part(sub),
+        None => step::restatable(part).is_ok(),
+    })
+}
+
+/// What the report says when an assembly is written as one part by [`flattened_assembly`].
+const FLATTENED_ASSEMBLY: &str = "the assembly's placed parts hold no geometry SolidCraft can \
+    import, so the design's own bodies are written as one part without component placements";
+
+/// `model` without its assembly, when the assembly places parts but none of them has geometry
+/// SolidCraft can import while the design's own bodies do: those bodies are then written as
+/// one part instead of failing the conversion.
+fn flattened_assembly(model: &Model) -> Option<Model> {
+    let assembly = model.assembly.as_ref()?;
+    if assembly.placements.is_empty() || model.ir.geometry.bodies.is_empty() || any_part(assembly) {
+        return None;
+    }
+    // Restating reads only the design's own geometry, never its assembly.
+    step::restatable(model).ok()?;
+    Some(Model {
+        assembly: None,
+        ..model.clone()
+    })
+}
+
 /// Whether `model` is an assembly that places no parts, written as an empty design.
 fn empty_assembly(model: &Model) -> bool {
     model
@@ -1006,7 +1299,7 @@ fn count(n: usize, one: &str, many: &str) -> String {
 fn solid_bodies(model: &Model) -> usize {
     model
         .ir
-        .model
+        .geometry
         .bodies
         .iter()
         .filter(|body| body.kind == cadmpeg_ir::topology::BodyKind::Solid)
@@ -1127,12 +1420,17 @@ impl Writer for SolidCraftWriter {
         report: &mut Report,
         progress: Option<&dutchman_core::Progress<'_>>,
     ) -> Result<(), Error> {
+        document::report_scoped_attributes(model, report);
         let _preparing = progress
             .filter(|_| model.assembly.is_none())
             .map(|p| p.stage_step(dutchman_core::StepKind::Preparing, Some(&model.name)));
         #[cfg(all(debug_assertions, not(target_family = "wasm")))]
         if model.assembly.is_none() {
             slow_part(&model.name);
+        }
+        if let Some(flat) = flattened_assembly(model) {
+            report.push(Severity::Degraded, GEOMETRY, FLATTENED_ASSEMBLY);
+            return self.write_with_progress(&flat, out, report, progress);
         }
         report.set_threads(self.threads, 1);
         if empty_assembly(model) {
@@ -1190,10 +1488,14 @@ impl Writer for SolidCraftWriter {
             None => step::restate(model, report)?,
         };
         let (bytes, outcome) = if self.import_only {
-            report.push(Severity::Info, HISTORY, "not written (--import-only)");
+            report.push(
+                Severity::Info,
+                HISTORY,
+                format!("not written ({})", self.import_only_reason),
+            );
             let outcome = Outcome {
                 mode: Mode::Import,
-                check: Check::NotApplicable("--import-only".to_owned()),
+                check: Check::NotApplicable(self.import_only_reason.clone()),
                 features: Vec::new(),
             };
             let references = self.sketches.then(|| history::sketches(model, report).0);
@@ -1203,11 +1505,19 @@ impl Writer for SolidCraftWriter {
             )
         } else {
             let mut history_report = Report::default();
-            let mut mapping = history::map_with_sketches(
+            let mut mapping = history::map_with_source_profile_check(
                 model,
                 &mut history_report,
                 self.resolved_version(),
                 self.sketches,
+                &mut Measuring {
+                    writer: self,
+                    model,
+                    step: &step,
+                    progress,
+                },
+                progress,
+                report.losses(),
             );
             if let Ok(history) = &mut mapping.result {
                 if let Err(why) = history::base::restate(history, model) {
@@ -1345,7 +1655,9 @@ impl Writer for SolidCraftWriter {
                             );
                             (written, written_as(Check::Verified))
                         }
-                        verify::Outcome::Unverified(why) if self.keep_unverified_hidden() => {
+                        verify::Outcome::Unverified(why)
+                            if self.keep_unverified_history_hidden(history) =>
+                        {
                             report.append(history_report);
                             let message = format!(
                                 "{summary}; unverified: {why}; kept hidden beside the original, which stays the visible model"
@@ -1400,14 +1712,39 @@ impl Writer for SolidCraftWriter {
                     }
                 }
             };
-            written
+            let (bytes, mut outcome) = written;
+            let flattened = mapping.result.is_err() || matches!(outcome.check, Check::Flattened(_));
+            if flattened {
+                output_links::retain(
+                    &mut outcome.features,
+                    &mapping.references.features,
+                    document::FEATURE,
+                );
+            } else if let Ok(history) = &mapping.result {
+                output_links::history(&mut outcome.features, history, 0);
+            }
+            (bytes, outcome)
         };
         if outcome.mode == Mode::Import {
             self.check_import(model, &bytes, report, progress);
         }
+        state_tolerances(report, &outcome);
         report.set_outcome(outcome);
         out.write_all(&bytes)
             .map_err(|err| Error::Encode(format!("cannot write the design: {err}")))
+    }
+}
+
+/// Records the tolerances of a history check that ran: the history verified, partly kept, or
+/// rebuilt and found to differ. Nothing is recorded when no replay was compared.
+pub(crate) fn state_tolerances(report: &mut Report, outcome: &Outcome) {
+    let compared = match &outcome.check {
+        Check::Verified | Check::Partial(_) => true,
+        Check::Flattened(reason) => reason.starts_with("replay differs ("),
+        _ => false,
+    };
+    if outcome.mode != Mode::Import && compared {
+        report.set_verification_tolerances(verification_tolerances());
     }
 }
 
@@ -1420,15 +1757,22 @@ pub struct MappedHistory {
     pub sketches: Vec<Value>,
     /// One mapping result per source feature.
     pub outcomes: Vec<FeatureOutcome>,
+    /// The value of each parameter the features may name, as a quantity, by parameter name.
+    pub parameter_values: std::collections::BTreeMap<String, String>,
 }
 
 /// Maps history without writing a container or running SolidCraft.
 pub fn mapped_history(model: &Model, report: &mut Report) -> MappedHistory {
     let mut mapping = history::map(model, report, SolidCraftVersion::default());
     // Blends are proven only on SolidCraft's replay of the history before them.
-    history::prove_blends(&mut mapping, |_, _, _| {
-        Err("only a SolidCraft design is replayed to find them".to_owned())
-    });
+    history::prove_blends(
+        &mut mapping,
+        |_, _, _| Err("only a SolidCraft design is replayed to find them".to_owned()),
+        |_, _| history::infer::Fit::Unknown,
+    );
+    for feature in &mut mapping.features {
+        feature.output = Default::default();
+    }
     MappedHistory {
         features: mapping.result.and_then(|history| match history.stop {
             Some(why) => Err(why),
@@ -1436,7 +1780,48 @@ pub fn mapped_history(model: &Model, report: &mut Report) -> MappedHistory {
         }),
         sketches: mapping.references.features,
         outcomes: mapping.features,
+        parameter_values: parameter_values(model, &mapping.references.params),
     }
+}
+
+/// The value of each parameter in `params` (the rows the mapped history names), as a quantity:
+/// a source parameter's solved value, a literal expression as written, and a negated parameter
+/// as the negation of its value.
+fn parameter_values(
+    model: &Model,
+    params: &[serde_json::Value],
+) -> std::collections::BTreeMap<String, String> {
+    let mut values = history::params::values(model);
+    for row in params {
+        let (Some(name), Some(expr)) = (
+            row.get("name").and_then(serde_json::Value::as_str),
+            row.get("expr").and_then(serde_json::Value::as_str),
+        ) else {
+            continue;
+        };
+        if values.contains_key(name) {
+            continue;
+        }
+        let expr = expr.trim();
+        let value = match expr.strip_prefix('-').map(str::trim) {
+            Some(negated) => {
+                values
+                    .get(negated)
+                    .map(|value| match value.trim().strip_prefix('-') {
+                        Some(positive) => positive.trim().to_owned(),
+                        None => format!("-{}", value.trim()),
+                    })
+            }
+            None if expr.starts_with(|c: char| c.is_ascii_digit() || c == '.') => {
+                Some(expr.to_owned())
+            }
+            None => None,
+        };
+        if let Some(value) = value {
+            values.insert(name.to_owned(), value);
+        }
+    }
+    values
 }
 
 /// Restates geometry with the existing guarded STEP encoder, for output adapters that
@@ -1527,5 +1912,48 @@ mod proof_prefix_tests {
         // Already the whole history, or no step in it: nothing to trim.
         assert!(through_last(&history, &[4, 1]).is_none());
         assert!(through_last(&history, &[9]).is_none());
+    }
+}
+
+#[cfg(test)]
+mod mesh_only_tests {
+    use super::*;
+
+    /// A model whose only geometry is a mesh has nothing SolidCraft can take.
+    #[test]
+    fn a_mesh_only_model_writes_no_design() {
+        use cadmpeg_ir::math::Point3;
+        use cadmpeg_ir::tessellation::{Tessellation, TessellationId, TessellationMesh};
+        let point = |x: f64, y: f64, z: f64| Point3 { x, y, z };
+        let mesh = TessellationMesh::List {
+            vertices: vec![
+                point(0.0, 0.0, 0.0),
+                point(10.0, 0.0, 0.0),
+                point(0.0, 10.0, 0.0),
+                point(0.0, 0.0, 10.0),
+            ],
+            triangles: vec![[0, 2, 1], [0, 1, 3], [0, 3, 2], [1, 2, 3]],
+        };
+        let mut ir = cadmpeg_ir::CadIr::empty();
+        ir.model.tessellations.push(
+            Tessellation::new(
+                TessellationId::mint("f3d:model:tessellation#1").unwrap(),
+                mesh,
+                Vec::new(),
+            )
+            .unwrap(),
+        );
+        let model = Model {
+            ir,
+            fidelity: None,
+            name: "mesh".to_owned(),
+            source_file: Some("mesh.f3d".to_owned()),
+            assembly: None,
+            source_step: None,
+        };
+        let mut out = Vec::new();
+        let result = SolidCraftWriter::default().write(&model, &mut out, &mut Report::default());
+        assert!(matches!(result, Err(Error::NoGeometry(_))), "{result:?}");
+        assert!(out.is_empty());
     }
 }

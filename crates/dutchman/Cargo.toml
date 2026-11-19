@@ -51,6 +51,7 @@ zip.workspace = true
 sysinfo.workspace = true
 
 [dev-dependencies]
+cadmpeg-ir.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 

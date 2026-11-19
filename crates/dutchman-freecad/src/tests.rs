@@ -21,39 +21,18 @@ fn model(kind: &str) -> Model {
             "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
             "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0}
         }},
-        "profiles": [[{"entity": "synthetic:test:sketch-entity#1"}]]
+        "profiles": [[{"entity": "synthetic:test:sketch-entity#1", "reversed": false}]]
     }]);
-    arena["sketch_entities"] = json!([{
-        "id": "synthetic:test:sketch-entity#1",
-        "sketch": "synthetic:test:sketch#1",
-        "construction": false,
-        "geometry": {"kind": "circle", "center": {"u": 5.0, "v": 0.0}, "radius": 2.0}
-    }]);
+    arena["sketch_entities"] = json!([{"id": "synthetic:test:sketch-entity#1", "sketch": "synthetic:test:sketch#1", "construction": false, "geometry": {"kind": "circle", "center": {"u": 5.0, "v": 0.0}, "radius": 2.0}, "endpoint_refs": []}]);
     arena["features"] = json!([
-        {"id": "synthetic:test:feature#1", "ordinal": 0, "name": "Profile", "suppressed": false,
-         "definition": {"definition": "sketch", "sketch": {"space": "planar", "sketch": "synthetic:test:sketch#1"}}},
-        {"id": "synthetic:test:feature#2", "ordinal": 1, "name": "Solid", "suppressed": false,
-         "definition": {"definition": "extrude", "profile": {"kind": "sketch", "value": "synthetic:test:sketch#1"},
-             "direction": {"kind": "profile_normal"}, "start": {"kind": "profile_plane"},
-             "extent": {"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": 5.0}}},
-             "op": "new_body"}}
+        {"id": "synthetic:test:feature#1", "ordinal": 0, "name": "Profile", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": "synthetic:test:sketch#1"}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []},
+        {"id": "synthetic:test:feature#2", "ordinal": 1, "name": "Solid", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {"profile": {"kind":"planar", "value": {"kind": "sketch", "value": "synthetic:test:sketch#1"}}, "direction": {"kind": "profile_normal"}, "start": {"kind": "profile_plane"}, "extent": {"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": 5.0}}}, "op": "new_body"}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}
     ]);
     if kind == "revolve" {
-        arena["features"][1]["definition"] = json!({
-            "definition": "revolve", "op": "new_body",
-            "construction": {"state": "resolved",
-                "profile": {"kind": "sketch", "value": "synthetic:test:sketch#1"},
-                "axis": {"origin": {"x": 0.0, "y": 0.0, "z": 0.0}, "direction": {"x": 0.0, "y": 1.0, "z": 0.0}},
-                "extent": {"kind": "one_sided", "termination": {"kind": "angle", "angle": std::f64::consts::TAU}}
-            }
-        });
+        arena["features"][1]["definition"] = json!({"kind":"operation", "value": {"kind": "revolve", "value": {"op": "new_body", "construction": {"kind": "resolved", "value": {"profile": {"kind": "sketch", "value": "synthetic:test:sketch#1"}, "axis": {"origin": {"x": 0.0, "y": 0.0, "z": 0.0}, "direction": {"x": 0.0, "y": 1.0, "z": 0.0}}, "extent": {"kind": "one_sided", "termination": {"kind": "angle", "angle": std::f64::consts::TAU}}}}}}});
     }
     if kind == "pattern" {
-        arena["features"].as_array_mut().unwrap().push(json!({
-            "id": "synthetic:test:feature#3", "ordinal": 2, "name": "Copies", "suppressed": false,
-            "definition": {"definition": "pattern", "seeds": [{"kind": "feature", "value": "synthetic:test:feature#2"}],
-                "pattern": {"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 20.0, "count": 3}}
-        }));
+        arena["features"].as_array_mut().unwrap().push(json!({"id": "synthetic:test:feature#3", "ordinal": 2, "name": "Copies", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "pattern", "value": {"seeds": [{"kind": "feature", "value": "synthetic:test:feature#2"}], "pattern": {"kind": "linear", "direction": {"x": 1.0, "y": 0.0, "z": 0.0}, "spacing": 20.0, "count": 3, "omitted_instances": [], "symmetric": false}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
     }
     let model = Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
@@ -67,6 +46,46 @@ fn model(kind: &str) -> Model {
         with_unmapped_suffix(model)
     } else {
         model
+    }
+}
+
+/// The synthetic pad twice over: two sketches, two new-body extrudes, and a second body in the
+/// final shape.
+fn two_bodies(second: &str) -> Model {
+    let mut wire = serde_json::to_value(cadmpeg_ir::examples::unit_cube().unwrap()).unwrap();
+    let arena = &mut wire["model"];
+    let sketch = |n: u32| {
+        json!({"id": format!("synthetic:test:sketch#{n}"), "name": format!("Profile {n}"),
+        "placement": {"kind": "resolved", "frame": {
+            "origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
+            "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0}
+        }},
+        "profiles": [[{"entity": format!("synthetic:test:sketch-entity#{n}"), "reversed": false}]]})
+    };
+    arena["sketches"] = json!([sketch(1), sketch(2)]);
+    arena["sketch_entities"] = json!([1, 2].map(|n| json!({"id": format!("synthetic:test:sketch-entity#{n}"), "sketch": format!("synthetic:test:sketch#{n}"), "construction": false, "geometry": {"kind": "circle", "center": {"u": 5.0 * f64::from(n) * 4.0, "v": 0.0}, "radius": 2.0}, "endpoint_refs": []})));
+    let extrude = |id: u32, sketch: u32, op: &str| json!({"id": format!("synthetic:test:feature#{id}"), "ordinal": id, "name": format!("Solid {id}"), "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {"profile": {"kind":"planar", "value": {"kind": "sketch", "value": format!("synthetic:test:sketch#{sketch}")}}, "direction": {"kind": "profile_normal"}, "start": {"kind": "profile_plane"}, "extent": {"kind": "one_sided", "side": {"termination": {"kind": "blind", "length": 5.0}}}, "op": op}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []});
+    let sketch_feature = |id: u32, sketch: u32| json!({"id": format!("synthetic:test:feature#{id}"), "ordinal": id, "name": format!("Profile {sketch}"), "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": format!("synthetic:test:sketch#{sketch}")}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []});
+    arena["features"] = json!([
+        sketch_feature(0, 1),
+        extrude(1, 1, "new_body"),
+        sketch_feature(2, 2),
+        extrude(3, 2, second)
+    ]);
+    // Topology lives under `geometry` in CADIR v11.
+    let mut bodies = wire["geometry"]["bodies"].as_array().unwrap().clone();
+    let mut other = bodies[0].clone();
+    other["id"] = json!("synthetic:test:body#2");
+    bodies.push(other);
+    wire["geometry"]["bodies"] = json!(bodies);
+    Model {
+        ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+        fidelity: None,
+        name: "Synthetic".to_owned(),
+        source_file: None,
+        source_step: None,
+        assembly: None,
     }
 }
 
@@ -113,11 +132,7 @@ fn with_unmapped_suffix(mut model: Model) -> Model {
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
-        .push(json!({
-            "id": "synthetic:test:feature#3", "ordinal": 2, "name": "Unmapped",
-            "suppressed": false,
-            "definition": {"definition": "native", "kind": "Synthetic unsupported feature"}
-        }));
+        .push(json!({"id": "synthetic:test:feature#3", "ordinal": 2, "name": "Unmapped", "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "native", "value": {"kind": "Synthetic unsupported feature", "parameters": {}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}));
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
 }
@@ -177,8 +192,8 @@ fn freecad_refusals_stop_the_prefix_and_keep_later_sketches() {
     tapered["id"] = json!("synthetic:test:feature#3");
     tapered["ordinal"] = json!(2);
     tapered["name"] = json!("Tapered pad");
-    tapered["definition"]["op"] = json!("join");
-    tapered["definition"]["extent"]["side"]["draft"] = json!(0.1);
+    tapered["definition"]["value"]["value"]["op"] = json!("join");
+    tapered["definition"]["value"]["value"]["extent"]["side"]["draft"] = json!(0.1);
     wire["model"]["features"]
         .as_array_mut()
         .unwrap()
@@ -328,8 +343,7 @@ fn import_only_and_unmapped_features_keep_step_and_report_each_feature() {
 
     let mut model = model;
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    wire["model"]["features"][1]["definition"] =
-        json!({"definition": "native", "kind": "Synthetic unsupported feature"});
+    wire["model"]["features"][1]["definition"] = json!({"kind":"operation", "value": {"kind": "native", "value": {"kind": "Synthetic unsupported feature", "parameters": {}}}});
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     let (_, report) = written(&model, FreeCadWriter::new());
     assert_eq!(report.outcome().unwrap().features.len(), 2);
@@ -370,10 +384,7 @@ fn huge_pattern_counts_are_reported_before_macro_execution() {
 fn sketch_constraints_keep_their_evaluated_dimensions() {
     let mut model = model("pad");
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    wire["model"]["parameters"] = json!([{
-        "id": "synthetic:test:parameter#1", "name": "Radius", "expression": "2 mm",
-        "owner": "synthetic:test:feature#1", "value": {"kind": "length", "value": 2.0}
-    }]);
+    wire["model"]["parameters"] = json!([{"id": "synthetic:test:parameter#1", "name": "Radius", "expression": "2 mm", "owner": "synthetic:test:feature#1", "value": {"kind": "length", "value": 2.0}, "ordinal": 0, "dependencies": [], "properties": {}}]);
     wire["model"]["sketch_constraints"] = json!([{
         "id": "synthetic:test:sketch-constraint#1", "sketch": "synthetic:test:sketch#1",
         "definition": {"kind": "radius", "entity": "synthetic:test:sketch-entity#1", "parameter": "synthetic:test:parameter#1"}
@@ -386,6 +397,23 @@ fn sketch_constraints_keep_their_evaluated_dimensions() {
     let (script, report) = written(&model, FreeCadWriter::new());
     assert_eq!(report.outcome().unwrap().mode, Mode::History);
     assert!(script.contains("parameter_table(json.loads("));
+}
+
+#[test]
+fn a_dimension_named_by_a_parameter_gets_the_parameters_value() {
+    let mut model = model("pad");
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["parameters"] = json!([{"id": "synthetic:test:parameter#1", "name": "Radius", "expression": "2 mm", "owner": "synthetic:test:feature#1", "value": {"kind": "length", "value": 2.0}, "ordinal": 0, "dependencies": [], "properties": {}}]);
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let mapped = dutchman_solidcraft::mapped_history(&model, &mut Report::default());
+    assert_eq!(
+        mapped.parameter_values.get("Radius").map(String::as_str),
+        Some("2 mm")
+    );
+    let (script, _) = written(&model, FreeCadWriter::new());
+    // FreeCAD's quantity parser takes no names: the macro resolves them from this table.
+    assert!(script.contains("parameter_values = json.loads("));
+    assert!(script.contains("if name in parameter_values:"));
 }
 
 #[test]
@@ -521,21 +549,19 @@ fn raw_joint_model(definition: Value) -> Model {
     let mut model = joint_model();
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     let identity = dutchman_core::placement::IDENTITY;
-    wire["model"]["product_definitions"] = json!([{
-        "id": "synthetic:test:product#part", "kind": "part"
-    }]);
+    wire["model"]["product_definitions"] = json!([{"id": "synthetic:test:product#part", "kind": "part", "bom_properties": {}, "bodies": [], "sketches": []}]);
     wire["model"]["occurrences"] = json!([
         {"id": "synthetic:test:occurrence#base", "ordinal": 0, "name": "Base",
-         "prototype": {"scope": "local", "definition": "synthetic:test:product#part"},
+         "prototype": {"kind": "local", "definition": "synthetic:test:product#part"},
          "parent": {"kind": "root"}, "transform": identity, "scale": [1.0, 1.0, 1.0]},
         {"id": "synthetic:test:occurrence#arm", "ordinal": 1, "name": "Arm",
-         "prototype": {"scope": "local", "definition": "synthetic:test:product#part"},
+         "prototype": {"kind": "local", "definition": "synthetic:test:product#part"},
          "parent": {"kind": "root"}, "transform": identity, "scale": [1.0, 1.0, 1.0]}
     ]);
     let joint = &model.assembly.as_ref().unwrap().joints[0];
     let connector = |name: &str, frame| {
         json!({
-            "operand": {"container": {"container": "occurrence", "occurrence": name}, "object": "Body"},
+            "operand": {"container": {"kind": "occurrence", "occurrence": name, "occurrence_path": []}, "object": "Body", "subelements": []},
             "frame": frame, "detached": false
         })
     };
@@ -547,13 +573,10 @@ fn raw_joint_model(definition: Value) -> Model {
             [-1.0, 0.0, 0.0, 10.0],
         ];
     }
-    wire["model"]["assembly_joints"] = json!([{
-        "id": "synthetic:test:joint#hinge", "suppressed": false,
-        "operands": {"arity": "pair", "kind": definition, "connectors": [
+    wire["model"]["assembly_joints"] = json!([{"id": "synthetic:test:joint#hinge", "suppressed": false, "operands": {"kind": "pair", "value": {"kind": definition, "connectors": [
             connector("synthetic:test:occurrence#base", frame_a),
             connector("synthetic:test:occurrence#arm", joint.frame_b)
-        ]}
-    }]);
+        ]}}, "drives": []}]);
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     // The core converts only these families; the others reach the writer through CADIR.
     let motion = match family.as_str() {
@@ -690,8 +713,8 @@ fn cadir_joint_families_and_independent_bounds_are_mapped() {
         assert_eq!(assembly_data(&script)["joints"][0]["kind"], kind);
     }
     let model = raw_joint_model(json!({"kind": "cylindrical", "angle": 0.4, "distance": 2.0,
-        "angular_limits": {"bounds": "minimum", "minimum": -0.5},
-        "linear_limits": {"bounds": "maximum", "maximum": 8.0}}));
+        "angular_limits": {"kind": "minimum", "minimum": -0.5},
+        "linear_limits": {"kind": "maximum", "maximum": 8.0}}));
     let (script, _) = written(&model, FreeCadWriter::new());
     let data = assembly_data(&script);
     let row = &data["joints"][0];
@@ -732,15 +755,15 @@ fn joints_core_left_out_are_reported_only_when_the_macro_cannot_build_them() {
 #[test]
 fn unsupported_joint_families_and_fixed_limits_have_specific_notes() {
     for definition in [
-        json!({"kind": "rack_pinion"}),
+        json!({"kind": "rack_pinion", "coupled_joints": []}),
         json!({"kind": "screw"}),
-        json!({"kind": "gears"}),
+        json!({"kind": "gears", "coupled_joints": []}),
         json!({"kind": "belt"}),
         json!({"kind": "plane_coincidence", "sense": "opposed"}),
         json!({"kind": "point_on_axis"}),
         json!({"kind": "tangent", "contact": "outside"}),
         json!({"kind": "native", "name": "Special linkage"}),
-        json!({"kind": "fixed", "angular_limits": {"bounds": "minimum", "minimum": 0.0}}),
+        json!({"kind": "fixed", "angular_limits": {"kind": "minimum", "minimum": 0.0}}),
     ] {
         let family = definition["kind"].as_str().unwrap().to_owned();
         let (script, report) = written(&raw_joint_model(definition), FreeCadWriter::new());
@@ -831,7 +854,8 @@ fn joint_attachment_offsets_grounding_and_operand_refusals_are_explicit() {
     let mut wire = serde_json::to_value(&model.ir).unwrap();
     let mut offset = IDENTITY;
     offset[0][3] = 5.0;
-    wire["model"]["assembly_joints"][0]["operands"]["offset_frames"] = json!([offset, IDENTITY]);
+    wire["model"]["assembly_joints"][0]["operands"]["value"]["offset_frames"] =
+        json!([offset, IDENTITY]);
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     let (script, _) = written(&model, FreeCadWriter::new());
     assert_eq!(assembly_data(&script)["joints"][0]["frame_a"][0][3], 5.0);
@@ -870,8 +894,8 @@ fn joint_attachment_offsets_grounding_and_operand_refusals_are_explicit() {
 
     let mut model = raw_joint_model(json!({"kind": "ball"}));
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    wire["model"]["assembly_joints"][0]["operands"]["connectors"][0]["operand"]["container"]
-        ["occurrence_path"] = json!(["NestedPart"]);
+    wire["model"]["assembly_joints"][0]["operands"]["value"]["connectors"][0]["operand"]
+        ["container"]["occurrence_path"] = json!(["NestedPart"]);
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     let (script, report) = written(&model, FreeCadWriter::new());
     assert!(assembly_data(&script)["joints"]
@@ -956,7 +980,7 @@ fn off_axis_model(definition: Value, ground: Option<usize>) -> Model {
     assembly.joints[0].frame_b = frame_b;
     assembly.held = ground.map(|part| vec![vec![part]]).unwrap_or_default();
     let mut wire = serde_json::to_value(&model.ir).unwrap();
-    let connectors = &mut wire["model"]["assembly_joints"][0]["operands"]["connectors"];
+    let connectors = &mut wire["model"]["assembly_joints"][0]["operands"]["value"]["connectors"];
     connectors[0]["frame"] = json!(axis);
     connectors[1]["frame"] = json!(frame_b);
     if let Some(part) = ground {
@@ -964,13 +988,9 @@ fn off_axis_model(definition: Value, ground: Option<usize>) -> Model {
         wire["model"]["assembly_joints"]
             .as_array_mut()
             .unwrap()
-            .push(json!({
-                "id": "synthetic:test:joint#ground", "suppressed": false,
-                "operands": {"arity": "grounded", "connector": {
-                    "operand": {"container": {"container": "occurrence",
-                        "occurrence": format!("synthetic:test:occurrence#{name}")}, "object": "Body"},
-                    "frame": IDENTITY, "detached": false}}
-            }));
+            .push(json!({"id": "synthetic:test:joint#ground", "suppressed": false, "operands": {"kind": "grounded", "value": {"connector": {
+                    "operand": {"container": {"kind": "occurrence", "occurrence": format!("synthetic:test:occurrence#{name}"), "occurrence_path": []}, "object": "Body", "subelements": []},
+                    "frame": IDENTITY, "detached": false}}}, "drives": []}));
     }
     model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     model
@@ -1215,18 +1235,16 @@ fn native_document_rebuilds_a_synthetic_pad_when_freecad_is_configured() {
             let points = [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]];
             let a = points[i];
             let b = points[(i + 1) % 4];
-            json!({"id": format!("synthetic:test:sketch-entity#{}", i + 1),
-                "sketch": "synthetic:test:sketch#1", "construction": false,
-                "geometry": {"kind": "line", "start": {"u": a[0], "v": a[1]}, "end": {"u": b[0], "v": b[1]}}})
+            json!({"id": format!("synthetic:test:sketch-entity#{}", i + 1), "sketch": "synthetic:test:sketch#1", "construction": false, "geometry": {"kind": "line", "start": {"u": a[0], "v": a[1]}, "end": {"u": b[0], "v": b[1]}}, "endpoint_refs": []})
         })
         .collect::<Vec<_>>();
     wire["model"]["sketch_entities"] = json!(entities);
     let profile = (1..=4)
-        .map(|i| json!({"entity": format!("synthetic:test:sketch-entity#{i}")}))
+        .map(|i| json!({"entity": format!("synthetic:test:sketch-entity#{i}"), "reversed": false}))
         .collect::<Vec<_>>();
     wire["model"]["sketches"][0]["profiles"] = json!([profile]);
-    wire["model"]["features"][1]["definition"]["extent"]["side"]["termination"]["length"] =
-        json!(10.0);
+    wire["model"]["features"][1]["definition"]["value"]["value"]["extent"]["side"]["termination"]
+        ["length"] = json!(10.0);
     source.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
     let runner = super::run::FreeCadRunner::new(
         FreeCadWriter::new(),
@@ -1267,4 +1285,32 @@ fn native_document_rebuilds_a_synthetic_pad_when_freecad_is_configured() {
         stdout.lines().any(|line| line == "VISIBLE=Body"),
         "{stdout}"
     );
+}
+
+#[test]
+fn a_part_with_several_bodies_opens_a_body_for_each_new_body_feature() {
+    let (script, report) = written(&two_bodies("new_body"), FreeCadWriter::new());
+    let outcome = report.outcome().unwrap();
+    assert_eq!(outcome.mode, Mode::History, "{outcome:?}");
+    assert_eq!(script.matches("rebuild_bodies(json.loads").count(), 4);
+    assert!(script.contains("states = []\n    sketch_rows = {}\n"));
+    assert!(script.contains("selected = rebuilt"));
+    assert!(!script.contains("body = doc.addObject('PartDesign::Body', 'Body')\nbody.Label"));
+    assert!(outcome
+        .features
+        .iter()
+        .all(|f| f.status == FeatureStatus::Mapped));
+}
+
+#[test]
+fn a_join_after_several_bodies_is_placed_by_the_macro() {
+    let (script, report) = written(&two_bodies("join"), FreeCadWriter::new());
+    assert_eq!(report.outcome().unwrap().mode, Mode::History);
+    assert!(script.contains("\\\"operation\\\":\\\"join\\\""));
+}
+
+#[test]
+fn single_body_macros_do_not_carry_the_multi_body_helpers() {
+    let (script, _) = written(&model("pad"), FreeCadWriter::new());
+    assert!(!script.contains("rebuild_bodies"));
 }

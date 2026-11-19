@@ -7,9 +7,19 @@ use serde_json::{json, Value};
 use super::sketch::{Curve, Mapped, Shape, P2};
 use super::Context;
 
+/// V11 operations use either PlanarProfileRef directly or ProfileRef's planar arm.
+/// Spatial arms stay intact so the mapper names the unsupported profile form.
+pub(super) fn planar(reference: &Value) -> &Value {
+    if reference.get("kind").and_then(Value::as_str) == Some("planar") {
+        reference.get("value").unwrap_or(&Value::Null)
+    } else {
+        reference
+    }
+}
+
 /// The sketch a profile reference uses, and the SolidCraft profile selection for it.
 pub(super) fn profile(profile: Option<&Value>, ctx: &Context) -> Result<(String, Value), String> {
-    let profile = profile.ok_or("it has no profile")?;
+    let profile = planar(profile.ok_or("it has no profile")?);
     let kind = profile
         .get("kind")
         .and_then(Value::as_str)
@@ -118,9 +128,10 @@ pub(super) fn profile(profile: Option<&Value>, ctx: &Context) -> Result<(String,
     Ok((sketch.to_owned(), selection))
 }
 
-/// A whole source region may span subdivisions needed by another feature's trimmed picks.
-/// Give that explicit whole-loop consumer a copy with its unused curves construction, while
-/// the shared sketch retains every trimmed boundary. Geometry, constraints, and curve ids
+/// A whole source region may span subdivisions needed by another feature's trimmed picks:
+/// lines across it, or unused curves (a notch drawn from its edge, say) that touch or enter
+/// it. Give that explicit whole-loop consumer a copy with its unused curves construction,
+/// while the shared sketch retains every trimmed boundary. Geometry, constraints, and curve ids
 /// are copied unchanged; SolidCraft still has to match the selected boundaries uniquely.
 pub(super) fn whole_region_sketch(
     feature: &Value,
@@ -128,7 +139,7 @@ pub(super) fn whole_region_sketch(
     ctx: &mut Context,
     preceding: &[Value],
 ) -> Option<u64> {
-    let reference = super::operation(feature).get("profile")?;
+    let reference = planar(super::operation(feature).get("profile")?);
     match reference.get("kind")?.as_str()? {
         "sketch_profiles" => {}
         "sketch_regions"
@@ -136,16 +147,18 @@ pub(super) fn whole_region_sketch(
                 .pointer("/value/regions")?
                 .as_array()?
                 .iter()
-                .all(|region| region.get("region").and_then(Value::as_str) == Some("loops")) => {}
+                .all(|region| region.get("kind").and_then(Value::as_str) == Some("loops")) => {}
         _ => return None,
     }
     let source = ctx.row("sketches", sketch)?;
     let entities = sketch_entities(ctx, sketch);
     let demoted = super::crossing::demoted(source, &entities, std::slice::from_ref(feature));
     let mapped = ctx.sketches.get(sketch)?;
-    let crossing_ids: BTreeSet<String> = demoted
+    let dividing = super::crossing::dividing(source, &entities, feature, &demoted.stray);
+    let splitting_ids: BTreeSet<String> = demoted
         .crossing
         .iter()
+        .chain(&dividing)
         .filter_map(|entity| mapped.curve(entity))
         .flat_map(Curve::ids)
         .collect();
@@ -164,7 +177,7 @@ pub(super) fn whole_region_sketch(
             && curve
                 .get("id")
                 .and_then(Value::as_str)
-                .is_some_and(|id| crossing_ids.contains(id))
+                .is_some_and(|id| splitting_ids.contains(id))
     }) {
         return None;
     }
@@ -507,7 +520,7 @@ fn needs_split(ctx: &Context, sketch: &str, index: &Value, ring: &[String]) -> b
 }
 
 /// Source entities belonging to this sketch.
-fn sketch_entities<'a>(ctx: &'a Context, sketch: &str) -> Vec<&'a Value> {
+pub(super) fn sketch_entities<'a>(ctx: &'a Context, sketch: &str) -> Vec<&'a Value> {
     ctx.arena("sketch_entities")
         .iter()
         .filter(|entity| entity.get("sketch").and_then(Value::as_str) == Some(sketch))
@@ -626,10 +639,8 @@ fn curve_ids(
         .ok_or_else(|| "its profile uses a curve the sketch does not carry".to_owned())
 }
 
-/// Profile regions. Regions made of whole source loops become SolidCraft's exact whole
-/// boundaries (outer loop and holes); when any region is bounded by pieces of curves, every
-/// region is selected by the curves of its outer boundary, which SolidCraft also matches
-/// against pieces.
+/// Profile regions. Whole source loops become exact whole boundaries (outer and holes).
+/// Trimmed boundaries name interior points: several regions can share the same carrier ids.
 fn regions(
     regions: Option<&Value>,
     ctx: &Context,
@@ -646,7 +657,7 @@ fn regions(
             .get("holes")
             .and_then(Value::as_array)
             .is_some_and(|holes| !holes.is_empty());
-        if region.get("region").and_then(Value::as_str) == Some("loops")
+        if region.get("kind").and_then(Value::as_str) == Some("loops")
             && region.get("outer").and_then(Value::as_u64) == Some(0)
             && !holes
             && profile_count(ctx, sketch) == 1
@@ -656,11 +667,13 @@ fn regions(
             return Ok(json!({"type": "all"}));
         }
     }
+    let expanded = expand_enclosing_loops(regions, ctx, sketch);
+    let regions = expanded.as_deref().unwrap_or(regions);
     let mut whole = Vec::with_capacity(regions.len());
     let mut outers = Vec::with_capacity(regions.len());
     let mut trimmed = false;
     for region in regions {
-        match region.get("region").and_then(Value::as_str) {
+        match region.get("kind").and_then(Value::as_str) {
             Some("loops") => {
                 let outer = source_loop(
                     ctx,
@@ -727,7 +740,13 @@ fn regions(
         }
     }
     if trimmed {
-        if let Some(points) = region_points(regions, ctx, sketch, mapped, false) {
+        if regions
+            .iter()
+            .any(|region| region.get("kind").and_then(Value::as_str) == Some("trimmed"))
+        {
+            let points = region_points(regions, ctx, sketch, mapped).ok_or(
+                "its trimmed profile boundary does not close unambiguously or has no unambiguous interior point",
+            )?;
             return Ok(json!({"type": "points", "points": points}));
         }
         curves(outers)
@@ -736,7 +755,7 @@ fn regions(
         // loops of one region that cross bound it by their union: either way its own curves
         // bound none of SolidCraft's profiles, so name each region by a point.
         if shares_an_edge(regions, ctx, sketch) || loops_cross(regions, ctx, sketch) {
-            if let Some(points) = region_points(regions, ctx, sketch, mapped, true) {
+            if let Some(points) = region_points(regions, ctx, sketch, mapped) {
                 return Ok(json!({"type": "points", "points": points}));
             }
         }
@@ -744,6 +763,95 @@ fn regions(
             json!({"type": "whole_boundaries", "profiles": whole}),
         ))
     }
+}
+
+/// A selection of whole-loop regions where a hole-less region encloses another loop the
+/// selection names: the enclosing loop alone is not a region of the sketch (the loop inside
+/// divides it into a ring and that loop's own disc), and SolidCraft refuses it as an unknown
+/// profile. It is the ring around the loops directly inside it plus the disc of each, which
+/// take the same material. `None` when nothing needs that, or a region is not a whole loop.
+fn expand_enclosing_loops(regions: &[Value], ctx: &Context, sketch: &str) -> Option<Vec<Value>> {
+    let index = |value: Option<&Value>| value?.as_u64().and_then(|i| usize::try_from(i).ok());
+    let mut wanted: Vec<(usize, Vec<usize>)> = Vec::with_capacity(regions.len());
+    for region in regions {
+        if region.get("kind").and_then(Value::as_str) != Some("loops") {
+            return None;
+        }
+        let holes = match region.get("holes").and_then(Value::as_array) {
+            Some(holes) => holes
+                .iter()
+                .map(|hole| index(Some(hole)))
+                .collect::<Option<Vec<_>>>()?,
+            None => Vec::new(),
+        };
+        wanted.push((index(region.get("outer"))?, holes));
+    }
+    let row = ctx.row("sketches", sketch)?;
+    let entities = sketch_entities(ctx, sketch);
+    let mut loops: Vec<usize> = wanted
+        .iter()
+        .flat_map(|(outer, holes)| std::iter::once(*outer).chain(holes.iter().copied()))
+        .collect();
+    loops.sort_unstable();
+    loops.dedup();
+    if loops.len() < 2 {
+        return None;
+    }
+    // Which selected loops lie directly inside each loop.
+    let inside = |outer: usize| -> Vec<usize> {
+        let within: Vec<usize> = loops
+            .iter()
+            .copied()
+            .filter(|&other| {
+                other != outer
+                    && super::crossing::nesting(row, &entities, &[outer, other])
+                        .is_some_and(|nest| nest.contains(&(outer, vec![other])))
+            })
+            .collect();
+        within
+            .iter()
+            .copied()
+            .filter(|&child| {
+                !within.iter().any(|&between| {
+                    between != child
+                        && super::crossing::nesting(row, &entities, &[between, child])
+                            .is_some_and(|nest| nest.contains(&(between, vec![child])))
+                })
+            })
+            .collect()
+    };
+    let mut out: Vec<(usize, Vec<usize>)> = Vec::with_capacity(wanted.len());
+    let mut changed = false;
+    let mut pending = wanted;
+    // Each step moves to loops strictly inside the one before, so this ends.
+    while let Some((outer, holes)) = pending.pop() {
+        let children = if holes.is_empty() {
+            inside(outer)
+        } else {
+            Vec::new()
+        };
+        if children.is_empty() {
+            if !out.contains(&(outer, holes.clone())) {
+                out.push((outer, holes));
+            }
+            continue;
+        }
+        changed = true;
+        pending.extend(children.iter().map(|&child| (child, Vec::new())));
+        let ring = (outer, children);
+        if !out.contains(&ring) {
+            out.push(ring);
+        }
+    }
+    if !changed {
+        return None;
+    }
+    out.reverse();
+    Some(
+        out.into_iter()
+            .map(|(outer, holes)| json!({"kind": "loops", "outer": outer, "holes": holes}))
+            .collect(),
+    )
 }
 
 /// Whether a loop of these whole-loop regions (outer or hole) runs along part of a line of the
@@ -796,18 +904,40 @@ fn loops_cross(regions: &[Value], ctx: &Context, sketch: &str) -> bool {
     })
 }
 
-/// Regions that use part of a whole circle (or, with `any`, any regions), each named by a point
-/// inside it. Two crossing closed curves bound several profiles with the same curves, so curves
-/// can't tell them apart; a stored region's boundary can. `None` when no region trims a closed
-/// curve and not `any`, or some region's boundary doesn't close into one shape, or leaves no
-/// point: those stay selected by their curves, where SolidCraft refuses what stays ambiguous.
+/// Each region named by a point strictly inside its trimmed boundary, clear of holes
+/// and of the possible chord error. A boundary that does not resolve is refused.
 fn region_points(
     regions: &[Value],
     ctx: &Context,
     sketch: &str,
     mapped: &Mapped,
-    any: bool,
 ) -> Option<Vec<P2>> {
+    let original = region_points_at(regions, ctx, sketch, mapped, false);
+    if let Some(points) = &original {
+        if let Some(points) = points.iter().copied().collect::<Option<Vec<_>>>() {
+            return Some(points);
+        }
+    }
+    let refined = region_points_at(regions, ctx, sketch, mapped, true)?;
+    refined
+        .into_iter()
+        .enumerate()
+        .map(|(index, point)| {
+            original
+                .as_ref()
+                .and_then(|points| points.get(index).copied().flatten())
+                .or(point)
+        })
+        .collect()
+}
+
+fn region_points_at(
+    regions: &[Value],
+    ctx: &Context,
+    sketch: &str,
+    mapped: &Mapped,
+    refined: bool,
+) -> Option<Vec<Option<P2>>> {
     let entities = sketch_entities(ctx, sketch);
     fn boundary(region: &Value) -> Option<&[Value]> {
         region
@@ -815,17 +945,9 @@ fn region_points(
             .and_then(Value::as_array)
             .map(Vec::as_slice)
     }
-    if !any
-        && !regions.iter().any(|region| {
-            boundary(region)
-                .is_some_and(|uses| super::crossing::trims_a_closed_curve(uses, &entities))
-        })
-    {
-        return None;
-    }
     let boundaries = regions
         .iter()
-        .filter(|region| region.get("region").and_then(Value::as_str) == Some("trimmed"))
+        .filter(|region| region.get("kind").and_then(Value::as_str) == Some("trimmed"))
         .map(|region| {
             let holes = region
                 .get("hole_boundaries")
@@ -839,16 +961,50 @@ fn region_points(
         })
         .collect::<Option<Vec<_>>>()?;
     let boundaries: Vec<&[Value]> = boundaries.into_iter().flatten().collect();
-    let mut resolved = if boundaries.is_empty() {
-        Vec::new()
-    } else {
-        super::crossing::trimmed_rings(&boundaries, &entities)?
+    let mut used: BTreeSet<&str> = boundaries
+        .iter()
+        .flat_map(|uses| uses.iter())
+        .filter_map(|use_| use_.get("entity").and_then(Value::as_str))
+        .collect();
+    for region in regions
+        .iter()
+        .filter(|region| region.get("kind").and_then(Value::as_str) == Some("loops"))
+    {
+        for index in region.get("outer").into_iter().chain(
+            region
+                .get("holes")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten(),
+        ) {
+            for member in source_members(ctx, sketch, index).ok()? {
+                used.insert(member.get("entity")?.as_str()?);
+            }
+        }
     }
-    .into_iter();
+    let used_entities: Vec<&Value> = entities
+        .iter()
+        .copied()
+        .filter(|entity| {
+            entity
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| used.contains(id))
+        })
+        .collect();
+    let (resolved, mut error) = if boundaries.is_empty() {
+        (Vec::new(), 0.0)
+    } else {
+        super::crossing::sampled_trimmed_rings(&boundaries, &entities, refined)?
+    };
+    if !refined {
+        error = super::crossing::boundary_error(&used_entities)?;
+    }
+    let mut resolved = resolved.into_iter();
     let mut rings = Vec::with_capacity(regions.len());
     let mut holes = Vec::with_capacity(regions.len());
     for region in regions {
-        match region.get("region").and_then(Value::as_str) {
+        match region.get("kind").and_then(Value::as_str) {
             Some("trimmed") => {
                 rings.push(resolved.next()?);
                 holes.push(
@@ -863,7 +1019,12 @@ fn region_points(
             }
             Some("loops") => {
                 let members = source_members(ctx, sketch, region.get("outer")?).ok()?;
-                rings.push(super::crossing::loop_ring(members, &entities)?);
+                let (ring, bound) =
+                    super::crossing::sampled_loop_ring(members, &entities, refined)?;
+                if refined {
+                    error = error.max(bound);
+                }
+                rings.push(ring);
                 holes.push(
                     region
                         .get("holes")
@@ -872,13 +1033,31 @@ fn region_points(
                         .flatten()
                         .map(|hole| {
                             let members = source_members(ctx, sketch, hole).ok()?;
-                            super::crossing::loop_ring(members, &entities)
+                            let (ring, bound) =
+                                super::crossing::sampled_loop_ring(members, &entities, refined)?;
+                            if refined {
+                                error = error.max(bound);
+                            }
+                            Some(ring)
                         })
                         .collect::<Option<Vec<_>>>()?,
                 );
             }
             _ => return None,
         }
+    }
+    // These sampled rings contain only lines, circles and arcs. A line moves by at
+    // most the largest defining-point displacement; a circle by its centre's.
+    // An arc's centre moves by d and its radius by at most 2d (both its centre
+    // and endpoint can move). Thus 3d bounds the emitted boundary displacement,
+    // including endpoint-reference merges farther apart than the position tolerance.
+    // Add this to sampling/closure error, rather than taking their maximum.
+    if refined {
+        let displacement = mapped.point_displacement * 3.0;
+        if !displacement.is_finite() || displacement < 0.0 {
+            return None;
+        }
+        error += displacement;
     }
     let frame = sketch_to_mapped(ctx.row("sketches", sketch)?, mapped)?;
     let mut points = Vec::with_capacity(rings.len());
@@ -893,10 +1072,47 @@ fn region_points(
                 .filter(|other| super::crossing::ring_area(other) < area)
                 .map(Vec::as_slice),
         );
-        let point = super::crossing::interior_point(ring, &others)?;
-        points.push(frame(point));
+        let point = if refined {
+            super::crossing::narrow_interior_point(ring, &others, error)
+        } else {
+            super::crossing::interior_point(ring, &others, error)
+        };
+        points.push(point.map(&frame));
     }
     Some(points)
+}
+
+/// Bounds of the selected trimmed exteriors in a coordinate of the written sketch.
+/// Whole carriers cannot prove the side of a revolve whose region trims across its axis.
+pub(super) fn trimmed_bounds(
+    reference: Option<&Value>,
+    ctx: &Context,
+    mapped: &Mapped,
+    at: impl Fn(P2) -> f64,
+) -> Option<(f64, f64)> {
+    let reference = reference?;
+    if reference.get("kind")?.as_str()? != "sketch_regions" {
+        return None;
+    }
+    let value = reference.get("value")?;
+    let sketch = value.get("sketch")?.as_str()?;
+    let entities = sketch_entities(ctx, sketch);
+    let frame = sketch_to_mapped(ctx.row("sketches", sketch)?, mapped)?;
+    let mut low = f64::INFINITY;
+    let mut high = f64::NEG_INFINITY;
+    for region in value.get("regions")?.as_array()? {
+        if region.get("kind")?.as_str()? != "trimmed" {
+            return None;
+        }
+        let (a, b) = super::crossing::trimmed_bounds(
+            region.get("outer_boundary")?.as_array()?,
+            &entities,
+            |p| at(frame(p)),
+        )?;
+        low = low.min(a);
+        high = high.max(b);
+    }
+    (low.is_finite() && high.is_finite()).then_some((low, high))
 }
 
 /// Sketch coordinates as the source stores them, in the written sketch's coordinates: the same,
@@ -950,10 +1166,67 @@ fn sketch_to_mapped<'a>(sketch: &Value, mapped: &'a Mapped) -> Option<impl Fn(P2
 
 /// Profiles bounded by the selected curves: each connected group of them is one loop.
 fn entities(entities: Option<&Value>, mapped: &Mapped) -> Result<Value, String> {
+    curves(
+        groups(entities, mapped)?
+            .into_iter()
+            .map(|(_, curves)| curves)
+            .collect(),
+    )
+}
+
+/// The open curve chains a surface feature's profile picks, as SolidCraft curve ids, when it
+/// picks sketch entities that form only open chains; `None` when it picks a closed profile or
+/// anything else. A pick mixing open chains and closed loops is refused.
+pub(super) fn open_chains(
+    profile: Option<&Value>,
+    ctx: &Context,
+) -> Result<Option<(String, Vec<String>)>, String> {
+    let Some(profile) = profile.map(planar) else {
+        return Ok(None);
+    };
+    if profile.get("kind").and_then(Value::as_str) != Some("sketch_entities") {
+        return Ok(None);
+    }
+    let value = profile.get("value").unwrap_or(&Value::Null);
+    let sketch = value
+        .get("sketch")
+        .and_then(Value::as_str)
+        .ok_or("its profile sketch is malformed")?;
+    let mapped = ctx
+        .sketches
+        .get(sketch)
+        .ok_or("its sketch is not an earlier mapped sketch")?;
+    let groups = groups(value.get("entities"), mapped)?;
+    // A chain is closed when each of its end points joins two of its curves; a closed curve
+    // (a circle) has no end points.
+    let closed = |points: &[usize]| {
+        points
+            .iter()
+            .all(|p| points.iter().filter(|q| *q == p).count() == 2)
+    };
+    let open = groups.iter().filter(|(points, _)| !closed(points)).count();
+    if open == 0 {
+        return Ok(None);
+    }
+    if open < groups.len() {
+        return Err(
+            "a profile mixing open curve chains and closed loops is not mapped yet".to_owned(),
+        );
+    }
+    let curves = groups.into_iter().flat_map(|(_, curves)| curves).collect();
+    Ok(Some((sketch.to_owned(), curves)))
+}
+
+/// A chain of picked curves: its end point indices (one per curve end) and its SolidCraft
+/// curve ids, in selection order.
+type Chain = (Vec<usize>, Vec<String>);
+
+/// The picked entities, joined into chains where they share end points.
+fn groups(entities: Option<&Value>, mapped: &Mapped) -> Result<Vec<Chain>, String> {
     let entities = entities
         .and_then(Value::as_array)
         .ok_or("its profile entities are malformed")?;
-    let mut groups: Vec<(Vec<usize>, Vec<String>)> = Vec::new();
+    let mut groups: Vec<Chain> = Vec::new();
     for entity in entities {
         let id = entity
             .as_str()
@@ -989,7 +1262,7 @@ fn entities(entities: Option<&Value>, mapped: &Mapped) -> Result<Value, String> 
             }
         }
     }
-    curves(groups.into_iter().map(|(_, curves)| curves).collect())
+    Ok(groups)
 }
 
 #[cfg(test)]
@@ -1070,6 +1343,7 @@ mod tests {
             origin: [0.0; 3],
             x_dir: [1.0, 0.0, 0.0],
             y_dir: [0.0, 1.0, 0.0],
+            point_displacement: 0.0,
             points: Vec::new(),
             shapes,
         }
@@ -1077,13 +1351,13 @@ mod tests {
 
     fn model() -> Value {
         json!({"sketches": [{"id": "s", "profiles": [
-            [{"entity": "e0"}, {"entity": "e1"}, {"entity": "e2"}],
-            [{"entity": "circle"}],
+            [{"entity": "e0", "reversed": false}, {"entity": "e1", "reversed": false}, {"entity": "e2", "reversed": false}],
+            [{"entity": "circle", "reversed": false}],
         ]}]})
     }
 
     fn select(model: &Value, profile: Value) -> Result<Value, String> {
-        let mut ctx = Context::new(model);
+        let mut ctx = Context::testing(model);
         ctx.sketches.insert("s".to_owned(), mapped());
         super::profile(Some(&profile), &ctx).map(|(_, selection)| selection)
     }
@@ -1094,7 +1368,7 @@ mod tests {
         let selection = select(
             &model,
             json!({"kind": "sketch_regions", "value": {"sketch": "s",
-            "regions": [{"region": "loops", "outer": 0, "holes": [1]}]}}),
+            "regions": [{"kind": "loops", "outer": 0, "holes": [1]}]}}),
         );
         assert_eq!(
             selection.unwrap(),
@@ -1114,7 +1388,7 @@ mod tests {
     fn crossing_circles() -> (Value, Mapped) {
         let circle = |id: &str, center: [f64; 2], radius: f64| {
             json!({"id": id, "sketch": "s", "geometry": {"kind": "circle",
-                "center": {"u": center[0], "v": center[1]}, "radius": radius}})
+                "center": {"u": center[0], "v": center[1]}, "radius": radius}, "endpoint_refs": [], "construction": false})
         };
         let model = json!({
             "sketches": [{"id": "s", "profiles": [], "placement": {"kind": "resolved", "frame": {
@@ -1159,13 +1433,13 @@ mod tests {
         let epsilon = (centre - along).atan2(height);
         let half_pi = std::f64::consts::FRAC_PI_2;
         let pi = std::f64::consts::PI;
-        json!({"region": "trimmed", "outer_boundary": [
-            {"entity": "big", "parameter_range": [delta - half_pi, 3.0 * half_pi - delta]},
-            {"entity": "small", "parameter_range": [epsilon, pi - epsilon], "reversed": true}]})
+        json!({"kind": "trimmed", "outer_boundary": [
+            {"entity": "big", "parameter_range": [delta - half_pi, 3.0 * half_pi - delta], "reversed": false},
+            {"entity": "small", "parameter_range": [epsilon, pi - epsilon], "reversed": true}], "hole_boundaries": []})
     }
 
     fn selected(model: &Value, mapped: Mapped, regions: Value) -> Value {
-        let mut ctx = Context::new(model);
+        let mut ctx = Context::testing(model);
         ctx.sketches.insert("s".to_owned(), mapped);
         super::profile(
             Some(&json!({"kind": "sketch_regions", "value": {"sketch": "s", "regions": regions}})),
@@ -1190,15 +1464,13 @@ mod tests {
     }
 
     #[test]
-    fn a_shared_circle_reading_resolves_its_semicircle_but_not_an_unrelated_one() {
+    fn a_shared_circle_chart_does_not_mirror_an_unrelated_directed_semicircle() {
         let (mut model, mut mapped) = crossing_circles();
         model["sketch_entities"]
             .as_array_mut()
             .unwrap()
-            .push(json!({
-                "id": "diameter", "sketch": "s", "geometry": {"kind": "line",
-                "start": {"u": -BIG, "v": 0.0}, "end": {"u": BIG, "v": 0.0}}
-            }));
+            .push(json!({"id": "diameter", "sketch": "s", "geometry": {"kind": "line",
+                "start": {"u": -BIG, "v": 0.0}, "end": {"u": BIG, "v": 0.0}}, "endpoint_refs": [], "construction": false}));
         mapped.shapes.insert(
             "diameter".to_owned(),
             Shape::Curve(Curve {
@@ -1211,9 +1483,9 @@ mod tests {
                 center: None,
             }),
         );
-        let half = json!({"region": "trimmed", "outer_boundary": [
-            {"entity": "diameter", "parameter_range": [0.0, 1.0]},
-            {"entity": "big", "parameter_range": [0.0, std::f64::consts::PI]}]});
+        let half = json!({"kind": "trimmed", "outer_boundary": [
+            {"entity": "diameter", "parameter_range": [0.0, 1.0], "reversed": false},
+            {"entity": "big", "parameter_range": [0.0, std::f64::consts::PI], "reversed": false}], "hole_boundaries": []});
         // The diameter alone closes against either semicircle. The notch fixes the reading
         // of their shared circle, so both selected regions have one resolved shape.
         let picked = selected(&model, mapped, json!([notch_region(), half]));
@@ -1223,7 +1495,7 @@ mod tests {
         let (mut model, mut mapped) = crossing_circles();
         model["sketch_entities"].as_array_mut().unwrap().extend([
             json!({"id": "diameter", "sketch": "s", "geometry": {"kind": "line",
-                "start": {"u": -PIN, "v": 0.0}, "end": {"u": PIN, "v": 0.0}}}),
+                "start": {"u": -PIN, "v": 0.0}, "end": {"u": PIN, "v": 0.0}}, "endpoint_refs": [], "construction": false}),
         ]);
         mapped.shapes.insert(
             "diameter".to_owned(),
@@ -1237,24 +1509,56 @@ mod tests {
                 center: None,
             }),
         );
-        let unrelated = json!({"region": "trimmed", "outer_boundary": [
-            {"entity": "diameter", "parameter_range": [0.0, 1.0]},
-            {"entity": "pin", "parameter_range": [0.0, std::f64::consts::PI]}]});
+        let unrelated = json!({"kind": "trimmed", "outer_boundary": [
+            {"entity": "diameter", "parameter_range": [0.0, 1.0], "reversed": false},
+            {"entity": "pin", "parameter_range": [0.0, std::f64::consts::PI], "reversed": false}], "hole_boundaries": []});
         let picked = selected(&model, mapped, json!([notch_region(), unrelated]));
-        assert_eq!(picked["type"], "curves", "{picked}");
+        assert_eq!(picked["type"], "points", "{picked}");
+        assert!(picked["points"][1][1].as_f64().unwrap() > 0.0, "{picked}");
+    }
+
+    #[test]
+    fn a_legacy_chart_with_two_different_closed_half_discs_is_refused() {
+        let (mut model, mut mapped) = crossing_circles();
+        model["sketch_entities"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({"id": "diameter", "sketch": "s", "geometry": {"kind": "line",
+                    "start": {"u": 0.0, "v": -PIN}, "end": {"u": 0.0, "v": PIN}}, "endpoint_refs": [], "construction": false}));
+        mapped.shapes.insert(
+            "diameter".to_owned(),
+            Shape::Curve(Curve {
+                pieces: Vec::new(),
+                index: 3,
+                id: "l1".to_owned(),
+                kind: "line",
+                start: None,
+                end: None,
+                center: None,
+            }),
+        );
+        let reference = json!({"kind": "sketch_regions", "value": {"sketch": "s",
+            "regions": [{"kind": "trimmed", "outer_boundary": [
+                {"entity": "diameter", "parameter_range": [0.0, 1.0], "reversed": false},
+                {"entity": "pin", "parameter_range": [-std::f64::consts::FRAC_PI_2, std::f64::consts::FRAC_PI_2], "reversed": false}], "hole_boundaries": []}]}});
+        let mut ctx = Context::testing(&model);
+        ctx.sketches.insert("s".to_owned(), mapped);
+        assert!(super::profile(Some(&reference), &ctx)
+            .unwrap_err()
+            .contains("does not close unambiguously"));
     }
 
     #[test]
     fn overlapping_regions_each_get_a_point_of_their_own() {
         // A region stored with no hole covers the disc selected beside it.
         let (model, mapped) = crossing_circles();
-        let half = |from: f64, to: f64| json!({"entity": "pin", "parameter_range": [from, to]});
+        let half = |from: f64, to: f64| json!({"entity": "pin", "parameter_range": [from, to], "reversed": false});
         let pi = std::f64::consts::PI;
         let selection = selected(
             &model,
             mapped,
-            json!([notch_region(), {"region": "trimmed", "outer_boundary": [
-                half(0.0, pi), half(pi, 2.0 * pi)]}]),
+            json!([notch_region(), {"kind": "trimmed", "outer_boundary": [
+                half(0.0, pi), half(pi, 2.0 * pi)], "hole_boundaries": []}]),
         );
         let at = |n: usize| {
             let p = &selection["points"][n];
@@ -1268,33 +1572,28 @@ mod tests {
     }
 
     #[test]
-    fn a_boundary_that_never_closes_stays_selected_by_its_curves() {
-        // The arcs don't meet under any reading, so nothing says which region this is.
+    fn an_unclosed_or_unplaced_trimmed_boundary_is_refused() {
         let (model, mapped) = crossing_circles();
-        let selection = selected(
-            &model,
-            mapped,
-            json!([{"region": "trimmed", "outer_boundary": [
-                {"entity": "big", "parameter_range": [0.0, 1.0]},
-                {"entity": "small", "parameter_range": [0.0, 1.0]}]}]),
-        );
-        assert_eq!(selection["type"], "curves", "{selection}");
-    }
-
-    #[test]
-    fn trimmed_regions_select_by_their_outer_curves() {
-        let model = model();
-        let boundary = |e: &str| json!({"entity": e, "parameter_range": [0.0, 1.0]});
+        let mut ctx = Context::testing(&model);
+        ctx.sketches.insert("s".to_owned(), mapped);
+        let profile = json!({"kind": "sketch_regions", "value": {"sketch": "s",
+            "regions": [{"kind": "trimmed", "outer_boundary": [
+                {"entity": "big", "parameter_range": [0.0, 1.0], "reversed": false},
+                {"entity": "small", "parameter_range": [0.0, 1.0], "reversed": false}], "hole_boundaries": []}]}});
+        assert!(super::profile(Some(&profile), &ctx)
+            .unwrap_err()
+            .contains("does not close unambiguously"));
+        let boundary =
+            |e: &str| json!({"entity": e, "parameter_range": [0.0, 1.0], "reversed": false});
         let selection = select(
-            &model,
+            &self::model(),
             json!({"kind": "sketch_regions", "value": {"sketch": "s",
-            "regions": [{"region": "trimmed", "outer_boundary": [
-                boundary("e0"), boundary("e1"), boundary("e2"), boundary("e0")]}]}}),
+            "regions": [{"kind": "trimmed", "outer_boundary": [
+                boundary("e0"), boundary("e1"), boundary("e2"), boundary("e0")], "hole_boundaries": []}]}}),
         );
-        assert_eq!(
-            selection.unwrap(),
-            json!({"type": "curves", "loops": [["l1", "l2", "l3"]]})
-        );
+        assert!(selection
+            .unwrap_err()
+            .contains("does not close unambiguously"));
     }
 
     #[test]
@@ -1317,9 +1616,9 @@ mod tests {
         // The first triangle with a curve inside it, which its loop runs along both ways (as a
         // rectangle with its diagonals drawn comes from Fusion), and the circle.
         let model = json!({"sketches": [{"id": "s", "profiles": [
-            [{"entity": "e0"}, {"entity": "e3"}, {"entity": "e1"},
-             {"entity": "e3", "reversed": true}, {"entity": "e2"}],
-            [{"entity": "circle"}],
+            [{"entity": "e0", "reversed": false}, {"entity": "e3", "reversed": false}, {"entity": "e1", "reversed": false},
+             {"entity": "e3", "reversed": true}, {"entity": "e2", "reversed": false}],
+            [{"entity": "circle", "reversed": false}],
         ]}]});
         let every = select(
             &model,
@@ -1345,7 +1644,7 @@ mod tests {
     #[test]
     fn a_selection_cadmpeg_keeps_native_is_the_profile_of_a_one_profile_sketch() {
         let one = json!({"sketches": [{"id": "s", "profiles": [
-            [{"entity": "e0"}, {"entity": "e1"}, {"entity": "e2"}],
+            [{"entity": "e0", "reversed": false}, {"entity": "e1", "reversed": false}, {"entity": "e2", "reversed": false}],
         ]}]});
         let native = json!({"kind": "sketch_selection",
             "value": {"sketch": "s", "selections": ["native#1"]}});
@@ -1365,7 +1664,7 @@ mod tests {
         // each ending inside the loop, stays solid and divides it in SolidCraft.
         let line = |id: &str, a: [f64; 2], b: [f64; 2]| {
             json!({"id": id, "sketch": "s", "geometry": {"kind": "line",
-                "start": {"u": a[0], "v": a[1]}, "end": {"u": b[0], "v": b[1]}}})
+                "start": {"u": a[0], "v": a[1]}, "end": {"u": b[0], "v": b[1]}}, "endpoint_refs": [], "construction": false})
         };
         let corners = [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]];
         let square = |chain: bool| {
@@ -1378,7 +1677,7 @@ mod tests {
             }
             json!({
                 "sketches": [{"id": "s", "profiles": [
-                    [{"entity": "e0"}, {"entity": "e1"}, {"entity": "e2"}, {"entity": "e3"}],
+                    [{"entity": "e0", "reversed": false}, {"entity": "e1", "reversed": false}, {"entity": "e2", "reversed": false}, {"entity": "e3", "reversed": false}],
                 ], "placement": {"kind": "resolved", "frame": {
                     "origin": {"x": 0.0, "y": 0.0, "z": 0.0},
                     "normal": {"x": 0.0, "y": 0.0, "z": 1.0},
@@ -1402,7 +1701,7 @@ mod tests {
             )
         };
         let pick = |model: &Value| {
-            let mut ctx = Context::new(model);
+            let mut ctx = Context::testing(model);
             ctx.sketches.insert("s".to_owned(), drawing());
             let native = json!({"kind": "sketch_selection",
                 "value": {"sketch": "s", "selections": ["native#1"]}});
@@ -1563,16 +1862,16 @@ mod tests {
     #[test]
     fn the_whole_loop_of_a_one_loop_sketch_is_every_profile() {
         let one_loop = json!({"sketches": [{"id": "s", "profiles": [
-            [{"entity": "e0"}, {"entity": "e1"}, {"entity": "e2"}],
+            [{"entity": "e0", "reversed": false}, {"entity": "e1", "reversed": false}, {"entity": "e2", "reversed": false}],
         ]}]});
         let whole = json!({"kind": "sketch_regions", "value": {"sketch": "s",
-            "regions": [{"region": "loops", "outer": 0, "holes": []}]}});
+            "regions": [{"kind": "loops", "outer": 0, "holes": []}]}});
         assert_eq!(select(&one_loop, whole).unwrap(), json!({"type": "all"}));
         // With two loops in the sketch, the region names its boundary.
         let two = select(
             &model(),
             json!({"kind": "sketch_regions", "value": {"sketch": "s",
-                "regions": [{"region": "loops", "outer": 0}]}}),
+                "regions": [{"kind": "loops", "outer": 0, "holes": []}]}}),
         );
         assert_eq!(two.unwrap()["type"], "whole_boundaries");
     }
@@ -1612,11 +1911,11 @@ mod tests {
         );
         let circle = |id: &str, radius: f64| {
             json!({"id": id, "sketch": "s", "geometry": {"kind": "circle",
-                "center": {"u": 0.0, "v": 0.0}, "radius": radius}})
+                "center": {"u": 0.0, "v": 0.0}, "radius": radius}, "endpoint_refs": [], "construction": false})
         };
         let model = json!({
             "sketches": [{"id": "s", "profiles": [
-                [{"entity": "outer"}], [{"entity": "circle"}],
+                [{"entity": "outer", "reversed": false}], [{"entity": "circle", "reversed": false}],
             ]}],
             "sketch_entities": [circle("outer", 6.0), circle("circle", 3.0)],
         });
@@ -1626,7 +1925,7 @@ mod tests {
     #[test]
     fn concentric_loops_taken_together_are_a_ring() {
         let (model, mapped) = rings();
-        let mut ctx = Context::new(&model);
+        let mut ctx = Context::testing(&model);
         ctx.sketches.insert("s".to_owned(), mapped);
         let by_index =
             json!({"kind": "sketch_profiles", "value": {"sketch": "s", "profiles": [1, 0]}});

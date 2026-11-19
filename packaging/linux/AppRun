@@ -1,0 +1,44 @@
+#!/bin/sh
+# The AppImage's entry point (installed as AppRun by scripts/package-appimage.sh).
+#
+# The desktop app, dutchman-gui, starts by default. The command line programs are in the same
+# file and are chosen in one of three ways:
+#   - by the name the AppImage is started under: a link called dutchman, dutchman-mcp or
+#     dutchman-web (ln -s Dutchman.AppImage ~/.local/bin/dutchman) runs that program;
+#   - by --run: `Dutchman.AppImage --run dutchman convert design.f3d`;
+#   - by the DUTCHMAN_APPIMAGE_RUN environment variable, set to one of those program names.
+set -u
+
+APPDIR="$(dirname "$(readlink -f "$0")")"
+BIN="$APPDIR/usr/bin"
+
+# The AppImage runtime sets ARGV0 to the name it was started under (a link's name, not the
+# real file's).
+name="$(basename "${ARGV0:-}")"
+program=""
+case "$name" in
+  dutchman | dutchman-mcp | dutchman-web) program="$name" ;;
+esac
+
+if [ "${1:-}" = "--run" ]; then
+  if [ $# -lt 2 ]; then
+    echo "usage: $name --run dutchman|dutchman-mcp|dutchman-web|dutchman-gui [arguments]" >&2
+    exit 2
+  fi
+  program="$2"
+  shift 2
+elif [ -z "$program" ] && [ -n "${DUTCHMAN_APPIMAGE_RUN:-}" ]; then
+  program="$DUTCHMAN_APPIMAGE_RUN"
+fi
+
+# The variable must not reach the programs, or a program that starts another would loop.
+unset DUTCHMAN_APPIMAGE_RUN
+
+case "$program" in
+  "") exec "$BIN/dutchman-gui" "$@" ;;
+  dutchman | dutchman-mcp | dutchman-web | dutchman-gui) exec "$BIN/$program" "$@" ;;
+  *)
+    echo "Unknown program: $program (use dutchman, dutchman-mcp, dutchman-web or dutchman-gui)" >&2
+    exit 2
+    ;;
+esac

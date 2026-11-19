@@ -23,6 +23,8 @@ each time. The tags are:
 
 - `X.Y.Z`: one release, such as `0.2.1`; it never changes.
 - `latest`: the newest release.
+- `X.Y.Z-solidcraft` and `latest-solidcraft`: the same release with SolidCraft's checker added,
+  so histories are checked ([below](#checking-histories-in-solidcraft)).
 - `nightly`: built each day from `main` against cadmpeg's `main`, after its tests pass.
 
 To update, pull again (`docker pull ghcr.io/dutchman-cad/dutchman:latest`, then tag it again),
@@ -78,12 +80,16 @@ the container isn't stopped first.
 
 ## In a browser
 
-The repository's [`compose.yaml`](../compose.yaml) runs `dutchman-web` from the image on port
-8080, asking for the password you give it:
+The repository's [`compose.yaml`](../compose.yaml) runs `dutchman-web` from the image tagged
+`dutchman` on port 8080, asking for the password you give it. With the published image pulled
+and tagged as above:
 
 ```sh
-DUTCHMAN_WEB_PASSWORD=choose-one docker compose up -d --build
+DUTCHMAN_WEB_PASSWORD=choose-one docker compose up -d
 ```
+
+To build the image from the checkout instead, add `--build`; the first build takes several
+minutes or more, as in [Build it yourself](#build-it-yourself).
 
 Open `http://<server>:8080` and sign in as `dutchman`. Or run it with `docker run`:
 
@@ -128,8 +134,15 @@ Replace `/home/me/cad` with your folder and `1000:1000` with your user and group
 
 ## With Compose
 
-The [Compose example](../examples/compose/) serves SolidCraft and Dutchman on one address,
-with a shared folder and a watched inbox.
+### SolidCraft and Dutchman on one address
+
+The [Compose example](../examples/compose/) serves web SolidCraft at `/` and Dutchman Web at
+`/dutchman/` behind Caddy, with a shared folder and a watched inbox. Both apps come from
+published images, so it starts in about a minute. Copy the folder to your server and follow its
+[README](../examples/compose/README.md): create the folders and `.env`, then run
+`docker compose up -d`. Each converted design's card gets an **Open in SolidCraft** link.
+
+### Convert from the command line
 
 Save as `compose.yaml` next to your designs, then convert with
 `docker compose run --rm dutchman convert-all --out-dir converted/ .`:
@@ -150,17 +163,62 @@ host with SELinux, add `:Z` to the volume (`.:/work:Z`).
 ## Checking histories in SolidCraft
 
 Without `solidcraft-cli`, a written history is reported `unverified`
-([Feature history](history.md)). On x86_64, an image you build
-yourself can include a [SolidCraft release](https://github.com/tangency-labs/solidcraft/releases) to check
-each history. Give its version and the SHA-256 of its `solidcraft-VERSION-linux-x86_64.tar.gz`:
+([Feature history](history.md)), and a few features that need SolidCraft's replay to find their
+edges (such as some FreeCAD fillets) are not mapped. The default image has no `solidcraft-cli`,
+to stay small. To get checked histories with no build step, use the image that includes it:
+
+```sh
+docker pull ghcr.io/dutchman-cad/dutchman:latest-solidcraft
+docker tag ghcr.io/dutchman-cad/dutchman:latest-solidcraft dutchman
+docker run --rm --entrypoint solidcraft-cli dutchman --version
+```
+
+It is the same Dutchman for x86_64 and ARM64, plus the SolidCraft release that Dutchman targets
+(0.44 for now), and adds about 470 MB. Pin a release with `X.Y.Z-solidcraft`, such as
+`0.2.1-solidcraft`. In Compose, use `image: ghcr.io/dutchman-cad/dutchman:latest-solidcraft`.
+
+### Build your own
+
+To check histories with a different SolidCraft release, add that
+[release](https://github.com/tangency-labs/solidcraft/releases) to the image yourself. Give its
+version and the SHA-256 of its `solidcraft-VERSION-linux-x86_64.tar.gz`, or
+`-linux-aarch64.tar.gz` on ARM64, shown beside each file on the release page. The build stops if
+the download does not match.
+
+To add it to the default image without building Dutchman, save this as `Dockerfile` in an
+empty folder:
+
+```dockerfile
+FROM ghcr.io/dutchman-cad/dutchman:latest
+ARG TARGETARCH
+ARG SOLIDCRAFT_VERSION
+ARG SOLIDCRAFT_SHA256
+USER root
+RUN set -eu; \
+    case "$TARGETARCH" in amd64) arch=x86_64 ;; arm64) arch=aarch64 ;; *) exit 1 ;; esac; \
+    archive="solidcraft-${SOLIDCRAFT_VERSION}-linux-${arch}.tar.gz"; \
+    apt-get update; apt-get install -y --no-install-recommends curl; \
+    curl -fsSL -o "/tmp/$archive" \
+      "https://github.com/tangency-labs/solidcraft/releases/download/v${SOLIDCRAFT_VERSION}/$archive"; \
+    echo "${SOLIDCRAFT_SHA256}  /tmp/$archive" | sha256sum -c -; \
+    mkdir -p /opt/solidcraft; tar -xzf "/tmp/$archive" -C /opt/solidcraft --strip-components=1; \
+    ln -s /opt/solidcraft/bin/solidcraft-cli /usr/local/bin/solidcraft-cli; \
+    apt-get purge -y curl; apt-get autoremove -y; rm -rf /var/lib/apt/lists/* "/tmp/$archive"
+USER 1000:1000
+```
+
+Then build it in that folder, with the SolidCraft 0.44.1 archive for x86_64 here, and use
+`dutchman` as before:
 
 ```sh
 docker build -t dutchman \
-  --build-arg SOLIDCRAFT_VERSION=0.20.0 \
-  --build-arg SOLIDCRAFT_SHA256=0c0965f8807945722780f83750c4bd3ce6544f9d827e01cad0664b28cf2a6910 .
+  --build-arg SOLIDCRAFT_VERSION=0.44.1 \
+  --build-arg SOLIDCRAFT_SHA256=d667d38cf1fd9516d3a09835946a428eb2825faec6765752451435412168b302 .
 ```
 
-The build stops if the download does not match the SHA-256.
+It takes about a minute and adds about 470 MB. Build again after each `docker pull` to update
+Dutchman. An image you [build yourself](#build-it-yourself) from the repository takes the same
+two arguments.
 
 ## What the image leaves out
 
@@ -168,3 +226,12 @@ The build stops if the download does not match the SHA-256.
 - **FreeCAD.** `--to freecad` writes its macro without FreeCAD, but `--to fcstd` and
   `--verify` need FreeCAD's command-line program, which the image does not include. Build
   your own image on top of this one with FreeCAD installed, and set `FREECAD_CMD` to it.
+
+Merge queue and full CI Docker smoke tests reuse the optimized, non-LTO Bookworm
+programs built for placements with `docker/release.Dockerfile`. The standalone Docker
+workflow continues to build the source `Dockerfile`, including its Rust 1.88 builder.
+
+Merge groups also build the source `Dockerfile` when either Docker recipe, `.dockerignore`,
+Rust source/manifests, runtime files, or another potential build input changes. Unknown
+paths or an unavailable diff base require the source build. The reused-tools image and
+its smoke tests remain required; docs/support-only changes retain the fast image path.

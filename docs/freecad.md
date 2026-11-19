@@ -6,6 +6,10 @@ three-part assembly) come out at FreeCAD's volume. Before 0.1.5 FreeCAD document
 in the nightly builds only: cadmpeg 0.6.3 stored some faces as replicas of curves, kept each
 feature's intermediate shape as a body of its own and could turn revolved faces inwards.
 
+Faces with internal or external edge uses retain those edges as shell wire geometry.
+Their actual boundary edges still determine shell closure; native face associations that
+cannot be carried are reported.
+
 When a feature blocks SolidCraft history conversion, earlier editable features and resolved
 sketches are kept in a hidden **Editable history (partial)** component. The original final
 shape remains visible as an Import after the kept history. Show the hidden component to
@@ -91,9 +95,32 @@ before the blend.
 Dutchman preserves those edges when it removes the hidden intermediate shapes. It accepts
 straight edges and open circular arcs only when their midpoint identifies exactly one edge
 on SolidCraft's replay at that step, with matching ends and length. An ambiguous pick, a
-missing base shape, a closed edge, or another curve stops the editable prefix, with the
-reason reported. This requires a SolidCraft CLI to replay the history; `--no-verify` cannot
+missing base shape or another unsupported curve stops the editable prefix, with the
+reason reported. When explicitly targeting SolidCraft 0.44.1 or newer, a closed circular rim
+also maps if its seam, opposite midpoint, and tangent describe a circle, and rebuilt arc
+pieces cover that circle exactly once on one body. The proof compares plane, radius, and
+angular coverage rather than seam endpoints, then picks each rebuilt piece. An additional
+SolidCraft edge measurement must confirm its circular carrier and plane, with an analytic
+length; the seam and opposite midpoint cannot determine that plane alone. Closed splines
+that do not satisfy this circular proof remain unsupported. Older targets retain the
+original geometry with the reason that closed input circles need SolidCraft 0.44 patch 1
+or newer. This requires a SolidCraft CLI to replay the history; `--no-verify` cannot
 prove blend edges. Final-body edge numbers are never substituted for base-feature edges.
+
+Sweep paths selected as connected open chains of topological edges map for SolidCraft 0.44 and newer
+when every edge belongs to one earlier stored dependency result. A wire owned by an
+earlier sketch resolves to that sketch only when every selected edge matches an entire
+mapped curve, including an arc's midpoint, tangent and length. Other paths must match
+the input geometry on replay, in source order on one rebuilt body. Topological
+guide rails, closed paths without a proven start and traversal direction, paths without
+an earlier stored result, and unsupported curves remain named
+blockers. Older targets keep the original geometry with a version reason.
+
+A history using these edge paths stays hidden beside the
+original unless the full comparison succeeds. This also applies when checking is off
+or the original cannot be measured soundly. The original position and shape remain
+visible, and the report explains the unverified check. Other histories keep their
+existing verification behavior.
 
 FreeCAD signed horizontal and vertical sketch distances convert to positive dimension
 magnitudes at their solved positions. Their signed parameters and expressions remain
@@ -129,8 +156,8 @@ axis, pitch/height/turn law, handedness, reversed direction, and join/cut operat
 sketch-profile coils when the target is SolidCraft 0.25 patch 1 or newer. Choose a target with
 `--solidcraft-version x.y.z` on `convert`, `convert-all`, or `watch` (at least 0.18.2).
 The default is the found CLI's version, even with `--no-verify`, else the newest release
-known at build time (currently 0.41). The rolling 14-day window is currently
-0.18.2–0.41. Older targets block the helix with
+known at build time (currently 0.44). The rolling 14-day window is currently
+0.18.2–0.44. Older targets block the helix with
 `needs SolidCraft 0.25 patch 1 or newer` and the target version, preserving the original
 geometry. Resolved feature parameter
 bindings drive the coil dimensions; dimensions without bindings keep their values.
@@ -279,9 +306,9 @@ The macro makes a Body for each placed part, preserving nested assembly placemen
 uses Dutchman's existing history mapping and timeline order to rebuild planar sketches
 (lines, circles, arcs, ellipses, and supported B-splines), constraints, pads and pockets,
 full-turn or symmetric revolves, unguided lofts, sweeps, simple holes, linear and circular
-feature patterns, spheres, tori, and coils. Numeric feature values are retained. A parameter
-object keeps evaluated scalar values and source expressions as text; source expressions
-are never executed. Coils are rebuilt with Part geometry and stored as a feature, with
+feature patterns, spheres, tori, and coils. Numeric feature values are retained; a dimension
+driven by a parameter is built with that parameter's solved value. A parameter object keeps
+evaluated scalar values and source expressions as text; source expressions are never executed. Coils are rebuilt with Part geometry and stored as a feature, with
 numeric properties; editing those properties does not recompute the coil.
 
 When a later feature cannot be rebuilt, the macro keeps the longest mapped prefix and
@@ -292,11 +319,16 @@ kept as reference` (sketches count as features; suppressed and organizational fe
 not). Later body-building features are blocked, with their reasons; later mapped sketches
 remain hidden references. Partial histories are still experimental and unverified.
 
+A part that ends as several bodies is rebuilt as one Body per body: a new-body feature opens a
+Body, a pattern goes to the body holding its features, a cut or hole to every body it removes
+material from, and any other feature to the first body it joins without leaving a separate solid.
+A feature that makes several bodies at once, or that fits no body, keeps the part as STEP.
+
 A part whose history cannot be rebuilt is kept as an embedded STEP solid or surface in a
 Body. Examples include unresolved source selections, intersect operations, fixed-orientation,
 guided, twisted, scaled, or binormal sweeps and lofts, lofts ending at a point, extrudes from
 or to a point or face or with taper, counterbored, countersunk, or face-ended holes, coils
-about an axis other than Z, two-direction patterns, and histories spanning multiple bodies. The report gives one result per source feature, including the reason each feature
+about an axis other than Z, two-direction patterns, and combines across bodies. The report gives one result per source feature, including the reason each feature
 was not rebuilt. `--import-only` keeps every part as STEP and leaves out joints.
 Assemblies retain placements and rebuild supported joints as described below.
 Pattern counts are limited to 10,000. Solid lines drawn corner to

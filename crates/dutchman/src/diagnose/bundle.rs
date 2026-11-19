@@ -188,7 +188,7 @@ mod tests {
         )
         .unwrap();
         let mut doc = model.ir;
-        doc.model.points[0]
+        doc.geometry.points[0]
             .set_position(serde_json::from_value(json!({"x": 50.0, "y": 0.0, "z": 0.0})).unwrap());
         doc
     }

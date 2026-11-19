@@ -12,17 +12,13 @@ services:
     restart: unless-stopped
 
   solidcraft:
-    # Until tangency-labs/solidcraft#2878 makes the image public, build locally.
-    # Once a public release includes #6670, remove build and use
-    # image: ghcr.io/tangency-labs/solidcraft-web:latest
-    image: solidcraft-web:local
-    build:
-      context: https://github.com/tangency-labs/solidcraft.git#66b872a749d01759a288724a95cc0a3bce9db879
-      dockerfile: packaging/docker/Dockerfile
+    # Web SolidCraft 0.24.0 or newer opens Dutchman's results on the same origin.
+    image: ghcr.io/tangency-labs/solidcraft-web:latest
     restart: unless-stopped
 
   dutchman:
-    image: ghcr.io/dutchman-cad/dutchman:latest
+    # The -solidcraft image includes the checker, so converted histories are checked.
+    image: ghcr.io/dutchman-cad/dutchman:latest-solidcraft
     entrypoint: ["dutchman-web"]
     command: ["--base-path", "/dutchman", "--output-dir", "/designs/Converted", "--solidcraft", "/"]
     environment:

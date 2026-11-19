@@ -346,12 +346,17 @@ const PRESENT: &[(&str, &str)] = &[
 ];
 
 /// The operation a CADIR feature row stands for, looking through a post-processing wrapper.
-fn operation(feature: &Value) -> &Value {
-    let definition = feature.get("definition").unwrap_or(&Value::Null);
-    match definition.get("definition").and_then(Value::as_str) {
-        Some("post_process") => definition.get("operation").unwrap_or(&Value::Null),
-        _ => definition,
+fn operation_enum(feature: &Value) -> &Value {
+    match feature.pointer("/definition/kind").and_then(Value::as_str) {
+        Some("operation") => feature.pointer("/definition/value").unwrap_or(&Value::Null),
+        Some("post_process") => feature
+            .pointer("/definition/value/operation")
+            .unwrap_or(&Value::Null),
+        _ => &Value::Null,
     }
+}
+fn operation(feature: &Value) -> &Value {
+    operation_enum(feature).get("value").unwrap_or(&Value::Null)
 }
 
 /// A CADIR enum's word, whether it is written as a string or as an object's `kind`.
@@ -366,8 +371,8 @@ fn word(value: &Value) -> Option<&str> {
 /// object it belongs to. Dimensions, names and identities are read only to count loops.
 pub fn feature_shape(feature: &Value, model: &Value) -> FeatureShape {
     let definition = operation(feature);
-    let kind = definition
-        .get("definition")
+    let kind = operation_enum(feature)
+        .get("kind")
         .and_then(Value::as_str)
         .filter(|kind| is_tag(kind))
         .unwrap_or("other");
@@ -386,7 +391,7 @@ pub fn feature_shape(feature: &Value, model: &Value) -> FeatureShape {
                 options.insert("type".to_owned(), value.to_owned());
             }
         }
-        let wrapper = feature.get("definition").unwrap_or(&Value::Null);
+        let wrapper = feature.pointer("/definition/value").unwrap_or(&Value::Null);
         for (name, pointer) in FLAGS {
             let value = definition
                 .pointer(pointer)
@@ -481,6 +486,11 @@ fn span(geometry: &Value) -> Option<Vec<[f64; 2]>> {
 }
 
 fn profile(profile: &Value, model: &Value) -> Option<ProfileShape> {
+    let profile = if profile.get("kind").and_then(Value::as_str) == Some("planar") {
+        profile.get("value")?
+    } else {
+        profile
+    };
     let source = word(profile)?.to_owned();
     let value = profile.get("value").unwrap_or(&Value::Null);
     let mut shape = ProfileShape {
@@ -578,22 +588,14 @@ mod tests {
     }
 
     fn extrude(name: &str, length: f64) -> (Value, Value) {
-        let feature = json!({"id": "f:1", "ordinal": 3, "name": name, "definition": {
-            "definition": "extrude",
-            "op": "cut",
-            "direction": {"kind": "profile_normal"},
-            "start": {"kind": "profile_plane"},
-            "extent": {"kind": "two_sided",
+        let feature = json!({"id": "f:1", "ordinal": 3, "name": name, "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {"op": "cut", "direction": {"kind": "profile_normal"}, "start": {"kind": "profile_plane"}, "extent": {"kind": "two_sided",
                 "first": {"termination": {"kind": "blind", "length": length}, "draft": 0.1},
-                "second": {"termination": {"kind": "through_all"}}},
-            "solid": true,
-            "profile": {"kind": "sketch", "value": "s:1"},
-        }});
+                "second": {"termination": {"kind": "through_all"}}}, "solid": true, "profile": {"kind":"planar", "value": {"kind": "sketch", "value": "s:1"}}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []});
         let side = length * 4.0;
         let model = json!({
             "sketches": [{"id": "s:1", "name": name, "profiles": [
-                [{"entity": "a"}, {"entity": "b"}, {"entity": "c"}, {"entity": "d"}],
-                [{"entity": "hole"}],
+                [{"entity": "a", "reversed": false}, {"entity": "b", "reversed": false}, {"entity": "c", "reversed": false}, {"entity": "d", "reversed": false}],
+                [{"entity": "hole", "reversed": false}],
             ]}],
             "sketch_entities": [
                 {"id": "a", "geometry": {"kind": "line",
@@ -652,8 +654,7 @@ mod tests {
 
     #[test]
     fn a_native_features_own_words_stay_out() {
-        let feature = json!({"definition": {"definition": "native", "kind": "mysecretfeature",
-            "extent": {"kind": "secretword"}}});
+        let feature = json!({"definition": {"kind":"operation", "value": {"kind": "native", "value": {"kind": "mysecretfeature", "extent": {"kind": "secretword"}, "parameters": {}}}}});
         let shape = feature_shape(&feature, &json!({}));
         assert_eq!(shape.kind, "native");
         assert!(shape.options.is_empty());

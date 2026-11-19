@@ -470,11 +470,11 @@ impl<'a> Bindings<'a> {
     }
 
     fn bind(&self, p: &DesignParameter) -> Result<String, String> {
-        let expression = p
+        let degrees = p
             .expression
-            .trim()
-            .strip_prefix('=')
-            .unwrap_or(p.expression.trim());
+            .replace(" \u{b0}", " deg")
+            .replace('\u{b0}', " deg");
+        let expression = degrees.trim().strip_prefix('=').unwrap_or(degrees.trim());
         if expression.len() > MAX_EXPRESSION_BYTES {
             return Err("expression exceeds 65536 bytes".to_owned());
         }
@@ -647,6 +647,22 @@ fn unit(value: Option<&ParameterValue>) -> &'static str {
 }
 
 /// The value as a SolidCraft expression: lengths in millimetres, angles in degrees.
+/// The value of each parameter `map` writes, by its written name, as a quantity (`"40 mm"`,
+/// `"90 deg"`, a plain number): for a writer whose target cannot evaluate the expressions.
+pub(crate) fn values(model: &dutchman_core::Model) -> BTreeMap<String, String> {
+    let (_, written) = map(model, &mut Report::default());
+    model
+        .ir
+        .model
+        .parameters
+        .iter()
+        .filter_map(|parameter| {
+            let name = written.get(parameter.id.as_str())?;
+            Some((name.clone(), parameter.value.as_ref().and_then(literal)?))
+        })
+        .collect()
+}
+
 fn literal(value: &ParameterValue) -> Option<String> {
     match value {
         ParameterValue::Length(length) => Some(format!("{} mm", length.get())),
@@ -779,13 +795,7 @@ mod map_tests {
     use crate::testing::{cube, with};
 
     fn parameter(key: u32, name: &str, expression: &str, value: Value, owned: bool) -> Value {
-        let mut row = json!({
-            "id": format!("f3d:model:parameter#{key}"),
-            "ordinal": key,
-            "name": name,
-            "expression": expression,
-            "value": value,
-        });
+        let mut row = json!({"id": format!("f3d:model:parameter#{key}"), "ordinal": key, "name": name, "expression": expression, "value": value, "dependencies": [], "properties": {}});
         if row["value"].is_null() {
             row.as_object_mut().unwrap().remove("value");
         }
@@ -801,7 +811,7 @@ mod map_tests {
             1,
             0,
             "XY",
-            json!({"definition": "datum_principal_plane", "plane": "top"})
+            json!({"kind": "datum_principal_plane", "value": {"plane": "top"}})
         )]);
         let parameters = json!([
             parameter(
@@ -912,6 +922,43 @@ mod map_tests {
     }
 
     #[test]
+    fn a_degree_sign_reads_as_deg() {
+        let angle = |v: f64| json!({"kind": "angle", "value": v});
+        let parameters = json!([
+            parameter(1, "d98", "0.0 \u{b0}", angle(0.0), false),
+            parameter(2, "d99", "118.0 \u{b0}", angle(118.0), false),
+            parameter(3, "d100", "118\u{b0}", angle(118.0), false),
+            depending(
+                parameter(4, "d101", "d99 / 2 + 5\u{b0}", angle(64.0), false),
+                &[2]
+            ),
+        ]);
+        let model = with(cube(), json!([]), parameters);
+        let mut report = Report::default();
+        let (params, _) = map(&model, &mut report);
+        let expr = |name: &str| {
+            params
+                .iter()
+                .find(|p| p["name"] == name)
+                .and_then(|p| p["expr"].as_str())
+                .map(str::to_owned)
+        };
+        assert_eq!(expr("d98").as_deref(), Some("0.0 deg"));
+        assert_eq!(expr("d99").as_deref(), Some("118.0 deg"));
+        assert_eq!(expr("d100").as_deref(), Some("118 deg"));
+        assert_eq!(expr("d101").as_deref(), Some("d99 / 2 + 5 deg"));
+        assert!(report.losses().is_empty());
+    }
+
+    #[test]
+    fn other_unknown_tokens_still_refuse() {
+        assert_eq!(
+            validate("5 #", &std::collections::BTreeSet::new()).unwrap_err(),
+            "unsupported expression token #"
+        );
+    }
+
+    #[test]
     fn a_name_solidcraft_cannot_use_is_renamed_where_it_is_used() {
         let length = |v: f64| json!({"kind": "length", "value": v});
         let parameters = json!([
@@ -936,13 +983,13 @@ mod map_tests {
                 1,
                 0,
                 "Sheet",
-                json!({"definition": "datum_principal_plane", "plane": "top"})
+                json!({"kind": "datum_principal_plane", "value": {"plane": "top"}})
             ),
             crate::testing::feature(
                 2,
                 1,
                 "Pad",
-                json!({"definition": "datum_principal_plane", "plane": "top"})
+                json!({"kind": "datum_principal_plane", "value": {"plane": "top"}})
             ),
         ]);
         let model = with(cube(), features, parameters);
@@ -958,6 +1005,7 @@ mod map_tests {
             .collect();
         wire["model"]["spreadsheets"] = json!([{
             "id": "f3d:model:spreadsheet#1", "feature": "f3d:model:feature#1", "cells": cells,
+            "column_widths": [], "row_heights": [], "merged_ranges": [],
         }]);
         dutchman_core::Model {
             ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
@@ -1215,7 +1263,7 @@ mod map_tests {
                 1,
                 0,
                 "Feature",
-                json!({"definition": "datum_principal_plane", "plane": "top"})
+                json!({"kind": "datum_principal_plane", "value": {"plane": "top"}})
             )]),
             json!([
                 parameter(1, "width", "10 mm", value.clone(), false),
@@ -1233,7 +1281,7 @@ mod map_tests {
     fn signed_dimensions_share_a_magnitude_without_renaming_source_parameters() {
         let wire =
             json!({"parameters": [{"id": "negative", "value": {"kind": "length", "value": -3.0}}]});
-        let mut ctx = super::super::Context::new(&wire);
+        let mut ctx = super::super::Context::testing(&wire);
         ctx.params
             .insert("negative".to_owned(), "offset".to_owned());
         let mut history = super::super::History {

@@ -197,7 +197,7 @@ pub(super) fn admit(
                 continue;
             }
             for connector in row
-                .pointer("/operands/connectors")
+                .pointer("/operands/value/connectors")
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()

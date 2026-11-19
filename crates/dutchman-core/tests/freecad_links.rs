@@ -15,7 +15,7 @@ fn leaves<'a>(model: &'a Model, x: f64, out: &mut Vec<(&'a Model, f64)>) {
             let part = &assembly.parts[placement.part];
             leaves(part, x + placement.transform[0][3], out);
         }
-    } else if !model.ir.model.bodies.is_empty() {
+    } else if !model.ir.geometry.bodies.is_empty() {
         out.push((model, x));
     }
 }
@@ -58,16 +58,16 @@ fn external_body_links_keep_only_the_named_shapes_and_stored_placements() {
     );
     assert!(parts
         .iter()
-        .all(|(part, _)| part.ir.model.bodies.len() == 1));
+        .all(|(part, _)| part.ir.geometry.bodies.len() == 1));
     // The box's vertex bounds from manifest.json; the second part has curved extrema,
     // whose bounds and volumes are checked through SolidCraft in the writer regression.
     let part = parts[0].0;
     let mut low = [f64::INFINITY; 3];
     let mut high = [f64::NEG_INFINITY; 3];
-    for vertex in &part.ir.model.vertices {
+    for vertex in &part.ir.geometry.vertices {
         let point = part
             .ir
-            .model
+            .geometry
             .points
             .iter()
             .find(|point| point.id == vertex.point)

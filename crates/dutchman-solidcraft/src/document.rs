@@ -7,6 +7,8 @@
 //! SolidCraft reads an import's assembly tree from the STEP itself. Imports receiving
 //! explicit looks also name their output bodies so each look has a stable target.
 
+use std::collections::HashSet;
+
 use dutchman_core::{Model, Report, Severity};
 use serde_json::{json, Value};
 
@@ -23,7 +25,7 @@ const MAX_COMPONENT_NAME: usize = 128;
 /// occurrence, and the Import feature.
 const COMPONENT: u64 = 1;
 const OCCURRENCE: u64 = 2;
-const FEATURE: u64 = 3;
+pub(crate) const FEATURE: u64 = 3;
 
 /// The identity placement, column-major.
 const IDENTITY: [[f64; 4]; 4] = [
@@ -302,10 +304,13 @@ pub(crate) fn history_design(
                 .filter(|f| f.get("type").and_then(Value::as_str) == Some("sketch"))
                 .filter_map(|f| f.get("id").cloned())
                 .collect();
-            fields.insert(
-                "visibility".to_owned(),
-                json!({"hidden_occurrences": [[occurrence]], "hidden_sketches": sketches}),
-            );
+            let mut visibility = serde_json::Map::new();
+            visibility.insert("hidden_occurrences".to_owned(), json!([[occurrence]]));
+            visibility.insert("hidden_sketches".to_owned(), json!(sketches));
+            if !history.hidden_bodies.is_empty() {
+                visibility.insert("hidden_bodies".to_owned(), json!(history.hidden_bodies));
+            }
+            fields.insert("visibility".to_owned(), Value::Object(visibility));
         } else {
             let cname = component_name(&model.name);
             let components = vec![json!({"id": component, "name": cname, "parent": 0})];
@@ -320,6 +325,18 @@ pub(crate) fn history_design(
             fields.insert("components".to_owned(), json!(components));
             fields.insert("occurrences".to_owned(), json!(occurrences));
         }
+    }
+    // A body the source hides stays hidden when the history rebuilds it.
+    let rebuilt = matches!(live, Live::History | Live::Whole);
+    if let (true, false, Some(fields)) = (
+        rebuilt,
+        history.hidden_bodies.is_empty(),
+        doc.as_object_mut(),
+    ) {
+        fields.insert(
+            "visibility".to_owned(),
+            json!({"hidden_bodies": history.hidden_bodies}),
+        );
     }
 
     let has_looks = !history.looks.is_empty() || !history.face_looks.is_empty();
@@ -377,6 +394,42 @@ pub(crate) fn import_feature(
     feature
 }
 
+/// Attributes have no per-occurrence or evaluation-state destination in the writer.
+pub(crate) fn report_scoped_attributes(model: &Model, report: &mut Report) {
+    let mut seen = report
+        .losses()
+        .iter()
+        .filter(|loss| loss.subject == "attributes")
+        .map(|loss| loss.detail.clone())
+        .collect();
+    report_scoped_attributes_with_seen(model, report, &mut seen);
+}
+
+fn report_scoped_attributes_with_seen(
+    model: &Model,
+    report: &mut Report,
+    seen: &mut HashSet<String>,
+) {
+    for attribute in &model.ir.model.attributes {
+        let reason = if attribute.target.state.is_some() {
+            "attributes for an evaluation state are not supported yet"
+        } else if attribute.target.path.is_some() {
+            "attributes for one placed instance are not supported yet"
+        } else {
+            continue;
+        };
+        let detail = format!("Attribute {} is left out: {reason}", attribute.id);
+        if seen.insert(detail.clone()) {
+            report.push(Severity::Dropped, "attributes", detail);
+        }
+    }
+    if let Some(assembly) = &model.assembly {
+        for part in &assembly.parts {
+            report_scoped_attributes_with_seen(part, report, seen);
+        }
+    }
+}
+
 /// Records what an import design does not carry over from the model.
 pub(crate) fn report_unmapped(model: &Model, references: Option<&History>, report: &mut Report) {
     let m = &model.ir.model;
@@ -422,7 +475,7 @@ pub(crate) fn component_name(design: &str) -> String {
 pub(crate) fn feature_name(model: &Model) -> String {
     model
         .ir
-        .model
+        .geometry
         .bodies
         .first()
         .and_then(|body| body.name.as_deref())
@@ -448,7 +501,128 @@ fn source_file(model: &Model) -> String {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+
     use super::*;
+
+    fn attribute_model(scope: Option<(&str, Value)>) -> Model {
+        let mut target = json!({"entity": {"kind": "document"}});
+        if let Some((key, value)) = scope {
+            target[key] = value;
+        }
+        let mut ir = cadmpeg_ir::CadIr::empty();
+        ir.model.attributes.push(
+            serde_json::from_value(json!({
+                "id": "synthetic:test:attribute#number", "target": target,
+                "name": "Part number", "values": [{"kind": "string", "value": "A"}]
+            }))
+            .unwrap(),
+        );
+        Model {
+            ir,
+            fidelity: None,
+            name: "Synthetic".into(),
+            source_file: None,
+            assembly: None,
+            source_step: None,
+        }
+    }
+
+    fn attribute_report(scope: Option<(&str, Value)>) -> Report {
+        let model = attribute_model(scope);
+        let mut report = Report::default();
+        report_scoped_attributes(&model, &mut report);
+        report_scoped_attributes(&model, &mut report);
+        report
+    }
+
+    #[test]
+    fn scoped_attributes_preserve_order_and_deduplicate_across_parts_and_passes() {
+        let mut model = attribute_model(Some((
+            "state",
+            json!({"of": {"kind": "tool", "value": "synthetic:test:feature#earlier"}}),
+        )));
+        let attribute = model.ir.model.attributes[0].clone();
+        for index in (0..1024).rev() {
+            let mut distinct = serde_json::to_value(&attribute).unwrap();
+            distinct["id"] = json!(format!("synthetic:test:attribute#{index}"));
+            model
+                .ir
+                .model
+                .attributes
+                .push(serde_json::from_value(distinct).unwrap());
+        }
+        let part = model.clone();
+        model.assembly = Some(dutchman_core::Assembly {
+            own_part: None,
+            parts: vec![part],
+            definitions: vec![],
+            identities: vec![],
+            placements: vec![],
+            joints: vec![],
+            left_out: vec![],
+            held: vec![],
+            joint_notes: vec![],
+            stored_placements: vec![],
+        });
+        let reason = "attributes for an evaluation state are not supported yet";
+        let first = format!("Attribute {} is left out: {reason}", attribute.id);
+        let mut report = Report::default();
+        report.push(Severity::Degraded, "attributes", first.clone());
+        let second = format!("Attribute synthetic:test:attribute#1023 is left out: {reason}");
+        report.push(Severity::Dropped, "other", second.clone());
+        report_scoped_attributes(&model, &mut report);
+        let expected: Vec<_> = std::iter::once(first)
+            .chain(std::iter::once(second))
+            .chain((0..1024).rev().map(|index| {
+                format!("Attribute synthetic:test:attribute#{index} is left out: {reason}")
+            }))
+            .collect();
+        report_scoped_attributes(&model, &mut report);
+        assert_eq!(
+            report
+                .losses()
+                .iter()
+                .map(|loss| &loss.detail)
+                .collect::<Vec<_>>(),
+            expected.iter().collect::<Vec<_>>()
+        );
+        assert_eq!(report.losses()[0].severity, Severity::Degraded);
+    }
+
+    #[test]
+    fn definition_attributes_keep_the_existing_report_behavior() {
+        assert!(attribute_report(None).losses().is_empty());
+    }
+
+    #[test]
+    fn occurrence_attributes_are_left_out_with_one_loss() {
+        let report = attribute_report(Some((
+            "path",
+            json!([
+                {"occurrence": {"kind": "occurrence", "value": "synthetic:test:occurrence#one"}}
+            ]),
+        )));
+        assert_eq!(report.losses().len(), 1);
+        assert_eq!(report.losses()[0].severity, Severity::Dropped);
+        assert!(report.losses()[0]
+            .detail
+            .ends_with("attributes for one placed instance are not supported yet"));
+    }
+
+    #[test]
+    fn state_attributes_are_left_out_with_one_loss() {
+        let report = attribute_report(Some((
+            "state",
+            json!({
+                "of": {"kind": "tool", "value": "synthetic:test:feature#earlier"}
+            }),
+        )));
+        assert_eq!(report.losses().len(), 1);
+        assert!(report.losses()[0]
+            .detail
+            .ends_with("attributes for an evaluation state are not supported yet"));
+    }
 
     #[test]
     fn component_names_are_trimmed_and_capped() {
@@ -484,22 +658,68 @@ mod history_tests {
             sheet_rules: Vec::new(),
             next_id: 3,
             pattern_replay_required: false,
+            topological_replay_required: false,
             mapped: 2,
             not_needed: 0,
             reapplied: 0,
             total: 2,
             blends: Vec::new(),
             hidden: Vec::new(),
+            hidden_bodies: Vec::new(),
             unconfirmed: Default::default(),
+            measured: Default::default(),
             stop: None,
             sources: Default::default(),
         }
     }
 
     #[test]
+    fn bodies_the_source_hides_stay_hidden_when_the_history_rebuilds_them() {
+        let model = crate::testing::cube();
+        let mut hiding = history();
+        hiding.hidden_bodies = vec!["Body 2".to_owned()];
+        let version = SolidCraftVersion::V0_30_0;
+        for stand_up in [false, true] {
+            for live in [Live::History, Live::Whole, Live::Partial, Live::Unverified] {
+                let doc = history_design(&model, &hiding, "blobs/x.step", live, version, stand_up);
+                assert_eq!(
+                    doc["visibility"]["hidden_bodies"],
+                    json!(["Body 2"]),
+                    "{live:?}, stand_up={stand_up}"
+                );
+                if matches!(live, Live::Partial | Live::Unverified) {
+                    assert!(doc["visibility"]["hidden_occurrences"].is_array());
+                }
+            }
+        }
+        // Suppressed history builds nothing, so there is nothing to hide.
+        let doc = history_design(
+            &model,
+            &hiding,
+            "blobs/x.step",
+            Live::Original,
+            version,
+            false,
+        );
+        assert!(doc.get("visibility").is_none());
+        // Nothing hidden writes no visibility for a live history.
+        let doc = history_design(
+            &model,
+            &history(),
+            "blobs/x.step",
+            Live::History,
+            version,
+            false,
+        );
+        assert!(doc.get("visibility").is_none());
+    }
+
+    #[test]
     fn only_hidden_copies_hide_history_on_new_targets() {
         let model = crate::testing::cube();
-        for target in ["0.29.0", "0.30.0", "0.31.0", "0.40.0", "0.41.0"] {
+        for target in [
+            "0.29.0", "0.30.0", "0.31.0", "0.40.0", "0.41.0", "0.42.0", "0.43.0", "0.44.0",
+        ] {
             let version = target.parse().unwrap();
             for live in [
                 Live::Partial,
@@ -510,8 +730,8 @@ mod history_tests {
             ] {
                 let doc = history_design(&model, &history(), "blobs/x.step", live, version, false);
                 assert_eq!(doc["format"], FORMAT);
-                // Both newest targets keep format 23 and the 0.30 representation.
-                if matches!(target, "0.40.0" | "0.41.0") {
+                // The newest targets keep format 23 and the 0.30 representation.
+                if matches!(target, "0.40.0" | "0.41.0" | "0.42.0" | "0.43.0" | "0.44.0") {
                     assert_eq!(
                         doc,
                         history_design(

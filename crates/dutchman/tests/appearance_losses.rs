@@ -30,35 +30,36 @@ fn appearance_causes_are_counted_without_design_identifiers() {
         let m = &mut wire["model"];
         m["features"] = json!([]);
         m["appearances"] = json!([
-            {"id":"synthetic:private:appearance#red","name":"Private paint","base_color":{"r":1.0,"g":0.0,"b":0.0,"a":1.0}},
-            {"id":"synthetic:private:appearance#blue","base_color":{"r":0.0,"g":0.0,"b":1.0,"a":1.0}}
+            {"id": "synthetic:private:appearance#red", "name": "Private paint", "base_color": {"r":1.0,"g":0.0,"b":0.0,"a":1.0}, "properties": {}, "textures": []},
+            {"id": "synthetic:private:appearance#blue", "base_color": {"r":0.0,"g":0.0,"b":1.0,"a":1.0}, "properties": {}, "textures": []}
         ]);
-        let body = m["bodies"][0]["id"].clone();
-        let face = m["faces"][0]["id"].clone();
-        let edge = m["edges"][0]["id"].clone();
-        let mut target = json!({"kind":"face","id":face});
+        let topology = &mut wire["geometry"];
+        let body = topology["bodies"][0]["id"].clone();
+        let face = topology["faces"][0]["id"].clone();
+        let edge = topology["edges"][0]["id"].clone();
+        let mut target = json!({"kind":"face","value":face});
         let mut colour = "synthetic:private:appearance#blue";
         match mode {
             "equal" => colour = "synthetic:private:appearance#red",
             "wire" | "edge" | "unwritable" => {
-                m["bodies"].as_array_mut().unwrap().push(json!({"id":"synthetic:private:body#extra","kind":if mode == "unwritable" {"solid"} else {"wire"},"regions":["synthetic:private:region#extra"]}));
-                m["regions"].as_array_mut().unwrap().push(json!({"id":"synthetic:private:region#extra","body":"synthetic:private:body#extra","shells":["synthetic:private:shell#extra"]}));
-                m["shells"].as_array_mut().unwrap().push(json!({"id":"synthetic:private:shell#extra","region":"synthetic:private:region#extra","members":[{"kind":"wire_edge","id":edge}]}));
+                topology["bodies"].as_array_mut().unwrap().push(json!({"id":"synthetic:private:body#extra","kind":if mode == "unwritable" {"solid"} else {"wire"}}));
+                topology["regions"].as_array_mut().unwrap().push(json!({"id":"synthetic:private:region#extra","body":"synthetic:private:body#extra","shells":["synthetic:private:shell#extra"]}));
+                topology["shells"].as_array_mut().unwrap().push(json!({"id":"synthetic:private:shell#extra","region":"synthetic:private:region#extra","members":[{"kind":"wire_edge","id":edge}]}));
                 target = if mode == "edge" {
-                    json!({"kind":"edge","id":edge})
+                    json!({"kind":"edge","value":edge})
                 } else {
-                    json!({"kind":"body","id":"synthetic:private:body#extra"})
+                    json!({"kind":"body","value":"synthetic:private:body#extra"})
                 };
             }
-            "missed" => m["faces"][0]["loops"]["loops"] = json!([]),
-            "absent" => target["id"] = json!("synthetic:private:face#missing"),
+            "missed" => topology["faces"][0]["loops"]["loops"] = json!([]),
+            "absent" => target["value"] = json!("synthetic:private:face#missing"),
             "other" => colour = "synthetic:private:appearance#missing",
             _ => {}
         }
-        m["appearance_bindings"] = json!([
-            {"id":"synthetic:private:binding#body","target":{"kind":"body","id":body},"appearance":"synthetic:private:appearance#red"},
-            {"id":"synthetic:private:binding#target","target":target,"appearance":colour},
-            {"id":"synthetic:private:binding#repeat","target":target,"appearance":colour}
+        wire["model"]["appearance_bindings"] = json!([
+            {"id": "synthetic:private:binding#body", "target": {"entity": {"kind":"body","value":body}}, "appearance": "synthetic:private:appearance#red", "channels": {}},
+            {"id": "synthetic:private:binding#target", "target": {"entity": target}, "appearance": colour, "channels": {}},
+            {"id": "synthetic:private:binding#repeat", "target": {"entity": target}, "appearance": colour, "channels": {}}
         ]);
         model.ir = serde_json::from_value(wire).unwrap();
         let mut report = Report::default();

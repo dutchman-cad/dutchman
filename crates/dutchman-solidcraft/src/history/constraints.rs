@@ -129,7 +129,7 @@ impl Mapper<'_, '_> {
                 "internal alignment {}",
                 definition
                     .get("alignment")
-                    .and_then(|value| value.get("alignment"))
+                    .and_then(|value| value.get("kind"))
                     .and_then(Value::as_str)
                     .unwrap_or("helper")
             ),
@@ -448,7 +448,7 @@ impl Mapper<'_, '_> {
         {
             return None;
         }
-        let center = self.point(&json!({"kind": "entity", "entity": pattern.get("center")?}))?;
+        let center = self.point(&json!({"kind": "entity", "value": pattern.get("center")?}))?;
         let seed = pattern.get("seed")?.as_array()?;
         let instances = pattern.get("instances")?.as_array()?;
         if instances.len() >= 500 {
@@ -634,7 +634,7 @@ impl Mapper<'_, '_> {
         let p = self.point(first)?;
         let q = self.point(second)?;
         let endpoint_curve = |locus: &Value| {
-            let Shape::Curve(curve) = self.shape(locus.get("entity")?)? else {
+            let Shape::Curve(curve) = self.shape(locus.get("value")?)? else {
                 return None;
             };
             let piece = if curve.pieces.is_empty() {
@@ -836,8 +836,11 @@ impl Mapper<'_, '_> {
             return None;
         }
         let center = self.position(c.center?)?;
-        let a = self.position(c.start?)?;
-        let b = self.position(c.end?)?;
+        // Sweep constraints address the emitted CCW arc; endpoint loci retain source order.
+        let row = self.builder_curve(c.index)?;
+        let endpoint = |key: &str| self.position(usize::try_from(row.get(key)?.as_u64()?).ok()?);
+        let a = endpoint("a")?;
+        let b = endpoint("b")?;
         let sweep = signed_angle(
             [a[0] - center[0], a[1] - center[1]],
             [b[0] - center[0], b[1] - center[1]],
@@ -866,7 +869,7 @@ impl Mapper<'_, '_> {
 
     /// The point a CADIR locus names: a point entity, or a curve's start, end or centre.
     fn point(&self, locus: &Value) -> Option<usize> {
-        let shape = self.shape(locus.get("entity")?)?;
+        let shape = self.shape(locus.get("value")?)?;
         match (locus.get("kind")?.as_str()?, shape) {
             ("entity", Shape::Point(p)) => Some(*p),
             ("start", Shape::Curve(c)) => c.start,
@@ -957,7 +960,7 @@ impl Mapper<'_, '_> {
             }
             ("distance_loci", Some(p), None) | ("distance_loci", None, Some(p)) => {
                 let line = if q.is_none() { second } else { first };
-                let l = self.curve(line.get("entity")?, &["line"])?;
+                let l = self.curve(line.get("value")?, &["line"])?;
                 let value = point_line(
                     self.position(p)?,
                     self.position(l.start?)?,
@@ -1151,11 +1154,11 @@ impl Mapper<'_, '_> {
                 let fields = loci.as_object_mut()?;
                 fields.insert(
                     "first".to_owned(),
-                    json!({"kind": "entity", "entity": first}),
+                    json!({"kind": "entity", "value": first}),
                 );
                 fields.insert(
                     "second".to_owned(),
-                    json!({"kind": "entity", "entity": second}),
+                    json!({"kind": "entity", "value": second}),
                 );
                 self.loci_distance("distance_loci", &loci)
             }
@@ -1332,7 +1335,7 @@ mod tests {
     const SKETCH: &str = "f3d:model:sketch#1";
 
     fn entity(key: &str, geometry: Value) -> Value {
-        json!({"id": key, "sketch": SKETCH, "geometry": geometry})
+        json!({"id": key, "sketch": SKETCH, "geometry": geometry, "endpoint_refs": [], "construction": false})
     }
 
     fn line(key: &str, a: P2, b: P2) -> Value {
@@ -1341,6 +1344,33 @@ mod tests {
             json!({"kind": "line",
             "start": {"u": a[0], "v": a[1]}, "end": {"u": b[0], "v": b[1]}}),
         )
+    }
+
+    #[test]
+    fn sketch_clockwise_arc_sweep_constraint_uses_emitted_order() {
+        let model = json!({});
+        let ctx = Context::testing(&model);
+        let mut builder = Builder::default();
+        builder
+            .entity(
+                &entity(
+                    "cw",
+                    json!({"kind":"arc","center":{"u":0.0,"v":0.0},
+            "radius":3.0,"start_angle":0.0,"end_angle":-std::f64::consts::FRAC_PI_2}),
+                ),
+                &mut Report::default(),
+            )
+            .unwrap();
+        let mut mapper = Mapper {
+            ctx: &ctx,
+            builder: &mut builder,
+        };
+        let result = mapper
+            .map(&json!({"kind":"arc_angle","entity":"cw",
+            "angle":std::f64::consts::FRAC_PI_2}))
+            .unwrap();
+        assert_eq!(result[0]["type"], "arc_sweep");
+        assert_eq!(result[0]["value"], std::f64::consts::FRAC_PI_2);
     }
 
     /// A 40 × 30 rectangle (`b`, `r`, `t`, `l`), a circle `c` of radius 5 at (20, 15), a
@@ -1373,7 +1403,7 @@ mod tests {
             })
             .collect();
         let model = json!({"sketch_constraints": rows});
-        let mut ctx = Context::new(&model);
+        let mut ctx = Context::testing(&model);
         ctx.params
             .insert("f3d:model:parameter#1".to_owned(), "width".to_owned());
         let mut builder = Builder::default();
@@ -1386,7 +1416,7 @@ mod tests {
     }
 
     fn locus(kind: &str, entity: &str) -> Value {
-        json!({"kind": kind, "entity": entity})
+        json!({"kind": kind, "value": entity})
     }
 
     #[test]
@@ -1444,7 +1474,7 @@ mod tests {
     fn construction_and_reference_entities_keep_driven_dimensions() {
         let model = json!({"sketch_constraints": [{"sketch": SKETCH, "driving": false,
             "definition": {"kind": "distance", "entities": ["m", "axis"], "parameter": "p"}}]});
-        let mut ctx = Context::new(&model);
+        let mut ctx = Context::testing(&model);
         ctx.params.insert("p".to_owned(), "Length".to_owned());
         let mut builder = Builder::default();
         let mut report = Report::default();
@@ -1472,7 +1502,7 @@ mod tests {
     #[test]
     fn finite_point_line_distance_uses_the_endpoint_only_when_its_value_matches() {
         let model = json!({"parameters": [{"id": "p", "value": {"kind": "length", "value": 2.0}}]});
-        let mut ctx = Context::new(&model);
+        let mut ctx = Context::testing(&model);
         ctx.params.insert("p".to_owned(), "Length".to_owned());
         let mut builder = Builder::default();
         let mut report = Report::default();
@@ -1503,7 +1533,7 @@ mod tests {
         assert_eq!(mapper.map(&reversed).unwrap(), out);
         let mismatch =
             json!({"parameters": [{"id": "p", "value": {"kind": "length", "value": 3.0}}]});
-        let ctx = Context::new(&mismatch);
+        let ctx = Context::testing(&mismatch);
         assert!(Mapper {
             ctx: &ctx,
             builder: &mut builder
@@ -1515,7 +1545,7 @@ mod tests {
     #[test]
     fn reference_axes_have_no_artificial_finite_end_distance() {
         let model = json!({"parameters": [{"id": "p", "value": {"kind": "length", "value": 2.0}}]});
-        let ctx = Context::new(&model);
+        let ctx = Context::testing(&model);
         let mut builder = Builder::default();
         let mut report = Report::default();
         builder.entity(&entity("axis", json!({"kind": "reference_line", "origin": {"u": 0.0, "v": 0.0}, "direction": {"u": 1.0, "v": 0.0}})), &mut report).unwrap();
@@ -1539,7 +1569,7 @@ mod tests {
     #[test]
     fn disjoint_parallel_segments_can_measure_their_unique_nearest_ends() {
         let model = json!({"parameters": [{"id": "p", "value": {"kind": "length", "value": 5.0_f64.sqrt()}}]});
-        let ctx = Context::new(&model);
+        let ctx = Context::testing(&model);
         let mut builder = Builder::default();
         let mut report = Report::default();
         builder
@@ -1581,6 +1611,8 @@ mod tests {
             json!({"kind": "distance_loci", "first": locus("center", "c"),
                    "second": locus("entity", "b"), "parameter": "f3d:model:parameter#9"}),
             json!({"kind": "diameter", "entity": "c", "parameter": "f3d:model:parameter#9"}),
+            json!({"kind": "distance_loci", "first": locus("entity", "b"),
+                   "second": locus("center", "c"), "parameter": "f3d:model:parameter#9"}),
         ]);
         assert_eq!(
             out[0],
@@ -1598,6 +1630,8 @@ mod tests {
             out[3],
             json!({"id": "k4", "type": "diameter", "c": 4, "value": 10.0})
         );
+        assert_eq!(out[4]["type"], "point_line_distance");
+        assert_eq!(out[4]["value"], 15.0);
     }
 
     fn run_with_params(constraints: Vec<Value>, parameters: Value) -> Vec<Value> {
@@ -1610,7 +1644,7 @@ mod tests {
             })
             .collect();
         let model = json!({"sketch_constraints": rows, "parameters": parameters});
-        let mut ctx = Context::new(&model);
+        let mut ctx = Context::testing(&model);
         ctx.params.insert("a".to_owned(), "theta".to_owned());
         let mut builder = Builder::default();
         let mut report = Report::default();
@@ -1621,8 +1655,7 @@ mod tests {
     }
 
     fn angle_param(degrees: f64) -> Value {
-        json!([{"id": "a", "name": "theta", "expression": format!("{degrees} deg"),
-                "value": {"kind": "angle", "value": degrees.to_radians()}}])
+        json!([{"id": "a", "name": "theta", "expression": format!("{degrees} deg"), "value": {"kind": "angle", "value": degrees.to_radians()}, "ordinal": 0, "dependencies": [], "properties": {}}])
     }
 
     #[test]
@@ -1670,8 +1703,8 @@ mod tests {
     #[test]
     fn unmapped_constraints_are_dropped_and_counted() {
         let (out, report) = run(vec![
-            json!({"kind": "native", "native_kind": "Linear Dimension-1", "entities": []}),
-            json!({"kind": "native", "native_kind": "Linear Dimension-1", "entities": []}),
+            json!({"kind": "native", "native_kind": "Linear Dimension-1", "entities": [], "native_properties": {}, "operands": []}),
+            json!({"kind": "native", "native_kind": "Linear Dimension-1", "entities": [], "native_properties": {}, "operands": []}),
             json!({"kind": "angle", "first": "b", "second": "c", "parameter": "x"}),
             json!({"kind": "horizontal", "entity": "c"}),
             json!({"kind": "vertical", "entity": "l"}),

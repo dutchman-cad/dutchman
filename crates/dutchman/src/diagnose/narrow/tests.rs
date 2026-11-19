@@ -359,13 +359,7 @@ fn part(name: &str, features: u64) -> Model {
     let mut ir = serde_json::to_value(&model.ir).unwrap();
     let rows: Vec<Value> = (1..=features)
         .map(|at| {
-            json!({
-                "id": format!("f3d:model:feature#{}", at + 1000),
-                "ordinal": at,
-                "name": format!("SecretFeature{at}"),
-                "suppressed": false,
-                "definition": {"definition": "native", "kind": "Mystery", "parameters": {}},
-            })
+            json!({"id": format!("f3d:model:feature#{}", at + 1000), "ordinal": at, "name": format!("SecretFeature{at}"), "suppressed": false, "definition": {"kind": "operation", "value": {"kind": "native", "value": {"kind": "Mystery", "parameters": {}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []})
         })
         .collect();
     ir["model"]["features"] = Value::Array(rows);

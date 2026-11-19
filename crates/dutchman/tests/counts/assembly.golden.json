@@ -1,0 +1,30 @@
+{
+  "schema": "dutchman.report-counts/1",
+  "converter_version": [
+    0,
+    0,
+    0
+  ],
+  "files": [
+    {
+      "source_format": "inventor_assembly",
+      "source_version_band": "unknown",
+      "document": "assembly",
+      "verification": "partial",
+      "timing": "minutes",
+      "converted": true,
+      "count": 1
+    },
+    {
+      "source_format": "unknown",
+      "source_version_band": "unknown",
+      "document": "unknown",
+      "verification": "unknown",
+      "timing": "over_hour",
+      "converted": false,
+      "count": 1
+    }
+  ],
+  "features": [],
+  "features_by_kind": {}
+}

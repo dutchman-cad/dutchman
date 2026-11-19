@@ -28,7 +28,7 @@ fn frame(value: &Value) -> Result<Frame, String> {
 
 pub(super) fn map(feature: &Value, ctx: &mut Context) -> Result<(), String> {
     let definition = operation(feature);
-    let resolved = match definition.get("definition").and_then(Value::as_str) {
+    let resolved = match super::operation_kind(feature) {
         Some("datum_principal_plane") => {
             let (normal, x) = match definition.get("plane").and_then(Value::as_str) {
                 Some("top") => ([0.0, 0.0, 1.0], [1.0, 0.0, 0.0]),
@@ -62,7 +62,7 @@ fn offset(definition: &Value, ctx: &Context) -> Result<Frame, String> {
     let reference = definition
         .get("reference")
         .ok_or("its offset plane reference is not resolved")?;
-    let mut support = match reference.get("reference").and_then(Value::as_str) {
+    let mut support = match reference.get("kind").and_then(Value::as_str) {
         Some("feature") => reference
             .get("feature")
             .and_then(Value::as_str)
@@ -87,7 +87,7 @@ fn offset(definition: &Value, ctx: &Context) -> Result<Frame, String> {
                 .and_then(|face| face.get("surface"))
                 .and_then(Value::as_str)
                 .and_then(|id| ctx.row("surfaces", id))
-                .and_then(|s| s.get("geometry"))
+                .and_then(|s| s.pointer("/geometry/value"))
                 .filter(|g| g.get("kind").and_then(Value::as_str) == Some("plane"))
                 .ok_or("its offset plane face has no resolved planar surface")?;
             frame(surface)?
@@ -143,12 +143,11 @@ mod tests {
     #[test]
     fn signed_offsets_chain_through_earlier_frames() {
         let model = json!({});
-        let mut ctx = Context::new(&model);
-        let plane = json!({"id": "p", "definition": {"definition": "datum_principal_plane", "plane": "top"}});
+        let mut ctx = Context::testing(&model);
+        let plane = json!({"id": "p", "definition": {"kind": "operation", "value": {"kind": "datum_principal_plane", "value": {"plane": "top"}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [], "ordinal": 0});
         map(&plane, &mut ctx).unwrap();
         for (id, reference, distance, expected) in [("a", "p", -4.0, -4.0), ("b", "a", 7.0, 3.0)] {
-            let feature = json!({"id": id, "definition": {"definition": "datum_offset_plane", "distance": distance,
-                "reference": {"reference": "feature", "feature": reference}}});
+            let feature = json!({"id": id, "definition": {"kind": "operation", "value": {"kind": "datum_offset_plane", "value": {"distance": distance, "reference": {"kind": "feature", "feature": reference}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [], "ordinal": 0});
             map(&feature, &mut ctx).unwrap();
             assert_eq!(ctx.planes[id].origin, [0.0, 0.0, expected]);
         }
@@ -156,20 +155,18 @@ mod tests {
 
     #[test]
     fn a_face_offset_requires_one_planar_face_and_normalizes_its_normal() {
-        let model = json!({"features": [{"id": "split", "definition": {"definition": "split_body",
-            "tool": {"kind": "plane", "value": {"plane": "offset"}}}}],
+        let model = json!({"features": [{"id": "split", "definition": {"kind": "operation", "value": {"kind": "split_body", "value": {"tool": {"kind": "plane", "value": {"plane": "offset"}}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [], "ordinal": 0}],
             "faces": [{"id": "face", "surface": "surface"}],
-            "surfaces": [{"id": "surface", "geometry": {"kind": "plane",
+            "surfaces": [{"id": "surface", "geometry": {"kind":"solved", "value": {"kind": "plane",
                 "origin": {"x": 1.0, "y": 3.0, "z": 2.0},
                 "normal": {"x": 0.0, "y": 4.0, "z": 0.0},
-                "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0}}}]});
-        let mut ctx = Context::new(&model);
-        let mut feature = json!({"id": "offset", "definition": {"definition": "datum_offset_plane",
-            "distance": -2.0, "reference": {"reference": "face",
-                "face": {"kind": "faces", "value": ["face"]}}}});
+                "u_axis": {"x": 1.0, "y": 0.0, "z": 0.0}}}}]});
+        let mut ctx = Context::testing(&model);
+        let mut feature = json!({"id": "offset", "definition": {"kind": "operation", "value": {"kind": "datum_offset_plane", "value": {"distance": -2.0, "reference": {"kind": "face", "face": {"kind": "faces", "value": ["face"]}}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [], "ordinal": 0});
         map(&feature, &mut ctx).unwrap();
         assert_eq!(ctx.planes["offset"].origin, [1.0, 1.0, 2.0]);
-        feature["definition"]["reference"]["face"]["value"] = json!(["face", "face"]);
+        feature["definition"]["value"]["value"]["reference"]["face"]["value"] =
+            json!(["face", "face"]);
         assert!(map(&feature, &mut ctx)
             .unwrap_err()
             .contains("unique resolved planar face"));
@@ -178,19 +175,17 @@ mod tests {
     #[test]
     fn an_unused_offset_plane_needs_no_support_frame() {
         let model = json!({});
-        let mut ctx = Context::new(&model);
-        let feature = json!({"id": "unused", "definition": {"definition": "datum_offset_plane", "distance": 3.0}});
+        let mut ctx = Context::testing(&model);
+        let feature = json!({"id": "unused", "definition": {"kind": "operation", "value": {"kind": "datum_offset_plane", "value": {"distance": 3.0}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [], "ordinal": 0});
         assert!(map(&feature, &mut ctx).is_ok());
         assert!(ctx.planes.is_empty());
     }
 
     #[test]
     fn a_missing_reference_cannot_supply_a_frame() {
-        let model = json!({"features": [{"id": "split", "definition": {"definition": "split_body",
-            "tool": {"kind": "plane", "value": {"plane": "p"}}}}]});
-        let mut ctx = Context::new(&model);
-        let feature =
-            json!({"id": "p", "definition": {"definition": "datum_offset_plane", "distance": 3.0}});
+        let model = json!({"features": [{"id": "split", "definition": {"kind": "operation", "value": {"kind": "split_body", "value": {"tool": {"kind": "plane", "value": {"plane": "p"}}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [], "ordinal": 0}]});
+        let mut ctx = Context::testing(&model);
+        let feature = json!({"id": "p", "definition": {"kind": "operation", "value": {"kind": "datum_offset_plane", "value": {"distance": 3.0}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [], "ordinal": 0});
         assert!(map(&feature, &mut ctx)
             .unwrap_err()
             .contains("reference is not resolved"));

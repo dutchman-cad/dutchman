@@ -36,48 +36,84 @@ pub fn subset(model: &Model, arena: &str, ordinal: usize) -> Result<Model, Strin
 
 fn subset_guarded(model: &Model, arena: &str, ordinal: usize) -> Result<Model, String> {
     let mut document = serde_json::to_value(&model.ir).map_err(|e| e.to_string())?;
-    let wire = document
-        .get_mut("model")
-        .and_then(Value::as_object_mut)
-        .ok_or("model arenas are unavailable")?;
-    let count = wire
-        .values()
+    let homes = ["geometry", "model"];
+    let arenas = || {
+        homes
+            .iter()
+            .filter_map(|home| document.get(home)?.as_object())
+            .flat_map(|home| home.values())
+    };
+    let count = arenas()
         .filter_map(Value::as_array)
         .try_fold(0usize, |sum, rows| sum.checked_add(rows.len()))
         .ok_or("subset entity limit reached")?;
     if count > 100_000 {
         return Err("subset entity limit reached".into());
     }
-    let rows: BTreeMap<String, Value> = wire
-        .values()
+    let rows: BTreeMap<String, Value> = arenas()
         .filter_map(Value::as_array)
         .flatten()
         .filter_map(|row| Some((row.get("id")?.as_str()?.to_owned(), row.clone())))
         .collect();
-    let seed = wire
-        .get(arena)
+    let arena =
+        cadmpeg_ir::document::ArenaName::parse(arena).ok_or("subset arena is unavailable")?;
+    let seed = document
+        .get(arena.home().as_str())
+        .and_then(|home| home.get(arena.key()))
         .and_then(Value::as_array)
         .and_then(|rows| rows.get(ordinal))
         .and_then(|row| row.get("id"))
         .and_then(Value::as_str)
         .ok_or("subset seed is unavailable")?
         .to_owned();
+    let mut children: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (arena, parent) in [("regions", "body"), ("faces", "shell")] {
+        for row in document
+            .get("geometry")
+            .and_then(|home| home.get(arena))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            if let (Some(parent), Some(id)) = (
+                row.get(parent).and_then(Value::as_str),
+                row.get("id").and_then(Value::as_str),
+            ) {
+                children.entry(parent).or_default().push(id);
+            }
+        }
+    }
     let mut keep = BTreeSet::new();
     let mut queue = vec![seed];
     while let Some(id) = queue.pop() {
         if !keep.insert(id.clone()) {
             continue;
         }
+        queue.extend(
+            children
+                .get(id.as_str())
+                .into_iter()
+                .flatten()
+                .map(|id| (*id).to_owned()),
+        );
         if let Some(row) = rows.get(&id) {
             references(row, &rows, &keep, &mut queue);
         }
     }
-    for values in wire.values_mut().filter_map(Value::as_array_mut) {
-        values.retain(|row| {
-            row.get("id")
-                .and_then(Value::as_str)
-                .is_some_and(|id| keep.contains(id))
-        });
+    for home in homes {
+        for values in document
+            .get_mut(home)
+            .and_then(Value::as_object_mut)
+            .into_iter()
+            .flat_map(|home| home.values_mut())
+            .filter_map(Value::as_array_mut)
+        {
+            values.retain(|row| {
+                row.get("id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|id| keep.contains(id))
+            });
+        }
     }
     let mut subset = model.clone();
     subset.ir = serde_json::from_value(document).map_err(|e| e.to_string())?;
@@ -122,7 +158,7 @@ pub fn use_curve_outside_carrier_count(model: &Model) -> u64 {
     use cadmpeg_ir::geometry::{CurveGeometry, SolvedCurveGeometry};
     let curves: BTreeMap<_, _> = model
         .ir
-        .model
+        .geometry
         .curves
         .iter()
         .map(|curve| (&curve.id, &curve.geometry))
@@ -130,7 +166,7 @@ pub fn use_curve_outside_carrier_count(model: &Model) -> u64 {
     catch_unwind(AssertUnwindSafe(|| {
         model
             .ir
-            .model
+            .geometry
             .coedges
             .iter()
             .filter(|coedge| {
@@ -175,23 +211,20 @@ pub fn entity_kinds(model: &Model) -> Result<BTreeMap<String, u64>, Error> {
             .map_err(|e| Error::Decode(e.to_string()))?;
         let mut identities = BTreeMap::new();
         macro_rules! arenas { ($($arena:ident),+ $(,)?) => { $(
+            for entity in &model.ir.geometry.$arena {
+                identities.insert(entity.id.as_str(), stringify!($arena));
+            }
+        )+ }; }
+        arenas!(
+            bodies, regions, shells, faces, loops, coedges, edges, vertices, points, curves,
+            surfaces, pcurves,
+        );
+        macro_rules! arenas { ($($arena:ident),+ $(,)?) => { $(
             for entity in &model.ir.model.$arena {
                 identities.insert(entity.id.as_str(), stringify!($arena));
             }
         )+ }; }
         arenas!(
-            bodies,
-            regions,
-            shells,
-            faces,
-            loops,
-            coedges,
-            edges,
-            vertices,
-            points,
-            curves,
-            surfaces,
-            pcurves,
             features,
             sketches,
             parameters,
@@ -336,7 +369,7 @@ mod bundle_tests {
     #[test]
     fn synthetic_failure_survives_bundle_and_native_roundtrip() {
         let mut doc = cube();
-        doc.model.points[0].set_position(
+        doc.geometry.points[0].set_position(
             cadmpeg_ir::math::Point3::new(50.0, 0.0, 0.0)
                 .try_into()
                 .unwrap(),

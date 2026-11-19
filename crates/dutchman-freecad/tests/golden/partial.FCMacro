@@ -76,9 +76,16 @@ def parameter_table(rows):
             obj.addProperty('App::PropertyFloat', key, 'Parameters')
             setattr(obj, key, scalar)
 
+parameter_values = {}
+
 def quantity(value):
-    # Quantities come from the mapper, never from source expressions.
+    # Quantities come from the mapper, never from source expressions. A parameter the mapper
+    # names (a dimension driven by it) is its solved value: FreeCAD's quantity parser takes a
+    # single quantity, not a name or an expression.
     text = str(value).strip().strip('()').strip()
+    sign, name = (-1, text[1:].strip()) if text.startswith('-') else (1, text)
+    if name in parameter_values:
+        return sign * quantity(parameter_values[name])
     if '/' in str(value):
         first, second = str(value).split('/', 1)
         return quantity(first) / quantity(second)
@@ -441,6 +448,7 @@ def rebuild(row, body, objects, names, tip):
     return obj
 
 dutchman_parts = []
+parameter_values = json.loads("{}")
 original = original_step("Synthetic", "STEP payload")
 selected = original
 fallback = None

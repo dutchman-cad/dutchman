@@ -371,14 +371,14 @@ fn curve(source: &SolvedCurveGeometry) -> Reflected<SolvedCurveGeometry> {
 /// readers refuse), and loops and faces are reoriented so every solid keeps outward faces
 /// and positive volume. Parameter-space curves are dropped; the 3D edges carry the shape.
 fn reflect(part: &mut Model) -> Result<(), Error> {
-    for position in &mut part.ir.model.points {
+    for position in &mut part.ir.geometry.points {
         position.set_position(
             FinitePoint3::new(flip(position.position().get()))
                 .ok_or_else(|| failure("point is not finite"))?,
         );
     }
     let mut flipped = BTreeSet::new();
-    for s in &mut part.ir.model.surfaces {
+    for s in &mut part.ir.geometry.surfaces {
         let basis = s
             .geometry
             .solved()
@@ -389,28 +389,28 @@ fn reflect(part: &mut Model) -> Result<(), Error> {
         }
         s.geometry = SurfaceGeometry::Solved(mirrored);
     }
-    for c in &mut part.ir.model.curves {
+    for c in &mut part.ir.geometry.curves {
         let basis = c
             .geometry
             .solved()
             .ok_or_else(|| failure(format!("curve {} has no solved carrier", c.id)))?;
         c.geometry = CurveGeometry::Solved(curve(basis)?);
     }
-    part.ir.model.pcurves.clear();
-    for coedge in &mut part.ir.model.coedges {
+    part.ir.geometry.pcurves.clear();
+    for coedge in &mut part.ir.geometry.coedges {
         coedge.pcurves.clear();
     }
-    for face in &mut part.ir.model.faces {
+    for face in &mut part.ir.geometry.faces {
         // A mirrored analytic surface keeps its outward side; a free-form one is mirrored
         // pole by pole, which turns its parametric normal against the solid.
         if flipped.contains(&face.surface) {
             face.sense = reverse(face.sense);
         }
     }
-    for coedge in &mut part.ir.model.coedges {
+    for coedge in &mut part.ir.geometry.coedges {
         coedge.sense = reverse(coedge.sense);
     }
-    for boundary in &mut part.ir.model.loops {
+    for boundary in &mut part.ir.geometry.loops {
         if let LoopBoundary::Vertex { pcurves, .. } = &mut boundary.boundary {
             pcurves.clear();
         }
@@ -432,7 +432,7 @@ fn reflect(part: &mut Model) -> Result<(), Error> {
         let ring = boundary.coedges().iter().rev().cloned().collect();
         boundary.replace_ring(ring, uses).map_err(failure)?;
     }
-    for body in &mut part.ir.model.bodies {
+    for body in &mut part.ir.geometry.bodies {
         if let Some(transform) = body.transform {
             // M * B * p = (M * B * M) * (M * p).
             body.transform = Transform::affine(compose(
@@ -455,7 +455,7 @@ mod tests {
     // Signed volume from the oriented planar polygons of our synthetic cube. This check
     // does not depend on a kernel repairing the imported solid's orientation.
     fn signed_volume(model: &Model) -> f64 {
-        let m = &model.ir.model;
+        let m = &model.ir.geometry;
         let mut volume = 0.0;
         for boundary in &m.loops {
             let polygon: Vec<_> = boundary
@@ -465,9 +465,9 @@ mod tests {
                     let coedge = m.coedges.iter().find(|c| c.id == *id).unwrap();
                     let edge = m.edges.iter().find(|e| e.id == coedge.edge).unwrap();
                     let vertex = if coedge.sense == Sense::Forward {
-                        &edge.start
+                        edge.start().unwrap()
                     } else {
-                        &edge.end
+                        edge.end().unwrap()
                     };
                     let vertex = m.vertices.iter().find(|v| v.id == *vertex).unwrap();
                     let point = m
@@ -558,11 +558,23 @@ mod tests {
         let mut mirrored = original.clone();
         reflect(&mut mirrored).unwrap();
         assert!((signed_volume(&mirrored) - volume).abs() < 1e-7);
-        for (before, after) in original.ir.model.faces.iter().zip(&mirrored.ir.model.faces) {
+        for (before, after) in original
+            .ir
+            .geometry
+            .faces
+            .iter()
+            .zip(&mirrored.ir.geometry.faces)
+        {
             // Mirrored planes keep their outward normal.
             assert_eq!(after.sense, before.sense);
         }
-        for (before, after) in original.ir.model.loops.iter().zip(&mirrored.ir.model.loops) {
+        for (before, after) in original
+            .ir
+            .geometry
+            .loops
+            .iter()
+            .zip(&mirrored.ir.geometry.loops)
+        {
             assert_eq!(
                 before.coedges().iter().rev().collect::<Vec<_>>(),
                 after.coedges().iter().collect::<Vec<_>>()
@@ -570,10 +582,10 @@ mod tests {
         }
         for (before, after) in original
             .ir
-            .model
+            .geometry
             .coedges
             .iter()
-            .zip(&mirrored.ir.model.coedges)
+            .zip(&mirrored.ir.geometry.coedges)
         {
             assert_eq!(after.sense, reverse(before.sense));
         }

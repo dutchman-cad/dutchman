@@ -23,10 +23,10 @@ pub(crate) fn map(
         return Err("a hole with an exit treatment is not mapped yet".to_owned());
     }
     let construction = shape.get("construction").unwrap_or(&Value::Null);
-    if construction.get("construction").and_then(Value::as_str) == Some("native_thread") {
+    if construction.get("kind").and_then(Value::as_str) == Some("native_thread") {
         return Err("a hole with native thread geometry is not mapped yet".to_owned());
     }
-    let form = construction.get("kind").unwrap_or(&Value::Null);
+    let form = construction.pointer("/value/kind").unwrap_or(&Value::Null);
     // Newer SolidCraft drills an entry-recess hole to a point as well.
     let recess_tip = crate::VersionGate::EntryRecessTip.supported(ctx.target_version);
     if definition.pointer("/bottom/kind").and_then(Value::as_str) == Some("angled")
@@ -39,9 +39,10 @@ pub(crate) fn map(
         return Err("SolidCraft holes take a drill point only on a plain drilled hole".to_owned());
     }
     let diameter = number(shape.get("diameter")).ok_or("its diameter is not given")?;
-    let (thread, thread_note) = cosmetic_thread(construction.get("specification"), diameter)?;
+    let (thread, thread_note) =
+        cosmetic_thread(construction.pointer("/value/specification"), diameter)?;
     let mut hole = match (
-        construction.get("construction").and_then(Value::as_str),
+        construction.get("kind").and_then(Value::as_str),
         form.get("kind").and_then(Value::as_str),
     ) {
         (Some("form"), Some("simple")) => json!({"type": "simple"}),
@@ -384,7 +385,7 @@ fn thread_fits(major: f64, pitch: f64, bore: f64) -> bool {
 fn placement(
     feature: &Value,
     definition: &Value,
-    ctx: &Context,
+    ctx: &mut Context,
 ) -> Result<(V3, V3, Option<Value>), String> {
     if let Some(placements) = definition.get("placements").and_then(Value::as_array) {
         let [placement] = placements.as_slice() else {
@@ -396,19 +397,40 @@ fn placement(
                 let direction = v3(placement.get("direction"))
                     .and_then(unit)
                     .ok_or("its direction is zero")?;
+                if let Some(round) = round_face(feature, definition.get("face"), ctx)? {
+                    if !round.on_radius(position, direction) {
+                        return Err(
+                            "its placement does not drill along a radius into its entry cylinder"
+                                .to_owned(),
+                        );
+                    }
+                    return Ok((position, direction, None));
+                }
                 if definition.get("face").is_some_and(|face| !face.is_null()) {
-                    let face = earlier_face(feature, definition.get("face"), ctx)?;
+                    let mut face = entry_face(feature, definition.get("face"), ctx)?;
                     if dot(sub(position, face.point), face.normal).abs() > 1e-7
                         || !face.contains(position)
-                        || dot(direction, face.normal) >= 0.0
+                        || (face.entry.is_none() && dot(direction, face.normal) >= 0.0)
                     {
                         return Err("its placement does not drill into its entry face".to_owned());
+                    }
+                    if let Some(entry) = face.entry.take() {
+                        ctx.blends.push(entry.pending(direction, true));
                     }
                 }
                 Ok((position, direction, None))
             }
             Some("axis") => {
-                let face = earlier_face(feature, definition.get("face"), ctx)?;
+                if let Some(round) = round_face(feature, definition.get("face"), ctx)? {
+                    let origin =
+                        v3(placement.get("origin")).ok_or("its axis origin is not given")?;
+                    let axis = v3(placement.get("axis"))
+                        .and_then(unit)
+                        .ok_or("its axis is zero")?;
+                    let (position, direction) = round.entry(origin, axis)?;
+                    return Ok((position, direction, None));
+                }
+                let mut face = entry_face(feature, definition.get("face"), ctx)?;
                 let origin = v3(placement.get("origin")).ok_or("its axis origin is not given")?;
                 let axis = v3(placement.get("axis"))
                     .and_then(unit)
@@ -427,6 +449,9 @@ fn placement(
                 }
                 // An axis has no sign: the entry face supplies the inward direction.
                 let direction = axis.map(|c| if cos > 0.0 { -c } else { c });
+                if let Some(entry) = face.entry.take() {
+                    ctx.blends.push(entry.pending(direction, false));
+                }
                 Ok((position, direction, None))
             }
             _ => Err("a hole of this placement is not mapped yet".to_owned()),
@@ -564,7 +589,108 @@ fn sketch_locations(
     ))
 }
 
-/// A planar face with a point inside its boundary, as in `faces.rs`. The final B-rep
+/// A whole cylinder an entry face of the hole's own input topology stands on. The input
+/// topology is the model as it was just before the hole, so no earlier operation has to be
+/// proven to have made the face.
+struct Round {
+    origin: V3,
+    axis: V3,
+    radius: f64,
+    low: f64,
+    high: f64,
+}
+
+/// How far, in millimetres, a point may be from the cylinder and still be on it.
+const ON: f64 = 1e-6;
+
+impl Round {
+    /// The part of `point` away from the axis, and how far along the axis it is.
+    fn radial(&self, point: V3) -> (V3, f64) {
+        let d = sub(point, self.origin);
+        let along = dot(d, self.axis);
+        (sub(d, add([0.0; 3], self.axis, along)), along)
+    }
+
+    fn on_face(&self, point: V3) -> bool {
+        let (radial, along) = self.radial(point);
+        (dot(radial, radial).sqrt() - self.radius).abs() <= ON * self.radius.max(1.0)
+            && along >= self.low - ON
+            && along <= self.high + ON
+    }
+
+    /// Whether a hole from `position` along `direction` starts on the cylinder, on a radius,
+    /// heading for the axis.
+    fn on_radius(&self, position: V3, direction: V3) -> bool {
+        self.on_face(position)
+            && unit(self.radial(position).0)
+                .is_some_and(|outward| dot(outward, direction) < -1.0 + 1e-9)
+    }
+
+    /// Where a hole axis along a radius meets the cylinder, and the way it drills in. An axis
+    /// has no sign and meets the cylinder twice, so the end nearer `origin` is the entry, and
+    /// an origin midway between them leaves it open.
+    fn entry(&self, origin: V3, axis: V3) -> Result<(V3, V3), String> {
+        if dot(axis, self.axis).abs() > 1e-9 {
+            return Err("its hole axis is not along a radius of its entry cylinder".to_owned());
+        }
+        let centre = add(self.origin, self.axis, self.radial(origin).1);
+        if super::sketch::cross(axis, sub(origin, centre))
+            .iter()
+            .any(|c| c.abs() > ON * self.radius.max(1.0))
+        {
+            return Err("its hole axis does not cross the axis of its entry cylinder".to_owned());
+        }
+        let near = add(centre, axis, self.radius);
+        let far = add(centre, axis, -self.radius);
+        let distance = |p: V3| dot(sub(p, origin), sub(p, origin)).sqrt();
+        if (distance(near) - distance(far)).abs() <= ON * self.radius.max(1.0) {
+            return Err(
+                "its hole axis meets its entry cylinder at two points and its origin does not choose between them"
+                    .to_owned(),
+            );
+        }
+        let position = if distance(near) < distance(far) {
+            near
+        } else {
+            far
+        };
+        if !self.on_face(position) {
+            return Err("its hole axis misses its entry cylinder".to_owned());
+        }
+        let direction = unit(sub(centre, position)).ok_or("its entry cylinder has no radius")?;
+        Ok((position, direction))
+    }
+}
+
+/// The whole cylinder a historical entry face is, when it is one; `None` for any other
+/// selection and for a historical plane, which the planar proof handles.
+fn round_face(
+    feature: &Value,
+    selection: Option<&Value>,
+    ctx: &Context,
+) -> Result<Option<Round>, String> {
+    let Some(selection) =
+        selection.filter(|s| s.get("kind").and_then(Value::as_str) == Some("historical"))
+    else {
+        return Ok(None);
+    };
+    let value = selection.get("value").unwrap_or(&Value::Null);
+    if super::face_profile::planar_normal(feature, value, ctx).is_ok() {
+        return Ok(None);
+    }
+    let (origin, axis, radius, (low, high)) =
+        super::face_profile::whole_cylinder(feature, value, ctx)?;
+    Ok(Some(Round {
+        origin,
+        axis,
+        radius,
+        low,
+        high,
+    }))
+}
+
+/// A planar face with a point on its plane. Terminating caps also need that point
+/// inside their boundary, as in `faces.rs`. The final B-rep
 /// alone cannot establish when a face existed: `earlier_face` also proves its cap
 /// against the last preceding solid feature's sketch and extrusion distance.
 struct PlanarFace {
@@ -573,14 +699,43 @@ struct PlanarFace {
     u: V3,
     v: V3,
     corners: Vec<V3>,
+    entry: Option<super::face_profile::EntryFace>,
 }
 
 impl PlanarFace {
     fn contains(&self, point: V3) -> bool {
+        if let Some(entry) = &self.entry {
+            return entry.contains(point);
+        }
         let flat = |p: V3| [dot(p, self.u), dot(p, self.v)];
         let polygon: Vec<[f64; 2]> = self.corners.iter().map(|p| flat(*p)).collect();
         inside(&polygon, flat(point))
     }
+}
+
+/// Circular historical boundaries need replay, since a fillet or an earlier
+/// hole may have changed the extrusion cap. Straight caps retain their existing proof.
+fn entry_face(
+    feature: &Value,
+    selection: Option<&Value>,
+    ctx: &Context,
+) -> Result<PlanarFace, String> {
+    if let Some(value) = selection
+        .filter(|s| s.get("kind").and_then(Value::as_str) == Some("historical"))
+        .and_then(|s| s.get("value"))
+    {
+        if let Some(entry) = super::face_profile::curved_hole_face(feature, value, ctx)? {
+            return Ok(PlanarFace {
+                point: entry.point,
+                normal: entry.normal,
+                u: [0.0; 3],
+                v: [0.0; 3],
+                corners: Vec::new(),
+                entry: Some(entry),
+            });
+        }
+    }
+    earlier_face(feature, selection, ctx)
 }
 
 fn earlier_face(
@@ -589,6 +744,34 @@ fn earlier_face(
     ctx: &Context,
 ) -> Result<PlanarFace, String> {
     let selection = selection.ok_or("its face is not resolved")?;
+    if selection.get("kind").and_then(Value::as_str) == Some("historical") {
+        let value = selection.get("value").unwrap_or(&Value::Null);
+        let (normal, corners) = super::face_profile::polygon(feature, value, ctx)?;
+        let helper = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+            .into_iter()
+            .min_by(|a, b| dot(*a, normal).abs().total_cmp(&dot(*b, normal).abs()))
+            .ok_or("its face has no plane")?;
+        let u = unit(super::sketch::cross(helper, normal)).ok_or("its face has no plane")?;
+        let v = super::sketch::cross(normal, u);
+        let (mut planar, outward) = interior(
+            feature,
+            PlanarFace {
+                point: [0.0; 3],
+                normal,
+                u,
+                v,
+                corners,
+                entry: None,
+            },
+            ctx,
+        )?;
+        // Only the cap proof knows which way the face looks.
+        if dot(outward, normal).abs() < 1.0 - 1e-9 {
+            return Err("its face is not proven to exist before the hole".to_owned());
+        }
+        planar.normal = outward;
+        return Ok(planar);
+    }
     let ids = match selection.get("kind").and_then(Value::as_str) {
         Some("faces") => selection.get("value"),
         Some("resolved") => selection.pointer("/value/faces"),
@@ -607,7 +790,7 @@ fn earlier_face(
         .get("surface")
         .and_then(Value::as_str)
         .and_then(|id| ctx.row("surfaces", id))
-        .and_then(|row| row.get("geometry"))
+        .and_then(|row| row.pointer("/geometry/value"))
         .ok_or("its face's surface is missing")?;
     if geometry.get("kind").and_then(Value::as_str) != Some("plane") {
         return Err("a hole referring to a curved face is not mapped yet".to_owned());
@@ -628,7 +811,7 @@ fn earlier_face(
     // loops in the saved result may have been introduced by this very hole; the
     // proven earlier cap has the single, filled profile reconstructed below.
     let boundary = face.get("loops").ok_or("its face's boundary is missing")?;
-    let id = match boundary.get("classification").and_then(Value::as_str) {
+    let id = match boundary.get("kind").and_then(Value::as_str) {
         Some("classified") => boundary.get("outer"),
         _ => boundary
             .get("loops")
@@ -662,7 +845,7 @@ fn earlier_face(
             .and_then(Value::as_str)
             .and_then(|id| ctx.row("curves", id));
         if curve
-            .and_then(|row| row.pointer("/geometry/kind"))
+            .and_then(|row| row.pointer("/geometry/value/kind"))
             .and_then(Value::as_str)
             != Some("line")
         {
@@ -672,7 +855,8 @@ fn earlier_face(
         }
         let reversed = coedge.get("sense").and_then(Value::as_str) == Some("reversed");
         let vertex = edge
-            .get(if reversed { "end" } else { "start" })
+            .get("ends")
+            .and_then(|ends| ends.get(if reversed { "end" } else { "start" }))
             .and_then(Value::as_str)
             .and_then(|id| ctx.row("vertices", id))
             .ok_or("its face's vertex is missing")?;
@@ -690,17 +874,36 @@ fn earlier_face(
     if corners.len() < 3 {
         return Err("its face has no polygonal boundary".to_owned());
     }
-    let mut planar = PlanarFace {
-        point: [0.0; 3],
-        normal,
-        u,
-        v,
-        corners,
-    };
+    let (mut planar, _) = interior(
+        feature,
+        PlanarFace {
+            point: [0.0; 3],
+            normal,
+            u,
+            v,
+            corners,
+            entry: None,
+        },
+        ctx,
+    )?;
+    // The underlying surface normal need not be the face's outward normal.
+    if face.get("sense").and_then(Value::as_str) == Some("reversed") {
+        planar.normal = planar.normal.map(|c| -c);
+    }
+    Ok(planar)
+}
+
+/// `planar` with a point inside its outline, and the way its cap faces when it is the cap of
+/// the extrusion just before the hole.
+fn interior(
+    feature: &Value,
+    mut planar: PlanarFace,
+    ctx: &Context,
+) -> Result<(PlanarFace, V3), String> {
     let outer = &planar.corners;
     // As in faces.rs, choose the centroid of a nondegenerate corner triangle
     // inside the earlier cap's filled outline.
-    planar.point = (0..outer.len())
+    let point = (0..outer.len())
         .find_map(|i| {
             let a = *outer.get((i + outer.len() - 1) % outer.len())?;
             let b = *outer.get(i)?;
@@ -720,40 +923,33 @@ fn earlier_face(
             (dot(area, area) > 1e-18 && planar.contains(centre)).then_some(centre)
         })
         .ok_or("its face has no resolved interior point")?;
-    if !earlier_cap(feature, &planar, ctx) {
-        return Err("its face is not proven to exist before the hole".to_owned());
-    }
-    // The underlying surface normal need not be the face's outward normal.
-    if face.get("sense").and_then(Value::as_str) == Some("reversed") {
-        planar.normal = planar.normal.map(|c| -c);
-    }
-    Ok(planar)
+    planar.point = point;
+    let outward = earlier_cap(feature, &planar, ctx)
+        .ok_or("its face is not proven to exist before the hole")?;
+    Ok((planar, outward))
 }
 
 /// A deliberately narrow proof: one polygonal profile, extruded as a new body,
 /// with no intervening solid operation. Matching the cap's entire outer boundary
 /// rules out a blind bottom or shoulder introduced by this hole or a later cut.
-fn earlier_cap(feature: &Value, face: &PlanarFace, ctx: &Context) -> bool {
-    let Some(previous) = ctx
+fn earlier_cap(feature: &Value, face: &PlanarFace, ctx: &Context) -> Option<V3> {
+    let previous = ctx
         .arena("features")
         .iter()
         .filter(|row| {
             row.get("id")
                 .and_then(Value::as_str)
                 .is_some_and(|id| ctx.feature_names.contains_key(id))
-                && super::operation(row)
-                    .get("definition")
-                    .and_then(Value::as_str)
-                    != Some("sketch")
+                && super::operation_kind(row) != Some("sketch")
                 && row.get("ordinal").and_then(Value::as_u64)
                     < feature.get("ordinal").and_then(Value::as_u64)
         })
-        .max_by_key(|row| row.get("ordinal").and_then(Value::as_u64))
-    else {
-        return false;
-    };
-    let op = previous.get("definition").unwrap_or(&Value::Null);
-    if op.get("definition").and_then(Value::as_str) != Some("extrude")
+        .max_by_key(|row| row.get("ordinal").and_then(Value::as_u64))?;
+    let op = super::operation(previous);
+    if super::operation_kind(previous) == Some("block") {
+        return box_cap(op, face);
+    }
+    if super::operation_kind(previous) != Some("extrude")
         || op.get("op").and_then(Value::as_str) != Some("new_body")
         || op.pointer("/extent/kind").and_then(Value::as_str) != Some("one_sided")
         || op
@@ -765,54 +961,48 @@ fn earlier_cap(feature: &Value, face: &PlanarFace, ctx: &Context) -> bool {
             .get("start")
             .is_some_and(|s| s.get("kind").and_then(Value::as_str) != Some("profile_plane"))
     {
-        return false;
+        return None;
     }
     if !matches!(
-        op.pointer("/profile/kind").and_then(Value::as_str),
+        op.get("profile")
+            .map(super::profile::planar)
+            .and_then(|profile| profile.get("kind"))
+            .and_then(Value::as_str),
         Some("sketch" | "sketch_profiles")
     ) {
-        return false;
+        return None;
     }
-    let Some(length) = number(op.pointer("/extent/side/termination/length")) else {
-        return false;
-    };
+    let length = number(op.pointer("/extent/side/termination/length"))?;
     let Ok((sketch_id, _)) = super::profile::profile(op.get("profile"), ctx) else {
-        return false;
+        return None;
     };
-    let Some(sketch) = ctx.sketches.get(&sketch_id) else {
-        return false;
-    };
-    let Some(profiles) = ctx
+    let sketch = ctx.sketches.get(&sketch_id)?;
+    let profiles = ctx
         .row("sketches", &sketch_id)
         .and_then(|row| row.get("profiles"))
-        .and_then(Value::as_array)
-    else {
-        return false;
-    };
+        .and_then(Value::as_array)?;
     let [profile] = profiles.as_slice() else {
-        return false;
+        return None;
     };
-    let Some(uses) = profile.as_array() else {
-        return false;
-    };
+    let uses = profile.as_array()?;
     let outer = &face.corners;
     if uses.len() != outer.len() || dot(face.normal, sketch.normal).abs() < 1.0 - 1e-9 {
-        return false;
+        return None;
     }
     let unique: BTreeSet<_> = uses
         .iter()
         .filter_map(|entry| entry.get("entity").and_then(Value::as_str))
         .collect();
     if unique.len() != uses.len() {
-        return false;
+        return None;
     }
     let direction = match op.pointer("/direction/kind").and_then(Value::as_str) {
         None | Some("profile_normal") => 1.0,
         Some("reversed_profile_normal") => -1.0,
-        _ => return false,
+        _ => return None,
     };
-    [0.0, direction * length].into_iter().any(|height| {
-        uses.iter().all(|entry| {
+    [0.0, direction * length].into_iter().find_map(|height| {
+        let all = uses.iter().all(|entry| {
             let Some(curve) = entry
                 .get("entity")
                 .and_then(Value::as_str)
@@ -837,7 +1027,71 @@ fn earlier_cap(feature: &Value, face: &PlanarFace, ctx: &Context) -> bool {
                     (close(start, *a) && close(end, *b)) || (close(start, *b) && close(end, *a))
                 })
             })
+        });
+        // The cap at the start faces back against the extrusion, the one at the end ahead.
+        all.then(|| {
+            let along = if height == 0.0 { -direction } else { direction };
+            sketch.normal.map(|c| c * along)
         })
+    })
+}
+
+/// A box made as a new body: `face` must be one of its six faces, its four corners being four
+/// corners of the box that share a side. Returns the way that side faces, out of the box.
+fn box_cap(op: &Value, face: &PlanarFace) -> Option<V3> {
+    if op.get("op").and_then(Value::as_str) != Some("new_body") {
+        return None;
+    }
+    let (low, extent) = super::primitive::box_bounds(op).ok()?;
+    let high = [low[0] + extent[0], low[1] + extent[1], low[2] + extent[2]];
+    let near = |a: f64, b: f64| (a - b).abs() < 1e-7;
+    if face.corners.len() != 4 {
+        return None;
+    }
+    (0..3).find_map(|axis| {
+        let at = |corner: &V3| corner.get(axis).copied();
+        let first = at(face.corners.first()?)?;
+        let side = [(low.get(axis)?, -1.0), (high.get(axis)?, 1.0)]
+            .into_iter()
+            .find(|(bound, _)| near(first, **bound))?
+            .1;
+        let bound = if side < 0.0 { low } else { high };
+        let bound = *bound.get(axis)?;
+        if !face
+            .corners
+            .iter()
+            .all(|c| at(c).is_some_and(|v| near(v, bound)))
+        {
+            return None;
+        }
+        // The four corners are the four distinct corners of that side.
+        let (u, v) = match axis {
+            0 => (1, 2),
+            1 => (0, 2),
+            _ => (0, 1),
+        };
+        let mut seen = [false; 4];
+        for corner in &face.corners {
+            let pick = |i: usize, lo: &V3, hi: &V3| {
+                let value = *corner.get(i)?;
+                if near(value, *lo.get(i)?) {
+                    Some(0)
+                } else if near(value, *hi.get(i)?) {
+                    Some(1)
+                } else {
+                    None
+                }
+            };
+            let slot = pick(u, &low, &high)? * 2 + pick(v, &low, &high)?;
+            let cell = seen.get_mut(slot)?;
+            if *cell {
+                return None;
+            }
+            *cell = true;
+        }
+        let mut outward = [0.0; 3];
+        *outward.get_mut(axis)? = side;
+        Some(outward)
     })
 }
 
@@ -945,6 +1199,7 @@ mod tests {
             origin: [0.0, 0.0, 10.0],
             x_dir: [1.0, 0.0, 0.0],
             y_dir: [0.0, 1.0, 0.0],
+            point_displacement: 0.0,
             points: vec![
                 ("origin".to_owned(), [0.0, 0.0]),
                 ("p1".to_owned(), [3.0, 4.0]),
@@ -955,14 +1210,8 @@ mod tests {
     }
 
     fn hole(extra: Value) -> Value {
-        let mut hole = json!({
-            "definition": "hole",
-            "profile": {"kind": "sketch", "value": "s"},
-            "profile_filter": "circles",
-            "direction": {"x": 0.0, "y": 0.0, "z": -1.0},
-            "shape": {"construction": {"construction": "form", "kind": {"kind": "simple"}}, "diameter": 5.0},
-            "extent": {"kind": "through_all"},
-        });
+        let mut hole = json!({"kind": "hole", "value": {"profile": {"kind": "sketch", "value": "s"}, "profile_filter": "circles", "direction": {"x": 0.0, "y": 0.0, "z": -1.0}, "shape": {"construction": {"kind": "form", "value": {"kind": {"kind": "simple"}}}, "diameter": 5.0}, "extent": {"kind": "through_all"}}});
+        let mut hole = hole["value"].take();
         if let (Some(fields), Some(more)) = (hole.as_object_mut(), extra.as_object()) {
             fields.extend(more.clone());
         }
@@ -971,7 +1220,7 @@ mod tests {
 
     fn mapped(definition: &Value) -> Result<Value, String> {
         let model = json!({});
-        let mut ctx = Context::new(&model);
+        let mut ctx = Context::testing(&model);
         ctx.sketches.insert("s".to_owned(), sketch());
         map(
             &json!({"name": "Hole"}),
@@ -1033,7 +1282,7 @@ mod tests {
         for (entity, expected) in [("point", "p1"), ("circle", "p2")] {
             let model = json!({"sketch_entities": [
                 {"id": entity, "sketch": "s", "construction": true}]});
-            let mut ctx = Context::new(&model);
+            let mut ctx = Context::testing(&model);
             ctx.sketches.insert("s".to_owned(), sketch());
             let definition = hole(json!({"profile_filter": "all"}));
             let feature = json!({"name": "Hole"});
@@ -1103,8 +1352,9 @@ mod tests {
                 "its countersink angle is not given",
             ),
         ] {
-            let definition = hole(json!({"shape": {"construction": {
-                "construction": "form", "kind": form}, "diameter": 5.0}}));
+            let definition = hole(
+                json!({"shape": {"construction": {"kind": "form", "value": {"kind": form}}, "diameter": 5.0}}),
+            );
             assert_eq!(mapped(&definition).unwrap_err(), reason);
         }
     }
@@ -1127,7 +1377,7 @@ mod tests {
         ] {
             for to_tip in [false, true] {
                 let definition = hole(json!({
-                    "shape": {"construction": {"construction": "form", "kind": form}, "diameter": 5.0},
+                    "shape": {"construction": {"kind": "form", "value": {"kind": form}}, "diameter": 5.0},
                     "extent": {"kind": "blind", "length": 6.0},
                     "bottom": {"kind": "angled", "included_angle": 118_f64.to_radians(), "depth_to_tip": to_tip},
                 }));
@@ -1137,7 +1387,7 @@ mod tests {
                 assert_eq!(out["hole"]["tip_angle"], "118.00000000000001");
                 // Older SolidCraft would silently drop the point: refused.
                 let model = json!({});
-                let mut ctx = Context::new(&model);
+                let mut ctx = Context::testing(&model);
                 ctx.target_version = "0.22.0".parse().unwrap();
                 ctx.sketches.insert("s".to_owned(), sketch());
                 assert_eq!(
@@ -1156,10 +1406,11 @@ mod tests {
 
     #[test]
     fn other_holes_say_why_they_are_not_mapped() {
-        let counterbore = hole(json!({"shape": {"construction": {"construction": "form",
-            "kind": {"kind": "counterbore_drilled", "diameter": 8.0, "depth": 2.0,
-                "drill_point_angle": 118_f64.to_radians()}}, "diameter": 5.0},
-            "extent": {"kind": "blind", "length": 6.0}}));
+        let counterbore = hole(
+            json!({"shape": {"construction": {"kind": "form", "value": {"kind": {"kind": "counterbore_drilled", "diameter": 8.0, "depth": 2.0,
+                "drill_point_angle": 118_f64.to_radians()}}}, "diameter": 5.0},
+            "extent": {"kind": "blind", "length": 6.0}}),
+        );
         assert_eq!(
             mapped(&counterbore).unwrap_err(),
             "SolidCraft holes take a drill point only on a plain drilled hole"

@@ -456,24 +456,25 @@ fn narrow(
         ("sketches", "sketch"),
     ] {
         let document = serde_json::to_value(&model.ir).map_err(|e| e.to_string())?;
-        if document
-            .get("model")
-            .and_then(Value::as_object)
-            .is_some_and(|arenas| {
-                arenas
-                    .values()
-                    .filter_map(Value::as_array)
-                    .map(Vec::len)
-                    .sum::<usize>()
-                    > 100_000
-            })
+        if ["geometry", "model"]
+            .iter()
+            .filter_map(|home| document.get(home).and_then(Value::as_object))
+            .flat_map(|arenas| arenas.values())
+            .filter_map(Value::as_array)
+            .map(Vec::len)
+            .sum::<usize>()
+            > 100_000
         {
             result.limit("The 100,000-entity subset limit was reached; isolation is incomplete.");
             result.isolated = false;
             return Ok(());
         }
         let rows = document
-            .get("model")
+            .get(if arena == "bodies" {
+                "geometry"
+            } else {
+                "model"
+            })
             .and_then(|m| m.get(arena))
             .and_then(Value::as_array)
             .cloned()
@@ -501,8 +502,8 @@ fn narrow(
             // contribution. Only claim it if its subset actually reduces the failing model.
             if failure["kind"] == "cadmpeg_checks"
                 && matches!(unit, "feature" | "sketch")
-                && !candidate.ir.model.coedges.is_empty()
-                && candidate.ir.model.coedges == model.ir.model.coedges
+                && !candidate.ir.geometry.coedges.is_empty()
+                && candidate.ir.geometry.coedges == model.ir.geometry.coedges
             {
                 continue;
             }
@@ -520,7 +521,7 @@ fn narrow(
                 );
                 model = candidate;
                 result.isolated = (unit == "body" || unit == "feature" || unit == "sketch")
-                    && model.ir.model.bodies.len() <= 1
+                    && model.ir.geometry.bodies.len() <= 1
                     && failure["findings"]
                         .as_object()
                         .is_some_and(|m| !m.is_empty());
@@ -557,7 +558,7 @@ fn feature_kind(feature: &Value) -> &'static str {
         "stored_geometry",
     ];
     feature
-        .pointer("/definition/definition")
+        .pointer("/definition/value/kind")
         .and_then(Value::as_str)
         .and_then(|k| KINDS.iter().find(|known| **known == k).copied())
         .unwrap_or("other")
@@ -569,9 +570,14 @@ fn kinds(model: &Model) -> Value {
     // Only enum discriminants from CADIR are accepted; source-native kind/name strings
     // cannot enter the anonymous output.
     let document = serde_json::to_value(&model.ir).unwrap_or(Value::Null);
-    for surface in &model.ir.model.surfaces {
+    for surface in &model.ir.geometry.surfaces {
         let value = serde_json::to_value(&surface.geometry).unwrap_or(Value::Null);
-        let kind = value
+        let geometry = if value.get("kind").and_then(Value::as_str) == Some("solved") {
+            value.get("value").unwrap_or(&Value::Null)
+        } else {
+            &value
+        };
+        let kind = geometry
             .get("kind")
             .and_then(Value::as_str)
             .filter(|k| {

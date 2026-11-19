@@ -178,7 +178,7 @@ pub(super) fn trimmed_region_curves(sketch: &Value, features: &[Value]) -> BTree
                         .into_iter()
                         .flatten()
                         .filter(|region| {
-                            region.get("region").and_then(Value::as_str) == Some("trimmed")
+                            region.get("kind").and_then(Value::as_str) == Some("trimmed")
                         })
                     {
                         let rings = region
@@ -235,7 +235,7 @@ fn whole_loop_uses(
     let mut identities = vec![id];
     identities.extend(features.iter().filter_map(|feature| {
         let definition = super::operation(feature);
-        if definition.get("definition").and_then(Value::as_str) != Some("sketch")
+        if super::operation_kind(feature) != Some("sketch")
             || definition.pointer("/sketch/sketch").and_then(Value::as_str) != Some(id)
         {
             return None;
@@ -249,7 +249,7 @@ fn whole_loop_uses(
             continue;
         }
         let definition = super::operation(feature);
-        if definition.get("definition").and_then(Value::as_str) == Some("sketch") {
+        if super::operation_kind(feature) == Some("sketch") {
             continue;
         }
         let found = region_uses(definition, id, &identities, sketch, entities, &mut used, 0)?;
@@ -304,15 +304,76 @@ pub(super) fn stray_curves(
     // A consumer that names a curve itself (a path, a rail, a reference) keeps it real.
     let mut named = BTreeSet::new();
     for feature in features {
-        if super::operation(feature)
-            .get("definition")
-            .and_then(Value::as_str)
-            != Some("sketch")
-        {
+        if super::operation_kind(feature) != Some("sketch") {
             named_in(feature, &strays, &mut named, 0);
         }
     }
     strays.difference(&named).cloned().collect()
+}
+
+/// The curves among `ids` that touch, enter or cross a loop `feature` selects whole from the
+/// sketch. Solid, such a curve divides the region and SolidCraft finds no profile with the
+/// source's boundary. A curve or selected loop that cannot be followed counts as dividing.
+pub(super) fn dividing(
+    sketch: &Value,
+    entities: &[&Value],
+    feature: &Value,
+    ids: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let Some(id) = sketch.get("id").and_then(Value::as_str) else {
+        return ids.clone();
+    };
+    let mut used = BTreeSet::new();
+    if ids.len() > MAX_LINES
+        || region_uses(
+            super::operation(feature),
+            id,
+            &[id],
+            sketch,
+            entities,
+            &mut used,
+            0,
+        ) != Some(true)
+    {
+        return ids.clone();
+    }
+    let selected: Vec<&[Value]> = loops(sketch)
+        .into_iter()
+        .filter(|members| {
+            members.iter().all(|member| {
+                member
+                    .get("entity")
+                    .and_then(Value::as_str)
+                    .is_some_and(|entity| used.contains(entity))
+            })
+        })
+        .collect();
+    let Some(polygons) = selected
+        .iter()
+        .map(|members| polygon(members, entities))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return ids.clone();
+    };
+    ids.iter()
+        .filter(|id| {
+            entity_named(entities, id)
+                .and_then(samples)
+                .is_none_or(|points| polygons.iter().any(|polygon| meets(&points, polygon)))
+        })
+        .cloned()
+        .collect()
+}
+
+/// Whether a curve, as points along it, lies on or inside the polygon or crosses its edges.
+fn meets(points: &[P2], polygon: &[P2]) -> bool {
+    let tolerance = tolerance(polygon);
+    points
+        .iter()
+        .any(|&p| inside(p, polygon) || on_boundary(p, polygon, tolerance))
+        || points.iter().zip(points.iter().skip(1)).any(|(&c, &d)| {
+            edges(polygon).any(|(a, b)| !matches!(intersection(a, b, c, d), Ok(None)))
+        })
 }
 
 /// Adds to `found` each of `ids` that a string inside `value` names.
@@ -488,7 +549,7 @@ fn region_uses(
         let profiles = sketch.get("profiles")?.as_array()?;
         let mut members = 0usize;
         for region in regions {
-            match region.get("region").and_then(Value::as_str) {
+            match region.get("kind").and_then(Value::as_str) {
                 Some("loops") => {}
                 // A trimmed region is bounded by pieces of its curves: each is used.
                 Some("trimmed") => {
@@ -588,6 +649,13 @@ fn loops(sketch: &Value) -> Vec<&[Value]> {
 
 /// Points along a sketch curve from its start to its end; `None` for a curve not followed.
 fn samples(entity: &Value) -> Option<Vec<P2>> {
+    samples_at(entity, false)
+}
+
+// Refine only after the original point search fails, keeping every existing pick identical.
+const REFINEMENT: usize = 8;
+
+fn samples_at(entity: &Value, refined: bool) -> Option<Vec<P2>> {
     let geometry = entity.get("geometry")?;
     match geometry.get("kind")?.as_str()? {
         "line" => Some(vec![
@@ -600,11 +668,12 @@ fn samples(entity: &Value) -> Option<Vec<P2>> {
             let (start, sweep, count) = if kind == "arc" {
                 let start = number(geometry.get("start_angle"))?;
                 let end = number(geometry.get("end_angle"))?;
-                let sweep = (end - start).rem_euclid(std::f64::consts::TAU);
+                let sweep = end - start;
                 (start, sweep, ARC_SAMPLES)
             } else {
                 (0.0, std::f64::consts::TAU, CIRCLE_SAMPLES)
             };
+            let count = count * if refined { REFINEMENT } else { 1 };
             Some(
                 (0..=count)
                     .map(|i| {
@@ -624,7 +693,7 @@ fn samples(entity: &Value) -> Option<Vec<P2>> {
 /// How close the ends of two boundary uses must be for a ring to close.
 const RING_CLOSES: f64 = 1e-3;
 
-/// A point must be at least this far inside a region to name it.
+/// Preferred clearance; narrower regions use the proven room found by a finer search.
 const CLEARANCE: f64 = 1e-3;
 
 /// How a boundary use's parameter can run on a circle or arc against the sketch's own angle: the
@@ -637,38 +706,6 @@ const READINGS: [fn(f64) -> f64; 4] = [
     |t| std::f64::consts::PI + t,
 ];
 
-/// Whether a region uses part of a whole circle. Several regions of two crossing closed curves
-/// have the same curves, so naming the curves can't tell them apart.
-pub(super) fn trims_a_closed_curve(uses: &[Value], entities: &[&Value]) -> bool {
-    uses.iter().any(|use_| {
-        let entity = use_
-            .get("entity")
-            .and_then(Value::as_str)
-            .and_then(|id| entity_named(entities, id));
-        let is_circle = entity
-            .and_then(|e| e.pointer("/geometry/kind"))
-            .and_then(Value::as_str)
-            == Some("circle");
-        let span = range(use_).map(|(from, to)| (to - from).abs());
-        is_circle
-            && span.is_some_and(|span| {
-                span < std::f64::consts::TAU - 1e-6
-                    && !complete_circle(uses, use_.get("entity").and_then(Value::as_str))
-            })
-    })
-}
-
-/// Whether the uses of one circle together cover all of it.
-fn complete_circle(uses: &[Value], entity: Option<&str>) -> bool {
-    let total: f64 = uses
-        .iter()
-        .filter(|use_| use_.get("entity").and_then(Value::as_str) == entity)
-        .filter_map(range)
-        .map(|(from, to)| (to - from).abs())
-        .sum();
-    (total - std::f64::consts::TAU).abs() < 1e-6
-}
-
 fn entity_named<'a>(entities: &[&'a Value], id: &str) -> Option<&'a Value> {
     entities
         .iter()
@@ -678,11 +715,21 @@ fn entity_named<'a>(entities: &[&'a Value], id: &str) -> Option<&'a Value> {
 
 fn range(use_: &Value) -> Option<(f64, f64)> {
     let range = use_.get("parameter_range")?.as_array()?;
-    Some((range.first()?.as_f64()?, range.get(1)?.as_f64()?))
+    let (from, to) = (number(range.first())?, number(range.get(1))?);
+    (range.len() == 2 && from != to).then_some((from, to))
 }
 
 /// Points along one boundary use, under one reading of its parameter.
 fn use_samples(use_: &Value, entities: &[&Value], reading: fn(f64) -> f64) -> Option<Vec<P2>> {
+    use_samples_at(use_, entities, reading, false)
+}
+
+fn use_samples_at(
+    use_: &Value,
+    entities: &[&Value],
+    reading: fn(f64) -> f64,
+    refined: bool,
+) -> Option<Vec<P2>> {
     let entity = entity_named(entities, use_.get("entity")?.as_str()?)?;
     let geometry = entity.get("geometry")?;
     let (from, to) = range(use_)?;
@@ -694,7 +741,7 @@ fn use_samples(use_: &Value, entities: &[&Value], reading: fn(f64) -> f64) -> Op
             let end = super::sketch::p2(geometry.get("end"))?;
             let length = super::sketch::distance(start, end);
             let slack = RING_CLOSES / length;
-            if length <= 0.0 || from < -slack || to > 1.0 + slack {
+            if length <= 0.0 || from.min(to) < -slack || from.max(to) > 1.0 + slack {
                 return None;
             }
             Some(vec![along(start, end, from), along(start, end, to)])
@@ -702,9 +749,13 @@ fn use_samples(use_: &Value, entities: &[&Value], reading: fn(f64) -> f64) -> Op
         "arc" | "circle" => {
             let center = super::sketch::p2(geometry.get("center"))?;
             let radius = number(geometry.get("radius"))?;
+            if radius <= 0.0 || (to - from).abs() > std::f64::consts::TAU {
+                return None;
+            }
             let count = ((to - from).abs() / std::f64::consts::TAU * CIRCLE_SAMPLES as f64)
                 .ceil()
                 .max(2.0) as usize;
+            let count = count * if refined { REFINEMENT } else { 1 };
             Some(
                 (0..=count)
                     .map(|i| {
@@ -724,43 +775,57 @@ fn use_samples(use_: &Value, entities: &[&Value], reading: fn(f64) -> f64) -> Op
 /// One ring of boundary uses under one reading: each use continues from the end of the last,
 /// and the last meets the first. `None` when they don't: this isn't how the source means them.
 fn ring_under(uses: &[Value], entities: &[&Value], reading: fn(f64) -> f64) -> Option<Vec<P2>> {
+    Some(ring_under_at(uses, entities, reading, false)?.0)
+}
+
+fn ring_under_at(
+    uses: &[Value],
+    entities: &[&Value],
+    reading: fn(f64) -> f64,
+    refined: bool,
+) -> Option<(Vec<P2>, f64)> {
     if uses.is_empty() || uses.len() > MAX_LINES {
         return None;
     }
-    let mut pieces: Vec<Vec<P2>> = uses
-        .iter()
-        .map(|use_| use_samples(use_, entities, reading))
-        .collect::<Option<_>>()?;
-    // The first use's direction is settled by what it must meet next.
-    if let [first, second, ..] = pieces.as_mut_slice() {
-        let (start, end) = (*first.first()?, *first.last()?);
-        let (a, b) = (*second.first()?, *second.last()?);
-        let reach = |p: P2| super::sketch::distance(p, a).min(super::sketch::distance(p, b));
-        if reach(start) < reach(end) {
-            first.reverse();
-        }
-    }
     let mut out: Vec<P2> = Vec::new();
-    for mut piece in pieces {
+    let (mut sagitta, mut join): (f64, f64) = (0.0, 0.0);
+    for use_ in uses {
+        let mut piece = use_samples_at(use_, entities, reading, refined)?;
+        let geometry = entity_named(entities, use_.get("entity")?.as_str()?)?.get("geometry")?;
+        let (from, to) = range(use_)?;
+        sagitta = sagitta.max(chord_error(geometry, (to - from).abs(), piece.len())?);
+        if use_.get("reversed").and_then(Value::as_bool) == Some(true) {
+            piece.reverse();
+        }
         if let Some(&last) = out.last() {
-            if super::sketch::distance(last, *piece.last()?)
-                < super::sketch::distance(last, *piece.first()?)
-            {
-                piece.reverse();
-            }
-            if super::sketch::distance(last, *piece.first()?) > RING_CLOSES {
+            join = join.max(super::sketch::distance(last, *piece.first()?));
+            if join > RING_CLOSES {
                 return None;
             }
         }
         out.extend(piece);
+        if out.len() > MAX_POINTS {
+            return None;
+        }
     }
     let (&first, &last) = (out.first()?, out.last()?);
-    if super::sketch::distance(first, last) > RING_CLOSES {
+    join = join.max(super::sketch::distance(first, last));
+    if join > RING_CLOSES {
         return None;
     }
-    out.dedup_by(|a, b| super::sketch::distance(*a, *b) <= RING_CLOSES / 10.0);
+    let mut removed: f64 = 0.0;
+    let tolerance = if refined { EPS } else { RING_CLOSES / 10.0 };
+    out.dedup_by(|a, b| {
+        let gap = super::sketch::distance(*a, *b);
+        if gap <= tolerance {
+            removed = removed.max(gap);
+            true
+        } else {
+            false
+        }
+    });
     out.pop();
-    (out.len() >= 3 && !self_crossing(&out)).then_some(out)
+    (out.len() >= 3 && !self_crossing(&out)).then_some((out, sagitta + join + removed))
 }
 
 fn area_and_centre(ring: &[P2]) -> (f64, P2) {
@@ -777,16 +842,25 @@ fn area_and_centre(ring: &[P2]) -> (f64, P2) {
     ((area / 2.0).abs(), [x / (3.0 * area), y / (3.0 * area)])
 }
 
-/// The ring of a region's boundary uses. Every reading that closes must give the same shape;
-/// readings that close on different shapes can't be told apart, so there is no ring.
+/// The ring of a region's directed boundary uses. Prefer their solved sketch chart;
+/// otherwise require every directed reading that closes to describe the same shape.
 pub(super) fn trimmed_ring(uses: &[Value], entities: &[&Value]) -> Option<Vec<P2>> {
     trimmed_rings(&[uses], entities)?.pop()
 }
 
-/// Resolve parameter readings together only for rings sharing a curved carrier. A diameter
-/// alone cannot distinguish the two halves of a circle, but another closed boundary using
-/// that same circle can settle its reading. Unrelated carriers supply no such evidence.
+/// Resolve legacy angular charts together only for rings sharing a curved carrier.
+/// Directed intervals in the solved sketch chart already distinguish the two half-discs;
+/// unrelated carriers cannot settle a legacy chart whose surviving readings disagree.
 pub(super) fn trimmed_rings(uses: &[&[Value]], entities: &[&Value]) -> Option<Vec<Vec<P2>>> {
+    Some(sampled_trimmed_rings(uses, entities, false)?.0)
+}
+
+/// Refined rings and a bound on their chord and actual endpoint displacement errors.
+pub(super) fn sampled_trimmed_rings(
+    uses: &[&[Value]],
+    entities: &[&Value],
+    refined: bool,
+) -> Option<(Vec<Vec<P2>>, f64)> {
     if uses.is_empty()
         || uses.len() > MAX_LINES
         || uses
@@ -810,6 +884,7 @@ pub(super) fn trimmed_rings(uses: &[&[Value]], entities: &[&Value]) -> Option<Ve
         })
         .collect();
     let mut out = vec![None; uses.len()];
+    let mut error: f64 = 0.0;
     for start in 0..uses.len() {
         if out.get(start)?.is_some() {
             continue;
@@ -827,41 +902,145 @@ pub(super) fn trimmed_rings(uses: &[&[Value]], entities: &[&Value]) -> Option<Ve
             .iter()
             .filter_map(|index| uses.get(*index).copied())
             .collect();
-        for (index, ring) in component
-            .into_iter()
-            .zip(rings_under_readings(&boundaries, entities)?)
-        {
+        let (rings, bound) = rings_under_readings(&boundaries, entities, refined)?;
+        error = error.max(bound);
+        for (index, ring) in component.into_iter().zip(rings) {
             *out.get_mut(index)? = Some(ring);
         }
     }
-    out.into_iter().collect()
+    Some((out.into_iter().collect::<Option<Vec<_>>>()?, error))
 }
 
-fn rings_under_readings(uses: &[&[Value]], entities: &[&Value]) -> Option<Vec<Vec<P2>>> {
-    let mut found: Option<Vec<Vec<P2>>> = None;
-    for reading in READINGS {
-        let Some(rings) = uses
+fn rings_under_readings(
+    uses: &[&[Value]],
+    entities: &[&Value],
+    refined: bool,
+) -> Option<(Vec<Vec<P2>>, f64)> {
+    let read = |reading: fn(f64) -> f64| {
+        let rings = uses
             .iter()
-            .map(|uses| ring_under(uses, entities, reading))
-            .collect::<Option<Vec<_>>>()
-        else {
+            .map(|uses| ring_under_at(uses, entities, reading, refined))
+            .collect::<Option<Vec<_>>>()?;
+        let error = rings.iter().map(|(_, error)| *error).fold(0.0, f64::max);
+        Some((
+            rings.into_iter().map(|(ring, _)| ring).collect::<Vec<_>>(),
+            error,
+        ))
+    };
+    // A directed interval in the solved sketch's chart is authoritative. Mirroring a
+    // diameter and semicircle also closes, but selects the opposite half-disc.
+    if let Some(rings) = read(|t| t) {
+        return Some(rings);
+    }
+    // Older carriers can use a different angular chart. Retain them only when directed
+    // closure settles that reading and every surviving reading describes the same region.
+    let mut found: Option<(Vec<Vec<P2>>, f64)> = None;
+    let mut chart_error = 0.0;
+    for reading in READINGS {
+        let Some((rings, error)) = read(reading) else {
             continue;
         };
-        if let Some(known) = &found {
+        if let Some((known, bound)) = &mut found {
+            // Legacy charts accepted below can differ by up to RING_CLOSES. Keep that
+            // uncertainty in the point proof even when the sampled chords are finer.
+            *bound = bound.max(error);
+            chart_error = RING_CLOSES;
             for (known, ring) in known.iter().zip(&rings) {
                 let (a, c) = area_and_centre(known);
                 let (b, d) = area_and_centre(ring);
                 if (a - b).abs() > 1e-3 * a.max(b).max(1e-9)
                     || super::sketch::distance(c, d) > RING_CLOSES * 10.0
+                    || [
+                        (known.as_slice(), ring.as_slice()),
+                        (ring.as_slice(), known.as_slice()),
+                    ]
+                    .iter()
+                    .any(|(a, b)| {
+                        a.iter().any(|p| {
+                            edges(b)
+                                .map(|(x, y)| distance_to_edge(*p, x, y))
+                                .fold(f64::INFINITY, f64::min)
+                                > RING_CLOSES
+                        })
+                    })
                 {
                     return None;
                 }
             }
         } else {
-            found = Some(rings);
+            found = Some((rings, error));
         }
     }
-    found
+    found.map(|(rings, error)| (rings, error + chart_error))
+}
+
+/// Sagitta of the actual sampled interval, rather than the full carrier's angular step.
+fn chord_error(geometry: &Value, sweep: f64, samples: usize) -> Option<f64> {
+    if !matches!(geometry.get("kind")?.as_str()?, "arc" | "circle") {
+        return Some(0.0);
+    }
+    let radius = number(geometry.get("radius"))?;
+    let segments = samples.checked_sub(1)?;
+    if radius <= 0.0 || segments == 0 {
+        return None;
+    }
+    let error = radius * (1.0 - (sweep / (2.0 * segments as f64)).cos());
+    error.is_finite().then_some(error)
+}
+
+/// A conservative distance from the sampled boundary to its exact curves. Circular
+/// chords deviate by at most r(1 - cos(step / 2)); closure can move an endpoint by RING_CLOSES.
+pub(super) fn boundary_error(entities: &[&Value]) -> Option<f64> {
+    let mut error: f64 = 0.0;
+    for entity in entities {
+        let geometry = entity.get("geometry")?;
+        let count = match geometry.get("kind")?.as_str()? {
+            "circle" => CIRCLE_SAMPLES,
+            "arc" => ARC_SAMPLES.min(CIRCLE_SAMPLES),
+            _ => continue,
+        };
+        let radius = number(geometry.get("radius"))?;
+        error = error.max(radius * (1.0 - (std::f64::consts::PI / count as f64).cos()));
+    }
+    Some(error + RING_CLOSES)
+}
+
+/// Exact bounds of a linear coordinate over a directed trimmed boundary in the solved
+/// sketch chart. Include each arc's extrema only when they fall in its selected interval.
+pub(super) fn trimmed_bounds(
+    uses: &[Value],
+    entities: &[&Value],
+    at: impl Fn(P2) -> f64,
+) -> Option<(f64, f64)> {
+    ring_under(uses, entities, |t| t)?;
+    let mut low = f64::INFINITY;
+    let mut high = f64::NEG_INFINITY;
+    for use_ in uses {
+        let samples = use_samples(use_, entities, |t| t)?;
+        for point in samples {
+            let value = at(point);
+            low = low.min(value);
+            high = high.max(value);
+        }
+        let geometry = entity_named(entities, use_.get("entity")?.as_str()?)?.get("geometry")?;
+        if matches!(geometry.get("kind")?.as_str()?, "circle" | "arc") {
+            let center = super::sketch::p2(geometry.get("center"))?;
+            let radius = number(geometry.get("radius"))?;
+            let base = at(center);
+            let x = at([center[0] + radius, center[1]]) - base;
+            let y = at([center[0], center[1] + radius]) - base;
+            let angle = y.atan2(x);
+            let (from, to) = range(use_)?;
+            for theta in [angle, angle + std::f64::consts::PI] {
+                if (theta - from.min(to)).rem_euclid(std::f64::consts::TAU) <= (to - from).abs() {
+                    let value = base + x * theta.cos() + y * theta.sin();
+                    low = low.min(value);
+                    high = high.max(value);
+                }
+            }
+        }
+    }
+    (low.is_finite() && high.is_finite()).then_some((low, high))
 }
 
 /// The ring of a whole source loop, for the regions selected beside a trimmed one.
@@ -871,7 +1050,7 @@ pub(super) fn loop_ring(members: &[Value], entities: &[&Value]) -> Option<Vec<P2
 
 /// A point inside `ring`, outside each of `others`, as far from all their edges as the scan
 /// finds. `None` when no such point stands clear of them.
-pub(super) fn interior_point(ring: &[P2], others: &[&[P2]]) -> Option<P2> {
+pub(super) fn interior_point(ring: &[P2], others: &[&[P2]], minimum: f64) -> Option<P2> {
     const ROWS: usize = 96;
     let low = ring.iter().map(|p| p[1]).fold(f64::INFINITY, f64::min);
     let high = ring.iter().map(|p| p[1]).fold(f64::NEG_INFINITY, f64::max);
@@ -898,13 +1077,81 @@ pub(super) fn interior_point(ring: &[P2], others: &[&[P2]]) -> Option<P2> {
                     continue;
                 }
                 let room = clearance(p);
-                if room >= CLEARANCE && best.is_none_or(|(known, _)| room > known) {
+                if room > minimum.max(CLEARANCE) && best.is_none_or(|(known, _)| room > known) {
                     best = Some((room, p));
                 }
             }
         }
     }
     best.map(|(_, p)| p)
+}
+
+/// A finer bounded search for narrow regions. Crossings from holes and other selected
+/// regions split every scan interval, so even a thin strip beside a hole has a candidate.
+/// Membership is still proved by the same even-odd test, with room beyond the sampling error.
+pub(super) fn narrow_interior_point(ring: &[P2], others: &[&[P2]], error: f64) -> Option<P2> {
+    const ROWS: usize = 384;
+    if !error.is_finite() || error < 0.0 {
+        return None;
+    }
+    let edge_count = std::iter::once(ring)
+        .chain(others.iter().copied())
+        .try_fold(0usize, |count, ring| count.checked_add(ring.len()))?;
+    if edge_count > MAX_POINTS {
+        return None;
+    }
+    let mut best: Option<(f64, P2)> = None;
+    // Both directions find a strip even when it lies between two horizontal scan lines.
+    for axis in 0..2 {
+        let coordinate = |p: P2| if axis == 0 { p[1] } else { p[0] };
+        let along = |p: P2| if axis == 0 { p[0] } else { p[1] };
+        let low = ring
+            .iter()
+            .map(|p| coordinate(*p))
+            .fold(f64::INFINITY, f64::min);
+        let high = ring
+            .iter()
+            .map(|p| coordinate(*p))
+            .fold(f64::NEG_INFINITY, f64::max);
+        for row in 0..ROWS {
+            let scan = low + (high - low) * (row as f64 + 0.4871) / ROWS as f64;
+            let mut hits: Vec<f64> = std::iter::once(ring)
+                .chain(others.iter().copied())
+                .flat_map(edges)
+                .filter(|(a, b)| (coordinate(*a) > scan) != (coordinate(*b) > scan))
+                .map(|(a, b)| {
+                    along(a)
+                        + (scan - coordinate(a)) / (coordinate(b) - coordinate(a))
+                            * (along(b) - along(a))
+                })
+                .collect();
+            hits.sort_by(f64::total_cmp);
+            for (&left, &right) in hits.iter().zip(hits.iter().skip(1)) {
+                let middle = left + (right - left) / 2.0;
+                let point = if axis == 0 {
+                    [middle, scan]
+                } else {
+                    [scan, middle]
+                };
+                if !inside(point, ring) || others.iter().any(|other| inside(point, other)) {
+                    continue;
+                }
+                let room = std::iter::once(ring)
+                    .chain(others.iter().copied())
+                    .flat_map(edges)
+                    .map(|(a, b)| distance_to_edge(point, a, b))
+                    .fold(f64::INFINITY, f64::min);
+                // Half the measured inscribed radius, capped at the existing clearance.
+                // Never let that size-dependent preference undercut the geometric proof.
+                let preferred = (room * 0.5).min(CLEARANCE);
+                let margin = preferred.max(error + EPS);
+                if room.is_finite() && room > margin && best.is_none_or(|(known, _)| room > known) {
+                    best = Some((room, point));
+                }
+            }
+        }
+    }
+    best.map(|(_, point)| point)
 }
 
 fn distance_to_edge(p: P2, a: P2, b: P2) -> f64 {
@@ -964,7 +1211,7 @@ fn inside(p: P2, polygon: &[P2]) -> bool {
 
 /// A line arrangement is deliberately bounded: intersections and directed edges grow
 /// quadratically. Larger arrangements keep the existing refusal.
-const MAX_LINES: usize = 128;
+pub(super) const MAX_LINES: usize = 128;
 const MAX_SELECTION_DEPTH: usize = 64;
 const MAX_EDGES: usize = 16_384;
 const MAX_POINTS: usize = 2048;
@@ -1023,16 +1270,34 @@ fn intersection(a: P2, b: P2, c: P2, d: P2) -> Result<Option<(f64, f64)>, ()> {
 
 /// Follow one source loop, including retraced curves, for even-odd membership tests.
 fn polygon(members: &[Value], entities: &[&Value]) -> Option<Vec<P2>> {
+    Some(sampled_loop_ring(members, entities, false)?.0)
+}
+
+pub(super) fn sampled_loop_ring(
+    members: &[Value],
+    entities: &[&Value],
+    refined: bool,
+) -> Option<(Vec<P2>, f64)> {
     if members.len() > MAX_LINES {
         return None;
     }
     let mut out = Vec::new();
+    let mut error: f64 = 0.0;
     for member in members {
         let id = member.get("entity")?.as_str()?;
         let entity = entities
             .iter()
             .find(|entity| entity.get("id").and_then(Value::as_str) == Some(id))?;
-        let mut points = samples(entity)?;
+        let mut points = samples_at(entity, refined)?;
+        if refined {
+            let geometry = entity.get("geometry")?;
+            let sweep = if geometry.get("kind")?.as_str()? == "arc" {
+                (number(geometry.get("end_angle"))? - number(geometry.get("start_angle"))?).abs()
+            } else {
+                std::f64::consts::TAU
+            };
+            error = error.max(chord_error(geometry, sweep, points.len())?);
+        }
         if member.get("reversed").and_then(Value::as_bool) == Some(true) {
             points.reverse();
         }
@@ -1052,7 +1317,7 @@ fn polygon(members: &[Value], entities: &[&Value]) -> Option<Vec<P2>> {
     }
     out.dedup_by(|a, b| super::sketch::distance(*a, *b) <= EPS);
     out.pop();
-    (out.len() >= 3).then_some(out)
+    (out.len() >= 3).then_some((out, error + 2.0 * EPS))
 }
 
 /// Whether a source loop has intersections beyond adjacent endpoints.
@@ -1067,6 +1332,62 @@ pub(super) fn rings_cross(a: &[P2], b: &[P2]) -> bool {
     edges(a).any(|(p, q)| {
         edges(b).any(|(r, s)| !intersection(p, q, r, s).is_ok_and(|hit| hit.is_none()))
     })
+}
+
+/// Follow one simple perimeter of exact emitted lines. Share the bounded arrangement
+/// limits and intersection checks with profile selection. Collinear neighbours are refused
+/// because SolidCraft can merge them into one edge, changing the historical edge endpoints.
+pub(super) fn line_ring(lines: &[(P2, P2)]) -> Option<Vec<P2>> {
+    if !(3..=MAX_LINES).contains(&lines.len()) {
+        return None;
+    }
+    let &(first, mut end) = lines.first()?;
+    let mut remaining: Vec<_> = lines.iter().copied().skip(1).collect();
+    let mut ring = vec![first];
+    while !remaining.is_empty() {
+        ring.push(end);
+        let mut matches = remaining.iter().enumerate().filter_map(|(i, &(a, b))| {
+            if super::sketch::distance(end, a) <= EPS {
+                Some((i, b))
+            } else if super::sketch::distance(end, b) <= EPS {
+                Some((i, a))
+            } else {
+                None
+            }
+        });
+        let (index, next) = matches.next()?;
+        if matches.next().is_some() {
+            return None;
+        }
+        remaining.swap_remove(index);
+        end = next;
+    }
+    if super::sketch::distance(end, first) > EPS || self_crossing(&ring) {
+        return None;
+    }
+    for ((a, b), &c) in edges(&ring).zip(ring.iter().cycle().skip(2)) {
+        let u = subtract(b, a);
+        let v = subtract(c, b);
+        if super::sketch::distance(a, b) <= EPS
+            || determinant(u, v).abs() <= EPS * u[0].hypot(u[1]) * v[0].hypot(v[1])
+        {
+            return None;
+        }
+    }
+    (signed_area(edges(&ring)).abs() > EPS * EPS).then_some(ring)
+}
+
+/// Signed area relative to the first vertex, avoiding cancellation when a small
+/// perimeter is far from the sketch origin. The edge order determines the sign.
+pub(super) fn signed_area(lines: impl IntoIterator<Item = (P2, P2)>) -> f64 {
+    let mut lines = lines.into_iter();
+    let Some((origin, _)) = lines.next() else {
+        return 0.0;
+    };
+    lines
+        .map(|(a, b)| determinant(subtract(a, origin), subtract(b, origin)))
+        .sum::<f64>()
+        / 2.0
 }
 
 fn self_crossing(ring: &[P2]) -> bool {
@@ -1105,8 +1426,8 @@ impl Piece {
                 Some(Piece::Arc(
                     super::sketch::p2(geometry.get("center"))?,
                     number(geometry.get("radius"))?,
-                    start,
-                    (end - start).rem_euclid(std::f64::consts::TAU),
+                    start.min(end),
+                    (end - start).abs(),
                 ))
             }
             "circle" => Some(Piece::Arc(
@@ -1517,9 +1838,10 @@ fn disjoint(a: &[P2], b: &[P2], padding: f64) -> bool {
     })
 }
 
-/// An opaque native pick is unambiguous only when even-odd nesting leaves one
-/// material region: one outer loop and its immediate holes, with no islands.
-pub(super) fn single_region(sketch: &Value, entities: &[&Value]) -> Option<usize> {
+/// The sketch's profile loops as polygons, when they alone bound its regions: every other curve
+/// is construction, a point or a reference line, and no two loops touch, cross or coincide, so
+/// the loops nest into a unique tree. `None` otherwise.
+fn clear_loops(sketch: &Value, entities: &[&Value]) -> Option<Vec<Vec<P2>>> {
     if sketch.get("profiles")?.as_array()?.len() > MAX_LINES {
         return None;
     }
@@ -1568,6 +1890,13 @@ pub(super) fn single_region(sketch: &Value, entities: &[&Value]) -> Option<usize
             }
         }
     }
+    Some(polygons)
+}
+
+/// An opaque native pick is unambiguous only when even-odd nesting leaves one
+/// material region: one outer loop and its immediate holes, with no islands.
+pub(super) fn single_region(sketch: &Value, entities: &[&Value]) -> Option<usize> {
+    let polygons = clear_loops(sketch, entities)?;
     let mut outer = None;
     let mut regions = 0;
     for (i, ring) in polygons.iter().enumerate() {
@@ -1585,6 +1914,43 @@ pub(super) fn single_region(sketch: &Value, entities: &[&Value]) -> Option<usize
         }
     }
     (regions == 1).then_some(outer).flatten()
+}
+
+/// Every region of the sketch a native pick can name, as profile-table indices: each loop with
+/// the loops directly inside it, which are its holes. A loop inside another is also a region of
+/// its own (the disc inside a ring). `None` when the loops do not alone bound the regions, or
+/// touch or cross, as for [`single_region`].
+pub(super) fn loop_regions(sketch: &Value, entities: &[&Value]) -> Option<Vec<Vec<usize>>> {
+    let polygons = clear_loops(sketch, entities)?;
+    let around: Vec<Vec<usize>> = polygons
+        .iter()
+        .enumerate()
+        .map(|(i, ring)| {
+            let p = ring.first().copied();
+            polygons
+                .iter()
+                .enumerate()
+                .filter(|(j, other)| *j != i && p.is_some_and(|p| inside(p, other)))
+                .map(|(j, _)| j)
+                .collect()
+        })
+        .collect();
+    let regions = around
+        .iter()
+        .enumerate()
+        .map(|(i, containing)| {
+            let mut region = vec![i];
+            region.extend(
+                around
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, other)| other.len() == containing.len() + 1 && other.contains(&i))
+                    .map(|(j, _)| j),
+            );
+            region
+        })
+        .collect();
+    Some(regions)
 }
 
 /// The area (mm squared) of the region the source loops `wanted` (indices into the sketch's
@@ -1719,18 +2085,198 @@ mod tests {
     use super::*;
 
     #[test]
+    fn sketch_clockwise_arc_sampling_and_intersections_use_the_source_side() {
+        let entity = json!({"geometry":{"kind":"arc","center":{"u":0.0,"v":0.0},
+            "radius":3.0,"start_angle":0.0,"end_angle":-std::f64::consts::FRAC_PI_2}});
+        let points = samples(&entity).unwrap();
+        assert!(points.iter().all(|p| p[0] >= -EPS && p[1] <= EPS));
+        let piece = Piece::of(&entity).unwrap();
+        let middle = 3.0 / 2.0_f64.sqrt();
+        assert!(piece.holds_angle_of([middle, -middle], EPS));
+        assert!(!piece.holds_angle_of([middle, middle], EPS));
+        let hits = meetings(piece, Piece::Line([2.0, -4.0], [2.0, 4.0]), EPS);
+        assert_eq!(hits.len(), 1);
+        assert!(hits.first().unwrap()[1] < 0.0);
+    }
+
+    #[test]
+    fn narrow_gap_points_stay_strictly_inside_in_both_scan_directions() {
+        for ring in [
+            vec![[0.0, 0.0], [0.0005, 0.0], [0.0005, 10.0], [0.0, 10.0]],
+            vec![[0.0, 0.0], [10.0, 0.0], [10.0, 0.0005], [0.0, 0.0005]],
+            vec![[0.0, 0.0], [0.0005, 0.0], [10.0005, 10.0], [10.0, 10.0]],
+        ] {
+            assert!(interior_point(&ring, &[], 0.0).is_none());
+            let point = narrow_interior_point(&ring, &[], 0.0).unwrap();
+            assert!(inside(point, &ring));
+            assert!(!on_boundary(point, &ring, EPS));
+            assert!(narrow_interior_point(&ring, &[], 0.0005).is_none());
+        }
+    }
+
+    #[test]
+    fn narrow_annulus_and_disc_have_separate_proven_points() {
+        let circle = |radius| {
+            json!({"geometry": {
+                "kind": "circle", "center": {"u": 0.0, "v": 0.0}, "radius": radius
+            }})
+        };
+        let (outer, inner) = (circle(1.0), circle(0.9995));
+        let ring = samples_at(&outer, true).unwrap();
+        let hole = samples_at(&inner, true).unwrap();
+        let error = chord_error(&outer["geometry"], std::f64::consts::TAU, ring.len()).unwrap();
+        let annulus = narrow_interior_point(&ring, &[&hole], error).unwrap();
+        let disc = narrow_interior_point(&hole, &[], error).unwrap();
+        assert!(inside(annulus, &ring) && !inside(annulus, &hole));
+        assert!(annulus[0].hypot(annulus[1]) > 0.9995);
+        assert!(annulus[0].hypot(annulus[1]) < 1.0);
+        assert!(disc[0].hypot(disc[1]) < 0.9995);
+        assert!(!on_boundary(annulus, &ring, error + EPS));
+        assert!(!on_boundary(annulus, &hole, error + EPS));
+        assert!(narrow_interior_point(&ring, &[&hole], 0.0005).is_none());
+    }
+
+    #[test]
+    fn existing_interior_pick_keeps_its_exact_coordinates() {
+        let square = [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]];
+        assert_eq!(
+            serde_json::to_string(&interior_point(&square, &[], RING_CLOSES).unwrap()).unwrap(),
+            "[5.0,5.050739583333333]"
+        );
+    }
+
+    #[test]
+    fn narrow_search_refuses_coincident_regions_and_excessive_boundaries() {
+        let square = [[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
+        assert!(narrow_interior_point(&square, &[&square], 0.0).is_none());
+        assert!(narrow_interior_point(&square, &[], f64::NAN).is_none());
+        let excessive = vec![[0.0, 0.0]; MAX_POINTS + 1];
+        assert!(narrow_interior_point(&excessive, &[], 0.0).is_none());
+    }
+
+    #[test]
+    fn measured_endpoint_gap_still_limits_narrow_region_proof() {
+        let ends = [
+            ([0.0, 0.0], [0.0005, 0.0]),
+            ([0.0005, 0.0004], [0.0005, 10.0]),
+            ([0.0005, 10.0], [0.0, 10.0]),
+            ([0.0, 10.0], [0.0, 0.0]),
+        ];
+        let entities: Vec<_> = ends
+            .iter()
+            .enumerate()
+            .map(|(id, (a, b))| {
+                json!({"id": id.to_string(), "geometry": {"kind": "line",
+                "start": {"u": a[0], "v": a[1]}, "end": {"u": b[0], "v": b[1]}}})
+            })
+            .collect();
+        let uses: Vec<_> = (0..4)
+            .map(|id| {
+                json!({"entity": id.to_string(),
+            "parameter_range": [0.0, 1.0], "reversed": false})
+            })
+            .collect();
+        let (ring, error) =
+            ring_under_at(&uses, &entities.iter().collect::<Vec<_>>(), |t| t, true).unwrap();
+        assert!(error >= 0.0004);
+        assert!(narrow_interior_point(&ring, &[], 0.0).is_some());
+        assert!(narrow_interior_point(&ring, &[], error).is_none());
+    }
+
+    #[test]
+    fn narrow_points_do_not_resolve_ambiguous_legacy_angular_charts() {
+        // The two mirrored half-discs fit within the legacy chart comparison's
+        // tolerance. A smaller clearance must not choose between them.
+        let radius = 0.0005;
+        let entities = [
+            json!({"id": "circle", "geometry": {"kind": "circle",
+                "center": {"u": 0.0, "v": 0.0}, "radius": radius}}),
+            line("diameter", [0.0, -radius], [0.0, radius]),
+        ];
+        let uses = vec![
+            json!({"entity": "circle", "reversed": false,
+                "parameter_range": [-std::f64::consts::FRAC_PI_2, std::f64::consts::FRAC_PI_2]}),
+            json!({"entity": "diameter", "reversed": false, "parameter_range": [0.0, 1.0]}),
+        ];
+        let (rings, error) =
+            sampled_trimmed_rings(&[&uses], &entities.iter().collect::<Vec<_>>(), true).unwrap();
+        assert!(error >= RING_CLOSES);
+        assert!(narrow_interior_point(rings.first().unwrap(), &[], error).is_none());
+    }
+
+    #[test]
+    fn translated_line_perimeters_keep_their_area_and_winding() {
+        for (points, area) in [
+            (vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]], 1.0),
+            (
+                vec![
+                    [0.0, 0.0],
+                    [3.0, 0.0],
+                    [3.0, 1.0],
+                    [1.0, 1.0],
+                    [1.0, 3.0],
+                    [0.0, 3.0],
+                ],
+                5.0,
+            ),
+        ] {
+            for offset in [0.0, 100_000_000.0, 100_000_001.0] {
+                for reverse in [false, true] {
+                    let mut translated: Vec<_> = points
+                        .iter()
+                        .map(|[x, y]| [x + offset, y + offset])
+                        .collect();
+                    if reverse {
+                        translated.reverse();
+                    }
+                    let lines: Vec<_> = edges(&translated).collect();
+                    let ring = line_ring(&lines).unwrap();
+                    assert_eq!(
+                        signed_area(edges(&ring)),
+                        if reverse { -area } else { area }
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn emitted_line_perimeters_are_bounded_closed_and_unambiguous() {
+        // Out-of-order, reversed segments still describe the same concave perimeter.
+        let lines = [
+            ([0.0, 0.0], [30.0, 0.0]),
+            ([10.0, 10.0], [30.0, 10.0]),
+            ([0.0, 30.0], [10.0, 30.0]),
+            ([30.0, 10.0], [30.0, 0.0]),
+            ([10.0, 30.0], [10.0, 10.0]),
+            ([0.0, 0.0], [0.0, 30.0]),
+        ];
+        let ring = line_ring(&lines).unwrap();
+        assert_eq!(ring.len(), 6);
+        assert_eq!(ring_area(&ring), 500.0);
+        assert!(line_ring(&lines[..5]).is_none());
+        let mut branched = lines.to_vec();
+        branched.push(([30.0, 0.0], [40.0, 0.0]));
+        assert!(line_ring(&branched).is_none());
+        let mut zero_edge = lines.to_vec();
+        zero_edge.push(([30.0, 0.0], [30.0, 0.0]));
+        assert!(line_ring(&zero_edge).is_none());
+        assert!(line_ring(&[lines[0]; MAX_LINES + 1]).is_none());
+    }
+
+    #[test]
     fn curves_bounding_a_selected_trimmed_region_are_named() {
         let sketch = json!({"id": "s"});
         let features = vec![
-            json!({"id": "e", "definition": {"definition": "extrude", "profile": {
+            json!({"id": "e", "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {"profile": {"kind":"planar", "value": {
                 "kind": "sketch_regions", "value": {"sketch": "s", "regions": [
-                    {"region": "trimmed",
-                     "outer_boundary": [{"entity": "top"}, {"entity": "divider"}],
-                     "hole_boundaries": [[{"entity": "circle"}]]},
-                    {"region": "loops", "outer": 0}]}}}}),
-            json!({"id": "f", "definition": {"definition": "extrude", "profile": {
+                    {"kind": "trimmed",
+                     "outer_boundary": [{"entity": "top", "reversed": false}, {"entity": "divider", "reversed": false}],
+                     "hole_boundaries": [[{"entity": "circle", "reversed": false}]]},
+                    {"kind": "loops", "outer": 0, "holes": []}]}}}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [], "ordinal": 0}),
+            json!({"id": "f", "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {"profile": {"kind":"planar", "value": {
                 "kind": "sketch_regions", "value": {"sketch": "other", "regions": [
-                    {"region": "trimmed", "outer_boundary": [{"entity": "elsewhere"}]}]}}}}),
+                    {"kind": "trimmed", "outer_boundary": [{"entity": "elsewhere", "reversed": false}], "hole_boundaries": []}]}}}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [], "ordinal": 0}),
         ];
         let found = trimmed_region_curves(&sketch, &features);
         assert_eq!(
@@ -1896,8 +2442,8 @@ mod tests {
     }
 
     fn extrude(regions: Value) -> Value {
-        json!({"id": "e", "definition": {"definition": "extrude", "profile": {
-            "kind": "sketch_regions", "value": {"sketch": "s", "regions": regions}}}})
+        json!({"id": "e", "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {"profile": {"kind":"planar", "value": {
+            "kind": "sketch_regions", "value": {"sketch": "s", "regions": regions}}}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [], "ordinal": 0})
     }
 
     fn strays(sketch: &Value, entities: &[Value], features: &[Value]) -> Vec<String> {
@@ -1908,14 +2454,14 @@ mod tests {
     #[test]
     fn a_loop_no_feature_takes_is_construction_with_the_curves_in_no_loop() {
         let (sketch, entities) = square_and_tab();
-        let features = [extrude(json!([{"region": "loops", "outer": 0}]))];
+        let features = [extrude(json!([{"kind": "loops", "outer": 0, "holes": []}]))];
         assert_eq!(
             strays(&sketch, &entities, &features),
             ["t1", "t2", "t3", "t4", "x"]
         );
         // Both loops taken: only the line in no loop.
         let features = [extrude(
-            json!([{"region": "loops", "outer": 0}, {"region": "loops", "outer": 1}]),
+            json!([{"kind": "loops", "outer": 0, "holes": []}, {"kind": "loops", "outer": 1, "holes": []}]),
         )];
         assert_eq!(strays(&sketch, &entities, &features), ["x"]);
     }
@@ -1923,16 +2469,16 @@ mod tests {
     #[test]
     fn a_list_of_loops_counts_its_loops_and_the_whole_sketch_keeps_every_curve() {
         let (sketch, entities) = square_and_tab();
-        let listed = json!({"id": "e", "definition": {"definition": "extrude", "profile": {
-            "kind": "sketch_profiles", "value": {"sketch": "s", "profiles": [0]}}}});
+        let listed = json!({"id": "e", "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {"profile": {"kind":"planar", "value": {
+            "kind": "sketch_profiles", "value": {"sketch": "s", "profiles": [0]}}}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [], "ordinal": 0});
         assert_eq!(
             strays(&sketch, &entities, &[listed]),
             ["t1", "t2", "t3", "t4", "x"]
         );
         // The whole sketch takes every region its curves bound, which the profile table may
         // not list in full: nothing is inferred.
-        let whole = json!({"id": "e", "definition": {"definition": "extrude", "profile": {
-            "kind": "sketch", "value": "s"}}});
+        let whole = json!({"id": "e", "definition": {"kind": "operation", "value": {"kind": "extrude", "value": {"profile": {"kind":"planar", "value": {
+            "kind": "sketch", "value": "s"}}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": [], "ordinal": 0});
         assert!(strays(&sketch, &entities, &[whole]).is_empty());
     }
 
@@ -1941,13 +2487,13 @@ mod tests {
         let (sketch, entities) = square_and_tab();
         // Line ranges are fractions of the line: the tab's three outer sides whole, and the
         // stretch of the square's side between them.
-        let trimmed = json!({"region": "trimmed", "outer_boundary": [
-            {"entity": "t1", "parameter_range": [0.0, 1.0]},
-            {"entity": "t2", "parameter_range": [0.0, 1.0]},
-            {"entity": "t3", "parameter_range": [0.0, 1.0]},
-            {"entity": "b", "parameter_range": [0.3, 0.7]}]});
+        let trimmed = json!({"kind": "trimmed", "outer_boundary": [
+            {"entity": "t1", "parameter_range": [0.0, 1.0], "reversed": false},
+            {"entity": "t2", "parameter_range": [0.0, 1.0], "reversed": false},
+            {"entity": "t3", "parameter_range": [0.0, 1.0], "reversed": false},
+            {"entity": "b", "parameter_range": [0.3, 0.7], "reversed": true}], "hole_boundaries": []});
         let features = [
-            extrude(json!([{"region": "loops", "outer": 0}])),
+            extrude(json!([{"kind": "loops", "outer": 0, "holes": []}])),
             extrude(json!([trimmed])),
         ];
         assert_eq!(strays(&sketch, &entities, &features), ["t4", "x"]);
@@ -1955,12 +2501,14 @@ mod tests {
         // it are not named), says nothing about which curves it needs.
         for boundary in [
             json!([]),
-            json!([{"entity": "t1", "parameter_range": [0.0, 1.0]},
-                   {"entity": "t2", "parameter_range": [0.0, 1.0]}]),
+            json!([{"entity": "t1", "parameter_range": [0.0, 1.0], "reversed": false},
+                   {"entity": "t2", "parameter_range": [0.0, 1.0], "reversed": false}]),
         ] {
             let features = [
-                extrude(json!([{"region": "loops", "outer": 0}])),
-                extrude(json!([{"region": "trimmed", "outer_boundary": boundary}])),
+                extrude(json!([{"kind": "loops", "outer": 0, "holes": []}])),
+                extrude(
+                    json!([{"kind": "trimmed", "outer_boundary": boundary, "hole_boundaries": []}]),
+                ),
             ];
             assert!(strays(&sketch, &entities, &features).is_empty());
         }
@@ -1971,10 +2519,10 @@ mod tests {
         let (_, entities) = square_and_tab();
         let refs: Vec<&Value> = entities.iter().collect();
         let tab = |piece: [f64; 2]| {
-            json!([{"entity": "t1", "parameter_range": [0.0, 1.0]},
-                   {"entity": "t2", "parameter_range": [0.0, 1.0]},
-                   {"entity": "t3", "parameter_range": [0.0, 1.0]},
-                   {"entity": "b", "parameter_range": piece}])
+            json!([{"entity": "t1", "parameter_range": [0.0, 1.0], "reversed": false},
+                   {"entity": "t2", "parameter_range": [0.0, 1.0], "reversed": false},
+                   {"entity": "t3", "parameter_range": [0.0, 1.0], "reversed": false},
+                   {"entity": "b", "parameter_range": piece, "reversed": true}])
         };
         // 30% to 70% of the square's 10 mm side closes the 4 mm tab.
         let ring = trimmed_ring(tab([0.3, 0.7]).as_array().unwrap(), &refs).unwrap();

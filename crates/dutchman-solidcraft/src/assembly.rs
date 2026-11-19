@@ -79,7 +79,7 @@ fn unwritten_appearances(part: &Model, report: &mut Report) {
         let cause = match part.unplaced_appearance_cause(binding) {
             dutchman_core::AppearanceLoss::Other
                 if matches!(
-                    binding.target,
+                    binding.target.entity,
                     cadmpeg_ir::appearance::AppearanceTarget::Body(_)
                         | cadmpeg_ir::appearance::AppearanceTarget::Face(_)
                 ) =>
@@ -177,6 +177,7 @@ pub(crate) fn write(
         definition_components: BTreeMap::new(),
         written_sketches: BTreeSet::new(),
         unused_sketches: Vec::new(),
+        hidden_bodies: Vec::new(),
     };
     let top = builder.assembly(assembly, 0)?;
     builder.hold(&assembly.held, &top);
@@ -295,12 +296,20 @@ pub(crate) fn write(
     if !hidden_occurrences.is_empty() {
         visibility.insert("hidden_occurrences".to_owned(), json!(hidden_occurrences));
     }
+    let hidden_bodies = placed_body_names(
+        &builder.occurrences,
+        &builder.hidden_bodies,
+        MAX_HIDDEN_PATHS,
+    );
+    if !hidden_bodies.is_empty() {
+        visibility.insert("hidden_bodies".to_owned(), json!(hidden_bodies));
+    }
     if let (false, Some(fields)) = (visibility.is_empty(), doc.as_object_mut()) {
         fields.insert("visibility".to_owned(), Value::Object(visibility));
     }
-    builder
-        .report
-        .set_outcome(outcome(&builder.histories, builder.outcomes));
+    let result = outcome(&builder.histories, builder.outcomes);
+    crate::state_tolerances(builder.report, &result);
+    builder.report.set_outcome(result);
     builder.container.finish(&doc)
 }
 
@@ -308,6 +317,107 @@ pub(crate) fn write(
 /// occurrence ids from the root down. A hidden occurrence inside a component placed more than
 /// once is hidden in each placement of it. At most `cap` paths are made; the second value
 /// counts the paths left out past it (at least that many: making them stops at the cap).
+/// The world names SolidCraft gives each placement of the bodies in `bodies` ((component, body
+/// name)): the body's own name at the component's first placement, and `name (A/B)` at any
+/// other, A/B being the occurrence names along its path from the root (SolidCraft's
+/// `Document::world_body_name`). At most `cap` names per body.
+fn placed_body_names(occurrences: &[Value], bodies: &[(u64, String)], cap: usize) -> Vec<String> {
+    struct Occurrence<'a> {
+        id: u64,
+        parent: u64,
+        component: u64,
+        name: &'a str,
+    }
+    let rows: Vec<Occurrence> = occurrences
+        .iter()
+        .filter_map(|o| {
+            Some(Occurrence {
+                id: o.get("id")?.as_u64()?,
+                parent: o.get("parent")?.as_u64()?,
+                component: o.get("component")?.as_u64()?,
+                name: o.get("name").and_then(Value::as_str).unwrap_or(""),
+            })
+        })
+        .collect();
+    // Every path from the root to a placement of `component`, outermost occurrence first.
+    let paths_to = |component: u64| -> Vec<Vec<&Occurrence>> {
+        let mut done = Vec::new();
+        let mut partial: Vec<Vec<&Occurrence>> = rows
+            .iter()
+            .filter(|o| o.component == component)
+            .map(|o| vec![o])
+            .collect();
+        for _ in 0..=rows.len() {
+            let mut next = Vec::new();
+            for path in partial {
+                let Some(parent) = path.first().map(|o| o.parent) else {
+                    continue;
+                };
+                if parent == 0 {
+                    done.push(path);
+                    continue;
+                }
+                for outer in rows.iter().filter(|o| o.component == parent) {
+                    // Each partial path ends in at least one path, so a wide fan-out of
+                    // placements per level is cut here rather than growing round on round.
+                    if next.len() >= cap {
+                        break;
+                    }
+                    if !path.iter().any(|o| o.id == outer.id) {
+                        let mut longer = vec![outer];
+                        longer.extend(path.iter().copied());
+                        next.push(longer);
+                    }
+                }
+            }
+            if next.is_empty() || done.len() >= cap {
+                break;
+            }
+            partial = next;
+        }
+        done
+    };
+    // The path of a component's first placement: its first occurrence, inside the first
+    // placement of the component that occurrence sits in.
+    let first_path = |component: u64| -> Vec<u64> {
+        let mut path = Vec::new();
+        let mut c = component;
+        for _ in 0..=rows.len() {
+            if c == 0 {
+                break;
+            }
+            let Some(o) = rows.iter().find(|o| o.component == c) else {
+                break;
+            };
+            path.insert(0, o.id);
+            c = o.parent;
+        }
+        path
+    };
+    let mut names = Vec::new();
+    for (component, body) in bodies {
+        let first = first_path(*component);
+        let mut paths = paths_to(*component);
+        paths.truncate(cap);
+        if paths.is_empty() {
+            paths.push(Vec::new());
+        }
+        for path in paths {
+            let ids: Vec<u64> = path.iter().map(|o| o.id).collect();
+            let name = if path.is_empty() || ids == first {
+                body.clone()
+            } else {
+                let label: Vec<&str> = path.iter().map(|o| o.name).collect();
+                format!("{body} ({})", label.join("/"))
+            };
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+    }
+    names
+}
+
 fn hidden_paths(
     occurrences: &[Value],
     placements: &BTreeMap<u64, (u64, [[f64; 4]; 3])>,
@@ -411,6 +521,7 @@ fn plan_parts(
             writer.sketches,
         );
         writer.plan_blends(&mut mapping);
+        crate::output_links::not_written(&mut mapping.features);
         features.extend(mapping.features.iter().cloned().map(|mut feature| {
             feature.name = Some(format!("{file}: {}", feature.name.unwrap_or_default()));
             feature
@@ -565,11 +676,18 @@ fn prepare_history(
     progress: Option<&dutchman_core::Progress<'_>>,
 ) -> Result<PreparedHistory, Error> {
     let mut part_report = Report::default();
-    let mut mapping = history::map_with_sketches(
+    let mut mapping = history::map_with_profile_check(
         part,
         &mut part_report,
         writer.resolved_version(),
         writer.sketches,
+        &mut crate::Measuring {
+            writer,
+            model: part,
+            step,
+            progress,
+        },
+        progress,
     );
     if let Ok(history) = &mut mapping.result {
         if let Err(why) = history::base::restate(history, part) {
@@ -633,7 +751,7 @@ fn prepare_part(
     #[cfg(all(debug_assertions, not(target_family = "wasm")))]
     crate::slow_part(&part.name);
     let mut report = Report::default();
-    let step = if part.ir.model.bodies.is_empty() {
+    let step = if part.ir.geometry.bodies.is_empty() {
         None
     } else {
         Some(step::restate(part, &mut report)?)
@@ -678,7 +796,7 @@ fn prepare_parts(
         .map(|part| {
             dutchman_core::parallel::part_peak_bytes(
                 dutchman_core::parts::entity_count(part),
-                part.ir.model.bodies.len(),
+                part.ir.geometry.bodies.len(),
             )
         })
         .collect();
@@ -697,7 +815,7 @@ fn prepare_parts(
     // 16 workers used about 14 MiB more than serial preparation without saving time.
     let light_imports = parts.iter().zip(&peaks).all(|(part, peak)| {
         *peak == (256 << 20)
-            && part.ir.model.bodies.len() <= 1
+            && part.ir.geometry.bodies.len() <= 1
             && (writer.import_only || part.ir.model.features.is_empty())
             && (!writer.sketches || part.ir.model.sketches.is_empty())
     });
@@ -795,6 +913,8 @@ struct Builder<'r> {
     /// Sketches of written histories that no feature is built on or the source hides: they
     /// start hidden.
     unused_sketches: Vec<Value>,
+    /// Bodies written histories rebuild that the source hides: (component, body name).
+    hidden_bodies: Vec<(u64, String)>,
 }
 
 impl Builder<'_> {
@@ -1125,7 +1245,7 @@ impl Builder<'_> {
             }
             None => match &part.assembly {
                 Some(_) => None,
-                None if part.ir.model.bodies.is_empty() => None,
+                None if part.ir.geometry.bodies.is_empty() => None,
                 None => match step::restate(part, self.report) {
                     Ok(step) => Some(step),
                     Err(err) => {
@@ -1240,9 +1360,11 @@ impl Builder<'_> {
             Some(prepared) => prepared,
             None => prepare_history(self.writer, part, step, self.progress)?,
         };
+        let outcome_start = self.outcomes.len();
         self.outcomes
             .extend(mapping.features.iter().cloned().map(|mut feature| {
                 feature.name = Some(format!("{file}: {}", feature.name.unwrap_or_default()));
+                feature.output = Default::default();
                 feature
             }));
         let mut history = match mapping.result {
@@ -1264,6 +1386,12 @@ impl Builder<'_> {
                 let left_out = part.ir.model.sketches.len().saturating_sub(kept);
                 if kept > 0 {
                     self.mark_written(part);
+                    if let Some(rows) = self.outcomes.get_mut(outcome_start..) {
+                        for (row, source) in rows.iter_mut().zip(&mapping.features) {
+                            row.output = source.output.clone();
+                        }
+                        crate::output_links::retain(rows, &references.features, self.next_id - 1);
+                    }
                     references.relocate(
                         self.next_id - 1,
                         component,
@@ -1318,7 +1446,9 @@ impl Builder<'_> {
                     );
                     Check::Verified
                 }
-                verify::Outcome::Unverified(why) if self.writer.keep_unverified_hidden() => {
+                verify::Outcome::Unverified(why)
+                    if self.writer.keep_unverified_history_hidden(&history) =>
+                {
                     self.report.push_at(
                         Stage::SolidCraft,
                         Severity::Degraded,
@@ -1398,10 +1528,22 @@ impl Builder<'_> {
         } else {
             component
         };
+        if let Some(rows) = self.outcomes.get_mut(outcome_start..) {
+            for (row, source) in rows.iter_mut().zip(&mapping.features) {
+                row.output = source.output.clone();
+            }
+            crate::output_links::history(rows, &history, self.next_id - 1);
+        }
         history.relocate(self.next_id - 1, component, &prefix(name), &mut self.taken);
         history.rename_bodies(name, &mut self.bodies);
         self.mark_written(part);
         self.unused_sketches.extend(history.hidden_sketches());
+        self.hidden_bodies.extend(
+            history
+                .hidden_bodies
+                .iter()
+                .map(|body| (component, body.clone())),
+        );
         self.next_id = history.next_id;
         self.features.append(&mut history.features);
         self.params.append(&mut history.params);
@@ -1558,7 +1700,7 @@ fn sketch_owners(model: &Model) -> BTreeMap<String, String> {
     use cadmpeg_ir::features::{FeatureDefinition, FeatureOperation};
 
     let mut owners = BTreeMap::new();
-    if model.ir.check_decode_depth().is_err() {
+    if model.ir.check_scope().is_err() {
         return owners;
     }
     // Ownership does not require expanding geometry or native payloads. Match the
@@ -1592,18 +1734,13 @@ fn sketch_owner_lists_override_feature_owners_and_unresolved_sketches_have_none(
     let listed = "test:model:sketch#listed";
     let feature_only = "test:model:sketch#feature";
     wire["model"]["product_definitions"] = json!([
-        {"id": owner_a, "kind": "part", "bodies": [], "sketches": [listed]},
-        {"id": owner_b, "kind": "part", "bodies": []}
+        {"id": owner_a, "kind": "part", "bodies": [], "sketches": [listed], "bom_properties": {}},
+        {"id": owner_b, "kind": "part", "bodies": [], "bom_properties": {}, "sketches": []}
     ]);
     wire["model"]["features"] = json!([
-        {"id": "test:model:feature#listed", "ordinal": 0, "product_definition": owner_b,
-            "suppressed": false, "outputs": [], "definition": {"definition": "sketch",
-                "sketch": {"space": "planar", "sketch": listed}}},
-        {"id": "test:model:feature#feature", "ordinal": 1, "product_definition": owner_b,
-            "suppressed": false, "outputs": [], "definition": {"definition": "sketch",
-                "sketch": {"space": "planar", "sketch": feature_only}}},
-        {"id": "test:model:feature#unresolved", "ordinal": 2, "product_definition": owner_b,
-            "suppressed": false, "outputs": [], "definition": {"definition": "sketch", "sketch": {"space": "unresolved"}}}
+        {"id": "test:model:feature#listed", "ordinal": 0, "product_definition": owner_b, "suppressed": false, "outputs": [], "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": listed}}}}, "dependencies": [], "source_properties": {}, "source_content": []},
+        {"id": "test:model:feature#feature", "ordinal": 1, "product_definition": owner_b, "suppressed": false, "outputs": [], "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": feature_only}}}}, "dependencies": [], "source_properties": {}, "source_content": []},
+        {"id": "test:model:feature#unresolved", "ordinal": 2, "product_definition": owner_b, "suppressed": false, "outputs": [], "definition": {"kind": "operation", "value": {"kind": "sketch", "value": {"sketch": {"kind": "unresolved"}}}}, "dependencies": [], "source_properties": {}, "source_content": []}
     ]);
     let model = Model {
         ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
@@ -1639,6 +1776,46 @@ fn prefix(name: &str) -> String {
 #[allow(clippy::unwrap_used, clippy::indexing_slicing)]
 mod hidden_tests {
     use super::*;
+
+    #[test]
+    fn a_hidden_rebuilt_body_is_hidden_at_every_placement_by_its_world_name() {
+        // Component 10 is placed twice at the root and holds one placement of component 20.
+        let occurrences = vec![
+            json!({"id": 1, "parent": 0, "component": 10, "name": "A:1"}),
+            json!({"id": 2, "parent": 0, "component": 10, "name": "A:2"}),
+            json!({"id": 3, "parent": 10, "component": 20, "name": "B:1"}),
+        ];
+        let bodies = [(10, "Peg".to_owned()), (20, "Pin".to_owned())];
+        assert_eq!(
+            placed_body_names(&occurrences, &bodies, 10),
+            ["Peg", "Peg (A:2)", "Pin", "Pin (A:2/B:1)"]
+        );
+        // A body of a component nothing places keeps its own name.
+        assert_eq!(
+            placed_body_names(&occurrences, &[(30, "Loose".to_owned())], 10),
+            ["Loose"]
+        );
+        // The cap bounds the names per body.
+        assert_eq!(placed_body_names(&occurrences, &bodies[..1], 1), ["Peg"]);
+    }
+
+    #[test]
+    fn a_wide_fan_out_of_placements_stays_within_the_cap() {
+        // Components 10, 20 and 30, each placed 60 times inside the one before: 216000 paths
+        // to a body of 30, of which only the first few are named.
+        let mut occurrences = Vec::new();
+        let mut id = 0;
+        for (component, parent) in [(10, 0), (20, 10), (30, 20)] {
+            for n in 1..=60 {
+                id += 1;
+                occurrences.push(json!({"id": id, "parent": parent, "component": component,
+                    "name": format!("C{component}:{n}")}));
+            }
+        }
+        let names = placed_body_names(&occurrences, &[(30, "Deep".to_owned())], 5);
+        assert_eq!(names.len(), 5, "{names:?}");
+        assert_eq!(names[0], "Deep");
+    }
 
     #[test]
     fn hidden_paths_past_the_cap_are_counted_as_left_shown() {

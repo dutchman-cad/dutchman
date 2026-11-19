@@ -11,6 +11,7 @@ use eframe::egui;
 
 use super::{version, MAX_BYTES};
 
+mod appimage;
 mod msi;
 mod scoop;
 mod windows;
@@ -34,6 +35,8 @@ pub enum Install {
     Msi(PathBuf),
     #[cfg_attr(not(windows), allow(dead_code))]
     Zip(PathBuf),
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))] // Constructed on Linux from APPIMAGE.
+    AppImage(PathBuf),
     Cask(PathBuf),
     Formula(PathBuf),
     Scoop(PathBuf),
@@ -44,6 +47,7 @@ pub enum Action {
     Download,
     Homebrew,
     Zip,
+    AppImage,
     Scoop,
     Msi,
 }
@@ -147,6 +151,10 @@ impl Install {
                 }
             }
         }
+        #[cfg(target_os = "linux")]
+        if install == Self::Direct {
+            return appimage::detect(std::env::var_os("APPIMAGE").as_deref());
+        }
         install
     }
 
@@ -155,7 +163,7 @@ impl Install {
             Self::Cask(_) => Some("https://raw.githubusercontent.com/dutchman-cad/homebrew-tap/main/Casks/dutchman-convert.rb"),
             Self::Formula(_) => Some("https://raw.githubusercontent.com/dutchman-cad/homebrew-tap/main/Formula/dutchman.rb"),
             Self::Scoop(_) => Some("https://raw.githubusercontent.com/dutchman-cad/scoop-bucket/main/bucket/dutchman.json"),
-            Self::Direct | Self::Msi(_) | Self::Zip(_) => None,
+            Self::Direct | Self::Msi(_) | Self::Zip(_) | Self::AppImage(_) => None,
         }
     }
 
@@ -166,7 +174,7 @@ impl Install {
             }
             Self::Formula(_) => Some("brew update && brew upgrade dutchman-cad/tap/dutchman"),
             Self::Scoop(_) => Some("scoop update; if ($?) { scoop update dutchman }"),
-            Self::Direct | Self::Msi(_) | Self::Zip(_) => None,
+            Self::Direct | Self::Msi(_) | Self::Zip(_) | Self::AppImage(_) => None,
         }
     }
 
@@ -174,6 +182,7 @@ impl Install {
         match self {
             Self::Direct => Action::Download,
             Self::Zip(_) => Action::Zip,
+            Self::AppImage(_) => Action::AppImage,
             Self::Cask(_) | Self::Formula(_) => Action::Homebrew,
             Self::Scoop(_) => Action::Scoop,
             Self::Msi(_) => Action::Msi,
@@ -186,7 +195,7 @@ impl Install {
             Action::Homebrew => "Update with Homebrew",
             Action::Scoop => "Update with Scoop",
             Action::Msi => "Install (closes Dutchman)",
-            Action::Zip => "Update now",
+            Action::Zip | Action::AppImage => "Update now",
         }
     }
 
@@ -201,6 +210,7 @@ impl Install {
             Self::Msi(folder) | Self::Zip(folder) => {
                 Ok(Spec::new(folder.join("dutchman-gui.exe"), &[]))
             }
+            Self::AppImage(_) => Err("The AppImage restarts through its own helper.".into()),
             Self::Direct => {
                 Err("This copy uses a direct download. Download and open the new version.".into())
             }
@@ -362,6 +372,7 @@ fn plan(install: &Install) -> Result<Vec<Spec>, String> {
             Err("Scoop needs Dutchman to close before updating. Choose Update and restart.".into())
         }
         Install::Zip(_) => Err("Choose Update now to update this portable copy.".into()),
+        Install::AppImage(_) => Err("Choose Update now to update this AppImage.".into()),
         Install::Direct => Err("Use Download to update this copy.".into()),
     }
 }
@@ -707,6 +718,8 @@ impl Job {
             .spawn(move || {
                 let result = if matches!(install, Install::Zip(_)) {
                     windows::restart(&install)
+                } else if matches!(install, Install::AppImage(_)) {
+                    appimage::restart(&install)
                 } else {
                     install.restart().and_then(|spec| {
                         if matches!(install, Install::Cask(_)) {

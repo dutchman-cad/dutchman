@@ -258,7 +258,9 @@ struct IndexPage {
 #[template(path = "results.html")]
 struct ResultsPage<'a> {
     job: &'a str,
-    plan: &'a str,
+    plan: String,
+    /// Whether some history went unchecked because the server has no SolidCraft.
+    no_solidcraft: bool,
     converted: u64,
     failed: u64,
     skipped: u64,
@@ -369,10 +371,13 @@ async fn job_page(State(app): State<Shared>, UrlPath(job): UrlPath<String>) -> R
             render(
                 ResultsPage {
                     job: &job,
-                    plan: report
-                        .get("plan")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default(),
+                    plan: report::plan_line(
+                        report
+                            .get("plan")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default(),
+                    ),
+                    no_solidcraft: report::no_solidcraft(&report),
                     converted: count("converted"),
                     failed: count("failed"),
                     skipped: count("skipped"),

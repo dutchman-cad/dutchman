@@ -17,7 +17,7 @@ The desktop app's **Formats** list shows the same.
 | FreeCAD document | `.FCStd` | Reads geometry | L5 | Geometry and components; feature history and joints when they map |
 | CATIA part | `.CATPart` | Reads geometry | L3 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | Creo part | `.prt`, `.prt.N` | Opens, no geometry yet | L1 | Not yet |
-| NX part | `.prt` | Opens, no geometry yet | L1 | Not yet |
+| NX part | `.prt` | Reads geometry | L1 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | Creo View | `.pvz` | Reads geometry | L3 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | Rhino | `.3dm` | Reads geometry | L2 | Geometry through STEP; solids and surfaces SolidCraft can import |
 | ACIS | `.sat`, `.sab`, `.smt`, `.smb` | Reads geometry | L3 | Geometry through STEP; solids and surfaces SolidCraft can import |
@@ -47,10 +47,10 @@ Output is a SolidCraft design (`.sc`), or, experimental, a FreeCAD rebuild macro
 ## When a file doesn't convert
 
 After the results, a refused conversion (except IGES) or a history that didn't fully map
-prints one invitation to make [test files](https://dutchman-cad.github.io/fixtures/) or type
+prints one invitation to make [test files](https://dutchmancad.xyz/fixtures/) or type
 `/volunteer` in [Discord](https://discord.gg/yTcseBEdeu); `--quiet` hides it, and with
 `--json` stdout holds only the report. The desktop app shows the same under its results.
-Got a file that converts wrong? Send it, with its STEP export, to Dutchy in a Discord DM.
+Got a file that converts wrong? Please send it, with a STEP export of the exact same design, to Dutchy in a Discord DM.
 
 ## Per program
 

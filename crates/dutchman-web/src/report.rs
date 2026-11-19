@@ -227,6 +227,14 @@ fn card(result: &Value) -> Card {
                 .collect()
         })
         .unwrap_or_default();
+    // A design with nothing to place still gets a note of all-zero placement counts.
+    if result
+        .pointer("/part_positions/total")
+        .and_then(Value::as_u64)
+        == Some(0)
+    {
+        losses.retain(|(_, subject, _)| subject != "part positions");
+    }
     losses.sort_by_key(|(level, _, _)| severity(level));
     let loss_counts = ["Dropped", "Degraded", "Info"]
         .into_iter()
@@ -258,6 +266,8 @@ fn card(result: &Value) -> Card {
         (Some(path), Some(link)) if ok => Some((path, link)),
         _ => None,
     };
+    let send = send(result).filter(|_| !ok);
+    let losses = group_losses(losses);
     Card {
         name: text("/input/path").unwrap_or_else(|| "file".to_owned()),
         ok,
@@ -266,7 +276,9 @@ fn card(result: &Value) -> Card {
         outcome: if ok {
             outcome(result)
         } else {
-            text("/error/message").unwrap_or_else(|| "It could not be converted.".to_owned())
+            text("/error/message")
+                .map(|message| failure(&message, send.is_some()))
+                .unwrap_or_else(|| "It could not be converted.".to_owned())
         },
         stage: if ok { None } else { text("/error/stage") },
         blocked,
@@ -276,8 +288,104 @@ fn card(result: &Value) -> Card {
         open: text("/output/open").filter(|_| ok),
         saved: text("/output/saved").filter(|_| ok),
         save_error: text("/output/save_error").filter(|_| ok),
-        send: send(result).filter(|_| !ok),
+        send,
     }
+}
+
+/// Puts repeated losses of one level and subject on one line, as the command line does: "13
+/// notes: curve is not part of any closed profile loop". Equal messages always share a line.
+/// A decoder's note (its subject a code such as `f3d/sketch.curve-unprofiled`) names the entity
+/// it is about before its last ": ", so those also share a line when the rest agrees. The JSON
+/// report keeps every entry.
+fn group_losses(losses: Vec<(String, String, String)>) -> Vec<(String, String, String)> {
+    let key = |subject: &str, message: &str| {
+        if subject.contains('/') {
+            message
+                .rsplit_once(": ")
+                .map_or(message, |(_, tail)| tail)
+                .to_owned()
+        } else {
+            message.to_owned()
+        }
+    };
+    let mut rows: Vec<(String, String, String, usize)> = Vec::new();
+    for (level, subject, message) in losses {
+        let shared = key(&subject, &message);
+        match rows
+            .iter_mut()
+            .find(|row| row.0 == level && row.1 == subject && key(&row.1, &row.2) == shared)
+        {
+            Some(row) => {
+                row.2 = shared;
+                row.3 += 1;
+            }
+            None => rows.push((level, subject, message, 1)),
+        }
+    }
+    rows.into_iter()
+        .map(|(level, subject, message, count)| {
+            let message = if count > 1 {
+                format!("{count} notes: {message}")
+            } else {
+                message
+            };
+            (level, subject, message)
+        })
+        .collect()
+}
+
+/// A failed file's message for its card: starting with a capital, and without the sentence
+/// that spells out the issue form's address when the card links to that form itself.
+fn failure(message: &str, card_links_the_form: bool) -> String {
+    let mut message = message.to_owned();
+    if card_links_the_form {
+        if let Some(at) = message.find(dutchman::issue::NEW_ISSUE) {
+            let before = message.get(..at).unwrap_or_default();
+            if let Some(end) = before.rfind(". ") {
+                message = format!("{}.", before.get(..end).unwrap_or_default());
+            }
+        }
+    }
+    let mut chars = message.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => message,
+    }
+}
+
+/// The upload's plan without the kinds of file it has none of: "1 part" for "0 assemblies, 1
+/// part, 0 STEP files". What follows a ";" stays as it is.
+pub fn plan_line(plan: &str) -> String {
+    let (counts, rest) = plan.split_once(';').map_or((plan, ""), |(c, r)| (c, r));
+    let kept: Vec<&str> = counts
+        .split(", ")
+        .filter(|count| !count.starts_with("0 "))
+        .collect();
+    if kept.is_empty() {
+        return plan.to_owned();
+    }
+    let rest = if rest.is_empty() {
+        String::new()
+    } else {
+        format!(";{rest}")
+    };
+    format!("{}{rest}", kept.join(", "))
+}
+
+/// Whether a design's history went unchecked because the server found no `solidcraft-cli`.
+pub fn no_solidcraft(report: &Value) -> bool {
+    report
+        .get("results")
+        .and_then(Value::as_array)
+        .is_some_and(|results| {
+            results.iter().any(|result| {
+                result.pointer("/solidcraft/status").and_then(Value::as_str) == Some("none_found")
+                    && result
+                        .pointer("/history/total")
+                        .and_then(Value::as_u64)
+                        .is_some_and(|total| total > 0)
+            })
+        })
 }
 
 fn severity(level: &str) -> u8 {
@@ -397,7 +505,7 @@ mod tests {
             ))
         );
         assert!(!cards[1].ok);
-        assert_eq!(cards[1].outcome, "not supported yet");
+        assert_eq!(cards[1].outcome, "Not supported yet");
         assert_eq!(cards[1].stage.as_deref(), Some("decode"));
         assert_eq!(cards[1].download, None);
         assert_eq!(cards[0].saved, None);
@@ -445,6 +553,82 @@ mod tests {
         assert!(send.message.contains("Error: unknown."));
         assert!(send.message.ends_with("Size: 11 MB. STEP: yes."));
         assert_eq!(cards[2].send, None);
+    }
+
+    #[test]
+    fn the_browser_card_reads_as_sentences() {
+        let entity = |n: u32| {
+            json!({"level": "Degraded", "subject": "f3d/sketch.curve-unprofiled",
+                "message": format!("sketch entity f3d:model:sketch-entity#82:f3d%3Amodel@4125c{n}:0: curve is not part of any closed profile loop")})
+        };
+        let report = json!({"results": [
+            {"ok": true, "input": {"path": "a.f3d"}, "part_positions": {"total": 0},
+             "losses": [entity(137), entity(138), entity(139),
+                {"level": "Info", "subject": "part positions", "message": "0 parts placed"},
+                {"level": "Degraded", "subject": "history", "message": "stopped at Extrude 4: why"},
+                {"level": "Degraded", "subject": "history", "message": "stopped at Extrude 5: why"},
+                {"level": "Info", "subject": "s", "message": "first: one"},
+                {"level": "Info", "subject": "s", "message": "second: two"}]},
+            {"ok": false, "input": {"path": "b.f3d"}, "private_report": {"id": "x", "size_bytes": 10},
+             "error": {"message": format!(
+                "cannot read this design: malformed container. The file may be incomplete. \
+                 If the original opens in Fusion, report it with the file's anonymous report: {}",
+                dutchman::issue::NEW_ISSUE), "kind": "no_geometry"}}
+        ]});
+        let cards = cards(&report);
+        assert_eq!(cards[0].loss_counts, "5 Degraded, 2 Info");
+        assert_eq!(
+            cards[0].losses,
+            vec![
+                (
+                    "Degraded".to_owned(),
+                    "f3d/sketch.curve-unprofiled".to_owned(),
+                    "3 notes: curve is not part of any closed profile loop".to_owned()
+                ),
+                (
+                    "Degraded".to_owned(),
+                    "history".to_owned(),
+                    "stopped at Extrude 4: why".to_owned()
+                ),
+                (
+                    "Degraded".to_owned(),
+                    "history".to_owned(),
+                    "stopped at Extrude 5: why".to_owned()
+                ),
+                ("Info".to_owned(), "s".to_owned(), "first: one".to_owned()),
+                ("Info".to_owned(), "s".to_owned(), "second: two".to_owned()),
+            ]
+        );
+        assert!(
+            cards[1].send.is_some(),
+            "the card links the issue form itself"
+        );
+        assert_eq!(
+            cards[1].outcome,
+            "Cannot read this design: malformed container. The file may be incomplete."
+        );
+        assert_eq!(plan_line("0 assemblies, 1 part, 0 STEP files"), "1 part");
+        assert_eq!(
+            plan_line(
+                "2 assemblies, 0 parts, 0 STEP files; converting assemblies with their parts"
+            ),
+            "2 assemblies; converting assemblies with their parts"
+        );
+        assert_eq!(
+            plan_line("0 assemblies, 0 parts, 0 STEP files"),
+            "0 assemblies, 0 parts, 0 STEP files"
+        );
+    }
+
+    #[test]
+    fn a_server_without_solidcraft_says_so_once_for_histories() {
+        let found = |status: &str, total: u64| {
+            json!({"results": [
+            {"ok": true, "solidcraft": {"status": status}, "history": {"total": total}}]})
+        };
+        assert!(no_solidcraft(&found("none_found", 4)));
+        assert!(!no_solidcraft(&found("none_found", 0)));
+        assert!(!no_solidcraft(&found("current", 4)));
     }
 
     #[test]

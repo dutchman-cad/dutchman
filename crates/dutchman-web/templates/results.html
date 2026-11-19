@@ -7,6 +7,9 @@
   <strong>{{ converted }} converted, {{ failed }} failed{% if skipped > 0 %}, {{ skipped }} skipped (not a format Dutchman knows){% endif %}</strong>
   {% if converted > 0 %}<a href="../jobs/{{ job }}/designs.zip">Download all (.zip)</a>{% endif %}
 </div>
+{% if no_solidcraft %}
+<p class="muted">This server has no SolidCraft to check histories with, so they are marked unverified, and a few features that need SolidCraft to find their edges are not mapped. Whoever runs this server can add it: see <a href="https://github.com/dutchman-cad/dutchman/blob/main/docs/docker.md#checking-histories-in-solidcraft" target="_blank" rel="noopener">Checking histories in SolidCraft</a>.</p>
+{% endif %}
 
 {% for card in cards %}
 <section class="card">

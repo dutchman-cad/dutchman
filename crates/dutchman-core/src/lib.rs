@@ -6,6 +6,7 @@
 //! not be carried across. See `docs/ARCHITECTURE.md`.
 
 mod assembly;
+pub mod contents;
 mod decode;
 mod error;
 mod format;
@@ -21,6 +22,8 @@ pub mod placement;
 mod progress;
 pub mod progress_words;
 mod refusal;
+pub mod source;
+pub mod time;
 pub use part_positions::{PartPositionCounts, PartPositions, PlacementAssumption};
 pub use refusal::{
     classify as classify_refusal, clean as clean_refusal, Refusal,
@@ -40,7 +43,8 @@ pub use format::Format;
 pub use locate::{PartSearch, MAX_SEARCHED};
 pub use memory::available_memory;
 pub use progress::{
-    elapsed, MemberEvent, MemberObserver, Progress, ProgressEvent, RunningStep, StepGuard, StepKind,
+    elapsed, FeatureGuard, FeatureStep, MeasureGuard, MemberEvent, MemberObserver, Progress,
+    ProgressEvent, RunningStep, StepGuard, StepKind,
 };
 
 /// The neutral model every conversion passes through.
@@ -70,24 +74,29 @@ impl Model {
         binding: &cadmpeg_ir::appearance::AppearanceBinding,
     ) -> AppearanceLoss {
         use cadmpeg_ir::appearance::AppearanceTarget;
-        match &binding.target {
-            AppearanceTarget::Body(id) => match self.ir.model.bodies.iter().find(|b| b.id == *id) {
-                None => AppearanceLoss::TargetAbsent,
-                Some(body) if body.kind == cadmpeg_ir::topology::BodyKind::Wire => {
-                    AppearanceLoss::Wire
+        if binding.target.path.is_some() || binding.target.state.is_some() {
+            return AppearanceLoss::Other;
+        }
+        match &binding.target.entity {
+            AppearanceTarget::Body(id) => {
+                match self.ir.geometry.bodies.iter().find(|b| b.id == *id) {
+                    None => AppearanceLoss::TargetAbsent,
+                    Some(body) if body.kind == cadmpeg_ir::topology::BodyKind::Wire => {
+                        AppearanceLoss::Wire
+                    }
+                    Some(_) => AppearanceLoss::Other,
                 }
-                Some(_) => AppearanceLoss::Other,
-            },
-            AppearanceTarget::Face(id) if !self.ir.model.faces.iter().any(|f| f.id == *id) => {
+            }
+            AppearanceTarget::Face(id) if !self.ir.geometry.faces.iter().any(|f| f.id == *id) => {
                 AppearanceLoss::TargetAbsent
             }
             AppearanceTarget::Edge(id)
                 if self
                     .ir
-                    .model
+                    .geometry
                     .shells
                     .iter()
-                    .any(|s| s.wire_edges().contains(id)) =>
+                    .any(|s| s.wire_edges().any(|edge| edge == id)) =>
             {
                 AppearanceLoss::Wire
             }
@@ -102,16 +111,26 @@ impl Model {
         binding: &cadmpeg_ir::appearance::AppearanceBinding,
     ) -> String {
         use cadmpeg_ir::appearance::AppearanceTarget;
-        let (kind, id, exists) = match &binding.target {
+        let scope = if binding.target.state.is_some() {
+            Some("appearance bindings for an evaluation state are not supported yet")
+        } else if binding.target.path.is_some() {
+            Some("appearance bindings for one placed instance are not supported yet")
+        } else {
+            None
+        };
+        if let Some(reason) = scope {
+            return format!("Appearance binding {} is left out: {reason}", binding.id);
+        }
+        let (kind, id, exists) = match &binding.target.entity {
             AppearanceTarget::Body(id) => (
                 "body",
                 id.as_str(),
-                self.ir.model.bodies.iter().any(|body| body.id == *id),
+                self.ir.geometry.bodies.iter().any(|body| body.id == *id),
             ),
             AppearanceTarget::Face(id) => (
                 "face",
                 id.as_str(),
-                self.ir.model.faces.iter().any(|face| face.id == *id),
+                self.ir.geometry.faces.iter().any(|face| face.id == *id),
             ),
             _ => {
                 return format!(
@@ -132,8 +151,9 @@ impl Model {
     }
 }
 pub use report::{
-    AppearanceLoss, Check, Completeness, FeatureOutcome, FeatureStatus, LeftOutGroup, Loss, Mode,
-    Outcome, PartHistory, Report, Severity, Stage,
+    AppearanceLoss, Check, Completeness, FeatureOutcome, FeatureOutput, FeatureStatus, Inferred,
+    InferredAgainst, InferredSelection, LeftOutGroup, Loss, Mode, Outcome, OutputMatch,
+    PartHistory, Report, Severity, Stage,
 };
 
 /// Whether a source-native CADIR operation identifies a construction binder. Keep native
@@ -464,42 +484,7 @@ fn decode_bytes(
     report: &mut Report,
     progress: Option<&Progress<'_>>,
 ) -> Result<Model, Error> {
-    if let Some(progress) = progress {
-        progress.stage(Stage::Decode);
-    }
-    let mut model = decode::decode_with_progress(format, input, bytes, report, progress)?;
-    if matches!(format, Format::SolidWorksPart | Format::SolidWorksAssembly) {
-        assembly::release_solidworks_display(&mut model, report);
-    }
-    names::saw_model(&model, report);
-    if matches!(format, Format::FusionArchive | Format::FusionMultiDocument) {
-        return Ok(hidden::fusion(model, report));
-    }
-    if format != Format::FreeCadDocument {
-        return Ok(model);
-    }
-    match hidden::shown(&model) {
-        Ok(None) => Ok(model),
-        Ok(Some((shown, hidden))) => {
-            if hidden > 0 {
-                let body = if hidden == 1 { "body" } else { "bodies" };
-                report.push(
-                    Severity::Info,
-                    "bodies",
-                    format!("{hidden} hidden {body} not converted: FreeCAD hides them or a container above them"),
-                );
-            }
-            Ok(shown)
-        }
-        Err(why) => {
-            report.push(
-                Severity::Degraded,
-                "bodies",
-                format!("hidden bodies converted too, as {why}"),
-            );
-            Ok(model)
-        }
-    }
+    source::decode_source_bytes(format, input, bytes, false, report, progress)
 }
 
 /// Converts the file at `input` into `output` through `writer`, replacing an existing output.

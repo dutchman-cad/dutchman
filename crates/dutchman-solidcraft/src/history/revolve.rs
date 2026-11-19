@@ -23,13 +23,14 @@ const IN_PLANE: f64 = 1e-6;
 /// Maps a revolve feature whose operation is `definition`.
 pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Result<Value, String> {
     let construction = definition.get("construction").unwrap_or(&Value::Null);
-    if construction.get("state").and_then(Value::as_str) != Some("resolved") {
+    if construction.get("kind").and_then(Value::as_str) != Some("resolved") {
         let missing = construction
-            .get("missing")
+            .pointer("/value/kind")
             .and_then(Value::as_str)
             .unwrap_or("construction");
         return Err(format!("its revolve {missing} is not resolved"));
     }
+    let construction = construction.get("value").unwrap_or(&Value::Null);
     let surface = construction.get("solid").and_then(Value::as_bool) == Some(false);
     match construction.get("face_maker_class").and_then(Value::as_str) {
         // SolidCraft builds profile regions with nested islands, as the bullseye maker does.
@@ -44,7 +45,17 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
     // The fuse order and the single-face policy do not change the result of a revolve that
     // was built: the order only swaps the fuse operands, and the policy only rejects a
     // profile of several faces.
-    let (sketch_id, profiles) = profile(construction.get("profile"), ctx)?;
+    // A surface turned from open curve chains: SolidCraft takes them as `curves`, not as
+    // profiles, which must be closed.
+    let open = if surface {
+        super::profile::open_chains(construction.get("profile"), ctx)?
+    } else {
+        None
+    };
+    let (sketch_id, profiles) = match &open {
+        Some((sketch, _)) => (sketch.clone(), Value::Null),
+        None => profile(construction.get("profile"), ctx)?,
+    };
     let sketch = ctx
         .sketches
         .get(&sketch_id)
@@ -59,7 +70,14 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         if surface {
             return Err("one-sided partial surface revolves are not mapped yet (their sweep side is not proven)".to_owned());
         }
-        angle *= sweep_sign(&placed, sketch, &sketch_id, &profiles, ctx)?;
+        angle *= sweep_sign(
+            &placed,
+            sketch,
+            &sketch_id,
+            &profiles,
+            construction.get("profile"),
+            ctx,
+        )?;
         bound = ctx.owned_parameter(feature, "AlongAngle", angle.abs());
     }
     if surface && TAU - angle <= FULL_TURN {
@@ -97,6 +115,10 @@ pub(crate) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
             fields.remove("operation");
             fields.remove("convention");
         }
+        if let Some((_, curves)) = open {
+            fields.remove("profiles");
+            fields.insert("curves".to_owned(), json!(curves));
+        }
         if symmetric {
             fields.insert("symmetric".to_owned(), json!(true));
         }
@@ -115,6 +137,7 @@ fn sweep_sign(
     sketch: &Mapped,
     sketch_id: &str,
     profiles: &Value,
+    reference: Option<&Value>,
     ctx: &Context,
 ) -> Result<f64, String> {
     let missing = "its one-sided revolve sweep side is not proven (selected profile curves must lie on one side of the oriented axis)";
@@ -140,6 +163,17 @@ fn sweep_sign(
             ],
         )
     };
+    if profiles.get("type").and_then(Value::as_str) == Some("points") {
+        let (low, high) =
+            super::profile::trimmed_bounds(reference, ctx, sketch, at).ok_or(missing)?;
+        return if low >= -IN_PLANE && high > IN_PLANE {
+            Ok(1.0)
+        } else if high <= IN_PLANE && low < -IN_PLANE {
+            Ok(-1.0)
+        } else {
+            Err(missing.to_owned())
+        };
+    }
     let all = profiles.get("type").and_then(Value::as_str) == Some("all");
     let mut selected = BTreeSet::new();
     selected_curves(profiles, &mut selected);

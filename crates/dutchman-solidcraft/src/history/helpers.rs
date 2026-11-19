@@ -7,9 +7,9 @@ use dutchman_core::{Report, Severity};
 
 pub(super) fn is_helper(feature: &Value) -> bool {
     matches!(
-        operation(feature).get("definition").and_then(Value::as_str),
+        super::operation_kind(feature),
         Some("binder" | "datum_point" | "datum_coordinate_system" | "datum_axis" | "datum_plane")
-    ) || (operation(feature).get("definition").and_then(Value::as_str) == Some("native")
+    ) || (super::operation_kind(feature) == Some("native")
         && operation(feature)
             .get("kind")
             .and_then(Value::as_str)
@@ -59,10 +59,7 @@ pub(super) fn map(feature: &Value, ctx: &Context, report: &mut Report) -> Result
         return Ok(Mapped::Nothing);
     }
     let definition = operation(feature);
-    let kind = definition
-        .get("definition")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
+    let kind = super::operation_kind(feature).unwrap_or_default();
     if matches!(kind, "binder" | "native") {
         // A construction plane has one carrier frame, already carried by attached sketches.
         // A native subelement selector on a solid does not prove which source face it means.
@@ -77,7 +74,7 @@ pub(super) fn map(feature: &Value, ctx: &Context, report: &mut Report) -> Result
             .and_then(|id| ctx.row("features", id))
             .is_some_and(|source| {
                 matches!(
-                    operation(source).get("definition").and_then(Value::as_str),
+                    super::operation_kind(source),
                     Some("datum_plane" | "datum_principal_plane")
                 )
             });
@@ -107,25 +104,23 @@ pub(super) fn map(feature: &Value, ctx: &Context, report: &mut Report) -> Result
     }
     // These operations embed their placement or axes. A dependency edge alone needs no
     // target feature; an unresolved selection still needs the helper and must be refused.
-    if users.iter().all(
-        |user| match operation(user).get("definition").and_then(Value::as_str) {
-            Some("sketch") => resolved_sketch(user, ctx),
-            Some("pattern") => !contains(operation(user), &ids) && !unresolved(operation(user)),
-            Some("datum_plane" | "datum_coordinate_system") => {
-                operation(user).get("frame").is_some_and(Value::is_object)
-            }
-            Some("datum_point") => operation(user)
-                .get("position")
-                .is_some_and(Value::is_object),
-            Some("datum_axis") => {
-                operation(user).get("origin").is_some_and(Value::is_object)
-                    && operation(user)
-                        .get("direction")
-                        .is_some_and(Value::is_object)
-            }
-            _ => false,
-        },
-    ) {
+    if users.iter().all(|user| match super::operation_kind(user) {
+        Some("sketch") => resolved_sketch(user, ctx),
+        Some("pattern") => !contains(operation(user), &ids) && !unresolved(operation(user)),
+        Some("datum_plane" | "datum_coordinate_system") => {
+            operation(user).get("frame").is_some_and(Value::is_object)
+        }
+        Some("datum_point") => operation(user)
+            .get("position")
+            .is_some_and(Value::is_object),
+        Some("datum_axis") => {
+            operation(user).get("origin").is_some_and(Value::is_object)
+                && operation(user)
+                    .get("direction")
+                    .is_some_and(Value::is_object)
+        }
+        _ => false,
+    }) {
         report.push(
             Severity::Info,
             describe(feature),
@@ -138,7 +133,7 @@ pub(super) fn map(feature: &Value, ctx: &Context, report: &mut Report) -> Result
 }
 
 pub(super) fn resolved_sketch(feature: &Value, ctx: &Context) -> bool {
-    operation(feature).get("definition").and_then(Value::as_str) == Some("sketch")
+    super::operation_kind(feature) == Some("sketch")
         && operation(feature)
             .pointer("/sketch/sketch")
             .and_then(Value::as_str)
@@ -169,29 +164,28 @@ mod tests {
     use serde_json::json;
 
     fn helper(definition: Value) -> Value {
-        json!({"id": "test:model:feature#helper", "ordinal": 1, "definition": definition})
+        json!({"id": "test:model:feature#helper", "ordinal": 1, "definition": {"kind": "operation", "value": definition}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []})
     }
 
     fn user(definition: Value) -> Value {
-        json!({"id": "test:model:feature#user", "ordinal": 2,
-            "dependencies": ["test:model:feature#helper"], "definition": definition})
+        json!({"id": "test:model:feature#user", "ordinal": 2, "dependencies": ["test:model:feature#helper"], "definition": {"kind": "operation", "value": definition}, "source_properties": {}, "source_content": [], "outputs": []})
     }
 
     #[test]
     fn unused_helpers_and_suppressed_users_do_not_block() {
         for definition in [
-            json!({"definition": "datum_point", "position": {"x": 2, "y": 3, "z": 4}}),
-            json!({"definition": "datum_coordinate_system"}),
-            json!({"definition": "binder"}),
-            json!({"definition": "native", "kind": "PartDesign::SubShapeBinder"}),
-            json!({"definition": "native", "kind": "PartDesign::ShapeBinder"}),
+            json!({"kind": "datum_point", "value": {"position": {"x": 2, "y": 3, "z": 4}}}),
+            json!({"kind": "datum_coordinate_system", "value": {}}),
+            json!({"kind": "binder", "value": {}}),
+            json!({"kind": "native", "value": {"kind": "PartDesign::SubShapeBinder", "parameters": {}}}),
+            json!({"kind": "native", "value": {"kind": "PartDesign::ShapeBinder", "parameters": {}}}),
         ] {
             let helper = helper(definition);
             assert!(is_helper(&helper));
-            let mut suppressed = user(json!({"definition": "combine"}));
+            let mut suppressed = user(json!({"kind": "combine", "value": {}}));
             suppressed["suppressed"] = json!(true);
             let wire = json!({"features": [helper, suppressed]});
-            let ctx = Context::new(&wire);
+            let ctx = Context::testing(&wire);
             let mut report = Report::default();
             assert!(matches!(
                 map(&wire["features"][0], &ctx, &mut report),
@@ -207,15 +201,14 @@ mod tests {
 
     #[test]
     fn references_to_helper_outputs_count_as_uses() {
-        let mut helper =
-            helper(json!({"definition": "native", "kind": "PartDesign::SubShapeBinder"}));
+        let mut helper = helper(
+            json!({"kind": "native", "value": {"kind": "PartDesign::SubShapeBinder", "parameters": {}}}),
+        );
         helper["outputs"] = json!(["test:model:body#bound"]);
-        let wire = json!({"features": [helper, {
-            "id": "test:model:feature#boolean", "ordinal": 2,
-            "definition": {"definition": "combine", "tools": {"kind": "resolved", "value": ["test:model:body#bound"]}}}]});
+        let wire = json!({"features": [helper, {"id": "test:model:feature#boolean", "ordinal": 2, "definition": {"kind": "operation", "value": {"kind": "combine", "value": {"tools": {"kind": "resolved", "value": ["test:model:body#bound"]}, "destination": "target_component"}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []}]});
         assert!(map(
             &wire["features"][0],
-            &Context::new(&wire),
+            &Context::testing(&wire),
             &mut Report::default()
         )
         .is_err());
@@ -223,31 +216,32 @@ mod tests {
 
     #[test]
     fn whole_plane_binders_resolve_to_the_source_plane_for_attached_sketches() {
-        let binder = helper(json!({"definition": "binder",
-            "sources": [{"target": {"kind": "feature", "feature": "plane"}}],
-            "construction": {"kind": "shape", "trace_support": false}}));
+        let binder = helper(
+            json!({"kind": "binder", "value": {"sources": [{"target": {"kind": "feature", "feature": "plane"}}], "construction": {"kind": "shape", "trace_support": false}}}),
+        );
         let wire = json!({"features": [
-            {"id": "plane", "ordinal": 0, "definition": {"definition": "datum_plane", "frame": {}}},
-            binder, user(json!({"definition": "sketch", "sketch": {"space": "planar", "sketch": "s"}}))],
-            "sketches": [{"id": "s", "placement": {"kind": "resolved"}}]});
+            {"id": "plane", "ordinal": 0, "definition": {"kind": "operation", "value": {"kind": "datum_plane", "value": {"frame": {}}}}, "dependencies": [], "source_properties": {}, "source_content": [], "outputs": []},
+            binder, user(json!({"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": "s"}}}))],
+            "sketches": [{"id": "s", "placement": {"kind": "resolved"}, "profiles": []}]});
         assert!(map(
             &wire["features"][1],
-            &Context::new(&wire),
+            &Context::testing(&wire),
             &mut Report::default()
         )
         .is_ok());
         let mut face = wire;
-        face["features"][1]["definition"]["sources"][0]["subelements"] = json!(["Face1"]);
+        face["features"][1]["definition"]["value"]["value"]["sources"][0]["subelements"] =
+            json!(["Face1"]);
         assert!(map(
             &face["features"][1],
-            &Context::new(&face),
+            &Context::testing(&face),
             &mut Report::default()
         )
         .is_ok());
-        face["features"][0]["definition"]["definition"] = json!("extrude");
+        face["features"][0]["definition"]["value"]["kind"] = json!("extrude");
         assert!(map(
             &face["features"][1],
-            &Context::new(&face),
+            &Context::testing(&face),
             &mut Report::default()
         )
         .is_err());
@@ -256,15 +250,16 @@ mod tests {
     #[test]
     fn used_opaque_binders_remain_blockers() {
         for kind in ["binder", "native"] {
-            let helper = helper(json!({"definition": kind, "kind": "PartDesign::SubShapeBinder"}));
+            let helper =
+                helper(json!({"kind": kind, "value": {"kind": "PartDesign::SubShapeBinder"}}));
             for definition in [
-                json!({"definition": "combine"}),
-                json!({"definition": "sketch"}),
+                json!({"kind": "combine", "value": {}}),
+                json!({"kind": "sketch", "value": {}}),
             ] {
                 let wire = json!({"features": [helper, user(definition)]});
                 assert!(map(
                     &wire["features"][0],
-                    &Context::new(&wire),
+                    &Context::testing(&wire),
                     &mut Report::default()
                 )
                 .err()
@@ -278,13 +273,13 @@ mod tests {
     fn resolved_sketches_carry_used_datum_placements() {
         for kind in ["datum_point", "datum_coordinate_system"] {
             for resolved in [true, false] {
-                let wire = json!({"features": [helper(json!({"definition": kind})),
-                    user(json!({"definition": "sketch", "sketch": {"space": "planar", "sketch": "s"}}))],
-                    "sketches": [{"id": "s", "placement": {"kind": if resolved {"resolved"} else {"unresolved"}}}]});
+                let wire = json!({"features": [helper(json!({"kind": kind, "value": {}})),
+                    user(json!({"kind": "sketch", "value": {"sketch": {"kind": "planar", "sketch": "s"}}}))],
+                    "sketches": [{"id": "s", "placement": {"kind": if resolved {"resolved"} else {"unresolved"}}, "profiles": []}]});
                 assert_eq!(
                     map(
                         &wire["features"][0],
-                        &Context::new(&wire),
+                        &Context::testing(&wire),
                         &mut Report::default()
                     )
                     .is_ok(),
@@ -296,19 +291,19 @@ mod tests {
 
     #[test]
     fn resolved_datums_carry_the_helpers_they_depend_on() {
-        let wire = json!({"features": [helper(json!({"definition": "datum_point"})),
-            user(json!({"definition": "datum_coordinate_system", "frame": {}}))]});
+        let wire = json!({"features": [helper(json!({"kind": "datum_point", "value": {}})),
+            user(json!({"kind": "datum_coordinate_system", "value": {"frame": {}}}))]});
         assert!(map(
             &wire["features"][0],
-            &Context::new(&wire),
+            &Context::testing(&wire),
             &mut Report::default()
         )
         .is_ok());
         let mut unresolved = wire;
-        unresolved["features"][1]["definition"]["frame"] = Value::Null;
+        unresolved["features"][1]["definition"]["value"]["value"]["frame"] = Value::Null;
         assert!(map(
             &unresolved["features"][0],
-            &Context::new(&unresolved),
+            &Context::testing(&unresolved),
             &mut Report::default()
         )
         .is_err());
@@ -323,12 +318,12 @@ mod tests {
                 json!({"kind": "unresolved", "native": "JointOrigin.Z"}),
             ] {
                 let resolved = pattern["kind"] == "circular";
-                let wire = json!({"features": [helper(json!({"definition": kind})),
-                    user(json!({"definition": "pattern", "pattern": pattern}))]});
+                let wire = json!({"features": [helper(json!({"kind": kind, "value": {}})),
+                    user(json!({"kind": "pattern", "value": {"pattern": pattern}}))]});
                 assert_eq!(
                     map(
                         &wire["features"][0],
-                        &Context::new(&wire),
+                        &Context::testing(&wire),
                         &mut Report::default()
                     )
                     .is_ok(),
