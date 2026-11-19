@@ -178,51 +178,6 @@ impl SolidCraftEvaluator for Measurements {
     }
 }
 
-// The legacy revolve fixture has no stored producer for its rollback axis.
-// Exercise editable writer history with an explicitly owned construction axis;
-// core tests retain the legacy fixture's refusal coverage.
-fn revolve_with_stored_sketch_axis() -> (Model, Report) {
-    synthetic_bundle_named("revolve", |response| {
-        let native = response["features"][0]["featureId"]
-            .as_str()
-            .unwrap()
-            .to_owned();
-        response["features"][0]["entities"].as_array_mut().unwrap().push(json!({
-            "btType":"BTMSketchCurveSegment-155", "entityId":"writer-axis", "isConstruction":true,
-            "geometry":{"btType":"BTCurveGeometryLine-117","dirY":1.0}, "startParam":0.0,"endParam":0.01
-        }));
-        let string = |value: &str| format!("S{:x}${value}", value.len());
-        let fields = [
-            ("entityType", string("EDGE")),
-            ("historyType", string("CREATION")),
-            ("queryType", string("SKETCH_ENTITY")),
-            (
-                "operationId",
-                format!("A1{}", string(&format!("{native}.wireOp"))),
-            ),
-            ("sketchEntityId", string("writer-axis")),
-        ];
-        let literal = format!(
-            "%M5{}",
-            fields
-                .into_iter()
-                .map(|(key, value)| string(key) + &value)
-                .collect::<String>()
-        );
-        let query = format!(
-            "query=qCompressed(1.0,{},id);",
-            serde_json::to_string(&literal).unwrap()
-        );
-        let axis = response["features"][1]["parameters"]
-            .as_array_mut()
-            .unwrap()
-            .iter_mut()
-            .find(|p| p["parameterId"] == "axis")
-            .unwrap();
-        axis["queries"] = json!([{"queryString":query}]);
-    })
-}
-
 #[test]
 fn each_bundle_converts_with_expected_history_rows_and_losses() {
     for (name, kinds) in [
@@ -236,11 +191,7 @@ fn each_bundle_converts_with_expected_history_rows_and_losses() {
         ),
         ("unsupported", vec!["sketch", "extrude", "native"]),
     ] {
-        let (model, mut report) = if name == "revolve" {
-            revolve_with_stored_sketch_axis()
-        } else {
-            model(name)
-        };
+        let (model, mut report) = model(name);
         let host = Arc::new(Measurements {
             step: model.source_step.clone().unwrap(),
             calls: Mutex::default(),
