@@ -1,0 +1,123 @@
+[
+  {
+    "schema": "dutchman.convert/1",
+    "ok": true,
+    "input": null,
+    "mode": "history",
+    "verification": {
+      "status": "unverified",
+      "reason": "not checked"
+    },
+    "history": {
+      "mapped": 1,
+      "total": 1,
+      "rebuilt": 1,
+      "needing": 1,
+      "reapplied": 0,
+      "features": [
+        {
+          "name": "Feature",
+          "kind": "extrude",
+          "status": "mapped",
+          "reason": null,
+          "ordinal": 0,
+          "variant": null,
+          "output_ids": [
+            7
+          ],
+          "output_match": "emitted"
+        }
+      ]
+    }
+  },
+  {
+    "schema": "dutchman.convert/1",
+    "ok": true,
+    "input": null,
+    "mode": "history",
+    "verification": {
+      "status": "unverified",
+      "reason": "not checked"
+    },
+    "history": {
+      "mapped": 1,
+      "total": 1,
+      "rebuilt": 1,
+      "needing": 1,
+      "reapplied": 0,
+      "features": [
+        {
+          "name": "Feature",
+          "kind": "extrude",
+          "status": "mapped",
+          "reason": null,
+          "ordinal": 0,
+          "variant": null,
+          "output_ids": [
+            12,
+            8
+          ],
+          "output_match": "emitted"
+        }
+      ]
+    }
+  },
+  {
+    "schema": "dutchman.convert/1",
+    "ok": true,
+    "input": null,
+    "mode": "history",
+    "verification": {
+      "status": "unverified",
+      "reason": "not checked"
+    },
+    "history": {
+      "mapped": 0,
+      "total": 1,
+      "rebuilt": 0,
+      "needing": 1,
+      "reapplied": 0,
+      "features": [
+        {
+          "name": "Feature",
+          "kind": "extrude",
+          "status": "blocked",
+          "reason": null,
+          "ordinal": 0,
+          "variant": null,
+          "output_ids": [],
+          "output_match": "no_output"
+        }
+      ]
+    }
+  },
+  {
+    "schema": "dutchman.inspect/1",
+    "ok": true,
+    "input": null,
+    "mode": "history",
+    "verification": {
+      "status": "unverified",
+      "reason": "not checked"
+    },
+    "history": {
+      "mapped": 1,
+      "total": 1,
+      "rebuilt": 1,
+      "needing": 1,
+      "reapplied": 0,
+      "features": [
+        {
+          "name": "Feature",
+          "kind": "extrude",
+          "status": "mapped",
+          "reason": null,
+          "ordinal": 0,
+          "variant": null,
+          "output_ids": [],
+          "output_match": "not_written"
+        }
+      ]
+    }
+  }
+]

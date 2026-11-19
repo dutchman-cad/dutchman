@@ -12,6 +12,8 @@ use dutchman::{anon, batch, formats, json, worker, ConvertOptions};
 use dutchman_core::{Check, FeatureStatus, Format, Mode};
 use serde_json::Value;
 
+mod share_scratch;
+
 /// Convert CAD files: dutchman part.f3d writes part.sc.
 #[derive(Parser)]
 #[command(
@@ -196,10 +198,10 @@ enum Command {
     Pilot(dutchman_pilot::cli::Command),
     /// Convert CAD files, a folder or a project ZIP into SolidCraft designs or other output.
     Convert {
-        /// A design file, folder of designs or project ZIP.
+        /// A design file, folder, project ZIP, or public Fusion or Google Drive file share URL.
         input: PathBuf,
         /// The output file to write, matching --to; DXF also accepts an existing directory.
-        /// Omit to write beside the input; folders and ZIPs get a new (SolidCraft) folder.
+        /// Omit to write beside the input (URLs use the current folder); folders and ZIPs get a new (SolidCraft) folder.
         /// An explicit output is replaced, unless --no-clobber; an existing default needs --force.
         #[arg(conflicts_with = "output_flag")]
         output: Option<PathBuf>,
@@ -296,6 +298,24 @@ enum Command {
         #[arg(long, conflicts_with = "json")]
         markdown: bool,
     },
+    /// List a native CAD file's bodies, features and parameters, and what Dutchman can map of
+    /// each feature, without converting or writing anything.
+    Contents {
+        /// The native design file to read.
+        input: PathBuf,
+        /// The project folder an assembly's part files are searched in when they are not at
+        /// their stored paths (default: the nearest folder above the assembly holding an
+        /// Inventor .ipj, else two folders up).
+        #[arg(long, value_name = "DIR")]
+        project: Option<PathBuf>,
+        /// Another folder to search, with its subfolders, for part files the project folder
+        /// does not hold; may be given more than once.
+        #[arg(long = "search", value_name = "DIR")]
+        search: Vec<PathBuf>,
+        /// Print one machine-readable report on stdout instead of the text listing.
+        #[arg(long)]
+        json: bool,
+    },
     /// Show what converting a native CAD file would carry across, without writing anything.
     Inspect {
         /// The native design file to read.
@@ -341,7 +361,10 @@ const READER_CLOSED: i32 = 141;
 
 /// Whether a panic message is the standard library's report that stdout's reader went away.
 fn is_closed_stdout(message: &str) -> bool {
-    message.contains("failed printing to stdout") && message.contains("Broken pipe")
+    message.contains("failed printing to stdout")
+        && (message.contains("Broken pipe")
+            || cfg!(windows)
+                && (message.contains("(os error 109)") || message.contains("(os error 232)")))
 }
 
 /// When whatever reads stdout stops early (`dutchman … | head`), end quietly with the usual
@@ -356,7 +379,7 @@ fn quiet_when_stdout_closes() {
             .or_else(|| payload.downcast_ref::<&str>().copied())
             .unwrap_or("");
         if is_closed_stdout(message) {
-            std::process::exit(READER_CLOSED);
+            share_scratch::exit(READER_CLOSED);
         }
         report(info);
     }));
@@ -432,6 +455,11 @@ fn main() -> ExitCode {
     let verbose = cli.verbose;
     let quiet = cli.quiet;
     let yes = cli.yes;
+    // `contents` runs out of line from a reference: this function's frame is already near
+    // Windows' 1 MiB main-thread stack in debug builds, and must not grow.
+    if matches!(cli.command, Command::Contents { .. }) {
+        return contents_command(&cli.command, quiet, verbose);
+    }
     match cli.command {
         Command::Report {
             folder,
@@ -738,6 +766,32 @@ fn main() -> ExitCode {
             json,
         } => {
             let explicit = output.or(output_flag);
+            // Register the parent before starting any network work. It remains owned through
+            // conversion and reporting, including errors and intentional process exits.
+            let scratch = if dutchman::share_links::is_url(&input.to_string_lossy()) {
+                match share_scratch::Scratch::new() {
+                    Ok(scratch) => Some(scratch),
+                    Err(message) => return share_failure(&message, json),
+                }
+            } else {
+                None
+            };
+            let downloaded = if let Some(scratch) = scratch.as_ref() {
+                match dutchman::share_links::download_in(&input.to_string_lossy(), scratch.path()) {
+                    Ok(file) => Some(file),
+                    Err(message) => return share_failure(&message, json),
+                }
+            } else {
+                None
+            };
+            let input = downloaded
+                .as_ref()
+                .map_or(input, |file| file.path().to_path_buf());
+            let default_input = if downloaded.is_some() {
+                PathBuf::from(input.file_name().unwrap_or_default())
+            } else {
+                input.clone()
+            };
             options.part = part.map(|number| dutchman_core::PartSelection {
                 number,
                 children: with_children,
@@ -756,7 +810,7 @@ fn main() -> ExitCode {
                 Err(code) => return code,
             };
             if input.is_dir() || batch::extension_of(&input) == "zip" {
-                let out_dir = explicit.unwrap_or_else(|| batch::default_output(&input));
+                let out_dir = explicit.unwrap_or_else(|| batch::default_output(&default_input));
                 let settings = match batch::Settings::isolated() {
                     Ok(settings) => settings,
                     Err(err) => {
@@ -809,7 +863,7 @@ fn main() -> ExitCode {
             let derived = explicit.is_none();
             if options.to == dutchman::OutputFormat::Dxf {
                 let output = explicit.unwrap_or_else(|| {
-                    input
+                    default_input
                         .parent()
                         .filter(|p| !p.as_os_str().is_empty())
                         .unwrap_or(Path::new("."))
@@ -858,8 +912,8 @@ fn main() -> ExitCode {
                 return exit(&report);
             }
             let output = explicit.unwrap_or_else(|| {
-                dutchman_core::Format::part_revision(&input)
-                    .map_or_else(|| input.clone(), |(part, _)| part)
+                dutchman_core::Format::part_revision(&default_input)
+                    .map_or_else(|| default_input.clone(), |(part, _)| part)
                     .with_extension(options.output_extension())
             });
             if derived {
@@ -1026,6 +1080,8 @@ fn main() -> ExitCode {
             verbose,
             quiet,
         ),
+        // Handled before this match, by reference (see above).
+        Command::Contents { .. } => ExitCode::from(2),
         Command::Formats { json, markdown } => {
             if json {
                 print_json(&formats::json());
@@ -1409,6 +1465,19 @@ struct Output {
     quiet: bool,
 }
 
+fn share_failure(message: &str, as_json: bool) -> ExitCode {
+    if as_json {
+        print_json(&json::failure(
+            "dutchman.convert/1",
+            json::input(Path::new("Shared file")),
+            message,
+        ));
+    } else {
+        eprintln!("dutchman: {message}");
+    }
+    ExitCode::FAILURE
+}
+
 fn convert(
     input: &Path,
     output: &Path,
@@ -1436,7 +1505,7 @@ fn convert(
             } else {
                 eprintln!("dutchman: {message}");
             }
-            std::process::exit(2);
+            share_scratch::exit(2);
         });
     }
     let report = dutchman::convert_options_with_progress(
@@ -1588,6 +1657,61 @@ fn inspect(
     ExitCode::SUCCESS
 }
 
+/// Runs `dutchman contents`; any other command is a usage error.
+#[inline(never)]
+fn contents_command(command: &Command, quiet: bool, verbose: bool) -> ExitCode {
+    let Command::Contents {
+        input,
+        project,
+        search,
+        json,
+    } = command
+    else {
+        return ExitCode::from(2);
+    };
+    let search = dutchman::PartSearch {
+        threads: 0,
+        part_positions: dutchman_core::PartPositions::Smart,
+        project: project.clone(),
+        also: search.clone(),
+    };
+    contents(input, &search, *json, quiet, verbose)
+}
+
+fn contents(
+    input: &Path,
+    search: &dutchman::PartSearch,
+    as_json: bool,
+    quiet: bool,
+    verbose: bool,
+) -> ExitCode {
+    let progress = dutchman::progress::StderrProgress::new(quiet, as_json, verbose);
+    let result =
+        dutchman::contents_with_progress(input, search, &|event| progress.report(input, event));
+    progress.finish();
+    let report = match result {
+        Ok(report) => report,
+        Err(err) => {
+            if as_json {
+                print_json(&json::error(json::CONTENTS, json::input(input), &err));
+            } else {
+                eprintln!("dutchman: {err}");
+            }
+            return ExitCode::FAILURE;
+        }
+    };
+    if as_json {
+        print_json(&report);
+        return ExitCode::SUCCESS;
+    }
+    for line in json::contents_lines(&report) {
+        println!("{line}");
+    }
+    let losses = report.get("losses").and_then(Value::as_array);
+    print_losses(losses.map_or(&[][..], Vec::as_slice), verbose);
+    ExitCode::SUCCESS
+}
+
 /// Success when the report says the run succeeded.
 fn exit(report: &Value) -> ExitCode {
     if report.get("ok") == Some(&Value::Bool(true)) {
@@ -1668,6 +1792,14 @@ mod output_tests {
             "failed printing to stderr: Broken pipe (os error 32)"
         ));
         assert!(!is_closed_stdout("index out of bounds"));
+        assert_eq!(
+            is_closed_stdout("failed printing to stdout: The pipe has been ended. (os error 109)"),
+            cfg!(windows)
+        );
+        assert_eq!(
+            is_closed_stdout("failed printing to stdout: The pipe is being closed. (os error 232)"),
+            cfg!(windows)
+        );
     }
 
     #[test]
@@ -1721,7 +1853,7 @@ mod output_tests {
             if command != "convert" {
                 args.extend(["--out-dir", "out"]);
             }
-            for version in ["0.18.2", "0.25.1", "0.43.0"] {
+            for version in ["0.18.2", "0.25.1", "0.44.0"] {
                 let mut valid = args.clone();
                 valid.extend(["--solidcraft-version", version, "--no-verify"]);
                 let cli = Cli::try_parse_from(valid).unwrap();

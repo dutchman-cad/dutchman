@@ -143,7 +143,7 @@ mod tests {
 
     #[test]
     fn the_refresh_address_says_nothing_about_a_file() {
-        assert!(REFRESH_URL.starts_with("https://dutchman-cad.github.io/"));
+        assert_eq!(REFRESH_URL, "https://dutchmancad.xyz/report-policy.json");
         assert!(!REFRESH_URL.contains('?'));
     }
 

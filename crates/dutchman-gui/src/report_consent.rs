@@ -51,90 +51,130 @@ impl Card {
 }
 
 impl Consent {
-    /// Returns the row whose existing private-send card should be used.
-    pub fn window(&mut self, ctx: &egui::Context) -> Option<Action> {
-        let card = self.card.as_mut()?;
-        if let Some(rx) = &card.rx {
-            match rx.try_recv() {
-                Ok(result) => {
-                    card.sent = result.as_ref().is_ok_and(|value| {
-                        value.get("sent").and_then(Value::as_bool) == Some(true)
-                    });
-                    card.failed = !card.sent;
-                    card.status = match result {
-                        Ok(value) if value.get("sent").and_then(Value::as_bool) == Some(true) => {
-                            "Sent. The report was received.".into()
-                        }
-                        Ok(value) => value
-                            .get("summary")
-                            .and_then(Value::as_str)
-                            .unwrap_or("It did not go through. Your report is kept locally.")
-                            .into(),
-                        Err(error) => error,
-                    };
-                    card.rx = None;
-                }
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    card.failed = true;
-                    card.status = "It did not go through. Your report is kept locally.".into();
-                    card.rx = None;
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+    /// Takes the answer of a send in progress, if it has come. Called every frame, whether or
+    /// not the review is in view.
+    pub fn poll(&mut self) {
+        let Some(card) = self.card.as_mut() else {
+            return;
+        };
+        let Some(rx) = &card.rx else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(result) => {
+                card.sent = result
+                    .as_ref()
+                    .is_ok_and(|value| value.get("sent").and_then(Value::as_bool) == Some(true));
+                card.failed = !card.sent;
+                card.status = match result {
+                    Ok(value) if value.get("sent").and_then(Value::as_bool) == Some(true) => {
+                        "Sent. The report was received.".into()
+                    }
+                    Ok(value) => value
+                        .get("summary")
+                        .and_then(Value::as_str)
+                        .unwrap_or("It did not go through. Your report is kept locally.")
+                        .into(),
+                    Err(error) => error,
+                };
+                card.rx = None;
             }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                card.failed = true;
+                card.status = "It did not go through. Your report is kept locally.".into();
+                card.rx = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
         }
+    }
+
+    /// The review of the anonymous report, inside the "Is there a problem?" panel: nothing is
+    /// sent until Send is clicked. Returns the way to report the person chose instead.
+    pub fn ui(&mut self, ui: &mut egui::Ui) -> Option<Action> {
+        self.poll();
+        let ctx = ui.ctx().clone();
+        let card = self.card.as_mut()?;
         let mut open = true;
         let mut private = None;
-        egui::Window::new("Send a problem report").default_width(560.0).vscroll(true).open(&mut open).show(ctx, |ui| {
-            ui.label(format!("Report {}", card.prepared.report_id));
-            if card.prepared.signature == report_send::CONVERTED_PROBLEM_SIGNATURE {
-                ui.label("This file converted, but the result is wrong.");
+        ui.label(egui::RichText::new(REVIEW_TITLE).strong());
+        ui.label(format!("Report {}", card.prepared.report_id));
+        if card.prepared.signature == report_send::CONVERTED_PROBLEM_SIGNATURE {
+            ui.label("This file converted, but the result is wrong.");
+        }
+        ui.label("Descriptions are not supported by anonymous reports yet. Describe the problem in the private DM or GitHub form; leave out private names and paths.");
+        if let Some(log) = &card.log {
+            ui.label("This run's log contains no names or contents from the design. It is kept locally; Send uploads only the summary or bundle reviewed below.");
+            if let Err(message) = crate::platform::log_controls(ui, log, card.log_ready) {
+                card.status = message;
             }
-            ui.label("Descriptions are not supported by anonymous reports yet. Describe the problem in the private DM or GitHub form; leave out private names and paths.");
-            if let Some(log) = &card.log {
-                ui.label("This run's log contains no names or contents from the design. It is kept locally; Send uploads only the summary or bundle reviewed below.");
-                if let Err(message) = crate::platform::log_controls(ui, log, card.log_ready) { card.status = message; }
+        }
+        if card.prepared.bundle_sha256.is_some() {
+            ui.label("Bundles contain geometry and are used privately to reproduce the problem.");
+            ui.radio_value(&mut card.summary, false, "Send the bundle");
+        }
+        ui.radio_value(&mut card.summary, true, "Anonymous summary only");
+        if card.prepared.bundle_sha256.is_none() {
+            ui.label("No bundle is available yet. The summary contains no design geometry.");
+        } else {
+            ui.label(format!(
+                "Gzip bundle: {} bytes (send limit {} bytes)",
+                card.prepared.bundle_size,
+                report_send::MAX_BUNDLE
+            ));
+            if let Some(size) = card.prepared.request_size("bundle", card.public_test) {
+                ui.label(format!(
+                    "Upload request: {size} bytes (limit 25 MiB, including overhead)"
+                ));
             }
-            if card.prepared.bundle_sha256.is_some() {
-                ui.label("Bundles contain geometry and are used privately to reproduce the problem.");
-                ui.radio_value(&mut card.summary, false, "Send the bundle");
+            for part in &card.prepared.parts {
+                ui.label(format!("{}: {} bytes", part.role, part.bytes));
             }
-            ui.radio_value(&mut card.summary, true, "Anonymous summary only");
-            if card.prepared.bundle_sha256.is_none() {
-                ui.label("No bundle is available yet. The summary contains no design geometry.");
-            } else {
-                ui.label(format!("Gzip bundle: {} bytes (send limit {} bytes)", card.prepared.bundle_size, report_send::MAX_BUNDLE));
-                if let Some(size) = card.prepared.request_size("bundle", card.public_test) {
-                    ui.label(format!("Upload request: {size} bytes (limit 25 MiB, including overhead)"));
+            if let Some(entries) = card.prepared.manifest.as_array() {
+                for entry in entries {
+                    ui.label(format!(
+                        "{}: {} rows, {} bytes — {}",
+                        entry["arena"].as_str().unwrap_or("arena"),
+                        entry["rows"],
+                        entry["serialized_bytes"],
+                        entry["description"].as_str().unwrap_or("retained records")
+                    ));
                 }
-                for part in &card.prepared.parts { ui.label(format!("{}: {} bytes", part.role, part.bytes)); }
-                if let Some(entries) = card.prepared.manifest.as_array() {
-                    for entry in entries {
-                        ui.label(format!("{}: {} rows, {} bytes — {}",
-                            entry["arena"].as_str().unwrap_or("arena"), entry["rows"], entry["serialized_bytes"],
-                            entry["description"].as_str().unwrap_or("retained records")));
-                    }
-                }
-                if !card.prepared.can_send_bundle() {
-                    ui.label(report_send::SIZE_NOTICE);
-                }
             }
-            ui.checkbox(&mut card.public_test, "You may use this report in a public test case");
-            if ui.button("Send the whole file privately").clicked() { private = Some(Action::Private(card.row, None)); }
-            ui.label(format!("Anonymous summary: {} bytes — app version, operating system, file format, source app, problem signature, your sharing choices and a code for updates", card.prepared.metadata("summary", card.public_test).to_string().len()));
-            let choice = if card.summary { "summary" } else { "bundle" };
-            egui::CollapsingHeader::new("Exact metadata to send")
-                .default_open(true)
-                .show(ui, |ui| {
-                    egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
-                        let metadata = card.prepared.metadata(choice, card.public_test);
-                        ui.add(egui::Label::new(egui::RichText::new(
-                            serde_json::to_string_pretty(&metadata).unwrap_or_default()
-                        ).monospace()).wrap().selectable(true));
-                    });
-                });
-            ui.label(format!("Kept locally: {}", card.folder.display()));
-            let can_send = card.rx.is_none() && !card.sent && (card.summary || card.prepared.can_send_bundle());
-            if ui.add_enabled(can_send, egui::Button::new(if card.failed { "Retry" } else { "Send" })).clicked() {
+            if !card.prepared.can_send_bundle() {
+                ui.label(report_send::SIZE_NOTICE);
+            }
+        }
+        ui.checkbox(
+            &mut card.public_test,
+            "You may use this report in a public test case",
+        );
+        ui.label(format!("Anonymous summary: {} bytes — app version, operating system, file format, source app, problem signature, your sharing choices and a code for updates", card.prepared.metadata("summary", card.public_test).to_string().len()));
+        let choice = if card.summary { "summary" } else { "bundle" };
+        egui::CollapsingHeader::new("Exact metadata to send")
+            .default_open(true)
+            .show(ui, |ui| {
+                let metadata = card.prepared.metadata(choice, card.public_test);
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(
+                            serde_json::to_string_pretty(&metadata).unwrap_or_default(),
+                        )
+                        .monospace(),
+                    )
+                    .wrap()
+                    .selectable(true),
+                );
+            });
+        ui.label(format!("Kept locally: {}", card.folder.display()));
+        let can_send =
+            card.rx.is_none() && !card.sent && (card.summary || card.prepared.can_send_bundle());
+        ui.horizontal_wrapped(|ui| {
+            let label = if card.failed { "Retry" } else { "Send" };
+            let palette = crate::theme::palette(ui);
+            if ui
+                .add_enabled(can_send, crate::report_panel::filled(palette, label))
+                .clicked()
+            {
                 let prepared = card.prepared.clone();
                 let folder = card.folder.clone();
                 let choice = if card.summary { "summary" } else { "bundle" };
@@ -143,29 +183,62 @@ impl Consent {
                 card.rx = Some(rx);
                 card.failed = false;
                 card.status = "Sending…".into();
-                if !self.ids.contains(&prepared.report_id) { self.ids.push(prepared.report_id.clone()); }
+                if !self.ids.contains(&prepared.report_id) {
+                    self.ids.push(prepared.report_id.clone());
+                }
                 let endpoint = report_send::endpoint();
                 #[cfg(feature = "test-support")]
-                let endpoint = self.test_transport.as_ref().map(|(url, _)| url.clone()).or(endpoint);
+                let endpoint = self
+                    .test_transport
+                    .as_ref()
+                    .map(|(url, _)| url.clone())
+                    .or(endpoint);
                 let ctx = ctx.clone();
                 std::thread::spawn(move || {
-                    let result = report_send::submit(&prepared, &folder, choice, public_test, true, endpoint.as_deref());
+                    let result = report_send::submit(
+                        &prepared,
+                        &folder,
+                        choice,
+                        public_test,
+                        true,
+                        endpoint.as_deref(),
+                    );
                     let _ = tx.send(result);
                     ctx.request_repaint();
                 });
             }
-            ui.label(&card.status);
-            if ui.button("Use the private-send card").clicked() {
-                private = Some(Action::Private(card.row, card.prepared.bundle_sha256.as_ref().map(|_| card.folder.join("bundle.json.gz"))));
+            if ui.button(CLOSE_REVIEW).clicked() {
+                open = false;
             }
-            if ui.button("Get updates on Discord").clicked() {
-                ctx.copy_text(card.prepared.claim());
-                ctx.open_url(egui::OpenUrl::new_tab(dutchman::report_policy::ReportPolicy::bundled().dm_url()));
-                card.status = "The message for updates is copied. Paste it in Dutchy's DM to get updates.".into();
-            }
-            if ui.button("Open GitHub with anonymous summary only").clicked() { private = Some(Action::Github(card.row)); }
-            ui.label("GitHub is public. Share only the anonymous summary there, never the bundle.");
         });
+        ui.label(&card.status);
+        // The other ways go back to the panel's steps, never to another window.
+        if ui.button("Send the whole file privately").clicked() {
+            private = Some(Action::Private(card.row, None));
+        }
+        if card.prepared.bundle_sha256.is_some()
+            && ui.button("Send this bundle privately").clicked()
+        {
+            private = Some(Action::Private(
+                card.row,
+                Some(card.folder.join("bundle.json.gz")),
+            ));
+        }
+        if ui.button("Get updates on Discord").clicked() {
+            ctx.copy_text(card.prepared.claim());
+            ctx.open_url(egui::OpenUrl::new_tab(
+                dutchman::report_policy::ReportPolicy::bundled().dm_url(),
+            ));
+            card.status = crate::report_panel::UPDATES_COPIED.into();
+        }
+        if ui
+            .button(dutchman::present::REPORT_BUTTON)
+            .on_hover_text(dutchman::present::REPORT_HELP)
+            .clicked()
+        {
+            private = Some(Action::Github(card.row));
+        }
+
         if private.is_some() {
             open = false;
         }
@@ -175,6 +248,11 @@ impl Consent {
         private
     }
 }
+
+/// The heading of the review, at the top of it.
+pub const REVIEW_TITLE: &str = "Send a problem report";
+/// Closes the review without sending.
+pub const CLOSE_REVIEW: &str = "Close the review";
 
 #[cfg(test)]
 mod tests {
@@ -204,7 +282,9 @@ mod tests {
             .with_size(egui::vec2(1000.0, 1000.0))
             .build_state(
                 |ctx, state: &mut Consent| {
-                    state.window(ctx);
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| state.ui(ui));
+                    });
                 },
                 state,
             );
@@ -261,7 +341,9 @@ mod tests {
             .with_size(egui::vec2(1000.0, 1000.0))
             .build_state(
                 |ctx, state: &mut Consent| {
-                    state.window(ctx);
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| state.ui(ui));
+                    });
                 },
                 state,
             );
@@ -327,7 +409,9 @@ mod tests {
             .with_size(egui::vec2(1000.0, 1000.0))
             .build_state(
                 |ctx, state: &mut Consent| {
-                    state.window(ctx);
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| state.ui(ui));
+                    });
                 },
                 state,
             );
@@ -359,14 +443,16 @@ mod tests {
             .with_size(egui::vec2(1000.0, 1000.0))
             .build_state(
                 |ctx, state: &mut Consent| {
-                    state.window(ctx);
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| state.ui(ui));
+                    });
                 },
                 state,
             );
         harness.run_steps(3);
         harness.get_by_label("Send the bundle");
         harness.get_by_label(report_send::SIZE_NOTICE);
-        harness.get_by_label("Use the private-send card");
+        harness.get_by_label("Send this bundle privately");
         assert!(harness.get_by_label("Send").accesskit_node().is_disabled());
         harness
             .get_by_label("Anonymous summary only")

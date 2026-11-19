@@ -95,8 +95,16 @@ before the blend.
 Dutchman preserves those edges when it removes the hidden intermediate shapes. It accepts
 straight edges and open circular arcs only when their midpoint identifies exactly one edge
 on SolidCraft's replay at that step, with matching ends and length. An ambiguous pick, a
-missing base shape, a closed edge, or another curve stops the editable prefix, with the
-reason reported. This requires a SolidCraft CLI to replay the history; `--no-verify` cannot
+missing base shape or another unsupported curve stops the editable prefix, with the
+reason reported. When explicitly targeting SolidCraft 0.44.1 or newer, a closed circular rim
+also maps if its seam, opposite midpoint, and tangent describe a circle, and rebuilt arc
+pieces cover that circle exactly once on one body. The proof compares plane, radius, and
+angular coverage rather than seam endpoints, then picks each rebuilt piece. An additional
+SolidCraft edge measurement must confirm its circular carrier and plane, with an analytic
+length; the seam and opposite midpoint cannot determine that plane alone. Closed splines
+that do not satisfy this circular proof remain unsupported. Older targets retain the
+original geometry with the reason that closed input circles need SolidCraft 0.44 patch 1
+or newer. This requires a SolidCraft CLI to replay the history; `--no-verify` cannot
 prove blend edges. Final-body edge numbers are never substituted for base-feature edges.
 
 FreeCAD signed horizontal and vertical sketch distances convert to positive dimension
@@ -133,8 +141,8 @@ axis, pitch/height/turn law, handedness, reversed direction, and join/cut operat
 sketch-profile coils when the target is SolidCraft 0.25 patch 1 or newer. Choose a target with
 `--solidcraft-version x.y.z` on `convert`, `convert-all`, or `watch` (at least 0.18.2).
 The default is the found CLI's version, even with `--no-verify`, else the newest release
-known at build time (currently 0.43). The rolling 14-day window is currently
-0.18.2–0.43. Older targets block the helix with
+known at build time (currently 0.44). The rolling 14-day window is currently
+0.18.2–0.44. Older targets block the helix with
 `needs SolidCraft 0.25 patch 1 or newer` and the target version, preserving the original
 geometry. Resolved feature parameter
 bindings drive the coil dimensions; dimensions without bindings keep their values.

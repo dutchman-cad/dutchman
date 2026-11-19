@@ -6,7 +6,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use dutchman::batch::{Event, Job};
 use dutchman::choices::{estimate_text, Choices, Estimate, Preset};
 use dutchman::present::FileView;
-use dutchman::report_policy::{MessageFacts, ReportPolicy};
+use dutchman::report_policy::MessageFacts;
 use dutchman::{json, present, ConvertOptions};
 use eframe::egui::{
     self, Align, CornerRadius, Frame, Layout, Margin, RichText, ScrollArea, Stroke, TextStyle,
@@ -15,6 +15,7 @@ use eframe::egui::{
 use serde_json::Value;
 
 use crate::platform;
+use crate::report_panel::{self, Step};
 use crate::theme::{self, Palette};
 use crate::worker::{self, Message, Pick, Run};
 
@@ -100,13 +101,38 @@ impl Row {
     }
 }
 
+/// The selected attachment, measured once when it is chosen for private sharing.
+#[derive(Clone)]
+struct PrivateAttachment {
+    path: PathBuf,
+    size: Option<u64>,
+    bundle: bool,
+}
+
 /// Dutchman Convert's window.
 pub struct App {
     consent: crate::report_consent::Consent,
-    private_send: Option<(usize, Option<PathBuf>)>,
+    /// The row whose file the DM step sends privately, and the saved bundle to send instead of
+    /// the original, once "Send the whole file privately" was chosen in the review.
+    private_send: Option<(usize, PrivateAttachment)>,
+    /// The row the "Is there a problem?" panel is about, once chosen; else the first that needs
+    /// attention.
+    report_row: Option<usize>,
+    /// The step last taken in that panel and what it says on its card.
+    report_done: Option<(Step, &'static str)>,
+    /// Bring the panel into view on the next frame.
+    reveal_report: bool,
+    /// Bring the AI prompt into view on the next frame.
+    reveal_ai: bool,
     pub updater: crate::update::Updater,
     diagnosis: Option<crate::diagnose::Wizard>,
     inputs: Vec<PathBuf>,
+    share_link: String,
+    pending_links: Vec<String>,
+    downloading: bool,
+    downloads: Vec<dutchman::share_links::Downloaded>,
+    /// Owned on the window thread so closing the app removes active partial downloads.
+    download_root: Option<tempfile::TempDir>,
     doctor: Option<crate::doctor::Page>,
     project_summary: String,
     has_inventor: bool,
@@ -119,6 +145,8 @@ pub struct App {
     available: Option<u64>,
     pending: Option<PendingRun>,
     out_dir: Option<PathBuf>,
+    /// Reopen output settings after a result has collapsed them.
+    output_expanded: bool,
     options: ConvertOptions,
     diagnostic_path: Option<PathBuf>,
     diagnostic_stopped: bool,
@@ -338,6 +366,19 @@ fn saved_choices(options: &ConvertOptions, custom: bool) -> Value {
     })
 }
 
+/// What a large estimate means, on hover.
+const LARGE_ESTIMATE: &str = "A large conversion: it can take a while and use much of this \
+     computer's memory. If it seems stuck, tell us in \"Is there a problem? Is something missing?\"";
+
+/// An estimate shown in the warning colour: five minutes or more, or more than half the free
+/// memory (or 8 GB when the free memory is not known).
+fn large_estimate(estimate: &Estimate, available: Option<u64>) -> bool {
+    let memory = available
+        .filter(|bytes| *bytes > 0)
+        .map_or(8_000_000_000, |bytes| bytes / 2);
+    estimate.seconds >= 300 || estimate.peak_bytes > memory
+}
+
 fn gigabytes(bytes: u64) -> f64 {
     bytes as f64 / 1_000_000_000.0
 }
@@ -398,6 +439,11 @@ impl App {
         App {
             updater: crate::update::Updater::new(stored.as_ref().and_then(|v| v.get("update"))),
             inputs: Vec::new(),
+            share_link: String::new(),
+            pending_links: Vec::new(),
+            downloading: false,
+            downloads: Vec::new(),
+            download_root: None,
             doctor: None,
             project_summary: String::new(),
             has_inventor: false,
@@ -410,6 +456,7 @@ impl App {
             available: None,
             pending: None,
             out_dir: None,
+            output_expanded: false,
             options,
             diagnosis: None,
             diagnostic_path: None,
@@ -442,6 +489,10 @@ impl App {
                 stored.as_ref().and_then(|v| v.get("report_policy")),
             ),
             private_send: None,
+            report_row: None,
+            report_done: None,
+            reveal_report: false,
+            reveal_ai: false,
             consent: crate::report_consent::Consent {
                 ids: stored
                     .as_ref()
@@ -536,6 +587,11 @@ impl App {
     /// Adds design files and folders to convert, each once.
     pub fn add_inputs(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
         for path in paths {
+            if dutchman::share_links::is_url(&path.to_string_lossy()) || worker::is_link_file(&path)
+            {
+                self.queue_links(&path.to_string_lossy());
+                continue;
+            }
             if self.out_dir.is_none() {
                 self.out_dir = Some(dutchman::batch::default_output(&path));
             }
@@ -543,6 +599,29 @@ impl App {
                 self.inputs.push(path);
             }
         }
+    }
+
+    fn queue_links(&mut self, text: &str) {
+        for link in text
+            .lines()
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && !s.starts_with('#'))
+        {
+            if self.pending_links.len() >= 16 {
+                self.notice = Some("Add at most 16 share links at a time.".into());
+                break;
+            }
+            if !self.pending_links.iter().any(|old| old == link) {
+                self.pending_links.push(link.to_owned());
+            }
+        }
+    }
+
+    fn keep_used_downloads(&mut self) {
+        self.downloads.retain(|file| {
+            self.inputs.iter().any(|path| file.contains(path))
+                || self.rows.iter().any(|row| file.contains(&row.input))
+        });
     }
 
     /// Sets the folder designs are written to.
@@ -592,6 +671,22 @@ impl App {
     #[cfg(feature = "test-support")]
     pub fn preview_result_for_test(&mut self, row: Row) {
         self.rows = vec![row];
+    }
+
+    /// Starts a real isolated worker executable for cancellation tests.
+    #[cfg(feature = "test-support")]
+    pub fn start_isolated_for_test(&mut self, program: PathBuf, ctx: &egui::Context) {
+        let Some(out_dir) = self.out_dir.clone() else {
+            return;
+        };
+        self.run = Some(Run::start_isolated_for_test(
+            self.inputs.clone(),
+            out_dir,
+            &self.options,
+            self.sender.clone(),
+            ctx.clone(),
+            program,
+        ));
     }
 
     /// Supplies a held conversion through the normal card renderer, without a worker.
@@ -671,8 +766,17 @@ impl App {
             None => dutchman::anon::Salt::random()?,
         };
         let out_dir = self.out_dir.clone().unwrap_or_default();
+        let solidcraft = report
+            .pointer("/solidcraft/found")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         let run = dutchman::anon::Run {
-            verify: !self.options.no_verify,
+            verify: solidcraft.is_some()
+                && report
+                    .pointer("/verification/status")
+                    .and_then(Value::as_str)
+                    .is_some_and(|status| status != "none"),
+            solidcraft,
             import_only: self.options.import_only,
             jobs: 1,
             ..dutchman::anon::Run::default()
@@ -757,16 +861,23 @@ impl App {
 
     /// Opens the GitHub issue form about the file of the row at `index`, filled in from its
     /// report. When its anonymous report is too long for the link, it is copied for the
-    /// reporter to paste, and the notice says so.
+    /// reporter to paste, and the panel says so on the GitHub line.
     pub fn report_on_github(&mut self, index: usize, ctx: &egui::Context) -> Result<(), String> {
         let Some((anonymous, _, report)) = self.anonymous(index)? else {
-            return Ok(());
+            return self.github_form(ctx);
         };
         let link = present::report_link(report, &anonymous);
         let issue = link.issue;
         ctx.copy_text(issue.anonymous_report.clone());
-        self.notice = Some(link.copy_notice.to_owned());
+        self.report_done = Some((Step::Github, link.copy_notice));
         ctx.open_url(egui::OpenUrl::new_tab(issue.url));
+        Ok(())
+    }
+
+    /// Opens the empty GitHub issue form, for a problem with no finished file.
+    fn github_form(&mut self, ctx: &egui::Context) -> Result<(), String> {
+        ctx.open_url(egui::OpenUrl::new_tab(crate::REPORT_PROBLEM_URL));
+        self.report_done = Some((Step::Github, report_panel::GITHUB_OPENED));
         Ok(())
     }
 
@@ -799,26 +910,35 @@ impl App {
     /// Copies the message about the file of the row at `index` and opens Dutchy's
     /// DM. A file small enough to drag in has its folder shown too.
     pub fn dm_dutchy(&mut self, index: usize, ctx: &egui::Context) -> Result<(), String> {
-        self.dm_private(index, None, ctx)
+        let Some(attachment) = self.private_attachment(index) else {
+            return Ok(());
+        };
+        self.dm_private(index, &attachment, ctx)
+    }
+
+    fn private_attachment(&self, index: usize) -> Option<PrivateAttachment> {
+        if let Some((_, attachment)) = self.private_send.as_ref().filter(|(row, _)| *row == index) {
+            return Some(attachment.clone());
+        }
+        let row = self.rows.get(index)?;
+        Some(PrivateAttachment {
+            path: row.input.clone(),
+            size: row.size,
+            bundle: false,
+        })
     }
 
     fn dm_private(
         &mut self,
         index: usize,
-        file: Option<&Path>,
+        attachment: &PrivateAttachment,
         ctx: &egui::Context,
     ) -> Result<(), String> {
         let Some((_, id, report)) = self.anonymous(index)? else {
-            return Ok(());
-        };
-        let Some(row) = self.rows.get(index) else {
-            return Ok(());
+            return self.dm_general(Some(index), ctx);
         };
         let policy = self.report_policy.policy();
-        let size = file
-            .and_then(|p| std::fs::metadata(p).ok())
-            .map(|m| m.len())
-            .or(row.size);
+        let size = attachment.size;
         let steps = present::SendSteps::new(policy, size, report, present::Surface::Desktop);
         let facts = MessageFacts {
             code: present::error_code(report),
@@ -826,94 +946,46 @@ impl App {
             size_bytes: size,
             step: present::step_known(report),
         };
-        let mut message = if report.get("ok").and_then(Value::as_bool) == Some(true) {
-            policy.converted_message(&facts)
-        } else {
-            policy.message(&facts)
-        };
-        if let Some(log) = self.row_logs.get(&index) {
-            message.push_str(&format!(
-                " Run log: {}. It contains no names or contents from the design.",
-                log.file_name().unwrap_or_default().to_string_lossy()
-            ));
-        }
+        let converted = report.get("ok").and_then(Value::as_bool) == Some(true);
+        let log = self.row_logs.get(&index).map(|log| {
+            log.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned()
+        });
+        let message = report_panel::dm_message(policy, &facts, converted, log.as_deref());
         ctx.copy_text(message);
         ctx.open_url(egui::OpenUrl::new_tab(policy.dm_url()));
         let shown = if steps.drag {
-            (self.file_manager)(file.unwrap_or(&row.input))
+            (self.file_manager)(&attachment.path)
         } else {
             Ok(())
         };
-        self.notice = Some(present::SEND_COPIED.to_owned());
+        let done = if steps.drag {
+            report_panel::DM_DONE_DRAG
+        } else {
+            report_panel::DM_DONE_LINK
+        };
+        self.report_done = Some((Step::Dm, done));
         shown
     }
 
-    fn private_send_window(&mut self, ctx: &egui::Context) {
-        let Some((index, file)) = self.private_send.clone() else {
-            return;
-        };
-        let mut open = true;
-        let mut action = None;
-        let log_ready = !self.running();
-        egui::Window::new("Send privately")
-            .open(&mut open)
-            .show(ctx, |ui| {
-                let Some(row) = self.rows.get(index) else {
-                    return;
-                };
-                let Some(report) = row.report.as_ref() else {
-                    return;
-                };
-                if let Some(log) = self.row_logs.get(&index) {
-                    ui.label("This run's log contains no names or contents from the design. Its name is included in the copied DM; attach it if you choose.");
-                    if let Err(message) = platform::log_controls(ui, log, log_ready) { self.notice = Some(message); }
-                }
-                if let Some(path) = &file {
-                    ui.label(format!("Saved bundle: {}", path.display()));
-                }
-                let size = file
-                    .as_ref()
-                    .and_then(|p| std::fs::metadata(p).ok())
-                    .map(|m| m.len())
-                    .or(row.size);
-                let steps = present::SendSteps::new(
-                    self.report_policy.policy(),
-                    size,
-                    report,
-                    present::Surface::Desktop,
-                );
-                let palette = theme::palette(ui);
-                action = send_ui(ui, palette, index, &steps, false);
-            });
-        if action.is_some() {
-            self.notice = None;
-        }
-        let result = match action {
-            Some(Action::Dm(index)) => self.dm_private(index, file.as_deref(), ctx),
-            Some(Action::Join) => {
-                ctx.open_url(egui::OpenUrl::new_tab(
-                    self.report_policy.policy().invite_url.clone(),
-                ));
-                Ok(())
-            }
-            Some(Action::Report(index)) => self.report_on_github(index, ctx),
-            Some(Action::Consent(index)) => {
-                open = false;
-                self.open_consent(index)
-            }
-            _ => Ok(()),
-        };
-        if let Err(error) = result {
-            self.notice = Some(error);
-        }
-        if !open {
-            self.private_send = None;
-        }
+    /// Copies a message with no file's details and opens Dutchy's DM: for a problem before
+    /// any file has finished, or a file still converting.
+    fn dm_general(&mut self, index: Option<usize>, ctx: &egui::Context) -> Result<(), String> {
+        let elapsed = index
+            .and_then(|index| self.rows.get(index))
+            .filter(|row| row.status == Status::Converting)
+            .map(|row| row.progress.as_ref().map_or(0, |event| event.elapsed_ms));
+        ctx.copy_text(report_panel::general_message(elapsed));
+        ctx.open_url(egui::OpenUrl::new_tab(self.report_policy.policy().dm_url()));
+        self.report_done = Some((Step::Dm, report_panel::DM_DONE));
+        Ok(())
     }
 
     /// Whether a run is in progress.
     pub fn running(&self) -> bool {
-        self.run.is_some() || self.pending.is_some()
+        self.run.is_some() || self.pending.is_some() || self.downloading
     }
 
     fn refresh_blocked_checker(&mut self) {
@@ -994,6 +1066,10 @@ impl App {
             RunKind::Batch { inputs, out_dir } => {
                 self.row_logs.clear();
                 self.ai_prompts.clear();
+                self.report_row = None;
+                self.report_done = None;
+                self.private_send = None;
+                self.consent.card = None;
                 self.rows.clear();
                 self.offset = 0;
                 Run::start(
@@ -1122,6 +1198,25 @@ impl App {
     fn receive(&mut self, ctx: &egui::Context) {
         while let Ok(message) = self.messages.try_recv() {
             match message {
+                Message::Downloaded(results) => {
+                    self.downloading = false;
+                    for result in results {
+                        match result {
+                            Ok(file) => {
+                                if self.out_dir.is_none() {
+                                    // A download's output must survive removal of its scratch folder.
+                                    self.out_dir = Some(dutchman::batch::default_output(
+                                        Path::new(file.path().file_name().unwrap_or_default()),
+                                    ));
+                                }
+                                self.add_inputs([file.path().to_path_buf()]);
+                                self.downloads.push(file);
+                            }
+                            Err(message) => self.notice = Some(message),
+                        }
+                    }
+                    self.keep_used_downloads();
+                }
                 Message::ProjectSummary {
                     generation,
                     text,
@@ -1176,6 +1271,7 @@ impl App {
                             size: None,
                         }))
                         .collect();
+                    self.keep_used_downloads();
                     if let Some(path) = &self.diagnostic_path {
                         self.row_logs = (0..self.rows.len())
                             .map(|index| (index, path.clone()))
@@ -1201,13 +1297,27 @@ impl App {
                 }
                 Message::Progress(Event::Finished(index, report)) => {
                     self.ai_prompts.remove(&(self.offset + index));
+                    // A file ended by Stop did not fail: it was not finished.
+                    let stopped = self.diagnostic_stopped
+                        && report
+                            .pointer("/error/message")
+                            .and_then(Value::as_str)
+                            .is_some_and(|message| {
+                                message.contains(dutchman::worker::SHUTDOWN_STOPPED)
+                                    || message.contains(dutchman::worker::CANCELLED)
+                            });
                     if let Some(row) = self.rows.get_mut(self.offset + index) {
-                        row.status = if report.get("ok") == Some(&Value::Bool(true)) {
-                            Status::Converted
+                        if stopped {
+                            row.status = Status::NotStarted;
+                            row.report = None;
                         } else {
-                            Status::Failed
-                        };
-                        row.report = Some(report);
+                            row.status = if report.get("ok") == Some(&Value::Bool(true)) {
+                                Status::Converted
+                            } else {
+                                Status::Failed
+                            };
+                            row.report = Some(report);
+                        }
                     }
                 }
                 Message::Done => {
@@ -1255,15 +1365,72 @@ impl App {
     }
 
     fn take_dropped_files(&mut self, ctx: &egui::Context) {
-        let dropped: Vec<PathBuf> = ctx.input(|i| {
-            i.raw
+        if self.running() {
+            return;
+        }
+        let accepts_paste = !ctx.wants_keyboard_input();
+        let (dropped, links) = ctx.input(|i| {
+            let paths: Vec<_> = i
+                .raw
                 .dropped_files
                 .iter()
                 .filter_map(|file| file.path.clone())
-                .collect()
+                .collect();
+            let mut links = Vec::new();
+            for file in &i.raw.dropped_files {
+                if let Some(bytes) = file.bytes.as_ref().filter(|bytes| bytes.len() <= 8192) {
+                    if let Ok(text) = std::str::from_utf8(bytes) {
+                        links.extend(
+                            text.lines()
+                                .map(str::trim)
+                                .filter(|line| dutchman::share_links::is_url(line))
+                                .map(str::to_owned),
+                        );
+                    }
+                } else if dutchman::share_links::is_url(&file.name) {
+                    links.push(file.name.clone());
+                }
+            }
+            if accepts_paste {
+                for event in &i.events {
+                    if let egui::Event::Paste(text) = event {
+                        if text.len() <= 8192 && dutchman::share_links::is_url(text) {
+                            links.push(text.clone());
+                        }
+                    }
+                }
+            }
+            (paths, links)
         });
-        if !dropped.is_empty() && !self.running() {
-            self.add_inputs(dropped);
+        self.add_inputs(dropped);
+        for link in links {
+            self.queue_links(&link);
+        }
+        if !self.pending_links.is_empty() {
+            let links = std::mem::take(&mut self.pending_links);
+            let root = match &self.download_root {
+                Some(folder) => folder.path().to_path_buf(),
+                None => match tempfile::Builder::new()
+                    .prefix("dutchman-shares-")
+                    .tempdir()
+                {
+                    Ok(folder) => {
+                        let path = folder.path().to_path_buf();
+                        self.download_root = Some(folder);
+                        path
+                    }
+                    Err(_) => {
+                        self.notice = Some(
+                            "Cannot create a temporary download folder. Check free disk space."
+                                .into(),
+                        );
+                        return;
+                    }
+                },
+            };
+            self.downloading = true;
+            self.notice = None;
+            worker::download_links(links, root, self.sender.clone(), ctx.clone());
         }
     }
 
@@ -1394,20 +1561,7 @@ impl App {
                     self.narrow_page(ui, ctx, &view);
                 }
             });
-        if let Some(action) = self.consent.window(ctx) {
-            self.notice = None;
-            let result = match action {
-                crate::report_consent::Action::Private(index, file) => {
-                    self.private_send = Some((index, file));
-                    Ok(())
-                }
-                crate::report_consent::Action::Github(index) => self.report_on_github(index, ctx),
-            };
-            if let Err(error) = result {
-                self.notice = Some(error);
-            }
-        }
-        self.private_send_window(ctx);
+        self.consent.poll();
         self.updater.report_ids = self.consent.ids.clone();
         self.solidcraft_window(ctx);
         let can_restart =
@@ -1455,13 +1609,16 @@ impl App {
                     ui.add_space(theme::SPACE_8);
                     self.results(ui, view, false);
                 }
+                ui.add_space(theme::SPACE_8);
+                self.report_panel(ui, view);
             });
         self.page_scrolls = area.content_size.y > area.inner_rect.height() + 1.0;
     }
 
-    /// A wide window: Designs and Output folder on the left, Results on the right. The page
-    /// scrolls only if the window is too short for the left column; results scroll in their own
-    /// column.
+    /// A wide window: Designs and Output folder on the left, then "Is there a problem?" in the
+    /// room left under them, and Results on the right. The page scrolls only if the window is
+    /// too short for Designs and Output folder; the left column scrolls on to the report panel
+    /// when it does not fit, and results scroll in their own column.
     fn wide_page(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, view: &present::RunView) {
         let rect = ui.available_rect_before_wrap();
         let gap = theme::SPACE_8;
@@ -1473,15 +1630,22 @@ impl App {
         );
         let mut scrolls = false;
         ui.scope_builder(egui::UiBuilder::new().max_rect(left), |ui| {
+            let mut choices = 0.0;
             let area = ScrollArea::vertical()
                 .id_salt("main-left")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
+                    let top = ui.cursor().top();
                     self.inputs_panel(ui);
                     ui.add_space(theme::SPACE_4);
                     self.output_panel(ui, ctx);
+                    choices = ui.cursor().top() - top;
+                    ui.add_space(theme::SPACE_4);
+                    self.report_panel(ui, view);
                 });
-            scrolls = area.content_size.y > area.inner_rect.height() + 1.0;
+            // The page "scrolls" when Designs and the output choices alone do not fit; the
+            // report panel under them takes the room that is left and scrolls into view.
+            scrolls = choices > area.inner_rect.height() + 1.0;
         });
         ui.scope_builder(egui::UiBuilder::new().max_rect(right), |ui| {
             self.unfinished_notice(ui);
@@ -1543,7 +1707,14 @@ impl App {
     }
 
     fn title_controls(&mut self, ui: &mut egui::Ui, narrow: bool) {
-        ui.hyperlink_to("Report a problem", crate::REPORT_PROBLEM_URL);
+        // The same panel as every result's: Discord first, GitHub as the backup.
+        let p = *theme::palette(ui);
+        if report_panel::link(ui, &p, "Report a problem")
+            .on_hover_text(report_panel::QUESTION)
+            .clicked()
+        {
+            self.reveal_report = true;
+        }
         ui.add_space(theme::SPACE_2);
         let current = ui.ctx().options(|o| o.theme_preference);
         let themes = [
@@ -1719,7 +1890,7 @@ impl App {
             if self.inputs.is_empty() {
                 ui.vertical_centered(|ui| {
                     ui.add_space(theme::SPACE_4);
-                    ui.label(RichText::new("Drop design files, folders or ZIPs here").heading());
+                    ui.label(RichText::new("Drop design files, folders, ZIPs or link shortcuts here").heading());
                     ui.label(
                         RichText::new("Fusion, Inventor, SolidWorks, FreeCAD, CATIA, Creo, NX, Creo View, Rhino, ACIS, STEP and IGES")
                         .small()
@@ -1773,11 +1944,23 @@ impl App {
                                                     };
                                                     // Room for less than a stub: leave it out rather than draw "…" under the button.
                                                     if ui.available_width() > 48.0 {
-                                                        ui.label(
+                                                        let large = large_estimate(
+                                                            estimate,
+                                                            self.available,
+                                                        );
+                                                        let colour = if large {
+                                                            p.lantern_text
+                                                        } else {
+                                                            p.tide
+                                                        };
+                                                        let label = ui.label(
                                                             RichText::new(text)
                                                                 .small()
-                                                                .color(p.tide),
+                                                                .color(colour),
                                                         );
+                                                        if large {
+                                                            label.on_hover_text(LARGE_ESTIMATE);
+                                                        }
                                                     }
                                                 }
                                             }
@@ -1809,6 +1992,7 @@ impl App {
                     });
                 if let Some(index) = remove {
                     self.inputs.remove(index);
+                    self.keep_used_downloads();
                 }
             }
             if !self.inputs.is_empty() && !self.project_summary.is_empty() {
@@ -1822,6 +2006,28 @@ impl App {
                 );
             }
             ui.add_space(theme::SPACE_2);
+            ui.add_enabled_ui(!self.running(), |ui| {
+                ui.horizontal(|ui| {
+                    let field = ui.add(
+                        egui::TextEdit::singleline(&mut self.share_link)
+                            .hint_text("Public Fusion or Google Drive file link")
+                            .char_limit(8192)
+                            .desired_width(260.0),
+                    );
+                    if ui.button("Add link").clicked()
+                        || (field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                    {
+                        let link = std::mem::take(&mut self.share_link);
+                        self.queue_links(&link);
+                    }
+                });
+            });
+            if self.downloading {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label("Downloading shared files…");
+                });
+            }
             ui.horizontal(|ui| {
                 ui.add_enabled_ui(
                     !self.running() && !self.updater.blocks_conversions(),
@@ -1838,6 +2044,13 @@ impl App {
                         }
                         if !self.inputs.is_empty() && ui.button("Clear").clicked() {
                             self.inputs.clear();
+                            self.rows.clear();
+                            self.report_row = None;
+                            self.report_done = None;
+                            self.private_send = None;
+                            self.consent.card = None;
+                            self.output_expanded = false;
+                            self.keep_used_downloads();
                         }
                     },
                 );
@@ -1927,6 +2140,44 @@ impl App {
         let p = *theme::palette(ui);
         let wide = is_wide(ui);
         section_label(ui, &p, "Output folder");
+        let has_results = self.rows.iter().any(|row| row.report.is_some());
+        if !has_results {
+            self.output_expanded = false;
+        }
+        if has_results && !self.output_expanded {
+            panel(ui, &p, false, |ui| {
+                let path = self
+                    .out_dir
+                    .as_deref()
+                    .map(display)
+                    .unwrap_or_else(|| "Not chosen yet".to_owned());
+                let mut path_clicked = false;
+                let mut change_clicked = false;
+                egui::Sides::new().shrink_left().truncate().show(
+                    ui,
+                    |ui| {
+                        if ui
+                            .add(
+                                egui::Button::new(RichText::new(&path).monospace())
+                                    .frame(false)
+                                    .truncate(),
+                            )
+                            .on_hover_text(&path)
+                            .clicked()
+                        {
+                            path_clicked = true;
+                        }
+                    },
+                    |ui| {
+                        if ui.button("Change…").clicked() {
+                            change_clicked = true;
+                        }
+                    },
+                );
+                self.output_expanded = path_clicked || change_clicked;
+            });
+            return;
+        }
         panel(ui, &p, false, |ui| {
             let running = self.running();
             let sender = self.sender.clone();
@@ -2085,8 +2336,14 @@ impl App {
         let p = *theme::palette(ui);
         ui.horizontal(|ui| {
             if self.running() {
+                let stopping = self.diagnostic_stopped;
+                let label = if stopping {
+                    report_panel::STOPPING_BUTTON
+                } else {
+                    "Stop"
+                };
                 if ui
-                    .add_enabled(self.run.is_some(), egui::Button::new("Stop"))
+                    .add_enabled(self.run.is_some() && !stopping, egui::Button::new(label))
                     .clicked()
                 {
                     if let Some(run) = &self.run {
@@ -2135,18 +2392,16 @@ impl App {
                 }
             });
         });
-        if self.running() && self.rows.len() > 1 {
+        if self.running() && self.diagnostic_stopped {
+            ui.label(RichText::new(report_panel::STOPPING).color(p.lantern_text));
+        } else if self.running() && self.rows.len() > 1 {
             if let Some(line) = running_file_line(&self.rows) {
                 ui.label(line);
             }
         }
+        // What a copy button did is said on its own card in the report panel, not here.
         if let Some(notice) = &self.notice {
-            let colour = if notice == present::REPORT_COPIED || notice == present::SEND_COPIED {
-                p.spectre
-            } else {
-                p.danger
-            };
-            ui.label(RichText::new(notice).color(colour));
+            ui.label(RichText::new(notice).color(p.danger));
         }
     }
 
@@ -2186,23 +2441,11 @@ impl App {
                     continue;
                 };
                 let shown = card(ui, &p, |ui| {
-                    let policy = self.report_policy.policy();
                     let log = self
                         .row_logs
                         .get(&index)
                         .map(|path| (path.as_path(), log_ready));
-                    let chosen = row_ui(
-                        ui,
-                        &p,
-                        index,
-                        row,
-                        file,
-                        policy,
-                        self.has_app,
-                        running,
-                        log,
-                        self.ai_prompts.get(&index),
-                    );
+                    let chosen = row_ui(ui, &p, index, row, file, self.has_app, running, log);
                     if let Some(chosen) = chosen {
                         action = Some(chosen);
                     }
@@ -2224,62 +2467,11 @@ impl App {
         } else {
             cards(ui);
         }
-        if action.is_some() {
+        if let Some(action) = action {
             self.notice = None;
-        }
-        let result = match action {
-            Some(Action::Open(path)) => platform::open_in_solidcraft(&path),
-            Some(Action::Reveal(path)) => platform::reveal(&path),
-            Some(Action::Check(index)) => {
-                if let Some(row) = self.rows.get(index) {
-                    self.doctor = Some(crate::doctor::Page::new(Some(row.input.clone())));
-                }
-                Ok(())
+            if let Err(err) = self.act(action, ui.ctx()) {
+                self.notice = Some(err);
             }
-            Some(Action::Notice(message)) => {
-                self.notice = Some(message);
-                Ok(())
-            }
-            Some(Action::Pick(pick)) => {
-                worker::pick(pick, self.sender.clone(), ui.ctx().clone());
-                Ok(())
-            }
-            Some(Action::Diagnose(index)) => {
-                if self.diagnosis.is_some() {
-                    return;
-                }
-                if let Some(row) = self.rows.get(index) {
-                    let mut wizard =
-                        crate::diagnose::Wizard::new(row.input.clone(), self.options.clone());
-                    wizard.start(ui.ctx());
-                    self.diagnosis = Some(wizard);
-                }
-                Ok(())
-            }
-
-            Some(Action::Consent(index)) => self.open_consent(index),
-            Some(Action::Report(index)) => self.report_on_github(index, ui.ctx()),
-            Some(Action::Join) => {
-                let invite = self.report_policy.policy().invite_url.clone();
-                ui.ctx().open_url(egui::OpenUrl::new_tab(invite));
-                Ok(())
-            }
-            Some(Action::Dm(index)) => self.dm_dutchy(index, ui.ctx()),
-            Some(Action::AskAi(index)) => self.ask_ai(index, ui.ctx()),
-            Some(Action::OpenReport(index)) => {
-                ui.ctx()
-                    .data_mut(|data| data.insert_temp(egui::Id::new(("open-report", index)), true));
-                ui.ctx().request_repaint();
-                Ok(())
-            }
-            Some(Action::CloseAi(index)) => {
-                self.ai_prompts.remove(&index);
-                Ok(())
-            }
-            None => Ok(()),
-        };
-        if let Err(err) = result {
-            self.notice = Some(err);
         }
         if !running {
             if let Some(pitch) = &view.invitation {
@@ -2298,6 +2490,312 @@ impl App {
                         }
                     }
                 });
+            }
+        }
+    }
+
+    /// Does what a button on a result card or in the report panel asked for.
+    fn act(&mut self, action: Action, ctx: &egui::Context) -> Result<(), String> {
+        match action {
+            Action::Open(path) => platform::open_in_solidcraft(&path),
+            Action::Reveal(path) => platform::reveal(&path),
+            Action::Check(index) => {
+                if let Some(row) = self.rows.get(index) {
+                    self.doctor = Some(crate::doctor::Page::new(Some(row.input.clone())));
+                }
+                Ok(())
+            }
+            Action::Notice(message) => {
+                self.notice = Some(message);
+                Ok(())
+            }
+            Action::Pick(pick) => {
+                worker::pick(pick, self.sender.clone(), ctx.clone());
+                Ok(())
+            }
+            Action::Diagnose(index) => {
+                self.report_done = None;
+                if self.diagnosis.is_some() {
+                    return Ok(());
+                }
+                if let Some(row) = self.rows.get(index) {
+                    let mut wizard =
+                        crate::diagnose::Wizard::new(row.input.clone(), self.options.clone());
+                    wizard.top = self.header_bottom + theme::SPACE_2;
+                    wizard.start(ctx);
+                    self.diagnosis = Some(wizard);
+                }
+                Ok(())
+            }
+            Action::Consent(index) => {
+                self.report_done = None;
+                self.open_consent(index)
+            }
+            Action::Private(index, file) => {
+                // Back to the steps: the DM step now sends this file, or its saved bundle.
+                let attachment = match file {
+                    Some(path) => PrivateAttachment {
+                        size: std::fs::metadata(&path).ok().map(|meta| meta.len()),
+                        path,
+                        bundle: true,
+                    },
+                    None => {
+                        let Some(row) = self.rows.get(index) else {
+                            return Ok(());
+                        };
+                        PrivateAttachment {
+                            path: row.input.clone(),
+                            size: row.size,
+                            bundle: false,
+                        }
+                    }
+                };
+                self.private_send = Some((index, attachment));
+                self.report_row = Some(index);
+                self.report_done = None;
+                self.reveal_report = true;
+                Ok(())
+            }
+            Action::Report(index) => match index {
+                Some(index) => self.report_on_github(index, ctx),
+                None => self.github_form(ctx),
+            },
+            Action::Join => {
+                let invite = self.report_policy.policy().invite_url.clone();
+                ctx.open_url(egui::OpenUrl::new_tab(invite));
+                self.report_done = Some((Step::Join, report_panel::JOIN_DONE));
+                Ok(())
+            }
+            Action::Dm(index) => match index {
+                Some(index) => self.dm_dutchy(index, ctx),
+                None => self.dm_general(None, ctx),
+            },
+            Action::AskAi(index) => {
+                self.reveal_ai = true;
+                self.ask_ai(index, ctx)
+            }
+            Action::OpenReport(index) => {
+                self.select_report(index);
+                self.reveal_report = true;
+                ctx.request_repaint();
+                Ok(())
+            }
+            Action::SelectReport(index) => {
+                self.select_report(index);
+                Ok(())
+            }
+            Action::CloseAi(index) => {
+                self.ai_prompts.remove(&index);
+                Ok(())
+            }
+        }
+    }
+
+    /// Makes the report panel about the row at `index`.
+    fn select_report(&mut self, index: usize) {
+        if self.report_row != Some(index) {
+            self.report_done = None;
+        }
+        self.report_row = Some(index);
+    }
+
+    /// The row the report panel is about: the one chosen, else the first that needs attention.
+    fn report_index(&self, view: &present::RunView) -> Option<usize> {
+        self.report_row
+            .filter(|index| *index < self.rows.len())
+            .or_else(|| (!self.rows.is_empty()).then_some(view.first_to_show))
+    }
+
+    /// "Is there a problem? Is something missing?": always in the window, with the numbered
+    /// steps to tell us on Discord, GitHub as the backup, and the rarer tools under More.
+    fn report_panel(&mut self, ui: &mut egui::Ui, view: &present::RunView) {
+        let p = *theme::palette(ui);
+        let selected = self.report_index(view);
+        let attachment = selected.and_then(|index| self.private_attachment(index));
+        let heading = ui.label(RichText::new(report_panel::QUESTION).heading().color(p.ink));
+        if std::mem::take(&mut self.reveal_report) {
+            heading.scroll_to_me(Some(Align::Min));
+        }
+        let busy = self.running() || self.diagnosis.is_some() || self.updater.blocks_conversions();
+        let reveal_ai = std::mem::take(&mut self.reveal_ai);
+        let mut action = None;
+        {
+            let row = selected.and_then(|index| self.rows.get(index).map(|row| (index, row)));
+            let file = selected
+                .and_then(|index| view.files.iter().find(|(at, _)| *at == index))
+                .map(|(_, file)| file);
+            match row {
+                Some((index, row)) if self.rows.len() > 1 => {
+                    let mut chosen = index;
+                    egui::ComboBox::from_id_salt("report-file")
+                        .selected_text(format!("About {}", file_name(&row.input)))
+                        .show_ui(ui, |ui| {
+                            for (at, other) in self.rows.iter().enumerate() {
+                                ui.selectable_value(&mut chosen, at, file_name(&other.input));
+                            }
+                        });
+                    if chosen != index {
+                        action = Some(Action::SelectReport(chosen));
+                    }
+                }
+                Some((_, row)) => {
+                    ui.label(
+                        RichText::new(format!("About {}", file_name(&row.input)))
+                            .small()
+                            .color(p.tide),
+                    );
+                }
+                None => {
+                    ui.label(
+                        RichText::new(report_panel::NO_FILE_INTRO)
+                            .small()
+                            .color(p.tide),
+                    );
+                }
+            }
+            if let Some(attachment) = attachment.as_ref().filter(|file| file.bundle) {
+                ui.label(
+                    RichText::new(format!(
+                        "Private attachment: {} (bundle)",
+                        file_name(&attachment.path)
+                    ))
+                    .small()
+                    .color(p.tide),
+                );
+            }
+            let policy = self.report_policy.policy();
+            let report = row.and_then(|(_, row)| row.report.as_ref());
+            let steps = row.and_then(|(_, row)| {
+                let report = row.report.as_ref()?;
+                Some(present::SendSteps::new(
+                    policy,
+                    attachment.as_ref().and_then(|file| file.size),
+                    report,
+                    present::Surface::Desktop,
+                ))
+            });
+            let unfinished = row
+                .is_some_and(|(_, row)| matches!(row.status, Status::Waiting | Status::Converting));
+            let intro = match &steps {
+                Some(steps) => Some(steps.intro),
+                None if unfinished => Some(report_panel::RUNNING_INTRO),
+                None => None,
+            };
+            if let Some(intro) = intro {
+                ui.label(RichText::new(intro).color(p.ink));
+            }
+            let done = |step: Step| {
+                self.report_done
+                    .filter(|(taken, _)| *taken == step)
+                    .map(|(_, text)| text)
+            };
+            let step_card = match (&steps, row) {
+                (Some(steps), _) => steps.step_card,
+                (None, Some((_, row))) => !is_step(&row.input),
+                (None, None) => true,
+            };
+            let mut cards = vec![
+                report_panel::Card {
+                    title: present::SEND_JOIN_TITLE,
+                    button: Some((present::SEND_JOIN_BUTTON, Step::Join)),
+                    hint: present::SEND_JOIN_NOTE,
+                    done: done(Step::Join),
+                },
+                report_panel::Card {
+                    title: present::SEND_DM_TITLE,
+                    button: Some((present::SEND_DM_BUTTON, Step::Dm)),
+                    hint: steps
+                        .as_ref()
+                        .map_or(report_panel::DM_GENERAL, |steps| steps.dm_text.as_str()),
+                    done: done(Step::Dm),
+                },
+            ];
+            if step_card {
+                cards.push(report_panel::Card {
+                    title: present::SEND_STEP_TITLE,
+                    button: None,
+                    hint: report_panel::STEP_TEXT,
+                    done: None,
+                });
+            }
+            match report_panel::cards(ui, &p, selected, &cards) {
+                Some(Step::Join) => action = Some(Action::Join),
+                Some(Step::Dm) => action = Some(Action::Dm(selected)),
+                Some(Step::Github) | None => {}
+            }
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .add_enabled(
+                        !busy && report.is_some(),
+                        egui::Button::new("Anonymous report"),
+                    )
+                    .clicked()
+                {
+                    if let Some(index) = selected {
+                        action = Some(Action::Consent(index));
+                    }
+                }
+                if ui.button(present::REPORT_BUTTON).clicked() {
+                    action = Some(Action::Report(selected.filter(|_| report.is_some())));
+                }
+            });
+            if let Some(text) = done(Step::Github) {
+                ui.label(RichText::new(text).small().strong().color(p.ink));
+            }
+            if let (Some((index, row)), Some(file)) = (row, file) {
+                if row.report.is_some() {
+                    egui::CollapsingHeader::new(report_panel::MORE)
+                        .id_salt(("report-more", index, &row.input))
+                        .show(ui, |ui| {
+                            if file.can_report
+                                && ui
+                                    .add_enabled(!busy, egui::Button::new("Anonymous report"))
+                                    .clicked()
+                            {
+                                action = Some(Action::Consent(index));
+                            }
+                            if ui.button(present::REPORT_BUTTON).clicked() {
+                                action = Some(Action::Report(Some(index)));
+                            }
+                            if row.output.is_some() {
+                                if let Some(chosen) =
+                                    ask_ai_ui(ui, index, self.ai_prompts.get(&index), reveal_ai)
+                                {
+                                    action = Some(chosen);
+                                }
+                            }
+                            if file.error.is_some()
+                                && ui
+                                    .add_enabled(!busy, egui::Button::new("Diagnose this file"))
+                                    .clicked()
+                            {
+                                action = Some(Action::Diagnose(index));
+                            }
+                        });
+                }
+            }
+        }
+        // The anonymous review opens in the panel, under its steps, never in another window.
+        if self
+            .consent
+            .card
+            .as_ref()
+            .is_some_and(|card| Some(card.row) == selected)
+        {
+            ui.separator();
+            if let Some(chosen) = self.consent.ui(ui) {
+                action = Some(match chosen {
+                    crate::report_consent::Action::Private(index, file) => {
+                        Action::Private(index, file)
+                    }
+                    crate::report_consent::Action::Github(index) => Action::Report(Some(index)),
+                });
+            }
+        }
+        if let Some(action) = action {
+            self.notice = None;
+            if let Err(err) = self.act(action, ui.ctx()) {
+                self.notice = Some(err);
             }
         }
     }
@@ -2341,18 +2839,22 @@ enum Action {
     Reveal(PathBuf),
     Pick(Pick),
     Consent(usize),
-    /// Open the GitHub issue form about the row's file, filled in.
-    Report(usize),
+    /// Send the row's file privately on Discord, or the saved bundle given.
+    Private(usize, Option<PathBuf>),
+    /// Open the GitHub issue form about the row's file, filled in; the empty form without one.
+    Report(Option<usize>),
     /// Open the Discord invite.
     Join,
-    /// Copy the message about the row's file and open Dutchy's DM.
-    Dm(usize),
-    /// Copy the AI prompt for the row and show it on its card.
+    /// Copy the message about the row's file, or a general one, and open Dutchy's DM.
+    Dm(Option<usize>),
+    /// Copy the AI prompt for the row and show it in the report panel.
     AskAi(usize),
     /// Close the row's AI prompt.
     CloseAi(usize),
-    /// Open the row's "Something wrong? Report this file" section.
+    /// Choose the row's file in the report panel and bring the panel into view.
     OpenReport(usize),
+    /// Choose the row's file in the report panel.
+    SelectReport(usize),
 }
 
 /// One file's result: its status, what was written, and its losses.
@@ -2363,15 +2865,27 @@ fn row_ui(
     index: usize,
     row: &Row,
     view: &FileView,
-    policy: &ReportPolicy,
     has_app: bool,
     running: bool,
     log: Option<(&Path, bool)>,
-    ai: Option<&AiPrompt>,
 ) -> Option<Action> {
     let mut action = None;
+    // A partial history is not a full success: it is never shown in the success colour.
+    let partial = row
+        .report
+        .as_ref()
+        .and_then(|r| r.get("mode"))
+        .and_then(Value::as_str)
+        == Some("partial_history");
     let colour = match view.status {
         present::Status::Incomplete => p.lantern_text,
+        present::Status::Converted
+        | present::Status::ConvertedWithLosses
+        | present::Status::Flattened
+            if partial =>
+        {
+            p.lantern_text
+        }
         present::Status::Converted
         | present::Status::ConvertedWithLosses
         | present::Status::Flattened => p.spectre,
@@ -2445,13 +2959,32 @@ fn row_ui(
                 );
             });
             ui.label(event.running_line());
-            if let Some(total) = event.designs_total.filter(|total| *total > 0) {
-                ui.add(
-                    egui::ProgressBar::new(
-                        (event.designs_read as f32 / total as f32).clamp(0.0, 1.0),
-                    )
-                    .desired_width(200.0),
-                );
+            if let Some(feature) = event.feature_line() {
+                ui.label(feature);
+            }
+            if let Some(note) = event.measured_note() {
+                ui.label(RichText::new(note).small().color(p.tide));
+            }
+            let progress = event
+                .running
+                .as_ref()
+                .and_then(|step| step.feature.as_ref())
+                .filter(|feature| feature.total > 0)
+                .map(|feature| (feature.index, feature.total))
+                .or_else(|| {
+                    event
+                        .designs_total
+                        .filter(|total| *total > 0)
+                        .map(|total| (event.designs_read, total))
+                });
+            if let Some((current, total)) = progress {
+                ui.scope(|ui| {
+                    ui.visuals_mut().extreme_bg_color = p.surface_2;
+                    ui.add(
+                        egui::ProgressBar::new((current as f32 / total as f32).clamp(0.0, 1.0))
+                            .desired_width(ui.available_width()),
+                    );
+                });
             } else {
                 ui.add(egui::Spinner::new().size(14.0).color(p.lantern));
             }
@@ -2459,8 +2992,10 @@ fn row_ui(
             ui.add(egui::Spinner::new().size(14.0).color(p.lantern));
         }
     }
-    if let Some(status) = &view.capability {
-        ui.label(status);
+    if row.status != Status::Converting {
+        if let Some(status) = &view.capability {
+            ui.label(status);
+        }
     }
     if let Some(text) = &view.missing_summary {
         missing_ui(ui, p, text);
@@ -2476,39 +3011,14 @@ fn row_ui(
         });
     }
     if let Some(message) = &view.error {
-        ui.label(RichText::new(message).color(p.danger));
-        let mut diagnose = |ui: &mut egui::Ui| {
-            if ui
-                .add_enabled(!running, egui::Button::new("Diagnose this file"))
-                .clicked()
-            {
-                action = Some(Action::Diagnose(index));
-            }
-        };
-        match log {
-            Some((path, ready)) => {
-                if let Err(message) = platform::log_controls_with(ui, path, ready, diagnose) {
-                    action = Some(Action::Notice(message));
-                }
-            }
-            None => {
-                ui.horizontal_wrapped(|ui| diagnose(ui));
+        text_with_links(ui, message, p.danger);
+        if let Some((path, ready)) = log {
+            if let Err(message) = platform::log_controls(ui, path, ready) {
+                action = Some(Action::Notice(message));
             }
         }
-        if row.output.is_some() && row.report.is_some() {
-            if let Some(chosen) = ask_ai_ui(ui, index, ai) {
-                action = Some(chosen);
-            }
-        }
-        if view.can_report {
-            if let Some(report) = &row.report {
-                let steps =
-                    present::SendSteps::new(policy, row.size, report, present::Surface::Desktop);
-                // Folded, so the whole failed card fits the window at once.
-                if let Some(chosen) = send_ui(ui, p, index, &steps, true) {
-                    action = Some(chosen);
-                }
-            }
+        if row.report.is_some() && report_this_file(ui) {
+            action = Some(Action::OpenReport(index));
         }
         return action;
     }
@@ -2559,9 +3069,11 @@ fn row_ui(
                             1 => p.lantern_text,
                             _ => p.tide,
                         };
-                        egui::CollapsingHeader::new(
-                            RichText::new(&component.heading).color(colour),
-                        )
+                        egui::CollapsingHeader::new(wrapped_heading(
+                            ui,
+                            &component.heading,
+                            colour,
+                        ))
                         .id_salt(("component", index, n))
                         .show(ui, |ui| {
                             for loss in &component.lines {
@@ -2571,68 +3083,16 @@ fn row_ui(
                     }
                 });
         }
-        let has_losses = row
-            .report
-            .as_ref()
-            .and_then(|r| r.get("losses"))
-            .and_then(Value::as_array)
-            .is_some_and(|losses| !losses.is_empty());
-        let limited = has_losses
-            || view.status != present::Status::Converted
-            || row
-                .report
-                .as_ref()
-                .and_then(|r| r.get("mode"))
-                .and_then(Value::as_str)
-                == Some("partial_history");
-        let ask = has_losses && row.output.is_some();
-        let report_button = view.can_report && limited;
-        if !view.components.is_empty() || ask || report_button {
-            ui.horizontal_wrapped(|ui| {
-                if !view.components.is_empty() && ui.button("Save the full log…").clicked() {
-                    action = Some(Action::Pick(Pick::SaveLog(index)));
-                }
-                if ask && ui.button("Ask your AI about this file").clicked() {
-                    action = Some(Action::AskAi(index));
-                }
-                if report_button && ui.button("Report this file…").clicked() {
-                    action = Some(Action::OpenReport(index));
-                }
-            });
-        }
-        if ask {
-            if let Some(chosen) = ai_prompt_ui(ui, index, ai) {
-                action = Some(chosen);
+        ui.horizontal_wrapped(|ui| {
+            if !view.components.is_empty() && ui.button("Save the full log…").clicked() {
+                action = Some(Action::Pick(Pick::SaveLog(index)));
             }
-        }
-    }
-    if view.can_report && view.report_case == Some(present::ReportCase::Converted) {
-        if let Some(report) = &row.report {
-            // "Report this file…" opens the section and brings it into view.
-            let open_id = egui::Id::new(("open-report", index));
-            let force = ui
-                .ctx()
-                .data_mut(|data| data.remove_temp::<bool>(open_id))
-                .is_some();
-            let section = egui::CollapsingHeader::new(present::REPORT_CONVERTED)
-                .id_salt(("report-converted", index, &row.input))
-                .default_open(false)
-                .open(force.then_some(true))
-                .show(ui, |ui| {
-                    let steps = present::SendSteps::new(
-                        policy,
-                        row.size,
-                        report,
-                        present::Surface::Desktop,
-                    );
-                    if let Some(chosen) = send_ui(ui, p, index, &steps, false) {
-                        action = Some(chosen);
-                    }
-                });
-            if force {
-                section.header_response.scroll_to_me(Some(Align::Min));
+            // Every finished file has the way to report it, whatever the card says: Dutchman
+            // never decides for you that a result has no problem.
+            if report_this_file(ui) {
+                action = Some(Action::OpenReport(index));
             }
-        }
+        });
     }
     action
 }
@@ -2714,19 +3174,29 @@ struct AiPrompt {
 
 /// **Ask your AI about this file**: always copies, and the prompt it copied stays open under the
 /// button, with a Copy button, until closed or the card is replaced.
-fn ask_ai_ui(ui: &mut egui::Ui, index: usize, ai: Option<&AiPrompt>) -> Option<Action> {
+fn ask_ai_ui(
+    ui: &mut egui::Ui,
+    index: usize,
+    ai: Option<&AiPrompt>,
+    reveal: bool,
+) -> Option<Action> {
     let mut action = None;
     if ui.button("Ask your AI about this file").clicked() {
         action = Some(Action::AskAi(index));
     }
-    ai_prompt_ui(ui, index, ai).or(action)
+    ai_prompt_ui(ui, index, ai, reveal).or(action)
 }
 
 /// Lines of the prompt box shown at once; the rest scrolls inside it.
 const AI_PROMPT_LINES: f32 = 5.0;
 
 /// The copied prompt under the button, with "Copied" for a moment after a copy.
-fn ai_prompt_ui(ui: &mut egui::Ui, index: usize, ai: Option<&AiPrompt>) -> Option<Action> {
+fn ai_prompt_ui(
+    ui: &mut egui::Ui,
+    index: usize,
+    ai: Option<&AiPrompt>,
+    reveal: bool,
+) -> Option<Action> {
     let mut action = None;
     let Some(ai) = ai else {
         return action;
@@ -2750,7 +3220,7 @@ fn ai_prompt_ui(ui: &mut egui::Ui, index: usize, ai: Option<&AiPrompt>) -> Optio
                     .id_salt(("ask-ai-text", index)),
             );
         });
-    ui.horizontal(|ui| {
+    let buttons = ui.horizontal(|ui| {
         if ui.button("Copy").clicked() {
             action = Some(Action::AskAi(index));
         }
@@ -2758,7 +3228,18 @@ fn ai_prompt_ui(ui: &mut egui::Ui, index: usize, ai: Option<&AiPrompt>) -> Optio
             action = Some(Action::CloseAi(index));
         }
     });
+    // Just copied: bring the prompt and its buttons into view.
+    if reveal {
+        buttons.response.scroll_to_me(None);
+    }
     action
+}
+
+/// Whether the file at `path` is a STEP file, which needs no STEP export beside it.
+fn is_step(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("step") || ext.eq_ignore_ascii_case("stp"))
 }
 
 /// A folder that replaces the platform diagnostics folder for every app created after it is
@@ -2809,115 +3290,60 @@ fn test_diagnostics_folder() -> Option<PathBuf> {
     None
 }
 
-/// The narrowest a step card gets before the cards wrap onto another line.
-const MIN_STEP_WIDTH: f32 = 190.0;
-
-/// The way to send a file privately, and the anonymous report beside it.
-/// "Review and send report", then the other ways to send the file: in a collapsed
-/// "Help us fix it" section when `fold`, else shown in full.
-fn send_ui(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    index: usize,
-    steps: &present::SendSteps,
-    fold: bool,
-) -> Option<Action> {
-    let mut action = None;
-    if ui.button("Review and send report").clicked() {
-        action = Some(Action::Consent(index));
-    }
-    let other = if fold {
-        egui::CollapsingHeader::new(present::SEND_FOLD)
-            .id_salt(("send-fold", index))
-            .default_open(false)
-            .show(ui, |ui| send_ways_ui(ui, p, index, steps))
-            .body_returned
-            .flatten()
-    } else {
-        send_ways_ui(ui, p, index, steps)
-    };
-    other.or(action)
+/// The card's way into the "Is there a problem?" panel for its file.
+fn report_this_file(ui: &mut egui::Ui) -> bool {
+    ui.button(REPORT_THIS_FILE)
+        .on_hover_text("Choose this file in \"Is there a problem? Is something missing?\"")
+        .clicked()
 }
 
-/// Discord, the DM with Dutchy, a STEP export and the anonymous GitHub report.
-fn send_ways_ui(
-    ui: &mut egui::Ui,
-    p: &Palette,
-    index: usize,
-    steps: &present::SendSteps,
-) -> Option<Action> {
-    let mut action = None;
-    ui.add_space(theme::SPACE_2);
-    ui.label(RichText::new(steps.intro).color(p.ink));
-    ui.add_space(theme::SPACE_2);
-    let cards: &[usize] = if steps.step_card { &[0, 1, 2] } else { &[0, 1] };
-    let gap = ui.spacing().item_spacing.x;
-    let across = ((ui.available_width() + gap) / (MIN_STEP_WIDTH + gap)).floor() as usize;
-    let across = across.clamp(1, cards.len());
-    for (line, chunk) in cards.chunks(across).enumerate() {
-        // Cards on a line share the height of last frame's tallest.
-        let id = ui.id().with(("send-line", index, line, across));
-        let height = ui.data(|data| data.get_temp::<f32>(id)).unwrap_or(0.0);
-        let mut tallest = 0.0_f32;
-        ui.columns(across, |columns| {
-            for (ui, &card) in columns.iter_mut().zip(chunk) {
-                let fill = if card == 2 {
-                    egui::Color32::TRANSPARENT
-                } else {
-                    p.surface_2
-                };
-                framed(ui, p, fill, false, |ui| {
-                    ui.set_min_height(height);
-                    let shown = ui.scope(|ui| match card {
-                        0 => {
-                            step_title(ui, p, present::SEND_JOIN_TITLE);
-                            if ui.button(present::SEND_JOIN_BUTTON).clicked() {
-                                action = Some(Action::Join);
-                            }
-                            step_text(ui, p, present::SEND_JOIN_NOTE);
-                        }
-                        1 => {
-                            step_title(ui, p, present::SEND_DM_TITLE);
-                            if ui.button(present::SEND_DM_BUTTON).clicked() {
-                                action = Some(Action::Dm(index));
-                            }
-                            step_text(ui, p, &steps.dm_text);
-                        }
-                        _ => {
-                            ui.label(RichText::new(present::SEND_STEP_TITLE).color(p.tide));
-                            step_text(ui, p, present::SEND_STEP_TEXT);
-                        }
-                    });
-                    tallest = tallest.max(shown.response.rect.height());
-                });
+/// The button on every finished card that chooses its file in the report panel.
+pub const REPORT_THIS_FILE: &str = "Report this file…";
+
+/// `text` in `colour`, with each web address in it as a link that opens it.
+fn text_with_links(ui: &mut egui::Ui, text: &str, colour: egui::Color32) {
+    let mut parts = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("https://") {
+        let before = rest.get(..at).unwrap_or_default();
+        let from = rest.get(at..).unwrap_or_default();
+        let end = from.find(char::is_whitespace).unwrap_or(from.len());
+        // A sentence's closing punctuation is not part of the address.
+        let url = from
+            .get(..end)
+            .unwrap_or_default()
+            .trim_end_matches(['.', ',', ';', ':', ')']);
+        parts.push((before, None));
+        parts.push(("", Some(url)));
+        rest = from.get(url.len()..).unwrap_or_default();
+    }
+    if parts.is_empty() {
+        ui.label(RichText::new(text).color(colour));
+        return;
+    }
+    parts.push((rest, None));
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        for (words, url) in parts {
+            match url {
+                Some(url) => {
+                    ui.hyperlink_to(url, url);
+                }
+                None if !words.is_empty() => {
+                    ui.label(RichText::new(words).color(colour));
+                }
+                None => {}
             }
-        });
-        ui.data_mut(|data| data.insert_temp(id, tallest));
-        ui.add_space(theme::SPACE_2);
-    }
-    ui.label(
-        RichText::new(present::SEND_SMALL_PRINT)
-            .small()
-            .color(p.tide),
-    );
-    let report = ui
-        .button(present::REPORT_BUTTON)
-        .on_hover_text(present::REPORT_HELP);
-    if report.clicked() {
-        action = Some(Action::Report(index));
-    }
-    action
-}
-
-fn step_title(ui: &mut egui::Ui, p: &Palette, text: &str) {
-    ui.label(RichText::new(text).strong().color(p.ink));
-}
-
-fn step_text(ui: &mut egui::Ui, p: &Palette, text: &str) {
-    // Left-aligned: a justified column would stretch the gaps between words.
-    ui.with_layout(Layout::top_down(Align::Min), |ui| {
-        ui.label(RichText::new(text).small().color(p.tide));
+        }
     });
+}
+
+/// A collapsing header's title that wraps within the card instead of running past its edge.
+fn wrapped_heading(ui: &egui::Ui, text: &str, colour: egui::Color32) -> egui::WidgetText {
+    let width = (ui.available_width() - ui.spacing().indent - theme::SPACE_2).max(40.0);
+    let font = egui::TextStyle::Button.resolve(ui.style());
+    let galley = ui.painter().layout(text.to_owned(), font, colour, width);
+    egui::WidgetText::Galley(galley)
 }
 
 /// History decisions must be visible even while the full loss log is collapsed.
@@ -3107,7 +3533,121 @@ mod tests {
     use super::*;
 
     #[test]
-    fn results_scroll_to_the_last_private_send_option() {
+    fn share_links_queue_separately_from_local_files() {
+        let mut harness = egui_kittest::Harness::builder().build_eframe(|cc| App::new(cc));
+        let app = harness.state_mut();
+        app.add_inputs([
+            PathBuf::from("https://a360.co/synthetic"),
+            PathBuf::from("cube.f3d"),
+        ]);
+        assert_eq!(app.inputs, vec![PathBuf::from("cube.f3d")]);
+        assert_eq!(app.pending_links, vec!["https://a360.co/synthetic"]);
+        assert_eq!(app.out_dir, Some(PathBuf::from("cube (SolidCraft)")));
+        app.queue_links("https://a360.co/synthetic");
+        assert_eq!(app.pending_links.len(), 1);
+    }
+
+    #[test]
+    fn share_links_accept_pasted_and_dropped_uri_text_without_network() {
+        for dropped in [false, true] {
+            let mut harness = egui_kittest::Harness::builder().build_eframe(|cc| App::new(cc));
+            let app = harness.state_mut();
+            let ctx = egui::Context::default();
+            let mut input = egui::RawInput::default();
+            // HTTP is refused before any connection, including when entered through the UI.
+            if dropped {
+                input.dropped_files.push(egui::DroppedFile {
+                    mime: "text/uri-list".into(),
+                    bytes: Some(std::sync::Arc::from(
+                        b"# public link\r\nhttp://a360.co/synthetic\r\n".as_slice(),
+                    )),
+                    ..Default::default()
+                });
+            } else {
+                input
+                    .events
+                    .push(egui::Event::Paste("http://a360.co/synthetic".into()));
+            }
+            let _ = ctx.run(input, |ctx| app.take_dropped_files(ctx));
+            assert!(app.running());
+            assert!(app.inputs.is_empty());
+            assert!(app.out_dir.is_none());
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while app.downloading && std::time::Instant::now() < deadline {
+                app.receive(&ctx);
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            assert!(!app.running());
+            assert_eq!(
+                app.notice.as_deref(),
+                Some("The share link leads to a host or network address that is not allowed. Download the file yourself and drop it into Dutchman.")
+            );
+            assert!(!app.notice.as_ref().unwrap().contains("synthetic"));
+            let scratch = app.download_root.as_ref().unwrap().path().to_path_buf();
+            assert!(scratch.exists());
+            drop(harness);
+            assert!(!scratch.exists());
+        }
+    }
+
+    #[test]
+    fn share_links_field_adds_a_link_and_reports_download_errors() {
+        use egui_kittest::kittest::Queryable;
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(1000.0, 1000.0))
+            .build_eframe(|cc| App::new(cc));
+        harness.state_mut().share_link = "http://a360.co/synthetic".into();
+        harness.run_steps(2);
+        harness.get_by_label("Add link").click();
+        harness.run_steps(4);
+        assert!(harness.state().share_link.is_empty());
+        assert!(harness.state().inputs.is_empty());
+        assert!(harness.state().pending_links.is_empty());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while harness.state().downloading && std::time::Instant::now() < deadline {
+            let ctx = harness.ctx.clone();
+            harness.state_mut().receive(&ctx);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!harness.state().running());
+        assert_eq!(
+            harness.state().notice.as_deref(),
+            Some("The share link leads to a host or network address that is not allowed. Download the file yourself and drop it into Dutchman.")
+        );
+    }
+
+    #[test]
+    fn anonymous_versions_describe_the_conversion_instead_of_current_settings() {
+        let mut harness = egui_kittest::Harness::builder().build_eframe(|cc| {
+            let mut app = App::new(cc);
+            app.options.no_verify = true;
+            app.found_version = Some("0.45.2".into());
+            app.rows.push(Row {
+                input: PathBuf::from("synthetic.f3d"),
+                output: Some(PathBuf::from("synthetic.sc")),
+                status: Status::Converted,
+                progress: None,
+                job: None,
+                size: Some(100),
+                report: Some(json!({
+                    "ok": true,
+                    "solidcraft": {"found": "0.44.1"},
+                    "verification": {"status": "verified"}
+                })),
+            });
+            app
+        });
+        let (anonymous, _, _) = harness.state().anonymous(0).unwrap().unwrap();
+        assert_eq!(anonymous["versions"]["solidcraft"], "0.44.1");
+        assert_eq!(anonymous["run"]["verify"], true);
+        harness.state_mut().rows[0].report = Some(json!({"ok": false}));
+        let (anonymous, _, _) = harness.state().anonymous(0).unwrap().unwrap();
+        assert!(anonymous["versions"]["solidcraft"].is_null());
+        assert_eq!(anonymous["run"]["verify"], false);
+    }
+
+    #[test]
+    fn a_card_brings_the_report_panel_to_its_file() {
         use egui_kittest::kittest::Queryable;
         let mut harness = egui_kittest::Harness::builder()
             .with_size(egui::vec2(760.0, 680.0))
@@ -3124,75 +3664,55 @@ mod tests {
                 app
             });
         harness.run_steps(8);
-        // The other ways to send a failed file are folded under "Help us fix it".
+        // One panel for all of them, about the first until another is chosen.
+        assert_eq!(
+            harness.query_all_by_label(present::SEND_DM_BUTTON).count(),
+            1
+        );
+        harness.get_by_value("About synthetic-0.f3d");
         harness
-            .query_all_by_label(present::SEND_FOLD)
+            .query_all_by_label(REPORT_THIS_FILE)
             .last()
             .unwrap()
             .click_accesskit();
-        harness.run_steps(8);
-        harness
-            .query_all_by_label(present::SEND_DM_BUTTON)
-            .last()
-            .unwrap()
-            .scroll_to_me();
         harness.run_steps(12);
-        let button = harness
-            .query_all_by_label(present::SEND_DM_BUTTON)
-            .last()
-            .unwrap()
-            .rect();
-        assert!(button.top() > 80.0);
-        assert!(button.bottom() < 620.0);
+        assert_eq!(harness.state().report_row, Some(5));
+        harness.get_by_value("About synthetic-5.f3d");
+        let button = harness.get_by_label(present::SEND_DM_BUTTON).rect();
+        assert!(button.top() > 80.0, "{button:?}");
+        assert!(button.bottom() < 620.0, "{button:?}");
     }
 
     #[test]
-    fn failed_card_offers_diagnosis_after_a_click() {
+    fn failed_card_offers_diagnosis_under_more_after_a_click() {
         use egui_kittest::kittest::Queryable;
         let mut harness = egui_kittest::Harness::builder()
-            .with_size(egui::vec2(900.0, 1000.0))
-            .build_state(
-                |ctx, chosen| {
-                    egui::CentralPanel::default().show(ctx, |ui| {
-                        let row = Row {
-                            input: PathBuf::from("synthetic.f3d"),
-                            output: None,
-                            status: Status::Failed,
-                            progress: None,
-                            job: None,
-                            size: None,
-                            report: Some(
-                                json!({"ok": false, "error": {"message": "Conversion stopped."}}),
-                            ),
-                        };
-                        let view = row.view();
-                        if let Some(Action::Diagnose(0)) = row_ui(
-                            ui,
-                            theme::palette(ui),
-                            0,
-                            &row,
-                            &view,
-                            ReportPolicy::bundled(),
-                            false,
-                            false,
-                            None,
-                            None,
-                        ) {
-                            *chosen = true;
-                        }
-                    });
-                },
-                false,
-            );
+            .with_size(egui::vec2(1100.0, 1000.0))
+            .build_eframe(|cc| {
+                let mut app = App::new(cc);
+                app.rows.push(Row {
+                    input: PathBuf::from("synthetic.f3d"),
+                    output: None,
+                    status: Status::Failed,
+                    progress: None,
+                    job: None,
+                    size: None,
+                    report: Some(json!({"ok": false, "error": {"message": "Conversion stopped."}})),
+                });
+                app
+            });
+        harness.run_steps(4);
+        assert!(harness.query_by_label("Diagnose this file").is_none());
+        harness.get_by_label(report_panel::MORE).click_accesskit();
+        harness.run_steps(4);
+        assert!(harness.state().diagnosis.is_none());
+        harness.get_by_label("Diagnose this file").click_accesskit();
         harness.run_steps(2);
-        assert!(!harness.state());
-        harness.get_by_label("Diagnose this file").click();
-        harness.run_steps(2);
-        assert!(*harness.state());
+        assert!(harness.state().diagnosis.is_some());
     }
 
     #[test]
-    fn converted_card_reports_only_after_expanding_and_reviews_exact_metadata() {
+    fn converted_card_shows_the_steps_at_once_and_reviews_exact_metadata() {
         use egui_kittest::kittest::Queryable;
         for width in [1100.0, 520.0] {
             let dir = tempfile::tempdir().unwrap();
@@ -3224,24 +3744,29 @@ mod tests {
                     app
                 });
             harness.run_steps(8);
-            harness.get_by_label(present::REPORT_CONVERTED);
-            assert!(harness.query_by_label("Review and send report").is_none());
-            assert!(harness.query_by_label(present::SEND_DM_BUTTON).is_none());
-            harness
-                .get_by_label(present::REPORT_CONVERTED)
-                .click_accesskit();
-            harness.run_steps(8);
-            assert!(harness.query_by_label("Diagnose this file").is_none());
-            let review = harness.get_by_label("Review and send report").rect();
+            // The question and its steps show at once; the anonymous review is under More.
+            harness.get_by_label(report_panel::QUESTION);
+            harness.get_by_label("Anonymous report");
             let join = harness.get_by_label(present::SEND_JOIN_BUTTON).rect();
             let dm = harness.get_by_label(present::SEND_DM_BUTTON).rect();
-            assert!(review.bottom() < join.top());
-            assert!(join.top() <= dm.top());
+            harness.get_by_label(report_panel::MORE).click_accesskit();
+            harness.run_steps(8);
+            assert!(harness.query_by_label("Diagnose this file").is_none());
+            let review = harness
+                .query_all_by_label("Anonymous report")
+                .last()
+                .unwrap()
+                .rect();
+            // Discord first: the invite's card stands left of the DM's, both above More.
+            assert!(join.right() <= dm.left());
+            assert!(join.bottom() < review.top() && dm.bottom() < review.top());
             for rect in [review, join, dm] {
                 assert!(rect.left() >= 0.0 && rect.right() <= width);
             }
             harness
-                .get_by_label("Review and send report")
+                .query_all_by_label("Anonymous report")
+                .next()
+                .unwrap()
                 .click_accesskit();
             harness.run_steps(8);
             harness.get_by_label("This file converted, but the result is wrong.");
@@ -3263,6 +3788,100 @@ mod tests {
             assert!(!text.contains("claim_secret"));
             assert!(metadata.get("description").is_none());
             assert!(!card.folder.join("submission.json").exists());
+        }
+    }
+
+    #[test]
+    fn private_attachment_drives_the_panel_and_dm_on_both_sides_of_the_limit() {
+        use egui_kittest::kittest::Queryable;
+        static SHOWN: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+        for (original_mb, bundle_mb) in [(60, 2), (2, 60)] {
+            let dir = tempfile::tempdir().unwrap();
+            let original = dir.path().join("original.f3d");
+            let bundle = dir.path().join("selected-bundle.zip");
+            std::fs::File::create(&original)
+                .unwrap()
+                .set_len(original_mb << 20)
+                .unwrap();
+            std::fs::File::create(&bundle)
+                .unwrap()
+                .set_len(bundle_mb << 20)
+                .unwrap();
+            let shown = &SHOWN;
+            let mut h = egui_kittest::Harness::builder()
+                .with_size(egui::vec2(1600.0, 1000.0))
+                .build_eframe(|cc| {
+                    let mut app = App::new(cc);
+                    app.file_manager = |path| {
+                        SHOWN.lock().unwrap().push(path.to_path_buf());
+                        Ok(())
+                    };
+                    app.rows.push(Row {
+                        input: original.clone(),
+                        output: None,
+                        status: Status::Failed,
+                        progress: None,
+                        report: Some(json!({"ok": false,
+                        "input": {"path": original, "format": "fusion_archive"},
+                        "error": {"stage": "decode", "kind": "decode"}})),
+                        job: None,
+                        size: Some(original_mb << 20),
+                    });
+                    app
+                });
+            for file in [None, Some(bundle.clone())] {
+                let ctx = h.ctx.clone();
+                h.state_mut()
+                    .act(Action::Private(0, file.clone()), &ctx)
+                    .unwrap();
+                h.run_steps(12);
+                let mb = if file.is_some() {
+                    bundle_mb
+                } else {
+                    original_mb
+                };
+                let path = file.as_ref().unwrap_or(&original);
+                let steps = present::SendSteps::new(
+                    h.state().report_policy.policy(),
+                    Some(mb << 20),
+                    h.state().rows[0].report.as_ref().unwrap(),
+                    present::Surface::Desktop,
+                );
+                h.get_by_label(&steps.dm_text);
+                if file.is_some() {
+                    h.get_by_label("Private attachment: selected-bundle.zip (bundle)");
+                } else {
+                    assert!(h.query_by_label_contains("Private attachment:").is_none());
+                }
+                shown.lock().unwrap().clear();
+                h.get_by_label(present::SEND_DM_BUTTON).click_accesskit();
+                h.step();
+                let text = h
+                    .output()
+                    .platform_output
+                    .commands
+                    .iter()
+                    .find_map(|command| match command {
+                        egui::OutputCommand::CopyText(text) => Some(text),
+                        _ => None,
+                    })
+                    .unwrap();
+                assert!(text.contains(&format!("Size: {mb} MB.")), "{text}");
+                assert_eq!(
+                    *shown.lock().unwrap(),
+                    if steps.drag {
+                        vec![path.clone()]
+                    } else {
+                        vec![]
+                    }
+                );
+                h.run_steps(8);
+                h.get_by_label(if steps.drag {
+                    report_panel::DM_DONE_DRAG
+                } else {
+                    report_panel::DM_DONE_LINK
+                });
+            }
         }
     }
 
@@ -3703,18 +4322,7 @@ mod tests {
                         egui::CentralPanel::default().show(ctx, |ui| {
                             let p = *theme::palette(ui);
                             *card_rect = card(ui, &p, |ui| {
-                                row_ui(
-                                    ui,
-                                    &p,
-                                    0,
-                                    &row,
-                                    &view,
-                                    ReportPolicy::bundled(),
-                                    true,
-                                    false,
-                                    None,
-                                    None,
-                                );
+                                row_ui(ui, &p, 0, &row, &view, true, false, None);
                             })
                             .rect;
                         });
@@ -3795,18 +4403,7 @@ mod tests {
             .build_ui(|ui| {
                 theme::install(ui.ctx());
                 let p = *theme::palette(ui);
-                row_ui(
-                    ui,
-                    &p,
-                    0,
-                    &row,
-                    &row.view(),
-                    ReportPolicy::bundled(),
-                    true,
-                    false,
-                    None,
-                    None,
-                );
+                row_ui(ui, &p, 0, &row, &row.view(), true, false, None);
             });
         harness.run_steps(8);
         assert!(harness.query_by_label(message).is_some());
@@ -3875,18 +4472,7 @@ mod tests {
                 let p = *theme::palette(ui);
                 for (index, row) in rows.iter().enumerate() {
                     card(ui, &p, |ui| {
-                        row_ui(
-                            ui,
-                            &p,
-                            index,
-                            row,
-                            &row.view(),
-                            ReportPolicy::bundled(),
-                            true,
-                            false,
-                            None,
-                            None,
-                        );
+                        row_ui(ui, &p, index, row, &row.view(), true, false, None);
                     });
                     ui.add_space(theme::SPACE_2);
                 }
@@ -3901,11 +4487,11 @@ mod tests {
             "Losses: 1 Degraded",
             "Losses: 1 Dropped",
             "cannot read this design: no geometry could be read",
-            "Review and send report",
-            present::SEND_FOLD,
         ] {
             assert!(harness.query_by_label(label).is_some(), "missing {label}");
         }
+        // Every finished card, clean or not, has the way to report it.
+        assert_eq!(harness.query_all_by_label(REPORT_THIS_FILE).count(), 4);
         use egui_kittest::kittest::NodeT;
         let labels = harness
             .query_all_by(|node| node.label().is_some())
@@ -3966,6 +4552,7 @@ mod tests {
                     usual_ms: 60_000,
                     limit_ms: None,
                     consequence: None,
+                    feature: None,
                 }),
             }),
         };
@@ -4020,18 +4607,7 @@ mod tests {
                 .build_ui(|ui| {
                     theme::install(ui.ctx());
                     let p = *theme::palette(ui);
-                    row_ui(
-                        ui,
-                        &p,
-                        0,
-                        &row,
-                        &row.view(),
-                        ReportPolicy::bundled(),
-                        true,
-                        false,
-                        None,
-                        None,
-                    );
+                    row_ui(ui, &p, 0, &row, &row.view(), true, false, None);
                 });
             harness.run_steps(2);
             assert!(harness.query_by_label(&event.running_line()).is_some());

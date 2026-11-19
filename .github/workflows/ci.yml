@@ -3,14 +3,21 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
-  # The merge queue (docs/merge-queue.md) tests each group on a temporary branch: judged like a
-  # pull request, against the commit the group is based on.
+  schedule:
+    - cron: "0 6 * * *"
+  # The merge queue runs Linux checks; main and tags run the full matrix.
   merge_group:
     types: [checks_requested]
   # Started by hand, and by the SolidCraft window workflow for the pull request it opens (pull
-  # requests opened with the default token do not start workflows). Judged like a pull request.
+  # requests opened with the default token do not start workflows). Runs the full matrix.
   workflow_dispatch:
+    inputs:
+      release-builds:
+        description: Also build all release archives and installers
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -30,13 +37,13 @@ env:
 # runs started by hand on main) save, so pull requests and merge queue groups never evict each other's or main's cache.
 
 jobs:
-  # Whether the change touches Rust code, which the macOS tests (macOS runners are scarce) wait on;
-  # whether it is code at all (a docs-only change runs only the docs and release-notes jobs);
-  # or the Docker image, which the Docker job waits on (on pull requests, only the image's own
-  # inputs; on main, any crate).
+  # Pull requests and queue groups share path filters. Main, nightly, tags and manual runs
+  # always exercise the full matrix after merge.
   changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
+      full: ${{ github.event_name != 'pull_request' && github.event_name != 'merge_group' }}
       rust: ${{ steps.diff.outputs.rust }}
       code: ${{ steps.diff.outputs.code }}
       docker: ${{ steps.diff.outputs.docker }}
@@ -48,8 +55,11 @@ jobs:
         env:
           BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
         run: |
-          if [ "${{ github.event_name }}" = workflow_dispatch ]; then
-            BASE=$(git merge-base origin/main HEAD)
+          if [ "${{ github.event_name }}" != pull_request ] && [ "${{ github.event_name }}" != merge_group ]; then
+            echo "rust=true" >> "$GITHUB_OUTPUT"
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "docker=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           if ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
             echo "rust=true" >> "$GITHUB_OUTPUT"
@@ -71,8 +81,7 @@ jobs:
           else
             echo "rust=false" >> "$GITHUB_OUTPUT"
           fi
-          # The image is a full release build (40-80 minutes), so pull requests build it only when
-          # the image itself or the web server it serves changes; every push to main builds it.
+          # Keep main's existing image path filter; PRs never build the image.
           if [ "${{ github.event_name }}" = push ]; then
             image='^(crates/|Cargo\.(toml|lock)$|Dockerfile$|\.dockerignore$|\.github/workflows/ci\.yml$)'
           else
@@ -88,6 +97,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -97,6 +107,7 @@ jobs:
 
   release-notes:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
         with:
@@ -127,6 +138,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -143,18 +155,21 @@ jobs:
   # dutchman-solidcraft turns on every input format plus FreeCAD, so the codecs are checked too.
   wasm:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.full == 'true' && needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: wasm32-wasip2
+          targets: wasm32-wasip2,wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: wasm32-wasip2
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo check --locked --target wasm32-wasip2 -p dutchman-core -p dutchman-solidcraft --no-default-features
+      # The SolidCraft plugin component: wasm32-unknown-unknown, no WASI (docs/plugin.md).
+      - run: cargo check --locked --target wasm32-unknown-unknown -p dutchman-plugin
 
   test:
     needs: changes
@@ -162,27 +177,24 @@ jobs:
     # Debug-profile build and tests on Linux x86_64 and ARM64 and Windows (macOS is test-macos
     # below). Inventor and SolidWorks users are mostly on Windows; macOS has a case-insensitive
     # filesystem. Both matter to finding an assembly's part files. The optimised release builds
-    # are not made here: release-build.yml makes them for release and packaging changes.
+    # are not made here: release-build.yml makes them on tags and by hand.
     strategy:
       fail-fast: false
       matrix:
         # ARM64 is test-arm below, which gets a second try when its runner is shut down.
-        os: [ubuntu-latest, windows-latest]
+        os: ${{ fromJSON((github.event_name == 'pull_request' || github.event_name == 'merge_group') && '["ubuntu-latest"]' || '["ubuntu-latest", "windows-latest"]') }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.os == 'windows-latest' && 30 || 25 }}
     env:
       # Debug info is most of a cold Windows build's time and is not needed to run the tests.
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
-      # The Linux runner fills its disk building every crate's tests: free toolchains no job
-      # here uses.
-      - name: Free disk space
-        if: runner.os == 'Linux'
-        run: |
-          df -h /
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-          df -h /
+      # Keep the low-space fallback for older images without deleting 19 GiB on every run.
       - uses: actions/checkout@v7
+      - name: Check free disk space
+        if: runner.os == 'Linux'
+        run: bash scripts/ci-disk-space.sh
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -201,13 +213,14 @@ jobs:
         run: cargo test --locked -p dutchman --no-default-features
 
   # The tests on Linux ARM64, as test runs them. GitHub's ARM runners are sometimes shut down
-  # mid-job (exit code 143, "The runner has received a shutdown signal"); test-arm-again then
-  # runs them once more, and ci-result counts that second try in place of the first.
+  # mid-job (exit code 143, "The runner has received a shutdown signal") or freeze until the
+  # job times out; test-arm-again retries once, and ci-result counts that second try.
   test-arm:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.full == 'true' && needs.changes.outputs.code == 'true'
     name: test (ubuntu-24.04-arm)
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 230
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
@@ -215,12 +228,9 @@ jobs:
       # core it is shut down while compiling the desktop app and web crates.
       CARGO_BUILD_JOBS: "2"
     steps:
-      - name: Free disk space
-        run: |
-          df -h /
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-          df -h /
       - uses: actions/checkout@v7
+      - name: Check free disk space
+        run: bash scripts/ci-disk-space.sh
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -229,12 +239,13 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo test --workspace --locked --features dutchman-gui/test-support
 
-  # A second try of test-arm, only when its runner was shut down; a real failure is not retried.
+  # Retry test-arm after a timeout or runner shutdown; never retry a cancelled workflow or test failure.
   test-arm-again:
     needs: [changes, test-arm]
-    if: always() && needs.changes.outputs.code == 'true' && needs.test-arm.result == 'failure'
+    if: always() && !cancelled() && needs.changes.outputs.full == 'true' && needs.changes.outputs.code == 'true' && (needs.test-arm.result == 'failure' || needs.test-arm.result == 'cancelled')
     name: test (ubuntu-24.04-arm, again)
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 230
     permissions:
       contents: read
       actions: read
@@ -246,14 +257,21 @@ jobs:
       # core it is shut down while compiling the desktop app and web crates.
       CARGO_BUILD_JOBS: "2"
     steps:
-      - name: Retry only after a runner shutdown
+      - name: Retry only after a timeout or runner shutdown
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          job=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs" --paginate \
-            -q '.jobs[] | select(.name == "test (ubuntu-24.04-arm)") | .id' | head -1)
+          set -o pipefail
+          record=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}/jobs" --paginate \
+            -q '.jobs[] | select(.name == "test (ubuntu-24.04-arm)") | [.id, .conclusion, .check_run_url] | @tsv' | head -1)
+          IFS=$'\t' read -r job conclusion check_url <<<"$record"
           [ -n "$job" ] || { echo "test (ubuntu-24.04-arm) not found in this run" >&2; exit 1; }
-          notes=$(gh api "repos/${GITHUB_REPOSITORY}/check-runs/${job}/annotations" -q '.[].message')
+          if [ "$conclusion" = timed_out ]; then
+            echo "The ARM job timed out; trying the tests once more."
+            exit 0
+          fi
+          [ "$conclusion" = failure ] || { echo "The ARM job was not a failure or timeout; not retried." >&2; exit 1; }
+          notes=$(gh api "$check_url/annotations" -q '.[].message')
           echo "$notes"
           if grep -qE 'exit code 143|shutdown signal' <<<"$notes"; then
             echo "The ARM runner was shut down; trying the tests once more."
@@ -261,12 +279,9 @@ jobs:
             echo "test (ubuntu-24.04-arm) failed on its own; not retried." >&2
             exit 1
           fi
-      - name: Free disk space
-        run: |
-          df -h /
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-          df -h /
       - uses: actions/checkout@v7
+      - name: Check free disk space
+        run: bash scripts/ci-disk-space.sh
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -280,6 +295,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'false'
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
@@ -297,8 +313,9 @@ jobs:
   test-macos:
     name: test (macos-latest)
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.full == 'true' && needs.changes.outputs.rust == 'true'
     runs-on: macos-latest
+    timeout-minutes: 95
     env:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
@@ -315,14 +332,35 @@ jobs:
   # Builds the Docker image (docs/docker.md), converts a fixture in it, starts its MCP server,
   # and converts a fixture through its web server (docs/web.md).
   docker:
-    needs: changes
-    if: needs.changes.outputs.docker == 'true'
+    needs: [changes, placements]
+    if: always() && !cancelled() && needs.changes.outputs.full == 'true' && needs.changes.outputs.docker == 'true' && (needs.changes.outputs.full != 'true' || needs.placements.result == 'success')
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Select source Docker coverage
+        id: source
+        if: needs.changes.outputs.full == 'true'
+        env:
+          BASE: ${{ github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}
+        run: python3 scripts/ci-docker-source.py --base "$BASE" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v8
+        if: needs.changes.outputs.full == 'true'
+        with:
+          name: dutchman-bin
+          path: bin
+      - name: Prepare the image from the placement programs
+        if: needs.changes.outputs.full == 'true'
+        run: |
+          mkdir -p build-context/image/amd64/licences
+          cp bin/dutchman bin/dutchman-mcp bin/dutchman-web LICENSE NOTICE build-context/image/amd64/
+          cp licences/*.txt build-context/image/amd64/licences/
       - uses: docker/setup-buildx-action@v4
-      - uses: docker/build-push-action@v7
+      - name: Build the source Dockerfile
+        uses: docker/build-push-action@v7
+        if: needs.changes.outputs.full != 'true' || steps.source.outputs.required == 'true'
         with:
           context: .
           load: true
@@ -334,6 +372,17 @@ jobs:
           cache-from: type=gha
           # Only main writes the layer cache; a pull request reads it.
           cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,mode=max' || '' }}
+      - name: Build the image from the placement programs
+        if: needs.changes.outputs.full == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: build-context
+          file: docker/release.Dockerfile
+          load: true
+          tags: dutchman:ci
+          cache-from: type=gha,scope=ci-runtime
+          # Queue groups and tags restore but never compete to write the runtime cache.
+          cache-to: ${{ github.ref == 'refs/heads/main' && 'type=gha,mode=max,scope=ci-runtime' || '' }}
       - name: Convert a fixture in the image
         run: |
           fixtures="$PWD/crates/dutchman-core/tests/fixtures"
@@ -360,8 +409,9 @@ jobs:
 
   msrv:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.full == 'true' && needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.88
@@ -372,14 +422,14 @@ jobs:
       - run: cargo check --workspace --locked
 
   # Opens converted designs in the newest and oldest releases in the rolling 14-day
-  # window (NEWEST_SOLIDCRAFT and WINDOW_OLDEST). Informational:
-  # a SolidCraft change must not block Dutchman's own checks.
+  # window (NEWEST_SOLIDCRAFT and WINDOW_OLDEST), plus the fixed 0.18.2 opens-in floor.
+  # Required on main, nightly, tags and manual full runs; excluded from pre-merge checks.
   solidcraft-roundtrip:
     name: solidcraft-roundtrip (${{ matrix.solidcraft.version }})
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.full == 'true' && needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    continue-on-error: true
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -395,14 +445,10 @@ jobs:
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
-      # The runner's preinstalled toolchains leave too little disk for a debug build of every
-      # crate: free the ones these jobs never use.
-      - name: Free disk space
-        run: |
-          df -h /
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-          df -h /
+      # Debug=0 jobs on current images have ample disk; clean only smaller images.
       - uses: actions/checkout@v7
+      - name: Check free disk space
+        run: bash scripts/ci-disk-space.sh
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -444,27 +490,90 @@ jobs:
           export SOLIDCRAFT_CLI="$PWD/solidcraft-${SOLIDCRAFT_VERSION}-linux-x86_64/bin/solidcraft-cli"
           cargo test --locked -p dutchman-solidcraft --test history --test assembly
 
-  # One result for branch rules to require: it always runs, and fails only when a job it needs
-  # failed or was cancelled. Jobs a change skips (a docs-only change skips the builds and tests)
-  # count as passed, so a required check never waits for a job that never starts.
+  # Share the Linux tools; queue groups run only the small placement smoke checks.
+  placements:
+    needs: changes
+    if: needs.changes.outputs.full == 'true' || (github.event_name == 'merge_group' && needs.changes.outputs.code == 'true')
+    uses: ./.github/workflows/placements.yml
+    with:
+      smoke-only: ${{ github.event_name == 'merge_group' }}
+
+  release-build:
+    # Tags build directly in release-build.yml; main has the nightly builds. Queue groups
+    # check every platform above, without building release archives and installers again.
+    if: github.event_name == 'workflow_dispatch' && inputs.release-builds
+    # A called workflow can't hold more than its caller grants: release-build.yml asks for actions: read.
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/release-build.yml
+
+  # The only required branch check. Accept skips only for the event and path filters above;
+  # an unexpectedly skipped dependency must never turn a partial run green.
   ci-result:
-    needs: [changes, fmt, release-notes, clippy, wasm, test, test-arm, test-arm-again, docs, test-macos, docker, msrv, solidcraft-roundtrip]
+    needs: [changes, fmt, release-notes, clippy, wasm, test, test-arm, test-arm-again, docs, test-macos, docker, msrv, solidcraft-roundtrip, placements, release-build]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Check the results of every job
         env:
           RESULTS: ${{ toJSON(needs) }}
+          EVENT: ${{ github.event_name }}
+          RELEASE_BUILDS: ${{ inputs.release-builds }}
         run: |
           echo "$RESULTS" | python3 -c '
-          import json, sys
+          import json, os, sys
           needs = json.load(sys.stdin)
-          bad = {job: need["result"] for job, need in needs.items() if need["result"] in ("failure", "cancelled")}
-          # test-arm-again runs only when test-arm failed, and passes only after a runner
-          # shutdown and a passing second try: then the first try does not count.
-          if needs.get("test-arm-again", {}).get("result") == "success":
-              bad.pop("test-arm", None)
+          event = os.environ["EVENT"]
+          outputs = needs["changes"]["outputs"]
+          full = outputs.get("full") == "true"
+          code = outputs.get("code") == "true"
+          native = full and code
+          required = {
+              "changes": True, "release-notes": True,
+              "fmt": code, "clippy": code, "test": code, "docs": not code,
+              "wasm": native, "msrv": native, "solidcraft-roundtrip": native,
+              "test-macos": full and outputs.get("rust") == "true",
+              "docker": full and outputs.get("docker") == "true",
+              "placements": full or (event == "merge_group" and code),
+              "release-build": event == "workflow_dispatch" and os.environ["RELEASE_BUILDS"] == "true",
+          }
+          bad = {}
+          for job, run in required.items():
+              expected = "success" if run else "skipped"
+              result = needs[job]["result"]
+              if result != expected:
+                  bad[job] = result + " (expected " + expected + ")"
+          # The retry gate accepts only timeouts or runner shutdowns, never an ordinary test failure.
+          arm = needs["test-arm"]["result"]
+          retry = needs["test-arm-again"]["result"]
+          if (native and (arm, retry) not in (("success", "skipped"), ("failure", "success"), ("cancelled", "success"))) or (not native and (arm, retry) != ("skipped", "skipped")):
+              bad["test-arm"] = arm + "; retry: " + retry
+          if any(outputs.get(key) not in ("true", "false") for key in ("full", "code", "rust", "docker")):
+              bad["changes"] = "missing or unexpected filter outputs"
+          if event not in ("pull_request", "merge_group"):
+              if not full or not code or outputs.get("rust") != "true" or outputs.get("docker") != "true":
+                  bad["changes"] = "full matrix filters must all be true"
+          if event in ("pull_request", "merge_group") and full:
+              bad["changes"] = "pre-merge checks must use the Linux set"
           for job, need in sorted(needs.items()):
               print(job + ": " + need["result"])
-          sys.exit(f"failed or cancelled: {bad}" if bad else 0)
+          sys.exit(f"unexpected job results: {bad}" if bad else 0)
           '
+
+  main-ci-signal:
+    needs: [test, test-arm, test-arm-again, test-macos, wasm, msrv, solidcraft-roundtrip, placements, docker]
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Update the main CI issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RESULTS: ${{ toJSON(needs) }}
+        run: python3 scripts/ci-main-signal.py

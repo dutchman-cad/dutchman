@@ -107,7 +107,7 @@ CAD extension selects conversion.
 | `--no-memory-check` | Bypass the memory refusal, Standard's history budget, and automatic history-check skipping. |
 | `--yes` | Never prompt to switch presets; refuse an over-budget conversion with exit 2. |
 | `--solidcraft PATH` | The `solidcraft-cli` that checks a converted history. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH` or beside `dutchman`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`, else the install folder recorded in the registry). The same search runs in the desktop app; see [How Dutchman finds SolidCraft](desktop.md#how-dutchman-finds-solidcraft). When none is found, the report's `solidcraft.search` lists the places tried. |
-| `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the found CLI's version capped at newest known, even with `--no-verify`, else the newest known at build time (currently 0.43). |
+| `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the found CLI's version capped at newest known, even with `--no-verify`, else the newest known at build time (currently 0.44). |
 | `--no-verify` | Write the history without checking it in SolidCraft. Cannot be combined with `--solidcraft`. |
 | `--write-replay` | For a `.sc` design, also write `<design>.replay.json` beside it (the design's name with `.replay.json` in place of `.sc`): the command script that rebuilds the history step by step. See [Replay a history by hand](troubleshooting.md#replay-a-history-by-hand). Works with `convert` and `convert-all`; the JSON report names it as `replay_script`. |
 | `--verify-timeout SECONDS` | How long each SolidCraft check may run before the history is written unverified. Default 120. |
@@ -196,6 +196,35 @@ with its status (`mapped`, `not_needed`, `left_out` or `blocked`, with the reaso
 blocked one), and the loss report. `inspect --json` prints the same as a
 `dutchman.inspect/1` report.
 
+## List what a file holds: contents
+
+`contents` reads a file and lists its bodies, its feature timeline and its parameters, with
+what Dutchman can map of each feature to SolidCraft. Like `inspect`, it writes nothing and
+does not run SolidCraft.
+
+```sh
+dutchman contents design_sketch_constraints.f3d
+```
+
+The first line counts the bodies, features and parameters, and names the SolidCraft release
+the verdicts are for (the newest Dutchman knows). Then come the bodies (kind and name, marked
+hidden when the source hides them), each feature with its verdict, kind and name (marked
+suppressed when the source suppresses it), and each parameter with its value, unit,
+expression and the feature it belongs to. The verdicts are:
+
+| Verdict | Means |
+|---|---|
+| `mapped` | It becomes SolidCraft features as it is. |
+| `needs SolidCraft check` | It maps, but converting keeps it only when SolidCraft confirms it; the reason says what is checked. |
+| `not needed` | SolidCraft needs no feature for it, such as a default plane. |
+| `left out` | It is suppressed in the source, or changes no geometry there. |
+| `not supported yet` | Dutchman can't map it yet; the reason says why. |
+| `after blocker` | An earlier feature stops the history, so this one is kept in the imported final shape. |
+
+For an assembly, each line is marked with its part file (or, for a part held in the
+assembly's own file, its component name), and a part repeated in the assembly is listed once. `contents --json` prints the same as a
+[`dutchman.contents/1`](json.md#dutchmancontents1) report.
+
 ## Progress during conversion
 
 `convert`, `convert-all`, `inspect`, and `watch` show the current stage, designs read, and
@@ -224,6 +253,13 @@ time it reads **Still checking Bracket: 1 min 1 s**. This is elapsed time,
 not an estimate of time left. With parallel workers the oldest current step is shown;
 a check takes the place of preparation on its worker until it ends. Completed-read counts
 can stay unchanged while parts are prepared or checked.
+
+While a design's history is built, the line also names the feature it is on:
+**Building history for Bracket: 3 s; Feature 29 of 37 · Extrude 1**. The count is the
+feature's place in the source timeline, suppressed features included. When SolidCraft checks
+a feature by measuring it against the original, the line adds **(checking by measurement,
+which takes longer)**, and the desktop card says so under the feature. The whole-design check
+after the history is built runs once for the design, so it shows its check, not a feature.
 
 Available split reading, conversion and checking estimates supply usual times for whole
 stages, including a named whole-design read or preparation. A whole-file estimate is not
@@ -275,8 +311,7 @@ names the design that was left out (at most three per archive). A stuck single-d
 fails with a message naming it. Mapping and writing have no independent wall-clock limit.
 `convert-all --timeout` is a separate whole-file limit (900 s by default): it stops that
 file's worker and reports failure. The desktop has no practical whole-file timeout, but the
-per-design limit above applies there too. **Stop** starts no further files;
-files already converting finish. Closing the app ends its workers through their parent-exit
+per-design limit above applies there too. **Stop** starts no further files and promptly terminates the isolated converter and its children. Closing the app ends its workers through their parent-exit
 guard. The shared CLI supervisor separately allows a 30 s grace period when a shutdown
 flag is supplied; the desktop does not supply that flag. CLI version queries stop after 3 s; a CLI that gives no version can still be used for
 checks. Memory guards remain independent of these time limits.
@@ -333,7 +368,7 @@ converted  project/sub/synthetic_cube.ipt -> converted/sub/synthetic_cube.sc (ge
            Info: step/native.source-record-omitted: 67 source-native record(s) were not represented in STEP
            Info: history: flattened: the design carries no feature history
 2 converted, 1 failed, 1 skipped (not in a format Dutchman knows)
-Want to help Dutchman read Fusion, Inventor better? If you have Fusion, Inventor, you can make a few small test files from short recipes: https://dutchman-cad.github.io/fixtures/ or type /volunteer in our Discord (https://discord.gg/yTcseBEdeu).
+Want to help Dutchman read Fusion, Inventor better? If you have Fusion, Inventor, you can make a few small test files from short recipes: https://dutchmancad.xyz/fixtures/ or type /volunteer in our Discord (https://discord.gg/yTcseBEdeu).
 ```
 
 Each converted file's loss report is listed beneath it, summarised by component when it has
@@ -466,7 +501,7 @@ Dutchman is made for the current SolidCraft (any release from the last two weeks
 older versions get simplified features, or pass `--solidcraft-version x.y.z` on
 `convert`, `convert-all`, or `watch` (at least 0.18.2).
 The target defaults to the found CLI's version, even with `--no-verify`, else the
-newest minor known at build time (currently 0.43). The current window is 0.18.2–0.43.
+newest minor known at build time (currently 0.44). The current window is 0.18.2–0.44.
 Constant-radius FreeCAD helices keep editable sketch-profile coils only for targets
 0.25 patch 1 or newer; older targets preserve the original geometry and report the version needed.
 SolidCraft names and status comparisons use minors; patch-sensitive writer gates use full
@@ -488,10 +523,10 @@ than falling back to the writer's older pinned `WINDOW_OLDEST` value.
 
 
 SolidCraft conversion reports include the selected target and the discovered CLI version,
-even with verification off. Text output includes `Target SolidCraft 0.43 (found 0.43.0)`,
+even with verification off. Text output includes `Target SolidCraft 0.44 (found 0.44.0)`,
 or `(none found)` when no version can be read. `--solidcraft-version` overrides the target;
 otherwise the found supported version is used, capped at the newest known release, falling
-back to 0.43. Successful conversions print the same installed-version notice beside the
+back to 0.44. Successful conversions print the same installed-version notice beside the
 target line, with the SolidCraft download URL for too-old releases. The CLI never checks
 for Dutchman updates over the network. Failed or refused files print neither line.
 No installed release means no notice. Other output
@@ -523,7 +558,7 @@ Pilot; other missing tools print their installation link and exit 1.
 Pilot-only installations can ship the small `dutchman-launcher` binary renamed to `dutchman`.
 It runs installed tools and identifies itself as `dutchman launcher <version>` with
 `--version`. Get [Dutchman Convert](https://github.com/dutchman-cad/dutchman) for `convert`,
-`convert-all`, `watch`, `inspect`, and `formats`.
+`convert-all`, `watch`, `inspect`, `contents`, and `formats`.
 
 ## Assembly placements
 

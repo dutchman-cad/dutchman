@@ -25,6 +25,36 @@ pub(crate) struct Wizard {
     small: Option<PathBuf>,
     checked: bool,
     report_ready: bool,
+    /// Where the window opens, so it stays clear of the app's top row.
+    pub(crate) top: f32,
+}
+
+/// One line of the recipe as it is shown: a heading, or a line of text.
+#[derive(Debug, PartialEq, Eq)]
+enum RecipeLine<'a> {
+    Heading(&'a str),
+    Text(&'a str),
+}
+
+/// The recipe's Markdown as headings and lines, leaving out headings with nothing under them
+/// and blank lines.
+fn recipe_lines(recipe: &str) -> Vec<RecipeLine<'_>> {
+    let mut lines: Vec<RecipeLine<'_>> = Vec::new();
+    for line in recipe.lines().map(str::trim_end) {
+        let heading = line.trim_start_matches('#');
+        if heading.len() < line.len() && heading.starts_with(' ') {
+            if matches!(lines.last(), Some(RecipeLine::Heading(_))) {
+                lines.pop();
+            }
+            lines.push(RecipeLine::Heading(heading.trim()));
+        } else if !line.trim().is_empty() {
+            lines.push(RecipeLine::Text(line));
+        }
+    }
+    if matches!(lines.last(), Some(RecipeLine::Heading(_))) {
+        lines.pop();
+    }
+    lines
 }
 
 impl Wizard {
@@ -48,6 +78,7 @@ impl Wizard {
             small: None,
             checked: false,
             report_ready: false,
+            top: 80.0,
         }
     }
 
@@ -166,13 +197,25 @@ impl Wizard {
         }
         let busy = self.receiver.is_some();
         let mut close = false;
-        egui::Window::new("Diagnose this file").default_width(660.0).show(ctx, |ui| {
+        egui::Window::new("Diagnose this file")
+            .default_width(660.0)
+            .default_pos(egui::pos2(24.0, self.top))
+            .show(ctx, |ui| {
             ui.label("Works locally. Keep the original and local-key.json private.");
             ui.label("A stopped run resumes from its checkpoint when you choose Diagnose this file again.");
             if busy { ui.spinner(); ui.label(&self.progress); }
             ui.label(&self.summary);
             egui::ScrollArea::vertical().max_height(380.0).show(ui, |ui| {
-                for line in self.recipe.lines() { ui.label(line); }
+                for line in recipe_lines(&self.recipe) {
+                    match line {
+                        RecipeLine::Heading(text) => {
+                            ui.label(egui::RichText::new(text).strong());
+                        }
+                        RecipeLine::Text(text) => {
+                            ui.label(text);
+                        }
+                    }
+                }
             });
             ui.add_enabled_ui(!busy, |ui| {
                 if ui.button("Resume diagnosis").clicked() { self.start(ctx); }
@@ -195,6 +238,20 @@ impl Wizard {
 mod tests {
     use super::*;
     use egui_kittest::kittest::Queryable;
+
+    #[test]
+    fn the_recipe_shows_headings_without_markdown_and_drops_empty_ones() {
+        let lines = recipe_lines("### Fusion\n1. Make a new sketch.\n\n### Inventor\n### SolidWorks\n2. Export it.\n### Empty\n");
+        assert_eq!(
+            lines,
+            [
+                RecipeLine::Heading("Fusion"),
+                RecipeLine::Text("1. Make a new sketch."),
+                RecipeLine::Heading("SolidWorks"),
+                RecipeLine::Text("2. Export it."),
+            ]
+        );
+    }
 
     #[test]
     fn progress_recipe_and_report_controls_follow_the_worker_results() {

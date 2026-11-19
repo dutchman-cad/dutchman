@@ -53,10 +53,19 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 ```
 
-CI runs the debug-profile tests on Linux (x86_64 and ARM64), Windows and macOS, and checks that the workspace builds with
-Rust 1.88. A further job opens every converted fixture in a released SolidCraft
-(`scripts/solidcraft-roundtrip.sh`) and replays the history tests in it. It is informational
-and does not block a merge. To run it locally, put a SolidCraft release's `solidcraft-cli`
+Pull requests and merge groups run formatting, Linux Clippy and x86_64 tests (or the
+focused docs tests), release notes, changelog and version gates. Code merge groups also build
+the shared Linux CLI/server programs and run the small railcore and robot-arm placement checks.
+Windows, macOS, ARM64, Rust 1.88, WebAssembly, SolidCraft round trips (including 0.18.2),
+Voron placements and Docker images run after merge on main, nightly, on tags and by hand.
+Platform-only breaks are caught on main right after merge instead of before.
+The required `ci-result` enforces the Linux set before merge and the full matrix elsewhere;
+unexpected skips fail it. A failing main check opens or updates one main CI issue, which closes
+when the current main commit is green. Release tags must pass the full CI matrix on their exact
+commit before packaging or creating a release. To run everything on a branch before queueing,
+use `gh workflow run ci.yml --ref <branch>`; opt into release archives with `-f release-builds=true`.
+Packaging paths and the former `release-build` label do not start full builds on PRs.
+To run a round trip locally, put a SolidCraft release's `solidcraft-cli`
 where `SOLIDCRAFT_CLI` points:
 
 ```sh
@@ -130,9 +139,9 @@ checks them. The optimised programs (thin LTO, the same `dutchman`, `dutchman-mc
   commit and day it took.
 - a release candidate (`rc`, or a tag such as `v0.2.8-rc.1`): the full release build of a
   candidate tag, kept for 30 days.
-- a pull request: its full build, which exists only for packaging changes, the `release-build`
-  label, or a run started by hand (`gh pr edit 123 --add-label release-build`, or
-  `gh workflow run release-build.yml --ref my-branch`). The script says so when it has none.
+- a pull request: its full build, started by hand with
+  `gh workflow run release-build.yml --ref my-branch`. A full CI dispatch also builds release
+  artifacts, under the CI run in Actions. Packaging changes and labels do not start builds on PRs.
 
 To try a change without building it:
 

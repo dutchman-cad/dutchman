@@ -7,6 +7,8 @@
 //! SolidCraft reads an import's assembly tree from the STEP itself. Imports receiving
 //! explicit looks also name their output bodies so each look has a stable target.
 
+use std::collections::HashSet;
+
 use dutchman_core::{Model, Report, Severity};
 use serde_json::{json, Value};
 
@@ -23,7 +25,7 @@ const MAX_COMPONENT_NAME: usize = 128;
 /// occurrence, and the Import feature.
 const COMPONENT: u64 = 1;
 const OCCURRENCE: u64 = 2;
-const FEATURE: u64 = 3;
+pub(crate) const FEATURE: u64 = 3;
 
 /// The identity placement, column-major.
 const IDENTITY: [[f64; 4]; 4] = [
@@ -334,6 +336,20 @@ pub(crate) fn import_feature(
 
 /// Attributes have no per-occurrence or evaluation-state destination in the writer.
 pub(crate) fn report_scoped_attributes(model: &Model, report: &mut Report) {
+    let mut seen = report
+        .losses()
+        .iter()
+        .filter(|loss| loss.subject == "attributes")
+        .map(|loss| loss.detail.clone())
+        .collect();
+    report_scoped_attributes_with_seen(model, report, &mut seen);
+}
+
+fn report_scoped_attributes_with_seen(
+    model: &Model,
+    report: &mut Report,
+    seen: &mut HashSet<String>,
+) {
     for attribute in &model.ir.model.attributes {
         let reason = if attribute.target.state.is_some() {
             "attributes for an evaluation state are not supported yet"
@@ -343,17 +359,13 @@ pub(crate) fn report_scoped_attributes(model: &Model, report: &mut Report) {
             continue;
         };
         let detail = format!("Attribute {} is left out: {reason}", attribute.id);
-        if !report
-            .losses()
-            .iter()
-            .any(|loss| loss.subject == "attributes" && loss.detail == detail)
-        {
+        if seen.insert(detail.clone()) {
             report.push(Severity::Dropped, "attributes", detail);
         }
     }
     if let Some(assembly) = &model.assembly {
         for part in &assembly.parts {
-            report_scoped_attributes(part, report);
+            report_scoped_attributes_with_seen(part, report, seen);
         }
     }
 }
@@ -433,7 +445,7 @@ mod tests {
 
     use super::*;
 
-    fn attribute_report(scope: Option<(&str, Value)>) -> Report {
+    fn attribute_model(scope: Option<(&str, Value)>) -> Model {
         let mut target = json!({"entity": {"kind": "document"}});
         if let Some((key, value)) = scope {
             target[key] = value;
@@ -446,18 +458,76 @@ mod tests {
             }))
             .unwrap(),
         );
-        let model = Model {
+        Model {
             ir,
             fidelity: None,
             name: "Synthetic".into(),
             source_file: None,
             assembly: None,
             source_step: None,
-        };
+        }
+    }
+
+    fn attribute_report(scope: Option<(&str, Value)>) -> Report {
+        let model = attribute_model(scope);
         let mut report = Report::default();
         report_scoped_attributes(&model, &mut report);
         report_scoped_attributes(&model, &mut report);
         report
+    }
+
+    #[test]
+    fn scoped_attributes_preserve_order_and_deduplicate_across_parts_and_passes() {
+        let mut model = attribute_model(Some((
+            "state",
+            json!({"of": {"kind": "tool", "value": "synthetic:test:feature#earlier"}}),
+        )));
+        let attribute = model.ir.model.attributes[0].clone();
+        for index in (0..1024).rev() {
+            let mut distinct = serde_json::to_value(&attribute).unwrap();
+            distinct["id"] = json!(format!("synthetic:test:attribute#{index}"));
+            model
+                .ir
+                .model
+                .attributes
+                .push(serde_json::from_value(distinct).unwrap());
+        }
+        let part = model.clone();
+        model.assembly = Some(dutchman_core::Assembly {
+            own_part: None,
+            parts: vec![part],
+            definitions: vec![],
+            identities: vec![],
+            placements: vec![],
+            joints: vec![],
+            left_out: vec![],
+            held: vec![],
+            joint_notes: vec![],
+            stored_placements: vec![],
+        });
+        let reason = "attributes for an evaluation state are not supported yet";
+        let first = format!("Attribute {} is left out: {reason}", attribute.id);
+        let mut report = Report::default();
+        report.push(Severity::Degraded, "attributes", first.clone());
+        let second = format!("Attribute synthetic:test:attribute#1023 is left out: {reason}");
+        report.push(Severity::Dropped, "other", second.clone());
+        report_scoped_attributes(&model, &mut report);
+        let expected: Vec<_> = std::iter::once(first)
+            .chain(std::iter::once(second))
+            .chain((0..1024).rev().map(|index| {
+                format!("Attribute synthetic:test:attribute#{index} is left out: {reason}")
+            }))
+            .collect();
+        report_scoped_attributes(&model, &mut report);
+        assert_eq!(
+            report
+                .losses()
+                .iter()
+                .map(|loss| &loss.detail)
+                .collect::<Vec<_>>(),
+            expected.iter().collect::<Vec<_>>()
+        );
+        assert_eq!(report.losses()[0].severity, Severity::Degraded);
     }
 
     #[test]
@@ -536,6 +606,7 @@ mod history_tests {
             hidden: Vec::new(),
             hidden_bodies: Vec::new(),
             unconfirmed: Default::default(),
+            measured: Default::default(),
             stop: None,
             sources: Default::default(),
         }
@@ -567,7 +638,7 @@ mod history_tests {
     fn only_hidden_copies_hide_history_on_new_targets() {
         let model = crate::testing::cube();
         for target in [
-            "0.29.0", "0.30.0", "0.31.0", "0.40.0", "0.41.0", "0.42.0", "0.43.0",
+            "0.29.0", "0.30.0", "0.31.0", "0.40.0", "0.41.0", "0.42.0", "0.43.0", "0.44.0",
         ] {
             let version = target.parse().unwrap();
             for live in [
@@ -580,7 +651,7 @@ mod history_tests {
                 let doc = history_design(&model, &history(), "blobs/x.step", live, version);
                 assert_eq!(doc["format"], FORMAT);
                 // The newest targets keep format 23 and the 0.30 representation.
-                if matches!(target, "0.40.0" | "0.41.0" | "0.42.0" | "0.43.0") {
+                if matches!(target, "0.40.0" | "0.41.0" | "0.42.0" | "0.43.0" | "0.44.0") {
                     assert_eq!(
                         doc,
                         history_design(
