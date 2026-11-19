@@ -694,6 +694,46 @@ const COEFFICIENTS: &[Coefficients] = &[
         memory_band: 1.0,
         time_band: None,
     },
+    // eDrawings: Windows measurements of 17 parts/assemblies (57 KB to 5.7 MB, default
+    // choices, two runs each). Conversion peaked at 1100-2900 bytes per input byte
+    // (mean 1700); the checking child added 0.23-0.52 of that (mean 0.33), so the
+    // total averages ~2200 bytes per input byte. Time was 21-64 s per MiB (mean 38),
+    // checking included. These are averages: cost follows the display-mesh triangle
+    // count, not the file size, so single files miss by up to ~1.6x either way.
+    // eDrawings stores no feature history, so the history factors are 1.0.
+    Coefficients {
+        format: Format::EdrawingsPart,
+        model: CostModel::Legacy(LegacyCost {
+            base_bytes: 100_000_000,
+            bytes_per_byte: 1_650.0,
+            base_seconds: 1.0,
+            seconds_per_mib: 38.0,
+            history_factor: 1.0,
+            history_seconds_factor: 1.0,
+            startup: None,
+            check_share: 0.33,
+        }),
+        band: 1.0,
+        memory_band: 1.0,
+        time_band: None,
+    },
+    // Same measurements as EdrawingsPart above.
+    Coefficients {
+        format: Format::EdrawingsAssembly,
+        model: CostModel::Legacy(LegacyCost {
+            base_bytes: 100_000_000,
+            bytes_per_byte: 1_650.0,
+            base_seconds: 1.0,
+            seconds_per_mib: 38.0,
+            history_factor: 1.0,
+            history_seconds_factor: 1.0,
+            startup: None,
+            check_share: 0.33,
+        }),
+        band: 1.0,
+        memory_band: 1.0,
+        time_band: None,
+    },
     Coefficients {
         format: Format::Rhino,
         model: CostModel::Legacy(LegacyCost {

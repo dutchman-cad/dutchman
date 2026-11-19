@@ -1,0 +1,445 @@
+{
+  "components": [
+    {
+      "id": 1,
+      "name": "synthetic solidworks assembly.sldasm",
+      "parent": 0
+    },
+    {
+      "id": 2,
+      "name": "Cube-1",
+      "parent": 1
+    },
+    {
+      "id": 4,
+      "name": "Group A",
+      "parent": 1
+    },
+    {
+      "id": 5,
+      "name": "Group B",
+      "parent": 4
+    },
+    {
+      "id": 6,
+      "name": "Box-1",
+      "parent": 5
+    },
+    {
+      "id": 9,
+      "name": "Pair-1",
+      "parent": 4
+    },
+    {
+      "id": 14,
+      "name": "Group C",
+      "parent": 1
+    },
+    {
+      "id": 15,
+      "name": "Cube-3",
+      "parent": 14
+    }
+  ],
+  "features": [
+    {
+      "component": 2,
+      "file": "synthetic_sw_assembly.easm",
+      "id": 3,
+      "name": "body0",
+      "step": "",
+      "step_blob": "blobs/<sha256-0>.step",
+      "suppressed": false,
+      "type": "import"
+    },
+    {
+      "component": 6,
+      "file": "synthetic_sw_assembly.easm",
+      "id": 7,
+      "name": "body1",
+      "step": "",
+      "step_blob": "blobs/<sha256-1>.step",
+      "suppressed": false,
+      "type": "import"
+    },
+    {
+      "component": 9,
+      "file": "synthetic_sw_assembly.easm",
+      "id": 10,
+      "name": "body0",
+      "step": "",
+      "step_blob": "blobs/<sha256-2>.step",
+      "suppressed": false,
+      "type": "import"
+    },
+    {
+      "component": 15,
+      "file": "synthetic_sw_assembly.easm",
+      "id": 16,
+      "name": "body2",
+      "step": "",
+      "step_blob": "blobs/<sha256-3>.step",
+      "suppressed": false,
+      "type": "import"
+    }
+  ],
+  "format": "solidcraft/23",
+  "name": "synthetic_sw_assembly",
+  "next_id": 23,
+  "occurrences": [
+    {
+      "component": 6,
+      "grounded": false,
+      "id": 8,
+      "name": "Box-1",
+      "parent": 5,
+      "transform": [
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          -1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          -0.0,
+          1.0,
+          0.0
+        ],
+        [
+          50.00000074505806,
+          19.999999552965164,
+          9.999999776482582,
+          1.0
+        ]
+      ]
+    },
+    {
+      "component": 5,
+      "grounded": false,
+      "id": 11,
+      "name": "Group B",
+      "parent": 4,
+      "transform": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    },
+    {
+      "component": 9,
+      "grounded": false,
+      "id": 12,
+      "name": "Pair-1",
+      "parent": 4,
+      "transform": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          29.999999329447746,
+          0.0,
+          1.0
+        ]
+      ]
+    },
+    {
+      "component": 9,
+      "grounded": false,
+      "id": 13,
+      "name": "Pair-2",
+      "parent": 4,
+      "transform": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          29.999999329447746,
+          29.999999329447746,
+          0.0,
+          1.0
+        ]
+      ]
+    },
+    {
+      "component": 15,
+      "grounded": false,
+      "id": 17,
+      "name": "Cube-3",
+      "parent": 14,
+      "transform": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          50.00000074505806,
+          1.0
+        ]
+      ]
+    },
+    {
+      "component": 2,
+      "grounded": false,
+      "id": 18,
+      "name": "Cube-1",
+      "parent": 1,
+      "transform": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          100.00000149011612,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    },
+    {
+      "component": 4,
+      "grounded": false,
+      "id": 19,
+      "name": "Group A",
+      "parent": 1,
+      "transform": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    },
+    {
+      "component": 14,
+      "grounded": false,
+      "id": 20,
+      "name": "Group C",
+      "parent": 1,
+      "transform": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    },
+    {
+      "component": 15,
+      "grounded": false,
+      "id": 21,
+      "name": "Cube-4",
+      "parent": 1,
+      "transform": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          70.00000029802322,
+          1.0
+        ]
+      ]
+    },
+    {
+      "component": 1,
+      "grounded": false,
+      "id": 22,
+      "name": "synthetic solidworks assembly.sldasm:1",
+      "parent": 0,
+      "transform": [
+        [
+          1.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          1.0,
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          1.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0,
+          0.0,
+          1.0
+        ]
+      ]
+    }
+  ],
+  "params": [],
+  "units": "mm",
+  "visibility": {
+    "hidden_occurrences": [
+      [
+        22,
+        19,
+        13
+      ],
+      [
+        22,
+        20
+      ],
+      [
+        22,
+        20,
+        17
+      ],
+      [
+        22,
+        21
+      ]
+    ]
+  }
+}

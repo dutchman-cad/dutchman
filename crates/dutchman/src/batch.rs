@@ -757,7 +757,7 @@ pub fn summary(jobs: &[Job]) -> String {
     let fallbacks = jobs.iter().filter(|job| job.fallback.is_some()).count();
     for job in jobs {
         match extension_of(&job.input).as_str() {
-            "sldasm" | "iam" | "f3z" => assemblies += 1,
+            "sldasm" | "iam" | "f3z" | "easm" => assemblies += 1,
             "step" | "stp" => steps += 1,
             _ => parts += 1,
         }
