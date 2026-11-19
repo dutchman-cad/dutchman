@@ -9541,8 +9541,9 @@ fn a_face_at_an_angle_to_the_sketch_is_gated_to_solidcraft_0_44() {
     // The front face is perpendicular to the sketch: older targets name the release that
     // reaches slanted faces, and 0.44 still refuses a face the sweep runs along.
     for (target, reason) in [
-        (None, "needs SolidCraft 0.44 or newer"),
+        (Some("0.43.0"), "needs SolidCraft 0.44 or newer"),
         (Some("0.44.0"), "runs along the travel"),
+        (None, "runs along the travel"),
     ] {
         let mut model = face_ended_extrude(false, 0.0, false);
         let mut wire = serde_json::to_value(&model.ir).unwrap();
