@@ -337,7 +337,8 @@ fn custom_feature_without_a_proven_shape_blocks_later_topology_features() {
         .detail
         .contains("lacks complete per-feature body geometry"));
     assert_eq!(loss.severity, dutchman_core::Severity::Degraded);
-    assert_eq!(outcome.features[3].kind, "fillet");
+    // With no proven input edge the reader keeps the fillet as a native step.
+    assert_eq!(outcome.features[3].kind, "native");
     assert_eq!(outcome.features[3].status, FeatureStatus::Blocked);
     assert!(outcome.features[3]
         .reason
