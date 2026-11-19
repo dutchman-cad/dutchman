@@ -2804,6 +2804,67 @@ fn a_revolve_about_a_line_of_its_sketch_keeps_that_line() {
 }
 
 #[test]
+fn surface_revolves_of_open_curve_chains_take_them_as_curves() {
+    let quarter = json!({"kind": "symmetric",
+        "termination": {"kind": "angle", "angle": std::f64::consts::FRAC_PI_2}});
+    let picked = |entities: Value| {
+        let quarter = quarter.clone();
+        changed_ring(move |construction| {
+            construction["value"]["solid"] = json!(false);
+            construction["value"]["extent"] = quarter;
+            construction["value"]["profile"] = json!({"kind": "sketch_entities",
+                "value": {"sketch": SKETCH, "entities": entities}});
+        })
+    };
+    // One open line: the outer wall of the ring, x = 10 on the sketch.
+    let model = picked(json!(["f3d:model:sketch-entity#2"]));
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("2 of 2 features rebuilt"),
+        "{}",
+        history_line(&report)
+    );
+    let revolve = &document["features"][1];
+    assert_eq!(revolve["type"], "surface_revolve");
+    assert!(revolve.get("profiles").is_none(), "{revolve}");
+    assert_eq!(
+        revolve["curves"].as_array().map(Vec::len),
+        Some(1),
+        "{revolve}"
+    );
+    if let Some(cli) = solidcraft() {
+        let boxes = bounds(&cli, &written(&model).0);
+        assert_eq!(boxes.len(), 1, "{boxes:?}");
+        let (min, max) = boxes[0];
+        // A quarter of a radius-10 cylinder wall, symmetric about the sketch, z 0..10.
+        assert!((max[0] - 10.0).abs() < 1e-6, "{boxes:?}");
+        assert!(
+            min[2].abs() < 1e-6 && (max[2] - 10.0).abs() < 1e-6,
+            "{boxes:?}"
+        );
+        assert!((min[1] + max[1]).abs() < 1e-6 && max[1] > 0.0, "{boxes:?}");
+    }
+
+    // The four lines of the rectangle close a profile: it stays a profile.
+    let model = picked(json!([
+        "f3d:model:sketch-entity#1",
+        "f3d:model:sketch-entity#2",
+        "f3d:model:sketch-entity#3",
+        "f3d:model:sketch-entity#4"
+    ]));
+    let (document, _) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    let revolve = &document["features"][1];
+    assert!(revolve.get("curves").is_none(), "{revolve}");
+    assert_eq!(revolve["profiles"]["type"], "curves", "{revolve}");
+}
+
+#[test]
 fn surface_revolves_short_of_a_full_turn_map() {
     let quarter = json!({"kind": "symmetric",
         "termination": {"kind": "angle", "angle": std::f64::consts::FRAC_PI_2}});
