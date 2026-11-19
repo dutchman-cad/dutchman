@@ -22,6 +22,11 @@ consumer benefits and Dutchman stays small.
 The offline Onshape REST bundle reader is an explicit exception to that native
 codec rule. `dutchman-core::onshape` validates bundle v1 and translates the public
 JSON construction records into `cadmpeg-ir` history and feature input topology.
+Neutral properties opt in to two parameter behaviors: feature
+`source_properties.symmetric_distance_parameter = "total"` permits a symmetric
+extrude to use its owned total-span parameter; parameter
+`properties.retain_without_sketches = "true"` permits parameters beside a STEP-only
+fallback. Absent these properties, the writer preserves its existing defaults.
 The embedded STEP export is decoded by the existing guarded cadmpeg route; it
 supplies final source geometry and verification, never historical selections.
 `dutchman-solidcraft` receives the same neutral model and knows nothing about the
@@ -176,7 +181,7 @@ format provides the 0.18.2 compatibility floor. This stays `solidcraft/23` for 0
 targets too: its format 45 additions (nested Browser groups, point cloud properties and
 filters, and print faces) are not used by Dutchman. Feature mapping also respects the writer's
 target SolidCraft release: the found CLI's version capped at newest known, even with verification off, else
-`NEWEST_SOLIDCRAFT` (currently 0.43), unless an explicit target is supplied.
+`NEWEST_SOLIDCRAFT` (currently 0.44), unless an explicit target is supplied.
 `WINDOW_OLDEST` (currently 0.18.2) marks the oldest release in the rolling 14-day window;
 older targets down to the floor remain accepted with the existing feature gates. The
 CLI's `--solidcraft-version x.y.z` selects a target on `convert`, `convert-all`, and `watch`.
@@ -266,7 +271,8 @@ planning has no callback and keeps the blocker. Every admitted candidate has a n
 Curves that bound a selected trimmed sketch region stay solid (not
 construction), so SolidCraft splits the sketch there and sweeps that region, not the merged
 area around it. Complete-loop extrudes whose regions those curves subdivide use an editable
-copy with unused splitters as construction; the original sketch's geometry, constraints, and
+copy with unused splitters as construction: any solid curve the extrude does not use that
+touches, enters or crosses one of its selected loops, a curve it cannot follow included; the original sketch's geometry, constraints, and
 parameters are preserved. Boundary matching remains exact and unique. Trimmed boundary rings
 sharing a curved carrier resolve their parameter reading together, retaining the refusal when
 the surviving readings disagree. One-sided extrudes may
@@ -565,3 +571,8 @@ Debug builds accept `DUTCHMAN_TEST_SLOW_PART=<design name>` to hold one named pa
 preparation for six seconds, long enough for a real five-second heartbeat. Release builds
 do not read it. The running-step GUI screenshot case uses injected snapshots at 0 s,
 61 s, 120 s and 121 s through the normal card renderer in both themes.
+
+`dutchman-plugin` is the WebAssembly component front end, built for `wasm32-unknown-unknown`
+against SolidCraft's `craft:plugin` importer interface (no WASI). Its single ABI adapter
+streams host file capabilities into `dutchman_core::source`, then uses the normal SolidCraft
+writer. See [plugin architecture, contract and sandbox constraints](plugin.md).

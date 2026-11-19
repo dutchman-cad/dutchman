@@ -358,9 +358,23 @@ pub(crate) fn release_solidworks_display(model: &mut Model, report: &mut Report)
         }
     }
     model.ir.model.tessellations = Vec::new();
+    for binding in &model.ir.model.appearance_bindings {
+        if (binding.target.path.is_some() || binding.target.state.is_some())
+            && matches!(
+                binding.target.entity,
+                cadmpeg_ir::appearance::AppearanceTarget::Tessellation(_)
+                    | cadmpeg_ir::appearance::AppearanceTarget::TriangleGroup { .. }
+            )
+        {
+            report.push_appearance(
+                model.unplaced_appearance_cause(binding),
+                model.unplaced_appearance_binding(binding),
+            );
+        }
+    }
     model.ir.model.appearance_bindings.retain(|binding| {
         !matches!(
-            binding.target,
+            binding.target.entity,
             cadmpeg_ir::appearance::AppearanceTarget::Tessellation(_)
                 | cadmpeg_ir::appearance::AppearanceTarget::TriangleGroup { .. }
         )
@@ -3105,6 +3119,19 @@ fn slice(
             }
         }
     }
+    // A base feature's own body, kept by the source as a history body when a later feature
+    // changes it, comes along with the base feature.
+    if history {
+        let nests: Vec<&str> = slices
+            .nests
+            .iter()
+            .filter(|(feature, _)| keep.contains_key(feature.as_str()))
+            .flat_map(|(_, ids)| ids.iter().map(String::as_str))
+            .collect();
+        for id in nests {
+            keep.insert(id, ());
+        }
+    }
     // A sketch another component builds that a feature of this one uses (designing in the
     // context of an assembly): carry its sketch feature in, with the sketch's plane moved from
     // that component's coordinates into this one's. Repeated using components need a unique
@@ -3894,11 +3921,93 @@ mod tests {
     }
 
     #[test]
+    fn definition_appearance_bindings_still_reach_shared_parts() {
+        let model = component_appearance(None, None);
+        let mut report = Report::default();
+        let assembly = match local(&model, 1, crate::PartPositions::LastShown, &mut report) {
+            Components::Assembly(assembly) => Some(assembly),
+            _ => None,
+        }
+        .unwrap();
+        assert_eq!(assembly.placements.len(), 2);
+        assert_eq!(assembly.parts[0].ir.model.appearance_bindings.len(), 1);
+        assert!(!report
+            .losses()
+            .iter()
+            .any(|loss| loss.subject == "appearance"));
+    }
+
+    fn component_appearance(path: Option<Value>, state: Option<Value>) -> Model {
+        let mut model = with_components(true);
+        let mut target =
+            json!({"entity": {"kind": "body", "value": model.ir.geometry.bodies[0].id}});
+        if let Some(path) = path {
+            target["path"] = path;
+        }
+        if let Some(state) = state {
+            target["state"] = state;
+        }
+        model.ir.model.appearances = serde_json::from_value(json!([{
+            "id": "synthetic:test:appearance#red",
+            "base_color": {"r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0},
+            "properties": {}, "textures": []
+        }]))
+        .unwrap();
+        model.ir.model.appearance_bindings = serde_json::from_value(json!([{
+            "id": "synthetic:test:appearance-binding#scoped", "target": target,
+            "appearance": "synthetic:test:appearance#red", "channels": {}
+        }]))
+        .unwrap();
+        model
+    }
+
+    fn scoped_component_appearance_is_left_out(model: Model, reason: &str) {
+        let mut report = Report::default();
+        let assembly = match local(&model, 1, crate::PartPositions::LastShown, &mut report) {
+            Components::Assembly(assembly) => Some(assembly),
+            _ => None,
+        }
+        .unwrap();
+        assert_eq!(assembly.placements.len(), 2);
+        assert!(assembly
+            .parts
+            .iter()
+            .all(|part| part.ir.model.appearance_bindings.is_empty()));
+        let losses: Vec<_> = report
+            .losses()
+            .iter()
+            .filter(|loss| loss.subject == "appearance")
+            .collect();
+        assert_eq!(losses.len(), 1);
+        assert_eq!(losses[0].code.as_deref(), Some("dutchman/appearance.other"));
+        assert!(losses[0].detail.ends_with(reason), "{}", losses[0].detail);
+    }
+
+    #[test]
+    fn occurrence_appearance_is_not_copied_to_both_placements() {
+        let path =
+            json!([{"occurrence": {"kind": "occurrence", "value": "f3d:model:occurrence#0"}}]);
+        scoped_component_appearance_is_left_out(
+            component_appearance(Some(path), None),
+            "appearance bindings for one placed instance are not supported yet",
+        );
+    }
+
+    #[test]
+    fn state_appearance_is_not_applied_to_current_component_geometry() {
+        let state = json!({"of": {"kind": "tool", "value": "synthetic:test:feature#earlier"}});
+        scoped_component_appearance_is_left_out(
+            component_appearance(None, Some(state)),
+            "appearance bindings for an evaluation state are not supported yet",
+        );
+    }
+
+    #[test]
     fn component_slicing_reports_an_appearance_binding_without_a_target() {
         let mut model = with_components(true);
         let mut wire = serde_json::to_value(&model.ir).unwrap();
         wire["model"]["appearances"] = json!([{"id": "synthetic:test:appearance#red", "base_color": {"r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0}, "properties": {}, "textures": []}]);
-        wire["model"]["appearance_bindings"] = json!([{"id": "synthetic:test:appearance-binding#missing", "target": {"kind": "face", "value": "synthetic:test:face#missing"}, "appearance": "synthetic:test:appearance#red", "channels": {}}]);
+        wire["model"]["appearance_bindings"] = json!([{"id": "synthetic:test:appearance-binding#missing", "target": {"entity": {"kind": "face", "value": "synthetic:test:face#missing"}}, "appearance": "synthetic:test:appearance#red", "channels": {}}]);
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let mut report = Report::default();
         assert!(matches!(
@@ -3940,7 +4049,7 @@ mod tests {
             occurrence["prototype"]["definition"] = json!("synthetic:test:component#empty");
         }
         wire["model"]["appearances"] = json!([{"id": "synthetic:test:appearance#red", "base_color": {"r": 1.0, "g": 0.0, "b": 0.0, "a": 1.0}, "properties": {}, "textures": []}]);
-        wire["model"]["appearance_bindings"] = json!([{"id": "synthetic:test:appearance-binding#unplaced", "target": {"kind": "body", "value": body}, "appearance": "synthetic:test:appearance#red", "channels": {}}]);
+        wire["model"]["appearance_bindings"] = json!([{"id": "synthetic:test:appearance-binding#unplaced", "target": {"entity": {"kind": "body", "value": body}}, "appearance": "synthetic:test:appearance#red", "channels": {}}]);
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let mut report = Report::default();
         assert!(matches!(
@@ -4006,8 +4115,8 @@ mod tests {
             {"id": "synthetic:test:appearance#blue", "base_color": {"r": 0.0, "g": 0.0, "b": 1.0, "a": 1.0}, "properties": {}, "textures": []}
         ]));
         geometry.insert("appearance_bindings".into(), json!([
-            {"id": "synthetic:test:binding#red", "target": {"kind": "body", "value": body_a}, "appearance": "synthetic:test:appearance#red", "channels": {}},
-            {"id": "synthetic:test:binding#blue", "target": {"kind": "body", "value": body_b}, "appearance": "synthetic:test:appearance#blue", "channels": {}}
+            {"id": "synthetic:test:binding#red", "target": {"entity": {"kind": "body", "value": body_a}}, "appearance": "synthetic:test:appearance#red", "channels": {}},
+            {"id": "synthetic:test:binding#blue", "target": {"entity": {"kind": "body", "value": body_b}}, "appearance": "synthetic:test:appearance#blue", "channels": {}}
         ]));
         geometry.insert(
             "product_definitions".into(),
@@ -4060,7 +4169,7 @@ mod tests {
     fn cadir_cannot_receive_component_or_occurrence_appearance_targets_yet() {
         for kind in ["component", "occurrence"] {
             let mut wire = serde_json::to_value(&with_components(true).ir).unwrap();
-            wire["model"]["appearance_bindings"] = json!([{"id": "synthetic:test:appearance-binding#unsupported", "target": {"kind": kind, "value": "f3d:model:component#block"}, "appearance": "synthetic:test:appearance#red", "channels": {}}]);
+            wire["model"]["appearance_bindings"] = json!([{"id": "synthetic:test:appearance-binding#unsupported", "target": {"entity": {"kind": kind, "value": "f3d:model:component#block"}}, "appearance": "synthetic:test:appearance#red", "channels": {}}]);
             let error = cadmpeg_ir::CadIr::from_json(&wire.to_string())
                 .unwrap_err()
                 .to_string();
@@ -4166,6 +4275,67 @@ mod tests {
             .flatten()
             .filter_map(|row| row["id"].as_str().map(str::to_owned))
             .collect()
+    }
+
+    #[test]
+    fn a_component_carries_the_history_bodies_its_own_features_make() {
+        let model = with_history(true);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let block = wire["model"]["features"][0]["id"].clone();
+        let nest = |id: &str, by: &Value| {
+            let mut body = wire["geometry"]["bodies"][0].clone();
+            body["id"] = json!(format!("synthetic:nest:body#{id}"));
+            json!({"id": format!("synthetic:history-body:nest#{id}"), "produced_by": by,
+                "state": {"ordinal": 1, "identifier": 1}, "topology": {"body": body,
+                "regions": [], "shells": [], "faces": [], "loops": [], "coedges": [], "edges": [],
+                "vertices": [], "surfaces": [], "curves": [], "pcurves": [], "points": []}})
+        };
+        let nests = json!([
+            nest("block", &block),
+            nest("other", &json!("synthetic:copy:feature#other")),
+        ]);
+        wire["model"]["history_bodies"] = nests;
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        };
+        let carried = |part: &Model| -> Vec<String> {
+            part.ir
+                .model
+                .history_bodies
+                .iter()
+                .map(|nest| nest.id.as_str().to_owned())
+                .collect()
+        };
+        let assembly = local_assembly(&model).unwrap().unwrap();
+        assert_eq!(
+            carried(&assembly.parts[0]),
+            ["synthetic:history-body:nest#block"]
+        );
+        // The other part's feature is a copy of the block's and reaches it, so the block's
+        // history body comes along with that feature too.
+        assert!(
+            carried(&assembly.parts[1]).contains(&"synthetic:history-body:nest#other".to_owned())
+        );
+        // The expanded and the compact row index carry the same.
+        let expanded = serde_json::to_value(&model.ir).unwrap();
+        let text = serde_json::to_string(&model.ir).unwrap();
+        let packed = slicing::Packed::read(&text).unwrap();
+        let document = packed.document().unwrap();
+        let index = slicing::Index::packed(&packed, &document).unwrap();
+        let bodies: Vec<&str> = model.ir.model.product_definitions[0]
+            .bodies
+            .iter()
+            .map(|id| id.as_str())
+            .collect();
+        let owner = HistoryOwner::Definition(model.ir.model.product_definitions[0].id.as_str());
+        let value = only(&model, &expanded, &bodies, owner, "part".to_owned()).unwrap();
+        let compact = only_indexed(&model, &index, &bodies, owner, "part".to_owned()).unwrap();
+        assert_eq!(carried(&value), ["synthetic:history-body:nest#block"]);
+        assert_eq!(carried(&compact), carried(&value));
+        // Geometry alone carries none.
+        let geometry = geometry_only(&model, &expanded, &bodies, "part".to_owned()).unwrap();
+        assert!(carried(&geometry).is_empty());
     }
 
     #[test]

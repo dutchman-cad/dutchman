@@ -742,6 +742,9 @@ fn capture<C: HttpClient>(
                     fetcher.export_step(source, &eid, &step)?;
                     paths.insert("step", step);
                 }
+                let sketches = format!("{prefix}/sketches.json");
+                fetcher.raw(&format!("{base}/sketches"), "", sketches.clone(), false)?;
+                paths.insert("sketches", sketches);
             }
             "ASSEMBLY" => {
                 let base = format!(

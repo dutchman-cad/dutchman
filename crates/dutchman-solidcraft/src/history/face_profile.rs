@@ -17,6 +17,10 @@
 //! rebuilt ones (same plane, same area, every boundary edge on it) and either confirms the
 //! side or says the sketch has to be mirrored ([`Proof::sketch`]). A face it cannot find
 //! exactly once refuses the extrude.
+//!
+//! A planar hole entry with circular boundary edges uses the same source plane and
+//! complete-boundary replay proof, without creating a profile sketch. Its placement must
+//! lie within the filled face; the proven outward normal signs an unsigned drilling axis.
 
 use serde_json::{json, Value};
 
@@ -28,9 +32,9 @@ use crate::verify::{Replay, ReplayedEdge, ReplayedFace};
 const FACES: usize = 64;
 const EDGES: usize = 4096;
 /// How far apart, in millimetres, two positions may be and still be the same.
-const NEAR: f64 = 1e-5;
+const NEAR: f64 = crate::tolerances::FACE_POSITION_MM;
 /// How far from square or parallel two unit directions may be.
-const ANGLE: f64 = 1e-5;
+const ANGLE: f64 = crate::tolerances::FACE_DIRECTION;
 const TAU: f64 = std::f64::consts::TAU;
 
 /// One boundary edge of a face, as its samples describe it.
@@ -100,13 +104,16 @@ struct Boundary {
 /// What the replay has to confirm about a mapped face profile.
 #[derive(Clone, Debug)]
 pub(crate) struct Proof {
-    /// The id of the sketch feature written for the profile.
+    /// The id of the sketch feature written for a profile; unused for a hole entry.
     pub(crate) sketch: u64,
     name: String,
     origin: V3,
     x: V3,
     y: V3,
     faces: Vec<Boundary>,
+    /// A hole entry instead of a generated profile sketch: its provisional drilling
+    /// direction and whether the source gave that direction a sign.
+    entry: Option<(V3, bool)>,
 }
 
 /// Maps the faces `value` selects (a `historical_faces` profile) of `feature` to a sketch of
@@ -149,6 +156,7 @@ pub(super) fn map(
         x,
         y,
         faces,
+        entry: None,
     };
     let (sketch, mapped) = proof.sketch(false)?;
     let key = format!(
@@ -291,6 +299,16 @@ pub(super) fn planar_face(
     Ok((planar_point(face, origin, normal)?, normal))
 }
 
+/// The plane of one historical entry face, without requiring a separate interior
+/// pick. The hole's own placement is checked against the complete filled boundary.
+pub(super) fn planar_normal(feature: &Value, value: &Value, ctx: &Context) -> Result<V3, String> {
+    let faces = boundaries(feature, value, ctx)?;
+    let [face] = faces.as_slice() else {
+        return Err("a selection without exactly one face is not supported yet".to_owned());
+    };
+    plane(std::slice::from_ref(face), &samples(face)).map(|(_, normal)| normal)
+}
+
 /// The unit normal of the plane of the one face `value` selects (its side is not known from
 /// the boundary) and the corners of its single straight-edged outline, in order. A face with
 /// a curved edge or with holes is refused.
@@ -324,6 +342,141 @@ pub(super) fn polygon(
         })
         .collect::<Result<Vec<V3>, String>>()?;
     Ok((normal, corners))
+}
+
+/// A planar historical hole entry. The sampled boundary proves its plane; replay
+/// must still find exactly that bounded face before the hole, and supply its outward side.
+pub(super) struct EntryFace {
+    pub(super) point: V3,
+    pub(super) normal: V3,
+    proof: Proof,
+    rings: Vec<Vec<[f64; 2]>>,
+    /// Maximum distance between a circular boundary and its inscribed chords.
+    sagitta: f64,
+}
+
+impl EntryFace {
+    pub(super) fn contains(&self, point: V3) -> bool {
+        let d = sub(point, self.proof.origin);
+        let p = [dot(d, self.proof.x), dot(d, self.proof.y)];
+        self.rings.iter().filter(|ring| inside(ring, p)).count() % 2 == 1
+            && self.rings.iter().all(|ring| {
+                (0..ring.len()).all(|i| {
+                    let (Some(a), Some(b)) = (ring.get(i), ring.get((i + 1) % ring.len())) else {
+                        return false;
+                    };
+                    // A point farther from every chord than the maximum sagitta
+                    // has the same containment against the exact circular boundary.
+                    segment_distance(p, *a, *b) > self.sagitta + NEAR
+                })
+            })
+    }
+
+    pub(super) fn pending(mut self, direction: V3, fixed: bool) -> super::blend::Pending {
+        self.proof.entry = Some((direction, fixed));
+        super::blend::Pending {
+            feature: 0,
+            outcome: 0,
+            subject: String::new(),
+            edges: Vec::new(),
+            angle_chamfer: false,
+            face: Some(self.proof),
+            extra: None,
+            trimmed: false,
+        }
+    }
+}
+
+/// Keep the existing straight cap proof and its output unchanged. Circular edges
+/// or inner loops instead need the complete source boundary and a replay proof.
+pub(super) fn curved_hole_face(
+    feature: &Value,
+    value: &Value,
+    ctx: &Context,
+) -> Result<Option<EntryFace>, String> {
+    let mut faces = boundaries(feature, value, ctx)?;
+    let [face] = faces.as_mut_slice() else {
+        return Err("a selection without exactly one face is not supported yet".to_owned());
+    };
+    let (origin, normal) = plane(std::slice::from_ref(face), &samples(face))
+        .map_err(|_| "a hole entry face that is not planar is not supported yet".to_owned())?;
+    if face
+        .edges
+        .iter()
+        .all(|edge| matches!(edge, Edge::Line { .. }))
+        && loops(&face.edges)?.len() == 1
+    {
+        return Ok(None);
+    }
+    // This extends feature admission only within the current release window;
+    // older targets keep their original geometry with a named blocker.
+    let minimum: crate::SolidCraftVersion = "0.40.0".parse()?;
+    if ctx.target_version < minimum {
+        return Err(format!(
+            "holes on planar faces with circular boundaries need SolidCraft {minimum} or newer \
+             (target SolidCraft {})",
+            ctx.target_version
+        ));
+    }
+    let helper = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        .into_iter()
+        .min_by(|a, b| dot(*a, normal).abs().total_cmp(&dot(*b, normal).abs()))
+        .ok_or("its face has no plane")?;
+    let x = unit(cross(helper, normal)).ok_or("its face has no plane")?;
+    let y = unit(cross(normal, x)).ok_or("its face has no plane")?;
+    let rings = planar_rings(face, origin, normal, x, y)?;
+    let sagitta = face
+        .edges
+        .iter()
+        .map(|edge| match edge {
+            Edge::Line { .. } => 0.0,
+            Edge::Arc { radius, .. } => {
+                radius
+                    * (2.0
+                        * (edge_sweep(edge) / (4.0 * f64::from(ARC_STEPS)))
+                            .sin()
+                            .powi(2))
+            }
+            Edge::Circle { radius, .. } => {
+                radius * (2.0 * (TAU / (4.0 * f64::from(CIRCLE_STEPS))).sin().powi(2))
+            }
+        })
+        .fold(0.0, f64::max);
+    face.area = area(face, origin, x, y)?;
+    Ok(Some(EntryFace {
+        point: origin,
+        normal,
+        rings,
+        sagitta,
+        proof: Proof {
+            sketch: 0,
+            name: String::new(),
+            origin,
+            x,
+            y,
+            faces,
+            entry: None,
+        },
+    }))
+}
+
+impl Proof {
+    /// A directed placement keeps its sign and must enter the proven face. An
+    /// unsigned axis takes its sign from the face SolidCraft actually rebuilt.
+    pub(crate) fn entry_direction(&self, mirrored: bool) -> Result<Option<V3>, String> {
+        let Some((direction, fixed)) = self.entry else {
+            return Ok(None);
+        };
+        let normal = unit(cross(self.x, self.y)).ok_or("its face has no plane")?;
+        let outward = scale(normal, if mirrored { -1.0 } else { 1.0 });
+        if dot(direction, outward) < 0.0 {
+            Ok(Some(direction))
+        } else if fixed {
+            Err("its placement does not drill into its entry face".to_owned())
+        } else {
+            Ok(Some(scale(direction, -1.0)))
+        }
+    }
 }
 
 /// The ends and middle of every boundary edge of `face`.
@@ -363,7 +516,8 @@ fn point_in(face: &Boundary, planar_only: bool) -> Result<V3, String> {
 }
 
 /// The point of a planar face farthest from its boundary among the centres of the triangles
-/// its outline corners make that lie inside it, holes left out.
+/// its outline corners make that lie inside it, holes left out. If those all land in holes,
+/// try interval midpoints on bounded scan lines through the same loops.
 fn planar_point(face: &Boundary, origin: V3, normal: V3) -> Result<V3, String> {
     let helper = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
         .into_iter()
@@ -371,6 +525,85 @@ fn planar_point(face: &Boundary, origin: V3, normal: V3) -> Result<V3, String> {
         .ok_or("its face has no plane")?;
     let x = unit(cross(helper, normal)).ok_or("its face has no plane")?;
     let y = unit(cross(normal, x)).ok_or("its face has no plane")?;
+    let rings = planar_rings(face, origin, normal, x, y)?;
+    let inside_face = |p: [f64; 2]| rings.iter().filter(|ring| inside(ring, p)).count() % 2 == 1;
+    let clearance = |p: [f64; 2]| {
+        rings
+            .iter()
+            .flat_map(|ring| {
+                (0..ring.len()).filter_map(move |i| {
+                    Some(segment_distance(
+                        p,
+                        *ring.get(i)?,
+                        *ring.get((i + 1) % ring.len())?,
+                    ))
+                })
+            })
+            .fold(f64::INFINITY, f64::min)
+    };
+    let mut best: Option<([f64; 2], f64)> = None;
+    for ring in &rings {
+        let n = ring.len();
+        for i in 0..n {
+            let (Some(a), Some(b), Some(c)) = (
+                ring.get((i + n - 1) % n),
+                ring.get(i),
+                ring.get((i + 1) % n),
+            ) else {
+                continue;
+            };
+            let centre = [(a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0];
+            if !inside_face(centre) {
+                continue;
+            }
+            let room = clearance(centre);
+            if room > 1e-3 && best.is_none_or(|(_, most)| room > most) {
+                best = Some((centre, room));
+            }
+        }
+    }
+    if best.is_none() {
+        // Corner triangles can all land in holes (or the opening of a thin frame).
+        // Intersections with every trim ring split a scan line into intervals; their
+        // midpoints also find narrow strips that a uniform point grid would miss.
+        // Keep the old picks when available, and apply the same containment and
+        // clearance proof to every new candidate. Curve chords need extra room:
+        // their sagitta bounds the difference from the actual circular boundary.
+        let chord_error = face.edges.iter().fold(0.0_f64, |error, edge| {
+            let sagitta = match edge {
+                Edge::Line { .. } => 0.0,
+                Edge::Arc { radius, .. } => {
+                    radius * (1.0 - (edge_sweep(edge).abs() / f64::from(ARC_STEPS) / 2.0).cos())
+                }
+                Edge::Circle { radius, .. } => {
+                    radius * (1.0 - (TAU / f64::from(CIRCLE_STEPS) / 2.0).cos())
+                }
+            };
+            error.max(sagitta)
+        });
+        for centre in scan_candidates(&rings) {
+            if !inside_face(centre) {
+                continue;
+            }
+            let room = clearance(centre);
+            if room > 1e-3 + chord_error && best.is_none_or(|(_, most)| room > most) {
+                best = Some((centre, room));
+            }
+        }
+    }
+    let ([u, v], _) = best.ok_or("its face has no resolved planar interior point")?;
+    Ok(add(origin, add(scale(x, u), scale(y, v))))
+}
+
+/// Bounded inscribed polygons used for interior candidates. Circular placement
+/// admission separately accounts for their exact maximum chord error.
+fn planar_rings(
+    face: &Boundary,
+    origin: V3,
+    normal: V3,
+    x: V3,
+    y: V3,
+) -> Result<Vec<Vec<[f64; 2]>>, String> {
     let flat = |p: V3| {
         let d = sub(p, origin);
         [dot(d, x), dot(d, y)]
@@ -413,44 +646,51 @@ fn planar_point(face: &Boundary, origin: V3, normal: V3) -> Result<V3, String> {
         }
         rings.push(polygon);
     }
-    let inside_face = |p: [f64; 2]| rings.iter().filter(|ring| inside(ring, p)).count() % 2 == 1;
-    let clearance = |p: [f64; 2]| {
-        rings
+    Ok(rings)
+}
+
+/// Midpoints of the widest scan intervals, with fixed work and candidate limits.
+fn scan_candidates(rings: &[Vec<[f64; 2]>]) -> Vec<[f64; 2]> {
+    let mut candidates = Vec::new();
+    for swapped in [false, true] {
+        let orient = |[u, v]: [f64; 2]| if swapped { [v, u] } else { [u, v] };
+        let low = rings
             .iter()
-            .flat_map(|ring| {
-                (0..ring.len()).filter_map(move |i| {
-                    Some(segment_distance(
-                        p,
-                        *ring.get(i)?,
-                        *ring.get((i + 1) % ring.len())?,
-                    ))
-                })
-            })
-            .fold(f64::INFINITY, f64::min)
-    };
-    let mut best: Option<([f64; 2], f64)> = None;
-    for ring in &rings {
-        let n = ring.len();
-        for i in 0..n {
-            let (Some(a), Some(b), Some(c)) = (
-                ring.get((i + n - 1) % n),
-                ring.get(i),
-                ring.get((i + 1) % n),
-            ) else {
-                continue;
-            };
-            let centre = [(a[0] + b[0] + c[0]) / 3.0, (a[1] + b[1] + c[1]) / 3.0];
-            if !inside_face(centre) {
-                continue;
+            .flatten()
+            .map(|p| orient(*p)[0])
+            .fold(f64::INFINITY, f64::min);
+        let high = rings
+            .iter()
+            .flatten()
+            .map(|p| orient(*p)[0])
+            .fold(f64::NEG_INFINITY, f64::max);
+        for k in 1..16 {
+            let at = low + (high - low) * f64::from(k) / 16.0;
+            let mut crossings = Vec::new();
+            for ring in rings {
+                for (a, b) in ring
+                    .iter()
+                    .zip(ring.iter().cycle().skip(1))
+                    .take(ring.len())
+                {
+                    let ([a0, a1], [b0, b1]) = (orient(*a), orient(*b));
+                    if (a0 > at) != (b0 > at) {
+                        crossings.push(a1 + (at - a0) * (b1 - a1) / (b0 - a0));
+                    }
+                }
             }
-            let room = clearance(centre);
-            if room > 1e-3 && best.is_none_or(|(_, most)| room > most) {
-                best = Some((centre, room));
+            crossings.sort_by(f64::total_cmp);
+            // Pairing sorted crossings is the even-odd fill rule, across all rings.
+            for [a, b] in crossings.as_chunks::<2>().0 {
+                candidates.push((b - a, orient([at, (a + b) / 2.0])));
             }
+            // Retain only the widest intervals seen so far, bounding allocation
+            // by one scan line plus the candidate limit even on hostile inputs.
+            candidates.sort_by(|a, b| b.0.total_cmp(&a.0));
+            candidates.truncate(256);
         }
     }
-    let ([u, v], _) = best.ok_or("its face has no resolved planar interior point")?;
-    Ok(add(origin, add(scale(x, u), scale(y, v))))
+    candidates.into_iter().map(|(_, p)| p).collect()
 }
 
 /// How far `p` is from the segment `a`-`b`.
@@ -959,7 +1199,11 @@ pub(crate) fn prove(proof: &Proof, replay: &Replay) -> Result<bool, String> {
             .edges
             .iter()
             .any(|edge| !matches!(edge, Edge::Line { .. }));
-        let slack = if curved { 0.02 } else { 1e-4 };
+        let slack = if curved {
+            crate::tolerances::FACE_AREA_CURVED
+        } else {
+            crate::tolerances::FACE_AREA_STRAIGHT
+        };
         let mut found = Vec::new();
         // The nearest in area of the faces on its plane, for the reason a face is not found.
         let mut nearest: Option<(f64, &ReplayedFace, &[ReplayedEdge])> = None;
@@ -969,7 +1213,8 @@ pub(crate) fn prove(proof: &Proof, replay: &Replay) -> Result<bool, String> {
                     continue;
                 };
                 if (dot(outward, normal).abs() - 1.0).abs() > ANGLE
-                    || dot(sub(candidate.point, proof.origin), normal).abs() > 1e-4
+                    || dot(sub(candidate.point, proof.origin), normal).abs()
+                        > crate::tolerances::FACE_PLANE_MM
                 {
                     continue;
                 }
@@ -1095,14 +1340,17 @@ fn bounds(face: &Boundary, named: &[&ReplayedEdge]) -> bool {
         .iter()
         .zip(&covered)
         .all(|(edge, total)| match edge {
-            Edge::Line { .. } => (total - edge.length()).abs() <= 1e-4 * edge.length().max(1.0),
+            Edge::Line { .. } => {
+                (total - edge.length()).abs()
+                    <= crate::tolerances::FACE_LINE_COVER * edge.length().max(1.0)
+            }
             Edge::Arc { .. } => (total - edge_sweep(edge).abs()).abs() <= TURN_SLACK,
             Edge::Circle { .. } => (total - TAU).abs() <= TURN_SLACK,
         })
 }
 
 /// How far apart, in radians, the turn a curved edge's rebuilt pieces span may be from its own.
-const TURN_SLACK: f64 = 2e-3;
+const TURN_SLACK: f64 = crate::tolerances::FACE_TURN_RAD;
 
 /// The centre, radius and axis of a curved edge.
 fn carrier(edge: &Edge) -> Option<(V3, f64, V3)> {
@@ -1155,7 +1403,7 @@ fn lies_on(edge: &Edge, rebuilt: &ReplayedEdge) -> bool {
             let Some(turn) = piece_turn(edge, rebuilt) else {
                 return false;
             };
-            let tolerance = 1e-3 * radius.max(1.0);
+            let tolerance = crate::tolerances::FACE_ARC_RADIUS * radius.max(1.0);
             let on = |p: V3| (norm(sub(p, center)) - radius).abs() <= tolerance;
             let half = (turn / 2.0).min(std::f64::consts::FRAC_PI_2);
             let inner = radius * half.cos() - tolerance;
@@ -1237,6 +1485,110 @@ mod tests {
     fn circle(radius: f64) -> Edge {
         let r = row((radius, 0.0), (-radius, 0.0), (radius, 0.0), (0.0, -1.0));
         edge(&r).unwrap()
+    }
+
+    fn entry_from_rows(mut rows: Vec<Value>) -> Result<Option<EntryFace>, String> {
+        for (k, row) in rows.iter_mut().enumerate() {
+            row["edge"] = json!(format!("edge{k}"));
+            row["faces"] = json!(["face"]);
+        }
+        let model = json!({"feature_input_topologies": [{"id": "state", "input_of": "hole",
+            "faces": ["face"], "edge_geometry": rows}]});
+        curved_hole_face(
+            &json!({"id": "hole"}),
+            &json!({"state": "state", "faces": ["face"]}),
+            &Context::testing(&model),
+        )
+    }
+
+    #[test]
+    fn circular_hole_entry_placement_stays_clear_of_the_exact_inner_and_outer_rims() {
+        let face = entry_from_rows(vec![
+            row((10.0, 0.0), (-10.0, 0.0), (10.0, 0.0), (0.0, 1.0)),
+            row((4.0, 0.0), (-4.0, 0.0), (4.0, 0.0), (0.0, 1.0)),
+        ])
+        .unwrap()
+        .unwrap();
+        assert!(face.contains([7.0, 0.0, 0.0]));
+        assert!(!face.contains([0.0, 0.0, 0.0]));
+        assert!(!face.contains([11.0, 0.0, 0.0]));
+        // Between an inner chord and its true arc: must never enter the old hole.
+        let at = std::f64::consts::PI / 64.0;
+        assert!(!face.contains([3.999 * at.cos(), 3.999 * at.sin(), 0.0]));
+        assert!(!face.contains([4.0, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn a_small_planar_entry_uses_the_placement_instead_of_a_separate_interior_pick() {
+        let face = entry_from_rows(vec![row((0.1, 0.0), (-0.1, 0.0), (0.1, 0.0), (0.0, 1.0))])
+            .unwrap()
+            .unwrap();
+        assert!(face.contains([0.0; 3]));
+        assert!(!face.contains([0.2, 0.0, 0.0]));
+    }
+
+    #[test]
+    fn nonplanar_hole_entry_boundaries_have_a_named_refusal() {
+        let mut top = row((10.0, 0.0), (-10.0, 0.0), (10.0, 0.0), (0.0, 1.0));
+        for key in ["start", "interior", "end"] {
+            top[key]["z"] = json!(2.0);
+        }
+        let why = entry_from_rows(vec![
+            row((10.0, 0.0), (-10.0, 0.0), (10.0, 0.0), (0.0, 1.0)),
+            top,
+        ])
+        .err()
+        .unwrap();
+        assert_eq!(
+            why,
+            "a hole entry face that is not planar is not supported yet"
+        );
+    }
+
+    #[test]
+    fn hole_entry_side_comes_from_the_unique_rebuilt_face() {
+        let face = entry_from_rows(vec![row(
+            (10.0, 0.0),
+            (-10.0, 0.0),
+            (10.0, 0.0),
+            (0.0, 1.0),
+        )])
+        .unwrap()
+        .unwrap();
+        let mut proof = face.pending([0.0, 0.0, 1.0], false).face.unwrap();
+        let edge = ReplayedEdge {
+            start: [10.0, 0.0, 0.0],
+            mid: [-10.0, 0.0, 0.0],
+            end: [10.0, 0.0, 0.0],
+            length: TAU * 10.0,
+            name: "cap".to_owned(),
+        };
+        let cap = ReplayedFace {
+            name: "cap".to_owned(),
+            area: std::f64::consts::PI * 100.0,
+            normal: Some([0.0, 0.0, 1.0]),
+            point: [0.0; 3],
+        };
+        let mut replay = Replay {
+            bodies: vec![("body".to_owned(), vec![edge])],
+            faces: vec![vec![cap]],
+        };
+        let mirrored = prove(&proof, &replay).unwrap();
+        assert_eq!(
+            proof.entry_direction(mirrored).unwrap(),
+            Some([0.0, 0.0, -1.0])
+        );
+        proof.entry = Some(([0.0, 0.0, 1.0], true));
+        assert!(proof.entry_direction(mirrored).is_err());
+        // Equal area and plane alone are insufficient: the radius/centre must match.
+        replay.bodies[0].1[0].start[0] = 9.0;
+        assert!(prove(&proof, &replay).is_err());
+        replay.bodies[0].1[0].start[0] = 10.0;
+        let duplicate = replay.faces[0][0].clone();
+        replay.faces[0].push(duplicate);
+        assert!(prove(&proof, &replay)
+            .unwrap_err()
+            .contains("several faces"));
     }
 
     #[test]
@@ -1394,6 +1746,43 @@ mod tests {
         assert!((p[0] - 5.0 * half.cos()).abs() < 1e-6, "{p:?}");
         assert!((p[1] - 5.0 * half.sin()).abs() < 1e-6, "{p:?}");
         assert!((p[2] - 5.0).abs() < 1e-6, "{p:?}");
+    }
+
+    #[test]
+    fn a_thin_frame_with_many_holes_gets_a_point_outside_every_hole() {
+        // Synthetic rectangular frame: every old corner-triangle centre lies in
+        // the central opening. Twenty circular perforations occupy the top rail.
+        let rectangle = |low: [f64; 2], high: [f64; 2]| {
+            let corners = [low, [high[0], low[1]], high, [low[0], high[1]]];
+            (0..4).map(move |k| Edge::Line {
+                start: [corners[k][0], corners[k][1], 0.0],
+                end: [corners[(k + 1) % 4][0], corners[(k + 1) % 4][1], 0.0],
+            })
+        };
+        let holes: Vec<V3> = (0..20)
+            .map(|k| [5.0 + 5.0 * f64::from(k), 79.0, 0.0])
+            .collect();
+        let mut edges: Vec<Edge> = rectangle([0.0, 0.0], [120.0, 80.0])
+            .chain(rectangle([2.0, 2.0], [118.0, 78.0]))
+            .collect();
+        edges.extend(holes.iter().map(|&center| Edge::Circle {
+            start: add(center, [0.35, 0.0, 0.0]),
+            mid: add(center, [-0.35, 0.0, 0.0]),
+            center,
+            radius: 0.35,
+            axis: [0.0, 0.0, 1.0],
+        }));
+        let p = point_in(&Boundary { edges, area: 0.0 }, true).unwrap();
+        assert_eq!(p[2], 0.0);
+        assert!(
+            p[0] > 0.001 && p[0] < 119.999 && p[1] > 0.001 && p[1] < 79.999,
+            "{p:?}"
+        );
+        assert!(
+            p[0] < 1.999 || p[0] > 118.001 || p[1] < 1.999 || p[1] > 78.001,
+            "{p:?}"
+        );
+        assert!(holes.iter().all(|&c| norm(sub(p, c)) > 0.351), "{p:?}");
     }
 
     #[test]

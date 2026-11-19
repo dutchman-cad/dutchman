@@ -1,7 +1,7 @@
 //! Onshape uses the same history writer and source-geometry verifier as native files.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -16,6 +16,74 @@ fn model(name: &str) -> (Model, Report) {
     ));
     let mut report = Report::default();
     let model = dutchman_core::read(Format::OnshapeBundle, &path, &mut report).unwrap();
+    (model, report)
+}
+
+/// The plate fixture with its sketch length and extrude depth written as Part Studio
+/// variables (`#span`, and `#thick` defined from it), evaluating to the fixture's own values.
+fn variable_model() -> (Model, Report) {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../dutchman-core/tests/fixtures/onshape-plate-fillet.onshape-bundle");
+    let source = std::fs::read(path).unwrap();
+    let mut archive = zip::ZipArchive::new(Cursor::new(source)).unwrap();
+    let mut output = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for i in 0..archive.len() {
+        let mut member = archive.by_index(i).unwrap();
+        let mut name = member.name().unwrap().into_owned();
+        let mut bytes = Vec::new();
+        member.read_to_end(&mut bytes).unwrap();
+        // The two variables move every feature, and the body details captured at its
+        // rollback position, two places down.
+        if name.ends_with("bodydetails/index.json") {
+            let indices: Vec<u64> = serde_json::from_slice(&bytes).unwrap();
+            let moved: Vec<u64> = indices.iter().map(|i| i + 2).collect();
+            bytes = serde_json::to_vec(&moved).unwrap();
+        } else if let Some((folder, file)) = name.clone().rsplit_once("bodydetails/") {
+            let index: u64 = file.strip_suffix(".json").unwrap().parse().unwrap();
+            name = format!("{folder}bodydetails/{}.json", index + 2);
+        }
+        if name.ends_with("features.json") {
+            let mut response: Value = serde_json::from_slice(&bytes).unwrap();
+            let features = response["features"].as_array_mut().unwrap();
+            for row in features[0]["constraints"].as_array_mut().unwrap() {
+                for p in row["parameters"].as_array_mut().unwrap() {
+                    if p["parameterId"] == "length" {
+                        p["expression"] = json!("#span");
+                    }
+                }
+            }
+            for p in features[1]["parameters"].as_array_mut().unwrap() {
+                if p["parameterId"] == "depth" {
+                    p["expression"] = json!("#thick");
+                }
+            }
+            for (at, (feature, name, expression)) in [
+                ("span-variable", "span", "20 mm"),
+                ("thick-variable", "thick", "#span / 10"),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                features.insert(at, json!({"featureId": feature, "featureType": "assignVariable", "name": format!("Variable {name}"),
+                    "parameters": [{"parameterId": "mode", "value": "ASSIGNED"}, {"parameterId": "variableType", "value": "LENGTH"},
+                    {"parameterId": "name", "value": name}, {"parameterId": "lengthValue", "expression": expression}]}));
+            }
+            bytes = serde_json::to_vec(&response).unwrap();
+        }
+        output
+            .start_file(name.as_str(), zip::write::SimpleFileOptions::default())
+            .unwrap();
+        output.write_all(&bytes).unwrap();
+    }
+    let bytes = output.finish().unwrap().into_inner();
+    let mut report = Report::default();
+    let model = dutchman_core::read_bytes(
+        Format::OnshapeBundle,
+        Path::new("variables.onshape-bundle"),
+        &bytes,
+        &mut report,
+    )
+    .unwrap();
     (model, report)
 }
 
@@ -246,8 +314,12 @@ fn real_solidcraft_replays_the_synthetic_bodies_against_the_step_exports() {
         eprintln!("Set SOLIDCRAFT_CLI to replay Onshape fixture histories");
         return;
     };
-    for name in ["plate-fillet", "revolve", "hole", "hole-forms"] {
-        let (model, mut report) = model(name);
+    for name in ["plate-fillet", "revolve", "hole", "hole-forms", "variables"] {
+        let (model, mut report) = if name == "variables" {
+            variable_model()
+        } else {
+            model(name)
+        };
         let writer = SolidCraftWriter::new().verification(Verification::With(cli.clone()));
         writer.write(&model, &mut Vec::new(), &mut report).unwrap();
         assert_eq!(
@@ -283,6 +355,526 @@ fn sketch_only_history_writes_without_an_import_or_step_blob() {
     let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
     for i in 0..zip.len() {
         assert!(!zip.by_index(i).unwrap().name().unwrap().ends_with(".step"));
+    }
+}
+
+/// Rebuild an owner-authored synthetic fixture in memory, changing REST responses only.
+fn synthetic_bundle(edit: impl FnMut(&mut Value)) -> (Model, Report) {
+    synthetic_bundle_named("plate-fillet", edit)
+}
+
+fn synthetic_bundle_named(name: &str, mut edit: impl FnMut(&mut Value)) -> (Model, Report) {
+    use std::io::Write;
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+        "../dutchman-core/tests/fixtures/onshape-{name}.onshape-bundle"
+    ));
+    let mut archive = zip::ZipArchive::new(Cursor::new(std::fs::read(path).unwrap())).unwrap();
+    let mut output = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for i in 0..archive.len() {
+        let mut member = archive.by_index(i).unwrap();
+        let name = member.name().unwrap().into_owned();
+        let mut bytes = Vec::new();
+        member.read_to_end(&mut bytes).unwrap();
+        if name.ends_with("features.json") {
+            let mut value = serde_json::from_slice(&bytes).unwrap();
+            edit(&mut value);
+            bytes = serde_json::to_vec(&value).unwrap();
+        }
+        output
+            .start_file(name.as_str(), zip::write::SimpleFileOptions::default())
+            .unwrap();
+        output.write_all(&bytes).unwrap();
+    }
+    let bytes = output.finish().unwrap().into_inner();
+    let mut report = Report::default();
+    let model = dutchman_core::read_bytes(
+        Format::OnshapeBundle,
+        Path::new("synthetic.onshape-bundle"),
+        &bytes,
+        &mut report,
+    )
+    .unwrap();
+    (model, report)
+}
+
+fn write_synthetic(model: &Model, report: &mut Report) -> Value {
+    write_synthetic_target(model, report, SolidCraftVersion::default())
+}
+
+fn write_synthetic_latest(model: &Model, report: &mut Report) -> Value {
+    write_synthetic_target(model, report, SolidCraftVersion::V0_44_0)
+}
+
+fn write_synthetic_target(model: &Model, report: &mut Report, target: SolidCraftVersion) -> Value {
+    let host = Arc::new(Measurements {
+        step: model.source_step.clone().unwrap(),
+        calls: Mutex::default(),
+        mismatch: "",
+    });
+    let mut output = Vec::new();
+    SolidCraftWriter::new()
+        .target_version(Some(target))
+        .evaluator(host)
+        .write(model, &mut output, report)
+        .unwrap();
+    document(&output)
+}
+
+#[test]
+fn onshape_ellipses_and_arcs_reach_the_shared_sketch_writer() {
+    for span in [1.0, 4.0] {
+        let (model, mut report) = synthetic_bundle(|value| {
+            value["features"].as_array_mut().unwrap().truncate(2);
+            let curves = value["features"][0]["entities"].as_array_mut().unwrap();
+            let ellipse = json!({"btType":"BTMSketchCurve-4","entityId":"oval","isConstruction":true,
+                "geometry":{"btType":"BTCurveGeometryEllipse-1189","xCenter":0.03,"yCenter":0.04,
+                    "xDir":0.0,"yDir":1.0,"radius":0.006,"minorRadius":0.002}});
+            curves.push(ellipse.clone());
+            let mut arc = ellipse;
+            arc["entityId"] = json!("oval-arc");
+            arc["btType"] = json!("BTMSketchCurveSegment-155");
+            arc["startParam"] = json!(0.0);
+            arc["endParam"] = json!(span);
+            curves.push(arc);
+        });
+        let doc = write_synthetic(&model, &mut report);
+        let sketch = doc["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["type"] == "sketch")
+            .unwrap();
+        let curves = sketch["sketch"]["curves"].as_array().unwrap();
+        assert!(curves.iter().any(|c| c["type"] == "ellipse"), "{sketch}");
+        assert_eq!(
+            curves.iter().filter(|c| c["type"] == "conic").count(),
+            if span < std::f64::consts::PI { 1 } else { 4 }
+        );
+        assert!(
+            report
+                .outcome()
+                .unwrap()
+                .features
+                .iter()
+                .all(|f| matches!(f.status, FeatureStatus::Mapped | FeatureStatus::NotNeeded)),
+            "{:?}",
+            report.losses()
+        );
+    }
+}
+
+fn inch_variables(value: &mut Value) {
+    let rows = value["features"].as_array_mut().unwrap();
+    rows.truncate(2);
+    rows[0]["constraints"][1]["parameters"][1]["expression"] = json!("#stock * (20 / 25.4)");
+    rows[1]["parameters"][4]["expression"] = json!("#reach / 12.7");
+    rows[1]["parameters"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"parameterId":"symmetric","value":true}));
+    for (id, name, expression) in [
+        ("stock-variable", "stock", "1 inch"),
+        ("reach-variable", "reach", "#stock * 1"),
+    ] {
+        let variable = json!({"featureId":id,"featureType":"assignVariable","parameters":[
+            {"parameterId":"mode","value":"ASSIGNED"},{"parameterId":"variableType","value":"LENGTH"},
+            {"parameterId":"name","value":name},{"parameterId":"lengthValue","expression":expression}]});
+        let at = if name == "stock" { 0 } else { 1 };
+        rows.insert(at, variable);
+    }
+}
+
+#[test]
+fn inch_variables_keep_expressions_units_and_drive_dimensions_and_symmetric_depths() {
+    let (model, mut report) = synthetic_bundle(inch_variables);
+    let doc = write_synthetic(&model, &mut report);
+    let params = doc["params"].as_array().unwrap();
+    let stock = params.iter().find(|p| p["name"] == "stock").unwrap();
+    assert_eq!(stock["expr"], "1 in");
+    assert_eq!(stock["unit"], "in");
+    assert_eq!(stock["model"], false);
+    let reach = params.iter().find(|p| p["name"] == "reach").unwrap();
+    assert_eq!(reach["expr"], "(stock * 1)");
+    assert_eq!(reach["unit"], "in");
+    let features = doc["features"].as_array().unwrap();
+    let sketch = features.iter().find(|f| f["type"] == "sketch").unwrap();
+    let dimension = sketch["sketch"]["constraints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["type"] == "length")
+        .unwrap();
+    let name = dimension["param"].as_str().unwrap();
+    assert_eq!(
+        params.iter().find(|p| p["name"] == name).unwrap()["expr"],
+        "(stock * (20 / 25.4))"
+    );
+    let extrude = features.iter().find(|f| f["type"] == "extrude").unwrap();
+    let depth = extrude["extent"]["distance"].as_str().unwrap();
+    assert_eq!(
+        params.iter().find(|p| p["name"] == depth).unwrap()["expr"],
+        "(reach / 12.7)"
+    );
+    assert_eq!(extrude["extent"]["direction"], "symmetric");
+    assert_eq!(extrude["extent"]["convention"], "total_distance");
+}
+
+#[test]
+fn design_parameters_survive_a_fallback_with_no_mapped_sketch() {
+    let (model, mut report) = synthetic_bundle(|value| {
+        inch_variables(value);
+        value["features"][2]["entities"][0]["geometry"]["btType"] =
+            json!("UnsupportedSyntheticCurve");
+    });
+    let doc = write_synthetic(&model, &mut report);
+    assert_eq!(doc["params"].as_array().unwrap().len(), 2);
+    assert!(doc["params"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["name"] == "reach" && p["expr"] == "(stock * 1)"));
+    assert!(
+        !report
+            .losses()
+            .iter()
+            .any(|l| l.subject == "parameters" && l.detail.contains("non-parametric body")),
+        "{:?}",
+        report.losses()
+    );
+}
+
+#[test]
+fn unequal_chamfers_keep_a_named_loss_when_the_shared_writer_cannot_prove_them() {
+    for form in ["TWO_OFFSETS", "DISTANCE_ANGLE"] {
+        let (model, mut report) = synthetic_bundle(|value| {
+            let feature = &mut value["features"][2];
+            feature["featureType"] = json!("chamfer");
+            feature["parameters"].as_array_mut().unwrap().extend([
+                json!({"parameterId":"chamferType","value":form}),
+                json!({"parameterId":"width","expression":"0.4 mm"}),
+                json!({"parameterId":"width1","expression":"0.4 mm"}),
+                json!({"parameterId":"width2","expression":"0.8 mm"}),
+                json!({"parameterId":"angle","expression":"30 deg"}),
+            ]);
+        });
+        let doc = write_synthetic(&model, &mut report);
+        assert!(doc["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|f| f["type"] == "import"));
+        assert!(
+            report
+                .outcome()
+                .unwrap()
+                .features
+                .iter()
+                .any(|f| f.kind == "chamfer"
+                    && f.status == FeatureStatus::Blocked
+                    && f.reason.as_deref().is_some_and(|r| !r.is_empty())),
+            "{:?}",
+            report.outcome()
+        );
+    }
+}
+
+#[test]
+fn selected_line_regions_keep_their_extrude_beside_an_unused_ellipse() {
+    let (model, mut report) = synthetic_bundle_named("default-plane-regions", |value| {
+        value["features"][0]["entities"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+            "btType":"BTMSketchCurve-4","entityId":"separate-oval","isConstruction":false,
+            "geometry":{"btType":"BTCurveGeometryEllipse-1189","xCenter":0.04,"yCenter":0.04,
+                "xDir":1.0,"yDir":0.0,"radius":0.003,"minorRadius":0.001}}));
+    });
+    let doc = write_synthetic(&model, &mut report);
+    let sketch = doc["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["type"] == "sketch")
+        .unwrap();
+    assert!(sketch["sketch"]["curves"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|c| c["type"] == "ellipse"));
+    assert!(
+        report
+            .outcome()
+            .unwrap()
+            .features
+            .iter()
+            .all(|f| f.status == FeatureStatus::Mapped),
+        "{:?}",
+        report.outcome()
+    );
+}
+
+#[test]
+fn new_synthetic_sketches_and_inch_parameters_replay_against_the_source() {
+    let Some(cli) = std::env::var_os(dutchman_solidcraft::CLI_ENV).map(PathBuf::from) else {
+        eprintln!("Set SOLIDCRAFT_CLI to replay elliptical sketches and inch parameters");
+        return;
+    };
+    for parameters in [false, true] {
+        let (model, mut report) = synthetic_bundle_named("default-plane-regions", |value| {
+            if parameters {
+                value["features"][0]["constraints"] = json!([
+                    {"entityId":"horizontal","constraintType":"HORIZONTAL","parameters":[
+                        {"parameterId":"localFirst","value":"outline.side0"}]},
+                    {"entityId":"length","constraintType":"LENGTH","parameters":[
+                        {"parameterId":"localFirst","value":"outline.side0"},
+                        {"parameterId":"length","expression":"20 mm"}]}
+                ]);
+                inch_variables(value);
+                value["features"][3]["parameters"][4]["expression"] = json!("#reach / 5.08");
+                // Keep this fixture's original 5 mm, one-sided extrusion.
+                value["features"][3]["parameters"]
+                    .as_array_mut()
+                    .unwrap()
+                    .retain(|p| p["parameterId"] != "symmetric");
+            } else {
+                let curves = value["features"][0]["entities"].as_array_mut().unwrap();
+                for span in [None, Some(1.0), Some(4.0)] {
+                    let mut curve = json!({"btType":"BTMSketchCurve-4","entityId":format!("oval-{span:?}"),"isConstruction":true,
+                        "geometry":{"btType":"BTCurveGeometryEllipse-1189","xCenter":0.03,"yCenter":0.04,
+                            "xDir":0.0,"yDir":1.0,"radius":0.006,"minorRadius":0.002}});
+                    if let Some(span) = span {
+                        curve["btType"] = json!("BTMSketchCurveSegment-155");
+                        curve["startParam"] = json!(0.0);
+                        curve["endParam"] = json!(span);
+                    }
+                    curves.push(curve);
+                }
+            }
+        });
+        SolidCraftWriter::new()
+            .verification(Verification::With(cli.clone()))
+            .write(&model, &mut Vec::new(), &mut report)
+            .unwrap();
+        assert_eq!(
+            report.outcome().unwrap().check,
+            Check::Verified,
+            "{:?}",
+            report.losses()
+        );
+    }
+}
+
+// Independently authored neutral thin construction for existing writer checks.
+// The Onshape reader refuses these records until source scope and sides resolve.
+fn neutral_thin(mut model: Model, midplane: bool, flip: bool, second: f64) -> Model {
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let sketch = wire["model"]["sketches"][0]["id"].clone();
+    let entities: Vec<Value> = wire["model"]["sketch_entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| {
+            e["sketch"] == sketch && e["construction"] != true && e["geometry"]["kind"] != "point"
+        })
+        .map(|e| e["id"].clone())
+        .collect();
+    let feature = &mut wire["model"]["features"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|f| f["definition"]["value"]["kind"] == "extrude")
+        .unwrap();
+    feature["definition"]["value"]["value"]["profile"]["value"] =
+        json!({"kind":"sketch_entities","value":{"sketch":sketch,"entities":entities}});
+    let extrude = feature["definition"]["value"]["value"].clone();
+    let literal = |v: f64| json!({"kind":"literal","value":v});
+    let thickness = if midplane {
+        json!({"kind":"symmetric","value":literal(2.0)})
+    } else if second == 0.0 {
+        json!({"kind":"one_side","value":{"value":literal(1.0),"side":{"kind":if flip {"inside"} else {"outside"}}}})
+    } else {
+        json!({"kind":"offsets","value":{"outside":literal(if flip {second} else {1.0}),"inside":literal(if flip {1.0} else {second})}})
+    };
+    let picks: Vec<Value> = entities
+        .iter()
+        .map(|e| json!({"target":{"kind":"sketch_entity","value":e}}))
+        .collect();
+    wire["design"]["features"] = json!([{"id":feature["id"],"definition":{"operation":{"kind":"extrude","value":{
+        "profile":{"at":{"kind":"input"},"picks":{"kind":"named","value":picks}},
+        "direction":{"kind":"profile_normal","reversed":{"kind":"literal","value":extrude["direction"]["kind"]=="reversed_profile_normal"}},
+        "origin":{"kind":"profile_plane"},"span":{"kind":"between","start":{"kind":"at_origin"},"end":{"kind":"amount","value":literal(extrude["extent"]["side"]["termination"]["length"].as_f64().unwrap())}},
+        "output":{"body":{"kind":"thin","thickness":thickness},"boolean":{"kind":"new_body"}},"native_options":{},"source_settings":{}}}}}]);
+    model.ir = serde_json::from_value(wire).unwrap();
+    model
+}
+fn thin_bundle(midplane: bool, flip: bool, second: f64) -> (Model, Report) {
+    let (model, report) = synthetic_bundle(|value| {
+        value["features"].as_array_mut().unwrap().truncate(2);
+    });
+    (neutral_thin(model, midplane, flip, second), report)
+}
+
+#[test]
+fn typed_thin_outputs_write_exact_curves_sides_and_thicknesses() {
+    for (midplane, flip, second, side, thickness, thickness2) in [
+        (false, false, 0.0, Some("outside"), "1 mm", None),
+        (false, true, 0.0, Some("inside"), "1 mm", None),
+        (true, false, 0.0, None, "2 mm", None),
+        (false, false, 2.0, Some("two_sides"), "2 mm", Some("1 mm")),
+    ] {
+        let (model, mut report) = thin_bundle(midplane, flip, second);
+        let doc = write_synthetic_latest(&model, &mut report);
+        let extrude = doc["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["type"] == "extrude")
+            .unwrap();
+        assert_eq!(extrude["thin"]["side"].as_str(), side);
+        assert_eq!(extrude["thin"]["thickness"], thickness);
+        assert_eq!(extrude["thin"]["thickness2"].as_str(), thickness2);
+        assert_eq!(extrude["thin"]["curves"].as_array().unwrap().len(), 4);
+        assert!(
+            report
+                .outcome()
+                .unwrap()
+                .features
+                .iter()
+                .all(|f| f.status == FeatureStatus::Mapped),
+            "{:?}",
+            report.outcome()
+        );
+    }
+}
+
+#[test]
+fn thin_outputs_refuse_conflicting_projections_and_preserve_older_targets() {
+    let mut report = Report::default();
+    // A mismatched profile in an otherwise well-formed typed record is not
+    // allowed to supply output semantics to a different model projection.
+    let (model, _) = thin_bundle(false, false, 0.0);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["design"]["features"][0]["definition"]["operation"]["value"]["profile"]["picks"] =
+        json!({"kind":"named","value":[]});
+    let model = Model {
+        ir: serde_json::from_value(wire).unwrap(),
+        ..model
+    };
+    let doc = write_synthetic_latest(&model, &mut report);
+    assert!(!doc["features"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|f| f["type"] == "extrude"));
+    assert!(report.outcome().unwrap().features.iter().any(|f| f
+        .reason
+        .as_deref()
+        .is_some_and(|r| r.contains("projection disagree"))));
+    let (model, mut report) = thin_bundle(false, false, 0.0);
+    let mut output = Vec::new();
+    SolidCraftWriter::new()
+        .verification(Verification::Off)
+        .target_version(Some("0.18.2".parse().unwrap()))
+        .write(&model, &mut output, &mut report)
+        .unwrap();
+    assert!(report.outcome().unwrap().features.iter().any(|f| f
+        .reason
+        .as_deref()
+        .is_some_and(|r| r.contains("thin extrudes need SolidCraft"))));
+}
+
+#[test]
+fn thin_circle_walls_replay_with_the_stated_side_and_volume() {
+    let Some(cli) = std::env::var_os(dutchman_solidcraft::CLI_ENV).map(PathBuf::from) else {
+        eprintln!("Set SOLIDCRAFT_CLI to replay thin circle walls");
+        return;
+    };
+    let evaluator = dutchman_solidcraft::CliEvaluator::new(cli);
+    for (midplane, flip, second, area) in [
+        (false, false, 0.0, 11.0),
+        (false, true, 0.0, 9.0),
+        (true, false, 0.0, 20.0),
+        (false, false, 2.0, 27.0),
+    ] {
+        let (model, mut report) = synthetic_bundle(|value| {
+            value["features"].as_array_mut().unwrap().truncate(2);
+            value["features"][0]["constraints"] = json!([]);
+            value["features"][0]["entities"] = json!([{"btType":"BTMSketchCurve-4","entityId":"ring",
+                "geometry":{"btType":"BTCurveGeometryCircle-115","radius":0.005,"xDir":1.0}}]);
+        });
+        let model = neutral_thin(model, midplane, flip, second);
+        let host = Arc::new(Measurements {
+            step: model.source_step.clone().unwrap(),
+            calls: Mutex::default(),
+            mismatch: "",
+        });
+        let mut output = Vec::new();
+        SolidCraftWriter::new()
+            .target_version(Some(SolidCraftVersion::V0_44_0))
+            .evaluator(host)
+            .write(&model, &mut output, &mut report)
+            .unwrap();
+        // The transport double above exercises archive writing; the kernel's
+        // independent measurement must match the analytic annulus, not that double.
+        let measured = evaluator
+            .evaluate(&output, Duration::from_secs(120), "thin-circle")
+            .unwrap();
+        let bodies = measured["bodies"].as_array().unwrap();
+        assert_eq!(bodies.len(), 1, "{measured}");
+        let volume = bodies[0]["volume_mm3"].as_f64().unwrap();
+        assert!(
+            (volume - area * std::f64::consts::PI * 2.0).abs() < 1e-7,
+            "{measured}"
+        );
+    }
+}
+
+#[path = "../../dutchman-core/tests/fixtures/onshape_regions.rs"]
+mod region_fixture;
+
+#[test]
+fn an_open_divider_is_refused_before_writing_even_without_verification() {
+    for divider in ["line", "arc", "coincident"] {
+        for verification_off in [false, true] {
+            let (model, mut report) =
+                synthetic_bundle_named("default-plane-regions", |value| match divider {
+                    "arc" => region_fixture::arc_divider(value),
+                    "coincident" => region_fixture::coincident_dividers(value),
+                    _ => region_fixture::frame(value, true),
+                });
+            assert!(report
+                .losses()
+                .iter()
+                .any(|l| l.detail.contains("open divider")));
+            let mut output = Vec::new();
+            let mut writer =
+                SolidCraftWriter::new().target_version(Some(SolidCraftVersion::V0_44_0));
+            if verification_off {
+                writer = writer.verification(Verification::Off);
+            } else {
+                writer = writer.evaluator(Arc::new(Measurements {
+                    step: model.source_step.clone().unwrap(),
+                    calls: Mutex::default(),
+                    mismatch: "",
+                }));
+            }
+            writer.write(&model, &mut output, &mut report).unwrap();
+            let doc = document(&output);
+            assert!(doc["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|f| f["type"] != "extrude"));
+            assert!(doc["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["type"] == "import"));
+            assert_eq!(
+                report.outcome().unwrap().features[1].status,
+                FeatureStatus::Blocked
+            );
+        }
     }
 }
 
@@ -331,6 +923,195 @@ fn sketch_only_designs_are_checked_by_a_clean_replay_without_bodies() {
         match expected {
             "verified" => assert_eq!(check, &Check::Verified),
             _ => assert!(matches!(check, Check::Differs(_)), "{check:?}"),
+        }
+    }
+}
+
+#[test]
+fn part_studio_variables_drive_the_sketch_dimension_and_extrude_depth() {
+    let (model, mut report) = variable_model();
+    let host = Arc::new(Measurements {
+        step: model.source_step.clone().unwrap(),
+        calls: Mutex::default(),
+        mismatch: "",
+    });
+    let writer = SolidCraftWriter::new()
+        .evaluator(host)
+        .target_version(Some(SolidCraftVersion::default()));
+    let mut output = Vec::new();
+    writer.write(&model, &mut output, &mut report).unwrap();
+    let outcome = report.outcome().unwrap();
+    assert!(
+        outcome
+            .features
+            .iter()
+            .all(|f| matches!(f.status, FeatureStatus::Mapped | FeatureStatus::NotNeeded)),
+        "{:?}",
+        report.losses()
+    );
+    assert_eq!(outcome.check, Check::Verified, "{:?}", report.losses());
+    let doc = document(&output);
+    let params = doc["params"].as_array().unwrap();
+    let expr = |name: &str| {
+        params
+            .iter()
+            .find(|p| p["name"] == name)
+            .unwrap_or_else(|| panic!("no parameter {name}: {params:?}"))["expr"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert_eq!(expr("span"), "20 mm");
+    assert_eq!(expr("thick"), "(span / 10)");
+    // The extrude distance and the sketch length name parameters that read the variables.
+    let features = doc["features"].as_array().unwrap();
+    let extrude = features.iter().find(|f| f["type"] == "extrude").unwrap();
+    fn find<'a>(v: &'a Value, key: &str) -> Option<&'a Value> {
+        match v {
+            Value::Object(o) => o.get(key).or_else(|| o.values().find_map(|v| find(v, key))),
+            Value::Array(a) => a.iter().find_map(|v| find(v, key)),
+            _ => None,
+        }
+    }
+    let depth = find(extrude, "distance").and_then(Value::as_str).unwrap();
+    assert_eq!(expr(depth), "thick");
+    let sketch = features.iter().find(|f| f["type"] == "sketch").unwrap();
+    let driven: Vec<_> = sketch["sketch"]["constraints"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c["param"].as_str())
+        .map(expr)
+        .collect();
+    assert_eq!(driven, ["span"]);
+}
+
+#[test]
+fn unresolved_onshape_thin_walls_keep_final_geometry_with_verification_off() {
+    for midplane in [false, true] {
+        for flip in [false, true] {
+            let (model, mut report) = synthetic_bundle(|value| {
+                value["features"].as_array_mut().unwrap().truncate(2);
+                let params = value["features"][1]["parameters"].as_array_mut().unwrap();
+                params
+                    .iter_mut()
+                    .find(|p| p["parameterId"] == "bodyType")
+                    .unwrap()["value"] = json!("THIN");
+                params.extend([
+                    json!({"parameterId":"midplane","value":midplane}),
+                    json!({"parameterId":"flipWall","value":flip}),
+                ]);
+            });
+            assert!(model.ir.design.features.is_empty());
+            assert!(report
+                .losses()
+                .iter()
+                .any(|l| l.code.as_deref() == Some("onshape/extrude.thin-not-supported")));
+            let doc = write_synthetic_latest(&model, &mut report);
+            assert!(!doc["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["type"] == "extrude"));
+            assert!(doc["features"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["type"] == "import"));
+        }
+    }
+}
+
+#[test]
+fn stored_thin_controls_replay_the_directed_source_circle() {
+    let Some(cli) = std::env::var_os(dutchman_solidcraft::CLI_ENV).map(PathBuf::from) else {
+        eprintln!("Set SOLIDCRAFT_CLI to replay stored thin controls");
+        return;
+    };
+    let evaluator = dutchman_solidcraft::CliEvaluator::new(cli);
+    for clockwise in [false, true] {
+        for flip in [false, true] {
+            let (model, mut report) = synthetic_bundle(|response| {
+                response["features"].as_array_mut().unwrap().truncate(2);
+                response["features"][0]["constraints"] = json!([]);
+                response["features"][0]["entities"] = json!([{
+                    "btType":"BTMSketchCurve-4","entityId":"ring",
+                    "geometry":{"btType":"BTCurveGeometryCircle-115","radius":0.005,
+                    "xDir":1.0,"clockwise":clockwise}}]);
+                let native = response["features"][0]["featureId"].as_str().unwrap();
+                let string = |s: &str| format!("S{:x}${s}", s.len());
+                let fields = [
+                    ("entityType", string("EDGE")),
+                    ("historyType", string("CREATION")),
+                    ("queryType", string("SKETCH_ENTITY")),
+                    (
+                        "operationId",
+                        format!("A1{}", string(&format!("{native}.wireOp"))),
+                    ),
+                    ("sketchEntityId", string("ring")),
+                ];
+                let literal = format!(
+                    "%M5{}",
+                    fields
+                        .into_iter()
+                        .map(|(key, value)| string(key) + &value)
+                        .collect::<String>()
+                );
+                let query = format!(
+                    "query=qCompressed(1.0,{},id);",
+                    serde_json::to_string(&literal).unwrap()
+                );
+                let feature = &mut response["features"][1];
+                let parameters = feature["parameters"].as_array_mut().unwrap();
+                parameters
+                    .iter_mut()
+                    .find(|p| p["parameterId"] == "bodyType")
+                    .unwrap()["value"] = json!("THIN");
+                parameters
+                    .iter_mut()
+                    .find(|p| p["parameterId"] == "entities")
+                    .unwrap()["parameterId"] = json!("wallShape");
+                parameters
+                    .iter_mut()
+                    .find(|p| p["parameterId"] == "wallShape")
+                    .unwrap()["queries"] = json!([{"queryString":query}]);
+                parameters.extend([
+                    json!({"parameterId":"domain","value":"MODEL"}),
+                    json!({"parameterId":"midplane","value":false}),
+                    json!({"parameterId":"flipWall","value":flip}),
+                    json!({"parameterId":"oppositeDirection","value":false}),
+                    json!({"parameterId":"thickness1","expression":"1 mm"}),
+                    json!({"parameterId":"thickness2","expression":"0 mm"}),
+                ]);
+            });
+            assert_eq!(model.ir.design.features.len(), 1, "{:?}", report.losses());
+            let host = Arc::new(Measurements {
+                step: model.source_step.clone().unwrap(),
+                calls: Mutex::default(),
+                mismatch: "",
+            });
+            let mut output = Vec::new();
+            SolidCraftWriter::new()
+                .target_version(Some(SolidCraftVersion::V0_44_0))
+                .evaluator(host)
+                .write(&model, &mut output, &mut report)
+                .unwrap();
+            let measured = evaluator
+                .evaluate(&output, Duration::from_secs(120), "stored-thin-circle")
+                .unwrap();
+            let bodies = measured["bodies"].as_array().unwrap();
+            assert_eq!(bodies.len(), 1, "{measured}");
+            let volume = bodies[0]["volume_mm3"].as_f64().unwrap();
+            // A 5 mm source radius, 1 mm stored directed offset and 2 mm depth.
+            let annulus = if flip ^ clockwise {
+                25.0 - 16.0
+            } else {
+                36.0 - 25.0
+            };
+            assert!(
+                (volume - annulus * std::f64::consts::PI * 2.0).abs() < 1e-7,
+                "clockwise={clockwise}, flip={flip}: {measured}"
+            );
         }
     }
 }

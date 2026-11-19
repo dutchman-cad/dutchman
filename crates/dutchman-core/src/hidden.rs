@@ -93,7 +93,12 @@ pub(crate) fn fusion(model: Model, report: &mut Report) -> Model {
                 .collect();
             shown.ir.model.appearance_bindings.retain(|binding| {
                 use cadmpeg_ir::appearance::AppearanceTarget;
-                let (kind,id) = match &binding.target {
+                // A state or instance does not describe this definition's current
+                // geometry. Leave its specific refusal to appearance mapping.
+                if binding.target.path.is_some() || binding.target.state.is_some() {
+                    return true;
+                }
+                let (kind,id) = match &binding.target.entity {
                     AppearanceTarget::Body(id) => ("body",id.as_str()),
                     AppearanceTarget::Face(id) => ("face",id.as_str()),
                     _ => return true,
@@ -538,9 +543,9 @@ mod tests {
             .clone();
         wire["model"]["appearances"] = json!([{"id": "synthetic:test:appearance#red", "base_color": {"r":1.0,"g":0.0,"b":0.0,"a":1.0}, "properties": {}, "textures": []}]);
         wire["model"]["appearance_bindings"] = json!([
-            {"id": "synthetic:test:binding#body", "target": {"kind":"body","value":body}, "appearance": "synthetic:test:appearance#red", "channels": {}},
-            {"id": "synthetic:test:binding#face", "target": {"kind":"face","value":face}, "appearance": "synthetic:test:appearance#red", "channels": {}},
-            {"id": "synthetic:test:binding#missing", "target": {"kind":"face","value":"synthetic:test:face#missing"}, "appearance": "synthetic:test:appearance#red", "channels": {}}
+            {"id": "synthetic:test:binding#body", "target": {"entity": {"kind":"body","value":body}}, "appearance": "synthetic:test:appearance#red", "channels": {}},
+            {"id": "synthetic:test:binding#face", "target": {"entity": {"kind":"face","value":face}}, "appearance": "synthetic:test:appearance#red", "channels": {}},
+            {"id": "synthetic:test:binding#missing", "target": {"entity": {"kind":"face","value":"synthetic:test:face#missing"}}, "appearance": "synthetic:test:appearance#red", "channels": {}}
         ]);
         model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
         let mut report = Report::default();
