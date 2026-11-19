@@ -832,3 +832,19 @@ it has no messages, file IDs, names, paths, dimensions or geometry. It cannot us
 Review the exact file before sharing. This option writes locally and does not authorize
 sending; retain the existing user confirmation before sharing a report.
 See the counts-only schema in [JSON reports](json.md).
+
+## Scan before converting
+
+Run `dutchman preflight part.f3d` (or add `--json`) for bounded input evidence.
+The planned tier reads geometry and history, then forecasts the default target
+without writing a design. Partial results include retained feature counts and
+the first blocker. Other targets and budget overruns stay unknown. Exit 0
+includes unknown; it does not promise that conversion will succeed.
+See [preflight](preflight.md) for bounds and available facts.
+
+Preflight also refuses suffixes the current build cannot convert, following the
+existing converter gate before reading payload bytes. A shared part suffix stays
+unknown until its contents identify a reader.
+
+Library planning outcomes used by preflight keep empty output ids with
+`not_written`; preflight saves no design.

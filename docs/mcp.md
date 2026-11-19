@@ -1080,3 +1080,11 @@ it has no messages, file IDs, names, paths, dimensions or geometry. It cannot us
 Review the exact file before sharing. This option writes locally and does not authorize
 sending; retain the existing user confirmation before sharing a report.
 See the counts-only schema in [JSON reports](json.md).
+
+The CLI also provides `dutchman preflight <file> --json` for budgeted reading and
+history planning without writing a design. The default target gets a forecast;
+other targets and exhausted budgets return unknown. This is not an MCP tool.
+See [preflight](preflight.md) for tiers, counts and limits.
+
+Library planning outcomes used by preflight keep empty output ids with
+`not_written`; preflight saves no design.

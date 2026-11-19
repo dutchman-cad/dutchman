@@ -24,6 +24,7 @@ pub mod investigate;
 pub mod issue;
 pub mod json;
 pub mod mcp;
+pub mod preflight;
 pub mod present;
 pub mod progress;
 pub mod report_policy;

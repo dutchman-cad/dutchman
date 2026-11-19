@@ -1021,3 +1021,16 @@ it has no messages, file IDs, names, paths, dimensions or geometry. It cannot us
 Review the exact file before sharing. This option writes locally and does not authorize
 sending; retain the existing user confirmation before sharing a report.
 See the counts-only schema in [JSON reports](../../docs/json.md).
+
+For bounded evidence before conversion, run `dutchman preflight <file> --json`.
+The planned tier decodes geometry and history and forecasts the default target
+without writing output. Read `tier`, `stop_reason`, retained feature counts and
+the first blocking kind and reason. Unknown is not a conversion promise. Other
+targets have no planning-only forecast yet. No MCP tool or browser binding is
+provided. See `docs/preflight.md` and `docs/json.md` for bounds and fields.
+
+A `format_not_supported` reason follows the existing suffix policy before any
+payload is read. Shared part suffixes require bounded content evidence.
+
+Library planning outcomes used by preflight keep empty output ids with
+`not_written`; preflight saves no design.

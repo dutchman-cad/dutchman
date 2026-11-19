@@ -509,16 +509,25 @@ fn plan_parts(
     features: &mut Vec<FeatureOutcome>,
 ) {
     for part in parts {
-        if writer.import_only {
+        if writer
+            .plan_deadline
+            .is_some_and(|deadline| std::time::Instant::now() >= deadline)
+        {
+            return;
+        }
+        // Leaves whose geometry cannot be written contribute no written history.
+        if writer.import_only || step::restatable(part).is_err() {
             continue;
         }
         let file = part.source_file.as_deref().unwrap_or(&part.name);
         let mut part_report = Report::default();
-        let mut mapping = history::map_with_sketches(
+        let mut mapping = history::map_until(
             part,
             &mut part_report,
             writer.resolved_version(),
             writer.sketches,
+            &[],
+            writer.plan_deadline,
         );
         writer.plan_blends(&mut mapping);
         crate::output_links::not_written(&mut mapping.features);

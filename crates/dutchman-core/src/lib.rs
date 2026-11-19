@@ -19,6 +19,7 @@ pub mod parallel;
 mod part_positions;
 pub mod parts;
 pub mod placement;
+pub mod preflight;
 mod progress;
 pub mod progress_words;
 mod refusal;
