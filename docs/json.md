@@ -1,5 +1,18 @@
 # Machine-readable reports
 
+Onshape history dependencies follow consumed operands in their stored order. Deterministic
+body, face and edge selections need a unique earlier producer proved by rollback
+transitions; unresolved or ambiguous producers retain `onshape/history.not-supported`.
+Every present scope query list is validated, while an empty list keeps implicit scope.
+Thread depth follows explicit `isTappedThrough` and `tappedDepth`, independently of bore depth.
+A record the reader cannot convert becomes a named loss and the remaining records continue.
+Unreadable or oversized members use `onshape/member.not-supported`; malformed features
+remain Native with `onshape/history.not-supported`. Container admission and exhausted
+caller resource budgets can still stop conversion. Inspect the reported losses before
+relying on editable history.
+Open, one-sided thin walls retain directed left/right data in the reader; writing
+those sides is not supported yet, so the final STEP geometry remains.
+
 The desktop app also accepts pasted files, paths, Onshape links, and confirmed HTTPS
 downloads; see [pasting files and links](desktop.md#paste-files-and-links). This adds no CLI
 flags, MCP tools, or report fields.
@@ -7,7 +20,7 @@ flags, MCP tools, or report fields.
 Onshape bundles add the format identifier `onshape_bundle` and extension
 `onshape-bundle` to the existing format fields and listings. Existing report
 schemas and fields are unchanged. Reader losses use
-`onshape/history.not-supported` for a feature that stops history and
+`onshape/history.not-supported` for a feature retained as Native and
 `onshape/sketch.constraint-not-supported` for a dropped relation whose solved
 curves remain, and `onshape/history.part-not-matched` (subject `part names`) when a
 Part Studio's parts cannot all be matched to the features that made them. Constraint
@@ -23,9 +36,56 @@ geometry in bundle format 1 to prove a frozen step. Its `history` row remains bl
 as do later body-building rows; the final STEP shape is preserved. No frozen-step loss
 is emitted, because v1 cannot prove a frozen shape. Suppressed custom features are left
 out without this loss. No report schema or field changes.
+`onshape/extrude.thin-not-supported` is a Degraded loss at stage `map` for
+thin construction with missing or contradictory domain, input-body scope, thickness,
+side or direction values. Proven controls emit a typed design feature.
+The final STEP geometry remains available. Repeated ellipse trims and incomplete
+outside-face witness lists use the existing history rows; unresolved intersections
+and tied connections retain `onshape/history.not-supported`. Two-offset and distance-and-angle chamfers retain their dimensions in
+CADIR; asymmetric forms report missing input reference-face ordering in the existing
+history feature reason. Ellipses and variable expressions add no report fields.
+Unproven open dividers and exhausted cumulative region-recovery budgets produce
+`onshape/history.not-supported` before writing, including with verification off.
+Simplify the sketch or split the bundle when the recovery budget is exhausted;
+the final STEP shape remains available. Native symmetric distances and parameter
+fallback defaults stay unchanged.
+
+Onshape quantities need a dimensioned expression or explicit supported units.
+Malformed or repeated Boolean operands, unresolved latest variable bindings,
+face/cap sketch attachments without a stored complete frame, up-to-next extents without
+exact stored-target coverage, ambiguous directed region boundaries
+and missing required hole facts retain `onshape/history.not-supported` with a specific
+reason. A dropped sketch dimension instead uses
+`onshape/sketch.constraint-not-supported`, preserving the solved geometry.
+Blind holes need an explicit unique tip angle; angled bottoms also need Boolean
+`depthToTip`. Hole standards need explicit hand and modeled/cosmetic facts.
+Inspect these losses before relying on editable history; the final STEP shape remains.
+
+Explicit `--solidcraft-version` and MCP `solidcraft_version` options keep their
+full `x.y.z` value during writer preparation; the report's minor-only target is
+display metadata and is not parsed back into the option.
+Parameters retained alongside a STEP fallback are no longer counted as parameters
+carried only as a non-parametric body, even when no sketch maps.
 The optional bundle manifest field `consistent` is input metadata, not a new
 report field. `false` produces an ordinary decode failure explaining how to fetch
 a consistent snapshot; older v1 bundles lacking the field remain accepted.
+
+## Share link inputs
+
+`dutchman convert <url>` and the desktop app resolve public Fusion and Google Drive file
+links before ordinary local conversion. Successful conversion reports have the existing
+schemas and describe the downloaded file's temporary local path. Project ZIP downloads
+use `dutchman.convert-all/1`. The temporary source is removed after the CLI finishes, or
+when the app no longer needs the queued file or result; output paths remain usable.
+
+A CLI download failure with `--json` returns `dutchman.convert/1`, `ok: false`,
+`error.stage: "input"`, and `input.path: "Shared file"`. Its message explains the download
+limit, private/expired link, disallowed host or resolved network address, or need for a
+manual download.
+DNS, connection, TLS and body streaming share the total deadline. CLI cancellation and
+intentional exits also remove the temporary input; converted output paths remain usable. No report
+field is added for the original URL, file ID, or query tokens, and the provider's response body is never copied into reports.
+MCP input arguments remain local paths. There are no schema or field changes.
 
 ## Saved desktop and watch reports
 
@@ -139,6 +199,20 @@ A nested check replaces preparation on that worker until it finishes. Its fields
 | `usual_ms` | Existing estimate for a whole stage when available, otherwise the documented threshold for this unit of work; a longer duration displays “Still …”. |
 | `limit_ms` | Unsigned milliseconds for this step's enforced limit, or `null` when none applies. A whole-file timeout is separate. |
 | `consequence` | Plain local explanation of what happens past the limit, or `null` when none applies. |
+| `feature` | The timeline feature that step's worker is on while a design's history is built, or `null` outside one. Older workers omit it. |
+
+`feature` is an object with these fields:
+
+| Field | Meaning |
+|---|---|
+| `index` | The feature's place in the source timeline, counting from 1. |
+| `total` | Features in the source timeline, suppressed ones included. |
+| `name` | The feature's name in the source, or `null` when it has none. Bounded and cleaned like `running.name`; treat it as private text. |
+| `measured` | `true` while SolidCraft checks this feature by measurement against the original, which takes longer than building it. |
+
+Feature changes alone emit at most four events a second; a change not emitted at once
+follows on a rate-limited timer update while a conversion runs, so a fast timeline does not print
+a line per feature. For example, `"feature":{"index":29,"total":37,"name":"Extrude 1","measured":false}`.
 
 For example, `"running":{"kind":"checking","name":"Bracket","elapsed_ms":12000,
 "usual_ms":60000,"limit_ms":120000,"consequence":"the check stopped, and the history is kept unverified"}`.
@@ -259,8 +333,9 @@ Explicit output paths keep their given extension. The container format stays `so
 | `output.format` | The SolidCraft design format written. |
 | `mode` | `history`: editable feature history, with the original geometry kept beside it, suppressed. `partial_history`: retained editable features in a hidden component and the visible imported final shape. `import`: geometry, possibly with reference sketches. |
 | `retried_after_low_memory` | Present and `true` when a batch file stopped for low memory alongside other files and was converted again alone at the end of the batch. The report is of that second try: if it converted, an Info line under `memory` says so; if not, `error` holds the memory stop. |
+| `verification_tolerances` | Present when a SolidCraft history check ran: the history verified, partly kept (`partial`), or rebuilt and found to differ (`flattened` with a reason beginning `replay differs`). Absent when the check did not run (`unverified`, `not_applicable`, `--no-verify`), for geometry-only output, and for other output formats. The same object in the CLI's `--json`, the MCP tools and batch results. `version` is `1`. `replay`: `volume_relative` (1e-4), `area_relative` (1e-3), `position_min_mm` (0.01) and `position_diagonal_relative` (2e-4) for the box centre and corners, `mesh_chord_relative` (5e-5) and `mesh_chord_floor_mm` (1e-4) for the measuring mesh's allowance in volume, and the text fields `bodies`, `face_count` and `centre` saying what is and is not compared. `stored_bodies`: `exact_box_min_mm` (0.5), `exact_box_diagonal_relative` (0.01), `sampled_box_min_mm` (1.0), `sampled_box_diagonal_relative` (0.02). `import`: `no_volume_mm3` (1e-6). `edge_proof`: `position_mm` (1e-6), `direction` (1e-6), `blame_distance_mm` (0.01). `face_proof`: `position_mm` (1e-5), `direction` (1e-5), `area_relative_straight` (1e-4), `area_relative_curved` (0.02), `plane_mm` (1e-4), `line_cover_relative` (1e-4), `arc_radius_relative` (1e-3), `turn_rad` (2e-3). `cap_proof`: `area_min_mm2` (1.0), `area_relative` (0.03), `plane_mm` (1e-4). What each compares is in [How a history is checked](history.md#verification-tolerances). Fields are only added within `version`. |
 | `history_check_skipped` | Present only when a requested SolidCraft history/geometry check was skipped for memory. Object with `needed_bytes` (estimated extra memory), `available_bytes` (free memory at the decision), and `reason`: `History check skipped: needs about N GB, M GB free`. The conversion can still have `ok: true`; retained history stays unverified or partial and the original shape remains usable. Absent when checking is explicitly off, forced, or not skipped. Applies to batch result objects and MCP as well. |
-| `verification.status` | `verified`: the history was replayed in SolidCraft, or the FreeCAD output was measured, and matches the original. `differs`: a FreeCAD rebuild differs or restored STEP (`reason` names the part). `unverified`: the history was written without that check (`reason` says why: no `solidcraft-cli`, a timeout, `--no-verify`). `partial`: only partial history is retained; `reason` names the blocker, gives kept/total source feature counts, and states whether retained features replayed or remain unverified. This never claims the full history matches the original. `flattened`: no body-building prefix was retained (`reason`: the blocker or replay failure). `not_applicable`: there was no history to write (none in the source, or none cadmpeg decodes: every feature is kept in its native form), or `--import-only`. |
+| `verification.status` | `verified`: the history was replayed in SolidCraft, or the FreeCAD output was measured, and matches the original. `differs`: a FreeCAD rebuild differs or restored STEP (`reason` names the part). `unverified`: the history was written without that check (`reason` says why: no `solidcraft-cli`, a timeout, `--no-verify`). `partial`: only partial history is retained; `reason` names the blocker, gives kept/total source feature counts, and states whether retained features replayed or remain unverified. This never claims the full history matches the original. `flattened`: no body-building prefix was retained (`reason`: the blocker or replay failure). `not_applicable`: there was no history to write (none in the source, or none cadmpeg decodes: every feature is kept in its native form), or `--import-only` (the SolidCraft plugin's report says `Keep editable history is turned off` instead). |
 | `history.features` | Every source feature in timeline order. `status`: `mapped`, `not_needed` (the target needs no feature, e.g. a principal datum plane or an unused construction helper), `left_out` (suppressed in the source, changes no geometry in the source, or a reference sketch omitted by choice), `blocked` (does not map; `reason` says why). Each feature also has `ordinal` (its position number in the design's timeline, as the source model numbers it; null when it has none) and `variant` (a short form such as `extrude, to a plane`, or null for kinds without one). `profile_unverified: true` appears on a `mapped` extrude whose profile region could not be checked by the source end-cap area proof: it is kept, but that proof did not establish the region it swept. An extrude whose profile region does not match the source is `blocked` with a `reason` of `its profile region doesn't match the source (swept A mm², the source B mm²)` and a loss with code `history/profile-region-mismatch`. |
 | `history.rebuilt`, `history.needing` | Features that became SolidCraft features, out of those that need one: all but left-out and not-needed ones. These are the counts to quote. |
 | `history.reapplied` | Kept features that re-apply to a base body Fusion stores only as the design ends (a join, cut or intersection after it), so editing them may not change the shape. They are mapped, but not counted in `history.rebuilt`. |
@@ -306,6 +381,8 @@ sketch carries the source's bodies, which Fusion files can. In a design with com
 that features of more than one component carry isn't any one component's state, so it isn't used.
 A base feature written with its body as the design ends (`final_body`) isn't compared either: the
 source's stored state after it is the body before later features changed it.
+A base feature written with its own body as the source keeps it (a history body) is compared
+like any other feature.
 A state whose source marks any body centre as based on incomplete edge evidence
 (`body_centers_incomplete`) is not compared, even if every body has a centre entry, so the
 history stays unverified there.
@@ -341,9 +418,9 @@ asking for its body-producing feature to resolve first. Source storage order doe
 change replay order: the neutral ordinal controls it.
 
 SolidCraft version presentation uses minors: `solidcraft.target` and
-`solidcraft.known_newest` now contain `x.y` strings (for example, `"0.43"`), changing their
+`solidcraft.known_newest` now contain `x.y` strings (for example, `"0.44"`), changing their
 previous `x.y.z` representation. `solidcraft.found` keeps the full CLI release (for example,
-`"0.43.0"`). Status comparisons use minors, so all 0.43 patches are current; 0.44 is newer
+`"0.44.0"`). Status comparisons use minors, so all 0.44 patches are current; 0.45 is newer
 and 0.17 is too old. Patch-sensitive writer gates and the internal 0.18.2 verification
 floor remain unchanged. Explicit `solidcraft_version` inputs still accept `x.y.z` for
 precise gate control.
@@ -424,7 +501,7 @@ For older targets, `history.features[].reason` says
 line explains the blocker. `--solidcraft-version x.y.z` selects the target on `convert`,
 `convert-all`, and `watch`; it must be at least 0.18.2. By default the found verification
 CLI's version is used, even with `--no-verify`, else the newest release known at build
-time (currently 0.43). The supported rolling 14-day window is currently 0.18.2–0.43;
+time (currently 0.44). The supported rolling 14-day window is currently 0.18.2–0.44;
 older targets down to 0.18.2 retain the existing feature simplifications.
 When a written coil or flat entry-recess tip uses the newer mapping, the history line
 includes the actual target, such as `target SolidCraft 0.25 patch 1`. No new report fields are added. Counterbore and countersink holes use an explicit flat tip
@@ -440,13 +517,23 @@ For holes, a blocked feature's `reason` names the unsupported entry form, placem
 (for example, `a hole ending at the last encountered face is not mapped yet`). A tapped hole
 maps with an ISO metric thread label; thread details it can't keep are a `Degraded` loss on
 that feature. The wording is text for people, not a stable code.
+Planar historical hole entries with circular boundaries report `mapped` only after their
+source boundary and SolidCraft replay prove the face before the hole. Existing holes are
+excluded from valid placement locations. Missing replay, an unproven boundary, or outward
+drilling reports `blocked` with its specific `reason`. This adds no report fields.
+This extension requires a target of SolidCraft 0.40.0 or newer; older targets retain the
+original geometry with a named reason.
 Counterbores, countersinks, and chamfered entries with drill points map for SolidCraft 0.22.1
 and newer; for an older target they report
 `SolidCraft holes take a drill point only on a plain drilled hole`: SolidCraft 0.21.0 ignores
 `tip_angle` on entry recesses. This uses the existing blocked feature and reason fields.
 
 Sheet-metal edge flanges with proven input-edge picks and supported dimensions report
-`mapped`. Other flanges report `blocked` with the specific selection or dimension reason
+`mapped`. Attached rectangular plates and their paired bends can also report `mapped` on an
+unchanged simple polygonal base, using the actual straight profile edge. A base that is not
+one closed, non-crossing perimeter with distinct straight edges reports a base-profile reason;
+base holes or partial regions remain unsupported by this proof. These reasons use the existing
+`blocked` status and `reason` field. Other flanges report `blocked` with the specific selection or dimension reason
 (for example, "its input edge midpoint does not identify exactly one rebuilt edge"). Hems
 report the form or developed length SolidCraft cannot express. A blocked history falls back
 to geometry. These use the existing report fields; no schema fields change.
@@ -514,7 +601,7 @@ JSON `estimate.peak_bytes` and `estimate.seconds` remain numeric and unrounded.
 Appearance bindings that cannot reach written component geometry, resolve an appearance, or
 select a mixed-colour face are recorded in `losses` with subject `appearance` (possibly
 prefixed with a part name) and level `Dropped`. Their messages identify the binding.
-Unplaced body and face bindings also identify
+Unplaced definition-level body and face bindings also identify
 the target and distinguish “its target is absent from the decoded model” from “its target
 exists in the decoded model but has no placed component geometry”. These use the existing
 loss fields and schema. Targets deliberately filtered as consumed or removed Fusion
@@ -602,7 +689,7 @@ of a particular file. This additive field retains `dutchman.formats/1`.
 `extensions` lists all accepted suffixes without dots (`prt.N` denotes a numbered save);
 the existing `extension` remains the preferred suffix.
 Dutchman attempts conversion when the format reads geometry and its codec is available in
-this build. Creo and NX open without geometry support; SolidWorks assemblies and
+this build. Creo opens without geometry support; SolidWorks assemblies and
 unclassified `.prt` files are recognised without readers. Reader status does not promise
 that a particular file will convert or that every feature will map.
 `--quiet` suppresses only the text volunteer invitation after a conversion run; JSON
@@ -1339,6 +1426,12 @@ contain no binding or target ids or names. See [the anonymous report](report-ano
 Ordinary conversion losses keep `subject`, `message`, `stage` and `upstream` as before;
 Dutchman's appearance codes have `stage: "map"` and `upstream: null`.
 
+Appearance bindings scoped to one placed instance or an evaluation state use
+`dutchman/appearance.other`; their message names the unsupported scope. Scoped
+source attributes are dropped with subject `attributes` and a message naming
+that scope. Neither assignment is applied to the shared component definition.
+No report fields or schema versions change.
+
 ## Onshape fetch (`dutchman.onshape-fetch/1`)
 
 CLI `onshape fetch --json` and MCP `onshape_fetch` share this report builder.
@@ -1359,7 +1452,14 @@ The ZIP's manifest uses separate schema `dutchman.onshape-bundle/1` and records
 `definition` and `features` for assemblies. `external` lists `documentId`,
 `elementId`, and `microversionId` for other-document references. Raw API responses
 are retained verbatim. Part Studio roles are `features`, `bodydetails` (the rollback
-index file), optional `configuration` and `variables`, and `step`.
+index file), `sketches` (the raw sketch-information response at
+`partstudios/<element>/sketches.json`), optional `configuration` and `variables`, and
+`step`. The optional additive `sketches` role keeps bundle schema v1; older bundles
+retain their existing reading behavior. Each sketch entry binds its `featureId`
+to a sixteen-value row-major `sketchMatrix` (sketch-to-world, translation in metres).
+Missing or contradictory face-attachment frames keep `onshape/history.not-supported`
+with final STEP geometry; no report fields or loss codes change. The request adds
+one HTTP attempt per uncached Part Studio to the existing `calls` count.
 
 Successful manifests also contain `consistent: true` and `file_sources`, mapping each
 archive path (including generated indices and manifest) to `path_kind` (`m`, `v`, or
@@ -1376,4 +1476,31 @@ reference to compare: with a SolidCraft CLI their `verification.status` is `veri
 sketch replays without an error and no body is built, and `differs` otherwise (`reason` says
 why); without one it is `not_applicable`. Unresolved tangent chains and unsupported variable expressions
 use `onshape/history.not-supported`; unresolved external origin references use
-`onshape/sketch.constraint-not-supported`. Report fields and schema versions are unchanged.
+`onshape/sketch.constraint-not-supported`. A feature value written with variables that
+no SolidCraft parameter can keep driven (for example a fillet radius or hole size) is
+written as its evaluated value with a Degraded `onshape/history.variable-evaluated`
+loss at stage `map` naming the value. Suppressed features, including parent-suppressed
+features, do not produce these losses. Report fields and schema versions are unchanged.
+
+`onshape/member.not-supported` identifies a skipped member, body topology table or
+sketch-information record, with that record as its subject. `onshape/design.operation-native`
+identifies a native design timeline member whose decoded operation remains in model history.
+Both are Degraded losses at stage `map`; report fields and schema versions are unchanged.
+
+Appearance bindings scoped to one placed instance or an evaluation state use
+`dutchman/appearance.other`; their message names the unsupported scope. Scoped
+source attributes are dropped with subject `attributes` and a message naming
+that scope. Neither assignment is applied to the shared component definition.
+No report fields or schema versions change.
+
+## `dutchman.plugin.loss/1`
+
+The plugin returns SolidCraft's loss report (a summary line and one item per loss) with a
+structured projection of the core report under `details`: stage counts, coded losses,
+per-feature mapping results, assembly completeness, and verification.
+See [the plugin's loss report](plugin.md#loss-report) for the complete contract.
+CLI and MCP `dutchman.convert/1` reports are unchanged.
+
+The plugin aborts on host input failures before writing output. Its bounded loss report
+prioritizes dropped and degraded losses and includes an explicit truncation notice and
+`details.truncation` counts when shortened; see [the plugin contract](plugin.md).

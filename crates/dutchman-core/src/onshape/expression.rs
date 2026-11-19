@@ -2,6 +2,7 @@
 //! This deliberately does not execute FeatureScript or resolve forward references.
 use cadmpeg_ir::document::Model;
 use serde_json::Value;
+use std::collections::BTreeSet;
 
 use super::{number, Mapping};
 
@@ -18,17 +19,25 @@ pub(super) struct Evaluated {
     pub value: f64,
     pub expression: String,
     pub dependencies: Vec<String>,
+    pub display_unit: Option<String>,
 }
 
-pub(super) fn evaluate(source: &str, dimension: Dimension, model: &Model) -> Mapping<Evaluated> {
+pub(super) fn evaluate(
+    source: &str,
+    dimension: Dimension,
+    model: &Model,
+    unresolved: &BTreeSet<String>,
+) -> Mapping<Evaluated> {
     if source.len() > 65_536 {
         return Err("the variable expression exceeds the size limit".into());
     }
     let mut parser = Parser {
         rest: source,
         model,
+        unresolved,
         dependencies: Vec::new(),
         nodes: 0,
+        display_unit: None,
     };
     let (value, actual, expression) = parser.sum(0)?;
     if !parser.rest.trim().is_empty() || actual != dimension || !value.is_finite() {
@@ -38,14 +47,17 @@ pub(super) fn evaluate(source: &str, dimension: Dimension, model: &Model) -> Map
         value,
         expression,
         dependencies: parser.dependencies,
+        display_unit: parser.display_unit,
     })
 }
 
 struct Parser<'a> {
     rest: &'a str,
     model: &'a Model,
+    unresolved: &'a BTreeSet<String>,
     dependencies: Vec<String>,
     nodes: usize,
+    display_unit: Option<String>,
 }
 
 impl Parser<'_> {
@@ -92,9 +104,7 @@ impl Parser<'_> {
             };
             let (b, other, right) = self.atom(depth + 1)?;
             dim = match (op, dim, other) {
-                ('*', Dimension::Scalar, d)
-                | ('*', d, Dimension::Scalar)
-                | ('/', d, Dimension::Scalar) => d,
+                ('*', Dimension::Scalar, d) | ('*' | '/', d, Dimension::Scalar) => d,
                 ('/', a, b) if a == b => Dimension::Scalar,
                 _ => return Err(REFUSED.into()),
             };
@@ -129,6 +139,9 @@ impl Parser<'_> {
         }
         if self.take('#') {
             let name = self.word()?;
+            if self.unresolved.contains(&name) {
+                return Err(format!("variable #{name} has an unresolved latest binding"));
+            }
             let mut found = self
                 .model
                 .parameters
@@ -147,6 +160,12 @@ impl Parser<'_> {
                 _ => return Err(REFUSED.into()),
             };
             let id = param.id.as_str().to_owned();
+            if self.display_unit.is_none() {
+                self.display_unit = wire
+                    .pointer("/properties/display_unit")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+            }
             if !self.dependencies.contains(&id) {
                 self.dependencies.push(id);
             }
@@ -199,19 +218,22 @@ impl Parser<'_> {
             let unit = self.word()?;
             let (factor, dim, canonical) = match unit.as_str() {
                 "mm" | "millimeter" => (1.0, Dimension::Length, "mm"),
-                "cm" | "centimeter" => (10.0, Dimension::Length, "mm"),
-                "m" | "meter" => (1000.0, Dimension::Length, "mm"),
-                "in" | "inch" => (25.4, Dimension::Length, "mm"),
-                "ft" | "foot" => (304.8, Dimension::Length, "mm"),
+                "cm" | "centimeter" => (10.0, Dimension::Length, "cm"),
+                "m" | "meter" => (1000.0, Dimension::Length, "m"),
+                "in" | "inch" => (25.4, Dimension::Length, "in"),
+                "ft" | "foot" => (304.8, Dimension::Length, "ft"),
                 "rad" | "radian" => (1.0, Dimension::Angle, "rad"),
-                "deg" | "degree" => (std::f64::consts::PI / 180.0, Dimension::Angle, "rad"),
+                "deg" | "degree" => (std::f64::consts::PI / 180.0, Dimension::Angle, "deg"),
                 _ => return Err(REFUSED.into()),
             };
             let value = value * factor;
             if !value.is_finite() {
                 return Err("the variable expression exceeds the finite range".into());
             }
-            return Ok((value, dim, format!("{value} {canonical}")));
+            if self.display_unit.is_none() {
+                self.display_unit = Some(canonical.to_owned());
+            }
+            return Ok((value, dim, format!("{numeric} {canonical}")));
         }
         Ok((value, Dimension::Scalar, numeric))
     }

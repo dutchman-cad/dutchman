@@ -153,12 +153,13 @@ def hole_forms(cli):
                        quantity("cBoreDiameter", "6 mm"), quantity("cBoreDepth", "2 mm"))
     countersink = hole("Countersink", "p1", enum("style", "C_SINK"), enum("endStyle", "THROUGH"), quantity("holeDiameter", "3 mm"),
                        quantity("cSinkDiameter", "6 mm"), quantity("cSinkAngle", "90 deg"))
-    # REST leaves tipAngle out at its 118 degree default; the depth runs to the shoulder.
+    # Explicit drill and thread facts; omitted conventions are deliberately not assumed.
     tapped = hole("Tapped", "p2", enum("style", "SIMPLE"), enum("endStyle", "BLIND"), quantity("holeDiameter", "3.3 mm"),
                   quantity("tapDrillDiameter", "3.3 mm"), quantity("majorDiameter", "4 mm"), quantity("holeDepth", "6 mm"),
-                  param("isTappedThrough", "BTMParameterBoolean-144", value=False), quantity("tappedDepth", "5 mm"),
+                  param("isTappedThrough", "BTMParameterBoolean-144", value=False), quantity("tappedDepth", "5 mm"), quantity("tipAngle", "118 deg"),
+                  param("depthToTip", "BTMParameterBoolean-144", value=False),
                   param("standardTappedOrClearance", "BTMParameterLookupTablePath-1419",
-                        value={"standard": "ISO", "size": "M4", "pitch": "0.7 mm", "type": "Tapped", "engagement": "75%"}))
+                        value={"standard": "ISO", "size": "M4", "pitch": "0.7 mm", "type": "Tapped", "engagement": "75%", "hand": "right", "modeled": False, "cosmetic": True}))
     write_bundle(cli, "onshape-hole-forms", [rectangle("Base sketch", 0, 0, .03, .01), plate, points, counterbore, countersink, tapped],
                  [command("sketch.create", plane="XY", name="Base sketch"),
                   command("sketch.line", points=[[0, 0], [30, 0], [30, 10], [0, 10]], closed=True),

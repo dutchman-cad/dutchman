@@ -256,11 +256,7 @@ fn a_numbered_save_strips_one_suffix_and_uses_contents_for_its_program() {
             Format::CreoPart,
             "opens, no geometry yet",
         ),
-        (
-            b"SPLMSSTR".as_slice(),
-            Format::NxPart,
-            "opens, no geometry yet",
-        ),
+        (b"SPLMSSTR".as_slice(), Format::NxPart, "reads geometry"),
         (
             b"unknown".as_slice(),
             Format::UnclassifiedPart,
@@ -283,7 +279,7 @@ fn conversion_requires_geometry_and_an_available_codec() {
     for format in Format::ALL {
         let geometry = !matches!(
             format,
-            Format::CreoPart | Format::NxPart | Format::UnclassifiedPart | Format::Iges
+            Format::CreoPart | Format::UnclassifiedPart | Format::Iges
         );
         assert_eq!(format.reads_geometry(), geometry, "{}", format.name());
         assert_eq!(
@@ -313,15 +309,22 @@ fn published_headlines_are_independent_of_codec_availability() {
 
 #[test]
 fn inputs_without_geometry_are_refused_before_decoding() {
-    for (name, bytes, format) in [
-        ("low-creo.prt", b"#UGC:2".as_slice(), Format::CreoPart),
-        ("low-nx.prt", b"SPLMSSTR".as_slice(), Format::NxPart),
-    ] {
-        let path = scratch(name, bytes);
-        let err = read(format, &path, &mut Report::default()).unwrap_err();
-        assert!(matches!(err, Error::NotSupportedYet { .. }));
-        assert!(err.to_string().contains("opens, no geometry yet"));
-    }
+    let path = scratch("low-creo.prt", b"#UGC:2");
+    let err = read(Format::CreoPart, &path, &mut Report::default()).unwrap_err();
+    assert!(matches!(err, Error::NotSupportedYet { .. }));
+    assert!(err.to_string().contains("opens, no geometry yet"));
+}
+
+#[test]
+fn nx_parts_reach_the_decoder_and_a_truncated_one_is_an_error() {
+    // A signature with no body: NX is read now, so this gets to cadmpeg's NX decoder and
+    // comes back as an error rather than the old "no geometry yet" refusal or a crash.
+    let path = scratch("truncated-nx.prt", b"SPLMSSTR");
+    assert_eq!(Format::from_path(&path), Some(Format::NxPart));
+    assert!(Format::NxPart.can_convert());
+    let err = read(Format::NxPart, &path, &mut Report::default()).unwrap_err();
+    assert!(!matches!(err, Error::NotSupportedYet { .. }), "{err}");
+    assert!(!err.to_string().contains("no geometry yet"), "{err}");
 }
 
 #[test]

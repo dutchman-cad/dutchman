@@ -30,15 +30,15 @@ use crate::verify::{ReplayedBodies, ReplayedEdge};
 
 const LIMIT: usize = 256;
 /// How far apart, in millimetres, two positions may be and still be the same.
-const TOLERANCE: f64 = 1e-6;
+const TOLERANCE: f64 = crate::tolerances::EDGE_POSITION_MM;
 /// How far from square or parallel two unit directions may be.
-const ANGLE: f64 = 1e-6;
+const ANGLE: f64 = crate::tolerances::EDGE_DIRECTION;
 const INPUT: &str =
     "its input edge midpoint cannot be proven to select exactly one rebuilt edge yet";
 const INPUT_NONE: &str = "its input edge midpoint cannot be proven to select exactly one rebuilt edge yet: no rebuilt edge passes through it";
 /// How far, in millimetres, the nearest rebuilt edge must be for the reason to blame the rebuilt
 /// body rather than the tolerance.
-const NEAR: f64 = 0.01;
+const NEAR: f64 = crate::tolerances::EDGE_BLAME_MM;
 const INPUT_MANY: &str = "its input edge midpoint cannot be proven to select exactly one rebuilt edge yet: more than one rebuilt edge passes through it";
 const INPUT_ENDS: &str = "its input edge midpoint cannot be proven to select exactly one rebuilt edge yet: the rebuilt edge through it has other ends";
 const INPUT_LENGTH: &str = "its input edge midpoint cannot be proven to select exactly one rebuilt edge yet: the rebuilt edge through it has another length";
