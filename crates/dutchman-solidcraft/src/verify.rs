@@ -1160,9 +1160,10 @@ pub(crate) fn bodies_differ(
 /// What is wrong with a design's body `volumes` in SolidCraft, for a design with
 /// `bodies.solids` solid bodies (0: not counted): bodies inside out, and solids without a volume.
 ///
-/// A sheet body bounds no volume, but SolidCraft gives it one, of either sign, and does not
-/// say which of its bodies are sheets. So as many bodies inside out as the design has sheets
-/// are taken for them, and only the rest are reported.
+/// A sheet body bounds no volume. SolidCraft 0.23 and newer give it none (read as zero); older
+/// releases give it one, of either sign, and do not say which of its bodies are sheets. So as
+/// many bodies inside out as the design has sheets are taken for them, and only the rest are
+/// reported.
 fn volume_problems(volumes: &[f64], bodies: Expected) -> Vec<String> {
     let solids = bodies.solids;
     let mut problems = Vec::new();
@@ -1898,10 +1899,13 @@ fn parse(value: &Value) -> Result<Eval, String> {
     let bodies = bodies
         .iter()
         .map(|body| {
-            let volume = body
-                .get("volume_mm3")
-                .and_then(Value::as_f64)
-                .ok_or_else(|| format!("{CLI_NAME} result has a body without a volume"))?;
+            // SolidCraft 0.23 and newer give an open body no volume: it bounds none.
+            let volume = match body.get("volume_mm3") {
+                None | Some(Value::Null) => 0.0,
+                Some(volume) => volume
+                    .as_f64()
+                    .ok_or_else(|| format!("{CLI_NAME} result has a malformed body volume"))?,
+            };
             let corner = |end: &str| -> Option<[f64; 3]> {
                 let corner = body.pointer(&format!("/bbox/{end}"))?.as_array()?;
                 let corner: Option<Vec<f64>> = corner.iter().map(Value::as_f64).collect();
@@ -2550,6 +2554,13 @@ mod tests {
         });
         let eval = parse(&value).unwrap();
         assert_eq!(eval.volumes(), [1000.0, 24.0]);
+
+        // An open body: SolidCraft 0.23 and newer give it no volume.
+        let open = serde_json::json!({"bodies": [{"name": "Skin", "area_mm2": 314.0},
+            {"name": "Other", "volume_mm3": null, "area_mm2": 10.0}], "timeline": []});
+        assert_eq!(parse(&open).unwrap().volumes(), [0.0, 0.0]);
+        let malformed = serde_json::json!({"bodies": [{"volume_mm3": "big"}], "timeline": []});
+        assert!(parse(&malformed).is_err());
         assert_eq!(eval.bodies[0].area, None);
         assert_eq!(eval.bodies[1].area, Some(52.0));
         assert_eq!(eval.bodies[1].size, Some(7.0));
