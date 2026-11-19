@@ -123,10 +123,12 @@ offline. The built-in plane query forms are recognized explicitly, including lit
 `qCompressed` creation records naming `Top.planeOp`, `Front.planeOp`, or
 `Right.planeOp`. These planes supply their fixed origin, normal, and in-plane axis.
 Zlib literals and their boolean query fields are decoded within the same bounds.
-Face-plane and cap attachments map when the sketch feature stores a complete
-`plane` (`origin`, `normal`, `x`) and its deterministic face resolves in that
-feature's rollback topology. The stored frame must be orthogonal and coplanar with
-the referenced planar face. Translation and rotation come from the stored sketch
+Face-plane and cap attachments map when `sketches.json` stores a valid rigid
+`sketchMatrix`, or the sketch feature stores a complete legacy `plane`
+(`origin`, `normal`, `x`), and its deterministic face resolves in that feature's
+rollback topology. A validated matrix supplies an absolute placement without
+requiring an earlier feature to produce the support face. The stored frame must
+be orthogonal and coplanar with the referenced planar face. Translation and rotation come from the stored sketch
 frame; a face origin, face normal or inherited extrusion frame alone does not
 establish them. Missing or contradictory frames retain
 `onshape/history.not-supported`. Built-in plane frames remain supported.
