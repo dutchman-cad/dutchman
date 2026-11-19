@@ -759,7 +759,6 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 
     use super::*;
-
     use std::collections::BTreeMap;
 
     fn binding_looks(

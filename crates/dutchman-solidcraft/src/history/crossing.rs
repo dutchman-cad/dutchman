@@ -1138,7 +1138,7 @@ fn inside(p: P2, polygon: &[P2]) -> bool {
 
 /// A line arrangement is deliberately bounded: intersections and directed edges grow
 /// quadratically. Larger arrangements keep the existing refusal.
-const MAX_LINES: usize = 128;
+pub(super) const MAX_LINES: usize = 128;
 const MAX_SELECTION_DEPTH: usize = 64;
 const MAX_EDGES: usize = 16_384;
 const MAX_POINTS: usize = 2048;
@@ -1241,6 +1241,62 @@ pub(super) fn rings_cross(a: &[P2], b: &[P2]) -> bool {
     edges(a).any(|(p, q)| {
         edges(b).any(|(r, s)| !intersection(p, q, r, s).is_ok_and(|hit| hit.is_none()))
     })
+}
+
+/// Follow one simple perimeter of exact emitted lines. Share the bounded arrangement
+/// limits and intersection checks with profile selection. Collinear neighbours are refused
+/// because SolidCraft can merge them into one edge, changing the historical edge endpoints.
+pub(super) fn line_ring(lines: &[(P2, P2)]) -> Option<Vec<P2>> {
+    if !(3..=MAX_LINES).contains(&lines.len()) {
+        return None;
+    }
+    let &(first, mut end) = lines.first()?;
+    let mut remaining: Vec<_> = lines.iter().copied().skip(1).collect();
+    let mut ring = vec![first];
+    while !remaining.is_empty() {
+        ring.push(end);
+        let mut matches = remaining.iter().enumerate().filter_map(|(i, &(a, b))| {
+            if super::sketch::distance(end, a) <= EPS {
+                Some((i, b))
+            } else if super::sketch::distance(end, b) <= EPS {
+                Some((i, a))
+            } else {
+                None
+            }
+        });
+        let (index, next) = matches.next()?;
+        if matches.next().is_some() {
+            return None;
+        }
+        remaining.swap_remove(index);
+        end = next;
+    }
+    if super::sketch::distance(end, first) > EPS || self_crossing(&ring) {
+        return None;
+    }
+    for ((a, b), &c) in edges(&ring).zip(ring.iter().cycle().skip(2)) {
+        let u = subtract(b, a);
+        let v = subtract(c, b);
+        if super::sketch::distance(a, b) <= EPS
+            || determinant(u, v).abs() <= EPS * u[0].hypot(u[1]) * v[0].hypot(v[1])
+        {
+            return None;
+        }
+    }
+    (signed_area(edges(&ring)).abs() > EPS * EPS).then_some(ring)
+}
+
+/// Signed area relative to the first vertex, avoiding cancellation when a small
+/// perimeter is far from the sketch origin. The edge order determines the sign.
+pub(super) fn signed_area(lines: impl IntoIterator<Item = (P2, P2)>) -> f64 {
+    let mut lines = lines.into_iter();
+    let Some((origin, _)) = lines.next() else {
+        return 0.0;
+    };
+    lines
+        .map(|(a, b)| determinant(subtract(a, origin), subtract(b, origin)))
+        .sum::<f64>()
+        / 2.0
 }
 
 fn self_crossing(ring: &[P2]) -> bool {
@@ -1891,6 +1947,66 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn translated_line_perimeters_keep_their_area_and_winding() {
+        for (points, area) in [
+            (vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]], 1.0),
+            (
+                vec![
+                    [0.0, 0.0],
+                    [3.0, 0.0],
+                    [3.0, 1.0],
+                    [1.0, 1.0],
+                    [1.0, 3.0],
+                    [0.0, 3.0],
+                ],
+                5.0,
+            ),
+        ] {
+            for offset in [0.0, 100_000_000.0, 100_000_001.0] {
+                for reverse in [false, true] {
+                    let mut translated: Vec<_> = points
+                        .iter()
+                        .map(|[x, y]| [x + offset, y + offset])
+                        .collect();
+                    if reverse {
+                        translated.reverse();
+                    }
+                    let lines: Vec<_> = edges(&translated).collect();
+                    let ring = line_ring(&lines).unwrap();
+                    assert_eq!(
+                        signed_area(edges(&ring)),
+                        if reverse { -area } else { area }
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn emitted_line_perimeters_are_bounded_closed_and_unambiguous() {
+        // Out-of-order, reversed segments still describe the same concave perimeter.
+        let lines = [
+            ([0.0, 0.0], [30.0, 0.0]),
+            ([10.0, 10.0], [30.0, 10.0]),
+            ([0.0, 30.0], [10.0, 30.0]),
+            ([30.0, 10.0], [30.0, 0.0]),
+            ([10.0, 30.0], [10.0, 10.0]),
+            ([0.0, 0.0], [0.0, 30.0]),
+        ];
+        let ring = line_ring(&lines).unwrap();
+        assert_eq!(ring.len(), 6);
+        assert_eq!(ring_area(&ring), 500.0);
+        assert!(line_ring(&lines[..5]).is_none());
+        let mut branched = lines.to_vec();
+        branched.push(([30.0, 0.0], [40.0, 0.0]));
+        assert!(line_ring(&branched).is_none());
+        let mut zero_edge = lines.to_vec();
+        zero_edge.push(([30.0, 0.0], [30.0, 0.0]));
+        assert!(line_ring(&zero_edge).is_none());
+        assert!(line_ring(&[lines[0]; MAX_LINES + 1]).is_none());
+    }
 
     #[test]
     fn curves_bounding_a_selected_trimmed_region_are_named() {

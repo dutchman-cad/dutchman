@@ -107,7 +107,7 @@ CAD extension selects conversion.
 | `--no-memory-check` | Bypass the memory refusal, Standard's history budget, and automatic history-check skipping. |
 | `--yes` | Never prompt to switch presets; refuse an over-budget conversion with exit 2. |
 | `--solidcraft PATH` | The `solidcraft-cli` that checks a converted history. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH` or beside `dutchman`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`, else the install folder recorded in the registry). The same search runs in the desktop app; see [How Dutchman finds SolidCraft](desktop.md#how-dutchman-finds-solidcraft). When none is found, the report's `solidcraft.search` lists the places tried. |
-| `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the found CLI's version capped at newest known, even with `--no-verify`, else the newest known at build time (currently 0.43). |
+| `--solidcraft-version x.y.z` | Target SolidCraft release, at least 0.18.2. Default: the found CLI's version capped at newest known, even with `--no-verify`, else the newest known at build time (currently 0.44). |
 | `--no-verify` | Write the history without checking it in SolidCraft. Cannot be combined with `--solidcraft`. |
 | `--write-replay` | For a `.sc` design, also write `<design>.replay.json` beside it (the design's name with `.replay.json` in place of `.sc`): the command script that rebuilds the history step by step. See [Replay a history by hand](troubleshooting.md#replay-a-history-by-hand). Works with `convert` and `convert-all`; the JSON report names it as `replay_script`. |
 | `--verify-timeout SECONDS` | How long each SolidCraft check may run before the history is written unverified. Default 120. |
@@ -224,6 +224,13 @@ time it reads **Still checking Bracket: 1 min 1 s**. This is elapsed time,
 not an estimate of time left. With parallel workers the oldest current step is shown;
 a check takes the place of preparation on its worker until it ends. Completed-read counts
 can stay unchanged while parts are prepared or checked.
+
+While a design's history is built, the line also names the feature it is on:
+**Building history for Bracket: 3 s; Feature 29 of 37 · Extrude 1**. The count is the
+feature's place in the source timeline, suppressed features included. When SolidCraft checks
+a feature by measuring it against the original, the line adds **(checking by measurement,
+which takes longer)**, and the desktop card says so under the feature. The whole-design check
+after the history is built runs once for the design, so it shows its check, not a feature.
 
 Available split reading, conversion and checking estimates supply usual times for whole
 stages, including a named whole-design read or preparation. A whole-file estimate is not
@@ -466,7 +473,7 @@ Dutchman is made for the current SolidCraft (any release from the last two weeks
 older versions get simplified features, or pass `--solidcraft-version x.y.z` on
 `convert`, `convert-all`, or `watch` (at least 0.18.2).
 The target defaults to the found CLI's version, even with `--no-verify`, else the
-newest minor known at build time (currently 0.43). The current window is 0.18.2–0.43.
+newest minor known at build time (currently 0.44). The current window is 0.18.2–0.44.
 Constant-radius FreeCAD helices keep editable sketch-profile coils only for targets
 0.25 patch 1 or newer; older targets preserve the original geometry and report the version needed.
 Onshape fillets and chamfers blend exactly the edges Onshape blended (its tangent chain resolved
@@ -491,10 +498,10 @@ than falling back to the writer's older pinned `WINDOW_OLDEST` value.
 
 
 SolidCraft conversion reports include the selected target and the discovered CLI version,
-even with verification off. Text output includes `Target SolidCraft 0.43 (found 0.43.0)`,
+even with verification off. Text output includes `Target SolidCraft 0.44 (found 0.44.0)`,
 or `(none found)` when no version can be read. `--solidcraft-version` overrides the target;
 otherwise the found supported version is used, capped at the newest known release, falling
-back to 0.43. Successful conversions print the same installed-version notice beside the
+back to 0.44. Successful conversions print the same installed-version notice beside the
 target line, with the SolidCraft download URL for too-old releases. The CLI never checks
 for Dutchman updates over the network. Failed or refused files print neither line.
 No installed release means no notice. Other output

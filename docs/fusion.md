@@ -42,6 +42,23 @@ Historical body centres use bounded samples along curved edges as well as vertic
 proven circular extrema. cadmpeg identifies incomplete edge or topology evidence separately;
 only bodies certified as exact have exact bounding-box centres.
 
+## Public Fusion shares
+
+The desktop app accepts pasted `a360.co` and `*.autodesk360.com` links and dropped
+`.url`/`.webloc` shortcuts (or URL text where the desktop delivers it);
+`dutchman convert <url>` accepts them too. The share page must expose a public file
+download URL or download link reachable without login. Dutchman downloads that native
+file and runs the existing local conversion; conversion coverage is unchanged.
+
+Public share downloads screen resolved addresses on every hop and connect only to the
+screened public destinations. DNS, connection, TLS and body streaming share the two-minute
+deadline. CLI cancellation and intentional exits remove the temporary source.
+
+When a share needs login, has expired, disables downloads, or exposes no public download,
+Dutchman asks you to download the design in Fusion and drop the file into the app.
+Downloads stay on allowlisted Autodesk HTTPS hosts, with a 200 MB cap and two-minute
+timeout. See [Public share links](guide.md#public-share-links) for limits and cleanup.
+
 ## Mesh bodies
 
 When cadmpeg reports mesh-body members for a Fusion design with no decoded B-rep bodies
@@ -73,14 +90,14 @@ Bodies a Combine used up as a tool, or that a Remove step took out of the design
 |---|---|
 | The design's B-rep, with body transforms applied. | Converts it: restated as STEP, written as SolidCraft's import. |
 | A design saved while Fusion was offline, which records no cloud lineage. | Reads it like any other design. |
-| A Base Feature that holds a stored solid (no recipe), typed as a base body. | Writes it as a SolidCraft Import at its place in the timeline; later features keep their history. cadmpeg gives a base body only as the design ends. Later joins and cuts on it re-apply without changing the shape, so they are kept but counted as re-applied, not rebuilt; a Base Feature whose body any other later feature changes (a Move, a blend, a deleted face) is refused, naming that feature. A Base Feature proven to hold no bodies is not needed. |
+| A Base Feature that holds a stored solid (no recipe), typed as a base body. | Writes it as a SolidCraft Import at its place in the timeline; later features keep their history. When cadmpeg keeps the Base Feature's own body (a history body, as it stood when the Base Feature ended, kept when a later feature changes it), that body is imported and the later features rebuild on it; the replay right after it is compared with the bodies the source stores there. Otherwise cadmpeg gives a base body only as the design ends: later joins and cuts on it re-apply without changing the shape, so they are kept but counted as re-applied, not rebuilt; a Base Feature whose body any other later feature changes (a Move, a blend, a deleted face) is refused, naming that feature. A Base Feature proven to hold no bodies is not needed. |
 | A Canvas: a reference image placed in the design. | Needs no feature: it builds no geometry, so it is counted as not needed and doesn't stop the history. |
 | Stored geometry from any format (`stored_geometry`) with output bodies, solids and sheets. | The same Import, holding exactly the bodies it outputs. |
 | A mesh body whose container cadmpeg cannot decode. | Leaves it out and reports it as an undecoded mesh body. |
 | Parameters, planar sketches with typed and native constraints. | Mapped, including point-on-curve coincidences, point-to-line distances, resolved finite-endpoint distances, and parallel-line spacing. Dimensions keep their parameter expressions, so user parameters drive the editable geometry. Native constraints without neutral operands are reported as not carried. |
 | Spatial (3D) sketches. | Mapped as SolidCraft 3D sketches at their solved positions (lines, arcs, circles, splines, points); constraints and links to model edges are reported as not carried, and a later sweep path or rail picked from their curves follows them. |
 | Cosmetic thread annotations with diameter, pitch, extent, and a resolved cylindrical face. | Writes a cosmetic ISO metric thread, including a blind length or the whole face. An absent designation is derived exactly from diameter and pitch; conflicting or nonmetric designations, modeled threads, and unresolved faces remain reported losses. Unspecified construction keeps the annotation with a Degraded note. Historical face IDs without input surface geometry remain reported losses. |
-| Typed extrudes, revolves, fillets, chamfers and more, with selections often native. | Extrudes, revolves, lofts, sweeps, spheres, tori, coils and whole cylinders map, and whole cones on SolidCraft 0.24.1 and newer (see ARCHITECTURE.md for the cases); boxes map when their frame lies along the model axes; simple, counterbore and countersink holes drilled at a sketch's points map; constant-radius fillets and equal-setback chamfers map from proven feature input edge geometry, matched on SolidCraft's own replay of the history before them; selections on several bodies become one independent blend per body, with one mapped source outcome (a fillet with a tangency weight of exactly 1 maps as a circular fillet, with an Info note; any other weight is refused); other blends and holes placed on unresolved faces wait on input geometry (see guide.md). |
+| Typed extrudes, revolves, fillets, chamfers and more, with selections often native. | Extrudes, revolves, lofts, sweeps, spheres, tori, coils and whole cylinders map, and whole cones on SolidCraft 0.24.1 and newer (see ARCHITECTURE.md for the cases); boxes map when their frame lies along the model axes; simple, counterbore and countersink holes drilled at a sketch's points map, on a face of the extrusion or box made just before them; constant-radius fillets and equal-setback chamfers map from proven feature input edge geometry, matched on SolidCraft's own replay of the history before them; selections on several bodies become one independent blend per body, with one mapped source outcome (a fillet with a tangency weight of exactly 1 maps as a circular fillet, with an Info note; any other weight is refused); other blends and holes placed on unresolved faces wait on input geometry (see guide.md). |
 
 Fusion stores consumed Combine tools (with keep-tools off) and bodies removed by the
 timeline alongside its live bodies. For `.f3d`, designs inside `.f3z`, and component parts,
@@ -92,6 +109,19 @@ reported as a history blocker.
 User-hidden bodies that still belong to a component are kept, with an Info note. Hidden
 occurrences remain hidden; the current writer shows a part with both shown and hidden bodies
 whole, so its hidden members can appear visible in SolidCraft.
+
+Holes on planar historical entry faces can keep their editable history when the boundary
+includes circular arcs or whole circles, including a rounded corner or an earlier through
+hole. The source's own input-edge ends, midpoints, and tangents establish the circular
+centres, radii, and common plane. SolidCraft must then rebuild exactly that bounded face
+before the hole; matching the plane alone is insufficient. Placements must lie inside the
+filled face, clear of its curved boundary and existing holes, and drill inward. An unsigned
+axis takes its drilling side from the proven face. Non-planar faces other than the existing
+whole-cylinder radial-hole case remain refused with a specific reason. Without replay,
+conversion keeps the original geometry and reports why the hole history cannot map.
+Previously mapped straight-cap holes keep their existing output.
+This extension requires a target of SolidCraft 0.40.0 or newer; older targets retain the
+original geometry with a named reason.
 
 When every active feature using a sketch selects explicit whole-loop regions, unused lines
 crossing selected whole circles are kept as construction geometry. This preserves
@@ -115,6 +145,12 @@ different end, and CADIR supplies no input face geometry to prove which face exi
 Final-body faces cannot establish that timeline state. Tilted plane ends and native,
 generated, or historical vertex selections are not supported yet. Symmetric To Object ends
 and non-blind ends against the sketch normal on two-sided extrudes remain unsupported.
+
+Planar historical face selections also search intervals between trim-loop crossings when
+corner-triangle picks all land in holes. Each new point must lie in the material region,
+clear of every loop and the error from sampling circular boundaries. This retains offsets
+on perforated frames without selecting a hole. SolidCraft 0.43 supports normal offsets,
+but has no face-translation or face-rotation feature; affine MoveFace motions stay refused.
 
 An extrude whose profile is a face of the model as it was earlier in the timeline
 (`historical_faces`, "extrude this face") is rebuilt from that face's boundary. CADIR carries

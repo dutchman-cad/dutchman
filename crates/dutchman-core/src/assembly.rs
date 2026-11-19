@@ -3119,6 +3119,19 @@ fn slice(
             }
         }
     }
+    // A base feature's own body, kept by the source as a history body when a later feature
+    // changes it, comes along with the base feature.
+    if history {
+        let nests: Vec<&str> = slices
+            .nests
+            .iter()
+            .filter(|(feature, _)| keep.contains_key(feature.as_str()))
+            .flat_map(|(_, ids)| ids.iter().map(String::as_str))
+            .collect();
+        for id in nests {
+            keep.insert(id, ());
+        }
+    }
     // A sketch another component builds that a feature of this one uses (designing in the
     // context of an assembly): carry its sketch feature in, with the sketch's plane moved from
     // that component's coordinates into this one's. Repeated using components need a unique
@@ -4262,6 +4275,67 @@ mod tests {
             .flatten()
             .filter_map(|row| row["id"].as_str().map(str::to_owned))
             .collect()
+    }
+
+    #[test]
+    fn a_component_carries_the_history_bodies_its_own_features_make() {
+        let model = with_history(true);
+        let mut wire = serde_json::to_value(&model.ir).unwrap();
+        let block = wire["model"]["features"][0]["id"].clone();
+        let nest = |id: &str, by: &Value| {
+            let mut body = wire["geometry"]["bodies"][0].clone();
+            body["id"] = json!(format!("synthetic:nest:body#{id}"));
+            json!({"id": format!("synthetic:history-body:nest#{id}"), "produced_by": by,
+                "state": {"ordinal": 1, "identifier": 1}, "topology": {"body": body,
+                "regions": [], "shells": [], "faces": [], "loops": [], "coedges": [], "edges": [],
+                "vertices": [], "surfaces": [], "curves": [], "pcurves": [], "points": []}})
+        };
+        let nests = json!([
+            nest("block", &block),
+            nest("other", &json!("synthetic:copy:feature#other")),
+        ]);
+        wire["model"]["history_bodies"] = nests;
+        let model = Model {
+            ir: cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap(),
+            ..model
+        };
+        let carried = |part: &Model| -> Vec<String> {
+            part.ir
+                .model
+                .history_bodies
+                .iter()
+                .map(|nest| nest.id.as_str().to_owned())
+                .collect()
+        };
+        let assembly = local_assembly(&model).unwrap().unwrap();
+        assert_eq!(
+            carried(&assembly.parts[0]),
+            ["synthetic:history-body:nest#block"]
+        );
+        // The other part's feature is a copy of the block's and reaches it, so the block's
+        // history body comes along with that feature too.
+        assert!(
+            carried(&assembly.parts[1]).contains(&"synthetic:history-body:nest#other".to_owned())
+        );
+        // The expanded and the compact row index carry the same.
+        let expanded = serde_json::to_value(&model.ir).unwrap();
+        let text = serde_json::to_string(&model.ir).unwrap();
+        let packed = slicing::Packed::read(&text).unwrap();
+        let document = packed.document().unwrap();
+        let index = slicing::Index::packed(&packed, &document).unwrap();
+        let bodies: Vec<&str> = model.ir.model.product_definitions[0]
+            .bodies
+            .iter()
+            .map(|id| id.as_str())
+            .collect();
+        let owner = HistoryOwner::Definition(model.ir.model.product_definitions[0].id.as_str());
+        let value = only(&model, &expanded, &bodies, owner, "part".to_owned()).unwrap();
+        let compact = only_indexed(&model, &index, &bodies, owner, "part".to_owned()).unwrap();
+        assert_eq!(carried(&value), ["synthetic:history-body:nest#block"]);
+        assert_eq!(carried(&compact), carried(&value));
+        // Geometry alone carries none.
+        let geometry = geometry_only(&model, &expanded, &bodies, "part".to_owned()).unwrap();
+        assert!(carried(&geometry).is_empty());
     }
 
     #[test]

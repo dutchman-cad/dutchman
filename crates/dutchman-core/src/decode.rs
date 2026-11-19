@@ -458,7 +458,7 @@ struct Phase {
     sink: Option<std::sync::Arc<dyn crate::MemberObserver>>,
     name: &'static str,
     bytes: u64,
-    started: std::time::Instant,
+    started: crate::time::Instant,
 }
 
 impl Phase {
@@ -474,7 +474,7 @@ impl Phase {
             sink,
             name,
             bytes,
-            started: std::time::Instant::now(),
+            started: crate::time::Instant::now(),
         }
     }
 }
@@ -498,7 +498,7 @@ struct Members {
     step: std::cell::RefCell<Option<Phase>>,
     bytes: u64,
     sink: std::sync::Arc<dyn crate::MemberObserver>,
-    started: std::cell::RefCell<std::collections::BTreeMap<String, std::time::Instant>>,
+    started: std::cell::RefCell<std::collections::BTreeMap<String, crate::time::Instant>>,
 }
 
 impl cadmpeg_codec_f3d::F3zMemberObserver for Members {
@@ -547,7 +547,7 @@ impl cadmpeg_codec_f3d::F3zMemberObserver for Members {
         let mut started = self.started.borrow_mut();
         // The decoder also caps archive members; bound diagnostics independently.
         if started.len() < 100_000 {
-            started.insert(path.to_owned(), std::time::Instant::now());
+            started.insert(path.to_owned(), crate::time::Instant::now());
         }
         self.sink
             .member_event(path, crate::MemberEvent::Start, 0, None);

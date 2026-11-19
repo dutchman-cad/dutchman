@@ -1,0 +1,130 @@
+"""Exercise the required status check with real event/result combinations."""
+import json
+import os
+import re
+from pathlib import Path
+import subprocess
+import sys
+import textwrap
+import unittest
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+class CiResultTests(unittest.TestCase):
+    def check_results(self, event, release=False, failed=None, results=None, docs=False):
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        script = workflow.split('echo "$RESULTS" | python3 -c \'\n', 1)[1]
+        script = textwrap.dedent(script.rsplit("\n          '", 1)[0])
+        full = event not in ("pull_request", "merge_group")
+        active = {"changes", "release-notes", "fmt", "clippy", "test"}
+        if full:
+            active |= {"wasm", "msrv", "solidcraft-roundtrip", "test-macos",
+                       "docker", "test-arm", "placements"}
+        if event == "workflow_dispatch" and release:
+            active.add("release-build")
+        jobs = active | {"docs", "test-arm-again", "release-build", "wasm", "msrv",
+                         "solidcraft-roundtrip", "test-macos", "docker", "test-arm", "placements"}
+        needs = {job: {"result": "success" if job in active else "skipped"} for job in jobs}
+        needs["changes"]["outputs"] = {key: "true" for key in ("code", "rust", "docker")}
+        needs["changes"]["outputs"]["full"] = str(full).lower()
+        if event == "merge_group":
+            active.add("placements")
+            needs["placements"]["result"] = "success"
+        if docs:
+            for job in ("fmt", "clippy", "test", "placements"):
+                needs[job]["result"] = "skipped"
+            needs["docs"]["result"] = "success"
+            needs["changes"]["outputs"].update(code="false", rust="false", docker="false")
+        for job, result in (results or {}).items():
+            needs[job]["result"] = result
+        if failed:
+            needs[failed] = {"result": "skipped"}
+        return subprocess.run(
+            [sys.executable, "-c", script], input=json.dumps(needs), text=True,
+            capture_output=True,
+            env={**os.environ, "EVENT": event, "RELEASE_BUILDS": str(release).lower(),
+                 "GITHUB_REF": "refs/heads/test"},
+        )
+
+    def test_queue_does_not_require_release_packaging(self):
+        result = self.check_results("merge_group")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_queue_still_requires_tests(self):
+        result = self.check_results("merge_group", failed="test")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("test", result.stderr)
+
+    def test_dispatch_without_release_packaging(self):
+        result = self.check_results("workflow_dispatch")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_dispatch_requires_requested_release_packaging(self):
+        result = self.check_results("workflow_dispatch", release=True, failed="release-build")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("release-build", result.stderr)
+
+    def test_dispatch_accepts_successful_release_packaging(self):
+        result = self.check_results("workflow_dispatch", release=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_fast_pr(self):
+        result = self.check_results("pull_request")
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_queue_skips_platform_and_image_checks(self):
+        for job in ("test-arm", "test-macos", "wasm", "msrv", "solidcraft-roundtrip", "docker"):
+            with self.subTest(job=job):
+                result = self.check_results("merge_group", results={job: "success"})
+                self.assertNotEqual(result.returncode, 0)
+
+    def test_queue_requires_linux_tools_and_smoke_placements(self):
+        result = self.check_results("merge_group", failed="placements")
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_docs_only_queue_requires_focused_docs_checks(self):
+        result = self.check_results("merge_group", docs=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_main_and_tags_require_full_matrix(self):
+        for event in ("push", "schedule", "workflow_dispatch"):
+            for job in ("test-arm", "test-macos", "wasm", "msrv", "solidcraft-roundtrip", "docker", "placements"):
+                with self.subTest(event=event, job=job):
+                    result = self.check_results(event, failed=job)
+                    self.assertNotEqual(result.returncode, 0)
+
+    def test_merge_group_does_not_schedule_moved_jobs(self):
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        for job in ("test-arm", "test-arm-again", "test-macos", "msrv", "wasm", "solidcraft-roundtrip", "docker"):
+            block = workflow.split("  " + job + ":\n", 1)[1]
+            condition = next(line.strip()[4:] for line in block.splitlines() if line.startswith("    if: "))
+            values = {"always()": True, "cancelled()": False, "github.event_name": "merge_group",
+                      "needs.changes.outputs.full": "false", "needs.changes.outputs.code": "true",
+                      "needs.changes.outputs.rust": "true", "needs.changes.outputs.docker": "true",
+                      "needs.placements.result": "success", "needs.test-arm.result": "failure"}
+            for key, value in values.items():
+                condition = condition.replace(key, repr(value))
+            condition = re.sub(r"!(?!=)", "not ", condition.replace("&&", "and").replace("||", "or"))
+            with self.subTest(job=job):
+                self.assertFalse(eval(condition, {"__builtins__": {}}))
+
+    def test_full_ci_accepts_retry_after_timeout_or_shutdown(self):
+        # A timeout can appear as failure or cancelled in the needs context.
+        # The retry itself verifies the Actions job conclusion before testing.
+        for first in ("failure", "cancelled"):
+            with self.subTest(first=first):
+                result = self.check_results("push", results={
+                    "test-arm": first, "test-arm-again": "success",
+                })
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_full_ci_rejects_timeout_without_successful_retry(self):
+        for first in ("failure", "cancelled"):
+            for retry in ("failure", "cancelled", "skipped"):
+                with self.subTest(first=first, retry=retry):
+                    result = self.check_results("push", results={
+                        "test-arm": first, "test-arm-again": retry,
+                    })
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("test-arm", result.stderr)

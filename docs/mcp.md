@@ -78,6 +78,26 @@ Default-plane frames and explicit sketch-region boundaries can be resolved from
 compressed REST query records; deterministic IDs alone are insufficient. The same
 history counts and source-geometry checks apply.
 
+Local CLI and desktop progress can name the current timeline feature, such as
+“Feature 29 of 37 · Extrude 1”, and explain when measurement takes longer.
+These updates use `dutchman.progress/1`; MCP final conversion reports stay unchanged.
+Feature names are private local text and are excluded from anonymous diagnostics.
+
+## Public share links in the app and CLI
+
+The desktop app's **Add link**, paste, and shortcut/URI drop flows and `dutchman convert <url>` accept
+public Fusion and Google Drive file links. Downloads are bounded to 200 MB and two minutes,
+follow only provider HTTPS hosts resolving to public addresses, and use temporary files
+that are cleaned up, including on CLI cancellation or a closed output pipe. The total
+deadline includes DNS, connection, TLS and body streaming. Drive's
+virus-scan confirmation is handled; Fusion needs a download exposed without login.
+Private, expired, or login-only shares ask for a manual download. See
+[Public share links](guide.md#public-share-links).
+
+MCP tools continue to take local paths. Download the public file locally before calling
+`inspect` or `convert`; do not pass URLs to an MCP path argument. Reports keep their
+existing schemas and contain local input paths, never the original share link.
+
 ## Read an existing result
 
 `read_report` takes `input`, the absolute path of a `.sc` design or its adjacent
@@ -165,9 +185,13 @@ note. See [Fusion visibility](fusion.md#parts-and-history).
 
 Sheet-metal history follows the same mapping limits in [Feature history](history.md#sheet-metal) as the CLI:
 base flanges and full-edge flanges on unchanged rectangular base sheets map when their own
-input-edge geometry proves each pick. Unsupported flange dimensions or selections, and hems,
+input-edge geometry proves each pick. An attached rectangular plate and its paired bend also
+map on an unchanged simple polygonal base, including L-shaped and notched sheets, by picking
+the actual straight profile edge. Curved, open, crossing, disconnected, or collinear base edges
+and base profiles with holes or partial regions remain blocked for attachments.
+Unsupported flange dimensions or selections, and hems,
 appear as the first blocked feature's reason; the conversion keeps the geometry. K-factor and
-relief use the target rule defaults because CADIR does not supply them.
+relief use the target rule defaults.
 
 FreeCAD signed horizontal and vertical sketch distances convert to positive dimension
 magnitudes at their solved positions. Their signed parameters and expressions remain
@@ -246,6 +270,8 @@ rechecks before geometry replay. It does not multiply the memory already held by
 decoded design.
 Geometry-only conversion also checks the converted shape by default, using a separately
 calibrated check allowance; `verify: false` keeps either kind of checking off.
+A report whose history check ran also carries `verification_tolerances`: the numbers that
+check used, the same as the CLI's `--json` ([json.md](json.md)).
 If it cannot fit, the successful report includes `history_check_skipped` with
 `needed_bytes`, `available_bytes`, and `reason`:
 `History check skipped: needs about N GB, M GB free`. The original shape stays usable
@@ -362,8 +388,8 @@ Appearance or attribute bindings for one placed instance or an evaluation state 
 left out with a specific loss: Dutchman has no per-occurrence override for them.
 Definition-level appearance bindings still colour every placement of that definition.
 
-A Dropped definition-level appearance binding names its body or face target. “Its target is absent from the
-decoded model” means no decoded geometry can receive it; “its target exists in the decoded
+A Dropped definition-level appearance binding names its body or face target.
+“Its target is absent from the decoded model” means no decoded geometry can receive it; “its target exists in the decoded
 model but has no placed component geometry” means the target was decoded but is not placed.
 Bindings to consumed or removed Fusion geometry have a separate explanation. “Its body has
 no geometry the STEP writer can write” means the decoded target exists, but its shape cannot
@@ -372,7 +398,7 @@ be carried through STEP. Compare the named part with the source design when revi
 `formats` lists all recognised formats, their status `words`,
 and what Dutchman converts. Inputs without geometry support or a codec in this build
 return a failure describing the reader's current capability. Creo and NX `.prt` inputs
-are distinguished by contents. CATIA, Creo View, Rhino, ACIS and STEP use the geometry
+are distinguished by contents. CATIA, NX, Creo View, Rhino, ACIS and STEP use the geometry
 path. Each conversion report's `input` also carries `words`, `program` and `extension`.
 Status words are `reads geometry`, `opens, no geometry yet`, `recognised, not read yet`,
 or `open it in SolidCraft directly` for IGES (`.igs`, `.iges`). IGES is recognised and
@@ -427,8 +453,8 @@ map to sketch-profile coils when targeting SolidCraft 0.25 patch 1 or newer. Old
 the helix with `needs SolidCraft 0.25 patch 1 or newer` and the target version, preserving the
 original geometry. The CLI equivalent is `--solidcraft-version x.y.z` on `convert`,
 `convert-all`, and `watch` (default: found CLI version, even with `--no-verify`, else
-the newest release known at build time, currently 0.43). The rolling 14-day window
-is currently 0.18.2–0.43; older targets down to 0.18.2 get simplified features.
+the newest release known at build time, currently 0.44). The rolling 14-day window
+is currently 0.18.2–0.44; older targets down to 0.18.2 get simplified features.
 Pitch/height/turn laws, handedness, axis, reversed travel, and Boolean operation carry across. Feature parameter
 bindings are retained when available, otherwise dimensions use resolved values. Conical
 and spiral sweeps report the missing SolidCraft cone-angle/radial-growth option.
@@ -437,6 +463,13 @@ Hole history keeps chamfered entries and tapped holes (the bore and an ISO metri
 label); thread details it can't keep are `Degraded` losses. Unsupported hole forms,
 placements, and ends appear in `history.features[].reason`, and conversion keeps the
 geometry when the history can't map.
+Planar historical hole-entry faces may have circular arcs or circles in their boundaries.
+The source boundary establishes the plane, and SolidCraft replay must confirm the complete
+face before drilling, including existing holes. Unproven faces, placements outside the
+filled face, and outward drilling use the existing blocked feature reason; the original
+geometry remains available.
+This extension requires a target of SolidCraft 0.40.0 or newer; older targets retain the
+original geometry with a named reason.
 Entry recesses with drill points report "SolidCraft holes take a drill point only on a
 plain drilled hole"; SolidCraft 0.21.0 ignores `tip_angle` on counterbores and countersinks. SolidCraft 0.22.1 and newer support those drill
 points, but Dutchman retains this limit for compatibility with older releases.
@@ -485,7 +518,7 @@ The formats report includes each reader's status and cadmpeg's published headlin
 | `import_only` | boolean | Leave feature history out; keep geometry and the preset's reference sketches. |
 | `verify` | boolean | Check a converted history in SolidCraft. Default `true`; skipped, and the history marked unverified, when no `solidcraft-cli` is found. |
 | `solidcraft` | string | Path of `solidcraft-cli` for the check. Default: `$SOLIDCRAFT_CLI`, else `solidcraft-cli` on `PATH`, else the one inside an installed SolidCraft app (macOS `SolidCraft*.app`, newest first; Windows `Program Files\SolidCraft`). |
-| `solidcraft_version` | string | Target release as x.y.z, at least 0.18.2. Default: the found CLI's version capped at newest known, else the newest known at build time (currently 0.43), including when `verify` is false. |
+| `solidcraft_version` | string | Target release as x.y.z, at least 0.18.2. Default: the found CLI's version capped at newest known, else the newest known at build time (currently 0.44), including when `verify` is false. |
 | `verify_timeout` | integer, at least 1 | Seconds each SolidCraft check may run before the history is written unverified. Default 120. |
 | `overwrite` | boolean | Replace an existing `.sc` file (default true). When false, an existing file is left alone and that file's conversion fails with "already exists". |
 | `project` | string | Absolute path of the project folder an assembly's part files are searched in when they are not at their stored paths. Default: the nearest folder above the assembly holding an Inventor `.ipj`, else two folders up; for `convert_all`, each folder given. See [Finding the part files](inventor.md#finding-the-part-files). |
@@ -785,9 +818,9 @@ SolidCraft reports also include `solidcraft.known_newest` (a version string) and
 fields require no network check. See [JSON reports](json.md).
 
 SolidCraft version presentation uses minors: `solidcraft.target` and
-`solidcraft.known_newest` now contain `x.y` strings (for example, `"0.43"`), changing their
+`solidcraft.known_newest` now contain `x.y` strings (for example, `"0.44"`), changing their
 previous `x.y.z` representation. `solidcraft.found` keeps the full CLI release (for example,
-`"0.43.0"`). Status comparisons use minors, so all 0.43 patches are current; 0.44 is newer
+`"0.44.0"`). Status comparisons use minors, so all 0.44 patches are current; 0.45 is newer
 and 0.17 is too old. Patch-sensitive writer gates and the internal 0.18.2 verification
 floor remain unchanged. Explicit `solidcraft_version` inputs still accept `x.y.z` for
 precise gate control.
@@ -1010,3 +1043,11 @@ Extruding to or from a planar face at a slant to the sketch needs SolidCraft 0.4
 newer as the target; older targets retain a named loss and the final geometry.
 Unsupported expressions and unresolved external origin references retain named losses;
 see [Onshape](onshape.md).
+
+The [SolidCraft plugin component](plugin.md) is a separate streaming importer front end.
+It does not add or change MCP tools. Its evaluator uses the host's existing
+command surface through the `evaluate` import, subject to host permissions.
+
+The plugin aborts on host input failures before writing output. Its bounded loss report
+prioritizes dropped and degraded losses and includes an explicit truncation notice and
+`details.truncation` counts when shortened; see [the plugin contract](plugin.md).
