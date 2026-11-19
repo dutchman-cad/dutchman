@@ -36,7 +36,7 @@ pub(super) fn map(feature: &Value, definition: &Value, ctx: &mut Context) -> Res
         return Err("this shell corner continuation is not supported yet".to_owned());
     }
     let body = if let Some(selection) = definition.get("bodies").filter(|v| !v.is_null()) {
-        let names = super::modify::body_names(selection, ctx)?;
+        let names = super::modify::body_names(feature, selection, ctx)?;
         match names.as_slice() {
             [name] => Some(name.clone()),
             _ => return Err("shelling several bodies at once is not supported yet".to_owned()),

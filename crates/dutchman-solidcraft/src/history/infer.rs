@@ -660,7 +660,7 @@ fn body_scope(feature: &Value, ctx: &Context) -> Option<Vec<String>> {
         return None;
     }
     let selection = json!({"kind": "bodies", "value": outputs});
-    super::modify::body_names(&selection, ctx).ok()
+    super::modify::body_names(feature, &selection, ctx).ok()
 }
 
 /// Try the selected neutral curve identities first, then the whole carrier sketch. Native
