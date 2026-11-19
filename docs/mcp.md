@@ -243,6 +243,12 @@ and retained editable history stays unverified. This applies to `convert` and ea
 off; `no_memory_check: true` forces requested checks. Automatic part work uses at most two
 workers and budgets each detailed part's temporary peak and the retained preparation queue.
 
+Conversion results share the CLI's additive `verification_checks` array. It records final
+history comparisons per part and body, including measurement evidence and replayed named
+parameter values and quantity kinds compared with the source. Checks say `pass`, `fail` or `not_checked` with
+reasons. Missing evidence is never a pass; closure alone does not prove manifoldness.
+See [source comparison evidence](json.md#source-comparison-evidence) for the field contract.
+
 Use `convert` with `dry_run: true` for a quick estimate without decoding or writing;
 `output` is optional:
 

@@ -105,6 +105,15 @@ An unavailable answer is `Err`; a design refusal uses `evaluation_failed` in the
 JSON. Measurement parsing, matching, tolerances and fallback policy remain shared in
 `verify.rs`, independent of the transport.
 
+Final history comparison evidence lives in `verify/evidence.rs`. The existing geometry
+comparison supplies paired source and replay measurements; the final check adds actual
+centroids, kernel counts and closure when available. Named replay parameters are queried
+separately and compared with CADIR values, using the existing parameter name mapper.
+The core report carries opaque comparison entries through part merges; shared JSON reporting
+exposes them additively as `verification_checks`. A failed available check rejects the final
+history; an unavailable check records a reason and cannot upgrade the existing outcome.
+Earlier inference and partial-history geometry policies keep their existing checks.
+
 A plugin host must open a design archive with its STEP blobs, evaluate it with `inspect.measure` plus `document.inspect` (the same combined JSON
 that CLI eval returns), and dispatch `timeline.roll_to`, `document.inspect`,
 `model.edges` and `model.faces`. Edge results include names, endpoints, midpoints and

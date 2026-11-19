@@ -686,6 +686,56 @@ A cadmpeg loss is at `decode` when its code says the bytes could not be read (`�
 `…-unparsed`, `…-untyped`, framing, a missing or unreadable stream, `…not-transferred`), else
 at `project`.
 
+### Source comparison evidence
+
+`verification_checks` is an additive array in conversion reports. Each entry names `part`
+and `comparison` (`final_history_against_source_geometry`). Entries describe the attempted
+final history, including a rejected replay when conversion retained original geometry instead.
+They are preserved when part reports are merged. An absent array means this comparison was
+not attempted; it must never be interpreted as a pass.
+
+`geometry.body_count` records source and written counts. `geometry.bodies` pairs bodies by
+box position, then volume, retaining zero-based `source_index` and `written_index`.
+Indices refer to the evaluated source and replay body lists, rather than native topology ids.
+Each body's `checks` contains `volume`, `surface_area`, `bounding_box`, `centroid`, `faces`,
+`edges`, `shells`, `closed_shell` and `manifold`. Every check has `status`: `pass`, `fail`,
+or `not_checked`. Failures retain `source` and `written` evidence. Continuous measurements also
+record absolute `difference` and inclusive `tolerance`; exact counts retain their integers.
+Unavailable checks carry `reason`.
+An unmatched source body has `written_index: null`, `status: not_checked`, a reason and
+unavailable per-body checks; body count still fails. If evaluation cannot complete,
+`geometry.checks` lists unavailable checks with reasons. An entry with no evaluator also
+has `status: not_checked` and `reason`, with an empty `parameters` array.
+
+Volume, area and box checks use the existing measured replay tolerances above.
+The box difference is the larger of the distance between box centres and the largest
+absolute difference of a minimum or maximum coordinate, preserving both existing criteria. Centroid
+compares the actual centre of mass in source coordinates with the existing position allowance;
+a box centre is never substituted. Kernel face, edge and shell counts must match exactly.
+The existing descriptive `replay.face_count` and `replay.centre` tolerance fields describe
+the base geometry comparator retained for inference; `source_comparison` describes these
+additional final history checks.
+These counts describe the evaluated representation: splitting or merging equivalent faces
+can change them without changing the shape. Closure must match the source, allowing sheets
+that are open in both. Manifoldness is `not_checked` because the evaluator exposes no explicit
+manifold result; closure and counts do not establish it.
+
+`parameters` lists source parameter ids, mapped `name`, canonical `unit` (`mm`, `deg`,
+empty for scalars, or null), declared replay `written_unit` (or null), and a `check`.
+Both numeric values use the canonical `unit`, even when the declared replay unit differs.
+Replay parameter lists above 100,000 rows are not checked and carry a limit reason.
+Quantity kinds must match: lengths, angles and scalars cannot substitute for one another;
+an unavailable or unrecognised replay unit is `not_checked`. Values come directly
+from the source model and the replay's evaluated named parameters, in millimetres, degrees,
+or scalar units. Serialization roundoff allows 5e-12 times the larger of one and the source magnitude.
+`verification_tolerances.source_comparison` records `parameter_relative` (5e-12),
+`parameter_scale_floor` (1), `centroid_min_mm` (0.01),
+`centroid_diagonal_relative` (2e-4), and explanatory `counts` and `manifold` fields. Missing mapped parameters and evaluation errors fail;
+unmapped parameters, absent source numeric values and unavailable replay values are
+`not_checked`. Source expressions and written expressions are not used as proof of equality.
+A failed check prevents an otherwise matching final history from being reported as verified.
+Unavailable checks never strengthen the existing overall verification status.
+
 ## `dutchman.convert-all/1`
 
 `dutchman convert-all --json --out-dir DIR <files and folders>…` converts every file named, and

@@ -437,7 +437,8 @@ Never remove or change the quarantine attribute.
   unavailable). Position and box checks allow the larger of 0.01 mm and 0.02% of
   the larger box diagonal for the centre distance and each minimum/maximum coordinate;
   area and volume retain their measuring mesh tolerances. `verification_tolerances` in the
-  report states every number the check used; face count and centre of mass are not compared.
+  report states every number the check used; final history checks also compare available
+  kernel counts and centre of mass against the source.
   `unverified`: written
   without that check (the reason says why, usually no `solidcraft-cli` was found); mention
   that the history has not been checked. `partial`: an editable prefix and resolved
@@ -446,6 +447,7 @@ Never remove or change the quarantine attribute.
   keeps the imported shape and any
   mapped sketches with resolved planes, hidden for reference with no features built on them.
   An Info `sketches` line counts sketches kept and, when applicable, left out.
+
 - Mirrored assembly placements use shared mirrored component geometry, including nested
   reflections. Normal copies keep their original history; mirrored definitions use imported
   geometry only and report history left out. Explain Info `placements` notes as preserved
@@ -472,6 +474,14 @@ Never remove or change the quarantine attribute.
   open shells still matter. Sheets remain exempt from volume and closed-shell checks.
 - If something is off, say exactly what ("SolidCraft could not mesh 3 faces"), and don't
   claim the conversion is fine.
+
+When conversion reports `verification_checks`, explain the individual source comparisons:
+volume, surface area, bounds, counts, closure, centroid and evaluated named parameters,
+including their quantity kinds.
+A `fail` includes the compared evidence; `not_checked` names the missing evidence and must
+never be called a pass. Count differences may reflect split or merged equivalent faces.
+Do not claim manifoldness from closure: its check remains unavailable. Entries can describe
+a rejected final history even when the delivered design retains the original geometry.
 
 ## 5. Explain the loss report
 

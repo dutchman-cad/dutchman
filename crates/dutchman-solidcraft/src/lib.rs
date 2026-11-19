@@ -940,6 +940,7 @@ impl SolidCraftWriter {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn check(
         &self,
         model: &Model,
@@ -947,8 +948,48 @@ impl SolidCraftWriter {
         step: &str,
         written: &[u8],
         progress: Option<&dutchman_core::Progress<'_>>,
+        report: &mut Report,
     ) -> Result<verify::Outcome, Error> {
-        self.check_measurements(model, history, step, written, progress, false)
+        let unavailable = |reason: String, report: &mut Report| {
+            verify::record_unavailable(report, &model.name, &reason);
+            verify::Outcome::Unverified(reason)
+        };
+        if let Some(why) = self.memory_refusal() {
+            return Ok(unavailable(why, report));
+        }
+        let cli = match self.selected_evaluator(&self.verification) {
+            Ok(cli) => cli,
+            Err(why) => return Ok(unavailable(why.to_string(), report)),
+        };
+        let original = self.history_design(model, history, step, Live::Original)?;
+        if let Some(why) = self.memory_refusal() {
+            return Ok(unavailable(why, report));
+        }
+        let result = verify::compare_report(
+            cli.as_ref(),
+            self.timeout,
+            written,
+            &original,
+            verify::Expected {
+                solids: solid_bodies(model),
+                sheets: sheet_bodies(model),
+            },
+            progress,
+            model,
+            dutchman_core::progress_words::history_limit(
+                history.pattern_replay_required,
+                self.keep_unverified_hidden(),
+            ),
+            report,
+        );
+        Ok(match result {
+            verify::Outcome::Unverified(why) if history.pattern_replay_required => {
+                verify::Outcome::Differs(format!(
+                    "the pattern instance set could not be verified: {why}"
+                ))
+            }
+            result => result,
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1513,7 +1554,7 @@ impl Writer for SolidCraftWriter {
             if let Ok(history) = &mapping.result {
                 if history.stop.is_none() && !only_stored_geometry(&mapping.features) {
                     let written = self.history_design(model, history, &step, Live::History)?;
-                    checked = Some(self.check(model, history, &step, &written, progress)?);
+                    checked = Some(self.check(model, history, &step, &written, progress, report)?);
                 }
             }
             let partial_check = if let Some(verify::Outcome::Differs(why)) = &checked {
