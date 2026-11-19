@@ -8427,6 +8427,221 @@ fn solidcraft_builds_the_base_flange_as_the_original() {
     );
 }
 
+/// Synthetic open section; the saved cube is deliberately unrelated to the section, so
+/// conversion tests cannot accidentally select curves from the final body.
+fn contour_flange_model(change: Value) -> Model {
+    let mut model = cube_with_history(10.0, first_profile(), None);
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    let m = &mut wire["model"];
+    m["sketches"][0]["profiles"] = json!([]);
+    m["sketch_entities"] = json!([
+        line(1, [0.0, 0.0], [20.0, 0.0]),
+        line(2, [20.0, 0.0], [20.0, 15.0]),
+        line(3, [20.0, 15.0], [0.0, 0.0]),
+        line(4, [50.0, 0.0], [60.0, 0.0]),
+    ]);
+    m["sketch_constraints"] = json!([]);
+    let mut definition = json!({
+        "profile": {"kind": "sketch_entities", "value": {"sketch": SKETCH,
+            "entities": ["f3d:model:sketch-entity#1", "f3d:model:sketch-entity#2"]}},
+        "direction": {"x": 0.0, "y": 0.0, "z": 1.0},
+        "extent": {"kind": "one_sided", "side": {
+            "termination": {"kind": "blind", "length": 10.0}}},
+        "thickness": 2.0, "inside_radius": 2.0, "neutral_factor": 0.4, "side": "right",
+    });
+    for (key, value) in change.as_object().unwrap() {
+        definition[key] = value.clone();
+    }
+    m["features"][1]["name"] = json!("Contour flange");
+    m["features"][1]["definition"] = json!({
+        "kind": "operation", "value": {
+            "kind": "sheet_metal_contour_flange", "value": {"construction": definition},
+        },
+    });
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    model
+}
+
+#[test]
+fn contour_flanges_keep_the_open_section_bend_rule_and_signed_travel() {
+    for (side, direction, length, reverse) in [
+        ("right", 1.0, 10.0, false),
+        ("left", 1.0, -10.0, true),
+        ("right", -1.0, 10.0, true),
+        ("left", -1.0, -10.0, false),
+    ] {
+        let model = contour_flange_model(json!({"side": side,
+            "direction": {"x": 0.0, "y": 0.0, "z": direction},
+            "extent": {"kind": "one_sided", "side": {
+                "termination": {"kind": "blind", "length": length}}}}));
+        let (document, report) = convert(
+            &model,
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(
+            history_line(&report).starts_with("2 of 2 features rebuilt"),
+            "{report:?}"
+        );
+        let sketch = &document["features"][0];
+        let flange = &document["features"][1];
+        assert_eq!(flange["type"], "sheet_contour");
+        assert_eq!(flange["sketch"], sketch["id"]);
+        assert_eq!(flange["curves"], json!(["l1", "l2"]));
+        assert_eq!(flange["distance"], "10 mm");
+        assert_eq!(flange["flip"].as_bool().unwrap_or(false), side == "left");
+        assert_eq!(flange["reverse"].as_bool().unwrap_or(false), reverse);
+        let rule = &document["sheet"]["rules"][0];
+        assert_eq!(flange["rule"], rule["name"]);
+        assert_eq!(rule["thickness"], "2 mm");
+        assert_eq!(rule["bend_radius"], "2 mm");
+        assert_eq!(rule["k_factor"], "0.4");
+    }
+}
+
+#[test]
+fn contour_flanges_keep_arc_entities_in_source_order() {
+    let mut model = contour_flange_model(json!({}));
+    let mut wire = serde_json::to_value(&model.ir).unwrap();
+    wire["model"]["sketch_entities"][1] = entity(
+        2,
+        json!({
+            "kind": "arc", "center": {"u": 20.0, "v": 5.0}, "radius": 5.0,
+            "start_angle": -std::f64::consts::FRAC_PI_2, "end_angle": 0.0,
+        }),
+    );
+    model.ir = cadmpeg_ir::CadIr::from_json(&wire.to_string()).unwrap();
+    let (document, report) = convert(
+        &model,
+        &SolidCraftWriter::new().verification(Verification::Off),
+    );
+    assert!(
+        history_line(&report).starts_with("2 of 2 features rebuilt"),
+        "{report:?}"
+    );
+    assert_eq!(document["features"][1]["curves"], json!(["l1", "a1"]));
+}
+
+#[test]
+fn contour_flanges_report_unexpressible_sections_and_keep_the_source_geometry() {
+    for (change, reason) in [
+        (json!({"side": "centered"}), "centered on its profile"),
+        (
+            json!({"direction": {"x": 1.0, "y": 0.0, "z": 1.0}}),
+            "oblique to its sketch",
+        ),
+        (
+            json!({"extent": {"kind": "symmetric", "side": {
+            "termination": {"kind": "blind", "length": 10.0}}}}),
+            "symmetric contour flange",
+        ),
+        (
+            json!({"extent": {"kind": "one_sided", "side": {
+            "termination": {"kind": "through_all"}}}}),
+            "length ends through_all",
+        ),
+        (
+            json!({"extent": {"kind": "one_sided", "side": {
+            "termination": {"kind": "blind", "length": 10.0}, "draft": 0.1}}}),
+            "drafted contour flange",
+        ),
+        (
+            json!({"profile": {"kind": "sketch_entities", "value": {"sketch": SKETCH,
+            "entities": ["f3d:model:sketch-entity#1", "f3d:model:sketch-entity#4"]}}}),
+            "do not form an open chain",
+        ),
+        (
+            json!({"profile": {"kind": "sketch_entities", "value": {"sketch": SKETCH,
+            "entities": ["f3d:model:sketch-entity#1", "f3d:model:sketch-entity#2",
+                "f3d:model:sketch-entity#3"]}}}),
+            "closed profile",
+        ),
+    ] {
+        let (document, report) = convert(
+            &contour_flange_model(change),
+            &SolidCraftWriter::new().verification(Verification::Off),
+        );
+        assert!(history_line(&report).contains(reason), "{report:?}");
+        assert!(document["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|feature| feature["type"] == "import" && feature["suppressed"] == false));
+    }
+}
+
+#[test]
+fn solidcraft_replays_contour_flange_side_and_travel_at_the_expected_coordinates() {
+    let Some(cli) = solidcraft() else { return };
+    // A straight 20 mm section makes a 20 x 2 x 10 mm sheet. Its position independently
+    // proves the material side and signed sweep, even when volume alone cannot.
+    for (side, length) in [
+        ("right", 10.0),
+        ("left", 10.0),
+        ("right", -10.0),
+        ("left", -10.0),
+    ] {
+        let model = contour_flange_model(json!({"side": side,
+            "profile": {"kind": "sketch_entities", "value": {"sketch": SKETCH,
+                "entities": ["f3d:model:sketch-entity#1"]}},
+            "extent": {"kind": "one_sided", "side": {
+                "termination": {"kind": "blind", "length": length}}}}));
+        let dir = tempfile::tempdir().unwrap();
+        let design = dir.path().join("contour.sc");
+        std::fs::write(&design, written(&model).0).unwrap();
+        let actual = sheet_measurements(&cli, &design, &dir.path().join("actual.json"));
+        assert!(
+            (actual["volume_mm3"].as_f64().unwrap() - 400.0).abs() < 1e-6,
+            "{actual}"
+        );
+        let (near_y, far_y) = if side == "left" {
+            (0.0, 2.0)
+        } else {
+            (-2.0, 0.0)
+        };
+        let (near_z, far_z) = if length < 0.0 {
+            (-10.0, 0.0)
+        } else {
+            (0.0, 10.0)
+        };
+        for (corner, expected) in [
+            ("min", [0.0, near_y, near_z]),
+            ("max", [20.0, far_y, far_z]),
+        ] {
+            for (axis, at) in expected.into_iter().enumerate() {
+                assert!(
+                    (actual["bbox"][corner][axis].as_f64().unwrap() - at).abs() < 1e-6,
+                    "{side} {length}: {actual}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn solidcraft_replays_a_contour_bend_with_the_source_radius_and_thickness() {
+    let Some(cli) = solidcraft() else { return };
+    let dir = tempfile::tempdir().unwrap();
+    let design = dir.path().join("bent-contour.sc");
+    std::fs::write(&design, written(&contour_flange_model(json!({}))).0).unwrap();
+    let actual = sheet_measurements(&cli, &design, &dir.path().join("actual.json"));
+    // The right-side material turns around an inside radius of 2 mm. The straight
+    // portions are 18 and 13 mm; the bend is a quarter annulus of radii 2 and 4 mm.
+    let section_area = 2.0 * (18.0 + 13.0) + std::f64::consts::PI * (16.0 - 4.0) / 4.0;
+    let expected_volume = section_area * 10.0;
+    assert!(
+        (actual["volume_mm3"].as_f64().unwrap() - expected_volume).abs() < 1e-6,
+        "{actual}"
+    );
+    for (corner, expected) in [("min", [0.0, -2.0, 0.0]), ("max", [22.0, 15.0, 10.0])] {
+        for (axis, at) in expected.into_iter().enumerate() {
+            assert!(
+                (actual["bbox"][corner][axis].as_f64().unwrap() - at).abs() < 1e-6,
+                "{actual}"
+            );
+        }
+    }
+}
+
 /// A base sheet followed by a synthetic operation on its front top edge.
 fn sheet_operation(mut definition: Value) -> Model {
     let mut model = flanged_cube(10.0, "forward");
