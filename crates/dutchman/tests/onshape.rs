@@ -1840,8 +1840,7 @@ fn sketch_information_uses_existing_microversion_privacy_and_http_guards() {
     }
 }
 
-#[test]
-fn a_fetched_face_sketch_uses_its_stored_placement_during_offline_reading() {
+fn fetched_face_sketch(matrix: Option<Value>) -> (dutchman_core::Model, dutchman_core::Report) {
     let dir = tempfile::tempdir().unwrap();
     let mut mock = partstudio_mock(MID, "1");
     // The transport fixture has a metadata-only STEP reply. Use the existing
@@ -1875,11 +1874,13 @@ fn a_fetched_face_sketch_uses_its_stored_placement_during_offline_reading() {
         "faces":[{"id":"support","orientation":true,"loops":[],"surface":{"type":"PLANE",
             "origin":{"x":0.01,"y":-0.02,"z":0.005},"normal":{"z":1.0}}}]}]}),
     );
+    let mut placement = json!({"featureId":"sketch"});
+    if let Some(matrix) = matrix {
+        placement["sketchMatrix"] = matrix;
+    }
     *mock.replies.back_mut().unwrap() = response(
         200,
-        json!({"sourceMicroversion":MID,"sketches":[
-        {"featureId":"sketch","sketchMatrix":[0.0,-1.0,0.0,0.04, 1.0,0.0,0.0,0.07,
-            0.0,0.0,1.0,0.005, 0.0,0.0,0.0,1.0]}]}),
+        json!({"sourceMicroversion":MID,"sketches":[placement]}),
     );
     run(&mut mock, &dir, PS, 50).unwrap();
     let mut report = dutchman_core::Report::default();
@@ -1889,6 +1890,16 @@ fn a_fetched_face_sketch_uses_its_stored_placement_during_offline_reading() {
         &mut report,
     )
     .unwrap();
+    (model, report)
+}
+
+fn face_sketch_matrix() -> Value {
+    json!([0.0, -1.0, 0.0, 0.04, 1.0, 0.0, 0.0, 0.07, 0.0, 0.0, 1.0, 0.005, 0.0, 0.0, 0.0, 1.0])
+}
+
+#[test]
+fn a_fetched_face_sketch_uses_its_stored_placement_during_offline_reading() {
+    let (model, report) = fetched_face_sketch(Some(face_sketch_matrix()));
     let wire = serde_json::to_value(&model.ir).unwrap();
     assert_eq!(
         wire["model"]["sketches"][0]["placement"]["frame"]["origin"],
@@ -1900,4 +1911,59 @@ fn a_fetched_face_sketch_uses_its_stored_placement_during_offline_reading() {
     );
     assert!(model.source_step.is_some());
     assert!(!report.losses().iter().any(|loss| loss.subject == "Sketch"));
+}
+
+#[test]
+fn a_fetched_face_sketch_without_a_stored_matrix_keeps_the_final_shape() {
+    let (model, report) = fetched_face_sketch(None);
+    assert_face_sketch_refused(&model, &report);
+}
+
+#[test]
+fn a_fetched_face_sketch_with_a_malformed_matrix_keeps_the_final_shape() {
+    for case in [
+        "short",
+        "scaled",
+        "sheared",
+        "reflected",
+        "projective",
+        "nonfinite",
+        "off-plane",
+        "tilted",
+    ] {
+        let mut matrix = face_sketch_matrix();
+        match case {
+            "short" => {
+                matrix.as_array_mut().unwrap().pop();
+            }
+            "scaled" => matrix[4] = json!(2.0),
+            "sheared" => matrix[0] = json!(0.5),
+            "reflected" => matrix[1] = json!(1.0),
+            "projective" => matrix[12] = json!(0.1),
+            "nonfinite" => matrix[3] = Value::Null,
+            "off-plane" => matrix[11] = json!(0.05),
+            "tilted" => {
+                matrix[1] = json!(0.0);
+                matrix[9] = json!(1.0);
+                matrix[2] = json!(1.0);
+                matrix[10] = json!(0.0);
+            }
+            _ => panic!("unknown matrix case: {case}"),
+        }
+        let (model, report) = fetched_face_sketch(Some(matrix));
+        assert_face_sketch_refused(&model, &report);
+    }
+}
+
+fn assert_face_sketch_refused(model: &dutchman_core::Model, report: &dutchman_core::Report) {
+    let wire = serde_json::to_value(&model.ir).unwrap();
+    assert!(model.ir.model.sketches.is_empty());
+    assert_eq!(
+        wire["model"]["features"][0]["definition"]["value"]["kind"],
+        "native"
+    );
+    assert!(model.source_step.is_some());
+    assert!(report.losses().iter().any(|loss| loss.subject == "Sketch"
+        && loss.code.as_deref() == Some("onshape/history.not-supported")
+        && loss.detail.contains("kept the final STEP geometry")));
 }

@@ -426,7 +426,15 @@ pub(super) fn dependencies(
         return Ok(result);
     }
     let operation = definition.pointer("/value/kind").and_then(Value::as_str);
-    if operation == Some("sketch") && sketch::built_in_frame(source) {
+    // A validated stored sketch matrix supplies an absolute frame. The mapped
+    // sketch consumes that frame, rather than a historical face selection, so
+    // it needs no topology producer (including at the start of the history).
+    if operation == Some("sketch")
+        && (sketch::built_in_frame(source)
+            || inputs
+                .sketch_information(text(source, "featureId")?)?
+                .is_some())
+    {
         return Ok(result);
     }
     let reference = |native: &str| -> Mapping<String> {
