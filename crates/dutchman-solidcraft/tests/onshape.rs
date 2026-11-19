@@ -309,7 +309,9 @@ fn custom_feature_without_a_proven_shape_blocks_later_topology_features() {
         &mut report,
     )
     .unwrap();
-    assert_eq!(source.ir.model.feature_input_topologies.len(), 1);
+    // The custom feature has no proven shape, so the fillet's stored edge has no
+    // proven producer and the reader keeps no input topology for it.
+    assert!(source.ir.model.feature_input_topologies.is_empty());
     let mut output = Vec::new();
     SolidCraftWriter::new()
         .verification(Verification::Off)
